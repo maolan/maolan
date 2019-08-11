@@ -77,8 +77,6 @@ int main(int argc, char **argv)
     button = new gnui::Button(10, 10, 20, 20, "@>");
     button->callback(play);
   }
-  window->begin();
-  window->end();
   window->show(argc, argv);
   return gnui::run();
 }
