@@ -1,0 +1,9 @@
+PROG_CXX = src/maolanGui
+CXXFLAGS != gnui-config --cxxflags
+CXXFLAGS += -std=c++14
+LDFLAGS != gnui-config --ldflags
+PREFIX ?= /usr/local
+CXXFLAGS += -fPIC -lmaolan -lsndfile
+
+distclean: clean
+	rm -rf config.log config.status configure makeinclude.configured autom4te.cache

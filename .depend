@@ -1,0 +1,2 @@
+src/maolanGui.full: /usr/lib/libc.a
+src/maolanGui.full: /usr/lib/libc++.a
