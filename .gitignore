@@ -1,0 +1,14 @@
+*.o
+*.so
+*.full
+*.debug
+.depend
+.ccls-cache
+autom4te.cache/
+config.log
+config.status
+configure
+makeinclude.configured
+maolan/config.h
+src/maolanGui
+
