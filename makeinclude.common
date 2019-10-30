@@ -1,4 +1,4 @@
-PROG_CXX = src/maolanGui
+PROG_CXX = src/maolan
 CXXFLAGS != gnui-config --cxxflags
 CXXFLAGS += -std=c++14
 LDFLAGS != gnui-config --ldflags
