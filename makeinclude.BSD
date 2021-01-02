@@ -1,2 +1,0 @@
-SRCS != ls -1 src/*.cpp
-MK_MAN = no

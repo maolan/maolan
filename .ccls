@@ -1,0 +1,12 @@
+clang++
+%h -std=c++17
+%c -std=c11
+%cpp -std=c++17
+-I.
+-I..
+-I../..
+-I../imgui
+-I../imgui/examples
+-I./imgui
+-I./imgui/examples
+-I/usr/local/include
