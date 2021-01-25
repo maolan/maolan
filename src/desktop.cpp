@@ -1,6 +1,6 @@
 #include <iostream>
-#include "maolan/app.hpp"
-#include "maolan/glfw/ui.hpp"
+#include "maolan/ui/app.hpp"
+#include "maolan/ui/glfw/ui.hpp"
 #include <lo/lo_cpp.h>
 
 

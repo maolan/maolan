@@ -3,8 +3,8 @@
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-#include "maolan/app.hpp"
-#include "maolan/glfw/ui.hpp"
+#include "maolan/ui/app.hpp"
+#include "maolan/ui/glfw/ui.hpp"
 // #include "maolan/app.hpp"
 
 #if defined(IMGUI_IMPL_OPENGL_LOADER_GL3W)

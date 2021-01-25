@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include "./menu.hpp"
+#include "./tracks.hpp"
 
 
 namespace maolan
@@ -13,5 +14,6 @@ namespace maolan
 
     protected:
       Menu menu;
+      Tracks tracks;
   };
 }
