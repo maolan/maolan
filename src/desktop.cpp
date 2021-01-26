@@ -1,21 +1,17 @@
 #include <iostream>
+#include <maolan/audio/track.hpp>
+#include <maolan/audio/oss/out.hpp>
+
 #include "maolan/ui/app.hpp"
 #include "maolan/ui/glfw/ui.hpp"
-#include <lo/lo_cpp.h>
 
 
 int main()
 {
-  // lo::ServerThread st(10024);
-  // if (!st.is_valid()) {
-      // std::cerr << "Failed creating server thread" << std::endl;
-      // return 1;
-  // }
-  // st.set_callbacks([&st](){printf("Thread init: %p.\n",&st);},
-                   // [](){printf("Thread cleanup.\n");});
-  // std::cout << "URL: " << st.url() << std::endl;
-  // st.add_method(nullptr, nullptr, []{std::cout << "example" << std::endl;});
-  // st.start();
+  maolan::audio::OSSOut out("/dev/dsp", 2);
+  maolan::audio::Track one("one", 2);
+  one.mute(true);
+  maolan::audio::Track two("two", 2);
 
   maolan::UI *display = new maolan::GLFW("maolan");
   auto app = new maolan::App();
