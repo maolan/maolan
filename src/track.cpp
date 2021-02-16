@@ -1,3 +1,4 @@
+#include <sstream>
 #include "imgui.h"
 #include "maolan/ui/track.hpp"
 
@@ -10,6 +11,9 @@ float values[] = {1.0, 0.9, 0.5, 0.2, 0, -0.2, -0.5, -0.9, -1.0, -0.9, -0.5, -0.
 
 void Track::draw(audio::Track *track)
 {
+  std::stringstream s;
+  s << "##" << track;
+  std::string id = s.str();
   ImGui::BeginGroup();
   {
     ImGui::Text("%s", track->name().data());
@@ -20,7 +24,8 @@ void Track::draw(audio::Track *track)
     {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    if (ImGui::Button("M")) { track->mute(!muted); }
+    std::string mute = "M" + id;
+    if (ImGui::Button(mute.data())) { track->mute(!muted); }
     if (!muted) { ImGui::PopStyleColor(); }
 
     const bool soloed = track->solo();
@@ -29,7 +34,8 @@ void Track::draw(audio::Track *track)
     {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    if (ImGui::Button("S")) { track->solo(!soloed); }
+    std::string solo = "S" + id;
+    if (ImGui::Button(solo.data())) { track->solo(!soloed); }
     if (!soloed) { ImGui::PopStyleColor(); }
 
     const bool armed = track->arm();
@@ -38,7 +44,8 @@ void Track::draw(audio::Track *track)
     {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    if (ImGui::Button("R")) { track->arm(!armed); }
+    std::string arm = "R" + id;
+    if (ImGui::Button(arm.data())) { track->arm(!armed); }
     if (!armed) { ImGui::PopStyleColor(); }
   }
   ImGui::EndGroup();
