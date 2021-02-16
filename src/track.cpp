@@ -6,9 +6,6 @@
 using namespace maolan;
 
 
-float values[] = {1.0, 0.9, 0.5, 0.2, 0, -0.2, -0.5, -0.9, -1.0, -0.9, -0.5, -0.2, 0, 0.2, 0.5, 0.9, 1.0, 0.9, 0.5, 0.2, 0, -0.2, -0.5, -0.9, -1.0, -0.9, -0.5, -0.2, 0, 0.2, 0.5, 0.9, 1.0};
-
-
 void Track::draw(audio::Track *track)
 {
   std::stringstream s;
