@@ -11,4 +11,5 @@ void App::draw()
 {
   menu.draw();
   tracks.draw();
+  playback.draw();
 }
