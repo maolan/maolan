@@ -9,15 +9,17 @@ file(GLOB SRCS src/*.cpp)
 file(GLOB MY_HEADERS maolan/ui/*.hpp)
 install(FILES ${MY_HEADERS} DESTINATION ${CMAKE_INSTALL_PREFIX}/include/maolan/ui)
 set(MY_INCLUDE_DIRS ${MY_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
+set(MY_INCLUDE_DIRS ${MY_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends)
 set(MY_INCLUDE_DIRS ${MY_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/imgui/examples)
 set(MY_INCLUDE_DIRS ${MY_INCLUDE_DIRS} )
 
 file(GLOB IMGUI_SRCS
     imgui/imgui.cpp
     imgui/imgui_draw.cpp
+    imgui/imgui_tables.cpp
     imgui/imgui_widgets.cpp
-    imgui/examples/imgui_impl_glfw.cpp
-    imgui/examples/imgui_impl_opengl3.cpp
+    imgui/backends/imgui_impl_glfw.cpp
+    imgui/backends/imgui_impl_opengl3.cpp
     imgui/examples/libs/gl3w/GL/gl3w.c
  )
 enable_testing()
