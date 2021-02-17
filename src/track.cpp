@@ -6,11 +6,17 @@
 using namespace maolan;
 
 
+Track::Labels::Labels()
+{
+  const std::string suffix = "##" + std::to_string((long)this);
+  mute = "M" + suffix;
+  solo = "S" + suffix;
+  arm = "R" + suffix;
+}
+
+
 void Track::draw(audio::Track *track)
 {
-  std::stringstream s;
-  s << "##" << track;
-  std::string id = s.str();
   ImGui::BeginGroup();
   {
     ImGui::Text("%s", track->name().data());
@@ -21,8 +27,7 @@ void Track::draw(audio::Track *track)
     {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    std::string mute = "M" + id;
-    if (ImGui::Button(mute.data())) { track->mute(!muted); }
+    if (ImGui::Button(labels.mute.data())) { track->mute(!muted); }
     if (!muted) { ImGui::PopStyleColor(); }
 
     const bool soloed = track->solo();
@@ -31,8 +36,7 @@ void Track::draw(audio::Track *track)
     {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    std::string solo = "S" + id;
-    if (ImGui::Button(solo.data())) { track->solo(!soloed); }
+    if (ImGui::Button(labels.solo.data())) { track->solo(!soloed); }
     if (!soloed) { ImGui::PopStyleColor(); }
 
     const bool armed = track->arm();
@@ -41,8 +45,7 @@ void Track::draw(audio::Track *track)
     {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    std::string arm = "R" + id;
-    if (ImGui::Button(arm.data())) { track->arm(!armed); }
+    if (ImGui::Button(labels.arm.data())) { track->arm(!armed); }
     if (!armed) { ImGui::PopStyleColor(); }
   }
   ImGui::EndGroup();
