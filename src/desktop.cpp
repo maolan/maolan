@@ -1,4 +1,5 @@
 #include <iostream>
+#include <cstdint>
 #include <maolan/engine.hpp>
 #include <maolan/audio/track.hpp>
 #include <maolan/audio/clip.hpp>
@@ -10,7 +11,7 @@
 
 int main()
 {
-  maolan::audio::OSSOut out("/dev/dsp", 2);
+  maolan::audio::OSSOut<int32_t> out("/dev/dsp", 2);
   maolan::audio::Track one("one", 2);
   maolan::audio::Clip clip("../../libmaolan/data/stereo.wav", 0, 10000000, 0, &one);
   out.connect(&one);
