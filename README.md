@@ -1,4 +1,4 @@
-# Startkit for Desktop Application
+# Maolan, Modern and Bloat Free DAW
 
 ## Building
 
