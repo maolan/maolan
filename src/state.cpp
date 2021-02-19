@@ -8,7 +8,6 @@ State * State::state = nullptr;
 
 
 State::State()
-  : dummyvar{42}
 {}
 
 
@@ -22,7 +21,3 @@ State * State::get()
   state = new State();
   return state;
 }
-
-
-void State::init()
-{}

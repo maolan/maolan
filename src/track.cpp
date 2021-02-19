@@ -1,5 +1,6 @@
 #include <sstream>
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "maolan/ui/track.hpp"
 
 
@@ -47,6 +48,20 @@ void Track::draw(audio::Track *track)
     }
     if (ImGui::Button(labels.arm.data())) { track->arm(!armed); }
     if (!armed) { ImGui::PopStyleColor(); }
+  }
+  ImGui::EndGroup();
+
+  ImGui::SameLine();
+  ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
+  ImGui::SameLine();
+
+  ImGui::BeginGroup();
+  {
+    for (auto clip = track->clips(); clip != nullptr; clip = clip->next())
+    {
+      ImGui::SameLine();
+      ImGui::Button("something");
+    }
   }
   ImGui::EndGroup();
 }

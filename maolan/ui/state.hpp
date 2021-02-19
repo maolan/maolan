@@ -7,11 +7,8 @@ namespace maolan
   {
     public:
       ~State();
+
       static State * get();
-
-      void init();
-
-      int dummyvar;
 
     protected:
       State();
