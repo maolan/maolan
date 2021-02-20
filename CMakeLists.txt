@@ -11,7 +11,6 @@ install(FILES ${MY_HEADERS} DESTINATION ${CMAKE_INSTALL_PREFIX}/include/maolan/u
 set(MY_INCLUDE_DIRS ${MY_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
 set(MY_INCLUDE_DIRS ${MY_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/imgui/backends)
 set(MY_INCLUDE_DIRS ${MY_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/imgui/examples)
-set(MY_INCLUDE_DIRS ${MY_INCLUDE_DIRS} )
 
 file(GLOB IMGUI_SRCS
     imgui/imgui.cpp
@@ -21,7 +20,7 @@ file(GLOB IMGUI_SRCS
     imgui/backends/imgui_impl_glfw.cpp
     imgui/backends/imgui_impl_opengl3.cpp
     imgui/examples/libs/gl3w/GL/gl3w.c
- )
+)
 enable_testing()
 
 find_package(PkgConfig REQUIRED)
