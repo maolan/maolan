@@ -1,4 +1,4 @@
-# Startkit for Desktop Application
+# Maolan, Modern and Bloat Free DAW
 
 ## Building
 
@@ -8,7 +8,7 @@ mkdir build
 cd build
 cmake .. -DCMAKE_BUILD_TYPE=Debug -DGLFW=On
 make
-./desktop
+./maolan
 ```
 
 ## Requirements
@@ -16,3 +16,4 @@ make
 * OpenGL
 * GLFW
 * imgui (fetched automatically via `bin/init.sh`)
+* libmaolan
