@@ -2,6 +2,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "maolan/ui/track.hpp"
+#include "maolan/ui/widgets/clip.hpp"
 
 
 using namespace maolan;
@@ -57,11 +58,14 @@ void Track::draw(audio::Track *track)
 
   ImGui::BeginGroup();
   {
+    ImVec2 pos = ImGui::GetCursorScreenPos();
     for (auto clip = track->clips(); clip != nullptr; clip = clip->next())
     {
       ImGui::SameLine();
-      ImGui::Button("something");
+      Clip("something", pos, 20, clip);
+      pos.x += 10;
     }
   }
   ImGui::EndGroup();
+  ImGui::Separator();
 }
