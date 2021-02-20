@@ -62,8 +62,7 @@ void Track::draw(audio::Track *track)
     for (auto clip = track->clips(); clip != nullptr; clip = clip->next())
     {
       ImGui::SameLine();
-      Clip("something", pos, 20, clip);
-      pos.x += 10;
+      Clip(clip, pos, height);
     }
   }
   ImGui::EndGroup();

@@ -21,5 +21,6 @@ namespace maolan
 
     protected:
       Labels labels;
+      float height = 20;
   };
 }
