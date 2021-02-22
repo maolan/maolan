@@ -10,8 +10,11 @@ namespace maolan
 
       static State * get();
 
+      int zoom;
+
     protected:
       State();
+
       static State * state;
   };
 }
