@@ -17,10 +17,12 @@ namespace maolan
         std::string arm;
     };
     public:
-      void draw(audio::Track *track);
+      Track(audio::Track *track);
+      void draw();
 
     protected:
       Labels labels;
       float height = 20;
+      audio::Track *track;
   };
 }

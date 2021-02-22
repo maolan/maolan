@@ -17,7 +17,12 @@ Track::Labels::Labels()
 }
 
 
-void Track::draw(audio::Track *track)
+Track::Track(audio::Track *t)
+  : track{t}
+{}
+
+
+void Track::draw()
 {
   ImGui::BeginGroup();
   {
