@@ -25,9 +25,14 @@ Track::Track(audio::Track *t)
 
 void Track::draw(float &width)
 {
+  ImVec2 minimum = ImGui::GetCursorScreenPos();
+  ImVec2 maximum = {minimum.x + width, minimum.y + ImGui::GetTextLineHeight()};
   ImGui::BeginGroup();
   {
+    ImVec2 m = {maximum.x - 10, maximum.y};
+    ImGui::PushClipRect(minimum, m, true);
     ImGui::Text("%s", track->name().data());
+    ImGui::PopClipRect();
 
     const bool muted = track->mute();
     if (!muted)
@@ -58,6 +63,7 @@ void Track::draw(float &width)
   ImGui::EndGroup();
 
   ImGui::SameLine();
+  ImGui::SetCursorScreenPos(ImVec2(maximum.x, minimum.y));
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
 

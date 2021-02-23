@@ -6,11 +6,12 @@
 static auto state = maolan::State::get();
 
 
-bool Clip(maolan::audio::Clip *c, const ImVec2 &position, const float &height)
+bool Clip(maolan::audio::Clip *c, const ImVec2 &position, const float &h)
 {
+  const float &minHeight = 2 * ImGui::GetTextLineHeightWithSpacing() + 3 * ImGui::GetStyle().ItemInnerSpacing.y;
+  const float &height = h < minHeight ? minHeight : h;
   ImDrawList *draw_list = ImGui::GetWindowDrawList();
-  ImVec2 size = {100, height};
-  ImGuiStyle& style = ImGui::GetStyle();
+  ImVec2 size = {ImGui::GetWindowWidth(), height};
   ImVec4 color = { 0, 0.8, 0.8, 0.2 };
   const float start = (float)c->start() / (float)state->zoom;
   const float end = (float)c->end() / (float)state->zoom;
