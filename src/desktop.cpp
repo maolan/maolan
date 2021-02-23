@@ -15,7 +15,7 @@ int main()
   maolan::audio::Track one("one", 2);
   maolan::audio::Track two("two with the very long name", 2);
   maolan::audio::Clip clip("../../libmaolan/data/stereo.wav", 0, 624000, 0, &one);
-  maolan::audio::Clip clip2("../../libmaolan/data/stereo.wav", 624000, 1248000, 0, &one);
+  maolan::audio::Clip clip2("../../libmaolan/data/stereo.wav", 624000, 1248000, 0, &two);
   out.connect(&one);
 
   maolan::Engine::init();

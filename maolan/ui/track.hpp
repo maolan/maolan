@@ -19,7 +19,7 @@ namespace maolan
     public:
       Track(audio::Track *track);
 
-      void draw();
+      void draw(float &width);
       float height();
       void height(float h);
 

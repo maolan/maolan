@@ -7,5 +7,8 @@ namespace maolan
   {
     public:
       void draw();
+
+    protected:
+      float width = 100;
   };
 }

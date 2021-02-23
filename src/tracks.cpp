@@ -19,7 +19,7 @@ void Tracks::draw()
     for (auto track : audio::Track::all)
     {
       Track *t = (Track *)track->data();
-      t->draw();
+      t->draw(width);
     }
     ImGui::SliderInt("zoom", &(state->zoom), 1, 10000, "1:%d");
   }

@@ -23,14 +23,13 @@ Track::Track(audio::Track *t)
 {}
 
 
-void Track::draw()
+void Track::draw(float &width)
 {
   ImGui::BeginGroup();
   {
     ImGui::Text("%s", track->name().data());
 
     const bool muted = track->mute();
-    ImGui::SameLine();
     if (!muted)
     {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
