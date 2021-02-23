@@ -20,8 +20,8 @@ void Tracks::draw()
     {
       Track *t = (Track *)track->data();
       t->draw();
-      ImGui::SliderInt("zoom", &(state->zoom), 1, 10000, "1:%d");
     }
+    ImGui::SliderInt("zoom", &(state->zoom), 1, 10000, "1:%d");
   }
   ImGui::End();
 }
