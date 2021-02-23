@@ -18,11 +18,14 @@ namespace maolan
     };
     public:
       Track(audio::Track *track);
+
       void draw();
+      float height();
+      void height(float h);
 
     protected:
       Labels labels;
-      float height = 20;
+      float _height = 20;
       audio::Track *track;
   };
 }

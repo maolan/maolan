@@ -3,6 +3,7 @@
 #include "imgui_internal.h"
 #include "maolan/ui/track.hpp"
 #include "maolan/ui/widgets/clip.hpp"
+#include "maolan/ui/widgets/draglimit.hpp"
 
 
 using namespace maolan;
@@ -67,9 +68,14 @@ void Track::draw()
     for (auto clip = track->clips(); clip != nullptr; clip = clip->next())
     {
       ImGui::SameLine();
-      Clip(clip, pos, height);
+      Clip(clip, pos, _height);
     }
   }
   ImGui::EndGroup();
   ImGui::Separator();
+  DragLimit(track, _height);
 }
+
+
+float Track::height() { return _height; }
+void Track::height(float h) { _height = h; }

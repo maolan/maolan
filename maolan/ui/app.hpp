@@ -10,8 +10,11 @@ namespace maolan
   class App
   {
     public:
-      void draw();
+      App();
+
       static const std::string title;
+
+      void draw();
 
     protected:
       Menu menu;
