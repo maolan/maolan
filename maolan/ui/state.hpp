@@ -11,6 +11,7 @@ namespace maolan
       static State * get();
 
       int zoom;
+      float trackMinHeight;
 
     protected:
       State();

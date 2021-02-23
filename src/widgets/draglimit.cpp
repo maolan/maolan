@@ -1,13 +1,15 @@
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "maolan/ui/state.hpp"
 #include "maolan/ui/widgets/draglimit.hpp"
 
 
+static auto state = maolan::State::get();
 
 
 void DragLimit(maolan::audio::Track *t, float &value)
 {
-  const float &minHeight = 2 * ImGui::GetTextLineHeightWithSpacing() + 3 * ImGui::GetStyle().ItemInnerSpacing.y;
+  const float &minHeight = state->trackMinHeight;
   ImGuiIO &io = ImGui::GetIO();
   auto window = ImGui::GetCurrentWindow();
   ImVec2 size = {window->Pos.x + window->Size.x, 2};
@@ -19,7 +21,7 @@ void DragLimit(maolan::audio::Track *t, float &value)
   if (is_active && io.MouseDelta.y != 0.0f)
   {
     const auto &delta = io.MouseDelta.y;
-    if (value <= minHeight && delta < 0) { return; }
-    value += io.MouseDelta.y;
+    if (value < minHeight) { value = minHeight; }
+    else { value += io.MouseDelta.y; }
   }
 }

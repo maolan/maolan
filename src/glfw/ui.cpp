@@ -4,6 +4,7 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include "maolan/ui/app.hpp"
+#include "maolan/ui/state.hpp"
 #include "maolan/ui/glfw/ui.hpp"
 // #include "maolan/app.hpp"
 
@@ -37,6 +38,9 @@ using namespace gl;
 
 
 using namespace maolan;
+
+
+static auto state = State::get();
 
 
 static void glfw_error_callback(int error, const char *description)
@@ -136,6 +140,10 @@ void GLFW::render()
 
 void GLFW::run(App *app)
 {
+  prepare();
+  app->draw();
+  render();
+  state->trackMinHeight = 2 * ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemInnerSpacing.y;
   while (!glfwWindowShouldClose(window))
   {
     prepare();

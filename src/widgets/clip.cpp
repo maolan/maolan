@@ -8,7 +8,7 @@ static auto state = maolan::State::get();
 
 bool Clip(maolan::audio::Clip *c, const ImVec2 &position, const float &h)
 {
-  const float &minHeight = 2 * ImGui::GetTextLineHeightWithSpacing() + 3 * ImGui::GetStyle().ItemInnerSpacing.y;
+  const float &minHeight = state->trackMinHeight;
   const float &height = h < minHeight ? minHeight : h;
   ImDrawList *draw_list = ImGui::GetWindowDrawList();
   ImVec2 size = {ImGui::GetWindowWidth(), height};

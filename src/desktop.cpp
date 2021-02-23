@@ -5,7 +5,9 @@
 #include <maolan/audio/clip.hpp>
 #include <maolan/audio/oss/out.hpp>
 
+#include "imgui.h"
 #include "maolan/ui/app.hpp"
+#include "maolan/ui/state.hpp"
 #include "maolan/ui/glfw/ui.hpp"
 
 
@@ -18,6 +20,7 @@ int main()
   maolan::audio::Clip clip2("../../libmaolan/data/stereo.wav", 624000, 1248000, 0, &two);
   out.connect(&one);
 
+  auto state = maolan::State::get();
   maolan::Engine::init();
   maolan::UI *display = new maolan::GLFW("maolan");
   auto app = new maolan::App();
