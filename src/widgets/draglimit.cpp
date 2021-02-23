@@ -1,11 +1,13 @@
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "maolan/ui/widgets/draglimit.hpp"
 
 
 void DragLimit(maolan::audio::Track *t, float &value)
 {
-  ImVec2 size = {100, 2};
   ImGuiIO &io = ImGui::GetIO();
+  auto window = ImGui::GetCurrentWindow();
+  ImVec2 size = {window->Pos.x + window->Size.x, 2};
 
   ImGui::InvisibleButton(t->name().data(), size);
   const bool is_active = ImGui::IsItemActive();
