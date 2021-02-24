@@ -74,10 +74,16 @@ void Track::draw(float &width)
   ImGui::BeginGroup();
   {
     ImVec2 pos = ImGui::GetCursorScreenPos();
-    for (auto clip = _track->clips(); clip != nullptr; clip = clip->next())
+    for (auto c = _track->clips(); c != nullptr; c = c->next())
     {
       ImGui::SameLine();
-      Clip(clip, pos, _height);
+      Clip *clip = (Clip *)c->data();
+      if (!clip)
+      {
+        clip = new Clip(c);
+        c->data(clip);
+      }
+      clip->draw(pos, _height);
     }
   }
   ImGui::EndGroup();
