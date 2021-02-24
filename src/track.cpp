@@ -67,6 +67,7 @@ void Track::draw(float &width)
   ImGui::SetCursorScreenPos(ImVec2(maximum.x, minimum.y));
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
+  ImGui::SetCursorScreenPos(ImVec2(maximum.x, minimum.y));
   HDragLimit(this, width);
   ImGui::SameLine();
 
@@ -80,7 +81,9 @@ void Track::draw(float &width)
     }
   }
   ImGui::EndGroup();
+  minimum = ImGui::GetCursorScreenPos();
   ImGui::Separator();
+  ImGui::SetCursorScreenPos(minimum);
   DragLimit(this, _height);
 }
 
