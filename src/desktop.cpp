@@ -20,10 +20,10 @@ int main()
   maolan::audio::Clip clip2("../../libmaolan/data/stereo.wav", 624000, 1248000, 0, &two);
   out.connect(&one);
 
-  auto state = maolan::State::get();
+  auto state = maolan::ui::State::get();
   maolan::Engine::init();
-  maolan::UI *display = new maolan::GLFW("maolan");
-  auto app = new maolan::App();
+  maolan::ui::UI *display = new maolan::ui::GLFW("maolan");
+  auto app = new maolan::ui::App();
   display->run(app);
   maolan::Engine::quit();
   delete display;

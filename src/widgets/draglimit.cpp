@@ -4,10 +4,10 @@
 #include "maolan/ui/widgets/draglimit.hpp"
 
 
-static auto state = maolan::State::get();
+static auto state = maolan::ui::State::get();
 
 
-void DragLimit(maolan::Track *t, float &value)
+void DragLimit(maolan::ui::Track *t, float &value)
 {
   const float &minHeight = state->trackMinHeight;
   ImGuiIO &io = ImGui::GetIO();

@@ -1,7 +1,7 @@
 #include "maolan/ui/state.hpp"
 
 
-using namespace maolan;
+using namespace maolan::ui;
 
 
 State * State::state = nullptr;

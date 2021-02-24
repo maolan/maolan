@@ -2,4 +2,4 @@
 #include "maolan/ui/track.hpp"
 
 
-void DragLimit(maolan::Track *t, float &value);
+void DragLimit(maolan::ui::Track *t, float &value);

@@ -7,7 +7,7 @@
 #include "maolan/ui/widgets/hdraglimit.hpp"
 
 
-using namespace maolan;
+using namespace maolan::ui;
 
 
 Track::Labels::Labels()
@@ -19,7 +19,7 @@ Track::Labels::Labels()
 }
 
 
-Track::Track(audio::Track *t)
+Track::Track(maolan::audio::Track *t)
   : _track{t}
 {}
 
@@ -90,4 +90,4 @@ void Track::draw(float &width)
 
 float Track::height() { return _height; }
 void Track::height(float h) { _height = h; }
-audio::Track * Track::audio() { return _track; }
+maolan::audio::Track * Track::audio() { return _track; }

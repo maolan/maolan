@@ -3,4 +3,4 @@
 #include "imgui.h"
 
 
-bool Clip(maolan::audio::Clip *c, const ImVec2 &position, const float &height);
+void Clip(maolan::audio::Clip *c, const ImVec2 &position, const float &height);

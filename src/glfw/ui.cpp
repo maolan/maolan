@@ -37,7 +37,7 @@ using namespace gl;
 #endif
 
 
-using namespace maolan;
+using namespace maolan::ui;
 
 
 static auto state = State::get();

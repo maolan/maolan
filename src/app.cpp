@@ -4,7 +4,7 @@
 #include "maolan/ui/track.hpp"
 
 
-using namespace maolan;
+using namespace maolan::ui;
 
 
 const std::string App::title = "MaolanApp";

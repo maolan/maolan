@@ -6,7 +6,7 @@
 class GLFWwindow;
 
 
-namespace maolan
+namespace maolan::ui
 {
   class App;
   class GLFW : public UI

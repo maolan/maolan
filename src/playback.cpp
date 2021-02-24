@@ -4,7 +4,7 @@
 #include "maolan/ui/playback.hpp"
 
 
-using namespace maolan;
+using namespace maolan::ui;
 
 
 void Playback::draw()

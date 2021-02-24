@@ -5,7 +5,7 @@
 #include "./tracks.hpp"
 
 
-namespace maolan
+namespace maolan::ui
 {
   class App
   {

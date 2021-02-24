@@ -1,7 +1,7 @@
 #pragma once
 
 
-namespace maolan
+namespace maolan::ui
 {
   class Menu
   {

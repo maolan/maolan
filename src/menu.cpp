@@ -2,7 +2,7 @@
 #include "maolan/ui/menu.hpp"
 
 
-using namespace maolan;
+using namespace maolan::ui;
 
 
 void Menu::draw()

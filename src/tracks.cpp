@@ -6,10 +6,11 @@
 #include "maolan/ui/tracks.hpp"
 
 
-using namespace maolan;
+using namespace maolan::ui;
 
 
 static auto state = State::get();
+static int zoom = 0;
 
 
 void Tracks::draw()
@@ -21,7 +22,10 @@ void Tracks::draw()
       Track *t = (Track *)track->data();
       t->draw(width);
     }
-    ImGui::SliderInt("zoom", &(state->zoom), 1, 10000, "1:%d");
+    if (ImGui::SliderInt("zoom", &zoom, 0, 31))
+    {
+      state->zoom = 1 << zoom;
+    }
   }
   ImGui::End();
 }

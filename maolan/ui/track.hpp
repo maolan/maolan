@@ -3,7 +3,7 @@
 #include <maolan/audio/track.hpp>
 
 
-namespace maolan
+namespace maolan::ui
 {
   class Track
   {

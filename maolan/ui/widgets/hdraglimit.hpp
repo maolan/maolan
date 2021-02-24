@@ -2,4 +2,4 @@
 #include "maolan/ui/track.hpp"
 
 
-void HDragLimit(maolan::Track *t, float &value);
+void HDragLimit(maolan::ui::Track *t, float &value);
