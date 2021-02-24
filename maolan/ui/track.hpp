@@ -22,10 +22,11 @@ namespace maolan
       void draw(float &width);
       float height();
       void height(float h);
+      audio::Track * audio();
 
     protected:
       Labels labels;
       float _height = 20;
-      audio::Track *track;
+      audio::Track *_track;
   };
 }

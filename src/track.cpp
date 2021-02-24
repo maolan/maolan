@@ -4,6 +4,7 @@
 #include "maolan/ui/track.hpp"
 #include "maolan/ui/widgets/clip.hpp"
 #include "maolan/ui/widgets/draglimit.hpp"
+#include "maolan/ui/widgets/hdraglimit.hpp"
 
 
 using namespace maolan;
@@ -19,7 +20,7 @@ Track::Labels::Labels()
 
 
 Track::Track(audio::Track *t)
-  : track{t}
+  : _track{t}
 {}
 
 
@@ -31,33 +32,33 @@ void Track::draw(float &width)
   {
     ImVec2 m = {maximum.x - 10, maximum.y};
     ImGui::PushClipRect(minimum, m, true);
-    ImGui::Text("%s", track->name().data());
+    ImGui::Text("%s", _track->name().data());
     ImGui::PopClipRect();
 
-    const bool muted = track->mute();
+    const bool muted = _track->mute();
     if (!muted)
     {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    if (ImGui::Button(labels.mute.data())) { track->mute(!muted); }
+    if (ImGui::Button(labels.mute.data())) { _track->mute(!muted); }
     if (!muted) { ImGui::PopStyleColor(); }
 
-    const bool soloed = track->solo();
+    const bool soloed = _track->solo();
     ImGui::SameLine();
     if (!soloed)
     {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    if (ImGui::Button(labels.solo.data())) { track->solo(!soloed); }
+    if (ImGui::Button(labels.solo.data())) { _track->solo(!soloed); }
     if (!soloed) { ImGui::PopStyleColor(); }
 
-    const bool armed = track->arm();
+    const bool armed = _track->arm();
     ImGui::SameLine();
     if (!armed)
     {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    if (ImGui::Button(labels.arm.data())) { track->arm(!armed); }
+    if (ImGui::Button(labels.arm.data())) { _track->arm(!armed); }
     if (!armed) { ImGui::PopStyleColor(); }
   }
   ImGui::EndGroup();
@@ -66,11 +67,13 @@ void Track::draw(float &width)
   ImGui::SetCursorScreenPos(ImVec2(maximum.x, minimum.y));
   ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
   ImGui::SameLine();
+  HDragLimit(this, width);
+  ImGui::SameLine();
 
   ImGui::BeginGroup();
   {
     ImVec2 pos = ImGui::GetCursorScreenPos();
-    for (auto clip = track->clips(); clip != nullptr; clip = clip->next())
+    for (auto clip = _track->clips(); clip != nullptr; clip = clip->next())
     {
       ImGui::SameLine();
       Clip(clip, pos, _height);
@@ -78,9 +81,10 @@ void Track::draw(float &width)
   }
   ImGui::EndGroup();
   ImGui::Separator();
-  DragLimit(track, _height);
+  DragLimit(this, _height);
 }
 
 
 float Track::height() { return _height; }
 void Track::height(float h) { _height = h; }
+audio::Track * Track::audio() { return _track; }

@@ -12,6 +12,7 @@ namespace maolan
 
       int zoom;
       float trackMinHeight;
+      float trackMinWidth = 100;
 
     protected:
       State();
