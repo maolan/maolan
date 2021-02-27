@@ -13,9 +13,9 @@ static auto state = State::get();
 
 Clip::Labels::Labels()
 {
-  const auto suffix = std::to_string((long)this);
-  start = "start" + suffix;
-  end = "end" + suffix;
+  id = std::to_string((long)this);
+  start = "start" + id;
+  end = "end" + id;
 }
 
 
@@ -34,22 +34,42 @@ void Clip::draw(const ImVec2 &position, const float &h)
   const float end = (float)_clip->end() / (float)state->zoom;
   const ImVec2 minimum = {position.x + start, position.y};
   const ImVec2 maximum = {position.x + end, position.y + height};
+  const ImGuiIO &io = ImGui::GetIO();
   ImVec2 size = {end - start, height};
 
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
   ImGui::PushClipRect(minimum, maximum, true);
   ImGui::SetCursorScreenPos({minimum.x + 3, minimum.y});
-  ImGui::InvisibleButton(_clip->name().data(), {size.x - 6, size.y});
+  ImGui::InvisibleButton(labels.id.data(), {size.x - 6, size.y});
+  auto active = ImGui::IsItemActive();
+  auto hovered = ImGui::IsItemHovered();
+  if (hovered) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
+  if (active && io.MouseDelta.x != 0)
+  {
+    auto delta = io.MouseDelta.x * state->zoom;
+    auto newStart = _clip->start() + delta;
+    if (delta < 0)
+    {
+      if (newStart < 0)
+      {
+        delta -= newStart;
+        newStart = 0;
+      }
+    }
+    auto newEnd = _clip->end() + delta;
+    _clip->start(newStart);
+    _clip->end(newEnd);
+  }
   draw_list->AddRectFilled(minimum, maximum, ImGui::ColorConvertFloat4ToU32(color), 3);
-  draw_list->AddRect(minimum, maximum, ImGui::ColorConvertFloat4ToU32(ImVec4(1, 1, 1, 0.3)), 3);
   draw_list->AddText(minimum, ImGui::GetColorU32(ImGuiCol_Text), _clip->name().data());
   ImGui::PopClipRect();
+  draw_list->AddRect(minimum, maximum, ImGui::ColorConvertFloat4ToU32(ImVec4(1, 1, 1, 0.3)), 3);
 
   size.x = 3;
   ImGui::SameLine();
   ImGui::InvisibleButton(labels.end.data(), size);
-  auto active = ImGui::IsItemActive();
-  auto hovered = ImGui::IsItemHovered();
-  const ImGuiIO &io = ImGui::GetIO();
+  active = ImGui::IsItemActive();
+  hovered = ImGui::IsItemHovered();
   if (hovered) { ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW); }
   if (active && io.MouseDelta.x != 0)
   {
@@ -71,4 +91,5 @@ void Clip::draw(const ImVec2 &position, const float &h)
     if (newStart <= 0) { newStart = 1; }
     _clip->start(newStart);
   }
+  ImGui::PopStyleVar();
 }

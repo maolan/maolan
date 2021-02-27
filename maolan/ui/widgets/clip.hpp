@@ -13,6 +13,7 @@ namespace maolan::ui
         public:
           Labels();
 
+          std::string id;
           std::string start;
           std::string end;
       };
