@@ -21,6 +21,7 @@ Track::Labels::Labels()
 
 Track::Track(maolan::audio::Track *t)
   : _track{t}
+  , grid{this}
 {}
 
 
@@ -71,6 +72,10 @@ void Track::draw(float &width)
   HDragLimit(this, width);
   ImGui::SameLine();
 
+  ImGui::SetCursorScreenPos(ImVec2(maximum.x, minimum.y));
+  grid.draw();
+  ImGui::SameLine();
+  ImGui::SetCursorScreenPos(ImVec2(maximum.x, minimum.y));
   ImGui::BeginGroup();
   {
     ImVec2 pos = ImGui::GetCursorScreenPos();

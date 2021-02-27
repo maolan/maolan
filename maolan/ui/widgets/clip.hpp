@@ -1,3 +1,4 @@
+#pragma once
 #include <maolan/audio/clip.hpp>
 
 #include "imgui.h"

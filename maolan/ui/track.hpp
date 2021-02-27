@@ -2,6 +2,8 @@
 #include <string>
 #include <maolan/audio/track.hpp>
 
+#include "maolan/ui/widgets/grid.hpp"
+
 
 namespace maolan::ui
 {
@@ -26,6 +28,7 @@ namespace maolan::ui
 
     protected:
       Labels labels;
+      Grid grid;
       float _height = 20;
       audio::Track *_track;
   };

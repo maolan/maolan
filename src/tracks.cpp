@@ -20,6 +20,10 @@ void Tracks::draw()
     for (auto track : audio::Track::all)
     {
       Track *t = (Track *)track->data();
+      if (t->height() < state->trackMinHeight)
+      {
+        t->height(state->trackMinHeight);
+      }
       t->draw(width);
     }
     if (ImGui::SliderInt("zoom", &zoom, 0, 31))

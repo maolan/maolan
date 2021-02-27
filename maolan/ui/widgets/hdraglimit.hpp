@@ -1,3 +1,4 @@
+#pragma once
 #include "imgui.h"
 #include "maolan/ui/track.hpp"
 
