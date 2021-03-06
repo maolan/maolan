@@ -25,6 +25,7 @@ void Tracks::draw()
   {
     ImGui::Begin("Tracks");
     {
+      timetrack.draw(width);
       for (auto track : audio::Track::all)
       {
         Track *t = (Track *)track->data();
@@ -34,7 +35,7 @@ void Tracks::draw()
         }
         t->draw(width);
       }
-      if (ImGui::SliderInt("zoom", &zoom, 0, 31)) { state->zoom = 1 << zoom; }
+      if (ImGui::SliderInt("zoom", &zoom, 0, 30)) { state->zoom = 1 << zoom; }
     }
     ImGui::End();
   }

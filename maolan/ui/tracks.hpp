@@ -1,4 +1,5 @@
 #pragma once
+#include "maolan/ui/widgets/timetrack.hpp"
 
 
 namespace maolan::ui
@@ -16,5 +17,6 @@ namespace maolan::ui
       float width;
       int zoom;
       bool shown;
+      TimeTrack timetrack;
   };
 }
