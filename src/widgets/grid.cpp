@@ -11,6 +11,7 @@ using namespace maolan::ui;
 
 static const auto color = ImGui::ColorConvertFloat4ToU32({ 1, 1, 1, 0.2 });
 static const auto state = State::get();
+static const auto spacing = ImVec2(0.0f, 0.0f);
 
 
 Grid::Grid(Track *t)
@@ -22,19 +23,16 @@ void Grid::draw()
 {
   const auto &tempo = Config::tempos[0];
   const float delta = tempo.spt / (float)state->zoom;
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, spacing);
   auto position = ImGui::GetCursorScreenPos();
   const int bars = ImGui::GetWindowWidth() / delta;
   auto drawList = ImGui::GetWindowDrawList();
   int nth = 1;
   for (; (delta * nth) < 25; ++nth);
-  for (int i = 0; i < bars; ++i)
+  for (int i = 0; i < bars; i += nth)
   {
-    if ((i % nth) == 0)
-    {
-      drawList->AddLine(position, {position.x, position.y + _track->height()}, color, 1);
-    }
-    position.x += delta;
+    drawList->AddLine(position, {position.x, position.y + _track->height()}, color, 1);
+    position.x += nth * delta;
   }
   ImGui::PopStyleVar();
 }
