@@ -24,12 +24,16 @@ void Grid::draw()
   const float delta = tempo.spt / (float)state->zoom;
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
   auto position = ImGui::GetCursorScreenPos();
-  float width = ImGui::GetWindowWidth();
-  int bars = width / delta;
+  const int bars = ImGui::GetWindowWidth() / delta;
   auto drawList = ImGui::GetWindowDrawList();
+  int nth = 1;
+  for (; (delta * nth) < 25; ++nth);
   for (int i = 0; i < bars; ++i)
   {
-    drawList->AddLine(position, {position.x, position.y + _track->height()}, color, 1);
+    if ((i % nth) == 0)
+    {
+      drawList->AddLine(position, {position.x, position.y + _track->height()}, color, 1);
+    }
     position.x += delta;
   }
   ImGui::PopStyleVar();
