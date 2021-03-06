@@ -9,6 +9,7 @@ using namespace maolan::ui;
 
 
 static auto state = State::get();
+static const ImVec4 color = { 0, 0.8, 0.8, 0.2 };
 
 
 Clip::Labels::Labels()
@@ -29,7 +30,6 @@ void Clip::draw(const ImVec2 &position, const float &h)
   const float &minHeight = state->trackMinHeight;
   const float &height = h < minHeight ? minHeight : h;
   ImDrawList *draw_list = ImGui::GetWindowDrawList();
-  const ImVec4 color = { 0, 0.8, 0.8, 0.2 };
   const float start = (float)_clip->start() / (float)state->zoom;
   const float end = (float)_clip->end() / (float)state->zoom;
   const ImVec2 minimum = {position.x + start, position.y};

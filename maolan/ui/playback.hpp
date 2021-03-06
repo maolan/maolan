@@ -1,4 +1,5 @@
 #pragma once
+#include "maolan/ui/widgets/playbutton.hpp"
 
 
 namespace maolan::ui
@@ -7,5 +8,8 @@ namespace maolan::ui
   {
     public:
       void draw();
+
+    protected:
+      PlayButton _playButton;
   };
 }
