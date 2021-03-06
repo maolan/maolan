@@ -13,7 +13,7 @@ void Playback::draw()
   {
     if (_playButton.draw()) { Engine::play(); }
     ImGui::SameLine();
-    if (ImGui::Button("Stop")) { Engine::stop(); }
+    if (_stopButton.draw()) { Engine::stop(); }
   }
   ImGui::End();
 }

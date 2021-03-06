@@ -3,17 +3,13 @@
 #include <maolan/io.hpp>
 
 #include "imgui.h"
-#include "maolan/ui/state.hpp"
-#include "maolan/ui/widgets/playbutton.hpp"
+#include "maolan/ui/widgets/stopbutton.hpp"
 
 
 using namespace maolan::ui;
 
 
-static const auto state = State::get();
-
-
-bool PlayButton::draw()
+bool StopButton::draw()
 {
   const auto &m = ImGui::CalcTextSize("M", NULL, true);
   const auto &style = ImGui::GetStyle();
@@ -26,7 +22,7 @@ bool PlayButton::draw()
   size.x += 2 * frame.x;
   size.y += 2 * frame.y;
   auto color = ImGuiCol_Button;
-  ImGui::InvisibleButton("playbutton", size);
+  ImGui::InvisibleButton("stopbutton", size);
   auto active = ImGui::IsItemActive();
   auto hovered = ImGui::IsItemHovered();
   if (hovered) { color = ImGuiCol_ButtonHovered; }
@@ -37,10 +33,9 @@ bool PlayButton::draw()
   }
   position.x += frame.x;
   position.y += frame.y;
-  drawList->AddTriangleFilled(
-    {position.x, position.y},
-    {position.x, position.y + m.y},
-    {position.x + m.y, position.y + (m.y / 2)},
+  drawList->AddRectFilled(
+    position,
+    {position.x + m.y, position.y + m.y},
     ImGui::ColorConvertFloat4ToU32(style.Colors[color])
   );
   return valueChanged;
