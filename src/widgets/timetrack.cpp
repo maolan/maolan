@@ -17,6 +17,7 @@ static const float height = 15;
 
 void TimeTrack::draw(const float &width)
 {
+  _playhead.draw(width, height);
   ImGui::BeginGroup();
   {
     const auto &tempo = Config::tempos[0];
