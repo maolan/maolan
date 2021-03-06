@@ -10,26 +10,36 @@ using namespace maolan::ui;
 
 
 static auto state = State::get();
-static int zoom = 0;
+
+
+Tracks::Tracks()
+  : width{100}
+  , zoom{10}
+  , shown{true}
+{}
 
 
 void Tracks::draw()
 {
-  ImGui::Begin("Tracks");
+  if (shown)
   {
-    for (auto track : audio::Track::all)
+    ImGui::Begin("Tracks");
     {
-      Track *t = (Track *)track->data();
-      if (t->height() < state->trackMinHeight)
+      for (auto track : audio::Track::all)
       {
-        t->height(state->trackMinHeight);
+        Track *t = (Track *)track->data();
+        if (t->height() < state->trackMinHeight)
+        {
+          t->height(state->trackMinHeight);
+        }
+        t->draw(width);
       }
-      t->draw(width);
+      if (ImGui::SliderInt("zoom", &zoom, 0, 31)) { state->zoom = 1 << zoom; }
     }
-    if (ImGui::SliderInt("zoom", &zoom, 0, 31))
-    {
-      state->zoom = 1 << zoom;
-    }
+    ImGui::End();
   }
-  ImGui::End();
 }
+
+
+void Tracks::show() { shown = true; }
+void Tracks::hide() { shown = false; }

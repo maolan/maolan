@@ -6,9 +6,15 @@ namespace maolan::ui
   class Tracks
   {
     public:
+      Tracks();
+
       void draw();
+      void show();
+      void hide();
 
     protected:
-      float width = 100;
+      float width;
+      int zoom;
+      bool shown;
   };
 }

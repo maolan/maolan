@@ -23,11 +23,14 @@ void Grid::draw()
   const auto &tempo = Config::tempos[0];
   const float delta = tempo.spt / (float)state->zoom;
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
-  ImVec2 position = ImGui::GetCursorScreenPos();
-  ImDrawList *drawList = ImGui::GetWindowDrawList();
-  drawList->AddLine(position, {position.x, position.y + _track->height()}, color, 1);
-
-  position.x += delta;
-  drawList->AddLine(position, {position.x, position.y + _track->height()}, color, 1);
+  auto position = ImGui::GetCursorScreenPos();
+  float width = ImGui::GetWindowWidth();
+  int bars = width / delta;
+  auto drawList = ImGui::GetWindowDrawList();
+  for (int i = 0; i < bars; ++i)
+  {
+    drawList->AddLine(position, {position.x, position.y + _track->height()}, color, 1);
+    position.x += delta;
+  }
   ImGui::PopStyleVar();
 }

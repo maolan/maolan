@@ -8,7 +8,7 @@ State * State::state = nullptr;
 
 
 State::State()
-  : zoom{1}
+  : zoom{1 << 10}
 {}
 
 
