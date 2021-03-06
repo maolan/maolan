@@ -27,8 +27,9 @@ void Grid::draw()
   auto position = ImGui::GetCursorScreenPos();
   const int bars = ImGui::GetWindowWidth() / delta;
   auto drawList = ImGui::GetWindowDrawList();
-  int nth = 1;
-  for (; (delta * nth) < 25; ++nth);
+  int nth = 0;
+  if (delta > 25) { nth = 1; }
+  else { for (; (delta * nth) < 25; nth += 4); }
   for (int i = 0; i < bars; i += nth)
   {
     drawList->AddLine(position, {position.x, position.y + _track->height()}, color, 1);
