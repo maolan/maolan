@@ -44,3 +44,4 @@ void Tracks::draw()
 
 void Tracks::show() { shown = true; }
 void Tracks::hide() { shown = false; }
+void Tracks::toggle() { shown = !shown; }

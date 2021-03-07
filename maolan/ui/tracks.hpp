@@ -4,6 +4,7 @@
 
 namespace maolan::ui
 {
+  class App;
   class Tracks
   {
     public:
@@ -12,6 +13,7 @@ namespace maolan::ui
       void draw();
       void show();
       void hide();
+      void toggle();
 
     protected:
       float width;

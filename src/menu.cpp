@@ -1,11 +1,12 @@
 #include "imgui.h"
+#include "maolan/ui/app.hpp"
 #include "maolan/ui/menu.hpp"
 
 
 using namespace maolan::ui;
 
 
-void Menu::draw()
+void Menu::draw(App *app)
 {
   if (ImGui::BeginMainMenuBar())
   {
@@ -19,6 +20,11 @@ void Menu::draw()
     if (ImGui::BeginMenu("Edit"))
     {
       if (ImGui::MenuItem("Preferences")) { }
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu("View"))
+    {
+      if (ImGui::MenuItem("Tracks")) { app->tracks().toggle(); }
       ImGui::EndMenu();
     }
     ImGui::EndMainMenuBar();

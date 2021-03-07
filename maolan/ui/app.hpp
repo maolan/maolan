@@ -15,10 +15,11 @@ namespace maolan::ui
       static const std::string title;
 
       void draw();
+      Tracks & tracks();
 
     protected:
-      Menu menu;
-      Playback playback;
-      Tracks tracks;
+      Menu _menu;
+      Playback _playback;
+      Tracks _tracks;
   };
 }

@@ -26,7 +26,10 @@ App::App()
 
 void App::draw()
 {
-  menu.draw();
-  tracks.draw();
-  playback.draw();
+  _menu.draw(this);
+  _tracks.draw();
+  _playback.draw();
 }
+
+
+Tracks & App::tracks() { return _tracks; }
