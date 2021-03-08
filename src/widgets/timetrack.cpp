@@ -20,7 +20,7 @@ void TimeTrack::draw(const float &width)
   _playhead.draw(width, height);
   ImGui::BeginGroup();
   {
-    const auto &tempo = Config::tempos[0];
+    const auto &tempo = Config::tempos[Config::tempoIndex];
     const float delta = tempo.spt / (float)state->zoom;
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, spacing);
     auto position = ImGui::GetCursorScreenPos();

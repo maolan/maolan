@@ -21,7 +21,7 @@ Grid::Grid(Track *t)
 
 void Grid::draw()
 {
-  const auto &tempo = Config::tempos[0];
+  const auto &tempo = Config::tempos[Config::tempoIndex];
   const float delta = tempo.spt / (float)state->zoom;
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, spacing);
   auto position = ImGui::GetCursorScreenPos();
