@@ -1,22 +1,19 @@
 #pragma once
 
+namespace maolan::ui {
+class State {
+public:
+  ~State();
 
-namespace maolan::ui
-{
-  class State
-  {
-    public:
-      ~State();
+  static State *get();
 
-      static State * get();
+  int zoom;
+  float trackMinHeight;
+  float trackMinWidth = 100;
 
-      int zoom;
-      float trackMinHeight;
-      float trackMinWidth = 100;
+protected:
+  State();
 
-    protected:
-      State();
-
-      static State * state;
-  };
-}
+  static State *state;
+};
+} // namespace maolan::ui

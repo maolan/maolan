@@ -1,20 +1,15 @@
-#include <string>
+#include <imgui.h>
 #include <maolan/config.hpp>
 #include <maolan/io.hpp>
-
-#include "imgui.h"
-#include "maolan/ui/state.hpp"
-#include "maolan/ui/widgets/playbutton.hpp"
-
+#include <maolan/ui/state.hpp>
+#include <maolan/ui/widgets/playbutton.hpp>
+#include <string>
 
 using namespace maolan::ui;
 
-
 static const auto state = State::get();
 
-
-bool PlayButton::draw()
-{
+bool PlayButton::draw() {
   const auto &m = ImGui::CalcTextSize("M", NULL, true);
   const auto &style = ImGui::GetStyle();
   const auto &frame = style.FramePadding;
@@ -29,19 +24,18 @@ bool PlayButton::draw()
   ImGui::InvisibleButton("playbutton", size);
   auto active = ImGui::IsItemActive();
   auto hovered = ImGui::IsItemHovered();
-  if (hovered) { color = ImGuiCol_ButtonHovered; }
-  if (active)
-  {
+  if (hovered) {
+    color = ImGuiCol_ButtonHovered;
+  }
+  if (active) {
     color = ImGuiCol_ButtonActive;
     valueChanged = true;
   }
   position.x += frame.x;
   position.y += frame.y;
   drawList->AddTriangleFilled(
-    {position.x, position.y},
-    {position.x, position.y + m.y},
-    {position.x + m.y, position.y + (m.y / 2)},
-    ImGui::ColorConvertFloat4ToU32(style.Colors[color])
-  );
+      {position.x, position.y}, {position.x, position.y + m.y},
+      {position.x + m.y, position.y + (m.y / 2)},
+      ImGui::ColorConvertFloat4ToU32(style.Colors[color]));
   return valueChanged;
 }

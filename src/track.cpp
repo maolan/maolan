@@ -1,32 +1,23 @@
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <maolan/ui/track.hpp>
+#include <maolan/ui/widgets/clip.hpp>
+#include <maolan/ui/widgets/draglimit.hpp>
+#include <maolan/ui/widgets/hdraglimit.hpp>
 #include <sstream>
-#include "imgui.h"
-#include "imgui_internal.h"
-#include "maolan/ui/track.hpp"
-#include "maolan/ui/widgets/clip.hpp"
-#include "maolan/ui/widgets/draglimit.hpp"
-#include "maolan/ui/widgets/hdraglimit.hpp"
-
 
 using namespace maolan::ui;
 
-
-Track::Labels::Labels()
-{
+Track::Labels::Labels() {
   const std::string suffix = "##" + std::to_string((long)this);
   mute = "M" + suffix;
   solo = "S" + suffix;
   arm = "R" + suffix;
 }
 
+Track::Track(maolan::audio::Track *t) : _track{t}, grid{this} {}
 
-Track::Track(maolan::audio::Track *t)
-  : _track{t}
-  , grid{this}
-{}
-
-
-void Track::draw(float &width)
-{
+void Track::draw(float &width) {
   ImVec2 minimum = ImGui::GetCursorScreenPos();
   ImVec2 maximum = {minimum.x + width, minimum.y + ImGui::GetTextLineHeight()};
   ImGui::BeginGroup();
@@ -37,30 +28,39 @@ void Track::draw(float &width)
     ImGui::PopClipRect();
 
     const bool muted = _track->mute();
-    if (!muted)
-    {
+    if (!muted) {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    if (ImGui::Button(labels.mute.data())) { _track->mute(!muted); }
-    if (!muted) { ImGui::PopStyleColor(); }
+    if (ImGui::Button(labels.mute.data())) {
+      _track->mute(!muted);
+    }
+    if (!muted) {
+      ImGui::PopStyleColor();
+    }
 
     const bool soloed = _track->solo();
     ImGui::SameLine();
-    if (!soloed)
-    {
+    if (!soloed) {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    if (ImGui::Button(labels.solo.data())) { _track->solo(!soloed); }
-    if (!soloed) { ImGui::PopStyleColor(); }
+    if (ImGui::Button(labels.solo.data())) {
+      _track->solo(!soloed);
+    }
+    if (!soloed) {
+      ImGui::PopStyleColor();
+    }
 
     const bool armed = _track->arm();
     ImGui::SameLine();
-    if (!armed)
-    {
+    if (!armed) {
       ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(ImColor(0, 0, 0)));
     }
-    if (ImGui::Button(labels.arm.data())) { _track->arm(!armed); }
-    if (!armed) { ImGui::PopStyleColor(); }
+    if (ImGui::Button(labels.arm.data())) {
+      _track->arm(!armed);
+    }
+    if (!armed) {
+      ImGui::PopStyleColor();
+    }
   }
   ImGui::EndGroup();
 
@@ -79,12 +79,10 @@ void Track::draw(float &width)
   ImGui::BeginGroup();
   {
     ImVec2 pos = ImGui::GetCursorScreenPos();
-    for (auto c = _track->clips(); c != nullptr; c = c->next())
-    {
+    for (auto c = _track->clips(); c != nullptr; c = c->next()) {
       ImGui::SameLine();
       Clip *clip = (Clip *)c->data();
-      if (!clip)
-      {
+      if (!clip) {
         clip = new Clip(c);
         c->data(clip);
       }
@@ -98,7 +96,6 @@ void Track::draw(float &width)
   DragLimit(this, _height);
 }
 
-
 float Track::height() { return _height; }
 void Track::height(float h) { _height = h; }
-maolan::audio::Track * Track::audio() { return _track; }
+maolan::audio::Track *Track::audio() { return _track; }

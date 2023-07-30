@@ -1,32 +1,22 @@
+#include <imgui.h>
+#include <maolan/ui/state.hpp>
+#include <maolan/ui/widgets/clip.hpp>
 #include <string>
-
-#include "imgui.h"
-#include "maolan/ui/state.hpp"
-#include "maolan/ui/widgets/clip.hpp"
-
 
 using namespace maolan::ui;
 
-
 static auto state = State::get();
-static const ImVec4 color = { 0, 0.8, 0.8, 0.2 };
+static const ImVec4 color = {0, 0.8, 0.8, 0.2};
 
-
-Clip::Labels::Labels()
-{
+Clip::Labels::Labels() {
   id = std::to_string((long)this);
   start = "start" + id;
   end = "end" + id;
 }
 
+Clip::Clip(maolan::audio::Clip *c) : _clip{c} { c->data(this); }
 
-Clip::Clip(maolan::audio::Clip *c)
-  : _clip{c}
-{ c->data(this); }
-
-
-void Clip::draw(const ImVec2 &position, const float &h)
-{
+void Clip::draw(const ImVec2 &position, const float &h) {
   const float &minHeight = state->trackMinHeight;
   const float &height = h < minHeight ? minHeight : h;
   ImDrawList *draw_list = ImGui::GetWindowDrawList();
@@ -43,15 +33,14 @@ void Clip::draw(const ImVec2 &position, const float &h)
   ImGui::InvisibleButton(labels.id.data(), {size.x - 6, size.y});
   auto active = ImGui::IsItemActive();
   auto hovered = ImGui::IsItemHovered();
-  if (hovered) { ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); }
-  if (active && io.MouseDelta.x != 0)
-  {
+  if (hovered) {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+  }
+  if (active && io.MouseDelta.x != 0) {
     auto delta = io.MouseDelta.x * state->zoom;
     auto newStart = _clip->start() + delta;
-    if (delta < 0)
-    {
-      if (newStart < 0)
-      {
+    if (delta < 0) {
+      if (newStart < 0) {
         delta -= newStart;
         newStart = 0;
       }
@@ -60,22 +49,28 @@ void Clip::draw(const ImVec2 &position, const float &h)
     _clip->start(newStart);
     _clip->end(newEnd);
   }
-  draw_list->AddRectFilled(minimum, maximum, ImGui::ColorConvertFloat4ToU32(color), 3);
-  draw_list->AddText(minimum, ImGui::GetColorU32(ImGuiCol_Text), _clip->name().data());
+  draw_list->AddRectFilled(minimum, maximum,
+                           ImGui::ColorConvertFloat4ToU32(color), 3);
+  draw_list->AddText(minimum, ImGui::GetColorU32(ImGuiCol_Text),
+                     _clip->name().data());
   ImGui::PopClipRect();
-  draw_list->AddRect(minimum, maximum, ImGui::ColorConvertFloat4ToU32(ImVec4(1, 1, 1, 0.3)), 3);
+  draw_list->AddRect(minimum, maximum,
+                     ImGui::ColorConvertFloat4ToU32(ImVec4(1, 1, 1, 0.3)), 3);
 
   size.x = 3;
   ImGui::SameLine();
   ImGui::InvisibleButton(labels.end.data(), size);
   active = ImGui::IsItemActive();
   hovered = ImGui::IsItemHovered();
-  if (hovered) { ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW); }
-  if (active && io.MouseDelta.x != 0)
-  {
+  if (hovered) {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+  }
+  if (active && io.MouseDelta.x != 0) {
     auto newEnd = _clip->end();
     newEnd += io.MouseDelta.x * state->zoom;
-    if (newEnd <= _clip->start()) { newEnd = _clip->start() + 1; }
+    if (newEnd <= _clip->start()) {
+      newEnd = _clip->start() + 1;
+    }
     _clip->end(newEnd);
   }
 
@@ -83,12 +78,15 @@ void Clip::draw(const ImVec2 &position, const float &h)
   ImGui::InvisibleButton(labels.start.data(), size);
   active = ImGui::IsItemActive();
   hovered = ImGui::IsItemHovered();
-  if (hovered) { ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW); }
-  if (active && io.MouseDelta.x != 0)
-  {
+  if (hovered) {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+  }
+  if (active && io.MouseDelta.x != 0) {
     auto newStart = _clip->start();
     newStart += io.MouseDelta.x * state->zoom;
-    if (newStart <= 0) { newStart = 1; }
+    if (newStart <= 0) {
+      newStart = 1;
+    }
     _clip->start(newStart);
   }
   ImGui::PopStyleVar();

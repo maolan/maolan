@@ -1,6 +1,8 @@
 *.o
-cbsd.conf
 build/
 imgui/
 project.mk
 vars.mk
+compile_commands.json
+*.core
+.cache

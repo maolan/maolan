@@ -1,17 +1,14 @@
 #pragma once
 
+namespace maolan::ui {
+class Track;
+class Grid {
+public:
+  Grid(Track *t);
 
-namespace maolan::ui
-{
-  class Track;
-  class Grid
-  {
-    public:
-      Grid(Track *t);
+  void draw();
 
-      void draw();
-
-    protected:
-      Track *_track;
-  };
-}
+protected:
+  Track *_track;
+};
+} // namespace maolan::ui

@@ -1,14 +1,11 @@
-#include "imgui.h"
-#include "imgui_internal.h"
-#include "maolan/ui/state.hpp"
-#include "maolan/ui/widgets/draglimit.hpp"
-
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <maolan/ui/state.hpp>
+#include <maolan/ui/widgets/draglimit.hpp>
 
 static auto state = maolan::ui::State::get();
 
-
-void DragLimit(maolan::ui::Track *t, float &value)
-{
+void DragLimit(maolan::ui::Track *t, float &value) {
   const float &minHeight = state->trackMinHeight;
   ImGuiIO &io = ImGui::GetIO();
   auto window = ImGui::GetCurrentWindow();
@@ -18,10 +15,13 @@ void DragLimit(maolan::ui::Track *t, float &value)
   const bool active = ImGui::IsItemActive();
   const bool hovered = ImGui::IsItemHovered();
   const auto &delta = io.MouseDelta.y;
-  if (hovered) { ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS); }
-  if (active && delta != 0)
-  {
+  if (hovered) {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+  }
+  if (active && delta != 0) {
     value += delta;
-    if (value < minHeight) { value = minHeight; }
+    if (value < minHeight) {
+      value = minHeight;
+    }
   }
 }

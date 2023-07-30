@@ -1,16 +1,12 @@
-#include <string>
+#include <imgui.h>
 #include <maolan/config.hpp>
 #include <maolan/io.hpp>
-
-#include "imgui.h"
-#include "maolan/ui/widgets/stopbutton.hpp"
-
+#include <maolan/ui/widgets/stopbutton.hpp>
+#include <string>
 
 using namespace maolan::ui;
 
-
-bool StopButton::draw()
-{
+bool StopButton::draw() {
   const auto &m = ImGui::CalcTextSize("M", NULL, true);
   const auto &style = ImGui::GetStyle();
   const auto &frame = style.FramePadding;
@@ -25,18 +21,16 @@ bool StopButton::draw()
   ImGui::InvisibleButton("stopbutton", size);
   auto active = ImGui::IsItemActive();
   auto hovered = ImGui::IsItemHovered();
-  if (hovered) { color = ImGuiCol_ButtonHovered; }
-  if (active)
-  {
+  if (hovered) {
+    color = ImGuiCol_ButtonHovered;
+  }
+  if (active) {
     color = ImGuiCol_ButtonActive;
     valueChanged = true;
   }
   position.x += frame.x;
   position.y += frame.y;
-  drawList->AddRectFilled(
-    position,
-    {position.x + m.y, position.y + m.y},
-    ImGui::ColorConvertFloat4ToU32(style.Colors[color])
-  );
+  drawList->AddRectFilled(position, {position.x + m.y, position.y + m.y},
+                          ImGui::ColorConvertFloat4ToU32(style.Colors[color]));
   return valueChanged;
 }

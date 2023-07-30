@@ -1,25 +1,21 @@
 #pragma once
+#include <maolan/ui/ui.hpp>
 #include <string>
-#include "../ui.hpp"
-
 
 class GLFWwindow;
 
+namespace maolan::ui {
+class App;
+class GLFW : public UI {
+public:
+  GLFW(const std::string &title = "Maolan");
+  ~GLFW();
 
-namespace maolan::ui
-{
-  class App;
-  class GLFW : public UI
-  {
-    public:
-      GLFW(const std::string &title = "ImGui");
-      ~GLFW();
+  virtual void prepare();
+  virtual void render();
+  virtual void run(App *app);
 
-      virtual void prepare();
-      virtual void render();
-      virtual void run(App *app);
-
-    protected:
-      GLFWwindow *window;
-  };
-}
+protected:
+  GLFWwindow *_window;
+};
+} // namespace maolan::ui

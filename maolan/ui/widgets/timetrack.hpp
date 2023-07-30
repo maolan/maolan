@@ -1,15 +1,12 @@
 #pragma once
-#include "maolan/ui/widgets/playhead.hpp"
+#include <maolan/ui/widgets/playhead.hpp>
 
+namespace maolan::ui {
+class TimeTrack {
+public:
+  void draw(const float &width);
 
-namespace maolan::ui
-{
-  class TimeTrack
-  {
-    public:
-      void draw(const float &width);
-
-    protected:
-      PlayHead _playhead;
-  };
-}
+protected:
+  PlayHead _playhead;
+};
+} // namespace maolan::ui

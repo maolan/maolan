@@ -1,19 +1,19 @@
+#include <imgui.h>
 #include <maolan/engine.hpp>
-
-#include "imgui.h"
-#include "maolan/ui/playback.hpp"
-
+#include <maolan/ui/playback.hpp>
 
 using namespace maolan::ui;
 
-
-void Playback::draw()
-{
+void Playback::draw() {
   ImGui::Begin("Playback");
   {
-    if (_playButton.draw()) { Engine::play(); }
+    if (_playButton.draw()) {
+      Engine::play();
+    }
     ImGui::SameLine();
-    if (_stopButton.draw()) { Engine::stop(); }
+    if (_stopButton.draw()) {
+      Engine::stop();
+    }
   }
   ImGui::End();
 }

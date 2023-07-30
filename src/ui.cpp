@@ -1,7 +1,5 @@
-#include "maolan/ui/ui.hpp"
-
+#include <maolan/ui/ui.hpp>
 
 using namespace maolan::ui;
-
 
 UI::~UI() {}

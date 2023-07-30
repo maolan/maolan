@@ -1,24 +1,21 @@
 #pragma once
-#include "maolan/ui/widgets/timetrack.hpp"
+#include <maolan/ui/widgets/timetrack.hpp>
 
+namespace maolan::ui {
+class App;
+class Tracks {
+public:
+  Tracks();
 
-namespace maolan::ui
-{
-  class App;
-  class Tracks
-  {
-    public:
-      Tracks();
+  void draw();
+  void show();
+  void hide();
+  void toggle();
 
-      void draw();
-      void show();
-      void hide();
-      void toggle();
-
-    protected:
-      float width;
-      int zoom;
-      bool shown;
-      TimeTrack timetrack;
-  };
-}
+protected:
+  float width;
+  int zoom;
+  bool shown;
+  TimeTrack timetrack;
+};
+} // namespace maolan::ui

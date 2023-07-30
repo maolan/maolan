@@ -1,14 +1,11 @@
-#include "imgui.h"
-#include "imgui_internal.h"
-#include "maolan/ui/state.hpp"
-#include "maolan/ui/widgets/draglimit.hpp"
-
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <maolan/ui/state.hpp>
+#include <maolan/ui/widgets/draglimit.hpp>
 
 static auto state = maolan::ui::State::get();
 
-
-void HDragLimit(maolan::ui::Track *t, float &value)
-{
+void HDragLimit(maolan::ui::Track *t, float &value) {
   const float &minWidth = state->trackMinWidth;
   ImGuiIO &io = ImGui::GetIO();
   ImVec2 size = {2, t->height()};
@@ -17,10 +14,13 @@ void HDragLimit(maolan::ui::Track *t, float &value)
   const bool active = ImGui::IsItemActive();
   const bool hovered = ImGui::IsItemHovered();
   const auto &delta = io.MouseDelta.x;
-  if (hovered) { ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW); }
-  if (active && delta != 0)
-  {
+  if (hovered) {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+  }
+  if (active && delta != 0) {
     value += delta;
-    if (value < minWidth) { value = minWidth; }
+    if (value < minWidth) {
+      value = minWidth;
+    }
   }
 }
