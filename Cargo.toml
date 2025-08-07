@@ -1,0 +1,20 @@
+[package]
+name = "maolan"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+glow = "0.14"
+glutin = "0.32.3"
+glutin-winit = "0.5"
+imgui = "0.12.0"
+imgui-glow-renderer = "0.13.0"
+imgui-winit-support = "0.13.0"
+imnodes = "0.5.0"
+into_inner = "0.1.2"
+num_cpus = "1.17.0"
+#livi = "0.7.5"
+oss-audio-midi = "0.0.1"
+raw-window-handle = "0.6.0"
+wavers = "1.5.1"
+winit = "0.30.12"
