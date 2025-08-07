@@ -1,0 +1,8 @@
+[package]
+name = "maolan"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+iced = "0.13.1"
+maolan-engine = { path = "./engine" }

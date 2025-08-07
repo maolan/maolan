@@ -1,0 +1,9 @@
+[package]
+name = "maolan-engine"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+num_cpus = "1.17.0"
+wavers = "1.5.1"
+maolan-oss = { path = "./oss" }

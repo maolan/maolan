@@ -1,0 +1,18 @@
+[package]
+name = "maolan-oss"
+version = "0.0.1"
+edition = "2024"
+license = "BSD-2-Clause"
+description = "OSS based on FreeBSD implementation of audio and MIDI"
+repository = "https://github.com/maolan/oss-audio-midi"
+readme = "README.md"
+exclude = [
+  "stereo32.wav",
+]
+
+[dependencies]
+byteorder = "1.5.0"
+nix = { version = "0.29.0", features = [ "ioctl" ] }
+
+[dev-dependencies]
+wavers = "1.5.1"
