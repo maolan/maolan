@@ -1,4 +1,4 @@
-use super::{Message, State};
+use super::{Message, State, Track};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
@@ -28,8 +28,12 @@ impl Client {
         let _ = self.thread.join();
     }
 
-    pub fn add(&self) {
-        self.send(Message::Add("".to_string()));
+    pub fn add_audio_track(&self) {
+        self.send(Message::Add(Track::Audio("".to_string())));
+    }
+
+    pub fn add_midi_track(&self) {
+        self.send(Message::Add(Track::MIDI("".to_string())));
     }
 
     pub fn play(&self) {
