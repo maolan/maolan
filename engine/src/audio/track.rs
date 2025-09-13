@@ -1,13 +1,15 @@
 #[derive(Debug)]
 pub struct Track {
     name: String,
+    channels: usize,
     buffer: Vec<f32>,
 }
 
 impl Track {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: String, channels: usize) -> Self {
         Track {
             name,
+            channels,
             buffer: vec![],
         }
     }

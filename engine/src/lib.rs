@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 use std::thread::{self, JoinHandle};
 
 pub enum Track {
-    Audio(String),
+    Audio(String, usize),
     MIDI(String),
 }
 
@@ -19,7 +19,8 @@ pub enum Message {
     Quit,
     Play,
     Ready(usize),
-    Process(Arc<RwLock<AudioTrack>>),
+    ProcessAudio(Arc<RwLock<AudioTrack>>),
+    ProcessMidi(Arc<RwLock<MIDITrack>>),
     Finished(usize, String),
 }
 
@@ -90,7 +91,7 @@ impl Engine {
                     {
                         track = self.state.write().unwrap().audio.tracks[""].clone();
                     }
-                    match self.workers[0].tx.send(Message::Process(track)) {
+                    match self.workers[0].tx.send(Message::ProcessAudio(track)) {
                         Ok(_) => {}
                         Err(e) => {
                             println!("Error occured while sending PLAY: {e}")
@@ -112,13 +113,13 @@ impl Engine {
                     // This should go to queue and be actualized only before start of processing
                     // of new buffer
                     match t {
-                        Track::Audio(name) => {
+                        Track::Audio(name, channels) => {
                             self.state
                                 .write()
                                 .unwrap()
                                 .audio
                                 .tracks
-                                .insert(name.clone(), Arc::new(RwLock::new(AudioTrack::new(name))));
+                                .insert(name.clone(), Arc::new(RwLock::new(AudioTrack::new(name, channels))));
                         }
                         Track::MIDI(name) => {
                             self.state

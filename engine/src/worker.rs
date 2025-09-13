@@ -25,7 +25,7 @@ impl Worker {
                 Message::Quit => {
                     return;
                 }
-                Message::Process(t) => match t.write() {
+                Message::ProcessAudio(t) => match t.write() {
                     Ok(mut track) => {
                         track.process();
                         match self.tx.send(Message::Finished(self.id, track.name())) {

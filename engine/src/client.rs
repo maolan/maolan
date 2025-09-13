@@ -24,8 +24,8 @@ impl Client {
         self.send(Message::Quit);
     }
 
-    pub fn add_audio_track(&self, name: String) {
-        self.send(Message::Add(Track::Audio(name)));
+    pub fn add_audio_track(&self, name: String, channels: usize) {
+        self.send(Message::Add(Track::Audio(name, channels)));
     }
 
     pub fn add_midi_track(&self, name: String) {
