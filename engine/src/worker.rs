@@ -1,4 +1,4 @@
-use super::Message;
+use crate::message::Message;
 use std::sync::mpsc::{Receiver, Sender};
 
 #[derive(Debug)]

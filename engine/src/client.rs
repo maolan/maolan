@@ -1,4 +1,5 @@
-use super::{Message, State, Track};
+use super::message::{Message, Track};
+use super::state::State;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, RwLock};
 
