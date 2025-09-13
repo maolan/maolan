@@ -141,7 +141,7 @@ impl Engine {
     }
 }
 
-pub fn init() -> client::Client {
+pub fn init() -> (client::Client, JoinHandle<()>) {
     let (tx, rx) = channel::<Message>();
     let mut engine = Engine::new(rx, tx.clone());
     let state = engine.state();
@@ -149,6 +149,6 @@ pub fn init() -> client::Client {
         engine.init();
         engine.work();
     });
-    let client = client::Client::new(tx.clone(), state, handle);
-    client
+    let client = client::Client::new(tx.clone(), state);
+    (client, handle)
 }

@@ -1,4 +1,5 @@
 use iced::widget::{Column, button, column, text};
+use maolan_engine::init;
 
 #[derive(Debug, Clone, Copy)]
 enum Message {
@@ -35,5 +36,10 @@ impl Maolan {
 }
 
 fn main() -> iced::Result {
-    iced::run("Maolan", Maolan::update, Maolan::view)
+    let (_client, _handle) = init();
+    let _c = _client.clone();
+    let result = iced::run("Maolan", Maolan::update, Maolan::view);
+    _c.quit();
+    let _ = _handle.join();
+    result
 }
