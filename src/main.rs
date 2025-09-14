@@ -1,45 +1,43 @@
-use iced::widget::{Column, button, column, text};
-use maolan_engine::init;
+use std::thread::JoinHandle;
+use iced::widget::{Column, button, column};
+use maolan_engine::{init, client::Client, message::Message};
 
-#[derive(Debug, Clone, Copy)]
-enum Message {
-    Increment,
-    Decrement,
+struct Maolan {
+    client: Client,
+    handles: Vec<JoinHandle<()>>,
 }
 
-#[derive(Default)]
-struct Maolan {
-    value: i64,
+impl Default for Maolan {
+    fn default() -> Self {
+        let (client, handle) = init();
+        Self {client, handles: vec![handle]}
+    }
 }
 
 impl Maolan {
     fn update(&mut self, message: Message) {
         match message {
-            Message::Increment => {
-                self.value += 1;
-                println!("{}", self.value);
+            Message::Quit => {
+                self.client.quit();
+                self.join();
+                std::process::exit(0);
             }
-            Message::Decrement => {
-                self.value -= 1;
-                println!("{}", self.value);
-            }
+            _ => {}
         }
     }
 
     fn view(&self) -> Column<'_, Message> {
         column![
-            button("+").on_press(Message::Increment),
-            text(self.value),
-            button("-").on_press(Message::Decrement),
+            button("quit").on_press(Message::Quit),
         ]
+    }
+
+    fn join(&mut self) {
+        let handle = self.handles.remove(0);
+        let _ = handle.join();
     }
 }
 
 fn main() -> iced::Result {
-    let (_client, _handle) = init();
-    let _c = _client.clone();
-    let result = iced::run("Maolan", Maolan::update, Maolan::view);
-    _c.quit();
-    let _ = _handle.join();
-    result
+    iced::run("Maolan", Maolan::update, Maolan::view)
 }

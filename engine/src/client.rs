@@ -21,7 +21,7 @@ impl Client {
         let _ = self.tx.send(message);
     }
 
-    pub fn quit(self) {
+    pub fn quit(&self) {
         self.send(Message::Quit);
     }
 
