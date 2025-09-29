@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 iced = "0.13.1"
+iced_aw = "0.12.2"
 maolan-engine = { path = "./engine" }

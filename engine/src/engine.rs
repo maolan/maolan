@@ -105,8 +105,4 @@ impl Engine {
             }
         }
     }
-
-    pub fn state(&self) -> Arc<RwLock<State>> {
-        self.state.clone()
-    }
 }

@@ -1,20 +1,16 @@
 use super::message::{Message, Track};
-use super::state::State;
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
 pub struct Client {
     tx: Sender<Message>,
-    state: Arc<RwLock<State>>,
 }
 
 impl Client {
     pub fn new(
         tx: Sender<Message>,
-        state: Arc<RwLock<State>>,
     ) -> Self {
-        Self { tx, state }
+        Self { tx }
     }
 
     pub fn send(&self, message: Message) {
@@ -35,9 +31,5 @@ impl Client {
 
     pub fn play(&self) {
         self.send(Message::Play);
-    }
-
-    pub fn state(&self) -> Arc<RwLock<State>> {
-        self.state.clone()
     }
 }
