@@ -4,6 +4,7 @@ pub mod client;
 pub mod worker;
 pub mod message;
 pub mod state;
+pub mod mutex;
 mod engine;
 
 use std::thread;

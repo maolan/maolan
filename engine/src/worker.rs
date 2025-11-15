@@ -25,20 +25,15 @@ impl Worker {
                 Message::Quit => {
                     return;
                 }
-                Message::ProcessAudio(t) => match t.write() {
-                    Ok(mut track) => {
-                        track.process();
-                        match self.tx.send(Message::Finished(self.id, track.name())) {
-                            Ok(_) => {}
-                            Err(e) => {
-                                println!("Error while sending Finished: {e}")
-                            }
+                Message::ProcessAudio(t) => {
+                    let track = t.lock();
+                    match self.tx.send(Message::Finished(self.id, track.name())) {
+                        Ok(_) => {}
+                        Err(e) => {
+                            println!("Error while sending Finished: {e}")
                         }
                     }
-                    Err(e) => {
-                        println!("Error locking in Worker::work: {e}")
-                    }
-                },
+                }
                 _ => {}
             }
         }

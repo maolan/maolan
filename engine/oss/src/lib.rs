@@ -31,6 +31,9 @@ pub const AFMT_STEREO: u32 = 0x10000000;
 pub const AFMT_WEIRD: u32 = 0x20000000;
 pub const AFMT_FULLDUPLEX: u32 = 0x80000000;
 
+pub const AFMT_S16_NE: u32 = AFMT_S16_LE;
+pub const AFMT_S32_NE: u32 = AFMT_S32_LE;
+
 // Triggers
 pub const PCM_ENABLE_INPUT: u32 = 0x00000001;
 pub const PCM_ENABLE_OUTPUT: u32 = 0x00000002;

@@ -1,5 +1,5 @@
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use crate::audio::track::Track as AudioTrack;
@@ -7,6 +7,7 @@ use crate::midi::track::Track as MIDITrack;
 use crate::message::{Message, Track};
 use crate::state::State;
 use crate::worker::Worker;
+use crate::mutex::UnsafeMutex;
 
 #[derive(Debug)]
 struct WorkerData {
@@ -22,7 +23,7 @@ impl WorkerData {
 
 #[derive(Debug)]
 pub struct Engine {
-    state: Arc<RwLock<State>>,
+    state: Arc<UnsafeMutex<State>>,
     rx: Receiver<Message>,
     tx: Sender<Message>,
     workers: Vec<WorkerData>,
@@ -31,7 +32,7 @@ pub struct Engine {
 impl Engine {
     pub fn new(rx: Receiver<Message>, tx: Sender<Message>) -> Self {
         Self {
-            state: Arc::new(RwLock::new(State::new())),
+            state: Arc::new(UnsafeMutex::new(State::new())),
             rx,
             tx,
             workers: vec![],
@@ -58,7 +59,7 @@ impl Engine {
                 Message::Play => {
                     let track;
                     {
-                        track = self.state.write().unwrap().audio.tracks[""].clone();
+                        track = self.state.lock().audio.tracks[""].clone();
                     }
                     match self.workers[0].tx.send(Message::ProcessAudio(track)) {
                         Ok(_) => {}
@@ -84,19 +85,17 @@ impl Engine {
                     match t {
                         Track::Audio(name, channels) => {
                             self.state
-                                .write()
-                                .unwrap()
+                                .lock()
                                 .audio
                                 .tracks
-                                .insert(name.clone(), Arc::new(RwLock::new(AudioTrack::new(name, channels))));
+                                .insert(name.clone(), Arc::new(UnsafeMutex::new(AudioTrack::new(name, channels))));
                         }
                         Track::MIDI(name) => {
                             self.state
-                                .write()
-                                .unwrap()
+                                .lock()
                                 .midi
                                 .tracks
-                                .insert(name.clone(), Arc::new(RwLock::new(MIDITrack::new(name))));
+                                .insert(name.clone(), Arc::new(UnsafeMutex::new(MIDITrack::new(name))));
                         }
                     }
                 }

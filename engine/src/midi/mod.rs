@@ -1,13 +1,15 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
+
+use crate::mutex::UnsafeMutex;
 
 pub mod track;
 
 #[derive(Debug)]
 pub struct State {
-    pub tracks: HashMap<String, Arc<RwLock<track::Track>>>,
+    pub tracks: HashMap<String, Arc<UnsafeMutex<track::Track>>>,
 }
 
 impl State {

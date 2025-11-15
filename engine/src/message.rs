@@ -1,6 +1,7 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use crate::audio::track::Track as AudioTrack;
 use crate::midi::track::Track as MIDITrack;
+use crate::mutex::UnsafeMutex;
 
 #[derive(Debug, Clone)]
 pub enum Track {
@@ -16,7 +17,7 @@ pub enum Message {
     Finished(usize, String),
 
     Add(Track),
-    ProcessAudio(Arc<RwLock<AudioTrack>>),
-    ProcessMidi(Arc<RwLock<MIDITrack>>),
+    ProcessAudio(Arc<UnsafeMutex<AudioTrack>>),
+    ProcessMidi(Arc<UnsafeMutex<MIDITrack>>),
 }
 
