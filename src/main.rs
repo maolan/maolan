@@ -8,16 +8,16 @@ use std::thread::JoinHandle;
 #[derive(Default)]
 struct Track {
     name: String,
-    channels: usize,
-    flavor: String,
+    // channels: usize,
+    // flavor: String,
 }
 
 impl Track {
-    pub fn new(name: String, channels: usize, flavor: String) -> Self {
+    pub fn new(name: String, _channels: usize, _flavor: String) -> Self {
         Self {
             name,
-            channels,
-            flavor,
+            // channels,
+            // flavor,
         }
     }
 }

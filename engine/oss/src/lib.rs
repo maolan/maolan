@@ -1,4 +1,3 @@
-use libc::{MAP_SHARED, PROT_READ, mmap, munmap};
 use nix::libc;
 use std::{
     fs::File,
@@ -35,8 +34,8 @@ pub const AFMT_S16_NE: u32 = AFMT_S16_LE;
 pub const AFMT_S32_NE: u32 = AFMT_S32_LE;
 
 // Triggers
-pub const PCM_ENABLE_INPUT: u32 = 0x00000001;
-pub const PCM_ENABLE_OUTPUT: u32 = 0x00000002;
+pub const PCM_ENABLE_INPUT: i32 = 0x00000001;
+pub const PCM_ENABLE_OUTPUT: i32 = 0x00000002;
 
 #[derive(Debug)]
 pub struct Config {
@@ -47,10 +46,11 @@ pub struct Config {
     pub format: u32,
     pub samples: i32,
     pub chsamples: i32,
+    pub mmap: bool,
 }
 
 impl Config {
-    pub fn new(path: &str, rate: i32, bits: i32, input: bool) -> Config {
+    pub fn new(path: &str, rate: i32, bits: i32, input: bool, mmap: bool) -> Config {
         let mut binding = File::options();
         let options = binding.write(true);
         options.custom_flags(libc::O_RDONLY | libc::O_EXCL | libc::O_NONBLOCK);
@@ -62,6 +62,7 @@ impl Config {
             format: AFMT_S32_NE,
             samples: 0,
             chsamples: 0,
+            mmap,
         };
         if bits == 32 {
             c.format = AFMT_S32_NE;
@@ -79,14 +80,12 @@ impl Config {
             let flags: i32 = 0;
 
             oss_get_info(fd, &mut audio_info).expect("Failed to get info on device");
-            oss_get_caps(fd, &mut audio_info.caps)
-                .expect("Failed to get capabilities of the device");
+            oss_get_caps(fd, &mut audio_info.caps).expect("Failed to get capabilities of the device");
             oss_set_cooked(fd, &flags).expect("Failed to disable cooked mode");
 
             // Set number of channels, sample format and rate
             oss_set_format(fd, &mut c.format).expect("Failed to set format");
-            oss_set_channels(fd, &mut audio_info.max_channels)
-                .expect("Failed to set number of channels");
+            oss_set_channels(fd, &mut audio_info.max_channels).expect("Failed to set number of channels");
             oss_set_speed(fd, &mut c.rate).expect("Failed to set sample rate");
 
             // When it's all set and good to go, gather buffer size info
@@ -110,9 +109,9 @@ impl Config {
         c.chsamples = c.samples / c.channels;
         unsafe {
             let fd = c.dsp.as_raw_fd();
-            let trig: u32 = if input { PCM_ENABLE_INPUT } else { PCM_ENABLE_OUTPUT };
+            let trig: i32 = if input { PCM_ENABLE_INPUT } else { PCM_ENABLE_OUTPUT };
 
-            oss_set_trigger(fd, &trig);
+            let _ = oss_set_trigger(fd, &trig);
         }
         c
     }
@@ -154,8 +153,8 @@ struct AudioInfo {
 }
 
 impl AudioInfo {
-    pub fn new() -> AudioInfo {
-        AudioInfo {
+    pub fn new() -> Self {
+        Self {
             dev: 0,
             name: [0; 64],
             busy: 0,
@@ -210,6 +209,23 @@ impl BufferInfo {
     }
 }
 
+#[repr(C)]
+struct OssSyncGroup {
+    pub id: libc::c_int,
+    pub mode: libc::c_int,
+    pub filler: [libc::c_int; 16],
+}
+
+impl OssSyncGroup {
+    pub fn new() -> Self {
+        Self {
+            id: 0,
+            mode: 0,
+            filler: [0; 16],
+        }
+    }
+}
+
 const SNDCTL_DSP_MAGIC: u8 = b'P';
 const SNDCTL_DSP_SPEED: u8 = 2;
 const SNDCTL_DSP_SETFMT: u8 = 5;
@@ -217,6 +233,8 @@ const SNDCTL_DSP_CHANNELS: u8 = 6;
 const SNDCTL_DSP_GETOSPACE: u8 = 12;
 const SNDCTL_DSP_GETCAPS: u8 = 15;
 const SNDCTL_DSP_SETTRIGGER: u8 = 16;
+const SNDCTL_DSP_SYNCGROUP: u8 = 28;
+const SNDCTL_DSP_SYNCSTART: u8 = 29;
 const SNDCTL_DSP_COOKEDMODE: u8 = 30;
 nix::ioctl_readwrite!(oss_set_channels, SNDCTL_DSP_MAGIC, SNDCTL_DSP_CHANNELS, i32);
 nix::ioctl_read!(
@@ -229,7 +247,14 @@ nix::ioctl_read!(oss_get_caps, SNDCTL_DSP_MAGIC, SNDCTL_DSP_GETCAPS, i32);
 nix::ioctl_readwrite!(oss_set_format, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SETFMT, u32);
 nix::ioctl_readwrite!(oss_set_speed, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SPEED, i32);
 nix::ioctl_write_ptr!(oss_set_cooked, SNDCTL_DSP_MAGIC, SNDCTL_DSP_COOKEDMODE, i32);
-nix::ioctl_write_ptr!(oss_set_trigger, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SETTRIGGER, u32);
+nix::ioctl_write_ptr!(oss_set_trigger, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SETTRIGGER, i32);
+nix::ioctl_write_ptr!(oss_start_group, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SYNCSTART, i32);
+nix::ioctl_readwrite!(
+    oss_add_sync_group,
+    SNDCTL_DSP_MAGIC,
+    SNDCTL_DSP_SYNCGROUP,
+    OssSyncGroup
+);
 
 const SNDCTL_INFO_MAGIC: u8 = b'X';
 const SNDCTL_ENGINEINFO: u8 = 12;
@@ -240,14 +265,18 @@ nix::ioctl_readwrite!(
     AudioInfo
 );
 
-fn add_to_sync_group(fd: i32, group: i32) -> i32 {
-	// oss_syncgroup sync_group = {0, 0, {0}};
-	// sync_group.id = group;
-	// sync_group.mode |= PCM_ENABLE_INPUT;
-	// if (ioctl(fd, SNDCTL_DSP_SYNCGROUP, &sync_group) == 0)
-	// 	return sync_group.id;
-	// errx(1, "Failed to add %d to syncgroup", sync_group.id);
-  0
+pub fn add_to_sync_group(fd: i32, group: i32, input: bool) -> i32 {
+    let mut sync_group = OssSyncGroup::new();
+    sync_group.id = group;
+    if input {
+        sync_group.mode = PCM_ENABLE_INPUT;
+    } else {
+        sync_group.mode = PCM_ENABLE_OUTPUT;
+    }
+    unsafe {
+        oss_add_sync_group(fd, &mut sync_group).expect("Failed to set sync group");
+    }
+    return sync_group.id
 }
 
 #[cfg(test)]
@@ -256,11 +285,12 @@ mod tests {
     use std::io::Write;
     use std::slice::from_raw_parts;
     use wavers::Wav;
+    use libc::{MAP_SHARED, PROT_READ, mmap, munmap};
 
     #[test]
     #[ignore]
     fn it_works() {
-        let mut oss = Config::new("/dev/dsp", 48000, 32, false);
+        let mut oss = Config::new("/dev/dsp", 48000, 32, false, false);
         let mut wav: Wav<i32> = Wav::from_path("./stereo32.wav").unwrap();
         let nchannels: usize = wav.n_channels().into();
         let mut out: Vec<i32> = vec![];
@@ -289,10 +319,11 @@ mod tests {
     #[test]
     fn mmap_mode() {
         let device = "/dev/dsp4";
-        let oss_in = Config::new(device, 48000, 32, true);
-        let oss_out = Config::new(device, 48000, 32, false);
+        let oss_in = Config::new(device, 48000, 32, true, true);
+        let oss_out = Config::new(device, 48000, 32, false, true);
         let addr_in;
         let addr_out;
+        let mut group = 0;
         unsafe {
             addr_in = mmap(
                 std::ptr::null_mut(),
@@ -312,6 +343,8 @@ mod tests {
             );
 
         }
+        group = add_to_sync_group(oss_in.dsp.as_raw_fd(), group, true);
+        group = add_to_sync_group(oss_out.dsp.as_raw_fd(), group, false);
         assert_ne!(addr_in, libc::MAP_FAILED, "Memory-mapping of input failed");
         assert_ne!(addr_out, libc::MAP_FAILED, "Memory-mapping of output failed");
 
