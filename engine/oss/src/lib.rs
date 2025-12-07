@@ -37,88 +37,9 @@ pub const AFMT_S32_NE: u32 = AFMT_S32_LE;
 pub const PCM_ENABLE_INPUT: i32 = 0x00000001;
 pub const PCM_ENABLE_OUTPUT: i32 = 0x00000002;
 
-#[derive(Debug)]
-pub struct Config {
-    pub dsp: File,
-    pub channels: i32,
-    pub rate: i32,
-    pub bytes: i32,
-    pub format: u32,
-    pub samples: i32,
-    pub chsamples: i32,
-    pub mmap: bool,
-}
-
-impl Config {
-    pub fn new(path: &str, rate: i32, bits: i32, input: bool, mmap: bool) -> Config {
-        let mut binding = File::options();
-        let options = binding.write(true);
-        options.custom_flags(libc::O_RDONLY | libc::O_EXCL | libc::O_NONBLOCK);
-        let mut c = Config {
-            dsp: options.open(path).unwrap(),
-            channels: 0,
-            rate,
-            bytes: 0,
-            format: AFMT_S32_NE,
-            samples: 0,
-            chsamples: 0,
-            mmap,
-        };
-        if bits == 32 {
-            c.format = AFMT_S32_NE;
-        } else if bits == 16 {
-            c.format = AFMT_S16_NE;
-        } else if bits == 8 {
-            c.format = AFMT_S8;
-        } else {
-            panic!("No format with {} bits", bits);
-        }
-        let mut audio_info = AudioInfo::new();
-        let mut buffer_info = BufferInfo::new();
-        unsafe {
-            let fd = c.dsp.as_raw_fd();
-            let flags: i32 = 0;
-
-            oss_get_info(fd, &mut audio_info).expect("Failed to get info on device");
-            oss_get_caps(fd, &mut audio_info.caps).expect("Failed to get capabilities of the device");
-            oss_set_cooked(fd, &flags).expect("Failed to disable cooked mode");
-
-            // Set number of channels, sample format and rate
-            oss_set_format(fd, &mut c.format).expect("Failed to set format");
-            oss_set_channels(fd, &mut audio_info.max_channels).expect("Failed to set number of channels");
-            oss_set_speed(fd, &mut c.rate).expect("Failed to set sample rate");
-
-            // When it's all set and good to go, gather buffer size info
-            oss_get_buffer_info(fd, &mut buffer_info).expect("Failed to get buffer size");
-        }
-        if buffer_info.fragments < 1 {
-            buffer_info.fragments = buffer_info.fragstotal;
-        }
-        if buffer_info.bytes < 1 {
-            buffer_info.bytes = buffer_info.fragstotal * buffer_info.fragsize;
-        }
-        if buffer_info.bytes < 1 {
-            panic!(
-                "OSS buffer error: buffer size can not be {}",
-                buffer_info.bytes
-            );
-        }
-        c.channels = audio_info.max_channels;
-        c.bytes = buffer_info.bytes;
-        c.samples = c.bytes / mem::size_of::<i32>() as i32;
-        c.chsamples = c.samples / c.channels;
-        unsafe {
-            let fd = c.dsp.as_raw_fd();
-            let trig: i32 = if input { PCM_ENABLE_INPUT } else { PCM_ENABLE_OUTPUT };
-
-            let _ = oss_set_trigger(fd, &trig);
-        }
-        c
-    }
-}
-
 #[repr(C)]
-struct AudioInfo {
+#[derive(Debug)]
+pub struct AudioInfo {
     pub dev: libc::c_int,
     pub name: [libc::c_char; 64],
     pub busy: libc::c_int,
@@ -191,7 +112,8 @@ impl AudioInfo {
 }
 
 #[repr(C)]
-struct BufferInfo {
+#[derive(Debug)]
+pub struct BufferInfo {
     pub fragments: libc::c_int,
     pub fragstotal: libc::c_int,
     pub fragsize: libc::c_int,
@@ -206,6 +128,90 @@ impl BufferInfo {
             fragsize: 0,
             bytes: 0,
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct Config {
+    pub dsp: File,
+    pub channels: i32,
+    pub rate: i32,
+    pub bytes: i32,
+    pub format: u32,
+    pub samples: i32,
+    pub chsamples: i32,
+    pub mmap: bool,
+    pub audio_info: AudioInfo,
+    pub buffer_info: BufferInfo,
+}
+
+impl Config {
+    pub fn new(path: &str, rate: i32, bits: i32, input: bool, mmap: bool) -> Config {
+        let mut binding = File::options();
+        let options = binding.write(true);
+
+        if mmap {
+            options.custom_flags(libc::O_WRONLY | libc::O_EXCL | libc::O_NONBLOCK);
+        }
+        let mut c = Config {
+            dsp: options.open(path).unwrap(),
+            channels: 0,
+            rate,
+            bytes: 0,
+            format: AFMT_S32_NE,
+            samples: 0,
+            chsamples: 0,
+            mmap,
+            audio_info: AudioInfo::new(),
+            buffer_info: BufferInfo::new(),
+        };
+        if bits == 32 {
+            c.format = AFMT_S32_NE;
+        } else if bits == 16 {
+            c.format = AFMT_S16_NE;
+        } else if bits == 8 {
+            c.format = AFMT_S8;
+        } else {
+            panic!("No format with {} bits", bits);
+        }
+        unsafe {
+            let fd = c.dsp.as_raw_fd();
+            let flags: i32 = 0;
+            oss_get_info(fd, &mut c.audio_info).expect("Failed to get info on device");
+            oss_get_caps(fd, &mut c.audio_info.caps).expect("Failed to get capabilities of the device");
+            oss_set_cooked(fd, &flags).expect("Failed to disable cooked mode");
+
+            // Set number of channels, sample format and rate
+            oss_set_format(fd, &mut c.format).expect("Failed to set format");
+            oss_set_channels(fd, &mut c.audio_info.max_channels).expect("Failed to set number of channels");
+            oss_set_speed(fd, &mut c.rate).expect("Failed to set sample rate");
+
+            // When it's all set and good to go, gather buffer size info
+            oss_get_buffer_info(fd, &mut c.buffer_info).expect("Failed to get buffer size");
+        }
+        if c.buffer_info.fragments < 1 {
+            c.buffer_info.fragments = c.buffer_info.fragstotal;
+        }
+        if c.buffer_info.bytes < 1 {
+            c.buffer_info.bytes = c.buffer_info.fragstotal * c.buffer_info.fragsize;
+        }
+        if c.buffer_info.bytes < 1 {
+            panic!(
+                "OSS buffer error: buffer size can not be {}",
+                c.buffer_info.bytes
+            );
+        }
+        c.channels = c.audio_info.max_channels;
+        c.bytes = c.buffer_info.bytes;
+        c.samples = c.bytes / mem::size_of::<i32>() as i32;
+        c.chsamples = c.samples / c.channels;
+        unsafe {
+            let fd = c.dsp.as_raw_fd();
+            let trig: i32 = if input { PCM_ENABLE_INPUT } else { PCM_ENABLE_OUTPUT };
+
+            oss_set_trigger(fd, &trig).expect("Failed to set trigger");
+        }
+        c
     }
 }
 
@@ -288,7 +294,6 @@ mod tests {
     use libc::{MAP_SHARED, PROT_READ, mmap, munmap};
 
     #[test]
-    #[ignore]
     fn it_works() {
         let mut oss = Config::new("/dev/dsp", 48000, 32, false, false);
         let mut wav: Wav<i32> = Wav::from_path("./stereo32.wav").unwrap();
@@ -317,6 +322,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn mmap_mode() {
         let device = "/dev/dsp4";
         let oss_in = Config::new(device, 48000, 32, true, true);
@@ -344,7 +350,7 @@ mod tests {
 
         }
         group = add_to_sync_group(oss_in.dsp.as_raw_fd(), group, true);
-        group = add_to_sync_group(oss_out.dsp.as_raw_fd(), group, false);
+        add_to_sync_group(oss_out.dsp.as_raw_fd(), group, false);
         assert_ne!(addr_in, libc::MAP_FAILED, "Memory-mapping of input failed");
         assert_ne!(addr_out, libc::MAP_FAILED, "Memory-mapping of output failed");
 
