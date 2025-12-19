@@ -148,13 +148,16 @@ pub struct Config {
 impl Config {
     pub fn new(path: &str, rate: i32, bits: i32, input: bool, mmap: bool) -> Config {
         let mut binding = File::options();
-        let options = binding.write(true);
 
         if mmap {
-            options.custom_flags(libc::O_WRONLY | libc::O_EXCL | libc::O_NONBLOCK);
+            if input {
+                binding.read(true).write(false).custom_flags(libc::O_RDONLY | libc::O_EXCL | libc::O_NONBLOCK);
+            } else {
+                binding.read(false).write(true).custom_flags(libc::O_WRONLY | libc::O_EXCL | libc::O_NONBLOCK);
+            }
         }
         let mut c = Config {
-            dsp: options.open(path).unwrap(),
+            dsp: binding.open(path).unwrap(),
             channels: 0,
             rate,
             bytes: 0,
@@ -187,7 +190,11 @@ impl Config {
             oss_set_speed(fd, &mut c.rate).expect("Failed to set sample rate");
 
             // When it's all set and good to go, gather buffer size info
-            oss_get_buffer_info(fd, &mut c.buffer_info).expect("Failed to get buffer size");
+            if input {
+                oss_input_buffer_info(fd, &mut c.buffer_info).expect("Failed to get buffer size");
+            } else {
+                oss_output_buffer_info(fd, &mut c.buffer_info).expect("Failed to get buffer size");
+            }
         }
         if c.buffer_info.fragments < 1 {
             c.buffer_info.fragments = c.buffer_info.fragstotal;
@@ -237,6 +244,7 @@ const SNDCTL_DSP_SPEED: u8 = 2;
 const SNDCTL_DSP_SETFMT: u8 = 5;
 const SNDCTL_DSP_CHANNELS: u8 = 6;
 const SNDCTL_DSP_GETOSPACE: u8 = 12;
+const SNDCTL_DSP_GETISPACE: u8 = 13;
 const SNDCTL_DSP_GETCAPS: u8 = 15;
 const SNDCTL_DSP_SETTRIGGER: u8 = 16;
 const SNDCTL_DSP_SYNCGROUP: u8 = 28;
@@ -244,9 +252,15 @@ const SNDCTL_DSP_SYNCSTART: u8 = 29;
 const SNDCTL_DSP_COOKEDMODE: u8 = 30;
 nix::ioctl_readwrite!(oss_set_channels, SNDCTL_DSP_MAGIC, SNDCTL_DSP_CHANNELS, i32);
 nix::ioctl_read!(
-    oss_get_buffer_info,
+    oss_output_buffer_info,
     SNDCTL_DSP_MAGIC,
     SNDCTL_DSP_GETOSPACE,
+    BufferInfo
+);
+nix::ioctl_read!(
+    oss_input_buffer_info,
+    SNDCTL_DSP_MAGIC,
+    SNDCTL_DSP_GETISPACE,
     BufferInfo
 );
 nix::ioctl_read!(oss_get_caps, SNDCTL_DSP_MAGIC, SNDCTL_DSP_GETCAPS, i32);
@@ -291,9 +305,10 @@ mod tests {
     use std::io::Write;
     use std::slice::from_raw_parts;
     use wavers::Wav;
-    use libc::{MAP_SHARED, PROT_READ, mmap, munmap};
+    use libc::{MAP_SHARED, PROT_READ, PROT_WRITE, mmap, munmap};
 
     #[test]
+    #[ignore]
     fn it_works() {
         let mut oss = Config::new("/dev/dsp", 48000, 32, false, false);
         let mut wav: Wav<i32> = Wav::from_path("./stereo32.wav").unwrap();
@@ -322,7 +337,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn mmap_mode() {
         let device = "/dev/dsp4";
         let oss_in = Config::new(device, 48000, 32, true, true);
@@ -342,7 +356,7 @@ mod tests {
             addr_out = mmap(
                 std::ptr::null_mut(),
                 oss_out.bytes.try_into().unwrap(),
-                PROT_READ,
+                PROT_WRITE,
                 MAP_SHARED,
                 oss_out.dsp.as_raw_fd(),
                 0,
