@@ -1,3 +1,4 @@
+use libc::{MAP_SHARED, PROT_READ, PROT_WRITE, c_void, mmap, munmap};
 use nix::libc;
 use std::{
     fs::File,
@@ -135,36 +136,40 @@ impl BufferInfo {
 pub struct Config {
     pub dsp: File,
     pub channels: i32,
+    pub input: bool,
     pub rate: i32,
-    pub bytes: i32,
     pub format: u32,
     pub samples: i32,
     pub chsamples: i32,
-    pub mmap: bool,
+    pub buffer: *mut c_void,
     pub audio_info: AudioInfo,
     pub buffer_info: BufferInfo,
 }
 
 impl Config {
-    pub fn new(path: &str, rate: i32, bits: i32, input: bool, mmap: bool) -> Config {
+    pub fn new(path: &str, rate: i32, bits: i32, input: bool) -> Config {
         let mut binding = File::options();
 
-        if mmap {
-            if input {
-                binding.read(true).write(false).custom_flags(libc::O_RDONLY | libc::O_EXCL | libc::O_NONBLOCK);
-            } else {
-                binding.read(false).write(true).custom_flags(libc::O_WRONLY | libc::O_EXCL | libc::O_NONBLOCK);
-            }
+        if input {
+            binding
+                .read(true)
+                .write(false)
+                .custom_flags(libc::O_RDONLY | libc::O_EXCL | libc::O_NONBLOCK);
+        } else {
+            binding
+                .read(false)
+                .write(true)
+                .custom_flags(libc::O_WRONLY | libc::O_EXCL | libc::O_NONBLOCK);
         }
         let mut c = Config {
             dsp: binding.open(path).unwrap(),
             channels: 0,
+            input,
             rate,
-            bytes: 0,
             format: AFMT_S32_NE,
             samples: 0,
             chsamples: 0,
-            mmap,
+            buffer: std::ptr::null_mut(),
             audio_info: AudioInfo::new(),
             buffer_info: BufferInfo::new(),
         };
@@ -181,12 +186,14 @@ impl Config {
             let fd = c.dsp.as_raw_fd();
             let flags: i32 = 0;
             oss_get_info(fd, &mut c.audio_info).expect("Failed to get info on device");
-            oss_get_caps(fd, &mut c.audio_info.caps).expect("Failed to get capabilities of the device");
+            oss_get_caps(fd, &mut c.audio_info.caps)
+                .expect("Failed to get capabilities of the device");
             oss_set_cooked(fd, &flags).expect("Failed to disable cooked mode");
 
             // Set number of channels, sample format and rate
             oss_set_format(fd, &mut c.format).expect("Failed to set format");
-            oss_set_channels(fd, &mut c.audio_info.max_channels).expect("Failed to set number of channels");
+            oss_set_channels(fd, &mut c.audio_info.max_channels)
+                .expect("Failed to set number of channels");
             oss_set_speed(fd, &mut c.rate).expect("Failed to set sample rate");
 
             // When it's all set and good to go, gather buffer size info
@@ -209,16 +216,51 @@ impl Config {
             );
         }
         c.channels = c.audio_info.max_channels;
-        c.bytes = c.buffer_info.bytes;
-        c.samples = c.bytes / mem::size_of::<i32>() as i32;
+        c.samples = c.buffer_info.bytes / mem::size_of::<i32>() as i32;
         c.chsamples = c.samples / c.channels;
+
         unsafe {
+            if c.input {
+                c.buffer = mmap(
+                    std::ptr::null_mut(),
+                    c.buffer_info.bytes.try_into().unwrap(),
+                    PROT_READ,
+                    MAP_SHARED,
+                    c.dsp.as_raw_fd(),
+                    0,
+                );
+            } else {
+                c.buffer = mmap(
+                    std::ptr::null_mut(),
+                    c.buffer_info.bytes.try_into().unwrap(),
+                    PROT_WRITE,
+                    MAP_SHARED,
+                    c.dsp.as_raw_fd(),
+                    0,
+                );
+            }
+            if c.buffer == libc::MAP_FAILED {
+                panic!("Failed to memory map the buffer");
+            }
+
             let fd = c.dsp.as_raw_fd();
-            let trig: i32 = if input { PCM_ENABLE_INPUT } else { PCM_ENABLE_OUTPUT };
+            let trig: i32 = if input {
+                PCM_ENABLE_INPUT
+            } else {
+                PCM_ENABLE_OUTPUT
+            };
 
             oss_set_trigger(fd, &trig).expect("Failed to set trigger");
         }
         c
+    }
+}
+
+impl Drop for Config {
+    fn drop(&mut self) {
+        unsafe {
+            munmap(self.buffer, self.buffer_info.bytes.try_into().unwrap());
+        }
     }
 }
 
@@ -267,7 +309,12 @@ nix::ioctl_read!(oss_get_caps, SNDCTL_DSP_MAGIC, SNDCTL_DSP_GETCAPS, i32);
 nix::ioctl_readwrite!(oss_set_format, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SETFMT, u32);
 nix::ioctl_readwrite!(oss_set_speed, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SPEED, i32);
 nix::ioctl_write_ptr!(oss_set_cooked, SNDCTL_DSP_MAGIC, SNDCTL_DSP_COOKEDMODE, i32);
-nix::ioctl_write_ptr!(oss_set_trigger, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SETTRIGGER, i32);
+nix::ioctl_write_ptr!(
+    oss_set_trigger,
+    SNDCTL_DSP_MAGIC,
+    SNDCTL_DSP_SETTRIGGER,
+    i32
+);
 nix::ioctl_write_ptr!(oss_start_group, SNDCTL_DSP_MAGIC, SNDCTL_DSP_SYNCSTART, i32);
 nix::ioctl_readwrite!(
     oss_add_sync_group,
@@ -296,7 +343,7 @@ pub fn add_to_sync_group(fd: i32, group: i32, input: bool) -> i32 {
     unsafe {
         oss_add_sync_group(fd, &mut sync_group).expect("Failed to set sync group");
     }
-    return sync_group.id
+    return sync_group.id;
 }
 
 #[cfg(test)]
@@ -305,12 +352,11 @@ mod tests {
     use std::io::Write;
     use std::slice::from_raw_parts;
     use wavers::Wav;
-    use libc::{MAP_SHARED, PROT_READ, PROT_WRITE, mmap, munmap};
 
     #[test]
     #[ignore]
     fn it_works() {
-        let mut oss = Config::new("/dev/dsp", 48000, 32, false, false);
+        let mut oss = Config::new("/dev/dsp", 48000, 32, false);
         let mut wav: Wav<i32> = Wav::from_path("./stereo32.wav").unwrap();
         let nchannels: usize = wav.n_channels().into();
         let mut out: Vec<i32> = vec![];
@@ -330,7 +376,7 @@ mod tests {
                 }
             }
             let bytes = unsafe { from_raw_parts(out.as_ptr() as *const u8, out.len() * 4) };
-            let _ret = oss.dsp.write(bytes);
+            oss.dsp.write(bytes).expect("Failed to write data");
             out.clear();
         }
         // assert_eq!(1, 2, "Fake error");
@@ -339,38 +385,12 @@ mod tests {
     #[test]
     fn mmap_mode() {
         let device = "/dev/dsp4";
-        let oss_in = Config::new(device, 48000, 32, true, true);
-        let oss_out = Config::new(device, 48000, 32, false, true);
-        let addr_in;
-        let addr_out;
+        let oss_in = Config::new(device, 48000, 32, true);
+        let oss_out = Config::new(device, 48000, 32, false);
         let mut group = 0;
-        unsafe {
-            addr_in = mmap(
-                std::ptr::null_mut(),
-                oss_in.bytes.try_into().unwrap(),
-                PROT_READ,
-                MAP_SHARED,
-                oss_in.dsp.as_raw_fd(),
-                0,
-            );
-            addr_out = mmap(
-                std::ptr::null_mut(),
-                oss_out.bytes.try_into().unwrap(),
-                PROT_WRITE,
-                MAP_SHARED,
-                oss_out.dsp.as_raw_fd(),
-                0,
-            );
-
-        }
         group = add_to_sync_group(oss_in.dsp.as_raw_fd(), group, true);
         add_to_sync_group(oss_out.dsp.as_raw_fd(), group, false);
-        assert_ne!(addr_in, libc::MAP_FAILED, "Memory-mapping of input failed");
-        assert_ne!(addr_out, libc::MAP_FAILED, "Memory-mapping of output failed");
-
-        unsafe {
-            munmap(addr_in, oss_in.bytes.try_into().unwrap());
-            munmap(addr_out, oss_out.bytes.try_into().unwrap());
-        }
+        // assert_ne!(oss_in.buffer, libc::MAP_FAILED, "Memory-mapping of input failed");
+        // assert_ne!(oss_out.buffer, libc::MAP_FAILED, "Memory-mapping of output failed");
     }
 }
