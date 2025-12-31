@@ -92,5 +92,5 @@ impl Maolan {
 }
 
 fn main() -> iced::Result {
-    iced::run("Maolan", Maolan::update, Maolan::view)
+    iced::run(Maolan::update, Maolan::view)
 }
