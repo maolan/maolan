@@ -1,5 +1,5 @@
 use super::message::{Message, Track};
-use std::sync::mpsc::Sender;
+use tokio::sync::mpsc::UnboundedSender as Sender;
 
 #[derive(Debug, Clone)]
 pub struct Client {

@@ -1,11 +1,11 @@
 mod menu;
 mod message;
 
-use std::thread::JoinHandle;
-use std::sync::mpsc::Receiver;
 use std::cell::RefCell;
+use tokio::sync::mpsc::UnboundedReceiver as Receiver;
+use tokio::task::JoinHandle;
 
-use iced::{Theme, Subscription};
+use iced::{Subscription, Theme};
 
 use iced_aw::ICED_AW_FONT_BYTES;
 
@@ -47,9 +47,9 @@ impl Maolan {
         self.menu.view()
     }
 
-    fn join(&mut self) {
+    async fn join(&mut self) {
         let handle = self.handles.remove(0);
-        match handle.join() {
+        match handle.await {
             Err(_e) => {
                 println!("Error joining engine thread");
             }

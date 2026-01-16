@@ -1,13 +1,15 @@
-use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use tokio::sync::mpsc::{
+    UnboundedReceiver as Receiver, UnboundedSender as Sender, unbounded_channel as channel,
+};
+use tokio::task::JoinHandle;
 
 use crate::audio::track::Track as AudioTrack;
-use crate::midi::track::Track as MIDITrack;
 use crate::message::{Message, Track};
+use crate::midi::track::Track as MIDITrack;
+use crate::mutex::UnsafeMutex;
 use crate::state::State;
 use crate::worker::Worker;
-use crate::mutex::UnsafeMutex;
 
 #[derive(Debug)]
 struct WorkerData {
@@ -41,22 +43,22 @@ impl Engine {
         }
     }
 
-    pub fn init(&mut self) {
+    pub async fn init(&mut self) {
         let max_threads = num_cpus::get();
         for id in 0..max_threads {
             let (tx, rx) = channel::<Message>();
             let tx_thread = self.tx.clone();
-            let handler = thread::spawn(move || {
-                let wrk = Worker::new(id, rx, tx_thread);
-                wrk.work();
+            let handler = tokio::spawn(async move {
+                let mut wrk = Worker::new(id, rx, tx_thread);
+                wrk.work().await;
             });
             self.workers.push(WorkerData::new(tx.clone(), handler));
         }
     }
 
-    pub fn work(&mut self) {
+    pub async fn work(&mut self) {
         let mut ready_workers: Vec<usize> = vec![];
-        for message in &self.rx {
+        while let Some(message) = self.rx.recv().await {
             match message {
                 Message::Play => {
                     let track;
@@ -74,7 +76,7 @@ impl Engine {
                     while self.workers.len() > 0 {
                         let worker = self.workers.remove(0);
                         let _ = worker.tx.send(Message::Quit);
-                        let _ = worker.handle.join();
+                        let _ = worker.handle.await;
                     }
                     return;
                 }
@@ -86,18 +88,16 @@ impl Engine {
                     // of new buffer.write().unwrap().audio.tracks.insert(
                     match t {
                         Track::Audio(name, channels) => {
-                            self.state
-                                .lock()
-                                .audio
-                                .tracks
-                                .insert(name.clone(), Arc::new(UnsafeMutex::new(AudioTrack::new(name, channels))));
+                            self.state.lock().audio.tracks.insert(
+                                name.clone(),
+                                Arc::new(UnsafeMutex::new(AudioTrack::new(name, channels))),
+                            );
                         }
                         Track::MIDI(name) => {
-                            self.state
-                                .lock()
-                                .midi
-                                .tracks
-                                .insert(name.clone(), Arc::new(UnsafeMutex::new(MIDITrack::new(name))));
+                            self.state.lock().midi.tracks.insert(
+                                name.clone(),
+                                Arc::new(UnsafeMutex::new(MIDITrack::new(name))),
+                            );
                         }
                     }
                 }

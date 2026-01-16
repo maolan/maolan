@@ -7,3 +7,4 @@ edition = "2024"
 num_cpus = "1.17.0"
 wavers = "1.5.1"
 maolan-oss = { path = "./oss" }
+tokio = { version = "1.49.0", features = ["full"] }

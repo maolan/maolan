@@ -1,5 +1,5 @@
 use crate::message::Message;
-use std::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::{UnboundedReceiver as Receiver, UnboundedSender as Sender};
 
 #[derive(Debug)]
 pub struct Worker {
@@ -19,8 +19,8 @@ impl Worker {
         let _ = self.tx.send(message);
     }
 
-    pub fn work(&self) {
-        for message in &self.rx {
+    pub async fn work(&mut self) {
+        while let Some(message) = self.rx.recv().await {
             match message {
                 Message::Quit => {
                     return;
