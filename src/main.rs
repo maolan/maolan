@@ -1,83 +1,50 @@
-use iced::{
-    Element,
-    widget::{button, column, text},
-};
-use maolan_engine::{client::Client, init, message::Message, message::Track as MessageTrack};
+mod menu;
+mod message;
+
 use std::thread::JoinHandle;
+use std::sync::mpsc::Receiver;
+use std::cell::RefCell;
 
-#[derive(Default)]
-struct Track {
-    name: String,
-    // channels: usize,
-    // flavor: String,
-}
+use iced::{Theme, Subscription};
 
-impl Track {
-    pub fn new(name: String, _channels: usize, _flavor: String) -> Self {
-        Self {
-            name,
-            // channels,
-            // flavor,
-        }
-    }
-}
+use iced_aw::ICED_AW_FONT_BYTES;
 
-#[derive(Default)]
-struct State {
-    tracks: Vec<Track>,
+use maolan_engine::{client::Client, init};
+
+pub fn main() -> iced::Result {
+    iced::application(Maolan::default, Maolan::update, Maolan::view)
+        .title("Maolan")
+        .theme(Theme::Dark)
+        .font(ICED_AW_FONT_BYTES)
+        .run()
 }
 
 struct Maolan {
+    menu: menu::MaolanMenu,
+    receiver: RefCell<Option<Receiver<maolan_engine::message::Message>>>,
     client: Client,
     handles: Vec<JoinHandle<()>>,
-    state: State,
 }
 
 impl Default for Maolan {
     fn default() -> Self {
-        let (client, handle) = init();
+        let (client, handle, rx) = init();
         Self {
             client,
+            receiver: RefCell::new(Some(rx)),
             handles: vec![handle],
-            state: State::default(),
+            menu: menu::MaolanMenu::default(),
         }
     }
 }
 
 impl Maolan {
-    fn update(&mut self, message: Message) {
-        match message {
-            Message::Quit => {
-                self.client.quit();
-                self.join();
-                std::process::exit(0);
-            }
-            Message::Add(t) => {
-                match t {
-                    MessageTrack::Audio(name, channels) => {
-                        self.client.add_audio_track(name.clone(), channels);
-                        self.state.tracks.push(Track::new(name, channels, "audio".to_string()));
-                    }
-                    MessageTrack::MIDI(name) => {
-                        self.client.add_midi_track(name.clone());
-                        self.state.tracks.push(Track::new(name, 0, "midi".to_string()));
-                    }
-                }
-            }
-            _ => {}
-        }
+    fn update(&mut self, message: message::Message) {
+        self.menu.update(message)
     }
 
-    fn view(&self) -> Element<'_, Message> {
-        let mut result = column![
-            button("quit").on_press(Message::Quit),
-            button("add").on_press(Message::Add(MessageTrack::MIDI("random".to_string()))),
-        ];
-        for track in &self.state.tracks {
-            println!("track {}", track.name);
-            result = result.push(text(track.name.clone()));
-        }
-        result.into()
+    fn view(&self) -> iced::Element<'_, message::Message> {
+        self.menu.view()
     }
 
     fn join(&mut self) {
@@ -89,8 +56,8 @@ impl Maolan {
             _ => {}
         }
     }
-}
 
-fn main() -> iced::Result {
-    iced::run(Maolan::update, Maolan::view)
+    fn subscription(&self) -> Subscription<message::Message> {
+        Subscription::none()
+    }
 }

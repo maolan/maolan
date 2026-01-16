@@ -7,14 +7,14 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(
-        tx: Sender<Message>,
-    ) -> Self {
+    pub fn new(tx: Sender<Message>) -> Self {
         Self { tx }
     }
 
     pub fn send(&self, message: Message) {
-        let _ = self.tx.send(message);
+        self.tx
+            .send(message)
+            .expect("Failed to send message {message}");
     }
 
     pub fn quit(&self) {

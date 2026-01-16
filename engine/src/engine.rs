@@ -26,15 +26,17 @@ pub struct Engine {
     state: Arc<UnsafeMutex<State>>,
     rx: Receiver<Message>,
     tx: Sender<Message>,
+    client: Sender<Message>,
     workers: Vec<WorkerData>,
 }
 
 impl Engine {
-    pub fn new(rx: Receiver<Message>, tx: Sender<Message>) -> Self {
+    pub fn new(rx: Receiver<Message>, tx: Sender<Message>, client: Sender<Message>) -> Self {
         Self {
             state: Arc::new(UnsafeMutex::new(State::new())),
             rx,
             tx,
+            client,
             workers: vec![],
         }
     }
