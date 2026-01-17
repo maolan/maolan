@@ -28,17 +28,17 @@ pub struct Engine {
     state: Arc<UnsafeMutex<State>>,
     rx: Receiver<Message>,
     tx: Sender<Message>,
-    client: Sender<Message>,
+    clients: Vec<Sender<Message>>,
     workers: Vec<WorkerData>,
 }
 
 impl Engine {
-    pub fn new(rx: Receiver<Message>, tx: Sender<Message>, client: Sender<Message>) -> Self {
+    pub fn new(rx: Receiver<Message>, tx: Sender<Message>) -> Self {
         Self {
             state: Arc::new(UnsafeMutex::new(State::new())),
             rx,
             tx,
-            client,
+            clients: vec![],
             workers: vec![],
         }
     }
@@ -102,6 +102,15 @@ impl Engine {
                     }
                 }
                 Message::Finished(_workid, _trackid) => {}
+                Message::Echo(s) => {
+                    println!("Received echo {s}");
+                    for client in &self.clients {
+                        client.send(Message::Echo(s.clone())).expect("Error sending echo from engine");
+                    }
+                }
+                Message::Channel(s) => {
+                    self.clients.push(s);
+                }
                 _ => {}
             }
         }

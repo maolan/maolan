@@ -112,7 +112,7 @@ pub struct MaolanMenu {}
 impl MaolanMenu {
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::Debug(_s) => {}
+            _ => {},
         }
     }
 
@@ -123,7 +123,7 @@ impl MaolanMenu {
         let mb = menu_bar!(
             (menu_button_s("File", Message::Debug("File".to_string())), {
                 menu_tpl(menu_items!(
-                    (menu_button_f("New", Message::Debug("New".to_string()))),
+                    (menu_button_f("New", Message::Echo("New".to_string()))),
                     (menu_button_f("Open", Message::Debug("Open".to_string()))),
                     (submenu_button("Open Recent", Message::Debug("Open Recent".to_string())), menu_tpl(menu_items!(
                         (menu_button_f("First", Message::Debug("First".to_string()))),

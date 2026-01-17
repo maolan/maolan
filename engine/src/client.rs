@@ -1,35 +1,42 @@
-use super::message::{Message, Track};
-use tokio::sync::mpsc::UnboundedSender as Sender;
+use std::sync::Arc;
+use tokio::task::JoinHandle;
+
+use super::init;
+use super::message::Message;
+use tokio::sync::mpsc::{
+    UnboundedReceiver as Receiver, UnboundedSender as Sender, unbounded_channel as channel,
+};
 
 #[derive(Debug, Clone)]
 pub struct Client {
-    tx: Sender<Message>,
+    pub sender: Sender<Message>,
+    _handle: Arc<JoinHandle<()>>,
+}
+
+impl Default for Client {
+    fn default() -> Self {
+        let (sender, handle) = init();
+        Self {
+            sender,
+            _handle: Arc::new(handle),
+        }
+    }
 }
 
 impl Client {
-    pub fn new(tx: Sender<Message>) -> Self {
-        Self { tx }
+    pub fn subscribe(&self) -> Receiver<Message> {
+        let (tx, rx) = channel::<Message>();
+        self.sender.send(Message::Channel(tx)).expect("Failed to subscribe to engine");
+        rx
     }
 
     pub fn send(&self, message: Message) {
-        self.tx
+        self.sender
             .send(message)
             .expect("Failed to send message {message}");
     }
 
-    pub fn quit(&self) {
-        self.send(Message::Quit);
-    }
-
-    pub fn add_audio_track(&self, name: String, channels: usize) {
-        self.send(Message::Add(Track::Audio(name, channels)));
-    }
-
-    pub fn add_midi_track(&self, name: String) {
-        self.send(Message::Add(Track::MIDI(name)));
-    }
-
-    pub fn play(&self) {
-        self.send(Message::Play);
+    pub fn echo(&self, s: String) {
+        self.send(Message::Echo(s))
     }
 }
