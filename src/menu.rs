@@ -1,8 +1,10 @@
 use crate::message::Message;
+use engine::message::Action;
 use iced::widget::{button, container, row, text, tooltip};
 use iced::{Border, Color, Element, Length, alignment};
 use iced_aw::menu::{DrawPath, Menu};
 use iced_aw::{menu_bar, menu_items};
+use maolan_engine as engine;
 
 use iced_aw::iced_aw_font;
 
@@ -80,15 +82,24 @@ fn menu_button(
     )
 }
 
-fn menu_button_s(label: &str, message: Message) -> Element<'_, Message, iced::Theme, iced::Renderer> {
+fn menu_button_s(
+    label: &str,
+    message: Message,
+) -> Element<'_, Message, iced::Theme, iced::Renderer> {
     menu_button(label, Some(Length::Shrink), Some(Length::Shrink), message)
 }
 
-fn menu_button_f(label: &str, message: Message) -> Element<'_, Message, iced::Theme, iced::Renderer> {
+fn menu_button_f(
+    label: &str,
+    message: Message,
+) -> Element<'_, Message, iced::Theme, iced::Renderer> {
     menu_button(label, Some(Length::Fill), Some(Length::Shrink), message)
 }
 
-fn submenu_button(label: &str, message: Message) -> Element<'_, Message, iced::Theme, iced::Renderer> {
+fn submenu_button(
+    label: &str,
+    message: Message,
+) -> Element<'_, Message, iced::Theme, iced::Renderer> {
     tooltip_button(
         label.to_string(),
         row![
@@ -112,7 +123,7 @@ pub struct MaolanMenu {}
 impl MaolanMenu {
     pub fn update(&mut self, message: Message) {
         match message {
-            _ => {},
+            _ => {}
         }
     }
 
@@ -123,14 +134,14 @@ impl MaolanMenu {
         let mb = menu_bar!(
             (menu_button_s("File", Message::Debug("File".to_string())), {
                 menu_tpl(menu_items!(
-                    (menu_button_f("New", Message::Echo("New".to_string()))),
+                    (menu_button_f("New", Message::Request(Action::Echo("New".to_string())))),
                     (menu_button_f("Open", Message::Debug("Open".to_string()))),
                     (submenu_button("Open Recent", Message::Debug("Open Recent".to_string())), menu_tpl(menu_items!(
                         (menu_button_f("First", Message::Debug("First".to_string()))),
                         (menu_button_f("Second", Message::Debug("Second".to_string()))),
                     ))),
                     (menu_button_f("Close", Message::Debug("Close".to_string()))),
-                    (menu_button_f("Quit", Message::Debug("Quit".to_string()))),
+                    (menu_button_f("Quit", Message::Request(Action::Quit))),
                 ))
             }),
         )

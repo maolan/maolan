@@ -2,14 +2,17 @@ mod menu;
 mod message;
 
 use std::sync::LazyLock;
+use std::process::exit;
 
-use iced::Theme;
 use iced::Subscription;
+use iced::Theme;
 use iced::futures::Stream;
 
 use iced_aw::ICED_AW_FONT_BYTES;
 
 use maolan_engine as engine;
+use engine::message::{Action, Message as EngineMessage};
+use message::{Message};
 
 static CLIENT: LazyLock<engine::client::Client> =
     LazyLock::new(|| engine::client::Client::default());
@@ -31,16 +34,29 @@ struct Maolan {
 impl Maolan {
     fn update(&mut self, message: message::Message) {
         match message {
-            message::Message::Echo(ref s) => {
-                println!("Maolan::update::echo({s})");
-                CLIENT.echo(s.clone());
+            Message::Request(ref a) => {
+                match a {
+                    _ => {
+                        println!("Maolan::update::request({:?})", a);
+                        CLIENT.send(EngineMessage::Request(a.clone()));
+                    },
+                }
+            }
+            Message::Response(ref a) => {
+                match a {
+                    Action::Quit => {
+                        exit(0);
+                    }
+                    _ => {
+                        println!("Maolan::update::response({:?})", a);
+                        self.menu.update(message);
+                    },
+                }
             }
             message::Message::Debug(ref s) => {
                 println!("Maolan::update::debug({s})");
-            }
-            _ => {}
+            },
         }
-        self.menu.update(message)
     }
 
     fn view(&self) -> iced::Element<'_, message::Message> {
@@ -53,8 +69,8 @@ impl Maolan {
 
             stream::unfold(CLIENT.subscribe(), async move |mut receiver| {
                 let command = match receiver.recv().await? {
-                    engine::message::Message::Echo(s) => message::Message::Debug(s),
-                    _ => message::Message::Error("failed to receive in unfold".to_string()),
+                    EngineMessage::Response(e) => Message::Response(e),
+                    _ => Message::Response(Action::Error("failed to receive in unfold".to_string())),
                 };
 
                 Some((command, receiver))

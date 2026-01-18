@@ -1,6 +1,9 @@
+use maolan_engine::message::Action;
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Debug(String),
-    Echo(String),
-    Error(String),
+
+    Request(Action),
+    Response(Action),
 }

@@ -26,7 +26,9 @@ impl Default for Client {
 impl Client {
     pub fn subscribe(&self) -> Receiver<Message> {
         let (tx, rx) = channel::<Message>();
-        self.sender.send(Message::Channel(tx)).expect("Failed to subscribe to engine");
+        self.sender
+            .send(Message::Channel(tx))
+            .expect("Failed to subscribe to engine");
         rx
     }
 
@@ -34,9 +36,5 @@ impl Client {
         self.sender
             .send(message)
             .expect("Failed to send message {message}");
-    }
-
-    pub fn echo(&self, s: String) {
-        self.send(Message::Echo(s))
     }
 }

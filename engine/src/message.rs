@@ -1,27 +1,34 @@
-use std::sync::Arc;
+// use std::sync::Arc;
 use tokio::sync::mpsc::{UnboundedSender as Sender};
-use crate::audio::track::Track as AudioTrack;
-use crate::midi::track::Track as MIDITrack;
-use crate::mutex::UnsafeMutex;
+// use crate::audio::track::Track as AudioTrack;
+// use crate::midi::track::Track as MIDITrack;
+// use crate::mutex::UnsafeMutex;
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
+pub enum Action {
+    Quit,
+    Play,
+    Echo(String),
+    Error(String),
+}
+
+#[derive(Clone, Debug)]
 pub enum Track {
     Audio(String, usize),
     MIDI(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub enum Message {
-    Quit,
-    Play,
-    Echo(String),
     Ready(usize),
     Finished(usize, String),
 
-    Add(Track),
-    ProcessAudio(Arc<UnsafeMutex<AudioTrack>>),
-    ProcessMidi(Arc<UnsafeMutex<MIDITrack>>),
+    // Add(Track),
+    // ProcessAudio(Arc<UnsafeMutex<AudioTrack>>),
+    // ProcessMidi(Arc<UnsafeMutex<MIDITrack>>),
 
     Channel(Sender<Self>),
-}
 
+    Request(Action),
+    Response(Action),
+}

@@ -1,4 +1,4 @@
-use crate::message::Message;
+use crate::message::{Action, Message};
 use tokio::sync::mpsc::{UnboundedReceiver as Receiver, UnboundedSender as Sender};
 
 #[derive(Debug)]
@@ -22,18 +22,23 @@ impl Worker {
     pub async fn work(&mut self) {
         while let Some(message) = self.rx.recv().await {
             match message {
-                Message::Quit => {
-                    return;
-                }
-                Message::ProcessAudio(t) => {
-                    let track = t.lock();
-                    match self.tx.send(Message::Finished(self.id, track.name())) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            println!("Error while sending Finished: {e}")
+                Message::Request(a) => {
+                    match a {
+                        Action::Quit => {
+                            return;
                         }
+                        _ => {}
                     }
                 }
+                // Message::ProcessAudio(t) => {
+                //     let track = t.lock();
+                //     match self.tx.send(Message::Finished(self.id, track.name())) {
+                //         Ok(_) => {}
+                //         Err(e) => {
+                //             println!("Error while sending Finished: {e}")
+                //         }
+                //     }
+                // }
                 _ => {}
             }
         }
