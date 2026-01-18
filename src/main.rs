@@ -1,15 +1,20 @@
 mod menu;
 mod message;
+mod workspace;
 
 use std::process::exit;
 use std::sync::LazyLock;
 use tracing::{Level, error, info, span};
 use tracing_subscriber;
-use tracing_subscriber::{prelude::*, fmt::{Layer as FmtLayer, writer::MakeWriterExt}};
+use tracing_subscriber::{
+    fmt::{Layer as FmtLayer, writer::MakeWriterExt},
+    prelude::*,
+};
 
 use iced::Subscription;
 use iced::Theme;
 use iced::futures::Stream;
+use iced::widget::column;
 
 use iced_aw::ICED_AW_FONT_BYTES;
 
@@ -21,17 +26,17 @@ static CLIENT: LazyLock<engine::client::Client> =
     LazyLock::new(|| engine::client::Client::default());
 
 pub fn main() -> iced::Result {
-    let logfile = tracing_appender::rolling::hourly("./logs", "maolan.log");
-    let (non_blocking_appender, _guard) = tracing_appender::non_blocking(logfile);
-    let file_layer = FmtLayer::new()
-        .with_ansi(false)
-        .with_writer(non_blocking_appender);
     let stdout_layer =
         FmtLayer::new().with_writer(std::io::stdout.with_max_level(tracing::Level::INFO));
+    // let logfile = tracing_appender::rolling::hourly("./logs", "maolan.log");
+    // let (non_blocking_appender, _guard) = tracing_appender::non_blocking(logfile);
+    // let file_layer = FmtLayer::new()
+    //     .with_ansi(false)
+    //     .with_writer(non_blocking_appender);
 
     tracing_subscriber::registry()
         .with(stdout_layer)
-        .with(file_layer)
+        // .with(file_layer)
         .init();
 
     let my_span = span!(Level::INFO, "main");
@@ -50,9 +55,15 @@ pub fn main() -> iced::Result {
 #[derive(Default)]
 struct Maolan {
     menu: menu::MaolanMenu,
+    workspace: workspace::MaolanWorkspace,
 }
 
 impl Maolan {
+    fn update_children(&mut self, message: &message::Message) {
+                    self.menu.update(message.clone());
+                    self.workspace.update(message.clone());
+    }
+
     fn update(&mut self, message: message::Message) {
         match message {
             Message::Request(ref a) => match a {
@@ -70,17 +81,17 @@ impl Maolan {
                 }
                 _ => {
                     info!("Maolan::update::response({:?})", a);
-                    self.menu.update(message);
+                    self.update_children(&message)
                 }
             },
-            message::Message::Debug(ref s) => {
+            message::Message::Debug(s) => {
                 info!("Maolan::update::debug({s})");
             }
         }
     }
 
     fn view(&self) -> iced::Element<'_, message::Message> {
-        self.menu.view()
+        column![self.menu.view(), self.workspace.view()].into()
     }
 
     fn subscription(&self) -> Subscription<message::Message> {

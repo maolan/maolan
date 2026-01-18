@@ -1,6 +1,6 @@
 use crate::message::Message;
 use engine::message::Action;
-use iced::widget::{button, container, row, text, tooltip};
+use iced::widget::{button, row, text};
 use iced::{Border, Color, Element, Length, alignment};
 use iced_aw::menu::{DrawPath, Menu};
 use iced_aw::{menu_bar, menu_items};
@@ -37,71 +37,39 @@ fn base_button<'a>(
         .on_press(msg)
 }
 
-fn build_tooltip<'a>(
-    _label: String,
-    content: impl Into<Element<'a, Message, iced::Theme, iced::Renderer>>,
-) -> Element<'a, Message, iced::Theme, iced::Renderer> {
-    tooltip(
-        content,
-        container(text("").color(Color::TRANSPARENT))
-            .style(|theme| container::bordered_box(theme).background(Color::TRANSPARENT)),
-        tooltip::Position::Bottom,
-    )
-    .into()
-}
-
-fn tooltip_button<'a>(
-    label: String,
-    content: impl Into<Element<'a, Message, iced::Theme, iced::Renderer>>,
-    width: Option<Length>,
-    height: Option<Length>,
-    msg: Message,
-) -> Element<'a, Message, iced::Theme, iced::Renderer> {
-    build_tooltip(
-        label,
-        base_button(content, msg)
-            .width(width.unwrap_or(Length::Shrink))
-            .height(height.unwrap_or(Length::Shrink)),
-    )
-}
-
 fn menu_button(
     label: &str,
     width: Option<Length>,
     height: Option<Length>,
-    message: Message,
+    msg: Message,
 ) -> Element<'_, Message, iced::Theme, iced::Renderer> {
-    tooltip_button(
-        label.to_string(),
+    base_button(
         text(label)
             .height(height.unwrap_or(Length::Shrink))
             .align_y(alignment::Vertical::Center),
-        width,
-        height,
-        message,
+        msg,
     )
+    .width(width.unwrap_or(Length::Shrink))
+    .height(height.unwrap_or(Length::Shrink))
+    .into()
 }
 
-fn menu_button_s(
+fn menu_dropdown(
     label: &str,
     message: Message,
 ) -> Element<'_, Message, iced::Theme, iced::Renderer> {
     menu_button(label, Some(Length::Shrink), Some(Length::Shrink), message)
 }
 
-fn menu_button_f(
+fn menu_item(
     label: &str,
     message: Message,
 ) -> Element<'_, Message, iced::Theme, iced::Renderer> {
     menu_button(label, Some(Length::Fill), Some(Length::Shrink), message)
 }
 
-fn submenu_button(
-    label: &str,
-    message: Message,
-) -> Element<'_, Message, iced::Theme, iced::Renderer> {
-    tooltip_button(
-        label.to_string(),
+fn submenu(label: &str, msg: Message) -> Element<'_, Message, iced::Theme, iced::Renderer> {
+    base_button(
         row![
             text(label)
                 .width(Length::Fill)
@@ -111,10 +79,11 @@ fn submenu_button(
                 .align_y(alignment::Vertical::Center),
         ]
         .align_y(iced::Alignment::Center),
-        Some(Length::Fill),
-        None,
-        message,
+        msg,
     )
+    .width(Length::Fill)
+    .height(Length::Shrink)
+    .into()
 }
 
 #[derive(Default)]
@@ -132,16 +101,16 @@ impl MaolanMenu {
 
         #[rustfmt::skip]
         let mb = menu_bar!(
-            (menu_button_s("File", Message::Debug("File".to_string())), {
+            (menu_dropdown("File", Message::Debug("File".to_string())), {
                 menu_tpl(menu_items!(
-                    (menu_button_f("New", Message::Request(Action::Echo("New".to_string())))),
-                    (menu_button_f("Open", Message::Debug("Open".to_string()))),
-                    (submenu_button("Open Recent", Message::Debug("Open Recent".to_string())), menu_tpl(menu_items!(
-                        (menu_button_f("First", Message::Debug("First".to_string()))),
-                        (menu_button_f("Second", Message::Debug("Second".to_string()))),
+                    (menu_item("New", Message::Request(Action::Echo("New".to_string())))),
+                    (menu_item("Open", Message::Debug("Open".to_string()))),
+                    (submenu("Open Recent", Message::Debug("Open Recent".to_string())), menu_tpl(menu_items!(
+                        (menu_item("First", Message::Debug("First".to_string()))),
+                        (menu_item("Second", Message::Debug("Second".to_string()))),
                     ))),
-                    (menu_button_f("Close", Message::Debug("Close".to_string()))),
-                    (menu_button_f("Quit", Message::Request(Action::Quit))),
+                    (menu_item("Close", Message::Debug("Close".to_string()))),
+                    (menu_item("Quit", Message::Request(Action::Quit))),
                 ))
             }),
         )
