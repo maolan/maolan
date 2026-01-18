@@ -8,3 +8,6 @@ iced = { version = "0.14.0", features = ["tokio"] }
 iced_aw = "0.13.0"
 maolan-engine = { path = "./engine" }
 tokio = { version = "1.49.0", features = ["full"] }
+tracing = "0.1.44"
+tracing-appender = "0.2.4"
+tracing-subscriber = "0.3.22"
