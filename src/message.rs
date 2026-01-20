@@ -1,3 +1,4 @@
+use iced::widget::pane_grid;
 use maolan_engine::message::Action;
 
 #[derive(Debug, Clone)]
@@ -6,4 +7,6 @@ pub enum Message {
 
     Request(Action),
     Response(Action),
+
+    PaneResized(pane_grid::ResizeEvent),
 }
