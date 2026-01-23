@@ -9,4 +9,6 @@ pub enum Message {
     Response(Action),
 
     PaneResized(pane_grid::ResizeEvent),
+    TrackGain(String, f32),
+    TrackLevel(String, f32),
 }

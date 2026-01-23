@@ -55,7 +55,7 @@ pub fn main() -> iced::Result {
 #[derive(Default)]
 struct Maolan {
     menu: menu::MaolanMenu,
-    workspace: workspace::MaolanWorkspace,
+    workspace: workspace::Workspace,
 }
 
 impl Maolan {

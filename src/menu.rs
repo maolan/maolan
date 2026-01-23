@@ -113,6 +113,11 @@ impl MaolanMenu {
                     (menu_item("Quit", Message::Request(Action::Quit))),
                 ))
             }),
+            (menu_dropdown("Track", Message::Debug("Track".to_string())), {
+                menu_tpl(menu_items!(
+                    (menu_item("New", Message::Request(Action::AddAudioTrack("New".to_string(), 1, 0, 1)))),
+                ))
+            }),
         )
         .draw_path(DrawPath::Backdrop)
         .close_on_item_click_global(true)

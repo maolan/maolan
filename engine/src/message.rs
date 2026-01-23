@@ -10,12 +10,8 @@ pub enum Action {
     Play,
     Echo(String),
     Error(String),
-}
-
-#[derive(Clone, Debug)]
-pub enum Track {
-    Audio(String, usize),
-    MIDI(String),
+    AddAudioTrack(String, usize, usize, usize),
+    AddMIDITrack(String, usize, usize),
 }
 
 #[derive(Clone, Debug)]
@@ -23,7 +19,6 @@ pub enum Message {
     Ready(usize),
     Finished(usize, String),
 
-    // Add(Track),
     // ProcessAudio(Arc<UnsafeMutex<AudioTrack>>),
     // ProcessMidi(Arc<UnsafeMutex<MIDITrack>>),
 

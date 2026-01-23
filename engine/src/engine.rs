@@ -4,9 +4,9 @@ use tokio::sync::mpsc::{
 };
 use tokio::task::JoinHandle;
 
-// use crate::audio::track::Track as AudioTrack;
+use crate::audio::track::Track as AudioTrack;
 use crate::message::{Action, Message};
-// use crate::midi::track::Track as MIDITrack;
+use crate::midi::track::Track as MIDITrack;
 use crate::mutex::UnsafeMutex;
 use crate::state::State;
 use crate::worker::Worker;
@@ -72,42 +72,10 @@ impl Engine {
                 //         }
                 //     }
                 // }
-                // Message::Quit => {
-                //     while self.workers.len() > 0 {
-                //         let worker = self.workers.remove(0);
-                //         let _ = worker.tx.send(Message::Quit);
-                //         let _ = worker.handle.await;
-                //     }
-                //     return;
-                // }
                 Message::Ready(id) => {
                     ready_workers.push(id);
                 }
-                // Message::Add(t) => {
-                //     // This should go to queue and be actualized only before start of processing
-                //     // of new buffer.write().unwrap().audio.tracks.insert(
-                //     match t {
-                //         Track::Audio(name, channels) => {
-                //             self.state.lock().audio.tracks.insert(
-                //                 name.clone(),
-                //                 Arc::new(UnsafeMutex::new(AudioTrack::new(name, channels))),
-                //             );
-                //         }
-                //         Track::MIDI(name) => {
-                //             self.state.lock().midi.tracks.insert(
-                //                 name.clone(),
-                //                 Arc::new(UnsafeMutex::new(MIDITrack::new(name))),
-                //             );
-                //         }
-                //     }
-                // }
                 Message::Finished(_workid, _trackid) => {}
-                // Message::Echo(s) => {
-                //     println!("Received echo {s}");
-                //     for client in &self.clients {
-                //         client.send(Message::Echo(s.clone())).expect("Error sending echo from engine");
-                //     }
-                // }
                 Message::Channel(s) => {
                     self.clients.push(s);
                 }
@@ -120,6 +88,18 @@ impl Engine {
                                 let _ = worker.tx.send(Message::Request(a.clone()));
                                 let _ = worker.handle.await;
                             }
+                        }
+                        Action::AddAudioTrack(ref name, ins, _audio_outs, _midi_outs) => {
+                            self.state.lock().audio.tracks.insert(
+                                name.clone(),
+                                Arc::new(UnsafeMutex::new(AudioTrack::new(name.clone(), ins))),
+                            );
+                        }
+                        Action::AddMIDITrack(ref name, _midi_outs, _audio_outs) => {
+                            self.state.lock().midi.tracks.insert(
+                                name.clone(),
+                                Arc::new(UnsafeMutex::new(MIDITrack::new(name.clone()))),
+                            );
                         }
                         _ => {}
                     }
