@@ -1,13 +1,15 @@
+mod add_track;
 mod editor;
+mod meta;
 mod mixer;
 mod tracks;
-mod meta;
 
-use crate::message::Message;
+use crate::message::{Message, Show};
 use iced::{
     Element,
     widget::{container, pane_grid, pane_grid::Axis},
 };
+use maolan_engine::message::Action;
 
 #[derive(Clone)]
 enum Pane {
@@ -21,6 +23,8 @@ pub struct Workspace {
     editor: editor::Editor,
     mixer: mixer::Mixer,
     tracks: tracks::Tracks,
+    modal: Option<Show>,
+    add_track: add_track::AddTrack,
 }
 
 impl Workspace {
@@ -28,6 +32,7 @@ impl Workspace {
         self.editor.update(message.clone());
         self.mixer.update(message.clone());
         self.tracks.update(message.clone());
+        self.add_track.update(message.clone());
     }
 
     pub fn update(&mut self, message: Message) {
@@ -35,20 +40,35 @@ impl Workspace {
             Message::PaneResized(pane_grid::ResizeEvent { split, ratio }) => {
                 self.panes.resize(split, ratio);
             }
+            Message::Show(modal) => match modal {
+                Show::AddTrack => {
+                    self.modal = Some(modal);
+                }
+            },
+            Message::Response(Ok(ref a)) => match a {
+                Action::AddAudioTrack{name: _, ins: _, audio_outs: _, midi_outs: _} => {
+                    self.modal = None;
+                    self.update_children(message);
+                }
+                _ => {}
+            },
             _ => self.update_children(message),
         }
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        pane_grid(&self.panes, |_pane, state, _is_maximized| {
-            pane_grid::Content::new(match state {
-                Pane::Tracks => container(self.tracks.view()),
-                Pane::Mixer => container(self.mixer.view()),
-                Pane::Editor => container(self.editor.view()),
+        match &self.modal {
+            Some(_show) => self.add_track.view(),
+            None => pane_grid(&self.panes, |_pane, state, _is_maximized| {
+                pane_grid::Content::new(match state {
+                    Pane::Tracks => container(self.tracks.view()),
+                    Pane::Mixer => container(self.mixer.view()),
+                    Pane::Editor => container(self.editor.view()),
+                })
             })
-        })
-        .on_resize(10, Message::PaneResized)
-        .into()
+            .on_resize(10, Message::PaneResized)
+            .into(),
+        }
     }
 }
 
@@ -75,6 +95,8 @@ impl Default for Workspace {
             editor: editor::Editor::default(),
             mixer: mixer::Mixer::default(),
             tracks: tracks::Tracks::default(),
+            modal: None,
+            add_track: add_track::AddTrack::default(),
         }
     }
 }

@@ -7,7 +7,6 @@ use iced::{
 };
 use maolan_engine::message::Action;
 
-
 #[derive(Debug, Default)]
 pub struct Mixer {
     tracks: Vec<Track>,
@@ -26,11 +25,10 @@ impl Mixer {
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::Response(ref a) => match a {
-                Action::AddAudioTrack(name, ins, audio_outs, midi_outs) => {
+            Message::Response(Ok(ref a)) => match a {
+                Action::AddAudioTrack{name, ins, audio_outs, midi_outs} => {
                     self.tracks.push(Track::new(
                         name.clone(),
-                        0.0,
                         0.0,
                         ins.clone(),
                         TrackType::Audio,
@@ -38,10 +36,9 @@ impl Mixer {
                         midi_outs.clone(),
                     ));
                 }
-                Action::AddMIDITrack(name, midi_outs, audio_outs) => {
+                Action::AddMIDITrack{name, midi_outs, audio_outs} => {
                     self.tracks.push(Track::new(
                         name.clone(),
-                        0.0,
                         0.0,
                         0,
                         TrackType::MIDI,
@@ -49,7 +46,9 @@ impl Mixer {
                         midi_outs.clone(),
                     ));
                 }
-                _ => {}
+                _ => {
+                    self.update(message);
+                }
             },
             _ => {
                 self.update_children(message);
@@ -60,12 +59,9 @@ impl Mixer {
     pub fn view(&self) -> Element<'_, Message> {
         let mut result = row![];
         for track in &self.tracks {
-            result = result.push(
-                vertical_slider(0.0..=100.0, track.level, |new_val| {
-                    Message::TrackLevel(track.name.clone(), new_val)
-                })
-
-            );
+            result = result.push(vertical_slider(0.0..=100.0, track.level, |new_val| {
+                Message::Request(Action::TrackLevel(track.name.clone(), new_val))
+            }));
         }
         result.into()
     }

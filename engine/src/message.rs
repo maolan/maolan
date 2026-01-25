@@ -9,9 +9,9 @@ pub enum Action {
     Quit,
     Play,
     Echo(String),
-    Error(String),
-    AddAudioTrack(String, usize, usize, usize),
-    AddMIDITrack(String, usize, usize),
+    AddAudioTrack{name: String, ins: usize, audio_outs: usize, midi_outs: usize},
+    AddMIDITrack{name: String, midi_outs: usize, audio_outs: usize},
+    TrackLevel(String, f32),
 }
 
 #[derive(Clone, Debug)]
@@ -25,5 +25,5 @@ pub enum Message {
     Channel(Sender<Self>),
 
     Request(Action),
-    Response(Action),
+    Response(Result<Action, String>),
 }

@@ -6,7 +6,8 @@ edition = "2024"
 [dependencies]
 num_cpus = "1.17.0"
 wavers = "1.5.1"
-maolan-oss = { path = "./oss" }
 tokio = { version = "1.49.0", features = ["full"] }
 tracing-subscriber = "0.3.22"
 tracing = "0.1.44"
+byteorder = "1.5.0"
+nix = { version = "0.31.1", features = ["ioctl"] }

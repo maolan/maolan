@@ -24,11 +24,10 @@ impl Editor {
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::Response(ref a) => match a {
-                Action::AddAudioTrack(name, ins, audio_outs, midi_outs) => {
+            Message::Response(Ok(ref a)) => match a {
+                Action::AddAudioTrack{name, ins, audio_outs, midi_outs} => {
                     self.tracks.push(Track::new(
                         name.clone(),
-                        0.0,
                         0.0,
                         ins.clone(),
                         TrackType::Audio,
@@ -36,10 +35,9 @@ impl Editor {
                         midi_outs.clone(),
                     ));
                 }
-                Action::AddMIDITrack(name, midi_outs, audio_outs) => {
+                Action::AddMIDITrack{name, midi_outs, audio_outs} => {
                     self.tracks.push(Track::new(
                         name.clone(),
-                        0.0,
                         0.0,
                         0,
                         TrackType::MIDI,

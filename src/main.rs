@@ -72,12 +72,9 @@ impl Maolan {
                     CLIENT.send(EngineMessage::Request(a.clone()));
                 }
             },
-            Message::Response(ref a) => match a {
+            Message::Response(Ok(ref a)) => match a {
                 Action::Quit => {
                     exit(0);
-                }
-                Action::Error(s) => {
-                    error!("Maolan::update::error({s})");
                 }
                 _ => {
                     info!("Maolan::update::response({:?})", a);
@@ -103,7 +100,7 @@ impl Maolan {
                 let command = match receiver.recv().await? {
                     EngineMessage::Response(e) => Message::Response(e),
                     _ => {
-                        Message::Response(Action::Error("failed to receive in unfold".to_string()))
+                        Message::Response(Err("failed to receive in unfold".to_string()))
                     }
                 };
 

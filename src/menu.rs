@@ -1,4 +1,4 @@
-use crate::message::Message;
+use crate::message::{Message, Show};
 use engine::message::Action;
 use iced::widget::{button, row, text};
 use iced::{Border, Color, Element, Length, alignment};
@@ -115,7 +115,8 @@ impl MaolanMenu {
             }),
             (menu_dropdown("Track", Message::Debug("Track".to_string())), {
                 menu_tpl(menu_items!(
-                    (menu_item("New", Message::Request(Action::AddAudioTrack("New".to_string(), 1, 0, 1)))),
+                    // (menu_item("New", Message::Request(Action::AddAudioTrack("New".to_string(), 1, 0, 1)))),
+                    (menu_item("New", Message::Show(Show::AddTrack))),
                 ))
             }),
         )

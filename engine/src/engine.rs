@@ -89,13 +89,13 @@ impl Engine {
                                 let _ = worker.handle.await;
                             }
                         }
-                        Action::AddAudioTrack(ref name, ins, _audio_outs, _midi_outs) => {
+                        Action::AddAudioTrack{ref name, ins, audio_outs: _, midi_outs: _} => {
                             self.state.lock().audio.tracks.insert(
                                 name.clone(),
                                 Arc::new(UnsafeMutex::new(AudioTrack::new(name.clone(), ins))),
                             );
                         }
-                        Action::AddMIDITrack(ref name, _midi_outs, _audio_outs) => {
+                        Action::AddMIDITrack{ref name, midi_outs: _, audio_outs: _} => {
                             self.state.lock().midi.tracks.insert(
                                 name.clone(),
                                 Arc::new(UnsafeMutex::new(MIDITrack::new(name.clone()))),
@@ -105,7 +105,7 @@ impl Engine {
                     }
                     for client in &self.clients {
                         client
-                            .send(Message::Response(a.clone()))
+                            .send(Message::Response(Ok(a.clone())))
                             .expect("Error sending echo from engine");
                     }
                 }

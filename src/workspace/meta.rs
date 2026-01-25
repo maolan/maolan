@@ -1,3 +1,4 @@
+use maolan_engine::message::Action;
 use crate::message::Message;
 
 #[derive(Debug)]
@@ -9,7 +10,6 @@ pub enum TrackType {
 #[derive(Debug)]
 pub struct Track {
     pub name: String,
-    pub gain: f32,
     pub level: f32,
     pub track_type: TrackType,
     pub ins: usize,
@@ -21,7 +21,6 @@ impl Track {
     pub fn new(
         name: String,
         level: f32,
-        gain: f32,
         ins: usize,
         track_type: TrackType,
         audio_outs: usize,
@@ -29,7 +28,6 @@ impl Track {
     ) -> Self {
         Self {
             name,
-            gain,
             level,
             ins,
             track_type,
@@ -42,14 +40,14 @@ impl Track {
 impl Track {
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::TrackLevel(name, level) => {
-                if name == self.name {
-                    self.level = level;
-                }
-            }
-            Message::TrackGain(name, gain) => {
-                if name == self.name {
-                    self.gain = gain;
+            Message::Request(a) => {
+                match a {
+                    Action::TrackLevel(name, level) => {
+                        if name == self.name {
+                            self.level = level;
+                        }
+                    }
+                    _ => {}
                 }
             }
             _ => {}
