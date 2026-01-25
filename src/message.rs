@@ -7,6 +7,21 @@ pub enum Show {
 }
 
 #[derive(Debug, Clone)]
+pub enum TrackKind {
+    Audio,
+    MIDI,
+}
+
+#[derive(Debug, Clone)]
+pub enum AddTrack {
+    Kind(TrackKind),
+    Name(String),
+    Ins(usize),
+    AudioOuts(usize),
+    MIDIOuts(usize),
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     Debug(String),
 
@@ -15,4 +30,7 @@ pub enum Message {
 
     PaneResized(pane_grid::ResizeEvent),
     Show(Show),
+    Cancel(Show),
+
+    AddTrack(AddTrack),
 }

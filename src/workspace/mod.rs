@@ -24,7 +24,7 @@ pub struct Workspace {
     mixer: mixer::Mixer,
     tracks: tracks::Tracks,
     modal: Option<Show>,
-    add_track: add_track::AddTrack,
+    add_track: add_track::AddTrackView,
 }
 
 impl Workspace {
@@ -45,8 +45,16 @@ impl Workspace {
                     self.modal = Some(modal);
                 }
             },
+            Message::Cancel(_) => {
+                self.modal = None;
+            }
             Message::Response(Ok(ref a)) => match a {
-                Action::AddAudioTrack{name: _, ins: _, audio_outs: _, midi_outs: _} => {
+                Action::AddAudioTrack {
+                    name: _,
+                    ins: _,
+                    audio_outs: _,
+                    midi_outs: _,
+                } => {
                     self.modal = None;
                     self.update_children(message);
                 }
@@ -96,7 +104,7 @@ impl Default for Workspace {
             mixer: mixer::Mixer::default(),
             tracks: tracks::Tracks::default(),
             modal: None,
-            add_track: add_track::AddTrack::default(),
+            add_track: add_track::AddTrackView::default(),
         }
     }
 }
