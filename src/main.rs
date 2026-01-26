@@ -4,7 +4,7 @@ mod workspace;
 
 use std::process::exit;
 use std::sync::LazyLock;
-use tracing::{Level, error, info, span};
+use tracing::{Level, error, debug, span};
 use tracing_subscriber;
 use tracing_subscriber::{
     fmt::{Layer as FmtLayer, writer::MakeWriterExt},
@@ -68,7 +68,7 @@ impl Maolan {
         match message {
             Message::Request(ref a) => match a {
                 _ => {
-                    info!("Maolan::update::request({:?})", a);
+                    debug!("Maolan::update::request({:?})", a);
                     CLIENT.send(EngineMessage::Request(a.clone()));
                 }
             },
@@ -77,12 +77,12 @@ impl Maolan {
                     exit(0);
                 }
                 _ => {
-                    info!("Maolan::update::response({:?})", a);
+                    debug!("Maolan::update::response({:?})", a);
                     self.update_children(&message)
                 }
             },
             message::Message::Debug(s) => {
-                info!("Maolan::update::debug({s})");
+                debug!("Maolan::update::debug({s})");
             }
             _ => {
                 self.update_children(&message);

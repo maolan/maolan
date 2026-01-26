@@ -75,6 +75,7 @@ impl Tracks {
                     ]
                 ])
                 .width(Length::Fill)
+                .height(Length::Fixed(60.0))
                 .padding(5)
                 .style(|_theme| {
                     use container::Style;
