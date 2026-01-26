@@ -61,10 +61,7 @@ fn menu_dropdown(
     menu_button(label, Some(Length::Shrink), Some(Length::Shrink), message)
 }
 
-fn menu_item(
-    label: &str,
-    message: Message,
-) -> Element<'_, Message, iced::Theme, iced::Renderer> {
+fn menu_item(label: &str, message: Message) -> Element<'_, Message, iced::Theme, iced::Renderer> {
     menu_button(label, Some(Length::Fill), Some(Length::Shrink), message)
 }
 
@@ -115,7 +112,6 @@ impl MaolanMenu {
             }),
             (menu_dropdown("Track", Message::Debug("Track".to_string())), {
                 menu_tpl(menu_items!(
-                    // (menu_item("New", Message::Request(Action::AddAudioTrack("New".to_string(), 1, 0, 1)))),
                     (menu_item("New", Message::Show(Show::AddTrack))),
                 ))
             }),

@@ -6,6 +6,7 @@ use iced::{
     widget::{row, vertical_slider},
 };
 use maolan_engine::message::Action;
+use tracing::info;
 
 #[derive(Debug, Default)]
 pub struct Mixer {
@@ -13,20 +14,15 @@ pub struct Mixer {
 }
 
 impl Mixer {
-    fn update_children(&mut self, message: Message) {
-        match message {
-            _ => {
-                for track in &mut self.tracks {
-                    track.update(message.clone());
-                }
-            }
-        }
-    }
-
     pub fn update(&mut self, message: Message) {
         match message {
             Message::Response(Ok(ref a)) => match a {
-                Action::AddAudioTrack{name, ins, audio_outs, midi_outs} => {
+                Action::AddAudioTrack {
+                    name,
+                    ins,
+                    audio_outs,
+                    midi_outs,
+                } => {
                     self.tracks.push(Track::new(
                         name.clone(),
                         0.0,
@@ -36,7 +32,11 @@ impl Mixer {
                         midi_outs.clone(),
                     ));
                 }
-                Action::AddMIDITrack{name, midi_outs, audio_outs} => {
+                Action::AddMIDITrack {
+                    name,
+                    midi_outs,
+                    audio_outs,
+                } => {
                     self.tracks.push(Track::new(
                         name.clone(),
                         0.0,
@@ -46,13 +46,16 @@ impl Mixer {
                         midi_outs.clone(),
                     ));
                 }
-                _ => {
-                    self.update(message);
+                Action::TrackLevel(name, value) => {
+                    for track in &mut self.tracks {
+                        if track.name == *name {
+                            track.level = *value;
+                        }
+                    }
                 }
+                _ => {}
             },
-            _ => {
-                self.update_children(message);
-            }
+            _ => {}
         }
     }
 

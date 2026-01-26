@@ -60,8 +60,8 @@ struct Maolan {
 
 impl Maolan {
     fn update_children(&mut self, message: &message::Message) {
-                    self.menu.update(message.clone());
-                    self.workspace.update(message.clone());
+        self.menu.update(message.clone());
+        self.workspace.update(message.clone());
     }
 
     fn update(&mut self, message: message::Message) {
@@ -84,7 +84,9 @@ impl Maolan {
             message::Message::Debug(s) => {
                 info!("Maolan::update::debug({s})");
             }
-            _ => {self.update_children(&message);}
+            _ => {
+                self.update_children(&message);
+            }
         }
     }
 
@@ -99,9 +101,7 @@ impl Maolan {
             stream::unfold(CLIENT.subscribe(), async move |mut receiver| {
                 let command = match receiver.recv().await? {
                     EngineMessage::Response(e) => Message::Response(e),
-                    _ => {
-                        Message::Response(Err("failed to receive in unfold".to_string()))
-                    }
+                    _ => Message::Response(Err("failed to receive in unfold".to_string())),
                 };
 
                 Some((command, receiver))

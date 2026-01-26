@@ -1,7 +1,7 @@
 use crate::message::{AddTrack, Message, Show, TrackKind};
 use iced::{
     Alignment, Element, Length,
-    widget::{button, column, container, row, text, text_input},
+    widget::{button, column, container, pick_list, row, text, text_input},
 };
 use iced_aw::number_input;
 use maolan_engine::message::Action;
@@ -40,8 +40,15 @@ impl AddTrackView {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
+        let kinds = [TrackKind::Audio, TrackKind::MIDI];
         container(
             column![
+                row![
+                    text("Track type"),
+                    pick_list(kinds, Some(self.kind), |kind: TrackKind| Message::AddTrack(
+                        AddTrack::Kind(kind)
+                    )),
+                ],
                 row![
                     text("Name:"),
                     text_input("Track name", &self.name)

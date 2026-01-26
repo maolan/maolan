@@ -58,7 +58,17 @@ impl Workspace {
                     self.modal = None;
                     self.update_children(message);
                 }
-                _ => {}
+                Action::AddMIDITrack {
+                    name: _,
+                    audio_outs: _,
+                    midi_outs: _,
+                } => {
+                    self.modal = None;
+                    self.update_children(message);
+                }
+                _ => {
+                    self.update_children(message);
+                }
             },
             _ => self.update_children(message),
         }
