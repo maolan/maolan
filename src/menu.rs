@@ -87,11 +87,7 @@ fn submenu(label: &str, msg: Message) -> Element<'_, Message, iced::Theme, iced:
 pub struct MaolanMenu {}
 
 impl MaolanMenu {
-    pub fn update(&mut self, message: Message) {
-        match message {
-            _ => {}
-        }
-    }
+    pub fn update(&mut self, _message: Message) {}
 
     pub fn view(&self) -> iced::Element<'_, Message> {
         let menu_tpl = |items| Menu::new(items).width(180.0).offset(15.0).spacing(5.0);
