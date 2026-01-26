@@ -66,35 +66,33 @@ impl Editor {
         let mut result = column![];
         for track in &self.tracks {
             result = result.push(
-                container(column![
-                    text(track.name.clone()),
-                ])
-                .width(Length::Fill)
-                .height(Length::Fixed(60.0))
-                .padding(5)
-                .style(|_theme| {
-                    use container::Style;
+                container(column![text(track.name.clone())])
+                    .width(Length::Fill)
+                    .height(Length::Fixed(60.0))
+                    .padding(5)
+                    .style(|_theme| {
+                        use container::Style;
 
-                    Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.8,
-                            g: 0.8,
-                            b: 0.8,
-                            a: 0.8,
-                        })),
-                        border: Border {
-                            color: Color {
+                        Style {
+                            background: Some(Background::Color(Color {
                                 r: 0.0,
                                 g: 0.0,
                                 b: 0.0,
-                                a: 1.0,
+                                a: 0.0,
+                            })),
+                            border: Border {
+                                color: Color {
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 1.0,
+                                },
+                                width: 1.0,
+                                radius: 0.0.into(),
                             },
-                            width: 1.0,
-                            radius: 5.0.into(),
-                        },
-                        ..Style::default()
-                    }
-                }),
+                            ..Style::default()
+                        }
+                    }),
             );
         }
         result.into()
