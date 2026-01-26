@@ -54,6 +54,9 @@ impl Tracks {
                         midi_outs.clone(),
                     ));
                 }
+                Action::TrackToggleMute(_name) => {
+                    self.update_children(message);
+                }
                 _ => {}
             },
             _ => {

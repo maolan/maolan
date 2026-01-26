@@ -1,28 +1,32 @@
 #[derive(Debug)]
 pub struct Track {
-    name: String,
-    // channels: usize,
-    buffer: Vec<f32>,
+    pub name: String,
+    pub ins: usize,
+    pub audio_outs: usize,
+    pub midi_outs: usize,
+    pub level: f32,
+    pub armed: bool,
+    pub muted: bool,
+    pub soloed: bool,
+    pub buffer: Vec<f32>,
 }
 
 impl Track {
-    pub fn new(name: String, _channels: usize) -> Self {
+    pub fn new(name: String, ins: usize, audio_outs: usize, midi_outs: usize) -> Self {
         Track {
             name,
-            // channels,
+            ins,
+            audio_outs,
+            midi_outs,
+            level: 0.0,
+            armed: false,
+            muted: false,
+            soloed: false,
             buffer: vec![],
         }
     }
 
     pub fn process(&mut self) {
         self.buffer.clear();
-    }
-
-    pub fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    pub fn set_name(&mut self, name: String) {
-        self.name = name;
     }
 }

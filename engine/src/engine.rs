@@ -89,17 +89,43 @@ impl Engine {
                                 let _ = worker.handle.await;
                             }
                         }
-                        Action::AddAudioTrack{ref name, ins, audio_outs: _, midi_outs: _} => {
+                        Action::AddAudioTrack {
+                            ref name,
+                            ins,
+                            audio_outs,
+                            midi_outs,
+                        } => {
                             self.state.lock().audio.tracks.insert(
                                 name.clone(),
-                                Arc::new(UnsafeMutex::new(AudioTrack::new(name.clone(), ins))),
+                                Arc::new(UnsafeMutex::new(AudioTrack::new(
+                                    name.clone(),
+                                    ins,
+                                    audio_outs,
+                                    midi_outs,
+                                ))),
                             );
                         }
-                        Action::AddMIDITrack{ref name, midi_outs: _, audio_outs: _} => {
+                        Action::AddMIDITrack {
+                            ref name,
+                            midi_outs: _,
+                            audio_outs: _,
+                        } => {
                             self.state.lock().midi.tracks.insert(
                                 name.clone(),
                                 Arc::new(UnsafeMutex::new(MIDITrack::new(name.clone()))),
                             );
+                        }
+                        Action::TrackLevel(ref name, value) => {
+                            for (_, track) in &self.state.lock().midi.tracks {
+                                if *name == track.lock().name {
+                                    track.lock().level = value;
+                                }
+                            }
+                            for (_, track) in &self.state.lock().audio.tracks {
+                                if *name == track.lock().name {
+                                    track.lock().level = value;
+                                }
+                            }
                         }
                         _ => {}
                     }

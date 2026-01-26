@@ -16,7 +16,7 @@ impl Worker {
     }
 
     pub fn send(&self, message: Message) {
-        let _ = self.tx.send(message);
+        self.tx.send(message).expect("Failed to send message from worker");
     }
 
     pub async fn work(&mut self) {

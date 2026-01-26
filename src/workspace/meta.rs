@@ -15,6 +15,9 @@ pub struct Track {
     pub ins: usize,
     pub audio_outs: usize,
     pub midi_outs: usize,
+    pub armed: bool,
+    pub muted: bool,
+    pub soloed: bool,
 }
 
 impl Track {
@@ -33,6 +36,9 @@ impl Track {
             track_type,
             audio_outs,
             midi_outs,
+            armed: false,
+            muted: false,
+            soloed: false,
         }
     }
 }
@@ -45,6 +51,36 @@ impl Track {
                     Action::TrackLevel(name, level) => {
                         if name == self.name {
                             self.level = level;
+                        }
+                    }
+                    Action::TrackIns(name, ins) => {
+                        if name == self.name {
+                            self.ins = ins;
+                        }
+                    }
+                    Action::TrackAudioOuts(name, outs) => {
+                        if name == self.name {
+                            self.audio_outs = outs;
+                        }
+                    }
+                    Action::TrackMIDIOuts(name, outs) => {
+                        if name == self.name {
+                            self.midi_outs = outs;
+                        }
+                    }
+                    Action::TrackToggleArm(name) => {
+                        if name == self.name {
+                            self.armed = !self.armed;
+                        }
+                    }
+                    Action::TrackToggleMute(name) => {
+                        if name == self.name {
+                            self.muted = !self.muted;
+                        }
+                    }
+                    Action::TrackToggleSolo(name) => {
+                        if name == self.name {
+                            self.soloed = !self.soloed;
                         }
                     }
                     _ => {}

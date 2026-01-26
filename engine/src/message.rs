@@ -1,5 +1,5 @@
 // use std::sync::Arc;
-use tokio::sync::mpsc::{UnboundedSender as Sender};
+use tokio::sync::mpsc::UnboundedSender as Sender;
 // use crate::audio::track::Track as AudioTrack;
 // use crate::midi::track::Track as MIDITrack;
 // use crate::mutex::UnsafeMutex;
@@ -9,9 +9,24 @@ pub enum Action {
     Quit,
     Play,
     Echo(String),
-    AddAudioTrack{name: String, ins: usize, audio_outs: usize, midi_outs: usize},
-    AddMIDITrack{name: String, midi_outs: usize, audio_outs: usize},
+    AddAudioTrack {
+        name: String,
+        ins: usize,
+        audio_outs: usize,
+        midi_outs: usize,
+    },
+    AddMIDITrack {
+        name: String,
+        midi_outs: usize,
+        audio_outs: usize,
+    },
     TrackLevel(String, f32),
+    TrackIns(String, usize),
+    TrackAudioOuts(String, usize),
+    TrackMIDIOuts(String, usize),
+    TrackToggleArm(String),
+    TrackToggleMute(String),
+    TrackToggleSolo(String),
 }
 
 #[derive(Clone, Debug)]
@@ -21,7 +36,6 @@ pub enum Message {
 
     // ProcessAudio(Arc<UnsafeMutex<AudioTrack>>),
     // ProcessMidi(Arc<UnsafeMutex<MIDITrack>>),
-
     Channel(Sender<Self>),
 
     Request(Action),
