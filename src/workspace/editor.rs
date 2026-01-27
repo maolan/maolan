@@ -1,10 +1,10 @@
 use crate::{
     message::Message,
-    state::track::{Track, TrackType},
+    state::{Track, TrackType},
 };
 use iced::{
-    Background, Border, Color, Element, Length,
-    widget::{column, container, text},
+    Background, Border, Color, Element, Length, Point, Renderer, Theme,
+    widget::{Stack, column, container, pin, text},
 };
 use maolan_engine::message::Action;
 
@@ -58,43 +58,54 @@ impl Editor {
                 }
                 _ => {}
             },
-            _ => {
-                self.update_children(message);
-            }
+            _ => {}
         }
+        self.update_children(message);
     }
 
     pub fn view(&self) -> Element<'_, Message> {
         let mut result = column![];
         for track in &self.tracks {
+            let mut clips: Vec<Element<'_, Message, Theme, Renderer>> = vec![];
+            for clip in &track.clips {
+                clips.push(
+                    pin(text(clip.name.clone()))
+                        .position(Point::new(clip.start, 0.0))
+                        .into(),
+                );
+            }
             result = result.push(
-                container(column![text(track.name.clone())])
-                    .width(Length::Fill)
-                    .height(Length::Fixed(60.0))
-                    .padding(5)
-                    .style(|_theme| {
-                        use container::Style;
+                container(
+                    Stack::from_vec(clips)
+                        .height(Length::Fill)
+                        .width(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::Fixed(60.0))
+                .padding(5)
+                .style(|_theme| {
+                    use container::Style;
 
-                        Style {
-                            background: Some(Background::Color(Color {
+                    Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.0,
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        })),
+                        border: Border {
+                            color: Color {
                                 r: 0.0,
                                 g: 0.0,
                                 b: 0.0,
-                                a: 0.0,
-                            })),
-                            border: Border {
-                                color: Color {
-                                    r: 0.0,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 1.0,
-                                },
-                                width: 1.0,
-                                radius: 0.0.into(),
+                                a: 1.0,
                             },
-                            ..Style::default()
-                        }
-                    }),
+                            width: 1.0,
+                            radius: 0.0.into(),
+                        },
+                        ..Style::default()
+                    }
+                }),
             );
         }
         result.into()

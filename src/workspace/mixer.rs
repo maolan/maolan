@@ -1,6 +1,6 @@
 use crate::{
     message::Message,
-    state::track::{Track, TrackType},
+    state::{Track, TrackType},
     style,
 };
 

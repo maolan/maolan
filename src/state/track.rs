@@ -1,5 +1,6 @@
 use maolan_engine::message::Action;
 use crate::message::Message;
+use super::Clip;
 
 #[derive(Debug)]
 pub enum TrackType {
@@ -18,6 +19,7 @@ pub struct Track {
     pub armed: bool,
     pub muted: bool,
     pub soloed: bool,
+    pub clips: Vec<Clip>,
 }
 
 impl Track {
@@ -39,6 +41,7 @@ impl Track {
             armed: false,
             muted: false,
             soloed: false,
+            clips: vec![],
         }
     }
 }
