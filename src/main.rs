@@ -1,6 +1,7 @@
 mod menu;
 mod message;
 mod workspace;
+mod style;
 
 use std::process::exit;
 use std::sync::LazyLock;

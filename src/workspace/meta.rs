@@ -46,7 +46,7 @@ impl Track {
 impl Track {
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::Request(a) => {
+            Message::Response(Ok(a)) => {
                 match a {
                     Action::TrackLevel(name, level) => {
                         if name == self.name {

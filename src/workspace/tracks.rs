@@ -1,5 +1,6 @@
 use super::meta::{Track, TrackType};
 use crate::message::Message;
+use crate::style;
 use iced::{
     Background, Border, Color, Element, Length,
     widget::{button, column, container, row, text},
@@ -54,69 +55,65 @@ impl Tracks {
                         midi_outs.clone(),
                     ));
                 }
-                Action::TrackToggleArm(_) => {
-                    self.update_children(message);
-                }
-                Action::TrackToggleMute(_) => {
-                    self.update_children(message);
-                }
-                Action::TrackToggleSolo(_) => {
-                    self.update_children(message);
-                }
                 _ => {}
             },
-            _ => {
-                self.update_children(message);
-            }
+            _ => {}
         }
+        self.update_children(message);
     }
 
     pub fn view(&self) -> Element<'_, Message> {
         let mut result = column![];
         for track in &self.tracks {
-            result =
-                result.push(
-                    container(column![
-                        text(track.name.clone()),
-                        row![
-                            button("R").padding(3).on_press(Message::Request(
-                                Action::TrackToggleArm(track.name.clone())
-                            )),
-                            button("M").padding(3).on_press(Message::Request(
-                                Action::TrackToggleMute(track.name.clone())
-                            )),
-                            button("S").padding(3).on_press(Message::Request(
-                                Action::TrackToggleSolo(track.name.clone())
-                            )),
-                        ]
-                    ])
-                    .width(Length::Fill)
-                    .height(Length::Fixed(60.0))
-                    .padding(5)
-                    .style(|_theme| {
-                        use container::Style;
+            result = result.push(
+                container(column![
+                    text(track.name.clone()),
+                    row![
+                        button("R")
+                            .padding(3)
+                            .style(|theme, _state| { style::arm::style(theme, track.armed) })
+                            .on_press(Message::Request(Action::TrackToggleArm(track.name.clone()))),
+                        button("M")
+                            .padding(3)
+                            .style(|theme, _state| { style::mute::style(theme, track.muted) })
+                            .on_press(Message::Request(Action::TrackToggleMute(
+                                track.name.clone()
+                            ))),
+                        button("S")
+                            .padding(3)
+                            .style(|theme, _state| { style::solo::style(theme, track.soloed) })
+                            .on_press(Message::Request(Action::TrackToggleSolo(
+                                track.name.clone()
+                            ))),
+                    ]
+                ])
+                .width(Length::Fill)
+                .height(Length::Fixed(60.0))
+                .padding(5)
+                .style(|_theme| {
+                    use container::Style;
 
-                        Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.8,
-                                g: 0.8,
-                                b: 0.8,
-                                a: 0.8,
-                            })),
-                            border: Border {
-                                color: Color {
-                                    r: 0.0,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 1.0,
-                                },
-                                width: 1.0,
-                                radius: 5.0.into(),
+                    Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.8,
+                            g: 0.8,
+                            b: 0.8,
+                            a: 0.8,
+                        })),
+                        border: Border {
+                            color: Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 1.0,
                             },
-                            ..Style::default()
-                        }
-                    }),
-                );
+                            width: 1.0,
+                            radius: 5.0.into(),
+                        },
+                        ..Style::default()
+                    }
+                }),
+            );
         }
         result.into()
     }

@@ -103,7 +103,7 @@ impl Default for Workspace {
                 if i == 0 {
                     panes.resize(split, 0.75);
                 } else if i == 1 {
-                    panes.resize(split, 0.05);
+                    panes.resize(split, 0.1);
                 }
                 i += 1;
             }
