@@ -4,9 +4,9 @@ use tokio::sync::mpsc::{
 };
 use tokio::task::JoinHandle;
 
-use crate::audio::track::Track as AudioTrack;
+use crate::audio::track::AudioTrack;
 use crate::message::{Action, Message};
-use crate::midi::track::Track as MIDITrack;
+use crate::midi::track::MIDITrack;
 use crate::mutex::UnsafeMutex;
 use crate::state::State;
 use crate::worker::Worker;
@@ -23,7 +23,6 @@ impl WorkerData {
     }
 }
 
-#[derive(Debug)]
 pub struct Engine {
     state: Arc<UnsafeMutex<State>>,
     rx: Receiver<Message>,
@@ -97,33 +96,37 @@ impl Engine {
                         } => {
                             self.state.lock().audio.tracks.insert(
                                 name.clone(),
-                                Arc::new(UnsafeMutex::new(AudioTrack::new(
+                                Arc::new(UnsafeMutex::new(Box::new(AudioTrack::new(
                                     name.clone(),
                                     ins,
                                     audio_outs,
                                     midi_outs,
-                                ))),
+                                )))),
                             );
                         }
                         Action::AddMIDITrack {
                             ref name,
-                            midi_outs: _,
-                            audio_outs: _,
+                            midi_outs,
+                            audio_outs,
                         } => {
                             self.state.lock().midi.tracks.insert(
                                 name.clone(),
-                                Arc::new(UnsafeMutex::new(MIDITrack::new(name.clone()))),
+                                Arc::new(UnsafeMutex::new(Box::new(MIDITrack::new(
+                                    name.clone(),
+                                    midi_outs,
+                                    audio_outs,
+                                )))),
                             );
                         }
                         Action::TrackLevel(ref name, value) => {
                             for (_, track) in &self.state.lock().midi.tracks {
-                                if *name == track.lock().name {
-                                    track.lock().level = value;
+                                if *name == track.lock().name() {
+                                    track.lock().set_level(value);
                                 }
                             }
                             for (_, track) in &self.state.lock().audio.tracks {
-                                if *name == track.lock().name {
-                                    track.lock().level = value;
+                                if *name == track.lock().name() {
+                                    track.lock().set_level(value);
                                 }
                             }
                         }

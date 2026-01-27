@@ -3,12 +3,11 @@ use std::{
     sync::Arc,
 };
 
-use crate::mutex::UnsafeMutex;
+use crate::{mutex::UnsafeMutex, track::Track};
 pub mod track;
 
-#[derive(Debug)]
 pub struct State {
-    pub tracks: HashMap<String, Arc<UnsafeMutex<track::Track>>>,
+    pub tracks: HashMap<String, Arc<UnsafeMutex<Box<dyn Track>>>>,
 }
 
 impl State {

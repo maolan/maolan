@@ -5,9 +5,10 @@ pub mod message;
 pub mod midi;
 pub mod mutex;
 pub mod state;
+mod track;
 pub mod worker;
 
-use tokio::sync::mpsc::{unbounded_channel as channel, UnboundedSender as Sender};
+use tokio::sync::mpsc::{UnboundedSender as Sender, unbounded_channel as channel};
 use tokio::task::JoinHandle;
 
 pub fn init() -> (Sender<message::Message>, JoinHandle<()>) {

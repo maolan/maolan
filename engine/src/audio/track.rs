@@ -1,19 +1,20 @@
-#[derive(Debug)]
-pub struct Track {
-    pub name: String,
-    pub ins: usize,
-    pub audio_outs: usize,
-    pub midi_outs: usize,
-    pub level: f32,
-    pub armed: bool,
-    pub muted: bool,
-    pub soloed: bool,
-    pub buffer: Vec<f32>,
+use crate::track::Track;
+
+pub struct AudioTrack {
+    name: String,
+    ins: usize,
+    audio_outs: usize,
+    midi_outs: usize,
+    level: f32,
+    armed: bool,
+    muted: bool,
+    soloed: bool,
+    buffer: Vec<f32>,
 }
 
-impl Track {
+impl AudioTrack {
     pub fn new(name: String, ins: usize, audio_outs: usize, midi_outs: usize) -> Self {
-        Track {
+        Self {
             name,
             ins,
             audio_outs,
@@ -25,8 +26,24 @@ impl Track {
             buffer: vec![],
         }
     }
+}
 
-    pub fn process(&mut self) {
+impl Track for AudioTrack {
+    fn process(&mut self) {
         self.buffer.clear();
+    }
+
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+    fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    fn level(&self) -> f32 {
+        self.level
+    }
+    fn set_level(&mut self, level: f32) {
+        self.level = level;
     }
 }
