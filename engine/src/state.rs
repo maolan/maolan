@@ -1,16 +1,10 @@
-use crate::audio::State as AudioState;
-use crate::midi::State as MIDIState;
+use crate::{mutex::UnsafeMutex, track::Track};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+};
 
+#[derive(Default)]
 pub struct State {
-    pub audio: AudioState,
-    pub midi: MIDIState,
-}
-
-impl State {
-    pub fn new() -> Self {
-        State {
-            audio: AudioState::new(),
-            midi: MIDIState::new(),
-        }
-    }
+    pub tracks: HashMap<String, Arc<UnsafeMutex<Box<dyn Track>>>>,
 }

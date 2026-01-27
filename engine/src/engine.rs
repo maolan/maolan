@@ -34,7 +34,7 @@ pub struct Engine {
 impl Engine {
     pub fn new(rx: Receiver<Message>, tx: Sender<Message>) -> Self {
         Self {
-            state: Arc::new(UnsafeMutex::new(State::new())),
+            state: Arc::new(UnsafeMutex::new(State::default())),
             rx,
             tx,
             clients: vec![],
@@ -81,6 +81,8 @@ impl Engine {
 
                 Message::Request(a) => {
                     match a {
+                        Action::Play => {}
+                        Action::Echo(_) => {}
                         Action::Quit => {
                             while self.workers.len() > 0 {
                                 let worker = self.workers.remove(0);
@@ -94,7 +96,7 @@ impl Engine {
                             audio_outs,
                             midi_outs,
                         } => {
-                            self.state.lock().audio.tracks.insert(
+                            self.state.lock().tracks.insert(
                                 name.clone(),
                                 Arc::new(UnsafeMutex::new(Box::new(AudioTrack::new(
                                     name.clone(),
@@ -109,7 +111,7 @@ impl Engine {
                             midi_outs,
                             audio_outs,
                         } => {
-                            self.state.lock().midi.tracks.insert(
+                            self.state.lock().tracks.insert(
                                 name.clone(),
                                 Arc::new(UnsafeMutex::new(Box::new(MIDITrack::new(
                                     name.clone(),
@@ -119,18 +121,54 @@ impl Engine {
                             );
                         }
                         Action::TrackLevel(ref name, value) => {
-                            for (_, track) in &self.state.lock().midi.tracks {
-                                if *name == track.lock().name() {
-                                    track.lock().set_level(value);
-                                }
-                            }
-                            for (_, track) in &self.state.lock().audio.tracks {
+                            for (_, track) in &self.state.lock().tracks {
                                 if *name == track.lock().name() {
                                     track.lock().set_level(value);
                                 }
                             }
                         }
-                        _ => {}
+                        Action::TrackIns(ref name, ins) => {
+                            for (_, track) in &self.state.lock().tracks {
+                                if *name == track.lock().name() {
+                                    track.lock().set_ins(ins);
+                                }
+                            }
+                        }
+                        Action::TrackAudioOuts(ref name, outs) => {
+                            for (_, track) in &self.state.lock().tracks {
+                                if *name == track.lock().name() {
+                                    track.lock().set_audio_outs(outs);
+                                }
+                            }
+                        }
+                        Action::TrackMIDIOuts(ref name, outs) => {
+                            for (_, track) in &self.state.lock().tracks {
+                                if *name == track.lock().name() {
+                                    track.lock().set_midi_outs(outs);
+                                }
+                            }
+                        }
+                        Action::TrackToggleArm(ref name) => {
+                            for (_, track) in &self.state.lock().tracks {
+                                if *name == track.lock().name() {
+                                    track.lock().arm();
+                                }
+                            }
+                        }
+                        Action::TrackToggleMute(ref name) => {
+                            for (_, track) in &self.state.lock().tracks {
+                                if *name == track.lock().name() {
+                                    track.lock().mute();
+                                }
+                            }
+                        }
+                        Action::TrackToggleSolo(ref name) => {
+                            for (_, track) in &self.state.lock().tracks {
+                                if *name == track.lock().name() {
+                                    track.lock().solo();
+                                }
+                            }
+                        }
                     }
                     for client in &self.clients {
                         client

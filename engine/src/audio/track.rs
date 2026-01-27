@@ -46,4 +46,35 @@ impl Track for AudioTrack {
     fn set_level(&mut self, level: f32) {
         self.level = level;
     }
+
+    fn ins(&self) -> usize {
+        self.ins
+    }
+    fn set_ins(&mut self, ins: usize) {
+        self.ins = ins;
+    }
+
+    fn audio_outs(&self) -> usize {
+        self.audio_outs
+    }
+    fn set_audio_outs(&mut self, outs: usize) {
+        self.audio_outs = outs;
+    }
+
+    fn midi_outs(&self) -> usize {
+        self.midi_outs
+    }
+    fn set_midi_outs(&mut self, outs: usize) {
+        self.midi_outs = outs;
+    }
+
+    fn arm(&mut self) {
+        self.armed = !self.armed;
+    }
+    fn mute(&mut self) {
+        self.muted = !self.muted;
+    }
+    fn solo(&mut self) {
+        self.soloed = !self.soloed;
+    }
 }
