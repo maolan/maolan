@@ -1,6 +1,9 @@
-use super::meta::{Track, TrackType};
+use crate::{
+    message::Message,
+    state::track::{Track, TrackType},
+    style,
+};
 
-use crate::{message::Message, style};
 use iced::{
     Alignment, Background, Border, Color, Element,
     widget::{button, column, container, row, vertical_slider},

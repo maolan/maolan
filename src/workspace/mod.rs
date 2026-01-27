@@ -1,6 +1,5 @@
 mod add_track;
 mod editor;
-mod meta;
 mod mixer;
 mod tracks;
 

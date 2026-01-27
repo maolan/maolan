@@ -2,6 +2,7 @@ mod menu;
 mod message;
 mod workspace;
 mod style;
+mod state;
 
 use std::process::exit;
 use std::sync::LazyLock;

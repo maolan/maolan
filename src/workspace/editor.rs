@@ -1,5 +1,7 @@
-use super::meta::{Track, TrackType};
-use crate::message::Message;
+use crate::{
+    message::Message,
+    state::track::{Track, TrackType},
+};
 use iced::{
     Background, Border, Color, Element, Length,
     widget::{column, container, text},
