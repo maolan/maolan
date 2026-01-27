@@ -61,40 +61,52 @@ impl Mixer {
     pub fn view(&self) -> Element<'_, Message> {
         let mut result = row![];
         for track in &self.tracks {
-            result = result.push(
-                container(column![
-                    vertical_slider(-90.0..=20.0, track.level, |new_val| {
-                        Message::Request(Action::TrackLevel(track.name.clone(), new_val))
-                    }).shift_step(0.2),
-                    row![button("M").padding(3), button("S").padding(3)],
-                ])
-                .padding(5)
-                .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
-                .style(|_theme| {
-                    use container::Style;
+            result =
+                result.push(
+                    container(column![
+                        vertical_slider(-90.0..=20.0, track.level, |new_val| {
+                            Message::Request(Action::TrackLevel(track.name.clone(), new_val))
+                        })
+                        .shift_step(0.1),
+                        row![
+                            button("R").padding(3).on_press(Message::Request(
+                                Action::TrackToggleArm(track.name.clone())
+                            )),
+                            button("M").padding(3).on_press(Message::Request(
+                                Action::TrackToggleMute(track.name.clone())
+                            )),
+                            button("S").padding(3).on_press(Message::Request(
+                                Action::TrackToggleSolo(track.name.clone())
+                            )),
+                        ]
+                    ])
+                    .padding(5)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .style(|_theme| {
+                        use container::Style;
 
-                    Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.8,
-                            g: 0.8,
-                            b: 0.8,
-                            a: 0.8,
-                        })),
-                        border: Border {
-                            color: Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 1.0,
+                        Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.8,
+                                g: 0.8,
+                                b: 0.8,
+                                a: 0.8,
+                            })),
+                            border: Border {
+                                color: Color {
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 1.0,
+                                },
+                                width: 1.0,
+                                radius: 5.0.into(),
                             },
-                            width: 1.0,
-                            radius: 5.0.into(),
-                        },
-                        ..Style::default()
-                    }
-                }),
-            )
+                            ..Style::default()
+                        }
+                    }),
+                )
         }
         result.into()
     }

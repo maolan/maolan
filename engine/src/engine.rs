@@ -82,7 +82,6 @@ impl Engine {
                 Message::Request(a) => {
                     match a {
                         Action::Play => {}
-                        Action::Echo(_) => {}
                         Action::Quit => {
                             while self.workers.len() > 0 {
                                 let worker = self.workers.remove(0);

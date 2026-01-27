@@ -8,7 +8,6 @@ use tokio::sync::mpsc::UnboundedSender as Sender;
 pub enum Action {
     Quit,
     Play,
-    Echo(String),
     AddAudioTrack {
         name: String,
         ins: usize,

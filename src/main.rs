@@ -4,7 +4,7 @@ mod workspace;
 
 use std::process::exit;
 use std::sync::LazyLock;
-use tracing::{Level, error, debug, span};
+use tracing::{Level, debug, span};
 use tracing_subscriber;
 use tracing_subscriber::{
     fmt::{Layer as FmtLayer, writer::MakeWriterExt},
@@ -41,8 +41,6 @@ pub fn main() -> iced::Result {
 
     let my_span = span!(Level::INFO, "main");
     let _enter = my_span.enter();
-
-    error!("This is an error message");
 
     iced::application(Maolan::default, Maolan::update, Maolan::view)
         .title("Maolan")

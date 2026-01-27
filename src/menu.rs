@@ -96,7 +96,7 @@ impl MaolanMenu {
         let mb = menu_bar!(
             (menu_dropdown("File", Message::Debug("File".to_string())), {
                 menu_tpl(menu_items!(
-                    (menu_item("New", Message::Request(Action::Echo("New".to_string())))),
+                    (menu_item("New", Message::Debug("New".to_string()))),
                     (menu_item("Open", Message::Debug("Open".to_string()))),
                     (submenu("Open Recent", Message::Debug("Open Recent".to_string())), menu_tpl(menu_items!(
                         (menu_item("First", Message::Debug("First".to_string()))),

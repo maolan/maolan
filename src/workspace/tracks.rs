@@ -54,7 +54,13 @@ impl Tracks {
                         midi_outs.clone(),
                     ));
                 }
-                Action::TrackToggleMute(_name) => {
+                Action::TrackToggleArm(_) => {
+                    self.update_children(message);
+                }
+                Action::TrackToggleMute(_) => {
+                    self.update_children(message);
+                }
+                Action::TrackToggleSolo(_) => {
                     self.update_children(message);
                 }
                 _ => {}
@@ -68,37 +74,49 @@ impl Tracks {
     pub fn view(&self) -> Element<'_, Message> {
         let mut result = column![];
         for track in &self.tracks {
-            result = result.push(
-                container(column![
-                    text(track.name.clone()),
-                    row![
-                        button("R").padding(3),
-                        button("M").padding(3),
-                        button("S").padding(3),
-                    ]
-                ])
-                .width(Length::Fill)
-                .height(Length::Fixed(60.0))
-                .padding(5)
-                .style(|_theme| {
-                    use container::Style;
+            result =
+                result.push(
+                    container(column![
+                        text(track.name.clone()),
+                        row![
+                            button("R").padding(3).on_press(Message::Request(
+                                Action::TrackToggleArm(track.name.clone())
+                            )),
+                            button("M").padding(3).on_press(Message::Request(
+                                Action::TrackToggleMute(track.name.clone())
+                            )),
+                            button("S").padding(3).on_press(Message::Request(
+                                Action::TrackToggleSolo(track.name.clone())
+                            )),
+                        ]
+                    ])
+                    .width(Length::Fill)
+                    .height(Length::Fixed(60.0))
+                    .padding(5)
+                    .style(|_theme| {
+                        use container::Style;
 
-                    Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.8,
-                            g: 0.8,
-                            b: 0.8,
-                            a: 0.8,
-                        })),
-                        border: Border {
-                            color: Color{ r: 0.0, g: 0.0, b: 0.0, a: 1.0},
-                            width: 1.0,
-                            radius: 5.0.into(),
-                        },
-                        ..Style::default()
-                    }
-                }),
-            );
+                        Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.8,
+                                g: 0.8,
+                                b: 0.8,
+                                a: 0.8,
+                            })),
+                            border: Border {
+                                color: Color {
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 1.0,
+                                },
+                                width: 1.0,
+                                radius: 5.0.into(),
+                            },
+                            ..Style::default()
+                        }
+                    }),
+                );
         }
         result.into()
     }
