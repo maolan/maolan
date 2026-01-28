@@ -8,6 +8,7 @@ use iced::{
     widget::{button, column, container, row, text},
 };
 use maolan_engine::message::Action;
+use serde_json::{Value, json};
 
 #[derive(Debug, Default)]
 pub struct Tracks {
@@ -15,6 +16,9 @@ pub struct Tracks {
 }
 
 impl Tracks {
+    pub fn json(&self) -> Value {
+        json!(self.tracks)
+    }
     fn update_children(&mut self, message: Message) {
         match message {
             _ => {

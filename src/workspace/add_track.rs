@@ -1,4 +1,4 @@
-use crate::message::{AddTrack, Message, Show, TrackKind};
+use crate::message::{AddTrack, Message, TrackKind};
 use iced::{
     Alignment, Element, Length,
     widget::{button, column, container, pick_list, row, text, text_input},

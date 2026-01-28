@@ -43,5 +43,6 @@ pub enum Message {
     Cancel,
 
     AddTrack(AddTrack),
-    Save,
+    Save(String),
+    SavePath(String),
 }

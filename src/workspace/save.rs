@@ -1,20 +1,30 @@
 use crate::message::Message;
 use iced::{
     Alignment, Element, Length,
-    widget::{button, column, container, row},
+    widget::{button, column, container, row, text_input},
 };
 
 #[derive(Debug)]
-pub struct SaveView {}
+pub struct SaveView {
+    path: String,
+}
 
 impl SaveView {
-    pub fn update(&mut self, _message: Message) {}
+    pub fn update(&mut self, message: Message) {
+        match message {
+            Message::SavePath(path) => {
+                self.path = path;
+            }
+            _ => {}
+        }
+    }
 
     pub fn view(&self) -> Element<'_, Message> {
         container(
             column![
+                text_input("Path", &self.path).on_input(Message::SavePath),
                 row![
-                    button("Save").on_press(Message::Save),
+                    button("Save").on_press_with(|| { Message::Save(self.path.clone()) }),
                     button("Cancel")
                         .on_press(Message::Cancel)
                         .style(button::secondary),
@@ -35,6 +45,8 @@ impl SaveView {
 
 impl Default for SaveView {
     fn default() -> Self {
-        Self {}
+        Self {
+            path: "/tmp/".to_string(),
+        }
     }
 }

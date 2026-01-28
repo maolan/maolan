@@ -1,14 +1,16 @@
 use maolan_engine::message::Action;
 use crate::message::Message;
 use super::Clip;
+use serde::{Serialize, Deserialize};
 
-#[derive(Debug)]
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum TrackType {
     Audio,
     MIDI,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Track {
     pub name: String,
     pub level: f32,

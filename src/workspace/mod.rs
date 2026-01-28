@@ -10,6 +10,7 @@ use iced::{
     widget::{container, pane_grid, pane_grid::Axis},
 };
 use maolan_engine::message::Action;
+use serde_json::{Value, json};
 
 #[derive(Clone)]
 enum Pane {
@@ -29,6 +30,12 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    pub fn json(&self) -> Value {
+        json!({
+            "tracks": self.tracks.json(),
+        })
+    }
+
     fn update_children(&mut self, message: Message) {
         self.editor.update(message.clone());
         self.mixer.update(message.clone());
@@ -44,7 +51,7 @@ impl Workspace {
             }
             Message::Show(modal) => self.modal = Some(modal),
             Message::Cancel => self.modal = None,
-            Message::Save => self.modal = None,
+            Message::Save(_) => self.modal = None,
             Message::Response(Ok(ref a)) => match a {
                 Action::AddAudioTrack {
                     name: _,
@@ -59,7 +66,7 @@ impl Workspace {
                 } => self.modal = None,
                 _ => {}
             },
-            _ => {},
+            _ => {}
         }
         self.update_children(message);
     }

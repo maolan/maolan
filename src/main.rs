@@ -1,12 +1,14 @@
 mod menu;
 mod message;
-mod workspace;
-mod style;
 mod state;
+mod style;
+mod workspace;
 
+use std::fs::{self, File};
+use std::path::PathBuf;
 use std::process::exit;
 use std::sync::LazyLock;
-use tracing::{Level, debug, span};
+use tracing::{Level, debug, error, span};
 use tracing_subscriber;
 use tracing_subscriber::{
     fmt::{Layer as FmtLayer, writer::MakeWriterExt},
@@ -59,6 +61,17 @@ struct Maolan {
 }
 
 impl Maolan {
+    fn save(&self, path: String) -> std::io::Result<()> {
+        let filename = "session.json";
+        let result = self.workspace.json();
+        let mut p = PathBuf::from(path.clone());
+        p.push(filename);
+        println!("{:?}: {}", p, result);
+        let _err = fs::create_dir_all(path)?;
+        let file = File::create(&p)?;
+        serde_json::to_writer_pretty(file, &result)?;
+        Ok(())
+    }
     fn update_children(&mut self, message: &message::Message) {
         self.menu.update(message.clone());
         self.workspace.update(message.clone());
@@ -66,26 +79,28 @@ impl Maolan {
 
     fn update(&mut self, message: message::Message) {
         match message {
-            Message::Request(ref a) => match a {
-                _ => {
-                    debug!("Maolan::update::request({:?})", a);
-                    CLIENT.send(EngineMessage::Request(a.clone()));
-                }
-            },
+            Message::Request(ref a) => {
+                CLIENT.send(EngineMessage::Request(a.clone()));
+                return;
+            }
             Message::Response(Ok(ref a)) => match a {
                 Action::Quit => {
                     exit(0);
                 }
-                _ => {
-                    debug!("Maolan::update::response({:?})", a);
-                    self.update_children(&message)
-                }
+                _ => {}
             },
-            message::Message::Debug(s) => {
+            Message::Debug(ref s) => {
                 debug!("Maolan::update::debug({s})");
             }
-            _ => self.update_children(&message)
+            Message::Save(ref path) => {
+                match self.save(path.clone()) {
+                    Ok(_) => {}
+                    Err(s) => {error!("{}", s);}
+                }
+            }
+            _ => {}
         }
+        self.update_children(&message);
     }
 
     fn view(&self) -> iced::Element<'_, message::Message> {
