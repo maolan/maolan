@@ -1,6 +1,7 @@
 mod add_track;
 mod editor;
 mod mixer;
+mod save;
 mod tracks;
 
 use crate::message::{Message, Show};
@@ -24,6 +25,7 @@ pub struct Workspace {
     tracks: tracks::Tracks,
     modal: Option<Show>,
     add_track: add_track::AddTrackView,
+    save: save::SaveView,
 }
 
 impl Workspace {
@@ -32,50 +34,42 @@ impl Workspace {
         self.mixer.update(message.clone());
         self.tracks.update(message.clone());
         self.add_track.update(message.clone());
+        self.save.update(message.clone());
     }
 
     pub fn update(&mut self, message: Message) {
         match message {
             Message::PaneResized(pane_grid::ResizeEvent { split, ratio }) => {
-                self.panes.resize(split, ratio);
+                self.panes.resize(split, ratio)
             }
-            Message::Show(modal) => match modal {
-                Show::AddTrack => {
-                    self.modal = Some(modal);
-                }
-            },
-            Message::Cancel(_) => {
-                self.modal = None;
-            }
+            Message::Show(modal) => self.modal = Some(modal),
+            Message::Cancel => self.modal = None,
+            Message::Save => self.modal = None,
             Message::Response(Ok(ref a)) => match a {
                 Action::AddAudioTrack {
                     name: _,
                     ins: _,
                     audio_outs: _,
                     midi_outs: _,
-                } => {
-                    self.modal = None;
-                    self.update_children(message);
-                }
+                } => self.modal = None,
                 Action::AddMIDITrack {
                     name: _,
                     audio_outs: _,
                     midi_outs: _,
-                } => {
-                    self.modal = None;
-                    self.update_children(message);
-                }
-                _ => {
-                    self.update_children(message);
-                }
+                } => self.modal = None,
+                _ => {}
             },
-            _ => self.update_children(message),
+            _ => {},
         }
+        self.update_children(message);
     }
 
     pub fn view(&self) -> Element<'_, Message> {
         match &self.modal {
-            Some(_show) => self.add_track.view(),
+            Some(show) => match show {
+                Show::AddTrack => self.add_track.view(),
+                Show::Save => self.save.view(),
+            },
             None => pane_grid(&self.panes, |_pane, state, _is_maximized| {
                 pane_grid::Content::new(match state {
                     Pane::Tracks => container(self.tracks.view()),
@@ -114,6 +108,7 @@ impl Default for Workspace {
             tracks: tracks::Tracks::default(),
             modal: None,
             add_track: add_track::AddTrackView::default(),
+            save: save::SaveView::default(),
         }
     }
 }

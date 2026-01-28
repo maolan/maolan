@@ -98,6 +98,7 @@ impl MaolanMenu {
                 menu_tpl(menu_items!(
                     (menu_item("New", Message::Debug("New".to_string()))),
                     (menu_item("Open", Message::Debug("Open".to_string()))),
+                    (menu_item("Save", Message::Show(Show::Save))),
                     (submenu("Open Recent", Message::Debug("Open Recent".to_string())), menu_tpl(menu_items!(
                         (menu_item("First", Message::Debug("First".to_string()))),
                         (menu_item("Second", Message::Debug("Second".to_string()))),

@@ -84,9 +84,7 @@ impl Maolan {
             message::Message::Debug(s) => {
                 debug!("Maolan::update::debug({s})");
             }
-            _ => {
-                self.update_children(&message);
-            }
+            _ => self.update_children(&message)
         }
     }
 

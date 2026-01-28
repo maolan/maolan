@@ -56,18 +56,13 @@ impl AddTrackView {
                         .width(Length::Fixed(200.0)),
                 ]
                 .spacing(10),
-                match self.kind {
-                    TrackKind::Audio => {
-                        row![
-                            text("Number of inputs:"),
-                            number_input(&self.ins, 1..=32, |ins: usize| {
-                                Message::AddTrack(AddTrack::Ins(ins))
-                            })
-                        ]
-                        .spacing(10)
-                    }
-                    _ => row![],
-                },
+                row![
+                    text("Number of inputs:"),
+                    number_input(&self.ins, 1..=32, |ins: usize| {
+                        Message::AddTrack(AddTrack::Ins(ins))
+                    })
+                ]
+                .spacing(10),
                 row![
                     text("Audio outputs:"),
                     number_input(&self.audio_outs, 0..=32, |outs: usize| {
@@ -101,7 +96,7 @@ impl AddTrackView {
                         }
                     },
                     button("Cancel")
-                        .on_press(Message::Cancel(Show::AddTrack))
+                        .on_press(Message::Cancel)
                         .style(button::secondary)
                 ]
                 .spacing(10),

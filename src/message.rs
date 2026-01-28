@@ -4,6 +4,7 @@ use maolan_engine::message::Action;
 #[derive(Debug, Clone, Copy)]
 pub enum Show {
     AddTrack,
+    Save,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy, Eq)]
@@ -39,7 +40,8 @@ pub enum Message {
 
     PaneResized(pane_grid::ResizeEvent),
     Show(Show),
-    Cancel(Show),
+    Cancel,
 
     AddTrack(AddTrack),
+    Save,
 }
