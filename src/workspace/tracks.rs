@@ -49,13 +49,14 @@ impl Tracks {
                 }
                 Action::AddMIDITrack {
                     name,
+                    ins,
                     midi_outs,
                     audio_outs,
                 } => {
                     self.tracks.push(Track::new(
                         name.clone(),
                         0.0,
-                        0,
+                        ins.clone(),
                         TrackType::MIDI,
                         audio_outs.clone(),
                         midi_outs.clone(),

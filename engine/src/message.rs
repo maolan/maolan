@@ -16,6 +16,7 @@ pub enum Action {
     },
     AddMIDITrack {
         name: String,
+        ins: usize,
         midi_outs: usize,
         audio_outs: usize,
     },

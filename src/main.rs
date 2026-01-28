@@ -83,7 +83,6 @@ impl Maolan {
 
         if let Some(arr) = session["tracks"].as_array() {
             for track in arr {
-                println!("track: {}", track);
                 let name = {
                     if let Some(value) = track["name"].as_str() {
                         value.to_string()
@@ -126,14 +125,15 @@ impl Maolan {
                 };
                 if track["track_type"] == "Audio" {
                     CLIENT.send(EngineMessage::Request(Action::AddAudioTrack {
-                        name,
+                        name: name.clone(),
                         ins,
                         audio_outs,
                         midi_outs,
                     }));
                 } else if track["track_type"] == "MIDI" {
                     CLIENT.send(EngineMessage::Request(Action::AddMIDITrack {
-                        name,
+                        name: name.clone(),
+                        ins,
                         audio_outs,
                         midi_outs,
                     }));
@@ -146,7 +146,7 @@ impl Maolan {
                 }
                 if let Some(value) = track["armed"].as_bool() {
                     if value {
-                        CLIENT.send(EngineMessage::Request(Action::TrackToggleArm(track["name"].to_string())));
+                        CLIENT.send(EngineMessage::Request(Action::TrackToggleArm(name.clone())));
                     }
                 } else {
                     return Err(io::Error::new(
@@ -156,7 +156,9 @@ impl Maolan {
                 }
                 if let Some(value) = track["muted"].as_bool() {
                     if value {
-                        CLIENT.send(EngineMessage::Request(Action::TrackToggleMute(track["name"].to_string())));
+                        CLIENT.send(EngineMessage::Request(Action::TrackToggleMute(
+                            name.clone(),
+                        )));
                     }
                 } else {
                     return Err(io::Error::new(
@@ -166,7 +168,9 @@ impl Maolan {
                 }
                 if let Some(value) = track["soloed"].as_bool() {
                     if value {
-                        CLIENT.send(EngineMessage::Request(Action::TrackToggleMute(track["name"].to_string())));
+                        CLIENT.send(EngineMessage::Request(Action::TrackToggleSolo(
+                            name.clone(),
+                        )));
                     }
                 } else {
                     return Err(io::Error::new(
@@ -183,6 +187,7 @@ impl Maolan {
         }
         Ok(())
     }
+
     fn update_children(&mut self, message: &message::Message) {
         self.menu.update(message.clone());
         self.workspace.update(message.clone());

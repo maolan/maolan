@@ -14,10 +14,10 @@ pub struct MIDITrack {
 }
 
 impl MIDITrack {
-    pub fn new(name: String, midi_outs: usize, audio_outs: usize) -> Self {
+    pub fn new(name: String, ins: usize, midi_outs: usize, audio_outs: usize) -> Self {
         Self {
             name,
-            ins: 1,
+            ins,
             audio_outs,
             midi_outs,
             level: 0.0,

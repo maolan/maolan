@@ -90,6 +90,7 @@ impl AddTrackView {
                         TrackKind::MIDI => {
                             button("Create").on_press(Message::Request(Action::AddMIDITrack {
                                 name: self.name.clone(),
+                                ins: self.ins,
                                 audio_outs: self.audio_outs,
                                 midi_outs: self.midi_outs,
                             }))

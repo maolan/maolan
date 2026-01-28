@@ -64,6 +64,7 @@ impl Workspace {
                 } => self.modal = None,
                 Action::AddMIDITrack {
                     name: _,
+                    ins: _,
                     audio_outs: _,
                     midi_outs: _,
                 } => self.modal = None,

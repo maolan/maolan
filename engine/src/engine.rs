@@ -107,6 +107,7 @@ impl Engine {
                         }
                         Action::AddMIDITrack {
                             ref name,
+                            ins,
                             midi_outs,
                             audio_outs,
                         } => {
@@ -114,6 +115,7 @@ impl Engine {
                                 name.clone(),
                                 Arc::new(UnsafeMutex::new(Box::new(MIDITrack::new(
                                     name.clone(),
+                                    ins,
                                     midi_outs,
                                     audio_outs,
                                 )))),
