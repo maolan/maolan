@@ -97,7 +97,7 @@ impl MaolanMenu {
             (menu_dropdown("File", Message::Debug("File".to_string())), {
                 menu_tpl(menu_items!(
                     (menu_item("New", Message::Debug("New".to_string()))),
-                    (menu_item("Open", Message::Debug("Open".to_string()))),
+                    (menu_item("Open", Message::Show(Show::Open))),
                     (menu_item("Save", Message::Show(Show::Save))),
                     (submenu("Open Recent", Message::Debug("Open Recent".to_string())), menu_tpl(menu_items!(
                         (menu_item("First", Message::Debug("First".to_string()))),

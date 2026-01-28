@@ -5,6 +5,7 @@ use maolan_engine::message::Action;
 pub enum Show {
     AddTrack,
     Save,
+    Open,
 }
 
 #[derive(Debug, Clone, PartialEq, Copy, Eq)]
@@ -45,4 +46,6 @@ pub enum Message {
     AddTrack(AddTrack),
     Save(String),
     SavePath(String),
+    Open(String),
+    OpenPath(String),
 }

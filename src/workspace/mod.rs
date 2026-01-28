@@ -1,6 +1,7 @@
 mod add_track;
 mod editor;
 mod mixer;
+mod open;
 mod save;
 mod tracks;
 
@@ -27,6 +28,7 @@ pub struct Workspace {
     modal: Option<Show>,
     add_track: add_track::AddTrackView,
     save: save::SaveView,
+    open: open::OpenView,
 }
 
 impl Workspace {
@@ -42,6 +44,7 @@ impl Workspace {
         self.tracks.update(message.clone());
         self.add_track.update(message.clone());
         self.save.update(message.clone());
+        self.open.update(message.clone());
     }
 
     pub fn update(&mut self, message: Message) {
@@ -76,6 +79,7 @@ impl Workspace {
             Some(show) => match show {
                 Show::AddTrack => self.add_track.view(),
                 Show::Save => self.save.view(),
+                Show::Open => self.open.view(),
             },
             None => pane_grid(&self.panes, |_pane, state, _is_maximized| {
                 pane_grid::Content::new(match state {
@@ -116,6 +120,7 @@ impl Default for Workspace {
             modal: None,
             add_track: add_track::AddTrackView::default(),
             save: save::SaveView::default(),
+            open: open::OpenView::default(),
         }
     }
 }

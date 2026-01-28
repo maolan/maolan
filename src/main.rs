@@ -4,7 +4,9 @@ mod state;
 mod style;
 mod workspace;
 
+use serde_json::Value;
 use std::fs::{self, File};
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::process::exit;
 use std::sync::LazyLock;
@@ -17,7 +19,7 @@ use tracing_subscriber::{
 
 use iced::Subscription;
 use iced::Theme;
-use iced::futures::Stream;
+use iced::futures::{Stream, io};
 use iced::widget::column;
 
 use iced_aw::ICED_AW_FONT_BYTES;
@@ -66,10 +68,119 @@ impl Maolan {
         let result = self.workspace.json();
         let mut p = PathBuf::from(path.clone());
         p.push(filename);
-        println!("{:?}: {}", p, result);
-        let _err = fs::create_dir_all(path)?;
+        fs::create_dir_all(path)?;
         let file = File::create(&p)?;
         serde_json::to_writer_pretty(file, &result)?;
+        Ok(())
+    }
+    fn load(&self, path: String) -> std::io::Result<()> {
+        let filename = "session.json";
+        let mut p = PathBuf::from(path.clone());
+        p.push(filename);
+        let file = File::open(&p)?;
+        let reader = BufReader::new(file);
+        let session: Value = serde_json::from_reader(reader)?;
+
+        if let Some(arr) = session["tracks"].as_array() {
+            for track in arr {
+                println!("track: {}", track);
+                let name = {
+                    if let Some(value) = track["name"].as_str() {
+                        value.to_string()
+                    } else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "No 'name' in track",
+                        ));
+                    }
+                };
+                let ins = {
+                    if let Some(value) = track["ins"].as_u64() {
+                        value as usize
+                    } else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "No 'ins' in track",
+                        ));
+                    }
+                };
+                let audio_outs = {
+                    if let Some(value) = track["audio_outs"].as_u64() {
+                        value as usize
+                    } else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "No 'audio_outs' in track",
+                        ));
+                    }
+                };
+                let midi_outs = {
+                    if let Some(value) = track["midi_outs"].as_u64() {
+                        value as usize
+                    } else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "No 'midi_outs' in track",
+                        ));
+                    }
+                };
+                if track["track_type"] == "Audio" {
+                    CLIENT.send(EngineMessage::Request(Action::AddAudioTrack {
+                        name,
+                        ins,
+                        audio_outs,
+                        midi_outs,
+                    }));
+                } else if track["track_type"] == "MIDI" {
+                    CLIENT.send(EngineMessage::Request(Action::AddMIDITrack {
+                        name,
+                        audio_outs,
+                        midi_outs,
+                    }));
+                } else {
+                    let track_type = track["track_type"].to_string();
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("Unknown track type '{track_type}'"),
+                    ));
+                }
+                if let Some(value) = track["armed"].as_bool() {
+                    if value {
+                        CLIENT.send(EngineMessage::Request(Action::TrackToggleArm(track["name"].to_string())));
+                    }
+                } else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "'armed' is not boolean",
+                    ));
+                }
+                if let Some(value) = track["muted"].as_bool() {
+                    if value {
+                        CLIENT.send(EngineMessage::Request(Action::TrackToggleMute(track["name"].to_string())));
+                    }
+                } else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "'muted' is not boolean",
+                    ));
+                }
+                if let Some(value) = track["soloed"].as_bool() {
+                    if value {
+                        CLIENT.send(EngineMessage::Request(Action::TrackToggleMute(track["name"].to_string())));
+                    }
+                } else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "'soloed' is not boolean",
+                    ));
+                }
+            }
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "'tracks' is not an array",
+            ));
+        }
         Ok(())
     }
     fn update_children(&mut self, message: &message::Message) {
@@ -92,12 +203,18 @@ impl Maolan {
             Message::Debug(ref s) => {
                 debug!("Maolan::update::debug({s})");
             }
-            Message::Save(ref path) => {
-                match self.save(path.clone()) {
-                    Ok(_) => {}
-                    Err(s) => {error!("{}", s);}
+            Message::Save(ref path) => match self.save(path.clone()) {
+                Err(s) => {
+                    error!("{}", s);
                 }
-            }
+                _ => {}
+            },
+            Message::Open(ref path) => match self.load(path.clone()) {
+                Err(s) => {
+                    error!("{}", s);
+                }
+                _ => {}
+            },
             _ => {}
         }
         self.update_children(&message);
