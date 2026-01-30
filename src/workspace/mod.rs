@@ -5,7 +5,10 @@ mod open;
 mod save;
 mod tracks;
 
-use crate::message::{Message, Show};
+use crate::{
+    message::{Message, Show},
+    state::State,
+};
 use iced::{
     Element,
     widget::{container, pane_grid, pane_grid::Axis},
@@ -21,20 +24,51 @@ enum Pane {
 }
 
 pub struct Workspace {
-    panes: pane_grid::State<Pane>,
+    add_track: add_track::AddTrackView,
     editor: editor::Editor,
     mixer: mixer::Mixer,
-    tracks: tracks::Tracks,
     modal: Option<Show>,
-    add_track: add_track::AddTrackView,
-    save: save::SaveView,
     open: open::OpenView,
+    panes: pane_grid::State<Pane>,
+    save: save::SaveView,
+    state: State,
+    tracks: tracks::Tracks,
 }
 
 impl Workspace {
+    pub fn new(state: State) -> Self {
+        let (mut panes, pane) = pane_grid::State::new(Pane::Tracks);
+        panes.split(Axis::Horizontal, pane, Pane::Mixer);
+        panes.split(Axis::Vertical, pane, Pane::Editor);
+        {
+            let p = panes.clone();
+            let mut i = 0;
+            for s in p.layout().splits() {
+                let split = s.clone();
+                if i == 0 {
+                    panes.resize(split, 0.75);
+                } else if i == 1 {
+                    panes.resize(split, 0.1);
+                }
+                i += 1;
+            }
+        }
+        Self {
+            add_track: add_track::AddTrackView::default(),
+            editor: editor::Editor::new(state.clone()),
+            mixer: mixer::Mixer::new(state.clone()),
+            modal: None,
+            open: open::OpenView::default(),
+            panes,
+            save: save::SaveView::default(),
+            state: state.clone(),
+            tracks: tracks::Tracks::new(state.clone()),
+        }
+    }
+
     pub fn json(&self) -> Value {
         json!({
-            "tracks": self.tracks.json(),
+            "tracks": &self.state.blocking_read().tracks,
         })
     }
 
@@ -80,37 +114,6 @@ impl Workspace {
             })
             .on_resize(10, Message::PaneResized)
             .into(),
-        }
-    }
-}
-
-impl Default for Workspace {
-    fn default() -> Self {
-        let (mut panes, pane) = pane_grid::State::new(Pane::Tracks);
-        panes.split(Axis::Horizontal, pane, Pane::Mixer);
-        panes.split(Axis::Vertical, pane, Pane::Editor);
-        {
-            let p = panes.clone();
-            let mut i = 0;
-            for s in p.layout().splits() {
-                let split = s.clone();
-                if i == 0 {
-                    panes.resize(split, 0.75);
-                } else if i == 1 {
-                    panes.resize(split, 0.1);
-                }
-                i += 1;
-            }
-        }
-        Self {
-            panes,
-            editor: editor::Editor::default(),
-            mixer: mixer::Mixer::default(),
-            tracks: tracks::Tracks::default(),
-            modal: None,
-            add_track: add_track::AddTrackView::default(),
-            save: save::SaveView::default(),
-            open: open::OpenView::default(),
         }
     }
 }

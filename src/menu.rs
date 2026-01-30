@@ -2,7 +2,7 @@ use crate::message::{Message, Show};
 use engine::message::Action;
 use iced::widget::{button, row, text};
 use iced::{Border, Color, Element, Length, alignment};
-use iced_aw::menu::{DrawPath, Menu};
+use iced_aw::menu::{DrawPath, Menu as IcedMenu};
 use iced_aw::{menu_bar, menu_items};
 use maolan_engine as engine;
 
@@ -84,13 +84,13 @@ fn submenu(label: &str, msg: Message) -> Element<'_, Message, iced::Theme, iced:
 }
 
 #[derive(Default)]
-pub struct MaolanMenu {}
+pub struct Menu {}
 
-impl MaolanMenu {
+impl Menu {
     pub fn update(&mut self, _message: Message) {}
 
     pub fn view(&self) -> iced::Element<'_, Message> {
-        let menu_tpl = |items| Menu::new(items).width(180.0).offset(15.0).spacing(5.0);
+        let menu_tpl = |items| IcedMenu::new(items).width(180.0).offset(15.0).spacing(5.0);
 
         #[rustfmt::skip]
         let mb = menu_bar!(

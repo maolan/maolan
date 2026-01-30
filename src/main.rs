@@ -9,13 +9,14 @@ use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::PathBuf;
 use std::process::exit;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use tracing::{Level, debug, error, span};
 use tracing_subscriber;
 use tracing_subscriber::{
     fmt::{Layer as FmtLayer, writer::MakeWriterExt},
     prelude::*,
 };
+use tokio::sync::RwLock;
 
 use iced::Subscription;
 use iced::Theme;
@@ -29,6 +30,7 @@ use iced_aw::ICED_AW_FONT_BYTES;
 use engine::message::{Action, Message as EngineMessage, TrackKind};
 use maolan_engine as engine;
 use message::Message;
+use state::{State, StateData, Track};
 
 static CLIENT: LazyLock<engine::client::Client> =
     LazyLock::new(|| engine::client::Client::default());
@@ -58,13 +60,21 @@ pub fn main() -> iced::Result {
         .run()
 }
 
-#[derive(Default)]
 struct Maolan {
-    ctrl: bool,
-    shift: bool,
-    selected: Vec<String>,
-    menu: menu::MaolanMenu,
+    menu: menu::Menu,
     workspace: workspace::Workspace,
+    state: State,
+}
+
+impl Default for Maolan {
+    fn default() -> Self {
+        let state = Arc::new(RwLock::new(StateData::default()));
+        Self {
+            state: state.clone(),
+            menu: menu::Menu::default(),
+            workspace: workspace::Workspace::new(state.clone()),
+        }
+    }
 }
 
 impl Maolan {
@@ -201,6 +211,9 @@ impl Maolan {
     fn update_children(&mut self, message: &message::Message) {
         self.menu.update(message.clone());
         self.workspace.update(message.clone());
+        for track in &mut self.state.blocking_write().tracks {
+            track.update(message.clone());
+        }
     }
 
     fn update(&mut self, message: message::Message) {
@@ -215,6 +228,27 @@ impl Maolan {
             Message::Response(Ok(ref a)) => match a {
                 Action::Quit => {
                     exit(0);
+                }
+                Action::AddTrack {
+                    name,
+                    kind,
+                    ins,
+                    audio_outs,
+                    midi_outs,
+                } => {
+                    let tracks = &mut self.state.blocking_write().tracks;
+                    tracks.push(Track::new(
+                        name.clone(),
+                        *kind,
+                        0.0,
+                        *ins,
+                        *audio_outs,
+                        *midi_outs,
+                    ));
+                }
+                Action::DeleteTrack(name) => {
+                    let tracks = &mut self.state.blocking_write().tracks;
+                    tracks.retain(|track| track.name != *name);
                 }
                 _ => {}
             },
@@ -234,33 +268,35 @@ impl Maolan {
                 _ => {}
             },
             Message::ShiftPressed => {
-                self.shift = true;
+                self.state.blocking_write().shift = true;
             }
             Message::ShiftReleased => {
-                self.shift = false;
+                self.state.blocking_write().shift = false;
             }
             Message::CtrlPressed => {
-                self.ctrl = true;
+                self.state.blocking_write().ctrl = true;
             }
             Message::CtrlReleased => {
-                self.ctrl = false;
+                self.state.blocking_write().ctrl = false;
             }
             Message::SelectTrack(ref name) => {
-                if self.ctrl {
-                    if self.selected.contains(name) {
-                        self.selected.retain(|n| n != name);
+                let ctrl = self.state.blocking_read().ctrl;
+                let selected = self.state.blocking_read().selected.contains(name);
+                if ctrl {
+                    if selected {
+                        self.state.blocking_write().selected.retain(|n| n != name);
                     } else {
-                        self.selected.push(name.clone());
+                        self.state.blocking_write().selected.push(name.clone());
                     }
                 } else {
-                    self.selected.clear();
-                    if !self.selected.contains(name) {
-                        self.selected.push(name.clone());
+                    self.state.blocking_write().selected.clear();
+                    if !selected {
+                        self.state.blocking_write().selected.push(name.clone());
                     }
                 }
             }
             Message::DeleteSelectedTracks => {
-                for name in &self.selected {
+                for name in &self.state.blocking_read().selected {
                     CLIENT.send(EngineMessage::Request(Action::DeleteTrack(name.clone())));
                 }
             }

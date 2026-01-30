@@ -1,137 +1,82 @@
-use crate::{message::Message, state::Track, style};
+use crate::{
+    message::Message,
+    state::{State, Track},
+    style,
+};
 
 use iced::{
     Alignment, Background, Border, Color, Element,
     widget::{button, column, container, mouse_area, row, vertical_slider},
 };
-use maolan_engine::message::{Action, TrackKind};
+use maolan_engine::message::Action;
 
 #[derive(Debug, Default)]
 pub struct Mixer {
-    shift: bool,
-    ctrl: bool,
-    selected: Vec<String>,
-    tracks: Vec<Track>,
+    state: State,
 }
 
 impl Mixer {
-    fn update_children(&mut self, message: Message) {
-        match message {
-            _ => {
-                for track in &mut self.tracks {
-                    track.update(message.clone());
-                }
-            }
-        }
+    pub fn new(state: State) -> Self {
+        Self { state }
     }
 
-    pub fn update(&mut self, message: Message) {
-        match message {
-            Message::Response(Ok(ref a)) => match a {
-                Action::AddTrack {
-                    name,
-                    kind,
-                    ins,
-                    audio_outs,
-                    midi_outs,
-                } => match kind {
-                    TrackKind::Audio => {
-                        self.tracks.push(Track::new(
-                            name.clone(),
-                            TrackKind::Audio,
-                            0.0,
-                            ins.clone(),
-                            audio_outs.clone(),
-                            midi_outs.clone(),
-                        ));
-                    }
-                    TrackKind::MIDI => {
-                        self.tracks.push(Track::new(
-                            name.clone(),
-                            TrackKind::MIDI,
-                            0.0,
-                            ins.clone(),
-                            audio_outs.clone(),
-                            midi_outs.clone(),
-                        ));
-                    }
-                },
-                Action::DeleteTrack(name) => {
-                    self.selected.clear();
-                    self.tracks.retain(|track| track.name != *name);
-                }
-                _ => {}
-            },
-            Message::ShiftPressed => {
-                self.shift = true;
-            }
-            Message::ShiftReleased => {
-                self.shift = false;
-            }
-            Message::CtrlPressed => {
-                self.ctrl = true;
-            }
-            Message::CtrlReleased => {
-                self.ctrl = false;
-            }
-            Message::SelectTrack(ref name) => {
-                if self.ctrl {
-                    if self.selected.contains(name) {
-                        self.selected.retain(|n| n != name);
-                    } else {
-                        self.selected.push(name.clone());
-                    }
-                } else {
-                    self.selected.clear();
-                    if !self.selected.contains(name) {
-                        self.selected.push(name.clone());
-                    }
-                }
-            }
-            _ => {}
-        }
-        self.update_children(message);
-    }
+    pub fn update(&mut self, _: Message) {}
 
     pub fn view(&self) -> Element<'_, Message> {
         let mut result = row![];
-        for track in &self.tracks {
+        let (tracks, selected) = {
+            let state = self.state.blocking_read();
+            (state.tracks.clone(), state.selected.clone())
+        };
+
+        for track in tracks {
+            let selected = selected.contains(&track.name);
+            let t_name = track.name.clone();
+
             result = result.push(
                 mouse_area(
                     container(column![
-                        vertical_slider(-90.0..=20.0, track.level, |new_val| {
-                            Message::Request(Action::TrackLevel(track.name.clone(), new_val))
-                        })
+                        vertical_slider(-90.0..=20.0, track.level, {
+                            let name = track.name.clone();
+                            move |new_val| {
+                                Message::Request(Action::TrackLevel(name.clone(), new_val))
+                        }})
                         .shift_step(0.1),
                         row![
                             button("R")
                                 .padding(3)
-                                .style(|theme, _state| { style::arm::style(theme, track.armed) })
+                                .style(move |theme, _state| {
+                                    style::arm::style(theme, track.armed)
+                                })
                                 .on_press(Message::Request(Action::TrackToggleArm(
-                                    track.name.clone()
+                                    t_name.clone()
                                 ))),
                             button("M")
                                 .padding(3)
-                                .style(|theme, _state| { style::mute::style(theme, track.muted) })
+                                .style(move |theme, _state| {
+                                    style::mute::style(theme, track.muted)
+                                })
                                 .on_press(Message::Request(Action::TrackToggleMute(
-                                    track.name.clone()
+                                    t_name.clone()
                                 ))),
                             button("S")
                                 .padding(3)
-                                .style(|theme, _state| { style::solo::style(theme, track.soloed) })
+                                .style(move |theme, _state| {
+                                    style::solo::style(theme, track.soloed)
+                                })
                                 .on_press(Message::Request(Action::TrackToggleSolo(
-                                    track.name.clone()
+                                    t_name.clone()
                                 ))),
                         ]
                     ])
                     .padding(5)
                     .align_x(Alignment::Center)
                     .align_y(Alignment::Center)
-                    .style(|_theme| {
+                    .style(move |_theme| {
                         use container::Style;
 
                         Style {
-                            background: if self.selected.contains(&track.name) {
+                            background: if selected {
                                 Some(Background::Color(Color {
                                     r: 1.0,
                                     g: 1.0,
@@ -160,7 +105,7 @@ impl Mixer {
                         }
                     }),
                 )
-                .on_press(Message::SelectTrack(track.name.clone())),
+                .on_press(Message::SelectTrack(t_name.clone())),
             )
         }
         result.into()

@@ -28,7 +28,7 @@ where
     })
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
     pub name: String,
     #[serde(
