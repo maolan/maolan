@@ -60,6 +60,8 @@ pub fn main() -> iced::Result {
 
 #[derive(Default)]
 struct Maolan {
+    ctrl: bool,
+    shift: bool,
     selected: Vec<String>,
     menu: menu::MaolanMenu,
     workspace: workspace::Workspace,
@@ -231,8 +233,31 @@ impl Maolan {
                 }
                 _ => {}
             },
+            Message::ShiftPressed => {
+                self.shift = true;
+            }
+            Message::ShiftReleased => {
+                self.shift = false;
+            }
+            Message::CtrlPressed => {
+                self.ctrl = true;
+            }
+            Message::CtrlReleased => {
+                self.ctrl = false;
+            }
             Message::SelectTrack(ref name) => {
-                self.selected.push(name.clone());
+                if self.ctrl {
+                    if self.selected.contains(name) {
+                        self.selected.retain(|n| n != name);
+                    } else {
+                        self.selected.push(name.clone());
+                    }
+                } else {
+                    self.selected.clear();
+                    if !self.selected.contains(name) {
+                        self.selected.push(name.clone());
+                    }
+                }
             }
             Message::DeleteSelectedTracks => {
                 for name in &self.selected {
@@ -263,20 +288,18 @@ impl Maolan {
         }
         let engine_sub = Subscription::run(listener);
 
-        let keyboard_sub = keyboard::listen().map(|event| {
-            match event {
-                Event::KeyPressed { key, .. } => match key {
-                    keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
-                    keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
-                    _ => Message::Ignore,
-                },
-                Event::KeyReleased { key, .. } => match key {
-                    keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftReleased,
-                    keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlReleased,
-                    _ => Message::Ignore,
-                },
+        let keyboard_sub = keyboard::listen().map(|event| match event {
+            Event::KeyPressed { key, .. } => match key {
+                keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
+                keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
                 _ => Message::Ignore,
-            }
+            },
+            Event::KeyReleased { key, .. } => match key {
+                keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftReleased,
+                keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlReleased,
+                _ => Message::Ignore,
+            },
+            _ => Message::Ignore,
         });
 
         Subscription::batch(vec![engine_sub, keyboard_sub])

@@ -1,7 +1,4 @@
-use crate::{
-    message::Message,
-    state::{Track},
-};
+use crate::{message::Message, state::Track};
 use iced::{
     Background, Border, Color, Element, Length, Point, Renderer, Theme,
     widget::{Stack, column, container, pin, text},
@@ -10,6 +7,8 @@ use maolan_engine::message::{Action, TrackKind};
 
 #[derive(Debug, Default)]
 pub struct Editor {
+    ctrl: bool,
+    shift: bool,
     selected: Vec<String>,
     tracks: Vec<Track>,
 }
@@ -62,8 +61,31 @@ impl Editor {
                 }
                 _ => {}
             },
+            Message::ShiftPressed => {
+                self.shift = true;
+            }
+            Message::ShiftReleased => {
+                self.shift = false;
+            }
+            Message::CtrlPressed => {
+                self.ctrl = true;
+            }
+            Message::CtrlReleased => {
+                self.ctrl = false;
+            }
             Message::SelectTrack(ref name) => {
-                self.selected.push(name.clone());
+                if self.ctrl {
+                    if self.selected.contains(name) {
+                        self.selected.retain(|n| n != name);
+                    } else {
+                        self.selected.push(name.clone());
+                    }
+                } else {
+                    self.selected.clear();
+                    if !self.selected.contains(name) {
+                        self.selected.push(name.clone());
+                    }
+                }
             }
             _ => {}
         }

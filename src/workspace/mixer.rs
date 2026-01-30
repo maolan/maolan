@@ -2,7 +2,7 @@ use crate::{message::Message, state::Track, style};
 
 use iced::{
     Alignment, Background, Border, Color, Element,
-    widget::{button, column, container, row, vertical_slider, mouse_area},
+    widget::{button, column, container, mouse_area, row, vertical_slider},
 };
 use maolan_engine::message::{Action, TrackKind};
 
@@ -75,11 +75,17 @@ impl Mixer {
                 self.ctrl = false;
             }
             Message::SelectTrack(ref name) => {
-                if !self.ctrl {
+                if self.ctrl {
+                    if self.selected.contains(name) {
+                        self.selected.retain(|n| n != name);
+                    } else {
+                        self.selected.push(name.clone());
+                    }
+                } else {
                     self.selected.clear();
-                }
-                if !self.selected.contains(name) {
-                    self.selected.push(name.clone());
+                    if !self.selected.contains(name) {
+                        self.selected.push(name.clone());
+                    }
                 }
             }
             _ => {}

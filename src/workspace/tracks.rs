@@ -67,11 +67,17 @@ impl Tracks {
                 self.ctrl = false;
             }
             Message::SelectTrack(ref name) => {
-                if !self.ctrl {
+                if self.ctrl {
+                    if self.selected.contains(name) {
+                        self.selected.retain(|n| n != name);
+                    } else {
+                        self.selected.push(name.clone());
+                    }
+                } else {
                     self.selected.clear();
-                }
-                if !self.selected.contains(name) {
-                    self.selected.push(name.clone());
+                    if !self.selected.contains(name) {
+                        self.selected.push(name.clone());
+                    }
                 }
             }
             _ => {}
