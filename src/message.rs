@@ -33,4 +33,6 @@ pub enum Message {
     SavePath(String),
     Open(String),
     OpenPath(String),
+    SelectTrack(String),
+    DeleteSelectedTracks,
 }

@@ -58,6 +58,7 @@ pub fn main() -> iced::Result {
 
 #[derive(Default)]
 struct Maolan {
+    selected: Vec<String>,
     menu: menu::MaolanMenu,
     workspace: workspace::Workspace,
 }
@@ -225,6 +226,14 @@ impl Maolan {
                 }
                 _ => {}
             },
+            Message::SelectTrack(ref name) => {
+                self.selected.push(name.clone());
+            }
+            Message::DeleteSelectedTracks => {
+                for name in &self.selected {
+                    CLIENT.send(EngineMessage::Request(Action::DeleteTrack(name.clone())));
+                }
+            }
             _ => {}
         }
         self.update_children(&message);

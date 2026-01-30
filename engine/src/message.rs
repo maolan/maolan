@@ -30,6 +30,7 @@ pub enum Action {
         audio_outs: usize,
         midi_outs: usize,
     },
+    DeleteTrack(String),
     TrackLevel(String, f32),
     TrackIns(String, usize),
     TrackAudioOuts(String, usize),

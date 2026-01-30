@@ -110,6 +110,7 @@ impl MaolanMenu {
             (menu_dropdown("Track", Message::Debug("Track".to_string())), {
                 menu_tpl(menu_items!(
                     (menu_item("New", Message::Show(Show::AddTrack))),
+                    (menu_item("Delete", Message::DeleteSelectedTracks)),
                 ))
             }),
         )

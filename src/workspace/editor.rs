@@ -10,6 +10,7 @@ use maolan_engine::message::{Action, TrackKind};
 
 #[derive(Debug, Default)]
 pub struct Editor {
+    selected: Vec<String>,
     tracks: Vec<Track>,
 }
 
@@ -55,8 +56,15 @@ impl Editor {
                         ));
                     }
                 },
+                Action::DeleteTrack(name) => {
+                    self.selected.clear();
+                    self.tracks.retain(|track| track.name != *name);
+                }
                 _ => {}
             },
+            Message::SelectTrack(ref name) => {
+                self.selected.push(name.clone());
+            }
             _ => {}
         }
         self.update_children(message);

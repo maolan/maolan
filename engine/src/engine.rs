@@ -119,6 +119,9 @@ impl Engine {
                                 );
                             }
                         },
+                        Action::DeleteTrack(ref name) => {
+                            self.state.lock().tracks.remove(name);
+                        }
                         Action::TrackLevel(ref name, value) => {
                             for (_, track) in &self.state.lock().tracks {
                                 if *name == track.lock().name() {
