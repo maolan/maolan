@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 
 #[derive(Debug, Default)]
 pub struct Tracks {
+    shift: bool,
+    ctrl: bool,
     selected: Vec<String>,
     tracks: Vec<Track>,
 }
@@ -52,8 +54,25 @@ impl Tracks {
                 }
                 _ => {}
             },
+            Message::ShiftPressed => {
+                self.shift = true;
+            }
+            Message::ShiftReleased => {
+                self.shift = false;
+            }
+            Message::CtrlPressed => {
+                self.ctrl = true;
+            }
+            Message::CtrlReleased => {
+                self.ctrl = false;
+            }
             Message::SelectTrack(ref name) => {
-                self.selected.push(name.clone());
+                if !self.ctrl {
+                    self.selected.clear();
+                }
+                if !self.selected.contains(name) {
+                    self.selected.push(name.clone());
+                }
             }
             _ => {}
         }

@@ -56,13 +56,7 @@ impl Workspace {
             Message::Cancel => self.modal = None,
             Message::Save(_) => self.modal = None,
             Message::Response(Ok(ref a)) => match a {
-                Action::AddTrack {
-                    name: _,
-                    kind: _,
-                    ins: _,
-                    audio_outs: _,
-                    midi_outs: _,
-                } => self.modal = None,
+                Action::AddTrack { .. } => self.modal = None,
                 _ => {}
             },
             _ => {}

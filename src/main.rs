@@ -20,6 +20,8 @@ use tracing_subscriber::{
 use iced::Subscription;
 use iced::Theme;
 use iced::futures::{Stream, io};
+use iced::keyboard;
+use iced::keyboard::Event;
 use iced::widget::column;
 
 use iced_aw::ICED_AW_FONT_BYTES;
@@ -201,6 +203,9 @@ impl Maolan {
 
     fn update(&mut self, message: message::Message) {
         match message {
+            Message::Ignore => {
+                return;
+            }
             Message::Request(ref a) => {
                 CLIENT.send(EngineMessage::Request(a.clone()));
                 return;
@@ -256,7 +261,24 @@ impl Maolan {
                 Some((command, receiver))
             })
         }
+        let engine_sub = Subscription::run(listener);
 
-        Subscription::run(listener)
+        let keyboard_sub = keyboard::listen().map(|event| {
+            match event {
+                Event::KeyPressed { key, .. } => match key {
+                    keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
+                    keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
+                    _ => Message::Ignore,
+                },
+                Event::KeyReleased { key, .. } => match key {
+                    keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftReleased,
+                    keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlReleased,
+                    _ => Message::Ignore,
+                },
+                _ => Message::Ignore,
+            }
+        });
+
+        Subscription::batch(vec![engine_sub, keyboard_sub])
     }
 }

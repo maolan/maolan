@@ -1,17 +1,15 @@
-use crate::{
-    message::Message,
-    state::{Track},
-    style,
-};
+use crate::{message::Message, state::Track, style};
 
 use iced::{
     Alignment, Background, Border, Color, Element,
-    widget::{button, column, container, row, vertical_slider},
+    widget::{button, column, container, row, vertical_slider, mouse_area},
 };
 use maolan_engine::message::{Action, TrackKind};
 
 #[derive(Debug, Default)]
 pub struct Mixer {
+    shift: bool,
+    ctrl: bool,
     selected: Vec<String>,
     tracks: Vec<Track>,
 }
@@ -64,8 +62,25 @@ impl Mixer {
                 }
                 _ => {}
             },
+            Message::ShiftPressed => {
+                self.shift = true;
+            }
+            Message::ShiftReleased => {
+                self.shift = false;
+            }
+            Message::CtrlPressed => {
+                self.ctrl = true;
+            }
+            Message::CtrlReleased => {
+                self.ctrl = false;
+            }
             Message::SelectTrack(ref name) => {
-                self.selected.push(name.clone());
+                if !self.ctrl {
+                    self.selected.clear();
+                }
+                if !self.selected.contains(name) {
+                    self.selected.push(name.clone());
+                }
             }
             _ => {}
         }
@@ -76,56 +91,70 @@ impl Mixer {
         let mut result = row![];
         for track in &self.tracks {
             result = result.push(
-                container(column![
-                    vertical_slider(-90.0..=20.0, track.level, |new_val| {
-                        Message::Request(Action::TrackLevel(track.name.clone(), new_val))
-                    })
-                    .shift_step(0.1),
-                    row![
-                        button("R")
-                            .padding(3)
-                            .style(|theme, _state| { style::arm::style(theme, track.armed) })
-                            .on_press(Message::Request(Action::TrackToggleArm(track.name.clone()))),
-                        button("M")
-                            .padding(3)
-                            .style(|theme, _state| { style::mute::style(theme, track.muted) })
-                            .on_press(Message::Request(Action::TrackToggleMute(
-                                track.name.clone()
-                            ))),
-                        button("S")
-                            .padding(3)
-                            .style(|theme, _state| { style::solo::style(theme, track.soloed) })
-                            .on_press(Message::Request(Action::TrackToggleSolo(
-                                track.name.clone()
-                            ))),
-                    ]
-                ])
-                .padding(5)
-                .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
-                .style(|_theme| {
-                    use container::Style;
+                mouse_area(
+                    container(column![
+                        vertical_slider(-90.0..=20.0, track.level, |new_val| {
+                            Message::Request(Action::TrackLevel(track.name.clone(), new_val))
+                        })
+                        .shift_step(0.1),
+                        row![
+                            button("R")
+                                .padding(3)
+                                .style(|theme, _state| { style::arm::style(theme, track.armed) })
+                                .on_press(Message::Request(Action::TrackToggleArm(
+                                    track.name.clone()
+                                ))),
+                            button("M")
+                                .padding(3)
+                                .style(|theme, _state| { style::mute::style(theme, track.muted) })
+                                .on_press(Message::Request(Action::TrackToggleMute(
+                                    track.name.clone()
+                                ))),
+                            button("S")
+                                .padding(3)
+                                .style(|theme, _state| { style::solo::style(theme, track.soloed) })
+                                .on_press(Message::Request(Action::TrackToggleSolo(
+                                    track.name.clone()
+                                ))),
+                        ]
+                    ])
+                    .padding(5)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .style(|_theme| {
+                        use container::Style;
 
-                    Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.8,
-                            g: 0.8,
-                            b: 0.8,
-                            a: 0.8,
-                        })),
-                        border: Border {
-                            color: Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 1.0,
+                        Style {
+                            background: if self.selected.contains(&track.name) {
+                                Some(Background::Color(Color {
+                                    r: 1.0,
+                                    g: 1.0,
+                                    b: 1.0,
+                                    a: 1.0,
+                                }))
+                            } else {
+                                Some(Background::Color(Color {
+                                    r: 0.8,
+                                    g: 0.8,
+                                    b: 0.8,
+                                    a: 0.8,
+                                }))
                             },
-                            width: 1.0,
-                            radius: 5.0.into(),
-                        },
-                        ..Style::default()
-                    }
-                }),
+                            border: Border {
+                                color: Color {
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 1.0,
+                                },
+                                width: 1.0,
+                                radius: 5.0.into(),
+                            },
+                            ..Style::default()
+                        }
+                    }),
+                )
+                .on_press(Message::SelectTrack(track.name.clone())),
             )
         }
         result.into()

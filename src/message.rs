@@ -19,6 +19,7 @@ pub enum AddTrack {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Ignore,
     Debug(String),
 
     Request(Action),
@@ -35,4 +36,9 @@ pub enum Message {
     OpenPath(String),
     SelectTrack(String),
     DeleteSelectedTracks,
+
+    ShiftPressed,
+    CtrlPressed,
+    ShiftReleased,
+    CtrlReleased,
 }
