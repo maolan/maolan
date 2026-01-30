@@ -8,11 +8,11 @@ use maolan_engine::message::{Action, TrackKind};
 
 #[derive(Debug)]
 pub struct AddTrackView {
-    name: String,
-    kind: TrackKind,
-    ins: usize,
     audio_outs: usize,
+    ins: usize,
+    kind: TrackKind,
     midi_outs: usize,
+    name: String,
 }
 
 impl AddTrackView {
@@ -106,11 +106,11 @@ impl AddTrackView {
 impl Default for AddTrackView {
     fn default() -> Self {
         Self {
-            name: "".to_string(),
-            kind: TrackKind::Audio,
-            ins: 1,
             audio_outs: 1,
+            ins: 1,
+            kind: TrackKind::Audio,
             midi_outs: 0,
+            name: "".to_string(),
         }
     }
 }

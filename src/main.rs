@@ -252,6 +252,9 @@ impl Maolan {
                 }
                 _ => {}
             },
+            Message::Response(Err(ref e)) => {
+                error!("Engine error: {e}");
+            }
             Message::Debug(ref s) => {
                 debug!("Maolan::update::debug({s})");
             }

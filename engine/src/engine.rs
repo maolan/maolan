@@ -24,20 +24,20 @@ impl WorkerData {
 }
 
 pub struct Engine {
-    state: Arc<UnsafeMutex<State>>,
-    rx: Receiver<Message>,
-    tx: Sender<Message>,
     clients: Vec<Sender<Message>>,
+    rx: Receiver<Message>,
+    state: Arc<UnsafeMutex<State>>,
+    tx: Sender<Message>,
     workers: Vec<WorkerData>,
 }
 
 impl Engine {
     pub fn new(rx: Receiver<Message>, tx: Sender<Message>) -> Self {
         Self {
-            state: Arc::new(UnsafeMutex::new(State::default())),
-            rx,
-            tx,
             clients: vec![],
+            rx,
+            state: Arc::new(UnsafeMutex::new(State::default())),
+            tx,
             workers: vec![],
         }
     }
@@ -95,30 +95,44 @@ impl Engine {
                             ins,
                             audio_outs,
                             midi_outs,
-                        } => match kind {
-                            TrackKind::Audio => {
-                                self.state.lock().tracks.insert(
-                                    name.clone(),
-                                    Arc::new(UnsafeMutex::new(Box::new(AudioTrack::new(
-                                        name.clone(),
-                                        ins,
-                                        audio_outs,
-                                        midi_outs,
-                                    )))),
-                                );
+                        } => {
+                            let tracks = &mut self.state.lock().tracks;
+                            if tracks.contains_key(name) {
+                                for client in &self.clients {
+                                    client
+                                        .send(Message::Response(Err(format!(
+                                            "Track {} already exists",
+                                            name
+                                        ))))
+                                        .expect("Error sending echo from engine");
+                                }
+                                return;
                             }
-                            TrackKind::MIDI => {
-                                self.state.lock().tracks.insert(
-                                    name.clone(),
-                                    Arc::new(UnsafeMutex::new(Box::new(MIDITrack::new(
+                            match kind {
+                                TrackKind::Audio => {
+                                    tracks.insert(
                                         name.clone(),
-                                        ins,
-                                        audio_outs,
-                                        midi_outs,
-                                    )))),
-                                );
+                                        Arc::new(UnsafeMutex::new(Box::new(AudioTrack::new(
+                                            name.clone(),
+                                            ins,
+                                            audio_outs,
+                                            midi_outs,
+                                        )))),
+                                    );
+                                }
+                                TrackKind::MIDI => {
+                                    self.state.lock().tracks.insert(
+                                        name.clone(),
+                                        Arc::new(UnsafeMutex::new(Box::new(MIDITrack::new(
+                                            name.clone(),
+                                            ins,
+                                            audio_outs,
+                                            midi_outs,
+                                        )))),
+                                    );
+                                }
                             }
-                        },
+                        }
                         Action::DeleteTrack(ref name) => {
                             self.state.lock().tracks.remove(name);
                         }
