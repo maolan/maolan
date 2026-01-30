@@ -1,12 +1,12 @@
 use crate::{
     message::Message,
-    state::{Track, TrackType},
+    state::{Track},
 };
 use iced::{
     Background, Border, Color, Element, Length, Point, Renderer, Theme,
     widget::{Stack, column, container, pin, text},
 };
-use maolan_engine::message::Action;
+use maolan_engine::message::{Action, TrackKind};
 
 #[derive(Debug, Default)]
 pub struct Editor {
@@ -27,36 +27,34 @@ impl Editor {
     pub fn update(&mut self, message: Message) {
         match message {
             Message::Response(Ok(ref a)) => match a {
-                Action::AddAudioTrack {
+                Action::AddTrack {
                     name,
+                    kind,
                     ins,
                     audio_outs,
                     midi_outs,
-                } => {
-                    self.tracks.push(Track::new(
-                        name.clone(),
-                        0.0,
-                        ins.clone(),
-                        TrackType::Audio,
-                        audio_outs.clone(),
-                        midi_outs.clone(),
-                    ));
-                }
-                Action::AddMIDITrack {
-                    name,
-                    ins,
-                    midi_outs,
-                    audio_outs,
-                } => {
-                    self.tracks.push(Track::new(
-                        name.clone(),
-                        0.0,
-                        ins.clone(),
-                        TrackType::MIDI,
-                        audio_outs.clone(),
-                        midi_outs.clone(),
-                    ));
-                }
+                } => match kind {
+                    TrackKind::Audio => {
+                        self.tracks.push(Track::new(
+                            name.clone(),
+                            TrackKind::Audio,
+                            0.0,
+                            ins.clone(),
+                            audio_outs.clone(),
+                            midi_outs.clone(),
+                        ));
+                    }
+                    TrackKind::MIDI => {
+                        self.tracks.push(Track::new(
+                            name.clone(),
+                            TrackKind::MIDI,
+                            0.0,
+                            ins.clone(),
+                            audio_outs.clone(),
+                            midi_outs.clone(),
+                        ));
+                    }
+                },
                 _ => {}
             },
             _ => {}

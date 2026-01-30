@@ -1,5 +1,5 @@
-mod track;
 mod clip;
+mod track;
 
-pub use track::{Track, TrackType};
-pub use clip::{Clip};
+pub use clip::Clip;
+pub use track::Track;

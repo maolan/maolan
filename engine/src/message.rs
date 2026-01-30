@@ -4,21 +4,31 @@ use tokio::sync::mpsc::UnboundedSender as Sender;
 // use crate::midi::track::Track as MIDITrack;
 // use crate::mutex::UnsafeMutex;
 
+#[derive(Debug, Clone, PartialEq, Copy, Eq)]
+pub enum TrackKind {
+    Audio,
+    MIDI,
+}
+
+impl std::fmt::Display for TrackKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Audio => "Audio",
+            Self::MIDI => "MIDI",
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Action {
     Quit,
     Play,
-    AddAudioTrack {
+    AddTrack {
         name: String,
+        kind: TrackKind,
         ins: usize,
         audio_outs: usize,
         midi_outs: usize,
-    },
-    AddMIDITrack {
-        name: String,
-        ins: usize,
-        midi_outs: usize,
-        audio_outs: usize,
     },
     TrackLevel(String, f32),
     TrackIns(String, usize),

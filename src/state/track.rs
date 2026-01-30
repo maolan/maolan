@@ -1,20 +1,42 @@
-use maolan_engine::message::Action;
-use crate::message::Message;
 use super::Clip;
-use serde::{Serialize, Deserialize};
+use crate::message::Message;
+use maolan_engine::message::{Action, TrackKind};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+fn custom_deserializer<'de, D>(deserializer: D) -> Result<TrackKind, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    match s.as_str() {
+        "Audio" => Ok(TrackKind::Audio),
+        "MIDI" => Ok(TrackKind::MIDI),
+        _ => Err(serde::de::Error::custom(format!(
+            "Unknown track type '{}'",
+            s
+        ))),
+    }
+}
 
-#[derive(Debug, Serialize, Deserialize)]
-pub enum TrackType {
-    Audio,
-    MIDI,
+fn custom_serializer<S>(kind: &TrackKind, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    s.serialize_str(match kind {
+        TrackKind::Audio => "Audio",
+        TrackKind::MIDI => "MIDI",
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Track {
     pub name: String,
+    #[serde(
+        deserialize_with = "custom_deserializer",
+        serialize_with = "custom_serializer"
+    )]
+    pub track_kind: TrackKind,
     pub level: f32,
-    pub track_type: TrackType,
     pub ins: usize,
     pub audio_outs: usize,
     pub midi_outs: usize,
@@ -27,17 +49,17 @@ pub struct Track {
 impl Track {
     pub fn new(
         name: String,
+        track_kind: TrackKind,
         level: f32,
         ins: usize,
-        track_type: TrackType,
         audio_outs: usize,
         midi_outs: usize,
     ) -> Self {
         Self {
             name,
+            track_kind,
             level,
             ins,
-            track_type,
             audio_outs,
             midi_outs,
             armed: false,
@@ -51,48 +73,45 @@ impl Track {
 impl Track {
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::Response(Ok(a)) => {
-                match a {
-                    Action::TrackLevel(name, level) => {
-                        if name == self.name {
-                            self.level = level;
-                        }
+            Message::Response(Ok(a)) => match a {
+                Action::TrackLevel(name, level) => {
+                    if name == self.name {
+                        self.level = level;
                     }
-                    Action::TrackIns(name, ins) => {
-                        if name == self.name {
-                            self.ins = ins;
-                        }
-                    }
-                    Action::TrackAudioOuts(name, outs) => {
-                        if name == self.name {
-                            self.audio_outs = outs;
-                        }
-                    }
-                    Action::TrackMIDIOuts(name, outs) => {
-                        if name == self.name {
-                            self.midi_outs = outs;
-                        }
-                    }
-                    Action::TrackToggleArm(name) => {
-                        if name == self.name {
-                            self.armed = !self.armed;
-                        }
-                    }
-                    Action::TrackToggleMute(name) => {
-                        if name == self.name {
-                            self.muted = !self.muted;
-                        }
-                    }
-                    Action::TrackToggleSolo(name) => {
-                        if name == self.name {
-                            self.soloed = !self.soloed;
-                        }
-                    }
-                    _ => {}
                 }
-            }
+                Action::TrackIns(name, ins) => {
+                    if name == self.name {
+                        self.ins = ins;
+                    }
+                }
+                Action::TrackAudioOuts(name, outs) => {
+                    if name == self.name {
+                        self.audio_outs = outs;
+                    }
+                }
+                Action::TrackMIDIOuts(name, outs) => {
+                    if name == self.name {
+                        self.midi_outs = outs;
+                    }
+                }
+                Action::TrackToggleArm(name) => {
+                    if name == self.name {
+                        self.armed = !self.armed;
+                    }
+                }
+                Action::TrackToggleMute(name) => {
+                    if name == self.name {
+                        self.muted = !self.muted;
+                    }
+                }
+                Action::TrackToggleSolo(name) => {
+                    if name == self.name {
+                        self.soloed = !self.soloed;
+                    }
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
 }
-

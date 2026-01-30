@@ -1,10 +1,10 @@
-use crate::message::{AddTrack, Message, TrackKind};
+use crate::message::{AddTrack, Message};
 use iced::{
     Alignment, Element, Length,
     widget::{button, column, container, pick_list, row, text, text_input},
 };
 use iced_aw::number_input;
-use maolan_engine::message::Action;
+use maolan_engine::message::{Action, TrackKind};
 
 #[derive(Debug)]
 pub struct AddTrackView {
@@ -78,24 +78,13 @@ impl AddTrackView {
                 ]
                 .spacing(10),
                 row![
-                    match self.kind {
-                        TrackKind::Audio => {
-                            button("Create").on_press(Message::Request(Action::AddAudioTrack {
-                                name: self.name.clone(),
-                                ins: self.ins,
-                                audio_outs: self.audio_outs,
-                                midi_outs: self.midi_outs,
-                            }))
-                        }
-                        TrackKind::MIDI => {
-                            button("Create").on_press(Message::Request(Action::AddMIDITrack {
-                                name: self.name.clone(),
-                                ins: self.ins,
-                                audio_outs: self.audio_outs,
-                                midi_outs: self.midi_outs,
-                            }))
-                        }
-                    },
+                    button("Create").on_press(Message::Request(Action::AddTrack {
+                        name: self.name.clone(),
+                        kind: self.kind,
+                        ins: self.ins,
+                        audio_outs: self.audio_outs,
+                        midi_outs: self.midi_outs,
+                    })),
                     button("Cancel")
                         .on_press(Message::Cancel)
                         .style(button::secondary)

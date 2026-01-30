@@ -24,7 +24,7 @@ use iced::widget::column;
 
 use iced_aw::ICED_AW_FONT_BYTES;
 
-use engine::message::{Action, Message as EngineMessage};
+use engine::message::{Action, Message as EngineMessage, TrackKind};
 use maolan_engine as engine;
 use message::Message;
 
@@ -123,27 +123,32 @@ impl Maolan {
                         ));
                     }
                 };
-                if track["track_type"] == "Audio" {
-                    CLIENT.send(EngineMessage::Request(Action::AddAudioTrack {
-                        name: name.clone(),
-                        ins,
-                        audio_outs,
-                        midi_outs,
-                    }));
-                } else if track["track_type"] == "MIDI" {
-                    CLIENT.send(EngineMessage::Request(Action::AddMIDITrack {
-                        name: name.clone(),
-                        ins,
-                        audio_outs,
-                        midi_outs,
-                    }));
-                } else {
-                    let track_type = track["track_type"].to_string();
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        format!("Unknown track type '{track_type}'"),
-                    ));
-                }
+                let kind = {
+                    if let Some(value) = track["track_kind"].as_str() {
+                        if value == "Audio" {
+                            TrackKind::Audio
+                        } else if value == "MIDI" {
+                            TrackKind::MIDI
+                        } else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                format!("'track_kind' value '{}' is invalid", value),
+                            ));
+                        }
+                    } else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "No 'midi_outs' in track",
+                        ));
+                    }
+                };
+                CLIENT.send(EngineMessage::Request(Action::AddTrack {
+                    name: name.clone(),
+                    kind,
+                    ins,
+                    audio_outs,
+                    midi_outs,
+                }));
                 if let Some(value) = track["armed"].as_bool() {
                     if value {
                         CLIENT.send(EngineMessage::Request(Action::TrackToggleArm(name.clone())));

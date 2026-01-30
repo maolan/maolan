@@ -1,26 +1,11 @@
 use iced::widget::pane_grid;
-use maolan_engine::message::Action;
+use maolan_engine::message::{Action, TrackKind};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Show {
     AddTrack,
     Save,
     Open,
-}
-
-#[derive(Debug, Clone, PartialEq, Copy, Eq)]
-pub enum TrackKind {
-    Audio,
-    MIDI,
-}
-
-impl std::fmt::Display for TrackKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Audio => "Audio",
-            Self::MIDI => "MIDI",
-        })
-    }
 }
 
 #[derive(Debug, Clone)]

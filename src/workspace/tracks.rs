@@ -1,8 +1,4 @@
-use crate::{
-    message::Message,
-    state::{Track, TrackType},
-    style,
-};
+use crate::{message::Message, state::Track, style};
 use iced::{
     Background, Border, Color, Element, Length,
     widget::{button, column, container, row, text},
@@ -32,32 +28,18 @@ impl Tracks {
     pub fn update(&mut self, message: Message) {
         match message {
             Message::Response(Ok(ref a)) => match a {
-                Action::AddAudioTrack {
+                Action::AddTrack {
                     name,
+                    kind,
                     ins,
                     audio_outs,
                     midi_outs,
                 } => {
                     self.tracks.push(Track::new(
                         name.clone(),
+                        *kind,
                         0.0,
                         ins.clone(),
-                        TrackType::Audio,
-                        audio_outs.clone(),
-                        midi_outs.clone(),
-                    ));
-                }
-                Action::AddMIDITrack {
-                    name,
-                    ins,
-                    midi_outs,
-                    audio_outs,
-                } => {
-                    self.tracks.push(Track::new(
-                        name.clone(),
-                        0.0,
-                        ins.clone(),
-                        TrackType::MIDI,
                         audio_outs.clone(),
                         midi_outs.clone(),
                     ));

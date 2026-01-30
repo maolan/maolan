@@ -5,7 +5,7 @@ use tokio::sync::mpsc::{
 use tokio::task::JoinHandle;
 
 use crate::audio::track::AudioTrack;
-use crate::message::{Action, Message};
+use crate::message::{Action, Message, TrackKind};
 use crate::midi::track::MIDITrack;
 use crate::mutex::UnsafeMutex;
 use crate::state::State;
@@ -89,38 +89,36 @@ impl Engine {
                                 let _ = worker.handle.await;
                             }
                         }
-                        Action::AddAudioTrack {
+                        Action::AddTrack {
                             ref name,
+                            kind,
                             ins,
                             audio_outs,
                             midi_outs,
-                        } => {
-                            self.state.lock().tracks.insert(
-                                name.clone(),
-                                Arc::new(UnsafeMutex::new(Box::new(AudioTrack::new(
+                        } => match kind {
+                            TrackKind::Audio => {
+                                self.state.lock().tracks.insert(
                                     name.clone(),
-                                    ins,
-                                    audio_outs,
-                                    midi_outs,
-                                )))),
-                            );
-                        }
-                        Action::AddMIDITrack {
-                            ref name,
-                            ins,
-                            midi_outs,
-                            audio_outs,
-                        } => {
-                            self.state.lock().tracks.insert(
-                                name.clone(),
-                                Arc::new(UnsafeMutex::new(Box::new(MIDITrack::new(
+                                    Arc::new(UnsafeMutex::new(Box::new(AudioTrack::new(
+                                        name.clone(),
+                                        ins,
+                                        audio_outs,
+                                        midi_outs,
+                                    )))),
+                                );
+                            }
+                            TrackKind::MIDI => {
+                                self.state.lock().tracks.insert(
                                     name.clone(),
-                                    ins,
-                                    midi_outs,
-                                    audio_outs,
-                                )))),
-                            );
-                        }
+                                    Arc::new(UnsafeMutex::new(Box::new(MIDITrack::new(
+                                        name.clone(),
+                                        ins,
+                                        audio_outs,
+                                        midi_outs,
+                                    )))),
+                                );
+                            }
+                        },
                         Action::TrackLevel(ref name, value) => {
                             for (_, track) in &self.state.lock().tracks {
                                 if *name == track.lock().name() {
