@@ -10,20 +10,20 @@ use std::io::BufReader;
 use std::path::PathBuf;
 use std::process::exit;
 use std::sync::{Arc, LazyLock};
+use tokio::sync::RwLock;
 use tracing::{Level, debug, error, span};
 use tracing_subscriber;
 use tracing_subscriber::{
     fmt::{Layer as FmtLayer, writer::MakeWriterExt},
     prelude::*,
 };
-use tokio::sync::RwLock;
 
 use iced::Subscription;
 use iced::Theme;
 use iced::futures::{Stream, io};
 use iced::keyboard;
 use iced::keyboard::Event;
-use iced::widget::column;
+use iced::widget::{column, text};
 
 use iced_aw::ICED_AW_FONT_BYTES;
 
@@ -253,6 +253,7 @@ impl Maolan {
                 _ => {}
             },
             Message::Response(Err(ref e)) => {
+                self.state.blocking_write().message = e.clone();
                 error!("Engine error: {e}");
             }
             Message::Debug(ref s) => {
@@ -289,12 +290,12 @@ impl Maolan {
                     if selected {
                         self.state.blocking_write().selected.retain(|n| n != name);
                     } else {
-                        self.state.blocking_write().selected.push(name.clone());
+                        self.state.blocking_write().selected.insert(name.clone());
                     }
                 } else {
                     self.state.blocking_write().selected.clear();
                     if !selected {
-                        self.state.blocking_write().selected.push(name.clone());
+                        self.state.blocking_write().selected.insert(name.clone());
                     }
                 }
             }
@@ -309,7 +310,15 @@ impl Maolan {
     }
 
     fn view(&self) -> iced::Element<'_, message::Message> {
-        column![self.menu.view(), self.workspace.view()].into()
+        column![
+            self.menu.view(),
+            self.workspace.view(),
+            text(format!(
+                "Last message: {}",
+                self.state.blocking_read().message
+            ))
+        ]
+        .into()
     }
 
     fn subscription(&self) -> Subscription<message::Message> {
