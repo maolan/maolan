@@ -1,3 +1,4 @@
+use iced::mouse;
 use iced::widget::pane_grid;
 use maolan_engine::message::{Action, TrackKind};
 
@@ -36,6 +37,10 @@ pub enum Message {
     OpenPath(String),
     SelectTrack(String),
     DeleteSelectedTracks,
+
+    TrackResizeStart(String),
+    MouseMoved(mouse::Event),
+    MouseReleased,
 
     ShiftPressed,
     CtrlPressed,

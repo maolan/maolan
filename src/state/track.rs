@@ -44,6 +44,7 @@ pub struct Track {
     pub muted: bool,
     pub soloed: bool,
     pub clips: Vec<Clip>,
+    pub height: f32,
 }
 
 impl Track {
@@ -66,14 +67,15 @@ impl Track {
             muted: false,
             soloed: false,
             clips: vec![],
+            height: 60.0,
         }
     }
 }
 
 impl Track {
     pub fn update(&mut self, message: Message) {
-        match message {
-            Message::Response(Ok(a)) => match a {
+        if let Message::Response(Ok(a)) = message {
+            match a {
                 Action::TrackLevel(name, level) => {
                     if name == self.name {
                         self.level = level;
@@ -110,8 +112,7 @@ impl Track {
                     }
                 }
                 _ => {}
-            },
-            _ => {}
+            }
         }
     }
 }

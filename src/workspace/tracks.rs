@@ -5,7 +5,7 @@ use crate::{
 };
 use iced::{
     Background, Border, Color, Element, Length,
-    widget::{Column, button, column, container, mouse_area, row, text},
+    widget::{Column, Space, button, column, container, mouse_area, row, text},
 };
 use maolan_engine::message::Action;
 
@@ -29,6 +29,7 @@ impl Tracks {
             let mut track_ui: Column<'_, Message> = column![];
             let name = track.name.clone();
             let selected = self.state.blocking_read().selected.contains(&track.name);
+            let height = track.height;
 
             track_ui = track_ui.push(text(track.name.clone()));
             track_ui = track_ui.push(row![
@@ -39,17 +40,45 @@ impl Tracks {
                 button("M")
                     .padding(3)
                     .style(move |theme, _state| { style::mute::style(theme, track.muted) })
-                    .on_press(Message::Request(Action::TrackToggleMute(track.name.clone()))),
+                    .on_press(Message::Request(Action::TrackToggleMute(
+                        track.name.clone()
+                    ))),
                 button("S")
                     .padding(3)
                     .style(move |theme, _state| { style::solo::style(theme, track.soloed) })
-                    .on_press(Message::Request(Action::TrackToggleSolo(track.name.clone()))),
+                    .on_press(Message::Request(Action::TrackToggleSolo(
+                        track.name.clone()
+                    ))),
             ]);
+
+            track_ui = track_ui.push(Space::new().height(Length::Fill));
+
+            let resize_handle = mouse_area(
+                container("")
+                    .width(Length::Fill)
+                    .height(Length::Fixed(3.0))
+                    .style(|_theme| {
+                        use container::Style;
+                        Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.5,
+                                g: 0.5,
+                                b: 0.5,
+                                a: 0.5,
+                            })),
+                            ..Style::default()
+                        }
+                    }),
+            )
+            .on_press(Message::TrackResizeStart(track.name.clone()));
+
+            track_ui = track_ui.push(resize_handle);
+
             result = result.push(
                 mouse_area(
                     container(track_ui)
                         .width(Length::Fill)
-                        .height(Length::Fixed(60.0))
+                        .height(Length::Fixed(height))
                         .padding(5)
                         .style(move |_theme| {
                             use container::Style;

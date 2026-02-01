@@ -22,6 +22,7 @@ impl Editor {
 
         for track in &state.tracks {
             let mut clips: Vec<Element<'_, Message, Theme, Renderer>> = vec![];
+            let height = track.height;
             for clip in &track.clips {
                 clips.push(
                     pin(text(clip.name.clone()))
@@ -36,7 +37,7 @@ impl Editor {
                         .width(Length::Fill),
                 )
                 .width(Length::Fill)
-                .height(Length::Fixed(60.0))
+                .height(Length::Fixed(height))
                 .padding(5)
                 .style(|_theme| {
                     use container::Style;

@@ -18,12 +18,12 @@ use tracing_subscriber::{
     prelude::*,
 };
 
-use iced::Subscription;
-use iced::Theme;
 use iced::futures::{Stream, io};
 use iced::keyboard;
-use iced::keyboard::Event;
+use iced::keyboard::Event as KeyEvent;
+use iced::mouse;
 use iced::widget::{column, text};
+use iced::{Subscription, Theme, event};
 
 use iced_aw::ICED_AW_FONT_BYTES;
 
@@ -32,8 +32,7 @@ use maolan_engine as engine;
 use message::Message;
 use state::{State, StateData, Track};
 
-static CLIENT: LazyLock<engine::client::Client> =
-    LazyLock::new(|| engine::client::Client::default());
+static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
 
 pub fn main() -> iced::Result {
     let stdout_layer =
@@ -300,6 +299,32 @@ impl Maolan {
                     CLIENT.send(EngineMessage::Request(Action::DeleteTrack(name.clone())));
                 }
             }
+            Message::TrackResizeStart(ref name) => {
+                let mut state = self.state.blocking_write();
+                let height = state
+                    .tracks
+                    .iter()
+                    .find(|t| &t.name == name)
+                    .map(|t| t.height)
+                    .unwrap_or(60.0);
+                let mouse_y = state.cursor_position;
+                state.resizing_track = Some((name.clone(), height, mouse_y));
+            }
+            Message::MouseMoved(mouse::Event::CursorMoved { position }) => {
+                let mut state = self.state.blocking_write();
+                state.cursor_position = position.y;
+
+                if let Some((name, initial_height, initial_mouse_y)) = &state.resizing_track.clone()
+                {
+                    let delta = position.y - initial_mouse_y;
+                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name) {
+                        track.height = (initial_height + delta).clamp(60.0, 400.0);
+                    }
+                }
+            }
+            Message::MouseReleased => {
+                self.state.blocking_write().resizing_track = None;
+            }
             _ => {}
         }
         self.update_children(&message);
@@ -333,12 +358,12 @@ impl Maolan {
         let engine_sub = Subscription::run(listener);
 
         let keyboard_sub = keyboard::listen().map(|event| match event {
-            Event::KeyPressed { key, .. } => match key {
+            KeyEvent::KeyPressed { key, .. } => match key {
                 keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
                 keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
                 _ => Message::Ignore,
             },
-            Event::KeyReleased { key, .. } => match key {
+            KeyEvent::KeyReleased { key, .. } => match key {
                 keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftReleased,
                 keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlReleased,
                 _ => Message::Ignore,
@@ -346,6 +371,15 @@ impl Maolan {
             _ => Message::Ignore,
         });
 
-        Subscription::batch(vec![engine_sub, keyboard_sub])
+        let mouse_sub = event::listen().map(|event| match event {
+            event::Event::Mouse(mouse_event) => match mouse_event {
+                mouse::Event::CursorMoved { .. } => Message::MouseMoved(mouse_event),
+                mouse::Event::ButtonReleased(_) => Message::MouseReleased,
+                _ => Message::Ignore,
+            },
+            _ => Message::Ignore,
+        });
+
+        Subscription::batch(vec![engine_sub, keyboard_sub, mouse_sub])
     }
 }
