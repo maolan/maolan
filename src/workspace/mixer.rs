@@ -38,8 +38,7 @@ impl Mixer {
                                 Message::Request(Action::TrackLevel(name.clone(), new_val))
                             }
                         })
-                        .width(Length::Fixed(40.0))
-                        .dark_rect_style(),
+                        .width(Length::Fixed(40.0)),
                         // .shift_step(0.1),
                         row![
                             button("R")
