@@ -66,7 +66,7 @@ impl Track {
             armed: false,
             muted: false,
             soloed: false,
-            clips: vec![],
+            clips: vec![Clip::new("ime".to_string(), 30.0, 60.0, 0)],
             height: 60.0,
         }
     }

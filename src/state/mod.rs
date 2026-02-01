@@ -13,8 +13,11 @@ pub struct StateData {
     pub tracks: Vec<Track>,
     pub selected: HashSet<String>,
     pub message: String,
-    pub resizing_track: Option<(String, f32, f32)>, // (track_name, initial_height, initial_mouse_y)
-    pub cursor_position: f32, // Current mouse Y position
+    pub resizing_track: Option<(String, f32, f32)>,
+    pub resizing_clip: Option<(String, String, bool, f32, f32)>,
+    pub dragging_clip: Option<(String, String, f32, f32)>, // (track_name, clip_name, initial_start, initial_mouse_x)
+    pub cursor_position_y: f32,
+    pub cursor_position_x: f32,
 }
 
 pub type State = Arc<RwLock<StateData>>;

@@ -39,6 +39,7 @@ pub enum Message {
     DeleteSelectedTracks,
 
     TrackResizeStart(String),
+    ClipResizeStart(String, String, bool),
     MouseMoved(mouse::Event),
     MouseReleased,
 

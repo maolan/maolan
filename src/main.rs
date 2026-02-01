@@ -307,13 +307,35 @@ impl Maolan {
                     .find(|t| &t.name == name)
                     .map(|t| t.height)
                     .unwrap_or(60.0);
-                let mouse_y = state.cursor_position;
+                let mouse_y = state.cursor_position_y;
                 state.resizing_track = Some((name.clone(), height, mouse_y));
+            }
+            Message::ClipResizeStart(ref track_name, ref clip_name, is_right_side) => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter().find(|t| &t.name == track_name)
+                    && let Some(clip) = track.clips.iter().find(|c| &c.name == clip_name)
+                {
+                    let initial_value = if is_right_side {
+                        clip.length
+                    } else {
+                        clip.start
+                    };
+                    let mouse_x = state.cursor_position_x;
+                    state.resizing_clip = Some((
+                        track_name.clone(),
+                        clip_name.clone(),
+                        is_right_side,
+                        initial_value,
+                        mouse_x,
+                    ));
+                }
             }
             Message::MouseMoved(mouse::Event::CursorMoved { position }) => {
                 let mut state = self.state.blocking_write();
-                state.cursor_position = position.y;
+                state.cursor_position_y = position.y;
+                state.cursor_position_x = position.x;
 
+                // Handle track resizing
                 if let Some((name, initial_height, initial_mouse_y)) = &state.resizing_track.clone()
                 {
                     let delta = position.y - initial_mouse_y;
@@ -321,9 +343,48 @@ impl Maolan {
                         track.height = (initial_height + delta).clamp(60.0, 400.0);
                     }
                 }
+
+                // Handle clip resizing
+                if let Some((
+                    track_name,
+                    clip_name,
+                    is_right_side,
+                    initial_value,
+                    initial_mouse_x,
+                )) = &state.resizing_clip.clone()
+                {
+                    let delta = position.x - initial_mouse_x;
+                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name)
+                        && let Some(clip) = track.clips.iter_mut().find(|c| &c.name == clip_name)
+                    {
+                        if *is_right_side {
+                            clip.length = (initial_value + delta).max(10.0);
+                        } else {
+                            let new_start = (initial_value + delta).max(0.0);
+                            let start_delta = new_start - clip.start;
+                            clip.start = new_start;
+                            clip.length = (clip.length - start_delta).max(10.0);
+                        }
+                    }
+                }
+
+                // Handle clip dragging
+                if let Some((track_name, clip_name, initial_start, initial_mouse_x)) =
+                    &state.dragging_clip.clone()
+                {
+                    let delta = position.x - initial_mouse_x;
+                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name)
+                        && let Some(clip) = track.clips.iter_mut().find(|c| &c.name == clip_name)
+                    {
+                        clip.start = (initial_start + delta).max(0.0);
+                    }
+                }
             }
             Message::MouseReleased => {
-                self.state.blocking_write().resizing_track = None;
+                let mut state = self.state.blocking_write();
+                state.resizing_track = None;
+                state.resizing_clip = None;
+                state.dragging_clip = None;
             }
             _ => {}
         }
