@@ -2,6 +2,7 @@ mod menu;
 mod message;
 mod state;
 mod style;
+mod widget;
 mod workspace;
 
 use serde_json::Value;
@@ -12,7 +13,6 @@ use std::process::exit;
 use std::sync::{Arc, LazyLock};
 use tokio::sync::RwLock;
 use tracing::{Level, debug, error, span};
-use tracing_subscriber;
 use tracing_subscriber::{
     fmt::{Layer as FmtLayer, writer::MakeWriterExt},
     prelude::*,
@@ -259,18 +259,16 @@ impl Maolan {
             Message::Debug(ref s) => {
                 debug!("Maolan::update::debug({s})");
             }
-            Message::Save(ref path) => match self.save(path.clone()) {
-                Err(s) => {
+            Message::Save(ref path) => {
+                if let Err(s) = self.save(path.clone()) {
                     error!("{}", s);
                 }
-                _ => {}
-            },
-            Message::Open(ref path) => match self.load(path.clone()) {
-                Err(s) => {
+            }
+            Message::Open(ref path) => {
+                if let Err(s) = self.load(path.clone()) {
                     error!("{}", s);
                 }
-                _ => {}
-            },
+            }
             Message::ShiftPressed => {
                 self.state.blocking_write().shift = true;
             }
@@ -294,9 +292,7 @@ impl Maolan {
                     }
                 } else {
                     self.state.blocking_write().selected.clear();
-                    if !selected {
-                        self.state.blocking_write().selected.insert(name.clone());
-                    }
+                    self.state.blocking_write().selected.insert(name.clone());
                 }
             }
             Message::DeleteSelectedTracks => {

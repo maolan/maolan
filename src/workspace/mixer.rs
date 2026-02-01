@@ -1,12 +1,8 @@
-use crate::{
-    message::Message,
-    state::{State, Track},
-    style,
-};
+use crate::{message::Message, state::State, style, widget::slider::Slider};
 
 use iced::{
-    Alignment, Background, Border, Color, Element,
-    widget::{button, column, container, mouse_area, row, vertical_slider},
+    Alignment, Background, Border, Color, Element, Length,
+    widget::{button, column, container, mouse_area, row},
 };
 use maolan_engine::message::Action;
 
@@ -36,21 +32,22 @@ impl Mixer {
             result = result.push(
                 mouse_area(
                     container(column![
-                        vertical_slider(-90.0..=20.0, track.level, {
+                        Slider::new(-90.0..=20.0, track.level, {
                             let name = track.name.clone();
                             move |new_val| {
                                 Message::Request(Action::TrackLevel(name.clone(), new_val))
-                        }})
-                        .shift_step(0.1),
+                            }
+                        })
+                        .width(Length::Fixed(40.0))
+                        .dark_rect_style(),
+                        // .shift_step(0.1),
                         row![
                             button("R")
                                 .padding(3)
                                 .style(move |theme, _state| {
                                     style::arm::style(theme, track.armed)
                                 })
-                                .on_press(Message::Request(Action::TrackToggleArm(
-                                    t_name.clone()
-                                ))),
+                                .on_press(Message::Request(Action::TrackToggleArm(t_name.clone()))),
                             button("M")
                                 .padding(3)
                                 .style(move |theme, _state| {

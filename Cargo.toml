@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2024"
 
 [dependencies]
-iced = { version = "0.14.0", features = ["tokio"] }
+iced = { version = "0.14.0", features = ["advanced", "image", "tokio"] }
 iced_aw = "0.13.0"
 maolan-engine = { path = "./engine" }
 serde = { version = "1.0.228", features = ["derive"] }
