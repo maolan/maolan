@@ -1,8 +1,13 @@
-use crate::{message::Message, state::State, widget::piano::PianoKeyboard};
+use crate::{
+    message::{DraggedClip, Message},
+    state::State,
+    widget::piano::PianoKeyboard,
+};
 use iced::{
     Background, Border, Color, Element, Length, Point, Renderer, Theme,
     widget::{Stack, canvas, column, container, mouse_area, pin, row, text},
 };
+use iced_drop::droppable;
 use std::collections::HashSet;
 
 #[derive(Debug)]
@@ -30,10 +35,11 @@ impl Editor {
             let height = track.height;
             let track_name = track.name.clone();
 
-            for clip in &track.clips {
+            for (index, clip) in track.clips.iter().enumerate() {
                 let clip_name = clip.name.clone();
                 let track_name_left = track_name.clone();
                 let track_name_right = track_name.clone();
+                let track_name_clip = track_name.clone();
                 let clip_name_left = clip_name.clone();
                 let clip_name_right = clip_name.clone();
 
@@ -109,27 +115,32 @@ impl Editor {
                 let clip_widget = container(row![left_handle, clip_content, right_handle])
                     .width(Length::Fixed(clip.length))
                     .height(Length::Fill)
-                    .style(|_theme| {
-                        use container::Style;
-                        Style {
-                            background: None,
-                            border: Border {
-                                color: Color {
-                                    r: 0.2,
-                                    g: 0.4,
-                                    b: 0.6,
-                                    a: 1.0,
-                                },
-                                width: 1.0,
-                                radius: 3.0.into(),
+                    .style(|_theme| container::Style {
+                        background: None,
+                        border: Border {
+                            color: Color {
+                                r: 0.2,
+                                g: 0.4,
+                                b: 0.6,
+                                a: 1.0,
                             },
-                            ..Style::default()
-                        }
+                            width: 1.0,
+                            radius: 3.0.into(),
+                        },
+                        ..container::Style::default()
                     });
 
                 clips.push(
-                    pin(clip_widget)
-                        .position(Point::new(clip.start, 0.0))
+                    droppable(pin(clip_widget).position(Point::new(clip.start, 0.0)))
+                        .on_drag(move |point, rect| {
+                            Message::ClipDrag(DraggedClip::new(
+                                index,
+                                track_name_clip.clone(),
+                                point,
+                                rect,
+                            ))
+                        })
+                        .on_drop(Message::ClipDropped)
                         .into(),
                 );
             }
@@ -139,38 +150,35 @@ impl Editor {
                         .height(Length::Fill)
                         .width(Length::Fill),
                 )
+                .id(track.name.clone())
                 .width(Length::Fill)
                 .height(Length::Fixed(height))
                 .padding(5)
-                .style(|_theme| {
-                    use container::Style;
-
-                    Style {
-                        background: Some(Background::Color(Color {
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
+                    })),
+                    border: Border {
+                        color: Color {
                             r: 0.0,
                             g: 0.0,
                             b: 0.0,
-                            a: 0.0,
-                        })),
-                        border: Border {
-                            color: Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 1.0,
-                            },
-                            width: 1.0,
-                            radius: 0.0.into(),
+                            a: 1.0,
                         },
-                        ..Style::default()
-                    }
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                    ..container::Style::default()
                 }),
             );
         }
         result
-            .push(canvas(PianoKeyboard {
-                pressed_notes: self.active_notes.clone(),
-            }))
+            // .push(canvas(PianoKeyboard {
+            //     pressed_notes: self.active_notes.clone(),
+            // }))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()

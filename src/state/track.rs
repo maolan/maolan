@@ -68,18 +68,15 @@ impl Track {
             armed: false,
             muted: false,
             soloed: false,
-            clips: vec![Clip::new(0, "ime".to_string(), 30.0, 60.0, 0)],
+            clips: vec![Clip::new(0, "ime".to_string(), 0.0, 60.0, 0)],
             height: 60.0,
         }
     }
 
-    pub fn next(&mut self) -> usize {
-        self.id += 1;
-        self.id.clone()
+    pub fn add_clip(&mut self, clip: Clip) {
+        self.clips.push(clip);
     }
-}
 
-impl Track {
     pub fn update(&mut self, message: Message) {
         if let Message::Response(Ok(a)) = message {
             match a {

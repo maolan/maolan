@@ -19,18 +19,16 @@ use tracing_subscriber::{
 };
 
 use iced::futures::{Stream, io};
-use iced::keyboard;
 use iced::keyboard::Event as KeyEvent;
-use iced::mouse;
-use iced::widget::{column, text};
-use iced::{Subscription, Theme, event};
+use iced::widget::{Id, column, text};
+use iced::{Point, Subscription, Task, Theme, event, keyboard, mouse};
 
 use iced_aw::ICED_AW_FONT_BYTES;
 
 use engine::message::{Action, Message as EngineMessage, TrackKind};
 use maolan_engine as engine;
-use message::Message;
-use state::{State, StateData, Track};
+use message::{DraggedClip, Message};
+use state::{Resizing, State, StateData, Track};
 
 static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
 
@@ -63,6 +61,7 @@ struct Maolan {
     menu: menu::Menu,
     workspace: workspace::Workspace,
     state: State,
+    clip: Option<DraggedClip>,
 }
 
 impl Default for Maolan {
@@ -72,6 +71,7 @@ impl Default for Maolan {
             state: state.clone(),
             menu: menu::Menu::default(),
             workspace: workspace::Workspace::new(state.clone()),
+            clip: None,
         }
     }
 }
@@ -215,14 +215,14 @@ impl Maolan {
         }
     }
 
-    fn update(&mut self, message: message::Message) {
+    fn update(&mut self, message: message::Message) -> Task<Message> {
         match message {
             Message::Ignore => {
-                return;
+                return Task::none();
             }
             Message::Request(ref a) => {
                 CLIENT.send(EngineMessage::Request(a.clone()));
-                return;
+                return Task::none();
             }
             Message::Response(Ok(ref a)) => match a {
                 Action::Quit => {
@@ -307,8 +307,13 @@ impl Maolan {
                     .find(|t| &t.name == name)
                     .map(|t| t.height)
                     .unwrap_or(60.0);
-                let mouse_y = state.cursor_position_y;
-                state.resizing_track = Some((name.clone(), height, mouse_y));
+                state.resizing = Some(Resizing::Track(name.clone(), height, state.cursor.y));
+            }
+            Message::TracksResizeStart => {
+                self.state.blocking_write().resizing = Some(Resizing::Tracks);
+            }
+            Message::MixerResizeStart => {
+                self.state.blocking_write().resizing = Some(Resizing::Mixer);
             }
             Message::ClipResizeStart(ref track_name, ref clip_name, is_right_side) => {
                 let mut state = self.state.blocking_write();
@@ -320,42 +325,37 @@ impl Maolan {
                     } else {
                         clip.start
                     };
-                    let mouse_x = state.cursor_position_x;
-                    state.resizing_clip = Some((
+                    state.resizing = Some(Resizing::Clip(
                         track_name.clone(),
                         clip_name.clone(),
                         is_right_side,
                         initial_value,
-                        mouse_x,
+                        state.cursor.x,
                     ));
                 }
             }
             Message::MouseMoved(mouse::Event::CursorMoved { position }) => {
-                let mut state = self.state.blocking_write();
-                state.cursor_position_y = position.y;
-                state.cursor_position_x = position.x;
-
-                // Handle track resizing
-                if let Some((name, initial_height, initial_mouse_y)) = &state.resizing_track.clone()
+                self.state.blocking_write().cursor = position;
+                if let Some(Resizing::Track(name, initial_height, initial_mouse_y)) =
+                    &self.state.blocking_write().resizing
                 {
-                    let delta = position.y - initial_mouse_y;
-                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name) {
-                        track.height = (initial_height + delta).clamp(60.0, 400.0);
+                    let mut state = self.state.blocking_write();
+                    let delta = position.y - *initial_mouse_y;
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
+                        track.height = (*initial_height + delta).clamp(60.0, 400.0);
                     }
-                }
-
-                // Handle clip resizing
-                if let Some((
+                } else if let Some(Resizing::Clip(
                     track_name,
                     clip_name,
                     is_right_side,
                     initial_value,
                     initial_mouse_x,
-                )) = &state.resizing_clip.clone()
+                )) = &self.state.blocking_write().resizing
                 {
+                    let mut state = self.state.blocking_write();
                     let delta = position.x - initial_mouse_x;
-                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name)
-                        && let Some(clip) = track.clips.iter_mut().find(|c| &c.name == clip_name)
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        && let Some(clip) = track.clips.iter_mut().find(|c| c.name == *clip_name)
                     {
                         if *is_right_side {
                             clip.length = (initial_value + delta).max(10.0);
@@ -367,28 +367,52 @@ impl Maolan {
                         }
                     }
                 }
-
-                // Handle clip dragging
-                if let Some((track_name, clip_name, initial_start, initial_mouse_x)) =
-                    &state.dragging_clip.clone()
-                {
-                    let delta = position.x - initial_mouse_x;
-                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name)
-                        && let Some(clip) = track.clips.iter_mut().find(|c| &c.name == clip_name)
-                    {
-                        clip.start = (initial_start + delta).max(0.0);
-                    }
-                }
             }
             Message::MouseReleased => {
                 let mut state = self.state.blocking_write();
-                state.resizing_track = None;
-                state.resizing_clip = None;
-                state.dragging_clip = None;
+                state.resizing = None;
+            }
+            Message::ClipDrag(ref clip) => {
+                if self.clip.is_none() {
+                    let point = Point::new(clip.point.x - clip.rect.x, clip.point.y - clip.rect.y);
+                    self.clip = Some(DraggedClip {
+                        point,
+                        ..clip.clone()
+                    });
+                }
+            }
+            Message::ClipDropped(point, rect) => {
+                if let Some(clip) = &mut self.clip {
+                    clip.point.x = (point.x - clip.point.x).max(0.0);
+                    clip.point.y = (point.y - clip.point.y).max(0.0);
+                    clip.rect = rect;
+                    return iced_drop::zones_on_point(Message::HandleZones, point, None, None);
+                }
+            }
+            Message::HandleZones(ref zones) => {
+                if let Some(clip) = &self.clip
+                    && let Some((to_track_name, _zone_rect)) = zones.first()
+                {
+                    let mut guard = self.state.blocking_write();
+                    let from_track_index =
+                        guard.tracks.iter().position(|t| t.name == clip.track_name);
+                    let to_track_index = guard
+                        .tracks
+                        .iter()
+                        .position(|t| Id::from(t.name.clone()) == *to_track_name);
+
+                    if let (Some(f_idx), Some(t_idx)) = (from_track_index, to_track_index) {
+                        let mut clip_copy = guard.tracks[f_idx].clips[clip.index].clone();
+                        clip_copy.start = clip.point.x;
+                        guard.tracks[t_idx].add_clip(clip_copy);
+                    }
+                }
+                self.clip = None;
             }
             _ => {}
         }
         self.update_children(&message);
+        Task::none()
     }
 
     fn view(&self) -> iced::Element<'_, message::Message> {

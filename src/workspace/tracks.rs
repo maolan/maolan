@@ -116,6 +116,6 @@ impl Tracks {
                 .on_press(Message::SelectTrack(name)),
             );
         }
-        result.into()
+        result.width(self.state.blocking_read().tracks_width).into()
     }
 }

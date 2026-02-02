@@ -104,6 +104,8 @@ impl Mixer {
                 .on_press(Message::SelectTrack(t_name.clone())),
             )
         }
-        result.into()
+        result
+            .height(self.state.blocking_read().mixer_height)
+            .into()
     }
 }

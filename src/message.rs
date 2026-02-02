@@ -1,5 +1,7 @@
-use iced::mouse;
-use iced::widget::pane_grid;
+use iced::{
+    Point, Rectangle, mouse,
+    widget::{Id, pane_grid},
+};
 use maolan_engine::message::{Action, TrackKind};
 
 #[derive(Debug, Clone, Copy)]
@@ -19,6 +21,25 @@ pub enum AddTrack {
 }
 
 #[derive(Debug, Clone)]
+pub struct DraggedClip {
+    pub index: usize,
+    pub track_name: String,
+    pub point: Point,
+    pub rect: Rectangle,
+}
+
+impl DraggedClip {
+    pub fn new(index: usize, track_name: String, point: Point, rect: Rectangle) -> Self {
+        Self {
+            index,
+            track_name,
+            point,
+            rect,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     Ignore,
     Debug(String),
@@ -26,7 +47,6 @@ pub enum Message {
     Request(Action),
     Response(Result<Action, String>),
 
-    PaneResized(pane_grid::ResizeEvent),
     Show(Show),
     Cancel,
 
@@ -39,7 +59,12 @@ pub enum Message {
     DeleteSelectedTracks,
 
     TrackResizeStart(String),
+    TracksResizeStart,
+    MixerResizeStart,
     ClipResizeStart(String, String, bool),
+    ClipDrag(DraggedClip),
+    ClipDropped(Point, Rectangle),
+    HandleZones(Vec<(Id, Rectangle)>),
     MouseMoved(mouse::Event),
     MouseReleased,
 

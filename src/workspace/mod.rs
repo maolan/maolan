@@ -10,8 +10,8 @@ use crate::{
     state::State,
 };
 use iced::{
-    Element,
-    widget::{container, pane_grid, pane_grid::Axis},
+    Background, Color, Element, Length,
+    widget::{column, container, mouse_area, pane_grid, pane_grid::Axis, row},
 };
 use maolan_engine::message::Action;
 use serde_json::{Value, json};
@@ -45,7 +45,7 @@ impl Workspace {
             for (i, s) in p.layout().splits().enumerate() {
                 let split = *s;
                 if i == 0 {
-                    panes.resize(split, 0.75);
+                    panes.resize(split, 0.7);
                 } else if i == 1 {
                     panes.resize(split, 0.1);
                 }
@@ -81,9 +81,6 @@ impl Workspace {
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::PaneResized(pane_grid::ResizeEvent { split, ratio }) => {
-                self.panes.resize(split, ratio)
-            }
             Message::Show(modal) => self.modal = Some(modal),
             Message::Cancel => self.modal = None,
             Message::Save(_) => self.modal = None,
@@ -100,14 +97,48 @@ impl Workspace {
                 Show::Save => self.save.view(),
                 Show::Open => self.open.view(),
             },
-            None => pane_grid(&self.panes, |_pane, state, _is_maximized| {
-                pane_grid::Content::new(match state {
-                    Pane::Tracks => container(self.tracks.view()),
-                    Pane::Mixer => container(self.mixer.view()),
-                    Pane::Editor => container(self.editor.view()),
-                })
-            })
-            .on_resize(10, Message::PaneResized)
+            None => column![
+                row![
+                    self.tracks.view(),
+                    mouse_area(
+                        container("")
+                            .width(Length::Fixed(3.0))
+                            .height(Length::Fill)
+                            .style(|_theme| {
+                                container::Style {
+                                    background: Some(Background::Color(Color {
+                                        r: 0.5,
+                                        g: 0.5,
+                                        b: 0.5,
+                                        a: 0.5,
+                                    })),
+                                    ..container::Style::default()
+                                }
+                            }),
+                    )
+                    .on_press(Message::TracksResizeStart),
+                    self.editor.view(),
+                ]
+                .height(Length::Fill),
+                mouse_area(
+                    container("")
+                        .width(Length::Fill)
+                        .height(Length::Fixed(3.0))
+                        .style(|_theme| {
+                            container::Style {
+                                background: Some(Background::Color(Color {
+                                    r: 0.5,
+                                    g: 0.5,
+                                    b: 0.5,
+                                    a: 0.5,
+                                })),
+                                ..container::Style::default()
+                            }
+                        }),
+                )
+                .on_press(Message::MixerResizeStart),
+                self.mixer.view(),
+            ]
             .into(),
         }
     }

@@ -14,7 +14,12 @@ pub fn style(theme: &Theme, muted: bool) -> Style {
         }
     } else {
         Style {
-            background: Some(Background::Color(palette.background.base.color)),
+            background: Some(Background::Color(Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.0,
+            })),
             text_color: palette.background.base.text,
             ..Style::default()
         }

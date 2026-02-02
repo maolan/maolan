@@ -42,12 +42,11 @@ pub fn draw_octave(
     let black_key_offsets = [1, 2, 4, 5, 6];
     let black_note_ids = [1, 3, 6, 8, 10];
     let black_key_width = bounds.width * 0.6;
-    let black_key_height = white_key_height * 0.6;
+    let black_key_height = white_key_height * 0.6 / 2.0;
 
     for (idx, offset) in black_key_offsets.iter().enumerate() {
         let is_pressed = pressed_notes.contains(&black_note_ids[idx]);
-        let y_pos_black =
-            bounds.height - (*offset as f32 * white_key_height) - (black_key_height / 2.0);
+        let y_pos_black = bounds.height - (*offset as f32 * white_key_height) - black_key_height;
         let rect = Path::rectangle(
             Point::new(0.0, y_pos_black),
             Size::new(black_key_width, black_key_height),
