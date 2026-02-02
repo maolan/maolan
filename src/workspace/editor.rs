@@ -1,17 +1,22 @@
-use crate::{message::Message, state::State};
+use crate::{message::Message, state::State, widget::piano::PianoKeyboard};
 use iced::{
     Background, Border, Color, Element, Length, Point, Renderer, Theme,
-    widget::{Stack, column, container, mouse_area, pin, row, text},
+    widget::{Stack, canvas, column, container, mouse_area, pin, row, text},
 };
+use std::collections::HashSet;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Editor {
     state: State,
+    active_notes: HashSet<u8>,
 }
 
 impl Editor {
     pub fn new(state: State) -> Self {
-        Self { state }
+        Self {
+            state,
+            active_notes: HashSet::new(),
+        }
     }
 
     pub fn update(&mut self, _: Message) {}
@@ -162,6 +167,12 @@ impl Editor {
                 }),
             );
         }
-        result.into()
+        result
+            .push(canvas(PianoKeyboard {
+                pressed_notes: self.active_notes.clone(),
+            }))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 }
