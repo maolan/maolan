@@ -38,7 +38,7 @@ impl Mixer {
                                 Message::Request(Action::TrackLevel(name.clone(), new_val))
                             }
                         })
-                        .width(Length::Fixed(40.0)),
+                        .width(Length::Fixed(20.0)),
                         // .shift_step(0.1),
                         row![
                             button("R")
@@ -77,14 +77,14 @@ impl Mixer {
                                     r: 1.0,
                                     g: 1.0,
                                     b: 1.0,
-                                    a: 1.0,
+                                    a: 0.1,
                                 }))
                             } else {
                                 Some(Background::Color(Color {
-                                    r: 0.8,
-                                    g: 0.8,
-                                    b: 0.8,
-                                    a: 0.8,
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 0.0,
                                 }))
                             },
                             border: Border {

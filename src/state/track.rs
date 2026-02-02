@@ -30,6 +30,7 @@ where
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
+    id: usize,
     pub name: String,
     #[serde(
         deserialize_with = "custom_deserializer",
@@ -57,6 +58,7 @@ impl Track {
         midi_outs: usize,
     ) -> Self {
         Self {
+            id: 0,
             name,
             track_kind,
             level,
@@ -66,9 +68,14 @@ impl Track {
             armed: false,
             muted: false,
             soloed: false,
-            clips: vec![Clip::new("ime".to_string(), 30.0, 60.0, 0)],
+            clips: vec![Clip::new(0, "ime".to_string(), 30.0, 60.0, 0)],
             height: 60.0,
         }
+    }
+
+    pub fn next(&mut self) -> usize {
+        self.id += 1;
+        self.id.clone()
     }
 }
 

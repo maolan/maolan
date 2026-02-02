@@ -1525,6 +1525,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "iced_drop"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "714953ae0565718e14580433af7e58d59e084773adfaaf6c4bb1d0ae60c88e9a"
+dependencies = [
+ "iced",
+]
+
+[[package]]
 name = "iced_fonts"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2030,6 +2039,7 @@ version = "0.0.1"
 dependencies = [
  "iced",
  "iced_aw",
+ "iced_drop",
  "maolan-engine",
  "serde",
  "serde_json",

@@ -42,15 +42,13 @@ impl Workspace {
         panes.split(Axis::Vertical, pane, Pane::Editor);
         {
             let p = panes.clone();
-            let mut i = 0;
-            for s in p.layout().splits() {
-                let split = s.clone();
+            for (i, s) in p.layout().splits().enumerate() {
+                let split = *s;
                 if i == 0 {
                     panes.resize(split, 0.75);
                 } else if i == 1 {
                     panes.resize(split, 0.1);
                 }
-                i += 1;
             }
         }
         Self {
@@ -89,10 +87,7 @@ impl Workspace {
             Message::Show(modal) => self.modal = Some(modal),
             Message::Cancel => self.modal = None,
             Message::Save(_) => self.modal = None,
-            Message::Response(Ok(ref a)) => match a {
-                Action::AddTrack { .. } => self.modal = None,
-                _ => {}
-            },
+            Message::Response(Ok(Action::AddTrack { .. })) => self.modal = None,
             _ => {}
         }
         self.update_children(message);
