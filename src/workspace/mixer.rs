@@ -16,8 +16,6 @@ impl Mixer {
         Self { state }
     }
 
-    pub fn update(&mut self, _: Message) {}
-
     pub fn view(&self) -> Element<'_, Message> {
         let mut result = row![];
         let (tracks, selected) = {

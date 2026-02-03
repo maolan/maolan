@@ -304,15 +304,10 @@ impl Maolan {
                     CLIENT.send(EngineMessage::Request(Action::DeleteTrack(name.clone())));
                 }
             }
-            Message::TrackResizeStart(ref name) => {
+            Message::TrackResizeStart(index) => {
                 let mut state = self.state.blocking_write();
-                let height = state
-                    .tracks
-                    .iter()
-                    .find(|t| &t.name == name)
-                    .map(|t| t.height)
-                    .unwrap_or(60.0);
-                state.resizing = Some(Resizing::Track(name.clone(), height, state.cursor.y));
+                let height = state.tracks[index].height;
+                state.resizing = Some(Resizing::Track(index, height, state.cursor.y));
             }
             Message::TracksResizeStart => {
                 self.state.blocking_write().resizing = Some(Resizing::Tracks);
@@ -320,50 +315,43 @@ impl Maolan {
             Message::MixerResizeStart => {
                 self.state.blocking_write().resizing = Some(Resizing::Mixer);
             }
-            Message::ClipResizeStart(ref track_name, ref clip_name, is_right_side) => {
+            Message::ClipResizeStart(track_index, clip_index, is_right_side) => {
                 let mut state = self.state.blocking_write();
-                if let Some(track) = state.tracks.iter().find(|t| &t.name == track_name)
-                    && let Some(clip) = track.clips.iter().find(|c| &c.name == clip_name)
-                {
-                    let initial_value = if is_right_side {
-                        clip.length
-                    } else {
-                        clip.start
-                    };
-                    state.resizing = Some(Resizing::Clip(
-                        track_name.clone(),
-                        clip_name.clone(),
-                        is_right_side,
-                        initial_value,
-                        state.cursor.x,
-                    ));
-                }
+                let track = &state.tracks[track_index];
+                let clip = &track.clips[clip_index];
+                let initial_value = if is_right_side {
+                    clip.length
+                } else {
+                    clip.start
+                };
+                state.resizing = Some(Resizing::Clip(
+                    track_index,
+                    clip_index,
+                    is_right_side,
+                    initial_value,
+                    state.cursor.x,
+                ));
             }
             Message::MouseMoved(mouse::Event::CursorMoved { position }) => {
                 let mut state = self.state.blocking_write();
                 state.cursor = position;
-                if let Some(Resizing::Track(name, initial_height, initial_mouse_y)) =
-                    &state.resizing
-                {
-                    let mut state = self.state.blocking_write();
-                    let delta = position.y - *initial_mouse_y;
-                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
-                        track.height = (*initial_height + delta).clamp(60.0, 400.0);
+                match state.resizing {
+                    Some(Resizing::Track(index, initial_height, initial_mouse_y)) => {
+                        let delta = position.y - initial_mouse_y;
+                        let track = &mut state.tracks[index];
+                        track.height = (initial_height + delta).clamp(60.0, 400.0);
                     }
-                } else if let Some(Resizing::Clip(
-                    track_name,
-                    clip_name,
-                    is_right_side,
-                    initial_value,
-                    initial_mouse_x,
-                )) = &state.resizing
-                {
-                    let mut state = self.state.blocking_write();
-                    let delta = position.x - initial_mouse_x;
-                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                        && let Some(clip) = track.clips.iter_mut().find(|c| c.name == *clip_name)
-                    {
-                        if *is_right_side {
+                    Some(Resizing::Clip(
+                        track_index,
+                        index,
+                        is_right_side,
+                        initial_value,
+                        initial_mouse_x,
+                    )) => {
+                        let delta = position.x - initial_mouse_x;
+                        let track = &mut state.tracks[track_index];
+                        let clip = &mut track.clips[index];
+                        if is_right_side {
                             clip.length = (initial_value + delta).max(10.0);
                         } else {
                             let new_start = (initial_value + delta).max(0.0);
@@ -372,10 +360,13 @@ impl Maolan {
                             clip.length = (clip.length - start_delta).max(10.0);
                         }
                     }
-                } else if let Some(Resizing::Tracks) = &state.resizing {
-                    state.tracks_width = Length::Fixed(position.x);
-                } else if let Some(Resizing::Mixer) = &state.resizing {
-                    state.mixer_height = Length::Fixed(self.size.height - position.y);
+                    Some(Resizing::Tracks) => {
+                        state.tracks_width = Length::Fixed(position.x);
+                    }
+                    Some(Resizing::Mixer) => {
+                        state.mixer_height = Length::Fixed(self.size.height - position.y);
+                    }
+                    _ => {}
                 }
             }
             Message::MouseReleased => {
@@ -401,20 +392,19 @@ impl Maolan {
             }
             Message::HandleZones(ref zones) => {
                 if let Some(clip) = &self.clip
-                    && let Some((to_track_name, _zone_rect)) = zones.first()
+                    && let Some((to_track_name, _)) = zones.first()
                 {
-                    let mut guard = self.state.blocking_write();
-                    let from_track_index =
-                        guard.tracks.iter().position(|t| t.name == clip.track_name);
-                    let to_track_index = guard
+                    let mut state = self.state.blocking_write();
+                    let f_idx = clip.track_index;
+                    let to_track_index = state
                         .tracks
                         .iter()
                         .position(|t| Id::from(t.name.clone()) == *to_track_name);
 
-                    if let (Some(f_idx), Some(t_idx)) = (from_track_index, to_track_index) {
-                        let mut clip_copy = guard.tracks[f_idx].clips[clip.index].clone();
+                    if let Some(t_idx) = to_track_index {
+                        let mut clip_copy = state.tracks[f_idx].clips[clip.index].clone();
                         clip_copy.start = clip.point.x;
-                        guard.tracks[t_idx].add_clip(clip_copy);
+                        state.tracks[t_idx].add_clip(clip_copy);
                     }
                 }
                 self.clip = None;

@@ -20,16 +20,16 @@ pub enum AddTrack {
 #[derive(Debug, Clone)]
 pub struct DraggedClip {
     pub index: usize,
-    pub track_name: String,
+    pub track_index: usize,
     pub point: Point,
     pub rect: Rectangle,
 }
 
 impl DraggedClip {
-    pub fn new(index: usize, track_name: String, point: Point, rect: Rectangle) -> Self {
+    pub fn new(index: usize, track_index: usize, point: Point, rect: Rectangle) -> Self {
         Self {
             index,
-            track_name,
+            track_index,
             point,
             rect,
         }
@@ -55,10 +55,10 @@ pub enum Message {
     SelectTrack(String),
     DeleteSelectedTracks,
 
-    TrackResizeStart(String),
+    TrackResizeStart(usize),
     TracksResizeStart,
     MixerResizeStart,
-    ClipResizeStart(String, String, bool),
+    ClipResizeStart(usize, usize, bool),
     ClipDrag(DraggedClip),
     ClipDropped(Point, Rectangle),
     HandleZones(Vec<(Id, Rectangle)>),

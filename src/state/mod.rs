@@ -9,9 +9,9 @@ pub use track::Track;
 
 #[derive(Debug)]
 pub enum Resizing {
-    Clip(String, String, bool, f32, f32),
+    Clip(usize, usize, bool, f32, f32),
     Mixer,
-    Track(String, f32, f32),
+    Track(usize, f32, f32),
     Tracks,
 }
 

@@ -1,47 +1,39 @@
 use crate::{
     message::{DraggedClip, Message},
     state::State,
-    widget::piano::PianoKeyboard,
+    // widget::piano::PianoKeyboard,
 };
 use iced::{
     Background, Border, Color, Element, Length, Point, Renderer, Theme,
-    widget::{Stack, canvas, column, container, mouse_area, pin, row, text},
+    widget::{Stack, /* canvas, */ column, container, mouse_area, pin, row, text},
 };
 use iced_drop::droppable;
-use std::collections::HashSet;
+// use std::collections::HashSet;
 
 #[derive(Debug)]
 pub struct Editor {
     state: State,
-    active_notes: HashSet<u8>,
+    // active_notes: HashSet<u8>,
 }
 
 impl Editor {
     pub fn new(state: State) -> Self {
         Self {
             state,
-            active_notes: HashSet::new(),
+            // active_notes: HashSet::new(),
         }
     }
-
-    pub fn update(&mut self, _: Message) {}
 
     pub fn view(&self) -> Element<'_, Message> {
         let mut result = column![];
         let state = self.state.blocking_read();
 
-        for track in &state.tracks {
+        for (track_index, track) in state.tracks.iter().enumerate() {
             let mut clips: Vec<Element<'_, Message, Theme, Renderer>> = vec![];
             let height = track.height;
-            let track_name = track.name.clone();
 
             for (index, clip) in track.clips.iter().enumerate() {
                 let clip_name = clip.name.clone();
-                let track_name_left = track_name.clone();
-                let track_name_right = track_name.clone();
-                let track_name_clip = track_name.clone();
-                let clip_name_left = clip_name.clone();
-                let clip_name_right = clip_name.clone();
 
                 // Left resize handle
                 let left_handle = mouse_area(
@@ -61,11 +53,7 @@ impl Editor {
                             }
                         }),
                 )
-                .on_press(Message::ClipResizeStart(
-                    track_name_left,
-                    clip_name_left,
-                    false,
-                ));
+                .on_press(Message::ClipResizeStart(track_index, index, false));
 
                 // Right resize handle
                 let right_handle = mouse_area(
@@ -85,11 +73,7 @@ impl Editor {
                             }
                         }),
                 )
-                .on_press(Message::ClipResizeStart(
-                    track_name_right,
-                    clip_name_right,
-                    true,
-                ));
+                .on_press(Message::ClipResizeStart(track_index, index, true));
 
                 // Clip content (middle part)
                 let clip_content = mouse_area(
@@ -133,12 +117,7 @@ impl Editor {
                 clips.push(
                     droppable(pin(clip_widget).position(Point::new(clip.start, 0.0)))
                         .on_drag(move |point, rect| {
-                            Message::ClipDrag(DraggedClip::new(
-                                index,
-                                track_name_clip.clone(),
-                                point,
-                                rect,
-                            ))
+                            Message::ClipDrag(DraggedClip::new(index, track_index, point, rect))
                         })
                         .on_drop(Message::ClipDropped)
                         .into(),
