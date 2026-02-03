@@ -35,7 +35,7 @@ impl Default for StateData {
             ctrl: false,
             tracks: vec![],
             selected: HashSet::new(),
-            message: "".to_string(),
+            message: "Thank you for using Maolan!".to_string(),
             resizing: None,
             cursor: Point::new(0.0, 0.0),
             mixer_height: Length::Shrink,

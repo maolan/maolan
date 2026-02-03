@@ -21,7 +21,7 @@ use tracing_subscriber::{
 use iced::futures::{Stream, io};
 use iced::keyboard::Event as KeyEvent;
 use iced::widget::{Id, column, text};
-use iced::{Point, Subscription, Task, Theme, event, keyboard, mouse};
+use iced::{Length, Point, Size, Subscription, Task, Theme, event, keyboard, mouse, window};
 
 use iced_aw::ICED_AW_FONT_BYTES;
 
@@ -62,6 +62,7 @@ struct Maolan {
     workspace: workspace::Workspace,
     state: State,
     clip: Option<DraggedClip>,
+    size: Size,
 }
 
 impl Default for Maolan {
@@ -72,6 +73,7 @@ impl Default for Maolan {
             menu: menu::Menu::default(),
             workspace: workspace::Workspace::new(state.clone()),
             clip: None,
+            size: Size::new(0.0, 0.0),
         }
     }
 }
@@ -220,6 +222,9 @@ impl Maolan {
             Message::Ignore => {
                 return Task::none();
             }
+            Message::WindowResized(size) => {
+                self.size = size;
+            }
             Message::Request(ref a) => {
                 CLIENT.send(EngineMessage::Request(a.clone()));
                 return Task::none();
@@ -335,9 +340,10 @@ impl Maolan {
                 }
             }
             Message::MouseMoved(mouse::Event::CursorMoved { position }) => {
-                self.state.blocking_write().cursor = position;
+                let mut state = self.state.blocking_write();
+                state.cursor = position;
                 if let Some(Resizing::Track(name, initial_height, initial_mouse_y)) =
-                    &self.state.blocking_write().resizing
+                    &state.resizing
                 {
                     let mut state = self.state.blocking_write();
                     let delta = position.y - *initial_mouse_y;
@@ -350,7 +356,7 @@ impl Maolan {
                     is_right_side,
                     initial_value,
                     initial_mouse_x,
-                )) = &self.state.blocking_write().resizing
+                )) = &state.resizing
                 {
                     let mut state = self.state.blocking_write();
                     let delta = position.x - initial_mouse_x;
@@ -366,6 +372,10 @@ impl Maolan {
                             clip.length = (clip.length - start_delta).max(10.0);
                         }
                     }
+                } else if let Some(Resizing::Tracks) = &state.resizing {
+                    state.tracks_width = Length::Fixed(position.x);
+                } else if let Some(Resizing::Mixer) = &state.resizing {
+                    state.mixer_height = Length::Fixed(self.size.height - position.y);
                 }
             }
             Message::MouseReleased => {
@@ -456,15 +466,16 @@ impl Maolan {
             _ => Message::Ignore,
         });
 
-        let mouse_sub = event::listen().map(|event| match event {
+        let event_sub = event::listen().map(|event| match event {
             event::Event::Mouse(mouse_event) => match mouse_event {
                 mouse::Event::CursorMoved { .. } => Message::MouseMoved(mouse_event),
                 mouse::Event::ButtonReleased(_) => Message::MouseReleased,
                 _ => Message::Ignore,
             },
+            event::Event::Window(window::Event::Resized(size)) => Message::WindowResized(size),
             _ => Message::Ignore,
         });
 
-        Subscription::batch(vec![engine_sub, keyboard_sub, mouse_sub])
+        Subscription::batch(vec![engine_sub, keyboard_sub, event_sub])
     }
 }

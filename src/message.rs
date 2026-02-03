@@ -1,7 +1,4 @@
-use iced::{
-    Point, Rectangle, mouse,
-    widget::{Id, pane_grid},
-};
+use iced::{Point, Rectangle, Size, mouse, widget::Id};
 use maolan_engine::message::{Action, TrackKind};
 
 #[derive(Debug, Clone, Copy)]
@@ -72,4 +69,6 @@ pub enum Message {
     CtrlPressed,
     ShiftReleased,
     CtrlReleased,
+
+    WindowResized(Size),
 }
