@@ -113,6 +113,7 @@ impl Workspace {
                 .on_press(Message::MixerResizeStart),
                 self.mixer.view(),
             ]
+            .width(Length::Fill)
             .into(),
         }
     }
