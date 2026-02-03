@@ -21,7 +21,7 @@ use tracing_subscriber::{
 use iced::futures::{Stream, io};
 use iced::keyboard::Event as KeyEvent;
 use iced::widget::{Id, column, text};
-use iced::{Length, Point, Size, Subscription, Task, Theme, event, keyboard, mouse, window};
+use iced::{Length, Size, Subscription, Task, Theme, event, keyboard, mouse, window};
 
 use iced_aw::ICED_AW_FONT_BYTES;
 
@@ -375,18 +375,12 @@ impl Maolan {
             }
             Message::ClipDrag(ref clip) => {
                 if self.clip.is_none() {
-                    let point = Point::new(clip.point.x - clip.rect.x, clip.point.y - clip.rect.y);
-                    self.clip = Some(DraggedClip {
-                        point,
-                        ..clip.clone()
-                    });
+                    self.clip = Some(clip.clone());
                 }
             }
-            Message::ClipDropped(point, rect) => {
+            Message::ClipDropped(point, _rect) => {
                 if let Some(clip) = &mut self.clip {
-                    clip.point.x = (point.x - clip.point.x).max(0.0);
-                    clip.point.y = (point.y - clip.point.y).max(0.0);
-                    clip.rect = rect;
+                    clip.end = point;
                     return iced_drop::zones_on_point(Message::HandleZones, point, None, None);
                 }
             }
@@ -403,7 +397,11 @@ impl Maolan {
 
                     if let Some(t_idx) = to_track_index {
                         let mut clip_copy = state.tracks[f_idx].clips[clip.index].clone();
-                        clip_copy.start = clip.point.x;
+                        let offset = clip.end.x - clip.start.x;
+                        clip_copy.start = (clip_copy.start + offset).max(0.0);
+                        if !state.ctrl {
+                            state.tracks[f_idx].clips.remove(clip.index);
+                        }
                         state.tracks[t_idx].add_clip(clip_copy);
                     }
                 }

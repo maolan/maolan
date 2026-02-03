@@ -21,17 +21,17 @@ pub enum AddTrack {
 pub struct DraggedClip {
     pub index: usize,
     pub track_index: usize,
-    pub point: Point,
-    pub rect: Rectangle,
+    pub start: Point,
+    pub end: Point,
 }
 
 impl DraggedClip {
-    pub fn new(index: usize, track_index: usize, point: Point, rect: Rectangle) -> Self {
+    pub fn new(index: usize, track_index: usize) -> Self {
         Self {
             index,
             track_index,
-            point,
-            rect,
+            start: Point::new(0.0, 0.0),
+            end: Point::new(0.0, 0.0),
         }
     }
 }

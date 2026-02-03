@@ -116,8 +116,10 @@ impl Editor {
 
                 clips.push(
                     droppable(pin(clip_widget).position(Point::new(clip.start, 0.0)))
-                        .on_drag(move |point, rect| {
-                            Message::ClipDrag(DraggedClip::new(index, track_index, point, rect))
+                        .on_drag(move |point, _| {
+                            let mut clip = DraggedClip::new(index, track_index);
+                            clip.start = point;
+                            Message::ClipDrag(clip)
                         })
                         .on_drop(Message::ClipDropped)
                         .into(),
