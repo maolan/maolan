@@ -55,6 +55,14 @@ impl Engine {
         }
     }
 
+    fn notify_clients(&self, action: Result<Action, String>) {
+        for client in &self.clients {
+            client
+                .send(Message::Response(action.clone()))
+                .expect("Error sending response to client");
+        }
+    }
+
     pub async fn work(&mut self) {
         let mut ready_workers: Vec<usize> = vec![];
         while let Some(message) = self.rx.recv().await {
@@ -83,10 +91,16 @@ impl Engine {
                     match a {
                         Action::Play => {}
                         Action::Quit => {
-                            while self.workers.len() > 0 {
+                            while !self.workers.is_empty() {
                                 let worker = self.workers.remove(0);
-                                let _ = worker.tx.send(Message::Request(a.clone()));
-                                let _ = worker.handle.await;
+                                worker
+                                    .tx
+                                    .send(Message::Request(a.clone()))
+                                    .expect("Failed sending quit message to worker");
+                                worker
+                                    .handle
+                                    .await
+                                    .expect("Failed waiting for worker to quit");
                             }
                         }
                         Action::AddTrack {
@@ -98,14 +112,7 @@ impl Engine {
                         } => {
                             let tracks = &mut self.state.lock().tracks;
                             if tracks.contains_key(name) {
-                                for client in &self.clients {
-                                    client
-                                        .send(Message::Response(Err(format!(
-                                            "Track {} already exists",
-                                            name
-                                        ))))
-                                        .expect("Error sending echo from engine");
-                                }
+                                self.notify_clients(Err(format!("Track {} already exists", name)));
                                 return;
                             }
                             match kind {
@@ -136,61 +143,57 @@ impl Engine {
                         Action::DeleteTrack(ref name) => {
                             self.state.lock().tracks.remove(name);
                         }
-                        Action::TrackLevel(ref name, value) => {
-                            for (_, track) in &self.state.lock().tracks {
-                                if *name == track.lock().name() {
-                                    track.lock().set_level(value);
-                                }
+                        Action::TrackLevel(ref name, level) => {
+                            if let Some(track) = self.state.lock().tracks.get(name) {
+                                track.lock().set_level(level);
                             }
                         }
                         Action::TrackIns(ref name, ins) => {
-                            for (_, track) in &self.state.lock().tracks {
-                                if *name == track.lock().name() {
-                                    track.lock().set_ins(ins);
-                                }
+                            if let Some(track) = self.state.lock().tracks.get(name) {
+                                track.lock().set_ins(ins);
                             }
                         }
                         Action::TrackAudioOuts(ref name, outs) => {
-                            for (_, track) in &self.state.lock().tracks {
-                                if *name == track.lock().name() {
-                                    track.lock().set_audio_outs(outs);
-                                }
+                            if let Some(track) = self.state.lock().tracks.get(name) {
+                                track.lock().set_audio_outs(outs);
                             }
                         }
                         Action::TrackMIDIOuts(ref name, outs) => {
-                            for (_, track) in &self.state.lock().tracks {
-                                if *name == track.lock().name() {
-                                    track.lock().set_midi_outs(outs);
-                                }
+                            if let Some(track) = self.state.lock().tracks.get(name) {
+                                track.lock().set_midi_outs(outs);
                             }
                         }
                         Action::TrackToggleArm(ref name) => {
-                            for (_, track) in &self.state.lock().tracks {
-                                if *name == track.lock().name() {
-                                    track.lock().arm();
-                                }
+                            if let Some(track) = self.state.lock().tracks.get(name) {
+                                track.lock().arm();
                             }
                         }
                         Action::TrackToggleMute(ref name) => {
-                            for (_, track) in &self.state.lock().tracks {
-                                if *name == track.lock().name() {
-                                    track.lock().mute();
-                                }
+                            if let Some(track) = self.state.lock().tracks.get(name) {
+                                track.lock().mute();
                             }
                         }
                         Action::TrackToggleSolo(ref name) => {
-                            for (_, track) in &self.state.lock().tracks {
-                                if *name == track.lock().name() {
-                                    track.lock().solo();
+                            if let Some(track) = self.state.lock().tracks.get(name) {
+                                track.lock().solo();
+                            }
+                        }
+                        Action::ClipMove(ref clip, copy) => {
+                            if let Some(from_track_handle) =
+                                self.state.lock().tracks.get(&clip.from.0)
+                                && let Some(to_track_handle) =
+                                    self.state.lock().tracks.get(&clip.to.0)
+                            {
+                                let from_track = from_track_handle.lock();
+                                let to_track = to_track_handle.lock();
+                                if let Err(e) = to_track.add(from_track.at(clip.from.1)) {
+                                    self.notify_clients(Err(e));
+                                    return;
                                 }
                             }
                         }
                     }
-                    for client in &self.clients {
-                        client
-                            .send(Message::Response(Ok(a.clone())))
-                            .expect("Error sending echo from engine");
-                    }
+                    self.notify_clients(Ok(a.clone()));
                 }
                 _ => {}
             }

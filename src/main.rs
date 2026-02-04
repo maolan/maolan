@@ -328,7 +328,7 @@ impl Maolan {
                     track_index,
                     clip_index,
                     is_right_side,
-                    initial_value,
+                    initial_value as f32,
                     state.cursor.x,
                 ));
             }
@@ -352,12 +352,12 @@ impl Maolan {
                         let track = &mut state.tracks[track_index];
                         let clip = &mut track.clips[index];
                         if is_right_side {
-                            clip.length = (initial_value + delta).max(10.0);
+                            clip.length = (initial_value + delta).max(10.0) as usize;
                         } else {
                             let new_start = (initial_value + delta).max(0.0);
-                            let start_delta = new_start - clip.start;
-                            clip.start = new_start;
-                            clip.length = (clip.length - start_delta).max(10.0);
+                            let start_delta = new_start - clip.start as f32;
+                            clip.start = new_start as usize;
+                            clip.length = (clip.length - start_delta as usize).max(10);
                         }
                     }
                     Some(Resizing::Tracks) => {
@@ -398,7 +398,7 @@ impl Maolan {
                     if let Some(t_idx) = to_track_index {
                         let mut clip_copy = state.tracks[f_idx].clips[clip.index].clone();
                         let offset = clip.end.x - clip.start.x;
-                        clip_copy.start = (clip_copy.start + offset).max(0.0);
+                        clip_copy.start = (clip_copy.start + offset as usize).max(0);
                         if !state.ctrl {
                             state.tracks[f_idx].clips.remove(clip.index);
                         }

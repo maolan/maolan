@@ -97,7 +97,7 @@ impl Editor {
 
                 // Combine handles and content in a row
                 let clip_widget = container(row![left_handle, clip_content, right_handle])
-                    .width(Length::Fixed(clip.length))
+                    .width(Length::Fixed(clip.length as f32))
                     .height(Length::Fill)
                     .style(|_theme| container::Style {
                         background: None,
@@ -115,7 +115,7 @@ impl Editor {
                     });
 
                 clips.push(
-                    droppable(pin(clip_widget).position(Point::new(clip.start, 0.0)))
+                    droppable(pin(clip_widget).position(Point::new(clip.start as f32, 0.0)))
                         .on_drag(move |point, _| {
                             let mut clip = DraggedClip::new(index, track_index);
                             clip.start = point;

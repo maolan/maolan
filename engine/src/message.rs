@@ -20,6 +20,12 @@ impl std::fmt::Display for TrackKind {
 }
 
 #[derive(Clone, Debug)]
+pub struct ClipMove {
+    pub from: (String, usize),
+    pub to: (String, usize),
+}
+
+#[derive(Clone, Debug)]
 pub enum Action {
     Quit,
     Play,
@@ -38,6 +44,8 @@ pub enum Action {
     TrackToggleArm(String),
     TrackToggleMute(String),
     TrackToggleSolo(String),
+
+    ClipMove(ClipMove, bool),
 }
 
 #[derive(Clone, Debug)]

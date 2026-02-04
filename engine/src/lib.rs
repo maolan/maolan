@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod client;
+mod clip;
 mod engine;
 pub mod message;
 pub mod midi;

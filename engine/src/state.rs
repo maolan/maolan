@@ -1,8 +1,5 @@
 use crate::{mutex::UnsafeMutex, track::Track};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 #[derive(Default)]
 pub struct State {

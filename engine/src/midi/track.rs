@@ -1,4 +1,5 @@
-use crate::track::Track;
+use super::clip::MIDIClip;
+use crate::{clip::Clip, track::Track};
 
 #[derive(Debug)]
 pub struct MIDITrack {
@@ -10,7 +11,7 @@ pub struct MIDITrack {
     armed: bool,
     muted: bool,
     soloed: bool,
-    buffer: Vec<f32>,
+    clips: Vec<MIDIClip>,
 }
 
 impl MIDITrack {
@@ -24,14 +25,14 @@ impl MIDITrack {
             armed: false,
             muted: false,
             soloed: false,
-            buffer: vec![],
+            clips: vec![MIDIClip::new("".to_string(), 0, 60)],
         }
     }
 }
 
 impl Track for MIDITrack {
     fn process(&mut self) {
-        self.buffer.clear();
+        // self.buffer.clear();
     }
 
     fn name(&self) -> String {
@@ -77,5 +78,19 @@ impl Track for MIDITrack {
     }
     fn solo(&mut self) {
         self.soloed = !self.soloed;
+    }
+
+    fn add(&mut self, clip: Clip) -> Result<usize, String> {
+        match clip {
+            Clip::AudioClip { .. } => Err("Tried to add audio clip to MIDI track".to_string()),
+            Clip::MIDIClip { .. } => Ok(0),
+        }
+    }
+    fn remove(&mut self, _index: usize) -> Result<usize, String> {
+        Ok(0)
+    }
+
+    fn at(&self, index: usize) -> Clip {
+        Clip::MIDIClip(self.clips[index].clone())
     }
 }
