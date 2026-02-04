@@ -1,9 +1,9 @@
 #[derive(Default, Clone)]
 pub struct AudioClip {
-    name: String,
-    start: usize,
-    end: usize,
-    offset: usize,
+    pub name: String,
+    pub start: usize,
+    pub end: usize,
+    pub offset: usize,
 }
 
 impl AudioClip {

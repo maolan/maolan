@@ -81,15 +81,48 @@ impl Track for AudioTrack {
 
     fn add(&mut self, clip: Clip) -> Result<usize, String> {
         match clip {
-            Clip::AudioClip { .. } => Ok(0),
+            Clip::AudioClip(AudioClip {
+                name,
+                start,
+                end,
+                offset,
+            }) => {
+                let index = self
+                    .clips
+                    .iter()
+                    .position(|t| t.start >= start)
+                    .unwrap_or_default();
+                let mut clip = AudioClip::new(name, start, end);
+                clip.offset = offset;
+                self.clips.insert(index, clip);
+                Ok(index)
+            }
             Clip::MIDIClip { .. } => Err("Tried to add audio clip to MIDI track".to_string()),
         }
     }
-    fn remove(&mut self, _index: usize) -> Result<usize, String> {
-        Ok(0)
+    fn remove(&mut self, index: usize) -> Result<usize, String> {
+        if index < self.clips.len() {
+            self.clips.remove(index);
+            return Ok(index);
+        }
+        Err(format!(
+            "Can not remove index {} from track {} as it has {} clips",
+            index,
+            self.name,
+            self.clips.len()
+        ))
     }
 
     fn at(&self, index: usize) -> Result<Clip, String> {
-        Ok(Clip::AudioClip(self.clips[index].clone()))
+        if index < self.clips.len() {
+            Ok(Clip::AudioClip(self.clips[index].clone()))
+        } else {
+            Err(format!(
+                "Clip with index {} not found in track {}. There are totally {} clips in that track",
+                index,
+                self.name.clone(),
+                self.clips.len()
+            ))
+        }
     }
 }

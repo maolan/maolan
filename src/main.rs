@@ -21,11 +21,13 @@ use tracing_subscriber::{
 use iced::futures::{Stream, io};
 use iced::keyboard::Event as KeyEvent;
 use iced::widget::{Id, column, text};
-use iced::{Length, Size, Subscription, Task, Theme, event, keyboard, mouse, window};
+use iced::{
+    Length, Pixels, Settings, Size, Subscription, Task, Theme, event, keyboard, mouse, window,
+};
 
 use iced_aw::ICED_AW_FONT_BYTES;
 
-use engine::message::{Action, Message as EngineMessage, TrackKind};
+use engine::message::{Action, ClipMove, Message as EngineMessage, TrackKind};
 use maolan_engine as engine;
 use message::{DraggedClip, Message};
 use state::{Resizing, State, StateData, Track};
@@ -48,9 +50,14 @@ pub fn main() -> iced::Result {
 
     let my_span = span!(Level::INFO, "main");
     let _enter = my_span.enter();
+    let settings = Settings {
+        default_text_size: Pixels(16.0),
+        ..Default::default()
+    };
 
     iced::application(Maolan::default, Maolan::update, Maolan::view)
         .title("Maolan")
+        .settings(settings)
         .theme(Theme::Dark)
         .font(ICED_AW_FONT_BYTES)
         .subscription(Maolan::subscription)
@@ -254,6 +261,36 @@ impl Maolan {
                     let tracks = &mut self.state.blocking_write().tracks;
                     tracks.retain(|track| track.name != *name);
                 }
+                Action::ClipMove(clip, copy) => {
+                    println!("{:?} {}", clip, copy);
+                    let mut state = self.state.blocking_write();
+                    let f_idx = &state
+                        .tracks
+                        .iter()
+                        .position(|track| track.name == clip.from.0);
+                    let t_idx = &state
+                        .tracks
+                        .iter()
+                        .position(|track| track.name == clip.to.0);
+                    /*
+                            ClipMove {
+                                from: (from_track.name.clone(), clip.index),
+                                to: (to_track.name.clone(), clip_copy.start),
+                            },
+                    */
+                    if let (Some(f_idx), Some(t_idx)) = (f_idx, t_idx) {
+                        let tracks = &mut state.tracks;
+                        let clip_index = clip.from.1;
+                        if clip_index < tracks[*f_idx].clips.len() {
+                            let mut clip_copy = tracks[*f_idx].clips[clip_index].clone();
+                            clip_copy.start = clip.to.1;
+                            if !copy {
+                                tracks[*f_idx].clips.remove(clip_index);
+                            }
+                            tracks[*t_idx].clips.push(clip_copy);
+                        }
+                    }
+                }
                 _ => {}
             },
             Message::Response(Err(ref e)) => {
@@ -388,7 +425,7 @@ impl Maolan {
                 if let Some(clip) = &self.clip
                     && let Some((to_track_name, _)) = zones.first()
                 {
-                    let mut state = self.state.blocking_write();
+                    let state = self.state.blocking_read();
                     let f_idx = clip.track_index;
                     let to_track_index = state
                         .tracks
@@ -396,13 +433,18 @@ impl Maolan {
                         .position(|t| Id::from(t.name.clone()) == *to_track_name);
 
                     if let Some(t_idx) = to_track_index {
-                        let mut clip_copy = state.tracks[f_idx].clips[clip.index].clone();
+                        let from_track = &state.tracks[f_idx];
+                        let to_track = &state.tracks[t_idx];
+                        let mut clip_copy = from_track.clips[clip.index].clone();
                         let offset = clip.end.x - clip.start.x;
-                        clip_copy.start = (clip_copy.start + offset as usize).max(0);
-                        if !state.ctrl {
-                            state.tracks[f_idx].clips.remove(clip.index);
-                        }
-                        state.tracks[t_idx].add_clip(clip_copy);
+                        clip_copy.start = (clip_copy.start as f32 + offset).max(0.0) as usize;
+                        CLIENT.send(EngineMessage::Request(Action::ClipMove(
+                            ClipMove {
+                                from: (from_track.name.clone(), clip.index),
+                                to: (to_track.name.clone(), clip_copy.start),
+                            },
+                            state.ctrl,
+                        )));
                     }
                 }
                 self.clip = None;
