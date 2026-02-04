@@ -110,8 +110,7 @@ impl Mixer {
                     move |new_val| {
                         Message::Request(Action::TrackLevel("master".to_string(), new_val))
                     }
-                })
-                .width(Length::Shrink),
+                }),
                 // .shift_step(0.1),
                 row![
                     button("M")
