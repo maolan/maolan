@@ -89,7 +89,7 @@ impl Track for AudioTrack {
         Ok(0)
     }
 
-    fn at(&self, index: usize) -> Clip {
-        Clip::AudioClip(self.clips[index].clone())
+    fn at(&self, index: usize) -> Result<Clip, String> {
+        Ok(Clip::AudioClip(self.clips[index].clone()))
     }
 }

@@ -186,9 +186,21 @@ impl Engine {
                             {
                                 let from_track = from_track_handle.lock();
                                 let to_track = to_track_handle.lock();
-                                if let Err(e) = to_track.add(from_track.at(clip.from.1)) {
-                                    self.notify_clients(Err(e));
-                                    return;
+                                match from_track.at(clip.from.1) {
+                                    Ok(clip_copy) => {
+                                        if !copy && let Err(e) = from_track.remove(clip.from.1) {
+                                            self.notify_clients(Err(e));
+                                            return;
+                                        }
+                                        if let Err(e) = to_track.add(clip_copy) {
+                                            self.notify_clients(Err(e));
+                                            return;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.notify_clients(Err(e));
+                                        return;
+                                    }
                                 }
                             }
                         }

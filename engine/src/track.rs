@@ -24,5 +24,5 @@ pub trait Track: Send {
 
     fn add(&mut self, clip: Clip) -> Result<usize, String>;
     fn remove(&mut self, index: usize) -> Result<usize, String>;
-    fn at(&self, index: usize) -> Clip;
+    fn at(&self, index: usize) -> Result<Clip, String>;
 }

@@ -86,11 +86,28 @@ impl Track for MIDITrack {
             Clip::MIDIClip { .. } => Ok(0),
         }
     }
-    fn remove(&mut self, _index: usize) -> Result<usize, String> {
-        Ok(0)
+    fn remove(&mut self, index: usize) -> Result<usize, String> {
+        if index >= self.clips.len() {
+            return Err(format!(
+                "Track {} has {} clips, clip at position {} removal requested",
+                self.name,
+                self.clips.len(),
+                index
+            ));
+        }
+        self.clips.remove(index);
+        Ok(index)
     }
 
-    fn at(&self, index: usize) -> Clip {
-        Clip::MIDIClip(self.clips[index].clone())
+    fn at(&self, index: usize) -> Result<Clip, String> {
+        if index >= self.clips.len() {
+            return Err(format!(
+                "Track {} has {} clips, clip at position {} requested",
+                self.name,
+                self.clips.len(),
+                index
+            ));
+        }
+        Ok(Clip::MIDIClip(self.clips[index].clone()))
     }
 }
