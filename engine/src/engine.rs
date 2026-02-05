@@ -1,7 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::mpsc::{
-    UnboundedReceiver as Receiver, UnboundedSender as Sender, unbounded_channel as channel,
-};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 
 use crate::audio::track::AudioTrack;
@@ -45,20 +43,21 @@ impl Engine {
     pub async fn init(&mut self) {
         let max_threads = num_cpus::get();
         for id in 0..max_threads {
-            let (tx, rx) = channel::<Message>();
+            let (tx, rx) = channel::<Message>(32);
             let tx_thread = self.tx.clone();
             let handler = tokio::spawn(async move {
-                let mut wrk = Worker::new(id, rx, tx_thread);
-                wrk.work().await;
+                let wrk = Worker::new(id, rx, tx_thread);
+                wrk.await.work().await;
             });
             self.workers.push(WorkerData::new(tx.clone(), handler));
         }
     }
 
-    fn notify_clients(&self, action: Result<Action, String>) {
+    async fn notify_clients(&self, action: Result<Action, String>) {
         for client in &self.clients {
             client
                 .send(Message::Response(action.clone()))
+                .await
                 .expect("Error sending response to client");
         }
     }
@@ -96,6 +95,7 @@ impl Engine {
                                 worker
                                     .tx
                                     .send(Message::Request(a.clone()))
+                                    .await
                                     .expect("Failed sending quit message to worker");
                                 worker
                                     .handle
@@ -112,7 +112,8 @@ impl Engine {
                         } => {
                             let tracks = &mut self.state.lock().tracks;
                             if tracks.contains_key(name) {
-                                self.notify_clients(Err(format!("Track {} already exists", name)));
+                                self.notify_clients(Err(format!("Track {} already exists", name)))
+                                    .await;
                                 return;
                             }
                             match kind {
@@ -189,23 +190,23 @@ impl Engine {
                                 match from_track.at(clip.from.1) {
                                     Ok(clip_copy) => {
                                         if !copy && let Err(e) = from_track.remove(clip.from.1) {
-                                            self.notify_clients(Err(e));
+                                            self.notify_clients(Err(e)).await;
                                             return;
                                         }
                                         if let Err(e) = to_track.add(clip_copy) {
-                                            self.notify_clients(Err(e));
+                                            self.notify_clients(Err(e)).await;
                                             return;
                                         }
                                     }
                                     Err(e) => {
-                                        self.notify_clients(Err(e));
+                                        self.notify_clients(Err(e)).await;
                                         return;
                                     }
                                 }
                             }
                         }
                     }
-                    self.notify_clients(Ok(a.clone()));
+                    self.notify_clients(Ok(a.clone())).await;
                 }
                 _ => {}
             }

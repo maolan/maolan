@@ -3,9 +3,7 @@ use tokio::task::JoinHandle;
 
 use super::init;
 use super::message::Message;
-use tokio::sync::mpsc::{
-    UnboundedReceiver as Receiver, UnboundedSender as Sender, unbounded_channel as channel,
-};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 #[derive(Debug, Clone)]
 pub struct Client {
@@ -24,17 +22,19 @@ impl Default for Client {
 }
 
 impl Client {
-    pub fn subscribe(&self) -> Receiver<Message> {
-        let (tx, rx) = channel::<Message>();
+    pub async fn subscribe(&self) -> Receiver<Message> {
+        let (tx, rx) = channel::<Message>(32);
         self.sender
             .send(Message::Channel(tx))
+            .await
             .expect("Failed to subscribe to engine");
         rx
     }
 
-    pub fn send(&self, message: Message) {
+    pub async fn send(&self, message: Message) -> Result<(), String> {
         self.sender
             .send(message)
-            .expect("Failed to send message {message}");
+            .await
+            .map_err(|e| format!("Failed to send message from client: {:?}", e))
     }
 }

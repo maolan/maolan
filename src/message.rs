@@ -80,4 +80,6 @@ pub enum Message {
 
     OpenFileImporter,
     ImportFilesSelected(Option<Vec<std::path::PathBuf>>),
+
+    SendMessageFinished(Result<(), String>),
 }

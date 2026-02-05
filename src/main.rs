@@ -19,7 +19,7 @@ use tracing_subscriber::{
     prelude::*,
 };
 
-use iced::futures::{Stream, io};
+use iced::futures::{Stream, StreamExt, io};
 use iced::keyboard::Event as KeyEvent;
 use iced::widget::{Id, column, text};
 use iced::{
@@ -81,6 +81,15 @@ impl Default for Maolan {
 }
 
 impl Maolan {
+    fn send(&self, action: Action) -> Task<Message> {
+        Task::perform(
+            async move { CLIENT.send(EngineMessage::Request(action.clone())).await },
+            |result| match result {
+                Ok(_) => Message::SendMessageFinished(Ok(())),
+                Err(_) => Message::Response(Err("Channel closed".to_string())),
+            },
+        )
+    }
     fn save(&self, path: String) -> std::io::Result<()> {
         let filename = "session.json";
         let result = self.workspace.json();
@@ -91,7 +100,9 @@ impl Maolan {
         serde_json::to_writer_pretty(file, &result)?;
         Ok(())
     }
-    fn load(&self, path: String) -> std::io::Result<()> {
+
+    fn load(&self, path: String) -> std::io::Result<Task<Message>> {
+        let mut tasks = vec![];
         let filename = "session.json";
         let mut p = PathBuf::from(path.clone());
         p.push(filename);
@@ -160,7 +171,7 @@ impl Maolan {
                         ));
                     }
                 };
-                CLIENT.send(EngineMessage::Request(Action::AddTrack {
+                tasks.push(self.send(Action::AddTrack {
                     name: name.clone(),
                     kind,
                     ins,
@@ -169,7 +180,7 @@ impl Maolan {
                 }));
                 if let Some(value) = track["armed"].as_bool() {
                     if value {
-                        CLIENT.send(EngineMessage::Request(Action::TrackToggleArm(name.clone())));
+                        tasks.push(self.send(Action::TrackToggleArm(name.clone())));
                     }
                 } else {
                     return Err(io::Error::new(
@@ -179,9 +190,7 @@ impl Maolan {
                 }
                 if let Some(value) = track["muted"].as_bool() {
                     if value {
-                        CLIENT.send(EngineMessage::Request(Action::TrackToggleMute(
-                            name.clone(),
-                        )));
+                        tasks.push(self.send(Action::TrackToggleMute(name.clone())));
                     }
                 } else {
                     return Err(io::Error::new(
@@ -191,9 +200,7 @@ impl Maolan {
                 }
                 if let Some(value) = track["soloed"].as_bool() {
                     if value {
-                        CLIENT.send(EngineMessage::Request(Action::TrackToggleSolo(
-                            name.clone(),
-                        )));
+                        tasks.push(self.send(Action::TrackToggleSolo(name.clone())));
                     }
                 } else {
                     return Err(io::Error::new(
@@ -208,7 +215,7 @@ impl Maolan {
                 "'tracks' is not an array",
             ));
         }
-        Ok(())
+        Ok(Task::batch(tasks))
     }
 
     fn update_children(&mut self, message: &message::Message) {
@@ -227,10 +234,11 @@ impl Maolan {
             Message::WindowResized(size) => {
                 self.size = size;
             }
-            Message::Request(ref a) => {
-                CLIENT.send(EngineMessage::Request(a.clone()));
-                return Task::none();
-            }
+            Message::Request(ref a) => return self.send(a.clone()),
+            Message::SendMessageFinished(ref result) => match result {
+                Ok(_) => debug!("Sent successfully!"),
+                Err(e) => error!("Error: {}", e),
+            },
             Message::Response(Ok(ref a)) => match a {
                 Action::Quit => {
                     exit(0);
@@ -294,9 +302,14 @@ impl Maolan {
                 }
             }
             Message::Open(ref path) => {
-                if let Err(s) = self.load(path.clone()) {
-                    error!("{}", s);
-                }
+                let result = self.load(path.clone());
+                match result {
+                    Ok(task) => return task,
+                    Err(e) => {
+                        error!("{}", e);
+                        return Task::none();
+                    }
+                };
             }
             Message::ShiftPressed => {
                 self.state.blocking_write().shift = true;
@@ -325,9 +338,11 @@ impl Maolan {
                 }
             }
             Message::DeleteSelectedTracks => {
+                let mut tasks = vec![];
                 for name in &self.state.blocking_read().selected {
-                    CLIENT.send(EngineMessage::Request(Action::DeleteTrack(name.clone())));
+                    tasks.push(self.send(Action::DeleteTrack(name.clone())));
                 }
+                return Task::batch(tasks);
             }
             Message::TrackResizeStart(index) => {
                 let mut state = self.state.blocking_write();
@@ -426,16 +441,17 @@ impl Maolan {
                         let mut clip_copy = from_track.clips[clip.index].clone();
                         let offset = clip.end.x - clip.start.x;
                         clip_copy.start = (clip_copy.start as f32 + offset).max(0.0) as usize;
-                        CLIENT.send(EngineMessage::Request(Action::ClipMove(
+                        let task = self.send(Action::ClipMove(
                             ClipMove {
                                 from: (from_track.name.clone(), clip.index),
                                 to: (to_track.name.clone(), clip_copy.start),
                             },
                             state.ctrl,
-                        )));
+                        ));
+                        self.clip = None;
+                        return task;
                     }
                 }
-                self.clip = None;
             }
             Message::TrackDrag(index) => {
                 if self.track.is_none() {
@@ -511,13 +527,19 @@ impl Maolan {
         fn listener() -> impl Stream<Item = message::Message> {
             use iced::futures::stream;
 
-            stream::unfold(CLIENT.subscribe(), async move |mut receiver| {
-                let command = match receiver.recv().await? {
-                    EngineMessage::Response(e) => Message::Response(e),
-                    _ => Message::Response(Err("failed to receive in unfold".to_string())),
-                };
-
-                Some((command, receiver))
+            stream::once(CLIENT.subscribe()).flat_map(|receiver| {
+                stream::unfold(receiver, |mut rx| async move {
+                    match rx.recv().await {
+                        Some(m) => match m {
+                            EngineMessage::Response(r) => {
+                                let result = Message::Response(r);
+                                Some((result, rx))
+                            }
+                            _ => Some((Message::Ignore, rx)),
+                        },
+                        None => None,
+                    }
+                })
             })
         }
         let engine_sub = Subscription::run(listener);

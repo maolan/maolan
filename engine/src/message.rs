@@ -1,5 +1,5 @@
 // use std::sync::Arc;
-use tokio::sync::mpsc::UnboundedSender as Sender;
+use tokio::sync::mpsc::Sender;
 // use crate::audio::track::Track as AudioTrack;
 // use crate::midi::track::Track as MIDITrack;
 // use crate::mutex::UnsafeMutex;

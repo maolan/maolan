@@ -1,5 +1,5 @@
 use crate::message::{Action, Message};
-use tokio::sync::mpsc::{UnboundedReceiver as Receiver, UnboundedSender as Sender};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 #[derive(Debug)]
 pub struct Worker {
@@ -9,15 +9,16 @@ pub struct Worker {
 }
 
 impl Worker {
-    pub fn new(id: usize, rx: Receiver<Message>, tx: Sender<Message>) -> Worker {
+    pub async fn new(id: usize, rx: Receiver<Message>, tx: Sender<Message>) -> Worker {
         let worker = Worker { _id: id, rx, tx };
-        worker.send(Message::Ready(id));
+        worker.send(Message::Ready(id)).await;
         worker
     }
 
-    pub fn send(&self, message: Message) {
+    pub async fn send(&self, message: Message) {
         self.tx
             .send(message)
+            .await
             .expect("Failed to send message from worker");
     }
 
