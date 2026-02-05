@@ -37,16 +37,8 @@ static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::
 pub fn main() -> iced::Result {
     let stdout_layer =
         FmtLayer::new().with_writer(std::io::stdout.with_max_level(tracing::Level::INFO));
-    // let logfile = tracing_appender::rolling::hourly("./logs", "maolan.log");
-    // let (non_blocking_appender, _guard) = tracing_appender::non_blocking(logfile);
-    // let file_layer = FmtLayer::new()
-    //     .with_ansi(false)
-    //     .with_writer(non_blocking_appender);
 
-    tracing_subscriber::registry()
-        .with(stdout_layer)
-        // .with(file_layer)
-        .init();
+    tracing_subscriber::registry().with(stdout_layer).init();
 
     let my_span = span!(Level::INFO, "main");
     let _enter = my_span.enter();
@@ -65,22 +57,24 @@ pub fn main() -> iced::Result {
 }
 
 struct Maolan {
-    menu: menu::Menu,
-    workspace: workspace::Workspace,
-    state: State,
     clip: Option<DraggedClip>,
+    menu: menu::Menu,
     size: Size,
+    state: State,
+    track: Option<usize>,
+    workspace: workspace::Workspace,
 }
 
 impl Default for Maolan {
     fn default() -> Self {
         let state = Arc::new(RwLock::new(StateData::default()));
         Self {
-            state: state.clone(),
-            menu: menu::Menu::default(),
-            workspace: workspace::Workspace::new(state.clone()),
             clip: None,
+            menu: menu::Menu::default(),
             size: Size::new(0.0, 0.0),
+            state: state.clone(),
+            track: None,
+            workspace: workspace::Workspace::new(state.clone()),
         }
     }
 }
@@ -262,7 +256,6 @@ impl Maolan {
                     tracks.retain(|track| track.name != *name);
                 }
                 Action::ClipMove(clip, copy) => {
-                    println!("{:?} {}", clip, copy);
                     let mut state = self.state.blocking_write();
                     let f_idx = &state
                         .tracks
@@ -272,12 +265,6 @@ impl Maolan {
                         .tracks
                         .iter()
                         .position(|track| track.name == clip.to.0);
-                    /*
-                            ClipMove {
-                                from: (from_track.name.clone(), clip.index),
-                                to: (to_track.name.clone(), clip_copy.start),
-                            },
-                    */
                     if let (Some(f_idx), Some(t_idx)) = (f_idx, t_idx) {
                         let tracks = &mut state.tracks;
                         let clip_index = clip.from.1;
@@ -418,10 +405,10 @@ impl Maolan {
             Message::ClipDropped(point, _rect) => {
                 if let Some(clip) = &mut self.clip {
                     clip.end = point;
-                    return iced_drop::zones_on_point(Message::HandleZones, point, None, None);
+                    return iced_drop::zones_on_point(Message::HandleClipZones, point, None, None);
                 }
             }
-            Message::HandleZones(ref zones) => {
+            Message::HandleClipZones(ref zones) => {
                 if let Some(clip) = &self.clip
                     && let Some((to_track_name, _)) = zones.first()
                 {
@@ -448,6 +435,35 @@ impl Maolan {
                     }
                 }
                 self.clip = None;
+            }
+            Message::TrackDrag(index) => {
+                if self.track.is_none() {
+                    self.track = Some(index);
+                }
+            }
+            Message::TrackDropped(point, _rect) => {
+                if self.track.is_some() {
+                    return iced_drop::zones_on_point(Message::HandleTrackZones, point, None, None);
+                }
+            }
+            Message::HandleTrackZones(ref zones) => {
+                if let Some(index) = &self.track
+                    && let Some((track_name, _)) = zones.first()
+                {
+                    let mut state = self.state.blocking_write();
+                    if *index < state.tracks.len() {
+                        let clip = state.tracks.remove(*index);
+                        let to_index = state
+                            .tracks
+                            .iter()
+                            .position(|t| Id::from(t.name.clone()) == *track_name);
+                        if let Some(t_idx) = to_index {
+                            state.tracks.insert(t_idx, clip);
+                        } else {
+                            state.tracks.insert(*index, clip);
+                        }
+                    }
+                }
             }
             _ => {}
         }

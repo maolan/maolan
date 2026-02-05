@@ -3,6 +3,7 @@ use iced::{
     Background, Border, Color, Element, Length,
     widget::{Column, Space, button, column, container, mouse_area, row, text},
 };
+use iced_drop::droppable;
 use maolan_engine::message::Action;
 
 #[derive(Debug, Default)]
@@ -70,38 +71,43 @@ impl Tracks {
             ];
 
             mouse_area(
-                container(track_ui)
-                    .width(Length::Fill)
-                    .height(Length::Fixed(height))
-                    .padding(5)
-                    .style(move |_theme| container::Style {
-                        background: if selected {
-                            Some(Background::Color(Color {
-                                r: 1.0,
-                                g: 1.0,
-                                b: 1.0,
-                                a: 0.1,
-                            }))
-                        } else {
-                            Some(Background::Color(Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 0.0,
-                            }))
-                        },
-                        border: Border {
-                            color: Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 1.0,
+                droppable(
+                    container(track_ui)
+                        .id(track.name.clone())
+                        .width(Length::Fill)
+                        .height(Length::Fixed(height))
+                        .padding(5)
+                        .style(move |_theme| container::Style {
+                            background: if selected {
+                                Some(Background::Color(Color {
+                                    r: 1.0,
+                                    g: 1.0,
+                                    b: 1.0,
+                                    a: 0.1,
+                                }))
+                            } else {
+                                Some(Background::Color(Color {
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 0.0,
+                                }))
                             },
-                            width: 1.0,
-                            radius: 5.0.into(),
-                        },
-                        ..container::Style::default()
-                    }),
+                            border: Border {
+                                color: Color {
+                                    r: 0.0,
+                                    g: 0.0,
+                                    b: 0.0,
+                                    a: 1.0,
+                                },
+                                width: 1.0,
+                                radius: 5.0.into(),
+                            },
+                            ..container::Style::default()
+                        }),
+                )
+                .on_drag(move |_, _| Message::TrackDrag(index))
+                .on_drop(Message::TrackDropped),
             )
             .on_press(Message::SelectTrack(track.name.clone()))
             .into()

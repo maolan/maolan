@@ -59,9 +59,15 @@ pub enum Message {
     TracksResizeStart,
     MixerResizeStart,
     ClipResizeStart(usize, usize, bool),
+
     ClipDrag(DraggedClip),
     ClipDropped(Point, Rectangle),
-    HandleZones(Vec<(Id, Rectangle)>),
+    HandleClipZones(Vec<(Id, Rectangle)>),
+
+    TrackDrag(usize),
+    TrackDropped(Point, Rectangle),
+    HandleTrackZones(Vec<(Id, Rectangle)>),
+
     MouseMoved(mouse::Event),
     MouseReleased,
 
