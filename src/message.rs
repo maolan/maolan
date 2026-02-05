@@ -77,4 +77,7 @@ pub enum Message {
     CtrlReleased,
 
     WindowResized(Size),
+
+    OpenFileImporter,
+    ImportFilesSelected(Option<Vec<std::path::PathBuf>>),
 }

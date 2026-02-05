@@ -94,12 +94,13 @@ impl Menu {
 
         #[rustfmt::skip]
         let mb = menu_bar!(
-            (menu_dropdown("File", Message::Debug("File".to_string())), {
+            (menu_dropdown("File", Message::Ignore), {
                 menu_tpl(menu_items!(
                     (menu_item("New", Message::Debug("New".to_string()))),
                     (menu_item("Open", Message::Show(Show::Open))),
                     (menu_item("Save", Message::Show(Show::Save))),
-                    (submenu("Open Recent", Message::Debug("Open Recent".to_string())), menu_tpl(menu_items!(
+                    (menu_item("Import", Message::OpenFileImporter)),
+                    (submenu("Open Recent", Message::Ignore), menu_tpl(menu_items!(
                         (menu_item("First", Message::Debug("First".to_string()))),
                         (menu_item("Second", Message::Debug("Second".to_string()))),
                     ))),
@@ -107,7 +108,7 @@ impl Menu {
                     (menu_item("Quit", Message::Request(Action::Quit))),
                 ))
             }),
-            (menu_dropdown("Track", Message::Debug("Track".to_string())), {
+            (menu_dropdown("Track", Message::Ignore), {
                 menu_tpl(menu_items!(
                     (menu_item("New", Message::Show(Show::AddTrack))),
                     (menu_item("Delete", Message::DeleteSelectedTracks)),

@@ -5,6 +5,7 @@ mod style;
 mod widget;
 mod workspace;
 
+use rfd::AsyncFileDialog;
 use serde_json::Value;
 use std::fs::{self, File};
 use std::io::BufReader;
@@ -463,6 +464,29 @@ impl Maolan {
                             state.tracks.insert(*index, clip);
                         }
                     }
+                }
+            }
+            Message::OpenFileImporter => {
+                return Task::perform(
+                    async {
+                        let files = AsyncFileDialog::new()
+                            .set_title("Import files")
+                            .add_filter("wav", &["wav"])
+                            .pick_files()
+                            .await;
+                        files.map(|handles| {
+                            handles
+                                .into_iter()
+                                .map(|f| f.path().to_path_buf())
+                                .collect()
+                        })
+                    },
+                    Message::ImportFilesSelected,
+                );
+            }
+            Message::ImportFilesSelected(Some(ref paths)) => {
+                for _path in paths {
+                    // TODO
                 }
             }
             _ => {}
