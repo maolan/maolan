@@ -38,8 +38,7 @@ impl DraggedClip {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Ignore,
-    Debug(String),
+    None,
 
     Request(Action),
     Response(Result<Action, String>),

@@ -19,7 +19,7 @@ use tracing_subscriber::{
     prelude::*,
 };
 
-use iced::futures::{Stream, StreamExt, io};
+use iced::futures::{Stream, StreamExt, io, stream};
 use iced::keyboard::Event as KeyEvent;
 use iced::widget::{Id, column, text};
 use iced::{
@@ -228,7 +228,7 @@ impl Maolan {
 
     fn update(&mut self, message: message::Message) -> Task<Message> {
         match message {
-            Message::Ignore => {
+            Message::None => {
                 return Task::none();
             }
             Message::WindowResized(size) => {
@@ -292,9 +292,6 @@ impl Maolan {
             Message::Response(Err(ref e)) => {
                 self.state.blocking_write().message = e.clone();
                 error!("Engine error: {e}");
-            }
-            Message::Debug(ref s) => {
-                debug!("Maolan::update::debug({s})");
             }
             Message::Save(ref path) => {
                 if let Err(s) = self.save(path.clone()) {
@@ -525,8 +522,6 @@ impl Maolan {
 
     fn subscription(&self) -> Subscription<message::Message> {
         fn listener() -> impl Stream<Item = message::Message> {
-            use iced::futures::stream;
-
             stream::once(CLIENT.subscribe()).flat_map(|receiver| {
                 stream::unfold(receiver, |mut rx| async move {
                     match rx.recv().await {
@@ -535,7 +530,7 @@ impl Maolan {
                                 let result = Message::Response(r);
                                 Some((result, rx))
                             }
-                            _ => Some((Message::Ignore, rx)),
+                            _ => Some((Message::None, rx)),
                         },
                         None => None,
                     }
@@ -548,24 +543,24 @@ impl Maolan {
             KeyEvent::KeyPressed { key, .. } => match key {
                 keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
                 keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
-                _ => Message::Ignore,
+                _ => Message::None,
             },
             KeyEvent::KeyReleased { key, .. } => match key {
                 keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftReleased,
                 keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlReleased,
-                _ => Message::Ignore,
+                _ => Message::None,
             },
-            _ => Message::Ignore,
+            _ => Message::None,
         });
 
         let event_sub = event::listen().map(|event| match event {
             event::Event::Mouse(mouse_event) => match mouse_event {
                 mouse::Event::CursorMoved { .. } => Message::MouseMoved(mouse_event),
                 mouse::Event::ButtonReleased(_) => Message::MouseReleased,
-                _ => Message::Ignore,
+                _ => Message::None,
             },
             event::Event::Window(window::Event::Resized(size)) => Message::WindowResized(size),
-            _ => Message::Ignore,
+            _ => Message::None,
         });
 
         Subscription::batch(vec![engine_sub, keyboard_sub, event_sub])
