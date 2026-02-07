@@ -28,7 +28,10 @@ use iced::{
 
 use iced_aw::ICED_AW_FONT_BYTES;
 
-use engine::message::{Action, ClipMove, Message as EngineMessage, TrackKind};
+use engine::{
+    kind::Kind,
+    message::{Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage},
+};
 use maolan_engine as engine;
 use message::{DraggedClip, Message};
 use state::{Resizing, State, StateData, Track};
@@ -122,13 +125,23 @@ impl Maolan {
                         ));
                     }
                 };
-                let ins = {
-                    if let Some(value) = track["ins"].as_u64() {
+                let audio_ins = {
+                    if let Some(value) = track["audio_ins"].as_u64() {
                         value as usize
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
-                            "No 'ins' in track",
+                            "No 'audio_ins' in track",
+                        ));
+                    }
+                };
+                let midi_ins = {
+                    if let Some(value) = track["midi_ins"].as_u64() {
+                        value as usize
+                    } else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "No 'midi_ins' in track",
                         ));
                     }
                 };
@@ -152,30 +165,11 @@ impl Maolan {
                         ));
                     }
                 };
-                let kind = {
-                    if let Some(value) = track["track_kind"].as_str() {
-                        if value == "Audio" {
-                            TrackKind::Audio
-                        } else if value == "MIDI" {
-                            TrackKind::MIDI
-                        } else {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidInput,
-                                format!("'track_kind' value '{}' is invalid", value),
-                            ));
-                        }
-                    } else {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidInput,
-                            "No 'midi_outs' in track",
-                        ));
-                    }
-                };
                 tasks.push(self.send(Action::AddTrack {
                     name: name.clone(),
-                    kind,
-                    ins,
+                    audio_ins,
                     audio_outs,
+                    midi_ins,
                     midi_outs,
                 }));
                 if let Some(value) = track["armed"].as_bool() {
@@ -245,18 +239,18 @@ impl Maolan {
                 }
                 Action::AddTrack {
                     name,
-                    kind,
-                    ins,
+                    audio_ins,
                     audio_outs,
+                    midi_ins,
                     midi_outs,
                 } => {
                     let tracks = &mut self.state.blocking_write().tracks;
                     tracks.push(Track::new(
                         name.clone(),
-                        *kind,
                         0.0,
-                        *ins,
+                        *audio_ins,
                         *audio_outs,
+                        *midi_ins,
                         *midi_outs,
                     ));
                 }
@@ -264,26 +258,47 @@ impl Maolan {
                     let tracks = &mut self.state.blocking_write().tracks;
                     tracks.retain(|track| track.name != *name);
                 }
-                Action::ClipMove(clip, copy) => {
+                Action::ClipMove {
+                    kind,
+                    from,
+                    to,
+                    copy,
+                } => {
                     let mut state = self.state.blocking_write();
                     let f_idx = &state
                         .tracks
                         .iter()
-                        .position(|track| track.name == clip.from.0);
+                        .position(|track| track.name == from.track_name);
                     let t_idx = &state
                         .tracks
                         .iter()
-                        .position(|track| track.name == clip.to.0);
+                        .position(|track| track.name == to.track_name);
                     if let (Some(f_idx), Some(t_idx)) = (f_idx, t_idx) {
                         let tracks = &mut state.tracks;
-                        let clip_index = clip.from.1;
-                        if clip_index < tracks[*f_idx].clips.len() {
-                            let mut clip_copy = tracks[*f_idx].clips[clip_index].clone();
-                            clip_copy.start = clip.to.1;
-                            if !copy {
-                                tracks[*f_idx].clips.remove(clip_index);
+                        let clip_index = from.clip_index;
+                        match kind {
+                            Kind::Audio => {
+                                if clip_index < tracks[*f_idx].audio.clips.len() {
+                                    let mut clip_copy =
+                                        tracks[*f_idx].audio.clips[clip_index].clone();
+                                    clip_copy.start = to.sample_offset;
+                                    if !copy {
+                                        tracks[*f_idx].audio.clips.remove(clip_index);
+                                    }
+                                    tracks[*t_idx].audio.clips.push(clip_copy);
+                                }
                             }
-                            tracks[*t_idx].clips.push(clip_copy);
+                            Kind::MIDI => {
+                                if clip_index < tracks[*f_idx].midi.clips.len() {
+                                    let mut clip_copy =
+                                        tracks[*f_idx].midi.clips[clip_index].clone();
+                                    clip_copy.start = to.sample_offset;
+                                    if !copy {
+                                        tracks[*f_idx].midi.clips.remove(clip_index);
+                                    }
+                                    tracks[*t_idx].midi.clips.push(clip_copy);
+                                }
+                            }
                         }
                     }
                 }
@@ -352,56 +367,96 @@ impl Maolan {
             Message::MixerResizeStart => {
                 self.state.blocking_write().resizing = Some(Resizing::Mixer);
             }
-            Message::ClipResizeStart(track_index, clip_index, is_right_side) => {
+            Message::ClipResizeStart(ref kind, track_index, clip_index, is_right_side) => {
                 let mut state = self.state.blocking_write();
                 let track = &state.tracks[track_index];
-                let clip = &track.clips[clip_index];
-                let initial_value = if is_right_side {
-                    clip.length
-                } else {
-                    clip.start
-                };
-                state.resizing = Some(Resizing::Clip(
-                    track_index,
-                    clip_index,
-                    is_right_side,
-                    initial_value as f32,
-                    state.cursor.x,
-                ));
+                match kind {
+                    Kind::Audio => {
+                        let clip = &track.audio.clips[clip_index];
+                        let initial_value = if is_right_side {
+                            clip.length
+                        } else {
+                            clip.start
+                        };
+                        state.resizing = Some(Resizing::Clip(
+                            kind.clone(),
+                            track_index,
+                            clip_index,
+                            is_right_side,
+                            initial_value as f32,
+                            state.cursor.x,
+                        ));
+                    }
+                    Kind::MIDI => {
+                        let clip = &track.midi.clips[clip_index];
+                        let initial_value = if is_right_side {
+                            clip.length
+                        } else {
+                            clip.start
+                        };
+                        state.resizing = Some(Resizing::Clip(
+                            kind.clone(),
+                            track_index,
+                            clip_index,
+                            is_right_side,
+                            initial_value as f32,
+                            state.cursor.x,
+                        ));
+                    }
+                }
             }
             Message::MouseMoved(mouse::Event::CursorMoved { position }) => {
-                let mut state = self.state.blocking_write();
-                state.cursor = position;
-                match state.resizing {
+                let resizing = self.state.blocking_read().resizing.clone();
+                self.state.blocking_write().cursor = position;
+                match resizing {
                     Some(Resizing::Track(index, initial_height, initial_mouse_y)) => {
+                        let mut state = self.state.blocking_write();
                         let delta = position.y - initial_mouse_y;
                         let track = &mut state.tracks[index];
                         track.height = (initial_height + delta).clamp(60.0, 400.0);
                     }
                     Some(Resizing::Clip(
+                        kind,
                         track_index,
                         index,
                         is_right_side,
                         initial_value,
                         initial_mouse_x,
                     )) => {
+                        let mut state = self.state.blocking_write();
                         let delta = position.x - initial_mouse_x;
                         let track = &mut state.tracks[track_index];
-                        let clip = &mut track.clips[index];
-                        if is_right_side {
-                            clip.length = (initial_value + delta).max(10.0) as usize;
-                        } else {
-                            let new_start = (initial_value + delta).max(0.0);
-                            let start_delta = new_start - clip.start as f32;
-                            clip.start = new_start as usize;
-                            clip.length = (clip.length - start_delta as usize).max(10);
+                        match kind {
+                            Kind::Audio => {
+                                let clip = &mut track.audio.clips[index];
+                                if is_right_side {
+                                    clip.length = (initial_value + delta).max(10.0) as usize;
+                                } else {
+                                    let new_start = (initial_value + delta).max(0.0);
+                                    let start_delta = new_start - clip.start as f32;
+                                    clip.start = new_start as usize;
+                                    clip.length = (clip.length - start_delta as usize).max(10);
+                                }
+                            }
+                            Kind::MIDI => {
+                                let clip = &mut track.midi.clips[index];
+                                if is_right_side {
+                                    clip.length = (initial_value + delta).max(10.0) as usize;
+                                } else {
+                                    let new_start = (initial_value + delta).max(0.0);
+                                    let start_delta = new_start - clip.start as f32;
+                                    clip.start = new_start as usize;
+                                    clip.length = (clip.length - start_delta as usize).max(10);
+                                }
+                            }
                         }
                     }
                     Some(Resizing::Tracks) => {
-                        state.tracks_width = Length::Fixed(position.x);
+                        self.state.blocking_write().tracks_width = Length::Fixed(position.x);
                     }
                     Some(Resizing::Mixer) => {
-                        state.mixer_height = Length::Fixed(self.size.height - position.y);
+                        self.state.blocking_write().mixer_height =
+                            Length::Fixed(self.size.height - position.y);
                     }
                     _ => {}
                 }
@@ -435,18 +490,48 @@ impl Maolan {
                     if let Some(t_idx) = to_track_index {
                         let from_track = &state.tracks[f_idx];
                         let to_track = &state.tracks[t_idx];
-                        let mut clip_copy = from_track.clips[clip.index].clone();
-                        let offset = clip.end.x - clip.start.x;
-                        clip_copy.start = (clip_copy.start as f32 + offset).max(0.0) as usize;
-                        let task = self.send(Action::ClipMove(
-                            ClipMove {
-                                from: (from_track.name.clone(), clip.index),
-                                to: (to_track.name.clone(), clip_copy.start),
-                            },
-                            state.ctrl,
-                        ));
-                        self.clip = None;
-                        return task;
+                        match clip.kind {
+                            Kind::Audio => {
+                                let mut clip_copy = from_track.audio.clips[clip.index].clone();
+                                let offset = clip.end.x - clip.start.x;
+                                clip_copy.start =
+                                    (clip_copy.start as f32 + offset).max(0.0) as usize;
+                                let task = self.send(Action::ClipMove {
+                                    kind: clip.kind.clone(),
+                                    from: ClipMoveFrom {
+                                        track_name: from_track.name.clone(),
+                                        clip_index: clip.index,
+                                    },
+                                    to: ClipMoveTo {
+                                        track_name: to_track.name.clone(),
+                                        sample_offset: clip_copy.start,
+                                    },
+                                    copy: state.ctrl,
+                                });
+                                self.clip = None;
+                                return task;
+                            }
+                            Kind::MIDI => {
+                                let mut clip_copy = from_track.midi.clips[clip.index].clone();
+                                let offset = clip.end.x - clip.start.x;
+                                clip_copy.start =
+                                    (clip_copy.start as f32 + offset).max(0.0) as usize;
+                                let task = self.send(Action::ClipMove {
+                                    kind: clip.kind.clone(),
+                                    from: ClipMoveFrom {
+                                        track_name: from_track.name.clone(),
+                                        clip_index: clip.index,
+                                    },
+                                    to: ClipMoveTo {
+                                        track_name: to_track.name.clone(),
+                                        sample_offset: clip_copy.start,
+                                    },
+                                    copy: state.ctrl,
+                                });
+                                self.clip = None;
+                                return task;
+                            }
+                        }
                     }
                 }
             }

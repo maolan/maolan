@@ -1,18 +1,18 @@
 use crate::message::{AddTrack, Message};
 use iced::{
     Alignment, Element, Length,
-    widget::{button, column, container, pick_list, row, text, text_input},
+    widget::{button, column, container, row, text, text_input},
 };
 use iced_aw::number_input;
-use maolan_engine::message::{Action, TrackKind};
+use maolan_engine::message::Action;
 
 #[derive(Debug)]
 pub struct AddTrackView {
-    audio_outs: usize,
-    ins: usize,
-    kind: TrackKind,
-    midi_outs: usize,
     name: String,
+    audio_ins: usize,
+    audio_outs: usize,
+    midi_ins: usize,
+    midi_outs: usize,
 }
 
 impl AddTrackView {
@@ -22,11 +22,11 @@ impl AddTrackView {
                 AddTrack::Name(name) => {
                     self.name = name;
                 }
-                AddTrack::Kind(kind) => {
-                    self.kind = kind;
+                AddTrack::AudioIns(ins) => {
+                    self.audio_ins = ins;
                 }
-                AddTrack::Ins(ins) => {
-                    self.ins = ins;
+                AddTrack::MIDIIns(ins) => {
+                    self.midi_ins = ins;
                 }
                 AddTrack::AudioOuts(outs) => {
                     self.audio_outs = outs;
@@ -40,15 +40,8 @@ impl AddTrackView {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let kinds = [TrackKind::Audio, TrackKind::MIDI];
         container(
             column![
-                row![
-                    text("Track type"),
-                    pick_list(kinds, Some(self.kind), |kind: TrackKind| Message::AddTrack(
-                        AddTrack::Kind(kind)
-                    )),
-                ],
                 row![
                     text("Name:"),
                     text_input("Track name", &self.name)
@@ -57,9 +50,16 @@ impl AddTrackView {
                 ]
                 .spacing(10),
                 row![
-                    text("Number of inputs:"),
-                    number_input(&self.ins, 1..=32, |ins: usize| {
-                        Message::AddTrack(AddTrack::Ins(ins))
+                    text("Number of audio inputs:"),
+                    number_input(&self.audio_ins, 1..=32, |ins: usize| {
+                        Message::AddTrack(AddTrack::AudioIns(ins))
+                    })
+                ]
+                .spacing(10),
+                row![
+                    text("Number of midi inputs:"),
+                    number_input(&self.midi_ins, 1..=32, |ins: usize| {
+                        Message::AddTrack(AddTrack::MIDIIns(ins))
                     })
                 ]
                 .spacing(10),
@@ -80,8 +80,8 @@ impl AddTrackView {
                 row![
                     button("Create").on_press(Message::Request(Action::AddTrack {
                         name: self.name.clone(),
-                        kind: self.kind,
-                        ins: self.ins,
+                        audio_ins: self.audio_ins,
+                        midi_ins: self.midi_ins,
                         audio_outs: self.audio_outs,
                         midi_outs: self.midi_outs,
                     })),
@@ -106,9 +106,9 @@ impl AddTrackView {
 impl Default for AddTrackView {
     fn default() -> Self {
         Self {
+            audio_ins: 1,
             audio_outs: 1,
-            ins: 1,
-            kind: TrackKind::Audio,
+            midi_ins: 0,
             midi_outs: 0,
             name: "".to_string(),
         }

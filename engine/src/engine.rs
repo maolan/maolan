@@ -2,12 +2,14 @@ use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 
-use crate::audio::track::AudioTrack;
-use crate::message::{Action, Message, TrackKind};
-use crate::midi::track::MIDITrack;
-use crate::mutex::UnsafeMutex;
-use crate::state::State;
-use crate::worker::Worker;
+use crate::{
+    kind::Kind,
+    message::{Action, Message},
+    mutex::UnsafeMutex,
+    state::State,
+    track::Track,
+    worker::Worker,
+};
 
 #[derive(Debug)]
 struct WorkerData {
@@ -32,10 +34,10 @@ pub struct Engine {
 impl Engine {
     pub fn new(rx: Receiver<Message>, tx: Sender<Message>) -> Self {
         Self {
-            clients: vec![],
             rx,
-            state: Arc::new(UnsafeMutex::new(State::default())),
             tx,
+            clients: vec![],
+            state: Arc::new(UnsafeMutex::new(State::default())),
             workers: vec![],
         }
     }
@@ -105,8 +107,8 @@ impl Engine {
                         }
                         Action::AddTrack {
                             ref name,
-                            kind,
-                            ins,
+                            audio_ins,
+                            midi_ins,
                             audio_outs,
                             midi_outs,
                         } => {
@@ -116,30 +118,16 @@ impl Engine {
                                     .await;
                                 return;
                             }
-                            match kind {
-                                TrackKind::Audio => {
-                                    tracks.insert(
-                                        name.clone(),
-                                        Arc::new(UnsafeMutex::new(Box::new(AudioTrack::new(
-                                            name.clone(),
-                                            ins,
-                                            audio_outs,
-                                            midi_outs,
-                                        )))),
-                                    );
-                                }
-                                TrackKind::MIDI => {
-                                    self.state.lock().tracks.insert(
-                                        name.clone(),
-                                        Arc::new(UnsafeMutex::new(Box::new(MIDITrack::new(
-                                            name.clone(),
-                                            ins,
-                                            audio_outs,
-                                            midi_outs,
-                                        )))),
-                                    );
-                                }
-                            }
+                            tracks.insert(
+                                name.clone(),
+                                Arc::new(UnsafeMutex::new(Box::new(Track::new(
+                                    name.clone(),
+                                    audio_ins,
+                                    midi_ins,
+                                    audio_outs,
+                                    midi_outs,
+                                )))),
+                            );
                         }
                         Action::DeleteTrack(ref name) => {
                             self.state.lock().tracks.remove(name);
@@ -147,21 +135,6 @@ impl Engine {
                         Action::TrackLevel(ref name, level) => {
                             if let Some(track) = self.state.lock().tracks.get(name) {
                                 track.lock().set_level(level);
-                            }
-                        }
-                        Action::TrackIns(ref name, ins) => {
-                            if let Some(track) = self.state.lock().tracks.get(name) {
-                                track.lock().set_ins(ins);
-                            }
-                        }
-                        Action::TrackAudioOuts(ref name, outs) => {
-                            if let Some(track) = self.state.lock().tracks.get(name) {
-                                track.lock().set_audio_outs(outs);
-                            }
-                        }
-                        Action::TrackMIDIOuts(ref name, outs) => {
-                            if let Some(track) = self.state.lock().tracks.get(name) {
-                                track.lock().set_midi_outs(outs);
                             }
                         }
                         Action::TrackToggleArm(ref name) => {
@@ -179,29 +152,38 @@ impl Engine {
                                 track.lock().solo();
                             }
                         }
-                        Action::ClipMove(ref clip, copy) => {
+                        Action::ClipMove {
+                            ref kind,
+                            ref from,
+                            ref to,
+                            copy,
+                        } => {
                             if let Some(from_track_handle) =
-                                self.state.lock().tracks.get(&clip.from.0)
+                                self.state.lock().tracks.get(&from.track_name)
                                 && let Some(to_track_handle) =
-                                    self.state.lock().tracks.get(&clip.to.0)
+                                    self.state.lock().tracks.get(&to.track_name)
                             {
                                 let from_track = from_track_handle.lock();
                                 let to_track = to_track_handle.lock();
-                                match from_track.at(clip.from.1) {
-                                    Ok(clip_copy) => {
-                                        if !copy && let Err(e) = from_track.remove(clip.from.1) {
-                                            self.notify_clients(Err(e)).await;
+                                match kind {
+                                    Kind::Audio => {
+                                        if from.clip_index >= from_track.audio.clips.len() {
+                                            self.notify_clients(Err(format!(
+                                                "Clip index {} is too high, as track {} has only {} clips!",
+                                                from.clip_index,
+                                                from_track.name.clone(),
+                                                from_track.audio.clips.len(),
+                                            ))).await;
                                             return;
                                         }
-                                        if let Err(e) = to_track.add(clip_copy) {
-                                            self.notify_clients(Err(e)).await;
-                                            return;
+                                        let clip_copy =
+                                            from_track.audio.clips[from.clip_index].clone();
+                                        if !copy {
+                                            from_track.audio.clips.remove(from.clip_index);
                                         }
+                                        to_track.audio.clips.push(clip_copy);
                                     }
-                                    Err(e) => {
-                                        self.notify_clients(Err(e)).await;
-                                        return;
-                                    }
+                                    Kind::MIDI => {}
                                 }
                             }
                         }

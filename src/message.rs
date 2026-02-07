@@ -1,5 +1,5 @@
 use iced::{Point, Rectangle, Size, mouse, widget::Id};
-use maolan_engine::message::{Action, TrackKind};
+use maolan_engine::{kind::Kind, message::Action};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Show {
@@ -10,15 +10,16 @@ pub enum Show {
 
 #[derive(Debug, Clone)]
 pub enum AddTrack {
-    Kind(TrackKind),
     Name(String),
-    Ins(usize),
+    AudioIns(usize),
     AudioOuts(usize),
+    MIDIIns(usize),
     MIDIOuts(usize),
 }
 
 #[derive(Debug, Clone)]
 pub struct DraggedClip {
+    pub kind: Kind,
     pub index: usize,
     pub track_index: usize,
     pub start: Point,
@@ -26,8 +27,9 @@ pub struct DraggedClip {
 }
 
 impl DraggedClip {
-    pub fn new(index: usize, track_index: usize) -> Self {
+    pub fn new(kind: Kind, index: usize, track_index: usize) -> Self {
         Self {
+            kind,
             index,
             track_index,
             start: Point::new(0.0, 0.0),
@@ -47,17 +49,18 @@ pub enum Message {
     Cancel,
 
     AddTrack(AddTrack),
+    SelectTrack(String),
+    DeleteSelectedTracks,
+
     Save(String),
     SavePath(String),
     Open(String),
     OpenPath(String),
-    SelectTrack(String),
-    DeleteSelectedTracks,
 
     TrackResizeStart(usize),
     TracksResizeStart,
     MixerResizeStart,
-    ClipResizeStart(usize, usize, bool),
+    ClipResizeStart(Kind, usize, usize, bool),
 
     ClipDrag(DraggedClip),
     ClipDropped(Point, Rectangle),

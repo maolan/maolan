@@ -9,6 +9,7 @@ use iced::{
 };
 use iced_drop::droppable;
 // use std::collections::HashSet;
+use maolan_engine::kind::Kind;
 
 #[derive(Debug)]
 pub struct Editor {
@@ -32,7 +33,7 @@ impl Editor {
             let mut clips: Vec<Element<'_, Message, Theme, Renderer>> = vec![];
             let height = track.height;
 
-            for (index, clip) in track.clips.iter().enumerate() {
+            for (index, clip) in track.audio.clips.iter().enumerate() {
                 let clip_name = clip.name.clone();
 
                 // Left resize handle
@@ -53,7 +54,12 @@ impl Editor {
                             }
                         }),
                 )
-                .on_press(Message::ClipResizeStart(track_index, index, false));
+                .on_press(Message::ClipResizeStart(
+                    Kind::Audio,
+                    track_index,
+                    index,
+                    false,
+                ));
 
                 // Right resize handle
                 let right_handle = mouse_area(
@@ -73,7 +79,12 @@ impl Editor {
                             }
                         }),
                 )
-                .on_press(Message::ClipResizeStart(track_index, index, true));
+                .on_press(Message::ClipResizeStart(
+                    Kind::MIDI,
+                    track_index,
+                    index,
+                    true,
+                ));
 
                 // Clip content (middle part)
                 let clip_content = mouse_area(
@@ -117,7 +128,7 @@ impl Editor {
                 clips.push(
                     droppable(pin(clip_widget).position(Point::new(clip.start as f32, 0.0)))
                         .on_drag(move |point, _| {
-                            let mut clip = DraggedClip::new(index, track_index);
+                            let mut clip = DraggedClip::new(Kind::Audio, index, track_index);
                             clip.start = point;
                             Message::ClipDrag(clip)
                         })

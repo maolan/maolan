@@ -1,15 +1,16 @@
 mod clip;
 mod track;
 
-pub use clip::Clip;
+pub use clip::{AudioClip, MIDIClip};
 use iced::{Length, Point};
+use maolan_engine::kind::Kind;
 use std::{collections::HashSet, sync::Arc};
 use tokio::sync::RwLock;
 pub use track::Track;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Resizing {
-    Clip(usize, usize, bool, f32, f32),
+    Clip(Kind, usize, usize, bool, f32, f32),
     Mixer,
     Track(usize, f32, f32),
     Tracks,

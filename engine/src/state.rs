@@ -3,5 +3,5 @@ use std::{collections::HashMap, sync::Arc};
 
 #[derive(Default)]
 pub struct State {
-    pub tracks: HashMap<String, Arc<UnsafeMutex<Box<dyn Track>>>>,
+    pub tracks: HashMap<String, Arc<UnsafeMutex<Box<Track>>>>,
 }

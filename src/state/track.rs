@@ -1,80 +1,79 @@
-use super::Clip;
+use super::{AudioClip, MIDIClip};
 use crate::message::Message;
-use maolan_engine::message::{Action, TrackKind};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use maolan_engine::message::Action;
+use serde::{Deserialize, Serialize};
 
-fn custom_deserializer<'de, D>(deserializer: D) -> Result<TrackKind, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    match s.as_str() {
-        "Audio" => Ok(TrackKind::Audio),
-        "MIDI" => Ok(TrackKind::MIDI),
-        _ => Err(serde::de::Error::custom(format!(
-            "Unknown track type '{}'",
-            s
-        ))),
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AudioData {
+    pub clips: Vec<AudioClip>,
+    pub ins: Vec<usize>,
+    pub outs: Vec<usize>,
+}
+
+impl AudioData {
+    pub fn new(ins: usize, outs: usize) -> Self {
+        Self {
+            clips: vec![AudioClip::new("".to_string(), 0, 60, 0)],
+            ins: vec![0; ins],
+            outs: vec![0; outs],
+        }
     }
 }
 
-fn custom_serializer<S>(kind: &TrackKind, s: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    s.serialize_str(match kind {
-        TrackKind::Audio => "Audio",
-        TrackKind::MIDI => "MIDI",
-    })
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MIDIData {
+    pub clips: Vec<MIDIClip>,
+    pub ins: Vec<usize>,
+    pub outs: Vec<usize>,
+}
+
+impl MIDIData {
+    pub fn new(ins: usize, outs: usize) -> Self {
+        Self {
+            clips: vec![MIDIClip::new("".to_string(), 0, 60, 0)],
+            ins: vec![0; ins],
+            outs: vec![0; outs],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
     id: usize,
     pub name: String,
-    #[serde(
-        deserialize_with = "custom_deserializer",
-        serialize_with = "custom_serializer"
-    )]
-    pub track_kind: TrackKind,
     pub level: f32,
-    pub ins: usize,
-    pub audio_outs: usize,
-    pub midi_outs: usize,
     pub armed: bool,
     pub muted: bool,
     pub soloed: bool,
-    pub clips: Vec<Clip>,
     pub height: f32,
+    pub audio: AudioData,
+    pub midi: MIDIData,
 }
 
 impl Track {
     pub fn new(
         name: String,
-        track_kind: TrackKind,
         level: f32,
-        ins: usize,
+        audio_ins: usize,
         audio_outs: usize,
+        midi_ins: usize,
         midi_outs: usize,
     ) -> Self {
         Self {
             id: 0,
             name,
-            track_kind,
             level,
-            ins,
-            audio_outs,
-            midi_outs,
             armed: false,
             muted: false,
             soloed: false,
-            clips: vec![Clip::new("".to_string(), 0, 60, 0)],
+            audio: AudioData::new(audio_ins, audio_outs),
+            midi: MIDIData::new(midi_ins, midi_outs),
             height: 60.0,
         }
     }
 
-    pub fn add_clip(&mut self, clip: Clip) {
-        self.clips.push(clip);
+    pub fn add_audio(&mut self, clip: AudioClip) {
+        self.audio.clips.push(clip);
     }
 
     pub fn update(&mut self, message: Message) {
@@ -83,21 +82,6 @@ impl Track {
                 Action::TrackLevel(name, level) => {
                     if name == self.name {
                         self.level = level;
-                    }
-                }
-                Action::TrackIns(name, ins) => {
-                    if name == self.name {
-                        self.ins = ins;
-                    }
-                }
-                Action::TrackAudioOuts(name, outs) => {
-                    if name == self.name {
-                        self.audio_outs = outs;
-                    }
-                }
-                Action::TrackMIDIOuts(name, outs) => {
-                    if name == self.name {
-                        self.midi_outs = outs;
                     }
                 }
                 Action::TrackToggleArm(name) => {

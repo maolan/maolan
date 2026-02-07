@@ -3,26 +3,18 @@ use tokio::sync::mpsc::Sender;
 // use crate::audio::track::Track as AudioTrack;
 // use crate::midi::track::Track as MIDITrack;
 // use crate::mutex::UnsafeMutex;
+use crate::kind::Kind;
 
-#[derive(Debug, Clone, PartialEq, Copy, Eq)]
-pub enum TrackKind {
-    Audio,
-    MIDI,
-}
-
-impl std::fmt::Display for TrackKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Audio => "Audio",
-            Self::MIDI => "MIDI",
-        })
-    }
+#[derive(Clone, Debug)]
+pub struct ClipMoveFrom {
+    pub track_name: String,
+    pub clip_index: usize,
 }
 
 #[derive(Clone, Debug)]
-pub struct ClipMove {
-    pub from: (String, usize),
-    pub to: (String, usize),
+pub struct ClipMoveTo {
+    pub track_name: String,
+    pub sample_offset: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -31,21 +23,22 @@ pub enum Action {
     Play,
     AddTrack {
         name: String,
-        kind: TrackKind,
-        ins: usize,
+        audio_ins: usize,
+        midi_ins: usize,
         audio_outs: usize,
         midi_outs: usize,
     },
     DeleteTrack(String),
     TrackLevel(String, f32),
-    TrackIns(String, usize),
-    TrackAudioOuts(String, usize),
-    TrackMIDIOuts(String, usize),
     TrackToggleArm(String),
     TrackToggleMute(String),
     TrackToggleSolo(String),
-
-    ClipMove(ClipMove, bool),
+    ClipMove {
+        kind: Kind,
+        from: ClipMoveFrom,
+        to: ClipMoveTo,
+        copy: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
