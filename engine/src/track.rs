@@ -1,36 +1,4 @@
-use super::{audio::clip::AudioClip, midi::clip::MIDIClip};
-
-pub struct AudioData {
-    pub clips: Vec<AudioClip>,
-    pub ins: Vec<usize>,
-    pub outs: Vec<usize>,
-}
-
-impl AudioData {
-    pub fn new(ins: usize, outs: usize) -> Self {
-        Self {
-            clips: vec![AudioClip::new("".to_string(), 0, 60)],
-            ins: vec![0; ins],
-            outs: vec![0; outs],
-        }
-    }
-}
-
-pub struct MIDIData {
-    pub clips: Vec<MIDIClip>,
-    pub ins: Vec<usize>,
-    pub outs: Vec<usize>,
-}
-
-impl MIDIData {
-    pub fn new(ins: usize, outs: usize) -> Self {
-        Self {
-            clips: vec![MIDIClip::new("".to_string(), 0, 60)],
-            ins: vec![0; ins],
-            outs: vec![0; outs],
-        }
-    }
-}
+use super::{audio::track::AudioTrack, midi::track::MIDITrack};
 
 pub struct Track {
     pub name: String,
@@ -38,8 +6,8 @@ pub struct Track {
     pub armed: bool,
     pub muted: bool,
     pub soloed: bool,
-    pub audio: AudioData,
-    pub midi: MIDIData,
+    pub audio: AudioTrack,
+    pub midi: MIDITrack,
 }
 
 impl Track {
@@ -56,8 +24,8 @@ impl Track {
             armed: false,
             muted: false,
             soloed: false,
-            audio: AudioData::new(audio_ins, audio_outs),
-            midi: MIDIData::new(midi_ins, midi_outs),
+            audio: AudioTrack::new(audio_ins, audio_outs),
+            midi: MIDITrack::new(midi_ins, midi_outs),
         }
     }
 

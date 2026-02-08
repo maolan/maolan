@@ -72,10 +72,6 @@ impl Track {
         }
     }
 
-    pub fn add_audio(&mut self, clip: AudioClip) {
-        self.audio.clips.push(clip);
-    }
-
     pub fn update(&mut self, message: Message) {
         if let Message::Response(Ok(a)) = message {
             match a {
