@@ -1,4 +1,4 @@
-use super::clip::{AudioClip, MIDIClip};
+use super::{audio::clip::AudioClip, midi::clip::MIDIClip};
 
 pub struct AudioData {
     pub clips: Vec<AudioClip>,

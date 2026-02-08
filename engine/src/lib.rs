@@ -1,8 +1,9 @@
+mod audio;
 pub mod client;
-pub mod clip;
 mod engine;
 pub mod kind;
 pub mod message;
+mod midi;
 pub mod mutex;
 pub mod state;
 mod track;
