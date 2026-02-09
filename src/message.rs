@@ -84,4 +84,7 @@ pub enum Message {
     ImportFilesSelected(Option<Vec<std::path::PathBuf>>),
 
     SendMessageFinished(Result<(), String>),
+
+    Workspace,
+    Connections,
 }

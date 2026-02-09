@@ -16,6 +16,12 @@ pub enum Resizing {
     Tracks,
 }
 
+#[derive(Debug, Clone)]
+pub enum View {
+    Workspace,
+    Connections,
+}
+
 #[derive(Debug)]
 pub struct StateData {
     pub shift: bool,
@@ -27,6 +33,7 @@ pub struct StateData {
     pub cursor: Point,
     pub mixer_height: Length,
     pub tracks_width: Length,
+    pub view: View,
 }
 
 impl Default for StateData {
@@ -41,6 +48,7 @@ impl Default for StateData {
             cursor: Point::new(0.0, 0.0),
             mixer_height: Length::Shrink,
             tracks_width: Length::Fixed(200.0),
+            view: View::Workspace,
         }
     }
 }

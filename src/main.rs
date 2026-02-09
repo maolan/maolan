@@ -1,7 +1,9 @@
+mod connections;
 mod menu;
 mod message;
 mod state;
 mod style;
+mod toolbar;
 mod widget;
 mod workspace;
 
@@ -34,7 +36,7 @@ use engine::{
 };
 use maolan_engine as engine;
 use message::{DraggedClip, Message};
-use state::{Resizing, State, StateData, Track};
+use state::{Resizing, State, StateData, Track, View};
 
 static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
 
@@ -65,8 +67,10 @@ struct Maolan {
     menu: menu::Menu,
     size: Size,
     state: State,
+    toolbar: toolbar::Toolbar,
     track: Option<usize>,
     workspace: workspace::Workspace,
+    connections: connections::Connections,
 }
 
 impl Default for Maolan {
@@ -77,8 +81,10 @@ impl Default for Maolan {
             menu: menu::Menu::default(),
             size: Size::new(0.0, 0.0),
             state: state.clone(),
+            toolbar: toolbar::Toolbar::new(state.clone()),
             track: None,
             workspace: workspace::Workspace::new(state.clone()),
+            connections: connections::Connections::new(state.clone()),
         }
     }
 }
@@ -126,8 +132,8 @@ impl Maolan {
                     }
                 };
                 let audio_ins = {
-                    if let Some(value) = track["audio_ins"].as_u64() {
-                        value as usize
+                    if let Some(value) = track["audio"]["ins"].as_array() {
+                        value
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -136,8 +142,8 @@ impl Maolan {
                     }
                 };
                 let midi_ins = {
-                    if let Some(value) = track["midi_ins"].as_u64() {
-                        value as usize
+                    if let Some(value) = track["midi"]["ins"].as_array() {
+                        value
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -146,8 +152,8 @@ impl Maolan {
                     }
                 };
                 let audio_outs = {
-                    if let Some(value) = track["audio_outs"].as_u64() {
-                        value as usize
+                    if let Some(value) = track["audio"]["outs"].as_array() {
+                        value
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -156,8 +162,8 @@ impl Maolan {
                     }
                 };
                 let midi_outs = {
-                    if let Some(value) = track["midi_outs"].as_u64() {
-                        value as usize
+                    if let Some(value) = track["audio"]["outs"].as_array() {
+                        value
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -167,10 +173,10 @@ impl Maolan {
                 };
                 tasks.push(self.send(Action::AddTrack {
                     name: name.clone(),
-                    audio_ins,
-                    audio_outs,
-                    midi_ins,
-                    midi_outs,
+                    audio_ins: audio_ins.len(),
+                    audio_outs: audio_outs.len(),
+                    midi_ins: midi_ins.len(),
+                    midi_outs: midi_outs.len(),
                 }));
                 if let Some(value) = track["armed"].as_bool() {
                     if value {
@@ -214,7 +220,9 @@ impl Maolan {
 
     fn update_children(&mut self, message: &message::Message) {
         self.menu.update(message.clone());
+        self.toolbar.update(message.clone());
         self.workspace.update(message.clone());
+        self.connections.update(message.clone());
         for track in &mut self.state.blocking_write().tracks {
             track.update(message.clone());
         }
@@ -517,7 +525,7 @@ impl Maolan {
                                 clip_copy.start =
                                     (clip_copy.start as f32 + offset).max(0.0) as usize;
                                 let task = self.send(Action::ClipMove {
-                                    kind: clip.kind.clone(),
+                                    kind: clip.kind,
                                     from: ClipMoveFrom {
                                         track_name: from_track.name.clone(),
                                         clip_index: clip.index,
@@ -587,6 +595,12 @@ impl Maolan {
                     // TODO
                 }
             }
+            Message::Workspace => {
+                self.state.blocking_write().view = View::Workspace;
+            }
+            Message::Connections => {
+                self.state.blocking_write().view = View::Connections;
+            }
             _ => {}
         }
         self.update_children(&message);
@@ -594,9 +608,14 @@ impl Maolan {
     }
 
     fn view(&self) -> iced::Element<'_, message::Message> {
+        let view = match self.state.blocking_read().view {
+            View::Workspace => self.workspace.view(),
+            View::Connections => self.connections.view(),
+        };
         column![
             self.menu.view(),
-            self.workspace.view(),
+            self.toolbar.view(),
+            view,
             text(format!(
                 "Last message: {}",
                 self.state.blocking_read().message

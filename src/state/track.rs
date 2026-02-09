@@ -1,5 +1,6 @@
 use super::{AudioClip, MIDIClip};
 use crate::message::Message;
+use iced::Point;
 use maolan_engine::message::Action;
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +38,13 @@ impl MIDIData {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "Point")]
+struct PointDef {
+    x: f32,
+    y: f32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
     id: usize,
@@ -48,6 +56,8 @@ pub struct Track {
     pub height: f32,
     pub audio: AudioData,
     pub midi: MIDIData,
+    #[serde(with = "PointDef")]
+    pub position: Point,
 }
 
 impl Track {
@@ -69,6 +79,7 @@ impl Track {
             audio: AudioData::new(audio_ins, audio_outs),
             midi: MIDIData::new(midi_ins, midi_outs),
             height: 60.0,
+            position: Point::new(0.0, 0.0),
         }
     }
 

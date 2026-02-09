@@ -70,8 +70,8 @@ impl Tracks {
                 .on_press(Message::TrackResizeStart(index)),
             ];
 
-            mouse_area(
-                droppable(
+            droppable(
+                mouse_area(
                     container(track_ui)
                         .id(track.name.clone())
                         .width(Length::Fill)
@@ -106,10 +106,10 @@ impl Tracks {
                             ..container::Style::default()
                         }),
                 )
-                .on_drag(move |_, _| Message::TrackDrag(index))
-                .on_drop(Message::TrackDropped),
+                .on_press(Message::SelectTrack(track.name.clone())),
             )
-            .on_press(Message::SelectTrack(track.name.clone()))
+            .on_drag(move |_, _| Message::TrackDrag(index))
+            .on_drop(Message::TrackDropped)
             .into()
         }));
         result.width(width).into()
