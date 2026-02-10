@@ -3,8 +3,10 @@ use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 
 use crate::{
+    audio::clip::AudioClip,
     kind::Kind,
     message::{Action, Message},
+    midi::clip::MIDIClip,
     mutex::UnsafeMutex,
     state::State,
     track::Track,
@@ -184,6 +186,56 @@ impl Engine {
                                         to_track.audio.clips.push(clip_copy);
                                     }
                                     Kind::MIDI => {}
+                                }
+                            }
+                        }
+                        Action::AddClip {
+                            ref name,
+                            ref track_name,
+                            start,
+                            length,
+                            kind,
+                        } => {
+                            if let Some(track) = self.state.lock().tracks.get(track_name) {
+                                match kind {
+                                    Kind::Audio => {
+                                        let clip = AudioClip::new(name.clone(), start, length);
+                                        track.lock().audio.clips.push(clip);
+                                    }
+                                    Kind::MIDI => {
+                                        let clip = MIDIClip::new(name.clone(), start, length);
+                                        track.lock().midi.clips.push(clip);
+                                    }
+                                }
+                            }
+                        }
+                        Action::RemoveClip(index, ref track_name, kind) => {
+                            if let Some(track) = self.state.lock().tracks.get(track_name) {
+                                match kind {
+                                    Kind::Audio => {
+                                        if index >= track.lock().audio.clips.len() {
+                                            self.notify_clients(Err(format!(
+                                                "Clip index {} is too high, as track {} has only {} clips!",
+                                                index,
+                                                track.lock().name.clone(),
+                                                track.lock().audio.clips.len(),
+                                            ))).await;
+                                            return;
+                                        }
+                                        track.lock().audio.clips.remove(index);
+                                    }
+                                    Kind::MIDI => {
+                                        if index >= track.lock().midi.clips.len() {
+                                            self.notify_clients(Err(format!(
+                                                "Clip index {} is too high, as track {} has only {} clips!",
+                                                index,
+                                                track.lock().name.clone(),
+                                                track.lock().midi.clips.len(),
+                                            ))).await;
+                                            return;
+                                        }
+                                        track.lock().midi.clips.remove(index);
+                                    }
                                 }
                             }
                         }
