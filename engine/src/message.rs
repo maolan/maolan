@@ -47,6 +47,13 @@ pub enum Action {
         to: ClipMoveTo,
         copy: bool,
     },
+    Connect {
+        from_track: String,
+        from_port: usize,
+        to_track: String,
+        to_port: usize,
+        kind: Kind,
+    },
 }
 
 #[derive(Clone, Debug)]

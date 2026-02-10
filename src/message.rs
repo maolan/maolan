@@ -50,7 +50,7 @@ pub enum Message {
 
     AddTrack(AddTrack),
     SelectTrack(String),
-    DeleteSelectedTracks,
+    RemoveSelectedTracks,
 
     Save(String),
     SavePath(String),

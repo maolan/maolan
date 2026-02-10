@@ -13,7 +13,7 @@ use iced::{
         container,
     },
 };
-use maolan_engine::kind::Kind;
+use maolan_engine::{kind::Kind, message::Action as EngineAction};
 
 pub struct Graph {
     state: State,
@@ -55,7 +55,7 @@ impl Connections {
     }
 }
 
-impl<Message> canvas::Program<Message> for Graph {
+impl canvas::Program<Message> for Graph {
     type State = ();
 
     fn update(
@@ -133,23 +133,30 @@ impl<Message> canvas::Program<Message> for Graph {
                             }
                         }
 
-                        if let Some((to_t, to_p)) = target_port
-                            && let Some(to_track) = data.tracks.get(to_t)
-                        {
-                            let target_kind = if to_p < to_track.audio.ins {
-                                Kind::Audio
-                            } else {
-                                Kind::MIDI
-                            };
+                        if let Some((to_t, to_p)) = target_port {
+                            if let (Some(to_track), Some(from_track)) =
+                                (data.tracks.get(to_t), data.tracks.get(from_t))
+                            {
+                                let target_kind = if to_p < to_track.audio.ins {
+                                    Kind::Audio
+                                } else {
+                                    Kind::MIDI
+                                };
 
-                            if kind == target_kind {
-                                data.connections.push(crate::state::Connection {
-                                    from_track: from_t,
-                                    from_port: from_p,
-                                    to_track: to_t,
-                                    to_port: to_p,
-                                    kind,
-                                });
+                                if kind == target_kind {
+                                    let from_track_name = from_track.name.clone();
+                                    let to_track_name = to_track.name.clone();
+                                    data.connecting = None;
+                                    return Some(Action::publish(Message::Request(
+                                        EngineAction::Connect {
+                                            from_track: from_track_name,
+                                            from_port: from_p,
+                                            to_track: to_track_name,
+                                            to_port: to_p,
+                                            kind,
+                                        },
+                                    )));
+                                }
                             }
                         }
                     }

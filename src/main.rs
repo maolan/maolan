@@ -265,7 +265,7 @@ impl Maolan {
                         *midi_outs,
                     ));
                 }
-                Action::DeleteTrack(name) => {
+                Action::RemoveTrack(name) => {
                     let tracks = &mut self.state.blocking_write().tracks;
                     tracks.retain(|track| track.name != *name);
                 }
@@ -311,6 +311,37 @@ impl Maolan {
                                 }
                             }
                         }
+                    }
+                }
+                Action::Connect {
+                    from_track,
+                    from_port,
+                    to_track,
+                    to_port,
+                    kind,
+                } => {
+                    let mut state = self.state.blocking_write();
+                    let from_idx = state
+                        .tracks
+                        .iter()
+                        .position(|track| &track.name == from_track);
+                    let to_idx = state
+                        .tracks
+                        .iter()
+                        .position(|track| &track.name == to_track);
+
+                    if let (Some(from_idx), Some(to_idx)) = (from_idx, to_idx) {
+                        state.connections.push(crate::state::Connection {
+                            from_track: from_idx,
+                            from_port: *from_port,
+                            to_track: to_idx,
+                            to_port: *to_port,
+                            kind: *kind,
+                        });
+                        state.message = format!(
+                            "Connected {} port {} to {} port {}",
+                            from_track, from_port, to_track, to_port
+                        );
                     }
                 }
                 _ => {}
@@ -360,10 +391,10 @@ impl Maolan {
                     self.state.blocking_write().selected.insert(name.clone());
                 }
             }
-            Message::DeleteSelectedTracks => {
+            Message::RemoveSelectedTracks => {
                 let mut tasks = vec![];
                 for name in &self.state.blocking_read().selected {
-                    tasks.push(self.send(Action::DeleteTrack(name.clone())));
+                    tasks.push(self.send(Action::RemoveTrack(name.clone())));
                 }
                 return Task::batch(tasks);
             }
