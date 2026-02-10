@@ -51,6 +51,11 @@ pub enum Message {
     AddTrack(AddTrack),
     SelectTrack(String),
     RemoveSelectedTracks,
+    RemoveSelected,
+    Remove,
+
+    ConnectionViewSelectTrack(usize),
+    ConnectionViewSelectConnection(usize),
 
     Save(String),
     SavePath(String),

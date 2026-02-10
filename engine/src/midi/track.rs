@@ -60,4 +60,36 @@ impl MIDITrack {
         out.lock().connect(to);
         Ok(())
     }
+
+    pub fn disconnect_in(
+        &mut self,
+        index: usize,
+        to: &Arc<UnsafeMutex<Box<MIDIIO>>>,
+    ) -> Result<(), String> {
+        if index >= self.ins.len() {
+            return Err(format!(
+                "Index {} is too high, as there are only {} ins",
+                index,
+                self.ins.len()
+            ));
+        }
+        let myin = self.ins[index].clone();
+        myin.lock().disconnect(to)
+    }
+
+    pub fn disconnect_out(
+        &mut self,
+        index: usize,
+        to: &Arc<UnsafeMutex<Box<MIDIIO>>>,
+    ) -> Result<(), String> {
+        if index >= self.outs.len() {
+            return Err(format!(
+                "Index {} is too high, as there are only {} outs",
+                index,
+                self.outs.len()
+            ));
+        }
+        let out = self.outs[index].clone();
+        out.lock().disconnect(to)
+    }
 }

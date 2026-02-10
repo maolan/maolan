@@ -71,6 +71,51 @@ impl canvas::Program<Message> for Graph {
         if let Ok(mut data) = self.state.try_write() {
             match event {
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                    let shift = data.shift;
+
+                    // Check for connection selection first (only with Shift)
+                    if shift {
+                        let mut clicked_connection = None;
+                        for (idx, conn) in data.connections.iter().enumerate() {
+                            if let (Some(from_t), Some(to_t)) = (
+                                data.tracks.get(conn.from_track),
+                                data.tracks.get(conn.to_track),
+                            ) {
+                                let total_outs = from_t.audio.outs + from_t.midi.outs;
+                                let out_py = from_t.position.y
+                                    + (size.height / (total_outs + 1) as f32) * (conn.from_port + 1) as f32;
+                                let start = Point::new(from_t.position.x + size.width, out_py);
+
+                                let total_ins = to_t.audio.ins + to_t.midi.ins;
+                                let in_py = to_t.position.y
+                                    + (size.height / (total_ins + 1) as f32) * (conn.to_port + 1) as f32;
+                                let end = Point::new(to_t.position.x, in_py);
+
+                                // Simple distance check to line segment
+                                let line_len = ((end.x - start.x).powi(2) + (end.y - start.y).powi(2)).sqrt();
+                                if line_len > 0.0 {
+                                    let t = ((cursor_position.x - start.x) * (end.x - start.x)
+                                           + (cursor_position.y - start.y) * (end.y - start.y))
+                                           / line_len.powi(2);
+                                    let t = t.max(0.0).min(1.0);
+                                    let closest = Point::new(
+                                        start.x + t * (end.x - start.x),
+                                        start.y + t * (end.y - start.y),
+                                    );
+                                    let dist = cursor_position.distance(closest);
+                                    if dist < 10.0 {
+                                        clicked_connection = Some(idx);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(idx) = clicked_connection {
+                            return Some(Action::publish(Message::ConnectionViewSelectConnection(idx)));
+                        }
+                    }
+
                     for (i, track) in data.tracks.iter().enumerate().rev() {
                         // 1. Provera klika na OUT portove (desna strana) za novu konekciju
                         let total_outs = track.audio.outs + track.midi.outs;
@@ -80,6 +125,10 @@ impl canvas::Program<Message> for Graph {
                             let port_pos = Point::new(track.position.x + size.width, py);
 
                             if cursor_position.distance(port_pos) < 10.0 {
+                                if shift {
+                                    // Shift + click on port = select track
+                                    return Some(Action::publish(Message::ConnectionViewSelectTrack(i)));
+                                }
                                 let kind = if j < track.audio.outs {
                                     Kind::Audio
                                 } else {
@@ -95,17 +144,23 @@ impl canvas::Program<Message> for Graph {
                             }
                         }
 
-                        // 2. Provera klika na traku za pomeranje
+                        // 2. Check for track selection or move
                         let rect = Rectangle::new(track.position, size);
                         if rect.contains(cursor_position) {
-                            let offset_x = cursor_position.x - track.position.x;
-                            let offset_y = cursor_position.y - track.position.y;
-                            data.moving_track = Some(MovingTrack {
-                                track_idx: i,
-                                offset_x,
-                                offset_y,
-                            });
-                            return Some(Action::capture());
+                            if shift {
+                                // Shift + click on track = select
+                                return Some(Action::publish(Message::ConnectionViewSelectTrack(i)));
+                            } else {
+                                // Regular click = move
+                                let offset_x = cursor_position.x - track.position.x;
+                                let offset_y = cursor_position.y - track.position.y;
+                                data.moving_track = Some(MovingTrack {
+                                    track_idx: i,
+                                    offset_x,
+                                    offset_y,
+                                });
+                                return Some(Action::capture());
+                            }
                         }
                     }
                 }
@@ -267,8 +322,10 @@ impl canvas::Program<Message> for Graph {
         let size = iced::Size::new(140.0, 80.0);
 
         if let Ok(data) = self.state.try_read() {
+            use crate::state::ConnectionViewSelection;
+
             // Iscrtavanje postojećih konekcija
-            for conn in &data.connections {
+            for (idx, conn) in data.connections.iter().enumerate() {
                 if let (Some(from_t), Some(to_t)) = (
                     data.tracks.get(conn.from_track),
                     data.tracks.get(conn.to_track),
@@ -293,13 +350,24 @@ impl canvas::Program<Message> for Graph {
                         );
                     });
 
-                    let color = match conn.kind {
-                        Kind::Audio => Color::from_rgb(0.2, 0.5, 1.0),
-                        Kind::MIDI => Color::from_rgb(1.0, 0.6, 0.0),
+                    let is_selected = matches!(
+                        &data.connection_view_selection,
+                        ConnectionViewSelection::Connections(set) if set.contains(&idx)
+                    );
+
+                    let (color, width) = if is_selected {
+                        (Color::from_rgb(1.0, 1.0, 0.0), 4.0) // Yellow and thicker when selected
+                    } else {
+                        let c = match conn.kind {
+                            Kind::Audio => Color::from_rgb(0.2, 0.5, 1.0),
+                            Kind::MIDI => Color::from_rgb(1.0, 0.6, 0.0),
+                        };
+                        (c, 2.0)
                     };
+
                     frame.stroke(
                         &path,
-                        canvas::Stroke::default().with_color(color).with_width(2.0),
+                        canvas::Stroke::default().with_color(color).with_width(width),
                     );
                 }
             }
@@ -337,18 +405,26 @@ impl canvas::Program<Message> for Graph {
                 let path = Path::rectangle(pos, size);
                 frame.fill(&path, Color::from_rgb8(45, 45, 45));
 
-                // Highlight track if hovered (but not if a port on it is hovered)
+                // Highlight track if hovered or selected
                 let is_track_hovered = data.hovering == Some(Hovering::Track(i));
-                let stroke_color = if is_track_hovered {
-                    Color::from_rgb8(120, 120, 120)
+                let is_track_selected = matches!(
+                    &data.connection_view_selection,
+                    ConnectionViewSelection::Tracks(set) if set.contains(&i)
+                );
+
+                let (stroke_color, stroke_width) = if is_track_selected {
+                    (Color::from_rgb(1.0, 1.0, 0.0), 3.0) // Yellow and thicker when selected
+                } else if is_track_hovered {
+                    (Color::from_rgb8(120, 120, 120), 1.0)
                 } else {
-                    Color::from_rgb8(80, 80, 80)
+                    (Color::from_rgb8(80, 80, 80), 1.0)
                 };
+
                 frame.stroke(
                     &path,
                     canvas::Stroke::default()
                         .with_color(stroke_color)
-                        .with_width(1.0),
+                        .with_width(stroke_width),
                 );
 
                 // Krugovi za portove...

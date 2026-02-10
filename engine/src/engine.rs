@@ -125,8 +125,8 @@ impl Engine {
                                 Arc::new(UnsafeMutex::new(Box::new(Track::new(
                                     name.clone(),
                                     audio_ins,
-                                    midi_ins,
                                     audio_outs,
+                                    midi_ins,
                                     midi_outs,
                                 )))),
                             );
@@ -287,33 +287,96 @@ impl Engine {
                             let from_track_ref = from_track_handle.unwrap();
                             let to_track_ref = to_track_handle.unwrap();
 
+                            match kind {
+                                Kind::Audio => {
+                                    if let Some(to_in) = to_track_ref.lock().audio.ins.get(to_port)
+                                    {
+                                        if let Err(e) = from_track_ref
+                                            .lock()
+                                            .audio
+                                            .connect_out(from_port, to_in.clone())
+                                        {
+                                            self.notify_clients(Err(e)).await;
+                                        }
+                                    } else {
+                                        self.notify_clients(Err(format!(
+                                            "Audio input port {} not found on track '{}'",
+                                            to_port, to_track
+                                        )))
+                                        .await;
+                                    }
+                                }
+                                Kind::MIDI => {
+                                    if let Some(to_in) = to_track_ref.lock().midi.ins.get(to_port) {
+                                        if let Err(e) = from_track_ref
+                                            .lock()
+                                            .midi
+                                            .connect_out(from_port, to_in.clone())
+                                        {
+                                            self.notify_clients(Err(e)).await;
+                                        }
+                                    } else {
+                                        self.notify_clients(Err(format!(
+                                            "MIDI input port {} not found on track '{}'",
+                                            to_port, to_track
+                                        )))
+                                        .await;
+                                    }
+                                }
+                            };
+                        }
+                        Action::Disconnect {
+                            ref from_track,
+                            from_port,
+                            ref to_track,
+                            to_port,
+                            kind,
+                        } => {
+                            let state = self.state.lock();
+                            let from_track_handle = state.tracks.get(from_track);
+                            let to_track_handle = state.tracks.get(to_track);
+
+                            if from_track_handle.is_none() {
+                                self.notify_clients(Err(format!(
+                                    "Source track '{}' not found",
+                                    from_track
+                                )))
+                                .await;
+                                return;
+                            }
+
+                            if to_track_handle.is_none() {
+                                self.notify_clients(Err(format!(
+                                    "Destination track '{}' not found",
+                                    to_track
+                                )))
+                                .await;
+                                return;
+                            }
+
+                            let from_track_ref = from_track_handle.unwrap();
+                            let to_track_ref = to_track_handle.unwrap();
+
                             let result = match kind {
                                 Kind::Audio => {
-                                    let to_in = to_track_ref.lock().audio.ins.get(to_port);
-                                    if to_in.is_none() {
+                                    if let Some(to_in) = to_track_ref.lock().audio.ins.get(to_port)
+                                    {
+                                        from_track_ref.lock().audio.disconnect_out(from_port, to_in)
+                                    } else {
                                         Err(format!(
                                             "Audio input port {} not found on track '{}'",
                                             to_port, to_track
                                         ))
-                                    } else {
-                                        from_track_ref
-                                            .lock()
-                                            .audio
-                                            .connect_out(from_port, to_in.unwrap().clone())
                                     }
                                 }
                                 Kind::MIDI => {
-                                    let to_in = to_track_ref.lock().midi.ins.get(to_port);
-                                    if to_in.is_none() {
+                                    if let Some(to_in) = to_track_ref.lock().midi.ins.get(to_port) {
+                                        from_track_ref.lock().midi.disconnect_out(from_port, to_in)
+                                    } else {
                                         Err(format!(
                                             "MIDI input port {} not found on track '{}'",
                                             to_port, to_track
                                         ))
-                                    } else {
-                                        from_track_ref
-                                            .lock()
-                                            .midi
-                                            .connect_out(from_port, to_in.unwrap().clone())
                                     }
                                 }
                             };

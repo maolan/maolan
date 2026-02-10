@@ -43,6 +43,13 @@ pub enum Hovering {
     Track(usize),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConnectionViewSelection {
+    Tracks(HashSet<usize>),
+    Connections(HashSet<usize>),
+    None,
+}
+
 #[derive(Debug, Clone)]
 pub enum View {
     Workspace,
@@ -61,6 +68,7 @@ pub struct StateData {
     pub connecting: Option<Connecting>,
     pub moving_track: Option<MovingTrack>,
     pub hovering: Option<Hovering>,
+    pub connection_view_selection: ConnectionViewSelection,
     pub cursor: Point,
     pub mixer_height: Length,
     pub tracks_width: Length,
@@ -80,6 +88,7 @@ impl Default for StateData {
             connecting: None,
             moving_track: None,
             hovering: None,
+            connection_view_selection: ConnectionViewSelection::None,
             cursor: Point::new(0.0, 0.0),
             mixer_height: Length::Shrink,
             tracks_width: Length::Fixed(200.0),

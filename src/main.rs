@@ -92,7 +92,7 @@ impl Default for Maolan {
 impl Maolan {
     fn send(&self, action: Action) -> Task<Message> {
         Task::perform(
-            async move { CLIENT.send(EngineMessage::Request(action.clone())).await },
+            async move { CLIENT.send(EngineMessage::Request(action)).await },
             |result| match result {
                 Ok(_) => Message::SendMessageFinished(Ok(())),
                 Err(_) => Message::Response(Err("Channel closed".to_string())),
@@ -344,6 +344,38 @@ impl Maolan {
                         );
                     }
                 }
+                Action::Disconnect {
+                    from_track,
+                    from_port,
+                    to_track,
+                    to_port,
+                    kind,
+                } => {
+                    let mut state = self.state.blocking_write();
+                    let from_idx = state
+                        .tracks
+                        .iter()
+                        .position(|track| &track.name == from_track);
+                    let to_idx = state
+                        .tracks
+                        .iter()
+                        .position(|track| &track.name == to_track);
+
+                    if let (Some(from_idx), Some(to_idx)) = (from_idx, to_idx) {
+                        // Find and remove the matching connection
+                        state.connections.retain(|conn| {
+                            !(conn.from_track == from_idx
+                                && conn.from_port == *from_port
+                                && conn.to_track == to_idx
+                                && conn.to_port == *to_port
+                                && conn.kind == *kind)
+                        });
+                        state.message = format!(
+                            "Disconnected {} port {} from {} port {}",
+                            from_track, from_port, to_track, to_port
+                        );
+                    }
+                }
                 _ => {}
             },
             Message::Response(Err(ref e)) => {
@@ -397,6 +429,103 @@ impl Maolan {
                     tasks.push(self.send(Action::RemoveTrack(name.clone())));
                 }
                 return Task::batch(tasks);
+            }
+            Message::ConnectionViewSelectTrack(idx) => {
+                use crate::state::ConnectionViewSelection;
+                let ctrl = self.state.blocking_read().ctrl;
+                let mut state = self.state.blocking_write();
+
+                match &mut state.connection_view_selection {
+                    ConnectionViewSelection::Tracks(set) if ctrl => {
+                        // Ctrl + click: toggle in current selection
+                        if set.contains(&idx) {
+                            set.remove(&idx);
+                        } else {
+                            set.insert(idx);
+                        }
+                    }
+                    _ => {
+                        // New selection or switching from connections to tracks
+                        let mut set = std::collections::HashSet::new();
+                        set.insert(idx);
+                        state.connection_view_selection = ConnectionViewSelection::Tracks(set);
+                    }
+                }
+            }
+            Message::ConnectionViewSelectConnection(idx) => {
+                use crate::state::ConnectionViewSelection;
+                let ctrl = self.state.blocking_read().ctrl;
+                let mut state = self.state.blocking_write();
+
+                match &mut state.connection_view_selection {
+                    ConnectionViewSelection::Connections(set) if ctrl => {
+                        // Ctrl + click: toggle in current selection
+                        if set.contains(&idx) {
+                            set.remove(&idx);
+                        } else {
+                            set.insert(idx);
+                        }
+                    }
+                    _ => {
+                        // New selection or switching from tracks to connections
+                        let mut set = std::collections::HashSet::new();
+                        set.insert(idx);
+                        state.connection_view_selection = ConnectionViewSelection::Connections(set);
+                    }
+                }
+            }
+            Message::RemoveSelected => {
+                use crate::state::ConnectionViewSelection;
+                let state = self.state.blocking_read();
+                match &state.connection_view_selection {
+                    ConnectionViewSelection::Tracks(set) => {
+                        let mut tasks = vec![];
+                        for &idx in set {
+                            if let Some(track) = state.tracks.get(idx) {
+                                tasks.push(self.send(Action::RemoveTrack(track.name.clone())));
+                            }
+                        }
+                        drop(state);
+                        self.state.blocking_write().connection_view_selection =
+                            ConnectionViewSelection::None;
+                        return Task::batch(tasks);
+                    }
+                    ConnectionViewSelection::Connections(set) => {
+                        let mut tasks = vec![];
+                        for &idx in set {
+                            if let Some(conn) = state.connections.get(idx)
+                                && let (Some(from_track), Some(to_track)) = (
+                                    state.tracks.get(conn.from_track),
+                                    state.tracks.get(conn.to_track),
+                                )
+                            {
+                                tasks.push(self.send(Action::Disconnect {
+                                    from_track: from_track.name.clone(),
+                                    from_port: conn.from_port,
+                                    to_track: to_track.name.clone(),
+                                    to_port: conn.to_port,
+                                    kind: conn.kind,
+                                }));
+                            }
+                        }
+                        drop(state);
+                        self.state.blocking_write().connection_view_selection =
+                            ConnectionViewSelection::None;
+                        return Task::batch(tasks);
+                    }
+                    ConnectionViewSelection::None => {}
+                }
+            }
+            Message::Remove => {
+                let view = self.state.blocking_read().view.clone();
+                match view {
+                    crate::state::View::Connections => {
+                        return self.update(Message::RemoveSelected);
+                    }
+                    crate::state::View::Workspace => {
+                        return self.update(Message::RemoveSelectedTracks);
+                    }
+                }
             }
             Message::TrackResizeStart(index) => {
                 let mut state = self.state.blocking_write();
@@ -681,6 +810,7 @@ impl Maolan {
             KeyEvent::KeyPressed { key, .. } => match key {
                 keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
                 keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
+                keyboard::Key::Named(keyboard::key::Named::Delete) => Message::Remove,
                 _ => Message::None,
             },
             KeyEvent::KeyReleased { key, .. } => match key {
