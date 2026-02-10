@@ -185,7 +185,23 @@ impl Engine {
                                         }
                                         to_track.audio.clips.push(clip_copy);
                                     }
-                                    Kind::MIDI => {}
+                                    Kind::MIDI => {
+                                        if from.clip_index >= from_track.midi.clips.len() {
+                                            self.notify_clients(Err(format!(
+                                                "Clip index {} is too high, as track {} has only {} clips!",
+                                                from.clip_index,
+                                                from_track.name.clone(),
+                                                from_track.midi.clips.len(),
+                                            ))).await;
+                                            return;
+                                        }
+                                        let clip_copy =
+                                            from_track.midi.clips[from.clip_index].clone();
+                                        if !copy {
+                                            from_track.midi.clips.remove(from.clip_index);
+                                        }
+                                        to_track.midi.clips.push(clip_copy);
+                                    }
                                 }
                             }
                         }
