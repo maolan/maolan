@@ -8,7 +8,7 @@ mod widget;
 mod workspace;
 
 use rfd::AsyncFileDialog;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -101,11 +101,14 @@ impl Maolan {
     }
     fn save(&self, path: String) -> std::io::Result<()> {
         let filename = "session.json";
-        let result = self.workspace.json();
         let mut p = PathBuf::from(path.clone());
         p.push(filename);
         fs::create_dir_all(path)?;
         let file = File::create(&p)?;
+        let result = json!({
+            "tracks": &self.state.blocking_read().tracks,
+            "connections": &self.state.blocking_read().connections,
+        });
         serde_json::to_writer_pretty(file, &result)?;
         Ok(())
     }
@@ -132,8 +135,8 @@ impl Maolan {
                     }
                 };
                 let audio_ins = {
-                    if let Some(value) = track["audio"]["ins"].as_array() {
-                        value
+                    if let Some(value) = track["audio"]["ins"].as_u64() {
+                        value as usize
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -142,8 +145,8 @@ impl Maolan {
                     }
                 };
                 let midi_ins = {
-                    if let Some(value) = track["midi"]["ins"].as_array() {
-                        value
+                    if let Some(value) = track["midi"]["ins"].as_u64() {
+                        value as usize
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -152,8 +155,8 @@ impl Maolan {
                     }
                 };
                 let audio_outs = {
-                    if let Some(value) = track["audio"]["outs"].as_array() {
-                        value
+                    if let Some(value) = track["audio"]["outs"].as_u64() {
+                        value as usize
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -162,8 +165,8 @@ impl Maolan {
                     }
                 };
                 let midi_outs = {
-                    if let Some(value) = track["audio"]["outs"].as_array() {
-                        value
+                    if let Some(value) = track["audio"]["outs"].as_u64() {
+                        value as usize
                     } else {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidInput,
@@ -173,10 +176,10 @@ impl Maolan {
                 };
                 tasks.push(self.send(Action::AddTrack {
                     name: name.clone(),
-                    audio_ins: audio_ins.len(),
-                    audio_outs: audio_outs.len(),
-                    midi_ins: midi_ins.len(),
-                    midi_outs: midi_outs.len(),
+                    audio_ins,
+                    audio_outs,
+                    midi_ins,
+                    midi_outs,
                 }));
                 if let Some(value) = track["armed"].as_bool() {
                     if value {
@@ -387,7 +390,7 @@ impl Maolan {
                             clip.start
                         };
                         state.resizing = Some(Resizing::Clip(
-                            kind.clone(),
+                            *kind,
                             track_index,
                             clip_index,
                             is_right_side,
@@ -403,7 +406,7 @@ impl Maolan {
                             clip.start
                         };
                         state.resizing = Some(Resizing::Clip(
-                            kind.clone(),
+                            *kind,
                             track_index,
                             clip_index,
                             is_right_side,
@@ -505,7 +508,7 @@ impl Maolan {
                                 clip_copy.start =
                                     (clip_copy.start as f32 + offset).max(0.0) as usize;
                                 let task = self.send(Action::ClipMove {
-                                    kind: clip.kind.clone(),
+                                    kind: clip.kind,
                                     from: ClipMoveFrom {
                                         track_name: from_track.name.clone(),
                                         clip_index: clip.index,

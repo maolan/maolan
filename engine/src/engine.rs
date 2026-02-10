@@ -131,7 +131,7 @@ impl Engine {
                                 )))),
                             );
                         }
-                        Action::DeleteTrack(ref name) => {
+                        Action::RemoveTrack(ref name) => {
                             self.state.lock().tracks.remove(name);
                         }
                         Action::TrackLevel(ref name, level) => {

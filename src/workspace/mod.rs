@@ -14,7 +14,6 @@ use iced::{
     widget::{column, container, mouse_area, row},
 };
 use maolan_engine::message::Action;
-use serde_json::{Value, json};
 
 pub struct Workspace {
     add_track: add_track::AddTrackView,
@@ -23,7 +22,6 @@ pub struct Workspace {
     modal: Option<Show>,
     open: open::OpenView,
     save: save::SaveView,
-    state: State,
     tracks: tracks::Tracks,
 }
 
@@ -36,15 +34,8 @@ impl Workspace {
             modal: None,
             open: open::OpenView::default(),
             save: save::SaveView::default(),
-            state: state.clone(),
             tracks: tracks::Tracks::new(state.clone()),
         }
-    }
-
-    pub fn json(&self) -> Value {
-        json!({
-            "tracks": &self.state.blocking_read().tracks,
-        })
     }
 
     fn update_children(&mut self, message: Message) {

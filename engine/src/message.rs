@@ -36,7 +36,7 @@ pub enum Action {
         kind: Kind,
     },
     RemoveClip(usize, String, Kind),
-    DeleteTrack(String),
+    RemoveTrack(String),
     TrackLevel(String, f32),
     TrackToggleArm(String),
     TrackToggleMute(String),
