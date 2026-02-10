@@ -125,12 +125,11 @@ impl<Message> canvas::Program<Message> for Graph {
                         .with_width(1.0),
                 );
 
-                let total_ins = track.audio.ins.len() + track.midi.ins.len();
+                let total_ins = track.audio.ins + track.midi.ins;
                 if total_ins > 0 {
                     for j in 0..total_ins {
-                        // py se računa relativno u odnosu na pos.y
                         let py = pos.y + (size.height / (total_ins + 1) as f32) * (j + 1) as f32;
-                        let color = if j < track.audio.ins.len() {
+                        let color = if j < track.audio.ins {
                             Color::from_rgb(0.2, 0.5, 1.0)
                         } else {
                             Color::from_rgb(1.0, 0.6, 0.0)
@@ -139,11 +138,11 @@ impl<Message> canvas::Program<Message> for Graph {
                     }
                 }
 
-                let total_outs = track.audio.outs.len() + track.midi.outs.len();
+                let total_outs = track.audio.outs + track.midi.outs;
                 if total_outs > 0 {
                     for j in 0..total_outs {
                         let py = pos.y + (size.height / (total_outs + 1) as f32) * (j + 1) as f32;
-                        let color = if j < track.audio.outs.len() {
+                        let color = if j < track.audio.outs {
                             Color::from_rgb(0.2, 0.5, 1.0)
                         } else {
                             Color::from_rgb(1.0, 0.6, 0.0)

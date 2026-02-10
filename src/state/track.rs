@@ -7,16 +7,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AudioData {
     pub clips: Vec<AudioClip>,
-    pub ins: Vec<usize>,
-    pub outs: Vec<usize>,
+    pub ins: usize,
+    pub outs: usize,
 }
 
 impl AudioData {
     pub fn new(ins: usize, outs: usize) -> Self {
         Self {
             clips: vec![AudioClip::new("".to_string(), 0, 60, 0)],
-            ins: vec![0; ins],
-            outs: vec![0; outs],
+            ins,
+            outs,
         }
     }
 }
@@ -24,16 +24,16 @@ impl AudioData {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MIDIData {
     pub clips: Vec<MIDIClip>,
-    pub ins: Vec<usize>,
-    pub outs: Vec<usize>,
+    pub ins: usize,
+    pub outs: usize,
 }
 
 impl MIDIData {
     pub fn new(ins: usize, outs: usize) -> Self {
         Self {
             clips: vec![MIDIClip::new("".to_string(), 0, 60, 0)],
-            ins: vec![0; ins],
-            outs: vec![0; outs],
+            ins,
+            outs,
         }
     }
 }
