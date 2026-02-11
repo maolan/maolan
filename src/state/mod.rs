@@ -6,7 +6,7 @@ pub use clip::{AudioClip, MIDIClip};
 pub use connection::Connection;
 use iced::{Length, Point};
 use maolan_engine::kind::Kind;
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::{HashMap, HashSet}, sync::Arc};
 use tokio::sync::RwLock;
 pub use track::Track;
 
@@ -73,6 +73,7 @@ pub struct StateData {
     pub mixer_height: Length,
     pub tracks_width: Length,
     pub view: View,
+    pub pending_track_positions: HashMap<String, Point>,
 }
 
 impl Default for StateData {
@@ -93,6 +94,7 @@ impl Default for StateData {
             mixer_height: Length::Shrink,
             tracks_width: Length::Fixed(200.0),
             view: View::Workspace,
+            pending_track_positions: HashMap::new(),
         }
     }
 }

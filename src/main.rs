@@ -25,7 +25,8 @@ use iced::futures::{Stream, StreamExt, io, stream};
 use iced::keyboard::Event as KeyEvent;
 use iced::widget::{Id, column, text};
 use iced::{
-    Length, Pixels, Settings, Size, Subscription, Task, Theme, event, keyboard, mouse, window,
+    Length, Pixels, Point, Settings, Size, Subscription, Task, Theme, event, keyboard, mouse,
+    window,
 };
 
 use iced_aw::ICED_AW_FONT_BYTES;
@@ -109,6 +110,7 @@ impl Maolan {
             "tracks": &self.state.blocking_read().tracks,
             "connections": &self.state.blocking_read().connections,
         });
+        println!("result: {}", result);
         serde_json::to_writer_pretty(file, &result)?;
         Ok(())
     }
@@ -122,6 +124,9 @@ impl Maolan {
         let reader = BufReader::new(file);
         let session: Value = serde_json::from_reader(reader)?;
 
+        // Clear pending positions from any previous load
+        self.state.blocking_write().pending_track_positions.clear();
+
         if let Some(arr) = session["tracks"].as_array() {
             for track in arr {
                 let name = {
@@ -134,6 +139,18 @@ impl Maolan {
                         ));
                     }
                 };
+
+                // Extract and store position
+                if let (Some(x), Some(y)) = (
+                    track["position"]["x"].as_f64(),
+                    track["position"]["y"].as_f64(),
+                ) {
+                    self.state
+                        .blocking_write()
+                        .pending_track_positions
+                        .insert(name.clone(), Point::new(x as f32, y as f32));
+                }
+
                 let audio_ins = {
                     if let Some(value) = track["audio"]["ins"].as_u64() {
                         value as usize
@@ -255,8 +272,8 @@ impl Maolan {
                     midi_ins,
                     midi_outs,
                 } => {
-                    let tracks = &mut self.state.blocking_write().tracks;
-                    tracks.push(Track::new(
+                    let mut state = self.state.blocking_write();
+                    state.tracks.push(Track::new(
                         name.clone(),
                         0.0,
                         *audio_ins,
@@ -264,6 +281,13 @@ impl Maolan {
                         *midi_ins,
                         *midi_outs,
                     ));
+
+                    // Apply pending position if available
+                    if let Some(position) = state.pending_track_positions.remove(name) {
+                        if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name) {
+                            track.position = position;
+                        }
+                    }
                 }
                 Action::RemoveTrack(name) => {
                     let tracks = &mut self.state.blocking_write().tracks;
