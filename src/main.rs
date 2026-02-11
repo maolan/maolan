@@ -264,6 +264,38 @@ impl Maolan {
             Message::WindowResized(size) => {
                 self.size = size;
             }
+            Message::Show(ref show) => {
+                use crate::message::Show;
+                match show {
+                    Show::Save => {
+                        return Task::perform(
+                            async {
+                                AsyncFileDialog::new()
+                                    .set_title("Select folder to save session")
+                                    .set_directory("/tmp")
+                                    .pick_folder()
+                                    .await
+                                    .map(|handle| handle.path().to_path_buf())
+                            },
+                            Message::SaveFolderSelected,
+                        );
+                    }
+                    Show::Open => {
+                        return Task::perform(
+                            async {
+                                AsyncFileDialog::new()
+                                    .set_title("Select folder to open session")
+                                    .set_directory("/tmp")
+                                    .pick_folder()
+                                    .await
+                                    .map(|handle| handle.path().to_path_buf())
+                            },
+                            Message::OpenFolderSelected,
+                        );
+                    }
+                    Show::AddTrack => {}
+                }
+            }
             Message::Request(ref a) => return self.send(a.clone()),
             Message::SendMessageFinished(ref result) => match result {
                 Ok(_) => debug!("Sent successfully!"),
@@ -418,20 +450,24 @@ impl Maolan {
                 self.state.blocking_write().message = e.clone();
                 error!("Engine error: {e}");
             }
-            Message::Save(ref path) => {
-                if let Err(s) = self.save(path.clone()) {
-                    error!("{}", s);
+            Message::SaveFolderSelected(ref path_opt) => {
+                if let Some(path) = path_opt {
+                    if let Err(s) = self.save(path.to_string_lossy().to_string()) {
+                        error!("{}", s);
+                    }
                 }
             }
-            Message::Open(ref path) => {
-                let result = self.load(path.clone());
-                match result {
-                    Ok(task) => return task,
-                    Err(e) => {
-                        error!("{}", e);
-                        return Task::none();
+            Message::OpenFolderSelected(ref path_opt) => {
+                if let Some(path) = path_opt {
+                    let result = self.load(path.to_string_lossy().to_string());
+                    match result {
+                        Ok(task) => return task,
+                        Err(e) => {
+                            error!("{}", e);
+                            return Task::none();
+                        }
                     }
-                };
+                }
             }
             Message::ShiftPressed => {
                 self.state.blocking_write().shift = true;

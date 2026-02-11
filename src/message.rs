@@ -1,5 +1,6 @@
 use iced::{Point, Rectangle, Size, mouse, widget::Id};
 use maolan_engine::{kind::Kind, message::Action};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Show {
@@ -57,10 +58,8 @@ pub enum Message {
     ConnectionViewSelectTrack(usize),
     ConnectionViewSelectConnection(usize),
 
-    Save(String),
-    SavePath(String),
-    Open(String),
-    OpenPath(String),
+    SaveFolderSelected(Option<PathBuf>),
+    OpenFolderSelected(Option<PathBuf>),
 
     TrackResizeStart(usize),
     TracksResizeStart,

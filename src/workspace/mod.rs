@@ -1,8 +1,6 @@
 mod add_track;
 mod editor;
 mod mixer;
-mod open;
-mod save;
 mod tracks;
 
 use crate::{
@@ -20,8 +18,6 @@ pub struct Workspace {
     editor: editor::Editor,
     mixer: mixer::Mixer,
     modal: Option<Show>,
-    open: open::OpenView,
-    save: save::SaveView,
     tracks: tracks::Tracks,
 }
 
@@ -32,23 +28,18 @@ impl Workspace {
             editor: editor::Editor::new(state.clone()),
             mixer: mixer::Mixer::new(state.clone()),
             modal: None,
-            open: open::OpenView::default(),
-            save: save::SaveView::default(),
             tracks: tracks::Tracks::new(state.clone()),
         }
     }
 
     fn update_children(&mut self, message: Message) {
         self.add_track.update(message.clone());
-        self.save.update(message.clone());
-        self.open.update(message.clone());
     }
 
     pub fn update(&mut self, message: Message) {
         match message {
-            Message::Show(modal) => self.modal = Some(modal),
+            Message::Show(Show::AddTrack) => self.modal = Some(Show::AddTrack),
             Message::Cancel => self.modal = None,
-            Message::Save(_) => self.modal = None,
             Message::Response(Ok(Action::AddTrack { .. })) => self.modal = None,
             _ => {}
         }
@@ -57,12 +48,8 @@ impl Workspace {
 
     pub fn view(&self) -> Element<'_, Message> {
         match &self.modal {
-            Some(show) => match show {
-                Show::AddTrack => self.add_track.view(),
-                Show::Save => self.save.view(),
-                Show::Open => self.open.view(),
-            },
-            None => column![
+            Some(Show::AddTrack) => self.add_track.view(),
+            Some(Show::Save) | Some(Show::Open) | None => column![
                 row![
                     self.tracks.view(),
                     mouse_area(

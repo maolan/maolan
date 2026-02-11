@@ -6,7 +6,10 @@ pub use clip::{AudioClip, MIDIClip};
 pub use connection::Connection;
 use iced::{Length, Point};
 use maolan_engine::kind::Kind;
-use std::{collections::{HashMap, HashSet}, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::sync::RwLock;
 pub use track::Track;
 
