@@ -74,6 +74,7 @@ pub struct StateData {
     pub tracks_width: Length,
     pub view: View,
     pub pending_track_positions: HashMap<String, Point>,
+    pub pending_track_heights: HashMap<String, f32>,
 }
 
 impl Default for StateData {
@@ -95,6 +96,7 @@ impl Default for StateData {
             tracks_width: Length::Fixed(200.0),
             view: View::Workspace,
             pending_track_positions: HashMap::new(),
+            pending_track_heights: HashMap::new(),
         }
     }
 }

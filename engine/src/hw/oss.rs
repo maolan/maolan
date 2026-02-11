@@ -6,7 +6,6 @@ use std::{
     os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
 };
 
-// Format
 pub const AFMT_QUERY: u32 = 0x00000000;
 pub const AFMT_MU_LAW: u32 = 0x00000001;
 pub const AFMT_A_LAW: u32 = 0x00000002;
@@ -34,7 +33,6 @@ pub const AFMT_FULLDUPLEX: u32 = 0x80000000;
 pub const AFMT_S16_NE: u32 = AFMT_S16_LE;
 pub const AFMT_S32_NE: u32 = AFMT_S32_LE;
 
-// Triggers
 pub const PCM_ENABLE_INPUT: i32 = 0x00000001;
 pub const PCM_ENABLE_OUTPUT: i32 = 0x00000002;
 
@@ -190,13 +188,11 @@ impl Config {
                 .expect("Failed to get capabilities of the device");
             oss_set_cooked(fd, &flags).expect("Failed to disable cooked mode");
 
-            // Set number of channels, sample format and rate
             oss_set_format(fd, &mut c.format).expect("Failed to set format");
             oss_set_channels(fd, &mut c.audio_info.max_channels)
                 .expect("Failed to set number of channels");
             oss_set_speed(fd, &mut c.rate).expect("Failed to set sample rate");
 
-            // When it's all set and good to go, gather buffer size info
             if input {
                 oss_input_buffer_info(fd, &mut c.buffer_info).expect("Failed to get buffer size");
             } else {
@@ -379,7 +375,6 @@ mod tests {
             oss.dsp.write(bytes).expect("Failed to write data");
             out.clear();
         }
-        // assert_eq!(1, 2, "Fake error");
     }
 
     #[test]

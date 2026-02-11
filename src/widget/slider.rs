@@ -83,7 +83,6 @@ where
     ) {
         let bounds = layout.bounds();
 
-        // Calculate handle position
         let border_width = 1.0;
         let twice_border = border_width * 2.0;
         let value_bounds_y = bounds.y + (self.handle_height / 2.0);
@@ -158,7 +157,6 @@ where
             );
         }
 
-        // Draw handle
         renderer.fill_quad(
             renderer::Quad {
                 bounds: Rectangle {

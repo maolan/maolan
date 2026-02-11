@@ -36,7 +36,6 @@ impl Editor {
             for (index, clip) in track.audio.clips.iter().enumerate() {
                 let clip_name = clip.name.clone();
 
-                // Left resize handle
                 let left_handle = mouse_area(
                     container("")
                         .width(Length::Fixed(5.0))
@@ -61,7 +60,6 @@ impl Editor {
                     false,
                 ));
 
-                // Right resize handle
                 let right_handle = mouse_area(
                     container("")
                         .width(Length::Fixed(5.0))
@@ -86,7 +84,6 @@ impl Editor {
                     true,
                 ));
 
-                // Clip content (middle part)
                 let clip_content = mouse_area(
                     container(text(clip_name.clone()).size(12))
                         .width(Length::Fill)
@@ -106,7 +103,6 @@ impl Editor {
                         }),
                 );
 
-                // Combine handles and content in a row
                 let clip_widget = container(row![left_handle, clip_content, right_handle])
                     .width(Length::Fixed(clip.length as f32))
                     .height(Length::Fill)

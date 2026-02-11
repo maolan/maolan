@@ -54,8 +54,4 @@ impl Track {
     pub fn solo(&mut self) {
         self.soloed = !self.soloed;
     }
-
-    // fn add(&mut self, clip: Clip) -> Result<usize, String>;
-    // fn remove(&mut self, index: usize) -> Result<usize, String>;
-    // fn at(&self, index: usize) -> Result<Clip, String>;
 }

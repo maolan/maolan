@@ -110,7 +110,6 @@ impl Maolan {
             "tracks": &self.state.blocking_read().tracks,
             "connections": &self.state.blocking_read().connections,
         });
-        println!("result: {}", result);
         serde_json::to_writer_pretty(file, &result)?;
         Ok(())
     }
@@ -124,8 +123,11 @@ impl Maolan {
         let reader = BufReader::new(file);
         let session: Value = serde_json::from_reader(reader)?;
 
-        // Clear pending positions from any previous load
-        self.state.blocking_write().pending_track_positions.clear();
+        {
+            let mut state = self.state.blocking_write();
+            state.pending_track_positions.clear();
+            state.pending_track_heights.clear();
+        }
 
         if let Some(arr) = session["tracks"].as_array() {
             for track in arr {
@@ -140,7 +142,6 @@ impl Maolan {
                     }
                 };
 
-                // Extract and store position
                 if let (Some(x), Some(y)) = (
                     track["position"]["x"].as_f64(),
                     track["position"]["y"].as_f64(),
@@ -149,6 +150,13 @@ impl Maolan {
                         .blocking_write()
                         .pending_track_positions
                         .insert(name.clone(), Point::new(x as f32, y as f32));
+                }
+
+                if let Some(height) = track["height"].as_f64() {
+                    self.state
+                        .blocking_write()
+                        .pending_track_heights
+                        .insert(name.clone(), height as f32);
                 }
 
                 let audio_ins = {
@@ -282,11 +290,15 @@ impl Maolan {
                         *midi_outs,
                     ));
 
-                    // Apply pending position if available
-                    if let Some(position) = state.pending_track_positions.remove(name) {
-                        if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name) {
-                            track.position = position;
-                        }
+                    if let Some(position) = state.pending_track_positions.remove(name)
+                        && let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name)
+                    {
+                        track.position = position;
+                    }
+                    if let Some(height) = state.pending_track_heights.remove(name)
+                        && let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name)
+                    {
+                        track.height = height;
                     }
                 }
                 Action::RemoveTrack(name) => {

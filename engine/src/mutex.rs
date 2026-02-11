@@ -1,5 +1,4 @@
 use std::cell::UnsafeCell;
-// use std::hash::{Hash, Hasher};
 
 #[derive(Debug)]
 pub struct UnsafeMutex<T> {
