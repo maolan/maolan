@@ -71,55 +71,89 @@ impl canvas::Program<Message> for Graph {
         if let Ok(mut data) = self.state.try_write() {
             match event {
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                    let shift = data.shift;
+                    let ctrl = data.ctrl;
 
-                    if shift {
-                        let mut clicked_connection = None;
-                        for (idx, conn) in data.connections.iter().enumerate() {
-                            if let (Some(from_t), Some(to_t)) = (
-                                data.tracks.get(conn.from_track),
-                                data.tracks.get(conn.to_track),
-                            ) {
-                                let total_outs = from_t.audio.outs + from_t.midi.outs;
-                                let out_py = from_t.position.y
-                                    + (size.height / (total_outs + 1) as f32)
-                                        * (conn.from_port + 1) as f32;
-                                let start = Point::new(from_t.position.x + size.width, out_py);
+                    // Check for connection clicks (no modifier needed)
+                    let mut clicked_connection = None;
+                    for (idx, conn) in data.connections.iter().enumerate() {
+                        if let (Some(from_t), Some(to_t)) = (
+                            data.tracks.get(conn.from_track),
+                            data.tracks.get(conn.to_track),
+                        ) {
+                            let total_outs = from_t.audio.outs + from_t.midi.outs;
+                            let out_py = from_t.position.y
+                                + (size.height / (total_outs + 1) as f32)
+                                    * (conn.from_port + 1) as f32;
+                            let start = Point::new(from_t.position.x + size.width, out_py);
 
-                                let total_ins = to_t.audio.ins + to_t.midi.ins;
-                                let in_py = to_t.position.y
-                                    + (size.height / (total_ins + 1) as f32)
-                                        * (conn.to_port + 1) as f32;
-                                let end = Point::new(to_t.position.x, in_py);
+                            let total_ins = to_t.audio.ins + to_t.midi.ins;
+                            let in_py = to_t.position.y
+                                + (size.height / (total_ins + 1) as f32) * (conn.to_port + 1) as f32;
+                            let end = Point::new(to_t.position.x, in_py);
 
-                                let line_len =
-                                    ((end.x - start.x).powi(2) + (end.y - start.y).powi(2)).sqrt();
-                                if line_len > 0.0 {
-                                    let t = ((cursor_position.x - start.x) * (end.x - start.x)
-                                        + (cursor_position.y - start.y) * (end.y - start.y))
-                                        / line_len.powi(2);
-                                    let t = t.clamp(0.0, 1.0);
-                                    let closest = Point::new(
-                                        start.x + t * (end.x - start.x),
-                                        start.y + t * (end.y - start.y),
-                                    );
-                                    let dist = cursor_position.distance(closest);
-                                    if dist < 10.0 {
-                                        clicked_connection = Some(idx);
-                                        break;
-                                    }
-                                }
+                            // Check distance to Bezier curve (sample multiple points)
+                            let dist_x = (end.x - start.x).abs() / 2.0;
+                            let mut min_dist = f32::MAX;
+
+                            // Sample 20 points along the Bezier curve
+                            for i in 0..=20 {
+                                let t = i as f32 / 20.0;
+                                // Cubic Bezier formula: B(t) = (1-t)^3*P0 + 3(1-t)^2*t*P1 + 3(1-t)*t^2*P2 + t^3*P3
+                                let t2 = t * t;
+                                let t3 = t2 * t;
+                                let mt = 1.0 - t;
+                                let mt2 = mt * mt;
+                                let mt3 = mt2 * mt;
+
+                                let p1 = Point::new(start.x + dist_x, start.y);
+                                let p2 = Point::new(end.x - dist_x, end.y);
+
+                                let x = mt3 * start.x + 3.0 * mt2 * t * p1.x + 3.0 * mt * t2 * p2.x + t3 * end.x;
+                                let y = mt3 * start.y + 3.0 * mt2 * t * p1.y + 3.0 * mt * t2 * p2.y + t3 * end.y;
+
+                                let curve_point = Point::new(x, y);
+                                let dist = cursor_position.distance(curve_point);
+                                min_dist = min_dist.min(dist);
                             }
-                        }
 
-                        if let Some(idx) = clicked_connection {
-                            return Some(Action::publish(Message::ConnectionViewSelectConnection(
-                                idx,
-                            )));
+                            if min_dist < 10.0 {
+                                clicked_connection = Some(idx);
+                                break;
+                            }
                         }
                     }
 
+                    if let Some(idx) = clicked_connection {
+                        return Some(Action::publish(Message::ConnectionViewSelectConnection(idx)));
+                    }
+
                     for (i, track) in data.tracks.iter().enumerate().rev() {
+                        // Check input ports (left side)
+                        let total_ins = track.audio.ins + track.midi.ins;
+                        for j in 0..total_ins {
+                            let py = track.position.y
+                                + (size.height / (total_ins + 1) as f32) * (j + 1) as f32;
+                            let port_pos = Point::new(track.position.x, py);
+
+                            if cursor_position.distance(port_pos) < 10.0 {
+                                // Clicking on input port starts connection from input
+                                let kind = if j < track.audio.ins {
+                                    Kind::Audio
+                                } else {
+                                    Kind::MIDI
+                                };
+                                data.connecting = Some(Connecting {
+                                    from_track: i,
+                                    from_port: j,
+                                    kind,
+                                    point: cursor_position,
+                                    is_input: true,
+                                });
+                                return Some(Action::capture());
+                            }
+                        }
+
+                        // Check output ports (right side)
                         let total_outs = track.audio.outs + track.midi.outs;
                         for j in 0..total_outs {
                             let py = track.position.y
@@ -127,11 +161,7 @@ impl canvas::Program<Message> for Graph {
                             let port_pos = Point::new(track.position.x + size.width, py);
 
                             if cursor_position.distance(port_pos) < 10.0 {
-                                if shift {
-                                    return Some(Action::publish(
-                                        Message::ConnectionViewSelectTrack(i),
-                                    ));
-                                }
+                                // Clicking on output port starts connection from output
                                 let kind = if j < track.audio.outs {
                                     Kind::Audio
                                 } else {
@@ -142,18 +172,20 @@ impl canvas::Program<Message> for Graph {
                                     from_port: j,
                                     kind,
                                     point: cursor_position,
+                                    is_input: false,
                                 });
                                 return Some(Action::capture());
                             }
                         }
 
+                        // Check for track body click
                         let rect = Rectangle::new(track.position, size);
                         if rect.contains(cursor_position) {
-                            if shift {
-                                return Some(Action::publish(Message::ConnectionViewSelectTrack(
-                                    i,
-                                )));
+                            if ctrl {
+                                // Ctrl+click: toggle track in selection (no move)
+                                return Some(Action::publish(Message::ConnectionViewSelectTrack(i)));
                             } else {
+                                // Regular click: select track and start moving
                                 let offset_x = cursor_position.x - track.position.x;
                                 let offset_y = cursor_position.y - track.position.y;
                                 data.moving_track = Some(MovingTrack {
@@ -161,55 +193,124 @@ impl canvas::Program<Message> for Graph {
                                     offset_x,
                                     offset_y,
                                 });
-                                return Some(Action::capture());
+                                // Also select the track
+                                return Some(Action::publish(Message::ConnectionViewSelectTrack(i)));
                             }
                         }
                     }
+
+                    // If we get here, nothing was clicked - deselect all
+                    return Some(Action::publish(Message::DeselectAll));
                 }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                     if let Some(conn) = &data.connecting {
                         let from_t = conn.from_track;
                         let from_p = conn.from_port;
                         let kind = conn.kind;
+                        let is_input = conn.is_input;
                         let mut target_port = None;
 
-                        for (i, track) in data.tracks.iter().enumerate() {
-                            let total_ins = track.audio.ins + track.midi.ins;
-                            for j in 0..total_ins {
-                                let py = track.position.y
-                                    + (size.height / (total_ins + 1) as f32) * (j + 1) as f32;
-                                let port_pos = Point::new(track.position.x, py);
+                        if is_input {
+                            // Started from input, look for output ports
+                            for (i, track) in data.tracks.iter().enumerate() {
+                                let total_outs = track.audio.outs + track.midi.outs;
+                                for j in 0..total_outs {
+                                    let py = track.position.y
+                                        + (size.height / (total_outs + 1) as f32) * (j + 1) as f32;
+                                    let port_pos = Point::new(track.position.x + size.width, py);
 
-                                if cursor_position.distance(port_pos) < 10.0 {
-                                    target_port = Some((i, j));
+                                    if cursor_position.distance(port_pos) < 10.0 {
+                                        target_port = Some((i, j));
+                                        break;
+                                    }
+                                }
+                                if target_port.is_some() {
                                     break;
                                 }
                             }
-                            if target_port.is_some() {
-                                break;
+                        } else {
+                            // Started from output, look for input ports
+                            for (i, track) in data.tracks.iter().enumerate() {
+                                let total_ins = track.audio.ins + track.midi.ins;
+                                for j in 0..total_ins {
+                                    let py = track.position.y
+                                        + (size.height / (total_ins + 1) as f32) * (j + 1) as f32;
+                                    let port_pos = Point::new(track.position.x, py);
+
+                                    if cursor_position.distance(port_pos) < 10.0 {
+                                        target_port = Some((i, j));
+                                        break;
+                                    }
+                                }
+                                if target_port.is_some() {
+                                    break;
+                                }
                             }
                         }
 
                         if let Some((to_t, to_p)) = target_port
-                            && let (Some(to_track), Some(from_track)) =
-                                (data.tracks.get(to_t), data.tracks.get(from_t))
+                            && let Some(to_track) = data.tracks.get(to_t)
+                            && let Some(from_track) = data.tracks.get(from_t)
                         {
-                            let target_kind = if to_p < to_track.audio.ins {
-                                Kind::Audio
+                            let target_kind = if is_input {
+                                // Target is output port
+                                if to_p < to_track.audio.outs {
+                                    Kind::Audio
+                                } else {
+                                    Kind::MIDI
+                                }
                             } else {
-                                Kind::MIDI
+                                // Target is input port
+                                if to_p < to_track.audio.ins {
+                                    Kind::Audio
+                                } else {
+                                    Kind::MIDI
+                                }
                             };
 
                             if kind == target_kind {
-                                let from_track_name = from_track.name.clone();
-                                let to_track_name = to_track.name.clone();
+                                let (from_track_name, from_port_idx, to_track_name, to_port_idx) = if is_input {
+                                    // Swap: we started from input, so target is output
+                                    // Connection should be: output -> input
+                                    let to_track_name = to_track.name.clone();
+                                    let from_track_name = from_track.name.clone();
+
+                                    // Convert combined indices to type-specific indices
+                                    let from_port_idx = match kind {
+                                        Kind::Audio => from_p,
+                                        Kind::MIDI => from_p - from_track.audio.ins,
+                                    };
+                                    let to_port_idx = match kind {
+                                        Kind::Audio => to_p,
+                                        Kind::MIDI => to_p - to_track.audio.outs,
+                                    };
+
+                                    (to_track_name, to_port_idx, from_track_name, from_port_idx)
+                                } else {
+                                    // Normal: we started from output, target is input
+                                    let from_track_name = from_track.name.clone();
+                                    let to_track_name = to_track.name.clone();
+
+                                    // Convert combined indices to type-specific indices
+                                    let from_port_idx = match kind {
+                                        Kind::Audio => from_p,
+                                        Kind::MIDI => from_p - from_track.audio.outs,
+                                    };
+                                    let to_port_idx = match kind {
+                                        Kind::Audio => to_p,
+                                        Kind::MIDI => to_p - to_track.audio.ins,
+                                    };
+
+                                    (from_track_name, from_port_idx, to_track_name, to_port_idx)
+                                };
+
                                 data.connecting = None;
                                 return Some(Action::publish(Message::Request(
                                     EngineAction::Connect {
                                         from_track: from_track_name,
-                                        from_port: from_p,
+                                        from_port: from_port_idx,
                                         to_track: to_track_name,
-                                        to_port: to_p,
+                                        to_port: to_port_idx,
                                         kind,
                                     },
                                 )));
@@ -371,19 +472,40 @@ impl canvas::Program<Message> for Graph {
             if let Some(conn) = &data.connecting
                 && let Some(from_t) = data.tracks.get(conn.from_track)
             {
-                let total_outs = from_t.audio.outs + from_t.midi.outs;
-                let py = from_t.position.y
-                    + (size.height / (total_outs + 1) as f32) * (conn.from_port + 1) as f32;
-                let start = Point::new(from_t.position.x + size.width, py);
+                let (start, end) = if conn.is_input {
+                    // Started from input port (left side), draw to cursor
+                    let total_ins = from_t.audio.ins + from_t.midi.ins;
+                    let py = from_t.position.y
+                        + (size.height / (total_ins + 1) as f32) * (conn.from_port + 1) as f32;
+                    let start = Point::new(from_t.position.x, py);
+                    (start, conn.point)
+                } else {
+                    // Started from output port (right side), draw to cursor
+                    let total_outs = from_t.audio.outs + from_t.midi.outs;
+                    let py = from_t.position.y
+                        + (size.height / (total_outs + 1) as f32) * (conn.from_port + 1) as f32;
+                    let start = Point::new(from_t.position.x + size.width, py);
+                    (start, conn.point)
+                };
 
-                let dist = (conn.point.x - start.x).abs() / 2.0;
+                let dist = (end.x - start.x).abs() / 2.0;
+                let (control1, control2) = if conn.is_input {
+                    // Input port: curve goes left from start, right to end
+                    (
+                        Point::new(start.x - dist, start.y),
+                        Point::new(end.x + dist, end.y),
+                    )
+                } else {
+                    // Output port: curve goes right from start, left to end
+                    (
+                        Point::new(start.x + dist, start.y),
+                        Point::new(end.x - dist, end.y),
+                    )
+                };
+
                 let path = Path::new(|p| {
                     p.move_to(start);
-                    p.bezier_curve_to(
-                        Point::new(start.x + dist, start.y),
-                        Point::new(conn.point.x - dist, conn.point.y),
-                        conn.point,
-                    );
+                    p.bezier_curve_to(control1, control2, end);
                 });
                 frame.stroke(
                     &path,

@@ -12,7 +12,7 @@ pub struct AudioTrack {
 impl AudioTrack {
     pub fn new(ins: usize, outs: usize) -> Self {
         let mut ret = Self {
-            clips: vec![AudioClip::new("".to_string(), 0, 60)],
+            clips: vec![],
             ins: vec![],
             outs: vec![],
         };

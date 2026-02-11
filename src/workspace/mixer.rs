@@ -151,6 +151,8 @@ impl Mixer {
             }),
         )];
 
-        row![strips, master].height(height).into()
+        mouse_area(row![strips, master].height(height))
+            .on_press(Message::DeselectAll)
+            .into()
     }
 }

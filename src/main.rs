@@ -236,6 +236,40 @@ impl Maolan {
                         "'soloed' is not boolean",
                     ));
                 }
+
+                // Load audio clips
+                if let Some(audio_clips) = track["audio"]["clips"].as_array() {
+                    for clip in audio_clips {
+                        let clip_name = clip["name"].as_str().unwrap_or("").to_string();
+                        let start = clip["start"].as_u64().unwrap_or(0) as usize;
+                        let length = clip["length"].as_u64().unwrap_or(0) as usize;
+
+                        tasks.push(self.send(Action::AddClip {
+                            name: clip_name,
+                            track_name: name.clone(),
+                            start,
+                            length,
+                            kind: Kind::Audio,
+                        }));
+                    }
+                }
+
+                // Load MIDI clips
+                if let Some(midi_clips) = track["midi"]["clips"].as_array() {
+                    for clip in midi_clips {
+                        let clip_name = clip["name"].as_str().unwrap_or("").to_string();
+                        let start = clip["start"].as_u64().unwrap_or(0) as usize;
+                        let length = clip["length"].as_u64().unwrap_or(0) as usize;
+
+                        tasks.push(self.send(Action::AddClip {
+                            name: clip_name,
+                            track_name: name.clone(),
+                            start,
+                            length,
+                            kind: Kind::MIDI,
+                        }));
+                    }
+                }
             }
         } else {
             return Err(io::Error::new(
@@ -381,6 +415,35 @@ impl Maolan {
                         }
                     }
                 }
+                Action::AddClip {
+                    name,
+                    track_name,
+                    start,
+                    length,
+                    kind,
+                } => {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name) {
+                        match kind {
+                            Kind::Audio => {
+                                track.audio.clips.push(crate::state::AudioClip {
+                                    name: name.clone(),
+                                    start: *start,
+                                    length: *length,
+                                    offset: 0,
+                                });
+                            }
+                            Kind::MIDI => {
+                                track.midi.clips.push(crate::state::MIDIClip {
+                                    name: name.clone(),
+                                    start: *start,
+                                    length: *length,
+                                    offset: 0,
+                                });
+                            }
+                        }
+                    }
+                }
                 Action::Connect {
                     from_track,
                     from_port,
@@ -482,17 +545,48 @@ impl Maolan {
                 self.state.blocking_write().ctrl = false;
             }
             Message::SelectTrack(ref name) => {
+                use crate::state::ConnectionViewSelection;
                 let ctrl = self.state.blocking_read().ctrl;
                 let selected = self.state.blocking_read().selected.contains(name);
+                let mut state = self.state.blocking_write();
+
+                // Find track index
+                let track_idx = state.tracks.iter().position(|t| &t.name == name);
+
                 if ctrl {
                     if selected {
-                        self.state.blocking_write().selected.retain(|n| n != name);
+                        state.selected.retain(|n| n != name);
+                        // Also remove from connections view selection
+                        if let Some(idx) = track_idx {
+                            if let ConnectionViewSelection::Tracks(set) = &mut state.connection_view_selection {
+                                set.remove(&idx);
+                            }
+                        }
                     } else {
-                        self.state.blocking_write().selected.insert(name.clone());
+                        state.selected.insert(name.clone());
+                        // Also add to connections view selection
+                        if let Some(idx) = track_idx {
+                            match &mut state.connection_view_selection {
+                                ConnectionViewSelection::Tracks(set) => {
+                                    set.insert(idx);
+                                }
+                                _ => {
+                                    let mut set = std::collections::HashSet::new();
+                                    set.insert(idx);
+                                    state.connection_view_selection = ConnectionViewSelection::Tracks(set);
+                                }
+                            }
+                        }
                     }
                 } else {
-                    self.state.blocking_write().selected.clear();
-                    self.state.blocking_write().selected.insert(name.clone());
+                    state.selected.clear();
+                    state.selected.insert(name.clone());
+                    // Also sync to connections view selection
+                    if let Some(idx) = track_idx {
+                        let mut set = std::collections::HashSet::new();
+                        set.insert(idx);
+                        state.connection_view_selection = ConnectionViewSelection::Tracks(set);
+                    }
                 }
             }
             Message::RemoveSelectedTracks => {
@@ -507,13 +601,24 @@ impl Maolan {
                 let ctrl = self.state.blocking_read().ctrl;
                 let mut state = self.state.blocking_write();
 
+                // Get track name before modifying state
+                let track_name = state.tracks.get(idx).map(|t| t.name.clone());
+
                 match &mut state.connection_view_selection {
                     ConnectionViewSelection::Tracks(set) if ctrl => {
                         // Ctrl + click: toggle in current selection
                         if set.contains(&idx) {
                             set.remove(&idx);
+                            // Also remove from workspace selection
+                            if let Some(name) = track_name {
+                                state.selected.remove(&name);
+                            }
                         } else {
                             set.insert(idx);
+                            // Also add to workspace selection
+                            if let Some(name) = track_name {
+                                state.selected.insert(name);
+                            }
                         }
                     }
                     _ => {
@@ -521,8 +626,45 @@ impl Maolan {
                         let mut set = std::collections::HashSet::new();
                         set.insert(idx);
                         state.connection_view_selection = ConnectionViewSelection::Tracks(set);
+
+                        // Sync to workspace selection
+                        state.selected.clear();
+                        if let Some(name) = track_name {
+                            state.selected.insert(name);
+                        }
                     }
                 }
+            }
+            Message::SelectClip { track_idx, clip_idx, kind } => {
+                use crate::state::ClipId;
+                let ctrl = self.state.blocking_read().ctrl;
+                let mut state = self.state.blocking_write();
+
+                let clip_id = ClipId {
+                    track_idx,
+                    clip_idx,
+                    kind,
+                };
+
+                if ctrl {
+                    // Toggle clip in selection
+                    if state.selected_clips.contains(&clip_id) {
+                        state.selected_clips.remove(&clip_id);
+                    } else {
+                        state.selected_clips.insert(clip_id);
+                    }
+                } else {
+                    // Replace selection with this clip
+                    state.selected_clips.clear();
+                    state.selected_clips.insert(clip_id);
+                }
+            }
+            Message::DeselectAll => {
+                use crate::state::ConnectionViewSelection;
+                let mut state = self.state.blocking_write();
+                state.selected.clear();
+                state.selected_clips.clear();
+                state.connection_view_selection = ConnectionViewSelection::None;
             }
             Message::ConnectionViewSelectConnection(idx) => {
                 use crate::state::ConnectionViewSelection;

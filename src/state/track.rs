@@ -14,7 +14,7 @@ pub struct AudioData {
 impl AudioData {
     pub fn new(ins: usize, outs: usize) -> Self {
         Self {
-            clips: vec![AudioClip::new("".to_string(), 0, 60, 0)],
+            clips: vec![],
             ins,
             outs,
         }
@@ -31,7 +31,7 @@ pub struct MIDIData {
 impl MIDIData {
     pub fn new(ins: usize, outs: usize) -> Self {
         Self {
-            clips: vec![MIDIClip::new("".to_string(), 0, 60, 0)],
+            clips: vec![],
             ins,
             outs,
         }

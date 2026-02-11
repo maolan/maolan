@@ -51,9 +51,11 @@ pub enum Message {
 
     AddTrack(AddTrack),
     SelectTrack(String),
+    SelectClip { track_idx: usize, clip_idx: usize, kind: Kind },
     RemoveSelectedTracks,
     RemoveSelected,
     Remove,
+    DeselectAll,
 
     ConnectionViewSelectTrack(usize),
     ConnectionViewSelectConnection(usize),

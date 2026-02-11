@@ -112,6 +112,8 @@ impl Tracks {
             .on_drop(Message::TrackDropped)
             .into()
         }));
-        result.width(width).into()
+        mouse_area(result.width(width))
+            .on_press(Message::DeselectAll)
+            .into()
     }
 }

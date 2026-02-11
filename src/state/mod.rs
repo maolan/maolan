@@ -13,6 +13,13 @@ use std::{
 use tokio::sync::RwLock;
 pub use track::Track;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ClipId {
+    pub track_idx: usize,
+    pub clip_idx: usize,
+    pub kind: Kind,
+}
+
 #[derive(Debug, Clone)]
 pub enum Resizing {
     Clip(Kind, usize, usize, bool, f32, f32),
@@ -27,6 +34,7 @@ pub struct Connecting {
     pub from_port: usize,
     pub kind: Kind,
     pub point: Point,
+    pub is_input: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +74,7 @@ pub struct StateData {
     pub tracks: Vec<Track>,
     pub connections: Vec<Connection>,
     pub selected: HashSet<String>,
+    pub selected_clips: HashSet<ClipId>,
     pub message: String,
     pub resizing: Option<Resizing>,
     pub connecting: Option<Connecting>,
@@ -88,6 +97,7 @@ impl Default for StateData {
             tracks: vec![],
             connections: vec![],
             selected: HashSet::new(),
+            selected_clips: HashSet::new(),
             message: "Thank you for using Maolan!".to_string(),
             resizing: None,
             connecting: None,

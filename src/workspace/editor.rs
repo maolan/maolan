@@ -35,6 +35,11 @@ impl Editor {
 
             for (index, clip) in track.audio.clips.iter().enumerate() {
                 let clip_name = clip.name.clone();
+                let is_selected = state.selected_clips.contains(&crate::state::ClipId {
+                    track_idx: track_index,
+                    clip_idx: index,
+                    kind: Kind::Audio,
+                });
 
                 let left_handle = mouse_area(
                     container("")
@@ -89,19 +94,33 @@ impl Editor {
                         .width(Length::Fill)
                         .height(Length::Fill)
                         .padding(5)
-                        .style(|_theme| {
+                        .style(move |_theme| {
                             use container::Style;
                             Style {
-                                background: Some(Background::Color(Color {
-                                    r: 0.3,
-                                    g: 0.5,
-                                    b: 0.7,
-                                    a: 0.8,
+                                background: Some(Background::Color(if is_selected {
+                                    Color {
+                                        r: 0.4,
+                                        g: 0.6,
+                                        b: 0.8,
+                                        a: 1.0,
+                                    }
+                                } else {
+                                    Color {
+                                        r: 0.3,
+                                        g: 0.5,
+                                        b: 0.7,
+                                        a: 0.8,
+                                    }
                                 })),
                                 ..Style::default()
                             }
                         }),
-                );
+                )
+                .on_press(Message::SelectClip {
+                    track_idx: track_index,
+                    clip_idx: index,
+                    kind: Kind::Audio,
+                });
 
                 let clip_widget = container(row![left_handle, clip_content, right_handle])
                     .width(Length::Fixed(clip.length as f32))
@@ -163,12 +182,15 @@ impl Editor {
                 }),
             );
         }
-        result
-            // .push(canvas(PianoKeyboard {
-            //     pressed_notes: self.active_notes.clone(),
-            // }))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        mouse_area(
+            result
+                // .push(canvas(PianoKeyboard {
+                //     pressed_notes: self.active_notes.clone(),
+                // }))
+                .width(Length::Fill)
+                .height(Length::Fill)
+        )
+        .on_press(Message::DeselectAll)
+        .into()
     }
 }
