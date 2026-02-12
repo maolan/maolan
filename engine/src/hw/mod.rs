@@ -1,1 +1,1 @@
-mod oss;
+pub mod oss;

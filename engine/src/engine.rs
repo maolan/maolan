@@ -4,6 +4,7 @@ use tokio::task::JoinHandle;
 
 use crate::{
     audio::clip::AudioClip,
+    hw::oss,
     kind::Kind,
     message::{Action, Message},
     midi::clip::MIDIClip,
@@ -31,6 +32,7 @@ pub struct Engine {
     state: Arc<UnsafeMutex<State>>,
     tx: Sender<Message>,
     workers: Vec<WorkerData>,
+    oss_audio: Option<oss::Audio>,
 }
 
 impl Engine {
@@ -41,6 +43,7 @@ impl Engine {
             clients: vec![],
             state: Arc::new(UnsafeMutex::new(State::default())),
             workers: vec![],
+            oss_audio: None,
         }
     }
 
@@ -389,6 +392,16 @@ impl Engine {
                                 Err(err) => {
                                     self.notify_clients(Err(err)).await;
                                     return;
+                                }
+                            }
+                        }
+                        Action::OpenAudio(ref device) => {
+                            match oss::Audio::new(device, 48000, 32, false) {
+                                Ok(d) => {
+                                    self.oss_audio = Some(d);
+                                }
+                                Err(e) => {
+                                    self.notify_clients(Err(e.to_string())).await;
                                 }
                             }
                         }

@@ -1,6 +1,7 @@
 mod audio;
 pub mod client;
 mod engine;
+mod hw;
 pub mod kind;
 pub mod message;
 mod midi;

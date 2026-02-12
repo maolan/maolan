@@ -131,7 +131,7 @@ impl BufferInfo {
 }
 
 #[derive(Debug)]
-pub struct Config {
+pub struct Audio {
     pub dsp: File,
     pub channels: i32,
     pub input: bool,
@@ -139,35 +139,35 @@ pub struct Config {
     pub format: u32,
     pub samples: i32,
     pub chsamples: i32,
-    pub buffer: *mut c_void,
+    pub buffer: Vec<u8>,
     pub audio_info: AudioInfo,
     pub buffer_info: BufferInfo,
 }
 
-impl Config {
-    pub fn new(path: &str, rate: i32, bits: i32, input: bool) -> Config {
+impl Audio {
+    pub fn new(path: &str, rate: i32, bits: i32, input: bool) -> Result<Audio, std::io::Error> {
         let mut binding = File::options();
 
         if input {
             binding
                 .read(true)
                 .write(false)
-                .custom_flags(libc::O_RDONLY | libc::O_EXCL | libc::O_NONBLOCK);
+                .custom_flags(libc::O_RDONLY | libc::O_EXCL);
         } else {
             binding
                 .read(false)
                 .write(true)
-                .custom_flags(libc::O_WRONLY | libc::O_EXCL | libc::O_NONBLOCK);
+                .custom_flags(libc::O_WRONLY | libc::O_EXCL);
         }
-        let mut c = Config {
-            dsp: binding.open(path).unwrap(),
+        let mut c = Audio {
+            dsp: binding.open(path)?,
             channels: 0,
             input,
             rate,
             format: AFMT_S32_NE,
             samples: 0,
             chsamples: 0,
-            buffer: std::ptr::null_mut(),
+            buffer: vec![],
             audio_info: AudioInfo::new(),
             buffer_info: BufferInfo::new(),
         };
@@ -215,30 +215,31 @@ impl Config {
         c.samples = c.buffer_info.bytes / mem::size_of::<i32>() as i32;
         c.chsamples = c.samples / c.channels;
 
-        unsafe {
-            if c.input {
-                c.buffer = mmap(
-                    std::ptr::null_mut(),
-                    c.buffer_info.bytes.try_into().unwrap(),
-                    PROT_READ,
-                    MAP_SHARED,
-                    c.dsp.as_raw_fd(),
-                    0,
-                );
-            } else {
-                c.buffer = mmap(
-                    std::ptr::null_mut(),
-                    c.buffer_info.bytes.try_into().unwrap(),
-                    PROT_WRITE,
-                    MAP_SHARED,
-                    c.dsp.as_raw_fd(),
-                    0,
-                );
-            }
-            if c.buffer == libc::MAP_FAILED {
-                panic!("Failed to memory map the buffer");
-            }
+        // unsafe {
+        //     if c.input {
+        //         c.buffer = mmap(
+        //             std::ptr::null_mut(),
+        //             c.buffer_info.bytes.try_into().unwrap(),
+        //             PROT_READ,
+        //             MAP_SHARED,
+        //             c.dsp.as_raw_fd(),
+        //             0,
+        //         );
+        //     } else {
+        //         c.buffer = mmap(
+        //             std::ptr::null_mut(),
+        //             c.buffer_info.bytes.try_into().unwrap(),
+        //             PROT_WRITE,
+        //             MAP_SHARED,
+        //             c.dsp.as_raw_fd(),
+        //             0,
+        //         );
+        //     }
+        //     if c.buffer == libc::MAP_FAILED {
+        //         panic!("Failed to memory map the buffer");
+        //     }
 
+        unsafe {
             let fd = c.dsp.as_raw_fd();
             let trig: i32 = if input {
                 PCM_ENABLE_INPUT
@@ -248,17 +249,17 @@ impl Config {
 
             oss_set_trigger(fd, &trig).expect("Failed to set trigger");
         }
-        c
+        Ok(c)
     }
 }
 
-impl Drop for Config {
-    fn drop(&mut self) {
-        unsafe {
-            munmap(self.buffer, self.buffer_info.bytes.try_into().unwrap());
-        }
-    }
-}
+// impl Drop for Audio {
+//     fn drop(&mut self) {
+//         unsafe {
+//             munmap(self.buffer, self.buffer_info.bytes.try_into().unwrap());
+//         }
+//     }
+// }
 
 #[repr(C)]
 struct OssSyncGroup {
@@ -339,8 +340,15 @@ pub fn add_to_sync_group(fd: i32, group: i32, input: bool) -> i32 {
     unsafe {
         oss_add_sync_group(fd, &mut sync_group).expect("Failed to set sync group");
     }
-    return sync_group.id;
+    sync_group.id
 }
+
+// Bezbedno je slati Audio između niti jer mmap bafer
+// ostaje validan dok god Audio struct postoji.
+unsafe impl Send for Audio {}
+
+// Ako planiraš da pristupaš istom Audio objektu iz više niti (npr. preko Arc<Engine>)
+unsafe impl Sync for Audio {}
 
 #[cfg(test)]
 mod tests {
@@ -352,7 +360,7 @@ mod tests {
     #[test]
     #[ignore]
     fn it_works() {
-        let mut oss = Config::new("/dev/dsp", 48000, 32, false);
+        let mut oss = Audio::new("/dev/dsp", 48000, 32, false);
         let mut wav: Wav<i32> = Wav::from_path("./stereo32.wav").unwrap();
         let nchannels: usize = wav.n_channels().into();
         let mut out: Vec<i32> = vec![];
@@ -371,7 +379,7 @@ mod tests {
                     None => break 'outer,
                 }
             }
-            let bytes = unsafe { from_raw_parts(out.as_ptr() as *const u8, out.len() * 4) };
+            let bytes = unsafe { from_raw_parts(out.as_ptr(), out.len() * 4) };
             oss.dsp.write(bytes).expect("Failed to write data");
             out.clear();
         }
@@ -379,9 +387,9 @@ mod tests {
 
     #[test]
     fn mmap_mode() {
-        let device = "/dev/dsp4";
-        let oss_in = Config::new(device, 48000, 32, true);
-        let oss_out = Config::new(device, 48000, 32, false);
+        let device = "/dev/dsp";
+        let oss_in = Audio::new(device, 48000, 32, true);
+        let oss_out = Audio::new(device, 48000, 32, false);
         let mut group = 0;
         group = add_to_sync_group(oss_in.dsp.as_raw_fd(), group, true);
         add_to_sync_group(oss_out.dsp.as_raw_fd(), group, false);

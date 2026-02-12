@@ -506,6 +506,9 @@ impl Maolan {
                         );
                     }
                 }
+                Action::OpenAudio(s) => {
+                    self.state.blocking_write().message = format!("Opened device {s}");
+                }
                 _ => {}
             },
             Message::Response(Err(ref e)) => {
@@ -513,10 +516,10 @@ impl Maolan {
                 error!("Engine error: {e}");
             }
             Message::SaveFolderSelected(ref path_opt) => {
-                if let Some(path) = path_opt {
-                    if let Err(s) = self.save(path.to_string_lossy().to_string()) {
-                        error!("{}", s);
-                    }
+                if let Some(path) = path_opt
+                    && let Err(s) = self.save(path.to_string_lossy().to_string())
+                {
+                    error!("{}", s);
                 }
             }
             Message::OpenFolderSelected(ref path_opt) => {

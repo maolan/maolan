@@ -61,6 +61,7 @@ pub enum Action {
         to_port: usize,
         kind: Kind,
     },
+    OpenAudio(String),
 }
 
 #[derive(Clone, Debug)]
