@@ -28,8 +28,7 @@ use iced::{
     Length, Pixels, Point, Settings, Size, Subscription, Task, Theme, event, keyboard, mouse,
     window,
 };
-
-use iced_aw::ICED_AW_FONT_BYTES;
+use iced_fonts::LUCIDE_FONT_BYTES;
 
 use engine::{
     kind::Kind,
@@ -58,7 +57,7 @@ pub fn main() -> iced::Result {
         .title("Maolan")
         .settings(settings)
         .theme(Theme::Dark)
-        .font(ICED_AW_FONT_BYTES)
+        .font(LUCIDE_FONT_BYTES)
         .subscription(Maolan::subscription)
         .run()
 }
@@ -558,7 +557,9 @@ impl Maolan {
                         state.selected.retain(|n| n != name);
                         // Also remove from connections view selection
                         if let Some(idx) = track_idx {
-                            if let ConnectionViewSelection::Tracks(set) = &mut state.connection_view_selection {
+                            if let ConnectionViewSelection::Tracks(set) =
+                                &mut state.connection_view_selection
+                            {
                                 set.remove(&idx);
                             }
                         }
@@ -573,7 +574,8 @@ impl Maolan {
                                 _ => {
                                     let mut set = std::collections::HashSet::new();
                                     set.insert(idx);
-                                    state.connection_view_selection = ConnectionViewSelection::Tracks(set);
+                                    state.connection_view_selection =
+                                        ConnectionViewSelection::Tracks(set);
                                 }
                             }
                         }
@@ -635,7 +637,11 @@ impl Maolan {
                     }
                 }
             }
-            Message::SelectClip { track_idx, clip_idx, kind } => {
+            Message::SelectClip {
+                track_idx,
+                clip_idx,
+                kind,
+            } => {
                 use crate::state::ClipId;
                 let ctrl = self.state.blocking_read().ctrl;
                 let mut state = self.state.blocking_write();

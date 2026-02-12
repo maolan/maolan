@@ -2024,6 +2024,7 @@ dependencies = [
  "iced",
  "iced_aw",
  "iced_drop",
+ "iced_fonts",
  "maolan-engine",
  "rfd",
  "serde",

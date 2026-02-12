@@ -1,8 +1,9 @@
 use crate::{message::Message, state::State};
 use iced::{
     Background, Color, Length, Theme,
-    widget::{button, row},
+    widget::{button, row, tooltip, tooltip::Position},
 };
+use iced_fonts::lucide::{audio_lines, cable, pause, play, square};
 
 #[derive(Default)]
 pub struct Toolbar {
@@ -26,13 +27,42 @@ impl Toolbar {
             style
         };
         row![
-            row![].width(Length::Fill),
-            button("workspace")
-                .style(btn_style)
-                .on_press(Message::Workspace),
-            button("connections")
-                .style(btn_style)
-                .on_press(Message::Connections)
+            row![
+                tooltip(
+                    button(play()).style(btn_style).on_press(Message::Workspace),
+                    "Play",
+                    Position::Bottom
+                ),
+                tooltip(
+                    button(pause())
+                        .style(btn_style)
+                        .on_press(Message::Workspace),
+                    "Pause",
+                    Position::Bottom
+                ),
+                tooltip(
+                    button(square())
+                        .style(btn_style)
+                        .on_press(Message::Workspace),
+                    "Stop",
+                    Position::Bottom
+                ),
+            ]
+            .width(Length::Fill),
+            tooltip(
+                button(audio_lines())
+                    .style(btn_style)
+                    .on_press(Message::Workspace),
+                "Workspace",
+                Position::Bottom
+            ),
+            tooltip(
+                button(cable())
+                    .style(btn_style)
+                    .on_press(Message::Connections),
+                "Connections",
+                Position::Bottom
+            ),
         ]
         .into()
     }

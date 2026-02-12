@@ -7,6 +7,7 @@ edition = "2024"
 iced = { version = "0.14.0", features = ["advanced", "image", "tokio"] }
 iced_aw = "0.13.0"
 iced_drop = "0.2.6"
+iced_fonts = { version = "0.3.0", features = ["lucide"] }
 maolan-engine = { path = "./engine" }
 rfd = "0.17.2"
 serde = { version = "1.0.228", features = ["derive"] }

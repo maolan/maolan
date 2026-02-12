@@ -6,7 +6,7 @@ use iced_aw::menu::{DrawPath, Menu as IcedMenu};
 use iced_aw::{menu_bar, menu_items};
 use maolan_engine as engine;
 
-use iced_aw::iced_aw_font;
+use iced_fonts::lucide::chevron_right;
 
 fn base_button<'a>(
     content: impl Into<Element<'a, Message>>,
@@ -71,9 +71,7 @@ fn submenu(label: &str, msg: Message) -> Element<'_, Message, iced::Theme, iced:
             text(label)
                 .width(Length::Fill)
                 .align_y(alignment::Vertical::Center),
-            iced_aw_font::right_open()
-                .width(Length::Shrink)
-                .align_y(alignment::Vertical::Center),
+            chevron_right(),
         ]
         .align_y(iced::Alignment::Center),
         msg,
