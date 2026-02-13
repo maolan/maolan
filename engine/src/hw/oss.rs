@@ -1,10 +1,14 @@
-use libc::{MAP_SHARED, PROT_READ, PROT_WRITE, c_void, mmap, munmap};
+#![allow(dead_code)]
+
+use crate::channels::AudioChannels;
 use nix::libc;
 use std::{
     fs::File,
+    io::{Read, Write},
     mem,
     os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
 };
+use wavers::Samples;
 
 pub const AFMT_QUERY: u32 = 0x00000000;
 pub const AFMT_MU_LAW: u32 = 0x00000001;
@@ -132,14 +136,14 @@ impl BufferInfo {
 
 #[derive(Debug)]
 pub struct Audio {
-    pub dsp: File,
-    pub channels: i32,
+    dsp: File,
+    pub channels: AudioChannels,
     pub input: bool,
     pub rate: i32,
     pub format: u32,
-    pub samples: i32,
-    pub chsamples: i32,
-    pub buffer: Vec<u8>,
+    pub samples: usize,
+    pub chsamples: usize,
+    buffer: Samples<i32>,
     pub audio_info: AudioInfo,
     pub buffer_info: BufferInfo,
 }
@@ -161,13 +165,13 @@ impl Audio {
         }
         let mut c = Audio {
             dsp: binding.open(path)?,
-            channels: 0,
             input,
             rate,
+            channels: vec![],
             format: AFMT_S32_NE,
             samples: 0,
             chsamples: 0,
-            buffer: vec![],
+            buffer: Samples::new(vec![0i32; 0].into_boxed_slice()),
             audio_info: AudioInfo::new(),
             buffer_info: BufferInfo::new(),
         };
@@ -211,33 +215,14 @@ impl Audio {
                 c.buffer_info.bytes
             );
         }
-        c.channels = c.audio_info.max_channels;
-        c.samples = c.buffer_info.bytes / mem::size_of::<i32>() as i32;
-        c.chsamples = c.samples / c.channels;
-
-        // unsafe {
-        //     if c.input {
-        //         c.buffer = mmap(
-        //             std::ptr::null_mut(),
-        //             c.buffer_info.bytes.try_into().unwrap(),
-        //             PROT_READ,
-        //             MAP_SHARED,
-        //             c.dsp.as_raw_fd(),
-        //             0,
-        //         );
-        //     } else {
-        //         c.buffer = mmap(
-        //             std::ptr::null_mut(),
-        //             c.buffer_info.bytes.try_into().unwrap(),
-        //             PROT_WRITE,
-        //             MAP_SHARED,
-        //             c.dsp.as_raw_fd(),
-        //             0,
-        //         );
-        //     }
-        //     if c.buffer == libc::MAP_FAILED {
-        //         panic!("Failed to memory map the buffer");
-        //     }
+        c.samples = c.buffer_info.bytes as usize / mem::size_of::<i32>();
+        c.chsamples = c.samples / c.audio_info.max_channels as usize;
+        c.buffer = Samples::new(vec![0i32; c.samples].into_boxed_slice());
+        c.channels.reserve(c.audio_info.max_channels as usize);
+        for _ in 0..c.audio_info.max_channels {
+            c.channels
+                .push(Samples::new(vec![0.0; c.chsamples].into_boxed_slice()));
+        }
 
         unsafe {
             let fd = c.dsp.as_raw_fd();
@@ -251,15 +236,65 @@ impl Audio {
         }
         Ok(c)
     }
-}
 
-// impl Drop for Audio {
-//     fn drop(&mut self) {
-//         unsafe {
-//             munmap(self.buffer, self.buffer_info.bytes.try_into().unwrap());
-//         }
-//     }
-// }
+    pub fn read(&mut self) -> std::io::Result<()> {
+        let data_slice: &mut [i32] = self.buffer.as_mut();
+        let bytes: &mut [u8] = unsafe {
+            std::slice::from_raw_parts_mut(
+                data_slice.as_mut_ptr() as *mut u8,
+                std::mem::size_of_val(data_slice),
+            )
+        };
+        self.dsp.read_exact(bytes)?;
+
+        let num_channels = self.channels.len();
+        let norm_factor = 1.0 / i32::MAX as f32;
+
+        for _ in 0..num_channels {
+            for (ch_idx, channel_samples) in self.channels.iter_mut().enumerate() {
+                for (i, sample) in channel_samples
+                    .as_mut()
+                    .iter_mut()
+                    .enumerate()
+                    .take(self.chsamples)
+                {
+                    let source_idx = i * num_channels + ch_idx;
+
+                    *sample = data_slice[source_idx] as f32 * norm_factor;
+                }
+            }
+        }
+
+        Ok(())
+    }
+    pub fn write(&mut self) -> std::io::Result<()> {
+        let num_channels = self.channels.len();
+        if num_channels == 0 {
+            return Ok(());
+        }
+        let scale_factor = i32::MAX as f32;
+        let data_slice: &mut [i32] = self.buffer.as_mut();
+
+        for ch in 0..num_channels {
+            let channel_slice = self.channels[ch].as_ref();
+
+            for (i, &sample) in channel_slice.iter().enumerate().take(self.chsamples) {
+                let target_idx = i * num_channels + ch;
+                data_slice[target_idx] = (sample.clamp(-1.0, 1.0) * scale_factor) as i32;
+            }
+        }
+
+        let bytes: &[u8] = unsafe {
+            std::slice::from_raw_parts(
+                data_slice.as_ptr() as *const u8,
+                std::mem::size_of_val(data_slice), // Bezbedno dobijanje veličine u bajtovima
+            )
+        };
+        self.dsp.write_all(bytes)?;
+
+        Ok(())
+    }
+}
 
 #[repr(C)]
 struct OssSyncGroup {
@@ -343,57 +378,5 @@ pub fn add_to_sync_group(fd: i32, group: i32, input: bool) -> i32 {
     sync_group.id
 }
 
-// Bezbedno je slati Audio između niti jer mmap bafer
-// ostaje validan dok god Audio struct postoji.
 unsafe impl Send for Audio {}
-
-// Ako planiraš da pristupaš istom Audio objektu iz više niti (npr. preko Arc<Engine>)
 unsafe impl Sync for Audio {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-    use std::slice::from_raw_parts;
-    use wavers::Wav;
-
-    #[test]
-    #[ignore]
-    fn it_works() {
-        let mut oss = Audio::new("/dev/dsp", 48000, 32, false);
-        let mut wav: Wav<i32> = Wav::from_path("./stereo32.wav").unwrap();
-        let nchannels: usize = wav.n_channels().into();
-        let mut out: Vec<i32> = vec![];
-        let mut iter = wav.frames();
-
-        'outer: loop {
-            let mut i = 0;
-            while i < oss.chsamples {
-                match iter.next() {
-                    Some(ref samples) => {
-                        for ch in 0..nchannels {
-                            out.push(samples[ch]);
-                            i += 1;
-                        }
-                    }
-                    None => break 'outer,
-                }
-            }
-            let bytes = unsafe { from_raw_parts(out.as_ptr(), out.len() * 4) };
-            oss.dsp.write(bytes).expect("Failed to write data");
-            out.clear();
-        }
-    }
-
-    #[test]
-    fn mmap_mode() {
-        let device = "/dev/dsp";
-        let oss_in = Audio::new(device, 48000, 32, true);
-        let oss_out = Audio::new(device, 48000, 32, false);
-        let mut group = 0;
-        group = add_to_sync_group(oss_in.dsp.as_raw_fd(), group, true);
-        add_to_sync_group(oss_out.dsp.as_raw_fd(), group, false);
-        // assert_ne!(oss_in.buffer, libc::MAP_FAILED, "Memory-mapping of input failed");
-        // assert_ne!(oss_out.buffer, libc::MAP_FAILED, "Memory-mapping of output failed");
-    }
-}
