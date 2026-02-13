@@ -7,20 +7,6 @@ mod toolbar;
 mod widget;
 mod workspace;
 
-use rfd::AsyncFileDialog;
-use serde_json::{Value, json};
-use std::fs::{self, File};
-use std::io::BufReader;
-use std::path::PathBuf;
-use std::process::exit;
-use std::sync::{Arc, LazyLock};
-use tokio::sync::RwLock;
-use tracing::{Level, debug, error, span};
-use tracing_subscriber::{
-    fmt::{Layer as FmtLayer, writer::MakeWriterExt},
-    prelude::*,
-};
-
 use iced::futures::{Stream, StreamExt, io, stream};
 use iced::keyboard::Event as KeyEvent;
 use iced::widget::{Id, column, text};
@@ -29,14 +15,28 @@ use iced::{
     window,
 };
 use iced_fonts::LUCIDE_FONT_BYTES;
-
-use engine::{
+use maolan_engine::{
+    self as engine,
     kind::Kind,
     message::{Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage},
 };
-use maolan_engine as engine;
 use message::{DraggedClip, Message};
+use rfd::AsyncFileDialog;
+use serde_json::{Value, json};
 use state::{Resizing, State, StateData, Track, View};
+use std::{
+    fs::{self, File},
+    io::BufReader,
+    path::PathBuf,
+    process::exit,
+    sync::{Arc, LazyLock},
+};
+use tokio::sync::RwLock;
+use tracing::{Level, debug, error, span};
+use tracing_subscriber::{
+    fmt::{Layer as FmtLayer, writer::MakeWriterExt},
+    prelude::*,
+};
 
 static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
 
@@ -506,7 +506,7 @@ impl Maolan {
                         );
                     }
                 }
-                Action::OpenAudio(s) => {
+                Action::OpenAudioDevice(s) => {
                     self.state.blocking_write().message = format!("Opened device {s}");
                 }
                 _ => {}

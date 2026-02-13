@@ -17,6 +17,7 @@ impl Track {
         audio_outs: usize,
         midi_ins: usize,
         midi_outs: usize,
+        buffer_size: usize,
     ) -> Self {
         Self {
             name,
@@ -24,7 +25,7 @@ impl Track {
             armed: false,
             muted: false,
             soloed: false,
-            audio: AudioTrack::new(audio_ins, audio_outs),
+            audio: AudioTrack::new(audio_ins, audio_outs, buffer_size),
             midi: MIDITrack::new(midi_ins, midi_outs),
         }
     }

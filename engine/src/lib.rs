@@ -1,5 +1,4 @@
 mod audio;
-mod channels;
 pub mod client;
 mod engine;
 mod hw;

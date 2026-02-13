@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
-use crate::channels::AudioChannels;
+use crate::audio::io::AudioIO;
 use nix::libc;
 use std::{
     fs::File,
     io::{Read, Write},
     mem,
     os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
+    sync::Arc,
 };
 use wavers::Samples;
 
@@ -137,7 +138,7 @@ impl BufferInfo {
 #[derive(Debug)]
 pub struct Audio {
     dsp: File,
-    pub channels: AudioChannels,
+    pub channels: Vec<Arc<AudioIO>>,
     pub input: bool,
     pub rate: i32,
     pub format: u32,
@@ -220,8 +221,7 @@ impl Audio {
         c.buffer = Samples::new(vec![0i32; c.samples].into_boxed_slice());
         c.channels.reserve(c.audio_info.max_channels as usize);
         for _ in 0..c.audio_info.max_channels {
-            c.channels
-                .push(Samples::new(vec![0.0; c.chsamples].into_boxed_slice()));
+            c.channels.push(Arc::new(AudioIO::new(c.chsamples)));
         }
 
         unsafe {
@@ -236,7 +236,6 @@ impl Audio {
         }
         Ok(c)
     }
-
     pub fn read(&mut self) -> std::io::Result<()> {
         let data_slice: &mut [i32] = self.buffer.as_mut();
         let bytes: &mut [u8] = unsafe {
@@ -250,44 +249,38 @@ impl Audio {
         let num_channels = self.channels.len();
         let norm_factor = 1.0 / i32::MAX as f32;
 
-        for _ in 0..num_channels {
-            for (ch_idx, channel_samples) in self.channels.iter_mut().enumerate() {
-                for (i, sample) in channel_samples
-                    .as_mut()
-                    .iter_mut()
-                    .enumerate()
-                    .take(self.chsamples)
-                {
-                    let source_idx = i * num_channels + ch_idx;
+        for (ch_idx, io_port) in self.channels.iter().enumerate() {
+            let channel_buf_lock = io_port.buffer.lock();
+            let channel_samples = channel_buf_lock.as_mut();
 
-                    *sample = data_slice[source_idx] as f32 * norm_factor;
-                }
+            for (i, sample) in channel_samples.iter_mut().enumerate().take(self.chsamples) {
+                let source_idx = i * num_channels + ch_idx;
+                *sample = data_slice[source_idx] as f32 * norm_factor;
             }
         }
 
         Ok(())
     }
+
     pub fn write(&mut self) -> std::io::Result<()> {
         let num_channels = self.channels.len();
-        if num_channels == 0 {
-            return Ok(());
-        }
         let scale_factor = i32::MAX as f32;
-        let data_slice: &mut [i32] = self.buffer.as_mut();
+        let data_i32 = self.buffer.as_mut();
 
-        for ch in 0..num_channels {
-            let channel_slice = self.channels[ch].as_ref();
+        for (ch_idx, io_port) in self.channels.iter().enumerate() {
+            let channel_buf_lock = io_port.buffer.lock();
+            let channel_samples = channel_buf_lock.as_ref();
 
-            for (i, &sample) in channel_slice.iter().enumerate().take(self.chsamples) {
-                let target_idx = i * num_channels + ch;
-                data_slice[target_idx] = (sample.clamp(-1.0, 1.0) * scale_factor) as i32;
+            for (i, &sample) in channel_samples.iter().enumerate().take(self.chsamples) {
+                let target_idx = i * num_channels + ch_idx;
+                data_i32[target_idx] = (sample.clamp(-1.0, 1.0) * scale_factor) as i32;
             }
         }
 
         let bytes: &[u8] = unsafe {
             std::slice::from_raw_parts(
-                data_slice.as_ptr() as *const u8,
-                std::mem::size_of_val(data_slice), // Bezbedno dobijanje veličine u bajtovima
+                data_i32.as_ptr() as *const u8,
+                std::mem::size_of_val(data_i32),
             )
         };
         self.dsp.write_all(bytes)?;

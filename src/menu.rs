@@ -114,7 +114,7 @@ impl Menu {
             }),
             (menu_dropdown("OSS", Message::None), {
                 menu_tpl(menu_items!(
-                    (menu_item("Open", Message::Request(Action::OpenAudio("/dev/dsp".to_string())))),
+                    (menu_item("Open", Message::Request(Action::OpenAudioDevice("/dev/dsp".to_string())))),
                 ))
             }),
         )

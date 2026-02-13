@@ -1,96 +1,60 @@
 use super::{clip::AudioClip, io::AudioIO};
-use crate::mutex::UnsafeMutex;
 use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AudioTrack {
     pub clips: Vec<AudioClip>,
-    pub ins: Vec<Arc<UnsafeMutex<Box<AudioIO>>>>,
-    pub outs: Vec<Arc<UnsafeMutex<Box<AudioIO>>>>,
+    pub ins: Vec<Arc<AudioIO>>,
+    pub outs: Vec<Arc<AudioIO>>,
 }
 
 impl AudioTrack {
-    pub fn new(ins: usize, outs: usize) -> Self {
+    pub fn new(ins_count: usize, outs_count: usize, buffer_size: usize) -> Self {
         let mut ret = Self {
             clips: vec![],
-            ins: vec![],
-            outs: vec![],
+            ins: Vec::with_capacity(ins_count),
+            outs: Vec::with_capacity(outs_count),
         };
-        for _ in 0..ins {
-            ret.ins
-                .push(Arc::new(UnsafeMutex::new(Box::new(AudioIO::new()))));
+        for _ in 0..ins_count {
+            ret.ins.push(Arc::new(AudioIO::new(buffer_size)));
         }
-        for _ in 0..outs {
-            ret.outs
-                .push(Arc::new(UnsafeMutex::new(Box::new(AudioIO::new()))));
+        for _ in 0..outs_count {
+            ret.outs.push(Arc::new(AudioIO::new(buffer_size)));
         }
-
         ret
     }
 
-    pub fn connect_in(
-        &mut self,
-        index: usize,
-        to: Arc<UnsafeMutex<Box<AudioIO>>>,
-    ) -> Result<(), String> {
-        if index >= self.ins.len() {
-            return Err(format!(
-                "Index {} is too high, as there are only {} ins",
-                index,
-                self.ins.len()
-            ));
+    pub fn connect_in(&self, index: usize, to: Arc<AudioIO>) -> Result<(), String> {
+        if let Some(audio_in) = self.ins.get(index) {
+            audio_in.connect(to);
+            Ok(())
+        } else {
+            Err(format!("Audio input index {} too high", index))
         }
-        let myin = self.ins[index].clone();
-        myin.lock().connect(to);
-        Ok(())
     }
 
-    pub fn connect_out(
-        &mut self,
-        index: usize,
-        to: Arc<UnsafeMutex<Box<AudioIO>>>,
-    ) -> Result<(), String> {
-        if index >= self.outs.len() {
-            return Err(format!(
-                "Index {} is too high, as there are only {} outs",
-                index,
-                self.outs.len()
-            ));
+    pub fn connect_out(&self, index: usize, to: Arc<AudioIO>) -> Result<(), String> {
+        if let Some(audio_out) = self.outs.get(index) {
+            audio_out.connect(to);
+            Ok(())
+        } else {
+            Err(format!("Audio output index {} too high", index))
         }
-        let out = self.outs[index].clone();
-        out.lock().connect(to);
-        Ok(())
     }
 
-    pub fn disconnect_in(
-        &mut self,
-        index: usize,
-        to: &Arc<UnsafeMutex<Box<AudioIO>>>,
-    ) -> Result<(), String> {
-        if index >= self.ins.len() {
-            return Err(format!(
-                "Index {} is too high, as there are only {} ins",
-                index,
-                self.ins.len()
-            ));
+    pub fn disconnect_in(&self, index: usize, to: &Arc<AudioIO>) -> Result<(), String> {
+        if let Some(audio_in) = self.ins.get(index) {
+            audio_in.disconnect(to)
+        } else {
+            Err(format!("Audio input index {} too high", index))
         }
-        let myin = self.ins[index].clone();
-        myin.lock().disconnect(to)
     }
 
-    pub fn disconnect_out(
-        &mut self,
-        index: usize,
-        to: &Arc<UnsafeMutex<Box<AudioIO>>>,
-    ) -> Result<(), String> {
-        if index >= self.outs.len() {
-            return Err(format!(
-                "Index {} is too high, as there are only {} outs",
-                index,
-                self.outs.len()
-            ));
+    pub fn disconnect_out(&self, index: usize, to: &Arc<AudioIO>) -> Result<(), String> {
+        if let Some(audio_out) = self.outs.get(index) {
+            audio_out.disconnect(to)
+        } else {
+            Err(format!("Audio output index {} too high", index))
         }
-        let out = self.outs[index].clone();
-        out.lock().disconnect(to)
     }
 }

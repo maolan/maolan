@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 
@@ -32,7 +35,9 @@ pub struct Engine {
     state: Arc<UnsafeMutex<State>>,
     tx: Sender<Message>,
     workers: Vec<WorkerData>,
-    oss_audio: Option<oss::Audio>,
+    oss_in: Option<oss::Audio>,
+    oss_out: Option<oss::Audio>,
+    sorted_tracks: Vec<String>,
 }
 
 impl Engine {
@@ -43,7 +48,9 @@ impl Engine {
             clients: vec![],
             state: Arc::new(UnsafeMutex::new(State::default())),
             workers: vec![],
-            oss_audio: None,
+            oss_in: None,
+            oss_out: None,
+            sorted_tracks: vec![],
         }
     }
 
@@ -67,6 +74,107 @@ impl Engine {
                 .await
                 .expect("Error sending response to client");
         }
+    }
+
+    pub fn sort_tracks(&mut self) {
+        let state = self.state.lock();
+        let mut adjacency_list: HashMap<String, Vec<String>> = HashMap::new();
+        let mut in_degree: HashMap<String, usize> = HashMap::new();
+
+        for name in state.tracks.keys() {
+            in_degree.insert(name.clone(), 0);
+            adjacency_list.insert(name.clone(), vec![]);
+        }
+
+        for (from_name, from_track_handle) in &state.tracks {
+            let from_track = from_track_handle.lock();
+            for out_port in &from_track.audio.outs {
+                let conns = out_port.connections.lock();
+                for connection in conns.iter() {
+                    for (to_name, to_track_handle) in &state.tracks {
+                        if from_name == to_name {
+                            continue;
+                        }
+                        let target_track = to_track_handle.lock();
+                        if target_track
+                            .audio
+                            .ins
+                            .iter()
+                            .any(|ins| Arc::ptr_eq(&ins.buffer, &connection.buffer))
+                        {
+                            adjacency_list
+                                .get_mut(from_name)
+                                .unwrap()
+                                .push(to_name.clone());
+                            *in_degree.get_mut(to_name).unwrap() += 1;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut queue: VecDeque<String> = in_degree
+            .iter()
+            .filter(|&(_, &degree)| degree == 0)
+            .map(|(name, _)| name.clone())
+            .collect();
+
+        self.sorted_tracks.clear();
+        while let Some(u) = queue.pop_front() {
+            self.sorted_tracks.push(u.clone());
+            if let Some(neighbors) = adjacency_list.get(&u) {
+                for v in neighbors {
+                    let degree = in_degree.get_mut(v).unwrap();
+                    *degree -= 1;
+                    if *degree == 0 {
+                        queue.push_back(v.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn check_if_leads_to(&self, current_track_name: &str, target_track_name: &str) -> bool {
+        let neighbors: Vec<String> = {
+            let state = self.state.lock();
+            let mut found_neighbors = Vec::new();
+
+            if let Some(current_track_handle) = state.tracks.get(current_track_name) {
+                let current_track = current_track_handle.lock();
+
+                for out_port in &current_track.audio.outs {
+                    let conns = out_port.connections.lock();
+                    for conn in conns.iter() {
+                        for (name, next_track_handle) in &state.tracks {
+                            let next_track = next_track_handle.lock();
+                            let is_connected = next_track
+                                .audio
+                                .ins
+                                .iter()
+                                .any(|ins_port| Arc::ptr_eq(&ins_port.buffer, &conn.buffer));
+
+                            if is_connected {
+                                found_neighbors.push(name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            found_neighbors
+        };
+
+        for neighbor in neighbors {
+            if neighbor == target_track_name {
+                return true;
+            }
+
+            if self.check_if_leads_to(&neighbor, target_track_name) {
+                return true;
+            }
+        }
+
+        false
     }
 
     pub async fn work(&mut self) {
@@ -123,16 +231,26 @@ impl Engine {
                                     .await;
                                 return;
                             }
-                            tracks.insert(
-                                name.clone(),
-                                Arc::new(UnsafeMutex::new(Box::new(Track::new(
-                                    name.clone(),
-                                    audio_ins,
-                                    audio_outs,
-                                    midi_ins,
-                                    midi_outs,
-                                )))),
-                            );
+                            match &self.oss_out {
+                                Some(oss) => {
+                                    tracks.insert(
+                                        name.clone(),
+                                        Arc::new(UnsafeMutex::new(Box::new(Track::new(
+                                            name.clone(),
+                                            audio_ins,
+                                            audio_outs,
+                                            midi_ins,
+                                            midi_outs,
+                                            oss.chsamples,
+                                        )))),
+                                    );
+                                }
+                                None => {
+                                    self.notify_clients(
+                                        Err("Engine needs to open audio device before adding audio track".to_string())
+                                    ).await;
+                                }
+                            }
                         }
                         Action::RemoveTrack(ref name) => {
                             self.state.lock().tracks.remove(name);
@@ -292,21 +410,31 @@ impl Engine {
 
                             match kind {
                                 Kind::Audio => {
-                                    if let Some(to_in) = to_track_ref.lock().audio.ins.get(to_port)
-                                    {
-                                        if let Err(e) = from_track_ref
-                                            .lock()
-                                            .audio
-                                            .connect_out(from_port, to_in.clone())
-                                        {
-                                            self.notify_clients(Err(e)).await;
+                                    let to_in_arc = {
+                                        let to_track = to_track_ref.lock();
+                                        to_track.audio.ins.get(to_port).cloned()
+                                    };
+                                    match to_in_arc {
+                                        Some(to_in) => {
+                                            if self.check_if_leads_to(to_track, from_track) {
+                                                self.notify_clients(Err("Circular routing is not allowed in this engine!".to_string())).await;
+                                                return;
+                                            }
+                                            if let Err(e) = from_track_ref
+                                                .lock()
+                                                .audio
+                                                .connect_out(from_port, to_in.clone())
+                                            {
+                                                self.notify_clients(Err(e)).await;
+                                            }
                                         }
-                                    } else {
-                                        self.notify_clients(Err(format!(
-                                            "Audio input port {} not found on track '{}'",
-                                            to_port, to_track
-                                        )))
-                                        .await;
+                                        None => {
+                                            self.notify_clients(Err(format!(
+                                                "Audio input port {} not found on track '{}'",
+                                                to_port, to_track
+                                            )))
+                                            .await;
+                                        }
                                     }
                                 }
                                 Kind::MIDI => {
@@ -395,10 +523,18 @@ impl Engine {
                                 }
                             }
                         }
-                        Action::OpenAudio(ref device) => {
+                        Action::OpenAudioDevice(ref device) => {
+                            match oss::Audio::new(device, 48000, 32, true) {
+                                Ok(d) => {
+                                    self.oss_in = Some(d);
+                                }
+                                Err(e) => {
+                                    self.notify_clients(Err(e.to_string())).await;
+                                }
+                            }
                             match oss::Audio::new(device, 48000, 32, false) {
                                 Ok(d) => {
-                                    self.oss_audio = Some(d);
+                                    self.oss_out = Some(d);
                                 }
                                 Err(e) => {
                                     self.notify_clients(Err(e.to_string())).await;
