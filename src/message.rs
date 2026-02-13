@@ -51,7 +51,11 @@ pub enum Message {
 
     AddTrack(AddTrack),
     SelectTrack(String),
-    SelectClip { track_idx: usize, clip_idx: usize, kind: Kind },
+    SelectClip {
+        track_idx: usize,
+        clip_idx: usize,
+        kind: Kind,
+    },
     RemoveSelectedTracks,
     RemoveSelected,
     Remove,
@@ -93,4 +97,6 @@ pub enum Message {
 
     Workspace,
     Connections,
+
+    HWSelected(String),
 }

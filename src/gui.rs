@@ -1,5 +1,5 @@
 use crate::{
-    connections, menu,
+    connections, hw, menu,
     message::{DraggedClip, Message},
     state::{Resizing, State, StateData, Track, View},
     toolbar, workspace,
@@ -36,6 +36,7 @@ pub struct Maolan {
     track: Option<usize>,
     workspace: workspace::Workspace,
     connections: connections::Connections,
+    hw: hw::HW,
 }
 
 impl Default for Maolan {
@@ -50,6 +51,7 @@ impl Default for Maolan {
             track: None,
             workspace: workspace::Workspace::new(state.clone()),
             connections: connections::Connections::new(state.clone()),
+            hw: hw::HW::new(state.clone()),
         }
     }
 }
@@ -201,7 +203,6 @@ impl Maolan {
                     ));
                 }
 
-                // Load audio clips
                 if let Some(audio_clips) = track["audio"]["clips"].as_array() {
                     for clip in audio_clips {
                         let clip_name = clip["name"].as_str().unwrap_or("").to_string();
@@ -218,7 +219,6 @@ impl Maolan {
                     }
                 }
 
-                // Load MIDI clips
                 if let Some(midi_clips) = track["midi"]["clips"].as_array() {
                     for clip in midi_clips {
                         let clip_name = clip["name"].as_str().unwrap_or("").to_string();
@@ -473,6 +473,7 @@ impl Maolan {
                 }
                 Action::OpenAudioDevice(s) => {
                     self.state.blocking_write().message = format!("Opened device {s}");
+                    self.state.blocking_write().hw_loaded = true;
                 }
                 _ => {}
             },
@@ -948,6 +949,9 @@ impl Maolan {
             Message::Connections => {
                 self.state.blocking_write().view = View::Connections;
             }
+            Message::HWSelected(ref hw) => {
+                self.state.blocking_write().selected_hw = Some(hw.to_string());
+            }
             _ => {}
         }
         self.update_children(&message);
@@ -955,20 +959,26 @@ impl Maolan {
     }
 
     pub fn view(&self) -> iced::Element<'_, Message> {
-        let view = match self.state.blocking_read().view {
-            View::Workspace => self.workspace.view(),
-            View::Connections => self.connections.view(),
-        };
-        column![
-            self.menu.view(),
-            self.toolbar.view(),
-            view,
-            text(format!(
-                "Last message: {}",
-                self.state.blocking_read().message
-            ))
-        ]
-        .into()
+        let state = self.state.blocking_read();
+        if state.hw_loaded {
+            let view = match state.view {
+                View::Workspace => self.workspace.view(),
+                View::Connections => self.connections.view(),
+            };
+            column![
+                self.menu.view(),
+                self.toolbar.view(),
+                view,
+                text(format!("Last message: {}", state.message))
+            ]
+            .into()
+        } else {
+            column![
+                self.hw.view(),
+                text(format!("Last message: {}", state.message)),
+            ]
+            .into()
+        }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {

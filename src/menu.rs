@@ -112,11 +112,6 @@ impl Menu {
                     (menu_item("Remove", Message::RemoveSelectedTracks)),
                 ))
             }),
-            (menu_dropdown("OSS", Message::None), {
-                menu_tpl(menu_items!(
-                    (menu_item("Open", Message::Request(Action::OpenAudioDevice("/dev/dsp".to_string())))),
-                ))
-            }),
         )
         .draw_path(DrawPath::Backdrop)
         .close_on_item_click_global(true)

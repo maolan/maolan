@@ -1,5 +1,6 @@
 mod connections;
 mod gui;
+mod hw;
 mod menu;
 mod message;
 mod state;

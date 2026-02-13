@@ -8,6 +8,8 @@ use iced::{Length, Point};
 use maolan_engine::kind::Kind;
 use std::{
     collections::{HashMap, HashSet},
+    fs::read_dir,
+    path::PathBuf,
     sync::Arc,
 };
 use tokio::sync::RwLock;
@@ -87,10 +89,32 @@ pub struct StateData {
     pub view: View,
     pub pending_track_positions: HashMap<String, Point>,
     pub pending_track_heights: HashMap<String, f32>,
+    pub hw_loaded: bool,
+    pub available_hw: Vec<String>,
+    pub selected_hw: Option<String>,
 }
 
 impl Default for StateData {
     fn default() -> Self {
+        let mut hw: Vec<String> = read_dir("/dev")
+            .map(|rd| {
+                rd.filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter_map(|path| {
+                        let name = path.file_name()?.to_str()?;
+                        if name.starts_with("dsp") {
+                            // Ovde biraš: želiš li punu putanju ("/dev/dsp0")
+                            // ili samo ime ("dsp0") u listi?
+                            Some(path.to_string_lossy().into_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|_| vec![]);
+
+        hw.sort();
         Self {
             shift: false,
             ctrl: false,
@@ -110,6 +134,9 @@ impl Default for StateData {
             view: View::Workspace,
             pending_track_positions: HashMap::new(),
             pending_track_heights: HashMap::new(),
+            hw_loaded: false,
+            available_hw: hw,
+            selected_hw: None,
         }
     }
 }
