@@ -67,7 +67,7 @@ impl Tracks {
                             }
                         }),
                 )
-                .on_press(Message::TrackResizeStart(index)),
+                .on_press(Message::TrackResizeStart(track.name.clone())),
             ];
 
             droppable(

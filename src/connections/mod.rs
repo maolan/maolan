@@ -24,29 +24,24 @@ impl Graph {
         Self { state }
     }
 
-    fn get_port_kind(
-        data: &StateData,
-        hovering_port: &Hovering,
-    ) -> Option<Kind> {
+    fn get_port_kind(data: &StateData, hovering_port: &Hovering) -> Option<Kind> {
         match hovering_port {
             Hovering::Port {
                 track_idx,
                 port_idx,
                 is_input,
             } => {
-                if *track_idx == HW_IN_ID || *track_idx == HW_OUT_ID {
-                    Some(Kind::Audio) // HW ports are always Audio
+                if track_idx == HW_IN_ID || track_idx == HW_OUT_ID {
+                    Some(Kind::Audio)
                 } else {
-                    data.tracks.get(*track_idx).map(|t| {
+                    data.tracks.iter().find(|t| t.name == *track_idx).map(|t| {
                         if *is_input {
-                            // If hovered port is an INPUT on a track
                             if *port_idx < t.audio.ins {
                                 Kind::Audio
                             } else {
                                 Kind::MIDI
                             }
                         } else {
-                            // If hovered port is an OUTPUT on a track
                             if *port_idx < t.audio.outs {
                                 Kind::Audio
                             } else {
@@ -56,7 +51,7 @@ impl Graph {
                     })
                 }
             }
-            _ => None, // Not a port hover
+            _ => None,
         }
     }
 
@@ -111,21 +106,24 @@ impl canvas::Program<Message> for Graph {
             match event {
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                     let ctrl = data.ctrl;
+                    let mut pending_action: Option<Action<Message>> = None;
 
-                    // 1. PROVERA KLIKA NA KONEKCIJE (Bezier krive)
                     let mut clicked_connection = None;
                     for (idx, conn) in data.connections.iter().enumerate() {
-                        // Određivanje startne tačke (izlaz)
+                        let start_track_option =
+                            data.tracks.iter().find(|t| t.name == conn.from_track);
+                        let end_track_option = data.tracks.iter().find(|t| t.name == conn.to_track);
+
                         let start_point = if conn.from_track == HW_IN_ID {
-                            data.hw_in.as_ref().map(|hw| {
+                            data.hw_in.as_ref().map(move |hw_in| {
                                 let py = hw_margin
                                     + 50.0
-                                    + ((hw_height - 60.0) / (hw.channels + 1) as f32)
+                                    + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
                                         * (conn.from_port + 1) as f32;
                                 Point::new(hw_margin + hw_width, py)
                             })
                         } else {
-                            data.tracks.get(conn.from_track).map(|t| {
+                            start_track_option.map(|t| {
                                 let total_outs = t.audio.outs + t.midi.outs;
                                 let py = t.position.y
                                     + (size.height / (total_outs + 1) as f32)
@@ -134,17 +132,16 @@ impl canvas::Program<Message> for Graph {
                             })
                         };
 
-                        // Određivanje krajnje tačke (ulaz)
                         let end_point = if conn.to_track == HW_OUT_ID {
-                            data.hw_out.as_ref().map(|hw| {
+                            data.hw_out.as_ref().map(move |hw_out| {
                                 let py = hw_margin
                                     + 50.0
-                                    + ((hw_height - 60.0) / (hw.channels + 1) as f32)
+                                    + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
                                         * (conn.to_port + 1) as f32;
                                 Point::new(bounds.width - hw_width - hw_margin, py)
                             })
                         } else {
-                            data.tracks.get(conn.to_track).map(|t| {
+                            end_track_option.map(|t| {
                                 let total_ins = t.audio.ins + t.midi.ins;
                                 let py = t.position.y
                                     + (size.height / (total_ins + 1) as f32)
@@ -187,7 +184,6 @@ impl canvas::Program<Message> for Graph {
                         )));
                     }
 
-                    // 2. PROVERA KLIKA NA HW:IN PORTOVE (Izlazi)
                     if let Some(hw_in) = &data.hw_in {
                         let pos = Point::new(hw_margin, hw_margin);
                         for j in 0..hw_in.channels {
@@ -197,7 +193,7 @@ impl canvas::Program<Message> for Graph {
                                     * (j + 1) as f32;
                             if cursor_position.distance(Point::new(pos.x + hw_width, py)) < 10.0 {
                                 data.connecting = Some(Connecting {
-                                    from_track: HW_IN_ID,
+                                    from_track: HW_IN_ID.to_string(),
                                     from_port: j,
                                     kind: Kind::Audio,
                                     point: cursor_position,
@@ -208,7 +204,6 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
-                    // 3. PROVERA KLIKA NA HW:OUT PORTOVE (Ulazi)
                     if let Some(hw_out) = &data.hw_out {
                         let pos = Point::new(bounds.width - hw_width - hw_margin, hw_margin);
                         for j in 0..hw_out.channels {
@@ -218,7 +213,7 @@ impl canvas::Program<Message> for Graph {
                                     * (j + 1) as f32;
                             if cursor_position.distance(Point::new(pos.x, py)) < 10.0 {
                                 data.connecting = Some(Connecting {
-                                    from_track: HW_OUT_ID,
+                                    from_track: HW_OUT_ID.to_string(),
                                     from_port: j,
                                     kind: Kind::Audio,
                                     point: cursor_position,
@@ -229,16 +224,14 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
-                    // 4. PROVERA KLIKA NA TRAKE (Portovi i Telo)
-                    for (i, track) in data.tracks.iter().enumerate().rev() {
-                        // Ulazni portovi
+                    for track in data.tracks.iter().rev() {
                         let t_ins = track.audio.ins + track.midi.ins;
                         for j in 0..t_ins {
                             let py = track.position.y
                                 + (size.height / (t_ins + 1) as f32) * (j + 1) as f32;
                             if cursor_position.distance(Point::new(track.position.x, py)) < 10.0 {
                                 data.connecting = Some(Connecting {
-                                    from_track: i,
+                                    from_track: track.name.clone(),
                                     from_port: j,
                                     kind: if j < track.audio.ins {
                                         Kind::Audio
@@ -252,7 +245,6 @@ impl canvas::Program<Message> for Graph {
                             }
                         }
 
-                        // Izlazni portovi
                         let t_outs = track.audio.outs + track.midi.outs;
                         for j in 0..t_outs {
                             let py = track.position.y
@@ -262,7 +254,7 @@ impl canvas::Program<Message> for Graph {
                                 < 10.0
                             {
                                 data.connecting = Some(Connecting {
-                                    from_track: i,
+                                    from_track: track.name.clone(),
                                     from_port: j,
                                     kind: if j < track.audio.outs {
                                         Kind::Audio
@@ -276,26 +268,31 @@ impl canvas::Program<Message> for Graph {
                             }
                         }
 
-                        // Telo trake
                         if Rectangle::new(track.position, size).contains(cursor_position) {
                             if ctrl {
-                                return Some(Action::publish(Message::ConnectionViewSelectTrack(
-                                    i,
-                                )));
+                                pending_action = Some(Action::publish(
+                                    Message::ConnectionViewSelectTrack(track.name.clone()),
+                                ));
                             } else {
-                                data.moving_track = Some(MovingTrack {
-                                    track_idx: i,
+                                let moving_track_data = MovingTrack {
+                                    track_idx: track.name.clone(),
                                     offset_x: cursor_position.x - track.position.x,
                                     offset_y: cursor_position.y - track.position.y,
-                                });
-                                return Some(Action::publish(Message::ConnectionViewSelectTrack(
-                                    i,
-                                )));
+                                };
+                                pending_action =
+                                    Some(Action::publish(Message::StartMovingTrackAndSelect(
+                                        moving_track_data,
+                                        track.name.clone(),
+                                    )));
                             }
+                            break;
                         }
                     }
 
-                    // Klik u prazno
+                    if let Some(action) = pending_action {
+                        return Some(action);
+                    }
+
                     return Some(Action::publish(Message::DeselectAll));
                 }
 
@@ -308,16 +305,14 @@ impl canvas::Program<Message> for Graph {
                         let mut target_port = None;
 
                         if is_input {
-                            // --- Tražimo OUTPUT port kao metu ---
-                            // 1. Provera na običnim trakama
-                            for (i, track) in data.tracks.iter().enumerate() {
+                            for track in data.tracks.iter() {
                                 let total_outs = track.audio.outs + track.midi.outs;
                                 for j in 0..total_outs {
                                     let py = track.position.y
                                         + (size.height / (total_outs + 1) as f32) * (j + 1) as f32;
                                     let port_pos = Point::new(track.position.x + size.width, py);
                                     if cursor_position.distance(port_pos) < 10.0 {
-                                        target_port = Some((i, j));
+                                        target_port = Some((track.name.clone(), j));
                                         break;
                                     }
                                 }
@@ -325,35 +320,33 @@ impl canvas::Program<Message> for Graph {
                                     break;
                                 }
                             }
-                            // 2. Provera na hw:in (on je izvor/output)
-                            if target_port.is_none()
-                                && let Some(hw_in) = &data.hw_in
-                            {
-                                for j in 0..hw_in.channels {
-                                    let py = hw_margin
-                                        + 50.0
-                                        + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
-                                            * (j + 1) as f32;
-                                    if cursor_position
-                                        .distance(Point::new(hw_margin + hw_width, py))
-                                        < 10.0
-                                    {
-                                        target_port = Some((HW_IN_ID, j));
-                                        break;
+
+                            if target_port.is_none() && from_t != HW_IN_ID {
+                                if let Some(hw_in) = &data.hw_in {
+                                    for j in 0..hw_in.channels {
+                                        let py = hw_margin
+                                            + 50.0
+                                            + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
+                                                * (j + 1) as f32;
+                                        if cursor_position
+                                            .distance(Point::new(hw_margin + hw_width, py))
+                                            < 10.0
+                                        {
+                                            target_port = Some((HW_IN_ID.to_string(), j));
+                                            break;
+                                        }
                                     }
                                 }
                             }
                         } else {
-                            // --- Tražimo INPUT port kao metu ---
-                            // 1. Provera na običnim trakama
-                            for (i, track) in data.tracks.iter().enumerate() {
+                            for track in data.tracks.iter() {
                                 let total_ins = track.audio.ins + track.midi.ins;
                                 for j in 0..total_ins {
                                     let py = track.position.y
                                         + (size.height / (total_ins + 1) as f32) * (j + 1) as f32;
                                     let port_pos = Point::new(track.position.x, py);
                                     if cursor_position.distance(port_pos) < 10.0 {
-                                        target_port = Some((i, j));
+                                        target_port = Some((track.name.clone(), j));
                                         break;
                                     }
                                 }
@@ -361,67 +354,43 @@ impl canvas::Program<Message> for Graph {
                                     break;
                                 }
                             }
-                            // 2. Provera na hw:out (on je ponor/input)
-                            if target_port.is_none()
-                                && let Some(hw_out) = &data.hw_out
-                            {
-                                for j in 0..hw_out.channels {
-                                    let py = hw_margin
-                                        + 50.0
-                                        + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
-                                            * (j + 1) as f32;
-                                    if cursor_position.distance(Point::new(
-                                        bounds.width - hw_width - hw_margin,
-                                        py,
-                                    )) < 10.0
-                                    {
-                                        target_port = Some((HW_OUT_ID, j));
-                                        break;
+
+                            if target_port.is_none() && from_t != HW_OUT_ID {
+                                if let Some(hw_out) = &data.hw_out {
+                                    for j in 0..hw_out.channels {
+                                        let py = hw_margin
+                                            + 50.0
+                                            + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
+                                                * (j + 1) as f32;
+                                        if cursor_position.distance(Point::new(
+                                            bounds.width - hw_width - hw_margin,
+                                            py,
+                                        )) < 10.0
+                                        {
+                                            target_port = Some((HW_OUT_ID.to_string(), j));
+                                            break;
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        // --- Obrada rezultata povezivanja ---
-                        if let Some((to_t, to_p)) = target_port {
-                            // Bezbedno dobavljanje imena "izvora"
-                            let from_name = match from_t {
-                                HW_IN_ID => "hw:in".to_string(),
-                                HW_OUT_ID => "hw:out".to_string(),
-                                idx => data
-                                    .tracks
-                                    .get(idx)
-                                    .map(|t| t.name.clone())
-                                    .unwrap_or_default(),
-                            };
+                        if let Some((to_t_name, to_p)) = target_port {
+                            let target_track_option =
+                                data.tracks.iter().find(|t| t.name == to_t_name);
 
-                            // Bezbedno dobavljanje imena "ponora"
-                            let to_name = match to_t {
-                                HW_IN_ID => "hw:in".to_string(),
-                                HW_OUT_ID => "hw:out".to_string(),
-                                idx => data
-                                    .tracks
-                                    .get(idx)
-                                    .map(|t| t.name.clone())
-                                    .unwrap_or_default(),
-                            };
-
-                            // Određivanje Kind-a mete (Hardver je uvek Audio)
-                            let target_kind = if to_t == HW_IN_ID || to_t == HW_OUT_ID {
+                            let target_kind = if to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID {
                                 Kind::Audio
                             } else {
-                                data.tracks
-                                    .get(to_t)
+                                target_track_option
                                     .map(|t| {
                                         if is_input {
-                                            // Target is Output side
                                             if to_p < t.audio.outs {
                                                 Kind::Audio
                                             } else {
                                                 Kind::MIDI
                                             }
                                         } else {
-                                            // Target is Input side
                                             if to_p < t.audio.ins {
                                                 Kind::Audio
                                             } else {
@@ -433,11 +402,10 @@ impl canvas::Program<Message> for Graph {
                             };
 
                             if kind == target_kind {
-                                // Konverzija indeksa porta za Engine (oduzimanje Audio broja za MIDI)
                                 let f_p_idx = if from_t == HW_IN_ID || from_t == HW_OUT_ID {
                                     from_p
                                 } else {
-                                    let t = &data.tracks[from_t];
+                                    let t = data.tracks.iter().find(|t| t.name == from_t).unwrap();
                                     if kind == Kind::MIDI {
                                         from_p - (if is_input { t.audio.ins } else { t.audio.outs })
                                     } else {
@@ -445,10 +413,10 @@ impl canvas::Program<Message> for Graph {
                                     }
                                 };
 
-                                let t_p_idx = if to_t == HW_IN_ID || to_t == HW_OUT_ID {
+                                let t_p_idx = if to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID {
                                     to_p
                                 } else {
-                                    let t = &data.tracks[to_t];
+                                    let t = target_track_option.unwrap();
                                     if kind == Kind::MIDI {
                                         to_p - (if is_input { t.audio.outs } else { t.audio.ins })
                                     } else {
@@ -456,11 +424,10 @@ impl canvas::Program<Message> for Graph {
                                     }
                                 };
 
-                                // Finalna poruka: uvek formiramo (Output -> Input) za Engine
                                 let (final_from, final_f_p, final_to, final_t_p) = if is_input {
-                                    (to_name, t_p_idx, from_name, f_p_idx)
+                                    (to_t_name, t_p_idx, from_t, f_p_idx)
                                 } else {
-                                    (from_name, f_p_idx, to_name, t_p_idx)
+                                    (from_t, f_p_idx, to_t_name, t_p_idx)
                                 };
 
                                 return Some(Action::publish(Message::Request(
@@ -482,7 +449,6 @@ impl canvas::Program<Message> for Graph {
                 Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                     let mut new_h = None;
 
-                    // 1. Provera hover-a nad HW:IN portovima
                     if let Some(hw_in) = &data.hw_in {
                         let pos = Point::new(hw_margin, hw_margin);
                         for j in 0..hw_in.channels {
@@ -492,7 +458,7 @@ impl canvas::Program<Message> for Graph {
                                     * (j + 1) as f32;
                             if cursor_position.distance(Point::new(pos.x + hw_width, py)) < 10.0 {
                                 new_h = Some(Hovering::Port {
-                                    track_idx: HW_IN_ID,
+                                    track_idx: HW_IN_ID.to_string(),
                                     port_idx: j,
                                     is_input: false,
                                 });
@@ -501,7 +467,6 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
-                    // 2. Provera hover-a nad HW:OUT portovima
                     if new_h.is_none() {
                         if let Some(hw_out) = &data.hw_out {
                             let pos = Point::new(bounds.width - hw_width - hw_margin, hw_margin);
@@ -512,7 +477,7 @@ impl canvas::Program<Message> for Graph {
                                         * (j + 1) as f32;
                                 if cursor_position.distance(Point::new(pos.x, py)) < 10.0 {
                                     new_h = Some(Hovering::Port {
-                                        track_idx: HW_OUT_ID,
+                                        track_idx: HW_OUT_ID.to_string(),
                                         port_idx: j,
                                         is_input: true,
                                     });
@@ -522,10 +487,8 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
-                    // 3. Provera hover-a nad portovima i telom traka
                     if new_h.is_none() {
-                        for (i, track) in data.tracks.iter().enumerate().rev() {
-                            // Ulazni portovi
+                        for track in data.tracks.iter().rev() {
                             let t_ins = track.audio.ins + track.midi.ins;
                             for j in 0..t_ins {
                                 let py = track.position.y
@@ -533,7 +496,7 @@ impl canvas::Program<Message> for Graph {
                                 if cursor_position.distance(Point::new(track.position.x, py)) < 10.0
                                 {
                                     new_h = Some(Hovering::Port {
-                                        track_idx: i,
+                                        track_idx: track.name.clone(),
                                         port_idx: j,
                                         is_input: true,
                                     });
@@ -544,7 +507,6 @@ impl canvas::Program<Message> for Graph {
                                 break;
                             }
 
-                            // Izlazni portovi
                             let t_outs = track.audio.outs + track.midi.outs;
                             for j in 0..t_outs {
                                 let py = track.position.y
@@ -554,7 +516,7 @@ impl canvas::Program<Message> for Graph {
                                     < 10.0
                                 {
                                     new_h = Some(Hovering::Port {
-                                        track_idx: i,
+                                        track_idx: track.name.clone(),
                                         port_idx: j,
                                         is_input: false,
                                     });
@@ -565,9 +527,8 @@ impl canvas::Program<Message> for Graph {
                                 break;
                             }
 
-                            // Telo trake
                             if Rectangle::new(track.position, size).contains(cursor_position) {
-                                new_h = Some(Hovering::Track(i));
+                                new_h = Some(Hovering::Track(track.name.clone()));
                                 break;
                             }
                         }
@@ -579,12 +540,12 @@ impl canvas::Program<Message> for Graph {
                         conn.point = cursor_position;
                         redraw_needed = true;
                     }
-                    if let Some(mt) = data.moving_track.clone()
-                        && let Some(t) = data.tracks.get_mut(mt.track_idx)
-                    {
-                        t.position.x = cursor_position.x - mt.offset_x;
-                        t.position.y = cursor_position.y - mt.offset_y;
-                        redraw_needed = true;
+                    if let Some(mt) = data.moving_track.clone() {
+                        if let Some(t) = data.tracks.iter_mut().find(|tr| tr.name == mt.track_idx) {
+                            t.position.x = cursor_position.x - mt.offset_x;
+                            t.position.y = cursor_position.y - mt.offset_y;
+                            redraw_needed = true;
+                        }
                     }
 
                     if data.hovering != new_h {
@@ -619,19 +580,20 @@ impl canvas::Program<Message> for Graph {
         if let Ok(data) = self.state.try_read() {
             use crate::state::ConnectionViewSelection;
 
-            // 1. CRTANJE SVIH POTVRĐENIH KONEKCIJA
             for (idx, conn) in data.connections.iter().enumerate() {
-                // Pronalaženje START tačke
+                let start_track_option = data.tracks.iter().find(|t| t.name == conn.from_track);
+                let end_track_option = data.tracks.iter().find(|t| t.name == conn.to_track);
+
                 let start_point = if conn.from_track == HW_IN_ID {
-                    data.hw_in.as_ref().map(|hw| {
+                    data.hw_in.as_ref().map(move |hw_in| {
                         let py = hw_margin
                             + 50.0
-                            + ((hw_height - 60.0) / (hw.channels + 1) as f32)
+                            + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
                                 * (conn.from_port + 1) as f32;
                         Point::new(hw_margin + hw_width, py)
                     })
                 } else {
-                    data.tracks.get(conn.from_track).map(|t| {
+                    start_track_option.map(|t| {
                         let total_outs = t.audio.outs + t.midi.outs;
                         let py = t.position.y
                             + (size.height / (total_outs + 1) as f32) * (conn.from_port + 1) as f32;
@@ -639,17 +601,16 @@ impl canvas::Program<Message> for Graph {
                     })
                 };
 
-                // Pronalaženje END tačke
                 let end_point = if conn.to_track == HW_OUT_ID {
-                    data.hw_out.as_ref().map(|hw| {
+                    data.hw_out.as_ref().map(move |hw_out| {
                         let py = hw_margin
                             + 50.0
-                            + ((hw_height - 60.0) / (hw.channels + 1) as f32)
+                            + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
                                 * (conn.to_port + 1) as f32;
                         Point::new(bounds.width - hw_width - hw_margin, py)
                     })
                 } else {
-                    data.tracks.get(conn.to_track).map(|t| {
+                    end_track_option.map(|t| {
                         let total_ins = t.audio.ins + t.midi.ins;
                         let py = t.position.y
                             + (size.height / (total_ins + 1) as f32) * (conn.to_port + 1) as f32;
@@ -687,26 +648,27 @@ impl canvas::Program<Message> for Graph {
                 }
             }
 
-            // 2. CRTANJE "GUMENE TRAKE" DOK SE VUČE MIŠEM
             if let Some(conn) = &data.connecting {
+                let start_track_option = data.tracks.iter().find(|t| t.name == conn.from_track);
+
                 let start_point = if conn.from_track == HW_IN_ID {
-                    data.hw_in.as_ref().map(|hw| {
+                    data.hw_in.as_ref().map(move |hw_in| {
                         let py = hw_margin
                             + 50.0
-                            + ((hw_height - 60.0) / (hw.channels + 1) as f32)
+                            + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
                                 * (conn.from_port + 1) as f32;
                         Point::new(hw_margin + hw_width, py)
                     })
                 } else if conn.from_track == HW_OUT_ID {
-                    data.hw_out.as_ref().map(|hw| {
+                    data.hw_out.as_ref().map(move |hw_out| {
                         let py = hw_margin
                             + 50.0
-                            + ((hw_height - 60.0) / (hw.channels + 1) as f32)
+                            + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
                                 * (conn.from_port + 1) as f32;
                         Point::new(bounds.width - hw_width - hw_margin, py)
                     })
                 } else {
-                    data.tracks.get(conn.from_track).map(|t| {
+                    start_track_option.map(|t| {
                         if conn.is_input {
                             let py = t.position.y
                                 + (size.height / (t.audio.ins + t.midi.ins + 1) as f32)
@@ -747,7 +709,6 @@ impl canvas::Program<Message> for Graph {
                 }
             }
 
-            // 3. CRTANJE HW:IN (Sistem ulazi)
             if let Some(hw_in) = &data.hw_in {
                 let pos = Point::new(hw_margin, hw_margin);
                 let rect = Path::rectangle(pos, iced::Size::new(hw_width, hw_height));
@@ -780,7 +741,7 @@ impl canvas::Program<Message> for Graph {
                         ..Default::default()
                     });
                     let h_port = Hovering::Port {
-                        track_idx: HW_IN_ID,
+                        track_idx: HW_IN_ID.to_string(),
                         port_idx: j,
                         is_input: false,
                     };
@@ -797,13 +758,15 @@ impl canvas::Program<Message> for Graph {
                     };
 
                     frame.fill(
-                        &Path::circle(Point::new(pos.x + hw_width, py), if can_highlight_port { 8.0 } else { 5.0 }),
+                        &Path::circle(
+                            Point::new(pos.x + hw_width, py),
+                            if can_highlight_port { 8.0 } else { 5.0 },
+                        ),
                         Color::from_rgb(0.0, 1.0, 0.5),
                     );
                 }
             }
 
-            // 4. CRTANJE HW:OUT (Sistem izlazi)
             if let Some(hw_out) = &data.hw_out {
                 let pos = Point::new(bounds.width - hw_width - hw_margin, hw_margin);
                 let rect = Path::rectangle(pos, iced::Size::new(hw_width, hw_height));
@@ -836,7 +799,7 @@ impl canvas::Program<Message> for Graph {
                         ..Default::default()
                     });
                     let h_port = Hovering::Port {
-                        track_idx: HW_OUT_ID,
+                        track_idx: HW_OUT_ID.to_string(),
                         port_idx: j,
                         is_input: true,
                     };
@@ -853,20 +816,22 @@ impl canvas::Program<Message> for Graph {
                     };
 
                     frame.fill(
-                        &Path::circle(Point::new(pos.x, py), if can_highlight_port { 8.0 } else { 5.0 }),
+                        &Path::circle(
+                            Point::new(pos.x, py),
+                            if can_highlight_port { 8.0 } else { 5.0 },
+                        ),
                         Color::from_rgb(1.0, 0.3, 0.3),
                     );
                 }
             }
 
-            // 5. CRTANJE TRAKA
-            for (i, track) in data.tracks.iter().enumerate() {
+            for track in data.tracks.iter() {
                 let pos = track.position;
                 let path = Path::rectangle(pos, size);
                 frame.fill(&path, Color::from_rgb8(45, 45, 45));
 
-                let is_h = data.hovering == Some(Hovering::Track(i));
-                let is_s = matches!(&data.connection_view_selection, ConnectionViewSelection::Tracks(set) if set.contains(&i));
+                let is_h = data.hovering == Some(Hovering::Track(track.name.clone()));
+                let is_s = matches!(&data.connection_view_selection, ConnectionViewSelection::Tracks(set) if set.contains(&track.name));
                 let (sc, sw) = if is_s {
                     (Color::from_rgb(1.0, 1.0, 0.0), 3.0)
                 } else if is_h {
@@ -888,7 +853,7 @@ impl canvas::Program<Message> for Graph {
                         Color::from_rgb(1.0, 0.6, 0.0)
                     };
                     let h_port = Hovering::Port {
-                        track_idx: i,
+                        track_idx: track.name.clone(),
                         port_idx: j,
                         is_input: true,
                     };
@@ -905,7 +870,10 @@ impl canvas::Program<Message> for Graph {
                     };
 
                     frame.fill(
-                        &Path::circle(Point::new(pos.x, py), if can_highlight_port { 7.0 } else { 4.0 }),
+                        &Path::circle(
+                            Point::new(pos.x, py),
+                            if can_highlight_port { 7.0 } else { 4.0 },
+                        ),
                         c,
                     );
                 }
@@ -919,7 +887,7 @@ impl canvas::Program<Message> for Graph {
                         Color::from_rgb(1.0, 0.6, 0.0)
                     };
                     let h_port = Hovering::Port {
-                        track_idx: i,
+                        track_idx: track.name.clone(),
                         port_idx: j,
                         is_input: false,
                     };

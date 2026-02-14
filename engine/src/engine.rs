@@ -196,18 +196,6 @@ impl Engine {
         let mut ready_workers: Vec<usize> = vec![];
         while let Some(message) = self.rx.recv().await {
             match message {
-                // Message::Play => {
-                //     let track;
-                //     {
-                //         track = self.state.lock().audio.tracks[""].clone();
-                //     }
-                //     match self.workers[0].tx.send(Message::ProcessAudio(track)) {
-                //         Ok(_) => {}
-                //         Err(e) => {
-                //             println!("Error occured while sending PLAY: {e}")
-                //         }
-                //     }
-                // }
                 Message::Ready(id) => {
                     ready_workers.push(id);
                 }

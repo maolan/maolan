@@ -22,17 +22,17 @@ pub enum AddTrack {
 pub struct DraggedClip {
     pub kind: Kind,
     pub index: usize,
-    pub track_index: usize,
+    pub track_index: String,
     pub start: Point,
     pub end: Point,
 }
 
 impl DraggedClip {
-    pub fn new(kind: Kind, index: usize, track_index: usize) -> Self {
+    pub fn new(kind: Kind, index: usize, track_index: String) -> Self {
         Self {
             kind,
             index,
-            track_index,
+            track_index: track_index.clone(),
             start: Point::new(0.0, 0.0),
             end: Point::new(0.0, 0.0),
         }
@@ -52,7 +52,7 @@ pub enum Message {
     AddTrack(AddTrack),
     SelectTrack(String),
     SelectClip {
-        track_idx: usize,
+        track_idx: String,
         clip_idx: usize,
         kind: Kind,
     },
@@ -61,16 +61,16 @@ pub enum Message {
     Remove,
     DeselectAll,
 
-    ConnectionViewSelectTrack(usize),
+    ConnectionViewSelectTrack(String),
     ConnectionViewSelectConnection(usize),
 
     SaveFolderSelected(Option<PathBuf>),
     OpenFolderSelected(Option<PathBuf>),
 
-    TrackResizeStart(usize),
+    TrackResizeStart(String),
     TracksResizeStart,
     MixerResizeStart,
-    ClipResizeStart(Kind, usize, usize, bool),
+    ClipResizeStart(Kind, String, usize, bool),
 
     ClipDrag(DraggedClip),
     ClipDropped(Point, Rectangle),
@@ -79,6 +79,8 @@ pub enum Message {
     TrackDrag(usize),
     TrackDropped(Point, Rectangle),
     HandleTrackZones(Vec<(Id, Rectangle)>),
+
+    StartMovingTrackAndSelect(crate::state::MovingTrack, String),
 
     MouseMoved(mouse::Event),
     MouseReleased,

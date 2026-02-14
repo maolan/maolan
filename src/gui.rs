@@ -1,7 +1,9 @@
 use crate::{
     connections, hw, menu,
     message::{DraggedClip, Message},
-    state::{HW, HW_IN_ID, HW_OUT_ID, Resizing, State, StateData, Track, View},
+    state::{
+        ConnectionViewSelection, HW, HW_IN_ID, HW_OUT_ID, Resizing, State, StateData, Track, View,
+    },
     toolbar, workspace,
 };
 use iced::futures::{Stream, StreamExt, io, stream};
@@ -33,7 +35,7 @@ pub struct Maolan {
     size: Size,
     state: State,
     toolbar: toolbar::Toolbar,
-    track: Option<usize>,
+    track: Option<String>,
     workspace: workspace::Workspace,
     connections: connections::Connections,
     hw: hw::HW,
@@ -334,23 +336,18 @@ impl Maolan {
                 Action::RemoveTrack(name) => {
                     let mut state = self.state.blocking_write();
 
-                    if let Some(removed_idx) = state.tracks.iter().position(|t| &t.name == name) {
-                        state.connections.retain(|conn| {
-                            conn.from_track != removed_idx && conn.to_track != removed_idx
-                        });
-                        for conn in &mut state.connections {
-                            if conn.from_track != HW_IN_ID && conn.from_track != HW_OUT_ID {
-                                if conn.from_track > removed_idx {
-                                    conn.from_track -= 1;
-                                }
-                            }
-                            if conn.to_track != HW_IN_ID && conn.to_track != HW_OUT_ID {
-                                if conn.to_track > removed_idx {
-                                    conn.to_track -= 1;
-                                }
-                            }
-                        }
+                    if let Some(removed_idx) = state.tracks.iter().position(|t| t.name == *name) {
+                        state
+                            .connections
+                            .retain(|conn| conn.from_track != *name && conn.to_track != *name);
                         state.tracks.remove(removed_idx);
+
+                        state.selected.remove(name);
+                        if let ConnectionViewSelection::Tracks(set) =
+                            &mut state.connection_view_selection
+                        {
+                            set.remove(name);
+                        }
                     }
                 }
 
@@ -361,39 +358,57 @@ impl Maolan {
                     copy,
                 } => {
                     let mut state = self.state.blocking_write();
-                    let f_idx = &state
+
+                    // Find the track by name
+                    let from_track_idx_option: Option<usize> = state
                         .tracks
                         .iter()
                         .position(|track| track.name == from.track_name);
-                    let t_idx = &state
-                        .tracks
-                        .iter()
-                        .position(|track| track.name == to.track_name);
-                    if let (Some(f_idx), Some(t_idx)) = (f_idx, t_idx) {
-                        let tracks = &mut state.tracks;
-                        let clip_index = from.clip_index;
+
+                    if let Some(f_idx) = from_track_idx_option {
+                        // Get mutable borrow of from_track outside the main loop
+                        let from_track = &mut state.tracks[f_idx];
+
+                        let mut clip_to_move: Option<crate::state::AudioClip> = None;
+                        let mut midi_clip_to_move: Option<crate::state::MIDIClip> = None;
+
                         match kind {
                             Kind::Audio => {
-                                if clip_index < tracks[*f_idx].audio.clips.len() {
-                                    let mut clip_copy =
-                                        tracks[*f_idx].audio.clips[clip_index].clone();
-                                    clip_copy.start = to.sample_offset;
+                                if from.clip_index < from_track.audio.clips.len() {
                                     if !copy {
-                                        tracks[*f_idx].audio.clips.remove(clip_index);
+                                        clip_to_move =
+                                            Some(from_track.audio.clips.remove(from.clip_index));
+                                    } else {
+                                        clip_to_move =
+                                            Some(from_track.audio.clips[from.clip_index].clone());
                                     }
-                                    tracks[*t_idx].audio.clips.push(clip_copy);
                                 }
                             }
                             Kind::MIDI => {
-                                if clip_index < tracks[*f_idx].midi.clips.len() {
-                                    let mut clip_copy =
-                                        tracks[*f_idx].midi.clips[clip_index].clone();
-                                    clip_copy.start = to.sample_offset;
+                                if from.clip_index < from_track.midi.clips.len() {
                                     if !copy {
-                                        tracks[*f_idx].midi.clips.remove(clip_index);
+                                        midi_clip_to_move =
+                                            Some(from_track.midi.clips.remove(from.clip_index));
+                                    } else {
+                                        midi_clip_to_move =
+                                            Some(from_track.midi.clips[from.clip_index].clone());
                                     }
-                                    tracks[*t_idx].midi.clips.push(clip_copy);
                                 }
+                            }
+                        }
+
+                        // Now find the to_track and add the clip
+                        if let Some(to_track) = state
+                            .tracks
+                            .iter_mut()
+                            .find(|track| track.name == to.track_name)
+                        {
+                            if let Some(mut clip_data) = clip_to_move {
+                                clip_data.start = to.sample_offset;
+                                to_track.audio.clips.push(clip_data);
+                            } else if let Some(mut midi_clip_data) = midi_clip_to_move {
+                                midi_clip_data.start = to.sample_offset;
+                                to_track.midi.clips.push(midi_clip_data);
                             }
                         }
                     }
@@ -436,25 +451,13 @@ impl Maolan {
                 } => {
                     let mut state = self.state.blocking_write();
 
-                    let from_idx = match from_track.as_str() {
-                        "hw:in" => Some(HW_IN_ID),
-                        _ => state.tracks.iter().position(|t| &t.name == from_track),
-                    };
-
-                    let to_idx = match to_track.as_str() {
-                        "hw:out" => Some(HW_OUT_ID),
-                        _ => state.tracks.iter().position(|t| &t.name == to_track),
-                    };
-
-                    if let (Some(f_idx), Some(t_idx)) = (from_idx, to_idx) {
-                        state.connections.push(crate::state::Connection {
-                            from_track: f_idx,
-                            from_port: *from_port,
-                            to_track: t_idx,
-                            to_port: *to_port,
-                            kind: *kind,
-                        });
-                    }
+                    state.connections.push(crate::state::Connection {
+                        from_track: from_track.clone(),
+                        from_port: *from_port,
+                        to_track: to_track.clone(),
+                        to_port: *to_port,
+                        kind: *kind,
+                    });
                 }
                 Action::Disconnect {
                     from_track,
@@ -464,31 +467,17 @@ impl Maolan {
                     kind,
                 } => {
                     let mut state = self.state.blocking_write();
-                    let from_idx = if from_track == "hw:in" {
-                        Some(HW_IN_ID)
-                    } else {
-                        state.tracks.iter().position(|t| &t.name == from_track)
-                    };
+                    let original_len = state.connections.len();
 
-                    let to_idx = if to_track == "hw:out" {
-                        Some(HW_OUT_ID)
-                    } else {
-                        state.tracks.iter().position(|t| &t.name == to_track)
-                    };
-                    if let (Some(f_idx), Some(t_idx)) = (from_idx, to_idx) {
-                        let original_len = state.connections.len();
-
-                        state.connections.retain(|conn| {
-                            !(conn.from_track == f_idx
-                                && conn.from_port == *from_port
-                                && conn.to_track == t_idx
-                                && conn.to_port == *to_port
-                                && conn.kind == *kind)
-                        });
-                        if state.connections.len() < original_len {
-                            state.message =
-                                format!("Disconnected {} from {}", from_track, to_track);
-                        }
+                    state.connections.retain(|conn| {
+                        !(conn.from_track == from_track.as_str()
+                            && conn.from_port == *from_port
+                            && conn.to_track == to_track.as_str()
+                            && conn.to_port == *to_port
+                            && conn.kind == *kind)
+                    });
+                    if state.connections.len() < original_len {
+                        state.message = format!("Disconnected {} from {}", from_track, to_track);
                     }
                 }
 
@@ -553,45 +542,32 @@ impl Maolan {
                 self.state.blocking_write().ctrl = false;
             }
             Message::SelectTrack(ref name) => {
-                use crate::state::ConnectionViewSelection;
                 let ctrl = self.state.blocking_read().ctrl;
                 let selected = self.state.blocking_read().selected.contains(name);
                 let mut state = self.state.blocking_write();
-                let track_idx = state.tracks.iter().position(|t| &t.name == name);
 
                 if ctrl {
                     if selected {
-                        state.selected.retain(|n| n != name);
-                        if let Some(idx) = track_idx
-                            && let ConnectionViewSelection::Tracks(set) =
-                                &mut state.connection_view_selection
+                        state.selected.remove(name);
+                        if let ConnectionViewSelection::Tracks(set) =
+                            &mut state.connection_view_selection
                         {
-                            set.remove(&idx);
+                            set.remove(name);
                         }
                     } else {
                         state.selected.insert(name.clone());
-                        if let Some(idx) = track_idx {
-                            match &mut state.connection_view_selection {
-                                ConnectionViewSelection::Tracks(set) => {
-                                    set.insert(idx);
-                                }
-                                _ => {
-                                    let mut set = std::collections::HashSet::new();
-                                    set.insert(idx);
-                                    state.connection_view_selection =
-                                        ConnectionViewSelection::Tracks(set);
-                                }
-                            }
+                        if let ConnectionViewSelection::Tracks(set) =
+                            &mut state.connection_view_selection
+                        {
+                            set.insert(name.clone());
                         }
                     }
                 } else {
                     state.selected.clear();
                     state.selected.insert(name.clone());
-                    if let Some(idx) = track_idx {
-                        let mut set = std::collections::HashSet::new();
-                        set.insert(idx);
-                        state.connection_view_selection = ConnectionViewSelection::Tracks(set);
-                    }
+                    let mut set = std::collections::HashSet::new();
+                    set.insert(name.clone());
+                    state.connection_view_selection = ConnectionViewSelection::Tracks(set);
                 }
             }
             Message::RemoveSelectedTracks => {
@@ -601,39 +577,31 @@ impl Maolan {
                 }
                 return Task::batch(tasks);
             }
-            Message::ConnectionViewSelectTrack(idx) => {
-                use crate::state::ConnectionViewSelection;
+            Message::ConnectionViewSelectTrack(ref idx) => {
                 let ctrl = self.state.blocking_read().ctrl;
                 let mut state = self.state.blocking_write();
-                let track_name = state.tracks.get(idx).map(|t| t.name.clone());
 
                 match &mut state.connection_view_selection {
                     ConnectionViewSelection::Tracks(set) if ctrl => {
-                        if set.contains(&idx) {
-                            set.remove(&idx);
-                            if let Some(name) = track_name {
-                                state.selected.remove(&name);
-                            }
+                        if set.contains(idx.as_str()) {
+                            set.remove(idx.as_str());
+                            state.selected.remove(idx.as_str());
                         } else {
-                            set.insert(idx);
-                            if let Some(name) = track_name {
-                                state.selected.insert(name);
-                            }
+                            set.insert(idx.clone());
+                            state.selected.insert(idx.clone());
                         }
                     }
                     _ => {
                         let mut set = std::collections::HashSet::new();
-                        set.insert(idx);
+                        set.insert(idx.clone());
                         state.connection_view_selection = ConnectionViewSelection::Tracks(set);
                         state.selected.clear();
-                        if let Some(name) = track_name {
-                            state.selected.insert(name);
-                        }
+                        state.selected.insert(idx.clone());
                     }
                 }
             }
             Message::SelectClip {
-                track_idx,
+                ref track_idx,
                 clip_idx,
                 kind,
             } => {
@@ -642,7 +610,7 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
 
                 let clip_id = ClipId {
-                    track_idx,
+                    track_idx: track_idx.clone(),
                     clip_idx,
                     kind,
                 };
@@ -659,14 +627,12 @@ impl Maolan {
                 }
             }
             Message::DeselectAll => {
-                use crate::state::ConnectionViewSelection;
                 let mut state = self.state.blocking_write();
                 state.selected.clear();
                 state.selected_clips.clear();
                 state.connection_view_selection = ConnectionViewSelection::None;
             }
             Message::ConnectionViewSelectConnection(idx) => {
-                use crate::state::ConnectionViewSelection;
                 let ctrl = self.state.blocking_read().ctrl;
                 let mut state = self.state.blocking_write();
 
@@ -686,18 +652,12 @@ impl Maolan {
                 }
             }
             Message::RemoveSelected => {
-                use crate::state::ConnectionViewSelection;
-                const HW_IN_ID: usize = usize::MAX;
-                const HW_OUT_ID: usize = usize::MAX - 1;
-
                 let state = self.state.blocking_read();
                 match &state.connection_view_selection {
                     ConnectionViewSelection::Tracks(set) => {
                         let mut tasks = vec![];
-                        for &idx in set {
-                            if let Some(track) = state.tracks.get(idx) {
-                                tasks.push(self.send(Action::RemoveTrack(track.name.clone())));
-                            }
+                        for name in set {
+                            tasks.push(self.send(Action::RemoveTrack(name.clone())));
                         }
                         drop(state);
                         self.state.blocking_write().connection_view_selection =
@@ -709,24 +669,26 @@ impl Maolan {
                         for &idx in set {
                             if let Some(conn) = state.connections.get(idx) {
                                 let from_name = if conn.from_track == HW_IN_ID {
-                                    "hw:in".to_string()
+                                    HW_IN_ID.to_string()
                                 } else if conn.from_track == HW_OUT_ID {
-                                    "hw:out".to_string()
+                                    HW_OUT_ID.to_string()
                                 } else {
                                     state
                                         .tracks
-                                        .get(conn.from_track)
+                                        .iter()
+                                        .find(|t| t.name == conn.from_track)
                                         .map(|t| t.name.clone())
                                         .unwrap_or_default()
                                 };
                                 let to_name = if conn.to_track == HW_OUT_ID {
-                                    "hw:out".to_string()
+                                    HW_OUT_ID.to_string()
                                 } else if conn.to_track == HW_IN_ID {
-                                    "hw:in".to_string()
+                                    HW_IN_ID.to_string()
                                 } else {
                                     state
                                         .tracks
-                                        .get(conn.to_track)
+                                        .iter()
+                                        .find(|t| t.name == conn.to_track)
                                         .map(|t| t.name.clone())
                                         .unwrap_or_default()
                                 };
@@ -762,10 +724,12 @@ impl Maolan {
                     }
                 }
             }
-            Message::TrackResizeStart(index) => {
+            Message::TrackResizeStart(ref index) => {
                 let mut state = self.state.blocking_write();
-                let height = state.tracks[index].height;
-                state.resizing = Some(Resizing::Track(index, height, state.cursor.y));
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *index) {
+                    let height = track.height;
+                    state.resizing = Some(Resizing::Track(index.clone(), height, state.cursor.y));
+                }
             }
             Message::TracksResizeStart => {
                 self.state.blocking_write().resizing = Some(Resizing::Tracks);
@@ -773,41 +737,42 @@ impl Maolan {
             Message::MixerResizeStart => {
                 self.state.blocking_write().resizing = Some(Resizing::Mixer);
             }
-            Message::ClipResizeStart(ref kind, track_index, clip_index, is_right_side) => {
+            Message::ClipResizeStart(ref kind, ref track_name, clip_index, is_right_side) => {
                 let mut state = self.state.blocking_write();
-                let track = &state.tracks[track_index];
-                match kind {
-                    Kind::Audio => {
-                        let clip = &track.audio.clips[clip_index];
-                        let initial_value = if is_right_side {
-                            clip.length
-                        } else {
-                            clip.start
-                        };
-                        state.resizing = Some(Resizing::Clip(
-                            *kind,
-                            track_index,
-                            clip_index,
-                            is_right_side,
-                            initial_value as f32,
-                            state.cursor.x,
-                        ));
-                    }
-                    Kind::MIDI => {
-                        let clip = &track.midi.clips[clip_index];
-                        let initial_value = if is_right_side {
-                            clip.length
-                        } else {
-                            clip.start
-                        };
-                        state.resizing = Some(Resizing::Clip(
-                            *kind,
-                            track_index,
-                            clip_index,
-                            is_right_side,
-                            initial_value as f32,
-                            state.cursor.x,
-                        ));
+                if let Some(track) = state.tracks.iter().find(|t| t.name == *track_name) {
+                    match kind {
+                        Kind::Audio => {
+                            let clip = &track.audio.clips[clip_index];
+                            let initial_value = if is_right_side {
+                                clip.length
+                            } else {
+                                clip.start
+                            };
+                            state.resizing = Some(Resizing::Clip(
+                                *kind,
+                                track_name.clone(),
+                                clip_index,
+                                is_right_side,
+                                initial_value as f32,
+                                state.cursor.x,
+                            ));
+                        }
+                        Kind::MIDI => {
+                            let clip = &track.midi.clips[clip_index];
+                            let initial_value = if is_right_side {
+                                clip.length
+                            } else {
+                                clip.start
+                            };
+                            state.resizing = Some(Resizing::Clip(
+                                *kind,
+                                track_name.clone(),
+                                clip_index,
+                                is_right_side,
+                                initial_value as f32,
+                                state.cursor.x,
+                            ));
+                        }
                     }
                 }
             }
@@ -815,44 +780,48 @@ impl Maolan {
                 let resizing = self.state.blocking_read().resizing.clone();
                 self.state.blocking_write().cursor = position;
                 match resizing {
-                    Some(Resizing::Track(index, initial_height, initial_mouse_y)) => {
+                    Some(Resizing::Track(track_name, initial_height, initial_mouse_y)) => {
                         let mut state = self.state.blocking_write();
                         let delta = position.y - initial_mouse_y;
-                        let track = &mut state.tracks[index];
-                        track.height = (initial_height + delta).clamp(60.0, 400.0);
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name)
+                        {
+                            track.height = (initial_height + delta).clamp(60.0, 400.0);
+                        }
                     }
                     Some(Resizing::Clip(
                         kind,
-                        track_index,
+                        track_name,
                         index,
                         is_right_side,
                         initial_value,
                         initial_mouse_x,
                     )) => {
                         let mut state = self.state.blocking_write();
-                        let delta = position.x - initial_mouse_x;
-                        let track = &mut state.tracks[track_index];
-                        match kind {
-                            Kind::Audio => {
-                                let clip = &mut track.audio.clips[index];
-                                if is_right_side {
-                                    clip.length = (initial_value + delta).max(10.0) as usize;
-                                } else {
-                                    let new_start = (initial_value + delta).max(0.0);
-                                    let start_delta = new_start - clip.start as f32;
-                                    clip.start = new_start as usize;
-                                    clip.length = (clip.length - start_delta as usize).max(10);
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name)
+                        {
+                            let delta = position.x - initial_mouse_x;
+                            match kind {
+                                Kind::Audio => {
+                                    let clip = &mut track.audio.clips[index];
+                                    if is_right_side {
+                                        clip.length = (initial_value + delta).max(10.0) as usize;
+                                    } else {
+                                        let new_start = (initial_value + delta).max(0.0);
+                                        let start_delta = new_start - clip.start as f32;
+                                        clip.start = new_start as usize;
+                                        clip.length = (clip.length - start_delta as usize).max(10);
+                                    }
                                 }
-                            }
-                            Kind::MIDI => {
-                                let clip = &mut track.midi.clips[index];
-                                if is_right_side {
-                                    clip.length = (initial_value + delta).max(10.0) as usize;
-                                } else {
-                                    let new_start = (initial_value + delta).max(0.0);
-                                    let start_delta = new_start - clip.start as f32;
-                                    clip.start = new_start as usize;
-                                    clip.length = (clip.length - start_delta as usize).max(10);
+                                Kind::MIDI => {
+                                    let clip = &mut track.midi.clips[index];
+                                    if is_right_side {
+                                        clip.length = (initial_value + delta).max(10.0) as usize;
+                                    } else {
+                                        let new_start = (initial_value + delta).max(0.0);
+                                        let start_delta = new_start - clip.start as f32;
+                                        clip.start = new_start as usize;
+                                        clip.length = (clip.length - start_delta as usize).max(10);
+                                    }
                                 }
                             }
                         }
@@ -884,21 +853,26 @@ impl Maolan {
             }
             Message::HandleClipZones(ref zones) => {
                 if let Some(clip) = &self.clip
-                    && let Some((to_track_name, _)) = zones.first()
+                    && let Some((to_track_id, _)) = zones.first()
                 {
                     let state = self.state.blocking_read();
-                    let f_idx = clip.track_index;
-                    let to_track_index = state
+                    let from_track_name = &clip.track_index;
+
+                    let from_track_option =
+                        state.tracks.iter().find(|t| t.name == *from_track_name);
+                    let to_track_option = state
                         .tracks
                         .iter()
-                        .position(|t| Id::from(t.name.clone()) == *to_track_name);
+                        .find(|t| Id::from(t.name.clone()) == *to_track_id);
 
-                    if let Some(t_idx) = to_track_index {
-                        let from_track = &state.tracks[f_idx];
-                        let to_track = &state.tracks[t_idx];
+                    if let (Some(from_track), Some(to_track)) = (from_track_option, to_track_option)
+                    {
+                        let clip_index = clip.index;
                         match clip.kind {
                             Kind::Audio => {
-                                let mut clip_copy = from_track.audio.clips[clip.index].clone();
+                                let clip_index_in_from_track = clip_index;
+                                let mut clip_copy =
+                                    from_track.audio.clips[clip_index_in_from_track].clone();
                                 let offset = clip.end.x - clip.start.x;
                                 clip_copy.start =
                                     (clip_copy.start as f32 + offset).max(0.0) as usize;
@@ -918,7 +892,9 @@ impl Maolan {
                                 return task;
                             }
                             Kind::MIDI => {
-                                let mut clip_copy = from_track.midi.clips[clip.index].clone();
+                                let clip_index_in_from_track = clip_index;
+                                let mut clip_copy =
+                                    from_track.midi.clips[clip_index_in_from_track].clone();
                                 let offset = clip.end.x - clip.start.x;
                                 clip_copy.start =
                                     (clip_copy.start as f32 + offset).max(0.0) as usize;
@@ -943,7 +919,10 @@ impl Maolan {
             }
             Message::TrackDrag(index) => {
                 if self.track.is_none() {
-                    self.track = Some(index);
+                    let state = self.state.blocking_read();
+                    if index < state.tracks.len() {
+                        self.track = Some(state.tracks[index].name.clone());
+                    }
                 }
             }
             Message::TrackDropped(point, _rect) => {
@@ -952,20 +931,23 @@ impl Maolan {
                 }
             }
             Message::HandleTrackZones(ref zones) => {
-                if let Some(index) = &self.track
-                    && let Some((track_name, _)) = zones.first()
+                if let Some(index_name) = &self.track
+                    && let Some((track_id, _)) = zones.first()
                 {
                     let mut state = self.state.blocking_write();
-                    if *index < state.tracks.len() {
-                        let clip = state.tracks.remove(*index);
+                    if let Some(index) = state.tracks.iter().position(|t| t.name == *index_name) {
+                        let moved_track = state.tracks.remove(index);
                         let to_index = state
                             .tracks
                             .iter()
-                            .position(|t| Id::from(t.name.clone()) == *track_name);
+                            .position(|t| Id::from(t.name.clone()) == *track_id); // Compare Id with Id
+
                         if let Some(t_idx) = to_index {
-                            state.tracks.insert(t_idx, clip);
+                            state.tracks.insert(t_idx, moved_track);
                         } else {
-                            state.tracks.insert(*index, clip);
+                            // If target track not found, insert back to original position (or end)
+                            // For simplicity, let's insert it at the end if target not found
+                            state.tracks.push(moved_track);
                         }
                     }
                 }
@@ -1001,6 +983,13 @@ impl Maolan {
             }
             Message::HWSelected(ref hw) => {
                 self.state.blocking_write().selected_hw = Some(hw.to_string());
+            }
+            Message::StartMovingTrackAndSelect(moving_track, track_name) => {
+                let mut state = self.state.blocking_write();
+                state.moving_track = Some(moving_track);
+                return Task::perform(async {}, move |_| {
+                    Message::ConnectionViewSelectTrack(track_name)
+                });
             }
             _ => {}
         }

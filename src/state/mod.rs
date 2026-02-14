@@ -14,27 +14,27 @@ use std::{
 use tokio::sync::RwLock;
 pub use track::Track;
 
-pub const HW_IN_ID: usize = usize::MAX;
-pub const HW_OUT_ID: usize = usize::MAX - 1;
+pub const HW_IN_ID: &str = "hw:in";
+pub const HW_OUT_ID: &str = "hw:out";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ClipId {
-    pub track_idx: usize,
+    pub track_idx: String,
     pub clip_idx: usize,
     pub kind: Kind,
 }
 
 #[derive(Debug, Clone)]
 pub enum Resizing {
-    Clip(Kind, usize, usize, bool, f32, f32),
+    Clip(Kind, String, usize, bool, f32, f32),
     Mixer,
-    Track(usize, f32, f32),
+    Track(String, f32, f32),
     Tracks,
 }
 
 #[derive(Debug, Clone)]
 pub struct Connecting {
-    pub from_track: usize,
+    pub from_track: String,
     pub from_port: usize,
     pub kind: Kind,
     pub point: Point,
@@ -43,7 +43,7 @@ pub struct Connecting {
 
 #[derive(Debug, Clone)]
 pub struct MovingTrack {
-    pub track_idx: usize,
+    pub track_idx: String,
     pub offset_x: f32,
     pub offset_y: f32,
 }
@@ -51,16 +51,16 @@ pub struct MovingTrack {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Hovering {
     Port {
-        track_idx: usize,
+        track_idx: String,
         port_idx: usize,
         is_input: bool,
     },
-    Track(usize),
+    Track(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectionViewSelection {
-    Tracks(HashSet<usize>),
+    Tracks(HashSet<String>),
     Connections(HashSet<usize>),
     None,
 }
