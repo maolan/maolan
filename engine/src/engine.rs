@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
 };
 use tokio::sync::mpsc::{Receiver, Sender, channel};
@@ -136,6 +136,25 @@ impl Engine {
     }
 
     pub fn check_if_leads_to(&self, current_track_name: &str, target_track_name: &str) -> bool {
+        let mut visited = HashSet::new();
+        self.check_if_leads_to_inner(current_track_name, target_track_name, &mut visited)
+    }
+
+    fn check_if_leads_to_inner(
+        &self,
+        current_track_name: &str,
+        target_track_name: &str,
+        visited: &mut HashSet<String>,
+    ) -> bool {
+        if current_track_name == target_track_name {
+            return true;
+        }
+
+        if visited.contains(current_track_name) {
+            return false;
+        }
+        visited.insert(current_track_name.to_string());
+
         let neighbors: Vec<String> = {
             let state = self.state.lock();
             let mut found_neighbors = Vec::new();
@@ -165,11 +184,7 @@ impl Engine {
         };
 
         for neighbor in neighbors {
-            if neighbor == target_track_name {
-                return true;
-            }
-
-            if self.check_if_leads_to(&neighbor, target_track_name) {
+            if self.check_if_leads_to_inner(&neighbor, target_track_name, visited) {
                 return true;
             }
         }
@@ -383,7 +398,6 @@ impl Engine {
                             to_port,
                             kind,
                         } => {
-                            let state = self.state.lock();
                             let from_audio_io = if from_track == "hw:in" {
                                 self.oss_in
                                     .as_ref()
