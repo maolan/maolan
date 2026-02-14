@@ -1,7 +1,7 @@
 use crate::{
     connections, hw, menu,
     message::{DraggedClip, Message},
-    state::{Resizing, State, StateData, Track, View},
+    state::{HW, HW_IN_ID, HW_OUT_ID, Resizing, State, StateData, Track, View},
     toolbar, workspace,
 };
 use iced::futures::{Stream, StreamExt, io, stream};
@@ -332,9 +332,28 @@ impl Maolan {
                     }
                 }
                 Action::RemoveTrack(name) => {
-                    let tracks = &mut self.state.blocking_write().tracks;
-                    tracks.retain(|track| track.name != *name);
+                    let mut state = self.state.blocking_write();
+
+                    if let Some(removed_idx) = state.tracks.iter().position(|t| &t.name == name) {
+                        state.connections.retain(|conn| {
+                            conn.from_track != removed_idx && conn.to_track != removed_idx
+                        });
+                        for conn in &mut state.connections {
+                            if conn.from_track != HW_IN_ID && conn.from_track != HW_OUT_ID {
+                                if conn.from_track > removed_idx {
+                                    conn.from_track -= 1;
+                                }
+                            }
+                            if conn.to_track != HW_IN_ID && conn.to_track != HW_OUT_ID {
+                                if conn.to_track > removed_idx {
+                                    conn.to_track -= 1;
+                                }
+                            }
+                        }
+                        state.tracks.remove(removed_idx);
+                    }
                 }
+
                 Action::ClipMove {
                     kind,
                     from,
@@ -416,27 +435,25 @@ impl Maolan {
                     kind,
                 } => {
                     let mut state = self.state.blocking_write();
-                    let from_idx = state
-                        .tracks
-                        .iter()
-                        .position(|track| &track.name == from_track);
-                    let to_idx = state
-                        .tracks
-                        .iter()
-                        .position(|track| &track.name == to_track);
 
-                    if let (Some(from_idx), Some(to_idx)) = (from_idx, to_idx) {
+                    let from_idx = match from_track.as_str() {
+                        "hw:in" => Some(HW_IN_ID),
+                        _ => state.tracks.iter().position(|t| &t.name == from_track),
+                    };
+
+                    let to_idx = match to_track.as_str() {
+                        "hw:out" => Some(HW_OUT_ID),
+                        _ => state.tracks.iter().position(|t| &t.name == to_track),
+                    };
+
+                    if let (Some(f_idx), Some(t_idx)) = (from_idx, to_idx) {
                         state.connections.push(crate::state::Connection {
-                            from_track: from_idx,
+                            from_track: f_idx,
                             from_port: *from_port,
-                            to_track: to_idx,
+                            to_track: t_idx,
                             to_port: *to_port,
                             kind: *kind,
                         });
-                        state.message = format!(
-                            "Connected {} port {} to {} port {}",
-                            from_track, from_port, to_track, to_port
-                        );
                     }
                 }
                 Action::Disconnect {
@@ -447,35 +464,61 @@ impl Maolan {
                     kind,
                 } => {
                     let mut state = self.state.blocking_write();
-                    let from_idx = state
-                        .tracks
-                        .iter()
-                        .position(|track| &track.name == from_track);
-                    let to_idx = state
-                        .tracks
-                        .iter()
-                        .position(|track| &track.name == to_track);
+                    let from_idx = if from_track == "hw:in" {
+                        Some(HW_IN_ID)
+                    } else {
+                        state.tracks.iter().position(|t| &t.name == from_track)
+                    };
 
-                    if let (Some(from_idx), Some(to_idx)) = (from_idx, to_idx) {
-                        // Find and remove the matching connection
+                    let to_idx = if to_track == "hw:out" {
+                        Some(HW_OUT_ID)
+                    } else {
+                        state.tracks.iter().position(|t| &t.name == to_track)
+                    };
+                    if let (Some(f_idx), Some(t_idx)) = (from_idx, to_idx) {
+                        let original_len = state.connections.len();
+
                         state.connections.retain(|conn| {
-                            !(conn.from_track == from_idx
+                            !(conn.from_track == f_idx
                                 && conn.from_port == *from_port
-                                && conn.to_track == to_idx
+                                && conn.to_track == t_idx
                                 && conn.to_port == *to_port
                                 && conn.kind == *kind)
                         });
-                        state.message = format!(
-                            "Disconnected {} port {} from {} port {}",
-                            from_track, from_port, to_track, to_port
-                        );
+                        if state.connections.len() < original_len {
+                            state.message =
+                                format!("Disconnected {} from {}", from_track, to_track);
+                        }
                     }
                 }
+
                 Action::OpenAudioDevice(s) => {
                     self.state.blocking_write().message = format!("Opened device {s}");
                     self.state.blocking_write().hw_loaded = true;
                 }
-                _ => {}
+                Action::HWInfo {
+                    channels,
+                    rate,
+                    input,
+                } => {
+                    let mut state = self.state.blocking_write();
+                    if *input {
+                        state.hw_in = Some(HW {
+                            channels: *channels,
+                            rate: *rate,
+                            input: *input,
+                        });
+                    } else {
+                        state.hw_out = Some(HW {
+                            channels: *channels,
+                            rate: *rate,
+                            input: *input,
+                        });
+                    }
+                }
+                _ => {
+                    println!("Response: {:?}", a);
+                }
             },
             Message::Response(Err(ref e)) => {
                 self.state.blocking_write().message = e.clone();
@@ -514,14 +557,11 @@ impl Maolan {
                 let ctrl = self.state.blocking_read().ctrl;
                 let selected = self.state.blocking_read().selected.contains(name);
                 let mut state = self.state.blocking_write();
-
-                // Find track index
                 let track_idx = state.tracks.iter().position(|t| &t.name == name);
 
                 if ctrl {
                     if selected {
                         state.selected.retain(|n| n != name);
-                        // Also remove from connections view selection
                         if let Some(idx) = track_idx
                             && let ConnectionViewSelection::Tracks(set) =
                                 &mut state.connection_view_selection
@@ -530,7 +570,6 @@ impl Maolan {
                         }
                     } else {
                         state.selected.insert(name.clone());
-                        // Also add to connections view selection
                         if let Some(idx) = track_idx {
                             match &mut state.connection_view_selection {
                                 ConnectionViewSelection::Tracks(set) => {
@@ -548,7 +587,6 @@ impl Maolan {
                 } else {
                     state.selected.clear();
                     state.selected.insert(name.clone());
-                    // Also sync to connections view selection
                     if let Some(idx) = track_idx {
                         let mut set = std::collections::HashSet::new();
                         set.insert(idx);
@@ -567,34 +605,26 @@ impl Maolan {
                 use crate::state::ConnectionViewSelection;
                 let ctrl = self.state.blocking_read().ctrl;
                 let mut state = self.state.blocking_write();
-
-                // Get track name before modifying state
                 let track_name = state.tracks.get(idx).map(|t| t.name.clone());
 
                 match &mut state.connection_view_selection {
                     ConnectionViewSelection::Tracks(set) if ctrl => {
-                        // Ctrl + click: toggle in current selection
                         if set.contains(&idx) {
                             set.remove(&idx);
-                            // Also remove from workspace selection
                             if let Some(name) = track_name {
                                 state.selected.remove(&name);
                             }
                         } else {
                             set.insert(idx);
-                            // Also add to workspace selection
                             if let Some(name) = track_name {
                                 state.selected.insert(name);
                             }
                         }
                     }
                     _ => {
-                        // New selection or switching from connections to tracks
                         let mut set = std::collections::HashSet::new();
                         set.insert(idx);
                         state.connection_view_selection = ConnectionViewSelection::Tracks(set);
-
-                        // Sync to workspace selection
                         state.selected.clear();
                         if let Some(name) = track_name {
                             state.selected.insert(name);
@@ -618,14 +648,12 @@ impl Maolan {
                 };
 
                 if ctrl {
-                    // Toggle clip in selection
                     if state.selected_clips.contains(&clip_id) {
                         state.selected_clips.remove(&clip_id);
                     } else {
                         state.selected_clips.insert(clip_id);
                     }
                 } else {
-                    // Replace selection with this clip
                     state.selected_clips.clear();
                     state.selected_clips.insert(clip_id);
                 }
@@ -644,7 +672,6 @@ impl Maolan {
 
                 match &mut state.connection_view_selection {
                     ConnectionViewSelection::Connections(set) if ctrl => {
-                        // Ctrl + click: toggle in current selection
                         if set.contains(&idx) {
                             set.remove(&idx);
                         } else {
@@ -652,7 +679,6 @@ impl Maolan {
                         }
                     }
                     _ => {
-                        // New selection or switching from tracks to connections
                         let mut set = std::collections::HashSet::new();
                         set.insert(idx);
                         state.connection_view_selection = ConnectionViewSelection::Connections(set);
@@ -661,6 +687,9 @@ impl Maolan {
             }
             Message::RemoveSelected => {
                 use crate::state::ConnectionViewSelection;
+                const HW_IN_ID: usize = usize::MAX;
+                const HW_OUT_ID: usize = usize::MAX - 1;
+
                 let state = self.state.blocking_read();
                 match &state.connection_view_selection {
                     ConnectionViewSelection::Tracks(set) => {
@@ -678,19 +707,39 @@ impl Maolan {
                     ConnectionViewSelection::Connections(set) => {
                         let mut tasks = vec![];
                         for &idx in set {
-                            if let Some(conn) = state.connections.get(idx)
-                                && let (Some(from_track), Some(to_track)) = (
-                                    state.tracks.get(conn.from_track),
-                                    state.tracks.get(conn.to_track),
-                                )
-                            {
-                                tasks.push(self.send(Action::Disconnect {
-                                    from_track: from_track.name.clone(),
-                                    from_port: conn.from_port,
-                                    to_track: to_track.name.clone(),
-                                    to_port: conn.to_port,
-                                    kind: conn.kind,
-                                }));
+                            if let Some(conn) = state.connections.get(idx) {
+                                let from_name = if conn.from_track == HW_IN_ID {
+                                    "hw:in".to_string()
+                                } else if conn.from_track == HW_OUT_ID {
+                                    "hw:out".to_string()
+                                } else {
+                                    state
+                                        .tracks
+                                        .get(conn.from_track)
+                                        .map(|t| t.name.clone())
+                                        .unwrap_or_default()
+                                };
+                                let to_name = if conn.to_track == HW_OUT_ID {
+                                    "hw:out".to_string()
+                                } else if conn.to_track == HW_IN_ID {
+                                    "hw:in".to_string()
+                                } else {
+                                    state
+                                        .tracks
+                                        .get(conn.to_track)
+                                        .map(|t| t.name.clone())
+                                        .unwrap_or_default()
+                                };
+
+                                if !from_name.is_empty() && !to_name.is_empty() {
+                                    tasks.push(self.send(Action::Disconnect {
+                                        from_track: from_name,
+                                        from_port: conn.from_port,
+                                        to_track: to_name,
+                                        to_port: conn.to_port,
+                                        kind: conn.kind,
+                                    }));
+                                }
                             }
                         }
                         drop(state);
@@ -701,6 +750,7 @@ impl Maolan {
                     ConnectionViewSelection::None => {}
                 }
             }
+
             Message::Remove => {
                 let view = self.state.blocking_read().view.clone();
                 match view {

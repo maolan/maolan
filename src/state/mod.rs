@@ -9,11 +9,13 @@ use maolan_engine::kind::Kind;
 use std::{
     collections::{HashMap, HashSet},
     fs::read_dir,
-    path::PathBuf,
     sync::Arc,
 };
 use tokio::sync::RwLock;
 pub use track::Track;
+
+pub const HW_IN_ID: usize = usize::MAX;
+pub const HW_OUT_ID: usize = usize::MAX - 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClipId {
@@ -69,6 +71,13 @@ pub enum View {
     Connections,
 }
 
+#[derive(Debug, Clone)]
+pub struct HW {
+    pub channels: usize,
+    pub rate: usize,
+    pub input: bool,
+}
+
 #[derive(Debug)]
 pub struct StateData {
     pub shift: bool,
@@ -92,6 +101,8 @@ pub struct StateData {
     pub hw_loaded: bool,
     pub available_hw: Vec<String>,
     pub selected_hw: Option<String>,
+    pub hw_in: Option<HW>,
+    pub hw_out: Option<HW>,
 }
 
 impl Default for StateData {
@@ -103,8 +114,6 @@ impl Default for StateData {
                     .filter_map(|path| {
                         let name = path.file_name()?.to_str()?;
                         if name.starts_with("dsp") {
-                            // Ovde biraš: želiš li punu putanju ("/dev/dsp0")
-                            // ili samo ime ("dsp0") u listi?
                             Some(path.to_string_lossy().into_owned())
                         } else {
                             None
@@ -137,6 +146,8 @@ impl Default for StateData {
             hw_loaded: false,
             available_hw: hw,
             selected_hw: None,
+            hw_in: None,
+            hw_out: None,
         }
     }
 }

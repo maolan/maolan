@@ -384,10 +384,29 @@ impl Engine {
                             kind,
                         } => {
                             let state = self.state.lock();
-                            let from_track_handle = state.tracks.get(from_track);
-                            let to_track_handle = state.tracks.get(to_track);
-
-                            if from_track_handle.is_none() {
+                            let from_audio_io = if from_track == "hw:in" {
+                                self.oss_in
+                                    .as_ref()
+                                    .and_then(|h| h.channels.get(from_port).cloned())
+                            } else {
+                                self.state
+                                    .lock()
+                                    .tracks
+                                    .get(from_track)
+                                    .and_then(|t| t.lock().audio.outs.get(from_port).cloned())
+                            };
+                            let to_audio_io = if to_track == "hw:out" {
+                                self.oss_out
+                                    .as_ref()
+                                    .and_then(|h| h.channels.get(to_port).cloned())
+                            } else {
+                                self.state
+                                    .lock()
+                                    .tracks
+                                    .get(to_track)
+                                    .and_then(|t| t.lock().audio.ins.get(to_port).cloned())
+                            };
+                            if from_audio_io.is_none() {
                                 self.notify_clients(Err(format!(
                                     "Source track '{}' not found",
                                     from_track
@@ -396,7 +415,7 @@ impl Engine {
                                 return;
                             }
 
-                            if to_track_handle.is_none() {
+                            if to_audio_io.is_none() {
                                 self.notify_clients(Err(format!(
                                     "Destination track '{}' not found",
                                     to_track
@@ -405,53 +424,67 @@ impl Engine {
                                 return;
                             }
 
-                            let from_track_ref = from_track_handle.unwrap();
-                            let to_track_ref = to_track_handle.unwrap();
-
                             match kind {
-                                Kind::Audio => {
-                                    let to_in_arc = {
-                                        let to_track = to_track_ref.lock();
-                                        to_track.audio.ins.get(to_port).cloned()
-                                    };
-                                    match to_in_arc {
-                                        Some(to_in) => {
-                                            if self.check_if_leads_to(to_track, from_track) {
-                                                self.notify_clients(Err("Circular routing is not allowed in this engine!".to_string())).await;
-                                                return;
-                                            }
-                                            if let Err(e) = from_track_ref
-                                                .lock()
-                                                .audio
-                                                .connect_out(from_port, to_in.clone())
-                                            {
-                                                self.notify_clients(Err(e)).await;
+                                Kind::Audio => match (from_audio_io, to_audio_io) {
+                                    (Some(source), Some(target)) => {
+                                        if from_track != "hw:in"
+                                            && to_track != "hw:out"
+                                            && self.check_if_leads_to(to_track, from_track)
+                                        {
+                                            self.notify_clients(Err(
+                                                "Circular routing is not allowed!".into(),
+                                            ))
+                                            .await;
+                                            return;
+                                        }
+                                        source.connect(target);
+                                    }
+                                    _ => {
+                                        self.notify_clients(Err(format!(
+                                            "Connection failed: {}[{}] -> {}[{}] not found",
+                                            from_track, from_port, to_track, to_port
+                                        )))
+                                        .await;
+                                    }
+                                },
+                                Kind::MIDI => {
+                                    if from_track == "hw:in" || to_track == "hw:out" {
+                                        self.notify_clients(Err(
+                                            "Hardware MIDI connections are not supported!".into(),
+                                        ))
+                                        .await;
+                                        return;
+                                    }
+
+                                    let state = self.state.lock();
+                                    let from_track_handle = state.tracks.get(from_track);
+                                    let to_track_handle = state.tracks.get(to_track);
+
+                                    match (from_track_handle, to_track_handle) {
+                                        (Some(f_t), Some(t_t)) => {
+                                            let to_in_res =
+                                                t_t.lock().midi.ins.get(to_port).cloned();
+                                            if let Some(to_in) = to_in_res {
+                                                if let Err(e) =
+                                                    f_t.lock().midi.connect_out(from_port, to_in)
+                                                {
+                                                    self.notify_clients(Err(e)).await;
+                                                }
+                                            } else {
+                                                self.notify_clients(Err(format!(
+                                                    "MIDI input port {} not found on track '{}'",
+                                                    to_port, to_track
+                                                )))
+                                                .await;
                                             }
                                         }
-                                        None => {
+                                        _ => {
                                             self.notify_clients(Err(format!(
-                                                "Audio input port {} not found on track '{}'",
-                                                to_port, to_track
+                                                "MIDI tracks not found: {} or {}",
+                                                from_track, to_track
                                             )))
                                             .await;
                                         }
-                                    }
-                                }
-                                Kind::MIDI => {
-                                    if let Some(to_in) = to_track_ref.lock().midi.ins.get(to_port) {
-                                        if let Err(e) = from_track_ref
-                                            .lock()
-                                            .midi
-                                            .connect_out(from_port, to_in.clone())
-                                        {
-                                            self.notify_clients(Err(e)).await;
-                                        }
-                                    } else {
-                                        self.notify_clients(Err(format!(
-                                            "MIDI input port {} not found on track '{}'",
-                                            to_port, to_track
-                                        )))
-                                        .await;
                                     }
                                 }
                             };
@@ -463,70 +496,81 @@ impl Engine {
                             to_port,
                             kind,
                         } => {
-                            let state = self.state.lock();
-                            let from_track_handle = state.tracks.get(from_track);
-                            let to_track_handle = state.tracks.get(to_track);
-
-                            if from_track_handle.is_none() {
-                                self.notify_clients(Err(format!(
-                                    "Source track '{}' not found",
-                                    from_track
-                                )))
-                                .await;
-                                return;
-                            }
-
-                            if to_track_handle.is_none() {
-                                self.notify_clients(Err(format!(
-                                    "Destination track '{}' not found",
-                                    to_track
-                                )))
-                                .await;
-                                return;
-                            }
-
-                            let from_track_ref = from_track_handle.unwrap();
-                            let to_track_ref = to_track_handle.unwrap();
-
-                            let result = match kind {
-                                Kind::Audio => {
-                                    if let Some(to_in) = to_track_ref.lock().audio.ins.get(to_port)
-                                    {
-                                        from_track_ref.lock().audio.disconnect_out(from_port, to_in)
-                                    } else {
-                                        Err(format!(
-                                            "Audio input port {} not found on track '{}'",
-                                            to_port, to_track
-                                        ))
-                                    }
-                                }
-                                Kind::MIDI => {
-                                    if let Some(to_in) = to_track_ref.lock().midi.ins.get(to_port) {
-                                        from_track_ref.lock().midi.disconnect_out(from_port, to_in)
-                                    } else {
-                                        Err(format!(
-                                            "MIDI input port {} not found on track '{}'",
-                                            to_port, to_track
-                                        ))
-                                    }
-                                }
+                            let from_audio_io = if from_track == "hw:in" {
+                                self.oss_in
+                                    .as_ref()
+                                    .and_then(|h| h.channels.get(from_port).cloned())
+                            } else {
+                                let state = self.state.lock();
+                                state
+                                    .tracks
+                                    .get(from_track)
+                                    .and_then(|t| t.lock().audio.outs.get(from_port).cloned())
+                            };
+                            let to_audio_io = if to_track == "hw:out" {
+                                self.oss_out
+                                    .as_ref()
+                                    .and_then(|h| h.channels.get(to_port).cloned())
+                            } else {
+                                let state = self.state.lock();
+                                state
+                                    .tracks
+                                    .get(to_track)
+                                    .and_then(|t| t.lock().audio.ins.get(to_port).cloned())
                             };
 
-                            match result {
-                                Ok(_) => {
-                                    self.notify_clients(Ok(a.clone())).await;
-                                    return;
+                            if kind == Kind::Audio {
+                                match (from_audio_io, to_audio_io) {
+                                    (Some(source), Some(target)) => {
+                                        if let Err(e) = source.disconnect(&target) {
+                                            self.notify_clients(Err(format!(
+                                                "Disconnect failed: {}",
+                                                e
+                                            )))
+                                            .await;
+                                            return;
+                                        }
+                                    }
+                                    _ => {
+                                        self.notify_clients(Err(format!(
+                                            "Disconnect failed: Port not found ({} -> {})",
+                                            from_track, to_track
+                                        )))
+                                        .await;
+                                    }
                                 }
-                                Err(err) => {
-                                    self.notify_clients(Err(err)).await;
-                                    return;
+                            } else if kind == Kind::MIDI
+                                && from_track != "hw:in"
+                                && to_track != "hw:out"
+                            {
+                                let state = self.state.lock();
+                                if let (Some(f_t), Some(t_t)) =
+                                    (state.tracks.get(from_track), state.tracks.get(to_track))
+                                    && let Some(to_in) = t_t.lock().midi.ins.get(to_port).cloned()
+                                {
+                                    if let Err(e) =
+                                        f_t.lock().midi.disconnect_out(from_port, &to_in)
+                                    {
+                                        self.notify_clients(Err(e)).await;
+                                    } else {
+                                        self.notify_clients(Ok(a.clone())).await;
+                                    }
                                 }
                             }
                         }
+
                         Action::OpenAudioDevice(ref device) => {
                             match oss::Audio::new(device, 48000, 32, true) {
                                 Ok(d) => {
+                                    let channels = d.channels.len();
+                                    let rate = d.rate as usize;
                                     self.oss_in = Some(d);
+                                    self.notify_clients(Ok(Action::HWInfo {
+                                        channels,
+                                        rate,
+                                        input: true,
+                                    }))
+                                    .await;
                                 }
                                 Err(e) => {
                                     self.notify_clients(Err(e.to_string())).await;
@@ -534,13 +578,22 @@ impl Engine {
                             }
                             match oss::Audio::new(device, 48000, 32, false) {
                                 Ok(d) => {
+                                    let channels = d.channels.len();
+                                    let rate = d.rate as usize;
                                     self.oss_out = Some(d);
+                                    self.notify_clients(Ok(Action::HWInfo {
+                                        channels,
+                                        rate,
+                                        input: false,
+                                    }))
+                                    .await;
                                 }
                                 Err(e) => {
                                     self.notify_clients(Err(e.to_string())).await;
                                 }
                             }
                         }
+                        Action::HWInfo { .. } => {}
                     }
                     self.notify_clients(Ok(a.clone())).await;
                 }

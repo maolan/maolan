@@ -62,6 +62,11 @@ pub enum Action {
         kind: Kind,
     },
     OpenAudioDevice(String),
+    HWInfo {
+        channels: usize,
+        rate: usize,
+        input: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
