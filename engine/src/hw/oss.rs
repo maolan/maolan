@@ -245,38 +245,11 @@ impl Audio {
             )
         };
         self.dsp.read_exact(bytes)?;
-
-        let num_channels = self.channels.len();
-        let norm_factor = 1.0 / i32::MAX as f32;
-
-        for (ch_idx, io_port) in self.channels.iter().enumerate() {
-            let channel_buf_lock = io_port.buffer.lock();
-            let channel_samples = channel_buf_lock.as_mut();
-
-            for (i, sample) in channel_samples.iter_mut().enumerate().take(self.chsamples) {
-                let source_idx = i * num_channels + ch_idx;
-                *sample = data_slice[source_idx] as f32 * norm_factor;
-            }
-        }
-
         Ok(())
     }
 
     pub fn write(&mut self) -> std::io::Result<()> {
-        let num_channels = self.channels.len();
-        let scale_factor = i32::MAX as f32;
         let data_i32 = self.buffer.as_mut();
-
-        for (ch_idx, io_port) in self.channels.iter().enumerate() {
-            let channel_buf_lock = io_port.buffer.lock();
-            let channel_samples = channel_buf_lock.as_ref();
-
-            for (i, &sample) in channel_samples.iter().enumerate().take(self.chsamples) {
-                let target_idx = i * num_channels + ch_idx;
-                data_i32[target_idx] = (sample.clamp(-1.0, 1.0) * scale_factor) as i32;
-            }
-        }
-
         let bytes: &[u8] = unsafe {
             std::slice::from_raw_parts(
                 data_i32.as_ptr() as *const u8,
@@ -284,8 +257,39 @@ impl Audio {
             )
         };
         self.dsp.write_all(bytes)?;
-
         Ok(())
+    }
+
+    pub fn process(&mut self) {
+        let num_channels = self.channels.len();
+
+        if self.input {
+            let norm_factor = 1.0 / i32::MAX as f32;
+            let data_slice: &mut [i32] = self.buffer.as_mut();
+
+            for (ch_idx, io_port) in self.channels.iter().enumerate() {
+                let channel_buf_lock = io_port.buffer.lock();
+                let channel_samples = channel_buf_lock.as_mut();
+
+                for (i, sample) in channel_samples.iter_mut().enumerate().take(self.chsamples) {
+                    let source_idx = i * num_channels + ch_idx;
+                    *sample = data_slice[source_idx] as f32 * norm_factor;
+                }
+            }
+        } else {
+            let scale_factor = i32::MAX as f32;
+            let data_i32 = self.buffer.as_mut();
+
+            for (ch_idx, io_port) in self.channels.iter().enumerate() {
+                let channel_buf_lock = io_port.buffer.lock();
+                let channel_samples = channel_buf_lock.as_ref();
+
+                for (i, &sample) in channel_samples.iter().enumerate().take(self.chsamples) {
+                    let target_idx = i * num_channels + ch_idx;
+                    data_i32[target_idx] = (sample.clamp(-1.0, 1.0) * scale_factor) as i32;
+                }
+            }
+        }
     }
 }
 

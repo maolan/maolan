@@ -4,7 +4,7 @@ use wavers::Samples;
 
 #[derive(Debug, Clone)]
 pub struct AudioIO {
-    pub connections: Arc<UnsafeMutex<Vec<Arc<AudioIO>>>>,
+    pub connections: Arc<UnsafeMutex<Vec<Arc<Self>>>>,
     pub buffer: Arc<UnsafeMutex<Samples<f32>>>,
 }
 
@@ -25,12 +25,25 @@ impl AudioIO {
     pub fn disconnect(&self, to: &Arc<Self>) -> Result<(), String> {
         let conns = self.connections.lock();
         let original_len = conns.len();
-        conns.retain(|conn| !Arc::ptr_eq(conn, to));
 
+        conns.retain(|conn| !Arc::ptr_eq(conn, to));
         if conns.len() < original_len {
             Ok(())
         } else {
             Err("Connection not found".to_string())
+        }
+    }
+
+    pub fn process(&self) {
+        let local_buf = self.buffer.lock();
+        let conns = self.connections.lock();
+
+        local_buf.fill(0.0);
+        for source in conns.iter() {
+            let source_buf = source.buffer.lock();
+            for (out_sample, in_sample) in local_buf.iter_mut().zip(source_buf.iter()) {
+                *out_sample += *in_sample;
+            }
         }
     }
 }

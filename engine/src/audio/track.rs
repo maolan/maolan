@@ -57,4 +57,16 @@ impl AudioTrack {
             Err(format!("Audio output index {} too high", index))
         }
     }
+
+    pub fn process(&self) {
+        for audio_in in &self.ins {
+            audio_in.process();
+        }
+        for (audio_in, audio_out) in self.ins.iter().zip(self.outs.iter()) {
+            let in_samples = audio_in.buffer.lock();
+            let out_samples = audio_out.buffer.lock();
+
+            out_samples.copy_from_slice(in_samples);
+        }
+    }
 }
