@@ -1,6 +1,6 @@
 use crate::{
     message::Message,
-    state::{Connecting, HW_IN_ID, HW_OUT_ID, Hovering, MovingTrack, State},
+    state::{Connecting, HW_IN_ID, HW_OUT_ID, Hovering, MovingTrack, State, StateData},
 };
 use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
@@ -22,6 +22,42 @@ pub struct Graph {
 impl Graph {
     pub fn new(state: State) -> Self {
         Self { state }
+    }
+
+    fn get_port_kind(
+        data: &StateData,
+        hovering_port: &Hovering,
+    ) -> Option<Kind> {
+        match hovering_port {
+            Hovering::Port {
+                track_idx,
+                port_idx,
+                is_input,
+            } => {
+                if *track_idx == HW_IN_ID || *track_idx == HW_OUT_ID {
+                    Some(Kind::Audio) // HW ports are always Audio
+                } else {
+                    data.tracks.get(*track_idx).map(|t| {
+                        if *is_input {
+                            // If hovered port is an INPUT on a track
+                            if *port_idx < t.audio.ins {
+                                Kind::Audio
+                            } else {
+                                Kind::MIDI
+                            }
+                        } else {
+                            // If hovered port is an OUTPUT on a track
+                            if *port_idx < t.audio.outs {
+                                Kind::Audio
+                            } else {
+                                Kind::MIDI
+                            }
+                        }
+                    })
+                }
+            }
+            _ => None, // Not a port hover
+        }
     }
 
     pub fn update(&mut self, _message: Message) {}
@@ -444,23 +480,119 @@ impl canvas::Program<Message> for Graph {
                 }
 
                 Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                    let mut new_h = None;
+
+                    // 1. Provera hover-a nad HW:IN portovima
+                    if let Some(hw_in) = &data.hw_in {
+                        let pos = Point::new(hw_margin, hw_margin);
+                        for j in 0..hw_in.channels {
+                            let py = pos.y
+                                + 50.0
+                                + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
+                                    * (j + 1) as f32;
+                            if cursor_position.distance(Point::new(pos.x + hw_width, py)) < 10.0 {
+                                new_h = Some(Hovering::Port {
+                                    track_idx: HW_IN_ID,
+                                    port_idx: j,
+                                    is_input: false,
+                                });
+                                break;
+                            }
+                        }
+                    }
+
+                    // 2. Provera hover-a nad HW:OUT portovima
+                    if new_h.is_none() {
+                        if let Some(hw_out) = &data.hw_out {
+                            let pos = Point::new(bounds.width - hw_width - hw_margin, hw_margin);
+                            for j in 0..hw_out.channels {
+                                let py = pos.y
+                                    + 50.0
+                                    + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
+                                        * (j + 1) as f32;
+                                if cursor_position.distance(Point::new(pos.x, py)) < 10.0 {
+                                    new_h = Some(Hovering::Port {
+                                        track_idx: HW_OUT_ID,
+                                        port_idx: j,
+                                        is_input: true,
+                                    });
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // 3. Provera hover-a nad portovima i telom traka
+                    if new_h.is_none() {
+                        for (i, track) in data.tracks.iter().enumerate().rev() {
+                            // Ulazni portovi
+                            let t_ins = track.audio.ins + track.midi.ins;
+                            for j in 0..t_ins {
+                                let py = track.position.y
+                                    + (size.height / (t_ins + 1) as f32) * (j + 1) as f32;
+                                if cursor_position.distance(Point::new(track.position.x, py)) < 10.0
+                                {
+                                    new_h = Some(Hovering::Port {
+                                        track_idx: i,
+                                        port_idx: j,
+                                        is_input: true,
+                                    });
+                                    break;
+                                }
+                            }
+                            if new_h.is_some() {
+                                break;
+                            }
+
+                            // Izlazni portovi
+                            let t_outs = track.audio.outs + track.midi.outs;
+                            for j in 0..t_outs {
+                                let py = track.position.y
+                                    + (size.height / (t_outs + 1) as f32) * (j + 1) as f32;
+                                if cursor_position
+                                    .distance(Point::new(track.position.x + size.width, py))
+                                    < 10.0
+                                {
+                                    new_h = Some(Hovering::Port {
+                                        track_idx: i,
+                                        port_idx: j,
+                                        is_input: false,
+                                    });
+                                    break;
+                                }
+                            }
+                            if new_h.is_some() {
+                                break;
+                            }
+
+                            // Telo trake
+                            if Rectangle::new(track.position, size).contains(cursor_position) {
+                                new_h = Some(Hovering::Track(i));
+                                break;
+                            }
+                        }
+                    }
+
+                    let mut redraw_needed = false;
+
                     if let Some(ref mut conn) = data.connecting {
                         conn.point = cursor_position;
-                        return Some(Action::request_redraw());
+                        redraw_needed = true;
                     }
                     if let Some(mt) = data.moving_track.clone()
                         && let Some(t) = data.tracks.get_mut(mt.track_idx)
                     {
                         t.position.x = cursor_position.x - mt.offset_x;
                         t.position.y = cursor_position.y - mt.offset_y;
-                        return Some(Action::request_redraw());
+                        redraw_needed = true;
                     }
 
-                    // Hover logika za HW i Tracks... (slično kao ButtonPressed ali samo postavlja data.hovering)
-                    let new_h = None;
-                    // [Dodati ovde provere portova za HW i Tracks za kompletan hover efekat]
                     if data.hovering != new_h {
                         data.hovering = new_h;
+                        redraw_needed = true;
+                    }
+
+                    if redraw_needed {
                         return Some(Action::request_redraw());
                     }
                 }
@@ -647,8 +779,25 @@ impl canvas::Program<Message> for Graph {
                         align_y: Vertical::Center,
                         ..Default::default()
                     });
+                    let h_port = Hovering::Port {
+                        track_idx: HW_IN_ID,
+                        port_idx: j,
+                        is_input: false,
+                    };
+                    let h = data.hovering == Some(h_port.clone());
+
+                    let can_highlight_port = if let Some(ref connecting) = data.connecting {
+                        if let Some(hovered_kind) = Self::get_port_kind(&data, &h_port) {
+                            h && connecting.kind == hovered_kind
+                        } else {
+                            false
+                        }
+                    } else {
+                        h
+                    };
+
                     frame.fill(
-                        &Path::circle(Point::new(pos.x + hw_width, py), 5.0),
+                        &Path::circle(Point::new(pos.x + hw_width, py), if can_highlight_port { 8.0 } else { 5.0 }),
                         Color::from_rgb(0.0, 1.0, 0.5),
                     );
                 }
@@ -686,8 +835,25 @@ impl canvas::Program<Message> for Graph {
                         align_y: Vertical::Center,
                         ..Default::default()
                     });
+                    let h_port = Hovering::Port {
+                        track_idx: HW_OUT_ID,
+                        port_idx: j,
+                        is_input: true,
+                    };
+                    let h = data.hovering == Some(h_port.clone());
+
+                    let can_highlight_port = if let Some(ref connecting) = data.connecting {
+                        if let Some(hovered_kind) = Self::get_port_kind(&data, &h_port) {
+                            h && connecting.kind == hovered_kind
+                        } else {
+                            false
+                        }
+                    } else {
+                        h
+                    };
+
                     frame.fill(
-                        &Path::circle(Point::new(pos.x, py), 5.0),
+                        &Path::circle(Point::new(pos.x, py), if can_highlight_port { 8.0 } else { 5.0 }),
                         Color::from_rgb(1.0, 0.3, 0.3),
                     );
                 }
@@ -721,14 +887,25 @@ impl canvas::Program<Message> for Graph {
                     } else {
                         Color::from_rgb(1.0, 0.6, 0.0)
                     };
-                    let h = data.hovering
-                        == Some(Hovering::Port {
-                            track_idx: i,
-                            port_idx: j,
-                            is_input: true,
-                        });
+                    let h_port = Hovering::Port {
+                        track_idx: i,
+                        port_idx: j,
+                        is_input: true,
+                    };
+                    let h = data.hovering == Some(h_port.clone());
+
+                    let can_highlight_port = if let Some(ref connecting) = data.connecting {
+                        if let Some(hovered_kind) = Self::get_port_kind(&data, &h_port) {
+                            h && connecting.kind == hovered_kind
+                        } else {
+                            false
+                        }
+                    } else {
+                        h
+                    };
+
                     frame.fill(
-                        &Path::circle(Point::new(pos.x, py), if h { 6.0 } else { 4.0 }),
+                        &Path::circle(Point::new(pos.x, py), if can_highlight_port { 7.0 } else { 4.0 }),
                         c,
                     );
                 }
@@ -741,16 +918,27 @@ impl canvas::Program<Message> for Graph {
                     } else {
                         Color::from_rgb(1.0, 0.6, 0.0)
                     };
-                    let h = data.hovering
-                        == Some(Hovering::Port {
-                            track_idx: i,
-                            port_idx: j,
-                            is_input: false,
-                        });
+                    let h_port = Hovering::Port {
+                        track_idx: i,
+                        port_idx: j,
+                        is_input: false,
+                    };
+                    let h = data.hovering == Some(h_port.clone());
+
+                    let can_highlight_port = if let Some(ref connecting) = data.connecting {
+                        if let Some(hovered_kind) = Self::get_port_kind(&data, &h_port) {
+                            h && connecting.kind == hovered_kind
+                        } else {
+                            false
+                        }
+                    } else {
+                        h
+                    };
+
                     frame.fill(
                         &Path::circle(
                             Point::new(pos.x + size.width, py),
-                            if h { 6.0 } else { 4.0 },
+                            if can_highlight_port { 7.0 } else { 4.0 },
                         ),
                         c,
                     );
