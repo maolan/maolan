@@ -18,16 +18,24 @@ impl AudioIO {
         }
     }
 
-    pub fn connect(&self, to: Arc<Self>) {
-        self.connections.lock().push(to);
+    pub fn connect(from: &Arc<Self>, to: &Arc<Self>) {
+        // Add to target's connections (for pull)
+        to.connections.lock().push(from.clone());
+        // Add to source's connections (for push)
+        from.connections.lock().push(to.clone());
     }
 
-    pub fn disconnect(&self, to: &Arc<Self>) -> Result<(), String> {
-        let conns = self.connections.lock();
-        let original_len = conns.len();
+    pub fn disconnect(from: &Arc<Self>, to: &Arc<Self>) -> Result<(), String> {
+        // Remove from target's connections
+        let to_conns = to.connections.lock();
+        let to_original_len = to_conns.len();
+        to_conns.retain(|conn| !Arc::ptr_eq(conn, from));
 
-        conns.retain(|conn| !Arc::ptr_eq(conn, to));
-        if conns.len() < original_len {
+        // Remove from source's connections
+        let from_conns = from.connections.lock();
+        from_conns.retain(|conn| !Arc::ptr_eq(conn, to));
+
+        if to_conns.len() < to_original_len {
             Ok(())
         } else {
             Err("Connection not found".to_string())

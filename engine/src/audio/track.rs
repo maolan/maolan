@@ -24,9 +24,9 @@ impl AudioTrack {
         ret
     }
 
-    pub fn connect_in(&self, index: usize, to: Arc<AudioIO>) -> Result<(), String> {
+    pub fn connect_in(&self, index: usize, from: Arc<AudioIO>) -> Result<(), String> {
         if let Some(audio_in) = self.ins.get(index) {
-            audio_in.connect(to);
+            AudioIO::connect(&from, audio_in);
             Ok(())
         } else {
             Err(format!("Audio input index {} too high", index))
@@ -35,16 +35,16 @@ impl AudioTrack {
 
     pub fn connect_out(&self, index: usize, to: Arc<AudioIO>) -> Result<(), String> {
         if let Some(audio_out) = self.outs.get(index) {
-            audio_out.connect(to);
+            AudioIO::connect(audio_out, &to);
             Ok(())
         } else {
             Err(format!("Audio output index {} too high", index))
         }
     }
 
-    pub fn disconnect_in(&self, index: usize, to: &Arc<AudioIO>) -> Result<(), String> {
+    pub fn disconnect_in(&self, index: usize, from: &Arc<AudioIO>) -> Result<(), String> {
         if let Some(audio_in) = self.ins.get(index) {
-            audio_in.disconnect(to)
+            AudioIO::disconnect(from, audio_in)
         } else {
             Err(format!("Audio input index {} too high", index))
         }
@@ -52,7 +52,7 @@ impl AudioTrack {
 
     pub fn disconnect_out(&self, index: usize, to: &Arc<AudioIO>) -> Result<(), String> {
         if let Some(audio_out) = self.outs.get(index) {
-            audio_out.disconnect(to)
+            AudioIO::disconnect(audio_out, to)
         } else {
             Err(format!("Audio output index {} too high", index))
         }

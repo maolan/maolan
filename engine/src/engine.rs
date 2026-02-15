@@ -12,6 +12,7 @@ use crate::{
     message::{Action, Message},
     midi::clip::MIDIClip,
     mutex::UnsafeMutex,
+    oss_worker::OssWorker,
     state::State,
     track::Track,
     worker::Worker,
@@ -35,8 +36,9 @@ pub struct Engine {
     state: Arc<UnsafeMutex<State>>,
     tx: Sender<Message>,
     workers: Vec<WorkerData>,
-    oss_in: Option<oss::Audio>,
-    oss_out: Option<oss::Audio>,
+    oss_in: Option<Arc<UnsafeMutex<oss::Audio>>>,
+    oss_out: Option<Arc<UnsafeMutex<oss::Audio>>>,
+    oss_worker: Option<WorkerData>,
     sorted_tracks: Vec<String>,
 }
 
@@ -50,6 +52,7 @@ impl Engine {
             workers: vec![],
             oss_in: None,
             oss_out: None,
+            oss_worker: None,
             sorted_tracks: vec![],
         }
     }
@@ -208,6 +211,20 @@ impl Engine {
                     match a {
                         Action::Play => {}
                         Action::Quit => {
+                            // Shut down OSS worker first
+                            if let Some(worker) = self.oss_worker.take() {
+                                worker
+                                    .tx
+                                    .send(Message::Request(a.clone()))
+                                    .await
+                                    .expect("Failed sending quit message to OSS worker");
+                                worker
+                                    .handle
+                                    .await
+                                    .expect("Failed waiting for OSS worker to quit");
+                            }
+
+                            // Then shut down regular workers
                             while !self.workers.is_empty() {
                                 let worker = self.workers.remove(0);
                                 worker
@@ -236,6 +253,7 @@ impl Engine {
                             }
                             match &self.oss_out {
                                 Some(oss) => {
+                                    let chsamples = oss.lock().chsamples;
                                     tracks.insert(
                                         name.clone(),
                                         Arc::new(UnsafeMutex::new(Box::new(Track::new(
@@ -244,7 +262,7 @@ impl Engine {
                                             audio_outs,
                                             midi_ins,
                                             midi_outs,
-                                            oss.chsamples,
+                                            chsamples,
                                         )))),
                                     );
                                 }
@@ -389,7 +407,7 @@ impl Engine {
                             let from_audio_io = if from_track == "hw:in" {
                                 self.oss_in
                                     .as_ref()
-                                    .and_then(|h| h.channels.get(from_port).cloned())
+                                    .and_then(|h| h.lock().channels.get(from_port).cloned())
                             } else {
                                 self.state
                                     .lock()
@@ -400,7 +418,7 @@ impl Engine {
                             let to_audio_io = if to_track == "hw:out" {
                                 self.oss_out
                                     .as_ref()
-                                    .and_then(|h| h.channels.get(to_port).cloned())
+                                    .and_then(|h| h.lock().channels.get(to_port).cloned())
                             } else {
                                 self.state
                                     .lock()
@@ -439,7 +457,7 @@ impl Engine {
                                             .await;
                                             return;
                                         }
-                                        source.connect(target);
+                                        crate::audio::io::AudioIO::connect(&source, &target);
                                     }
                                     _ => {
                                         self.notify_clients(Err(format!(
@@ -501,7 +519,7 @@ impl Engine {
                             let from_audio_io = if from_track == "hw:in" {
                                 self.oss_in
                                     .as_ref()
-                                    .and_then(|h| h.channels.get(from_port).cloned())
+                                    .and_then(|h| h.lock().channels.get(from_port).cloned())
                             } else {
                                 let state = self.state.lock();
                                 state
@@ -512,7 +530,7 @@ impl Engine {
                             let to_audio_io = if to_track == "hw:out" {
                                 self.oss_out
                                     .as_ref()
-                                    .and_then(|h| h.channels.get(to_port).cloned())
+                                    .and_then(|h| h.lock().channels.get(to_port).cloned())
                             } else {
                                 let state = self.state.lock();
                                 state
@@ -524,7 +542,7 @@ impl Engine {
                             if kind == Kind::Audio {
                                 match (from_audio_io, to_audio_io) {
                                     (Some(source), Some(target)) => {
-                                        if let Err(e) = source.disconnect(&target) {
+                                        if let Err(e) = crate::audio::io::AudioIO::disconnect(&source, &target) {
                                             self.notify_clients(Err(format!(
                                                 "Disconnect failed: {}",
                                                 e
@@ -566,7 +584,7 @@ impl Engine {
                                 Ok(d) => {
                                     let channels = d.channels.len();
                                     let rate = d.rate as usize;
-                                    self.oss_in = Some(d);
+                                    self.oss_in = Some(Arc::new(UnsafeMutex::new(d)));
                                     self.notify_clients(Ok(Action::HWInfo {
                                         channels,
                                         rate,
@@ -582,7 +600,7 @@ impl Engine {
                                 Ok(d) => {
                                     let channels = d.channels.len();
                                     let rate = d.rate as usize;
-                                    self.oss_out = Some(d);
+                                    self.oss_out = Some(Arc::new(UnsafeMutex::new(d)));
                                     self.notify_clients(Ok(Action::HWInfo {
                                         channels,
                                         rate,
@@ -594,6 +612,18 @@ impl Engine {
                                     self.notify_clients(Err(e.to_string())).await;
                                 }
                             }
+
+                            // Initialize single OSS worker with both devices
+                            if self.oss_worker.is_none() && self.oss_in.is_some() && self.oss_out.is_some() {
+                                let (tx, rx) = channel::<Message>(32);
+                                let oss_in = self.oss_in.clone().unwrap();
+                                let oss_out = self.oss_out.clone().unwrap();
+                                let handler = tokio::spawn(async move {
+                                    let worker = OssWorker::new(oss_in, oss_out, rx);
+                                    worker.work().await;
+                                });
+                                self.oss_worker = Some(WorkerData::new(tx, handler));
+                            }
                         }
                         Action::HWInfo { .. } => {}
                     }
@@ -604,3 +634,4 @@ impl Engine {
         }
     }
 }
+

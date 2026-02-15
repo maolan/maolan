@@ -6,6 +6,7 @@ pub mod kind;
 pub mod message;
 mod midi;
 pub mod mutex;
+mod oss_worker;
 pub mod state;
 mod track;
 pub mod worker;
