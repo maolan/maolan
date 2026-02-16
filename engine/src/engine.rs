@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     sync::Arc,
 };
 use tokio::sync::mpsc::{Receiver, Sender, channel};
@@ -39,7 +39,8 @@ pub struct Engine {
     oss_in: Option<Arc<UnsafeMutex<oss::Audio>>>,
     oss_out: Option<Arc<UnsafeMutex<oss::Audio>>>,
     oss_worker: Option<WorkerData>,
-    sorted_tracks: Vec<String>,
+    ready_workers: Vec<usize>,
+    pending_requests: VecDeque<Action>,
 }
 
 impl Engine {
@@ -53,7 +54,8 @@ impl Engine {
             oss_in: None,
             oss_out: None,
             oss_worker: None,
-            sorted_tracks: vec![],
+            ready_workers: vec![],
+            pending_requests: VecDeque::new(),
         }
     }
 
@@ -79,60 +81,17 @@ impl Engine {
         }
     }
 
-    pub fn sort_tracks(&mut self) {
-        let state = self.state.lock();
-        let mut adjacency_list: HashMap<String, Vec<String>> = HashMap::new();
-        let mut in_degree: HashMap<String, usize> = HashMap::new();
-
-        for name in state.tracks.keys() {
-            in_degree.insert(name.clone(), 0);
-            adjacency_list.insert(name.clone(), vec![]);
-        }
-
-        for (from_name, from_track_handle) in &state.tracks {
-            let from_track = from_track_handle.lock();
-            for out_port in &from_track.audio.outs {
-                let conns = out_port.connections.lock();
-                for connection in conns.iter() {
-                    for (to_name, to_track_handle) in &state.tracks {
-                        if from_name == to_name {
-                            continue;
-                        }
-                        let target_track = to_track_handle.lock();
-                        if target_track
-                            .audio
-                            .ins
-                            .iter()
-                            .any(|ins| Arc::ptr_eq(&ins.buffer, &connection.buffer))
-                        {
-                            adjacency_list
-                                .get_mut(from_name)
-                                .unwrap()
-                                .push(to_name.clone());
-                            *in_degree.get_mut(to_name).unwrap() += 1;
-                            break;
-                        }
-                    }
-                }
+    async fn send_tracks(&mut self) {
+        for track in self.state.lock().tracks.values() {
+            if self.ready_workers.is_empty() {
+                return;
             }
-        }
-
-        let mut queue: VecDeque<String> = in_degree
-            .iter()
-            .filter(|&(_, &degree)| degree == 0)
-            .map(|(name, _)| name.clone())
-            .collect();
-
-        self.sorted_tracks.clear();
-        while let Some(u) = queue.pop_front() {
-            self.sorted_tracks.push(u.clone());
-            if let Some(neighbors) = adjacency_list.get(&u) {
-                for v in neighbors {
-                    let degree = in_degree.get_mut(v).unwrap();
-                    *degree -= 1;
-                    if *degree == 0 {
-                        queue.push_back(v.clone());
-                    }
+            let t = track.lock();
+            if !t.audio.finished && t.audio.ready() {
+                let worker_index = self.ready_workers.remove(0);
+                let worker = &self.workers[worker_index];
+                if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
+                    self.notify_clients(Err(e.to_string())).await;
                 }
             }
         }
@@ -195,8 +154,420 @@ impl Engine {
         false
     }
 
+    async fn handle_request(&mut self, a: Action) {
+        match a {
+            Action::Play => {}
+            Action::Quit => {
+                if let Some(worker) = self.oss_worker.take() {
+                    worker
+                        .tx
+                        .send(Message::Request(a.clone()))
+                        .await
+                        .expect("Failed sending quit message to OSS worker");
+                    worker
+                        .handle
+                        .await
+                        .expect("Failed waiting for OSS worker to quit");
+                }
+
+                // Then shut down regular workers
+                while !self.workers.is_empty() {
+                    let worker = self.workers.remove(0);
+                    worker
+                        .tx
+                        .send(Message::Request(a.clone()))
+                        .await
+                        .expect("Failed sending quit message to worker");
+                    worker
+                        .handle
+                        .await
+                        .expect("Failed waiting for worker to quit");
+                }
+            }
+            Action::AddTrack {
+                ref name,
+                audio_ins,
+                midi_ins,
+                audio_outs,
+                midi_outs,
+            } => {
+                let tracks = &mut self.state.lock().tracks;
+                if tracks.contains_key(name) {
+                    self.notify_clients(Err(format!("Track {} already exists", name)))
+                        .await;
+                    return;
+                }
+                match &self.oss_out {
+                    Some(oss) => {
+                        let chsamples = oss.lock().chsamples;
+                        tracks.insert(
+                            name.clone(),
+                            Arc::new(UnsafeMutex::new(Box::new(Track::new(
+                                name.clone(),
+                                audio_ins,
+                                audio_outs,
+                                midi_ins,
+                                midi_outs,
+                                chsamples,
+                            )))),
+                        );
+                    }
+                    None => {
+                        self.notify_clients(Err(
+                            "Engine needs to open audio device before adding audio track"
+                                .to_string(),
+                        ))
+                        .await;
+                    }
+                }
+            }
+            Action::RemoveTrack(ref name) => {
+                self.state.lock().tracks.remove(name);
+            }
+            Action::TrackLevel(ref name, level) => {
+                if let Some(track) = self.state.lock().tracks.get(name) {
+                    track.lock().set_level(level);
+                }
+            }
+            Action::TrackToggleArm(ref name) => {
+                if let Some(track) = self.state.lock().tracks.get(name) {
+                    track.lock().arm();
+                }
+            }
+            Action::TrackToggleMute(ref name) => {
+                if let Some(track) = self.state.lock().tracks.get(name) {
+                    track.lock().mute();
+                }
+            }
+            Action::TrackToggleSolo(ref name) => {
+                if let Some(track) = self.state.lock().tracks.get(name) {
+                    track.lock().solo();
+                }
+            }
+            Action::ClipMove {
+                ref kind,
+                ref from,
+                ref to,
+                copy,
+            } => {
+                if let Some(from_track_handle) = self.state.lock().tracks.get(&from.track_name)
+                    && let Some(to_track_handle) = self.state.lock().tracks.get(&to.track_name)
+                {
+                    let from_track = from_track_handle.lock();
+                    let to_track = to_track_handle.lock();
+                    match kind {
+                        Kind::Audio => {
+                            if from.clip_index >= from_track.audio.clips.len() {
+                                self.notify_clients(Err(format!(
+                                    "Clip index {} is too high, as track {} has only {} clips!",
+                                    from.clip_index,
+                                    from_track.name.clone(),
+                                    from_track.audio.clips.len(),
+                                )))
+                                .await;
+                                return;
+                            }
+                            let clip_copy = from_track.audio.clips[from.clip_index].clone();
+                            if !copy {
+                                from_track.audio.clips.remove(from.clip_index);
+                            }
+                            to_track.audio.clips.push(clip_copy);
+                        }
+                        Kind::MIDI => {
+                            if from.clip_index >= from_track.midi.clips.len() {
+                                self.notify_clients(Err(format!(
+                                    "Clip index {} is too high, as track {} has only {} clips!",
+                                    from.clip_index,
+                                    from_track.name.clone(),
+                                    from_track.midi.clips.len(),
+                                )))
+                                .await;
+                                return;
+                            }
+                            let clip_copy = from_track.midi.clips[from.clip_index].clone();
+                            if !copy {
+                                from_track.midi.clips.remove(from.clip_index);
+                            }
+                            to_track.midi.clips.push(clip_copy);
+                        }
+                    }
+                }
+            }
+            Action::AddClip {
+                ref name,
+                ref track_name,
+                start,
+                length,
+                kind,
+            } => {
+                if let Some(track) = self.state.lock().tracks.get(track_name) {
+                    match kind {
+                        Kind::Audio => {
+                            let clip = AudioClip::new(name.clone(), start, length);
+                            track.lock().audio.clips.push(clip);
+                        }
+                        Kind::MIDI => {
+                            let clip = MIDIClip::new(name.clone(), start, length);
+                            track.lock().midi.clips.push(clip);
+                        }
+                    }
+                }
+            }
+            Action::RemoveClip(index, ref track_name, kind) => {
+                if let Some(track) = self.state.lock().tracks.get(track_name) {
+                    match kind {
+                        Kind::Audio => {
+                            if index >= track.lock().audio.clips.len() {
+                                self.notify_clients(Err(format!(
+                                    "Clip index {} is too high, as track {} has only {} clips!",
+                                    index,
+                                    track.lock().name.clone(),
+                                    track.lock().audio.clips.len(),
+                                )))
+                                .await;
+                                return;
+                            }
+                            track.lock().audio.clips.remove(index);
+                        }
+                        Kind::MIDI => {
+                            if index >= track.lock().midi.clips.len() {
+                                self.notify_clients(Err(format!(
+                                    "Clip index {} is too high, as track {} has only {} clips!",
+                                    index,
+                                    track.lock().name.clone(),
+                                    track.lock().midi.clips.len(),
+                                )))
+                                .await;
+                                return;
+                            }
+                            track.lock().midi.clips.remove(index);
+                        }
+                    }
+                }
+            }
+            Action::Connect {
+                ref from_track,
+                from_port,
+                ref to_track,
+                to_port,
+                kind,
+            } => {
+                let from_audio_io = if from_track == "hw:in" {
+                    self.oss_in
+                        .as_ref()
+                        .and_then(|h| h.lock().channels.get(from_port).cloned())
+                } else {
+                    self.state
+                        .lock()
+                        .tracks
+                        .get(from_track)
+                        .and_then(|t| t.lock().audio.outs.get(from_port).cloned())
+                };
+                let to_audio_io = if to_track == "hw:out" {
+                    self.oss_out
+                        .as_ref()
+                        .and_then(|h| h.lock().channels.get(to_port).cloned())
+                } else {
+                    self.state
+                        .lock()
+                        .tracks
+                        .get(to_track)
+                        .and_then(|t| t.lock().audio.ins.get(to_port).cloned())
+                };
+                if from_audio_io.is_none() {
+                    self.notify_clients(Err(format!("Source track '{}' not found", from_track)))
+                        .await;
+                    return;
+                }
+
+                if to_audio_io.is_none() {
+                    self.notify_clients(Err(format!("Destination track '{}' not found", to_track)))
+                        .await;
+                    return;
+                }
+
+                match kind {
+                    Kind::Audio => match (from_audio_io, to_audio_io) {
+                        (Some(source), Some(target)) => {
+                            if from_track != "hw:in"
+                                && to_track != "hw:out"
+                                && self.check_if_leads_to(to_track, from_track)
+                            {
+                                self.notify_clients(Err("Circular routing is not allowed!".into()))
+                                    .await;
+                                return;
+                            }
+                            crate::audio::io::AudioIO::connect(&source, &target);
+                        }
+                        _ => {
+                            self.notify_clients(Err(format!(
+                                "Connection failed: {}[{}] -> {}[{}] not found",
+                                from_track, from_port, to_track, to_port
+                            )))
+                            .await;
+                        }
+                    },
+                    Kind::MIDI => {
+                        if from_track == "hw:in" || to_track == "hw:out" {
+                            self.notify_clients(Err(
+                                "Hardware MIDI connections are not supported!".into(),
+                            ))
+                            .await;
+                            return;
+                        }
+
+                        let state = self.state.lock();
+                        let from_track_handle = state.tracks.get(from_track);
+                        let to_track_handle = state.tracks.get(to_track);
+
+                        match (from_track_handle, to_track_handle) {
+                            (Some(f_t), Some(t_t)) => {
+                                let to_in_res = t_t.lock().midi.ins.get(to_port).cloned();
+                                if let Some(to_in) = to_in_res {
+                                    if let Err(e) = f_t.lock().midi.connect_out(from_port, to_in) {
+                                        self.notify_clients(Err(e)).await;
+                                    }
+                                } else {
+                                    self.notify_clients(Err(format!(
+                                        "MIDI input port {} not found on track '{}',",
+                                        to_port, to_track
+                                    )))
+                                    .await;
+                                }
+                            }
+                            _ => {
+                                self.notify_clients(Err(format!(
+                                    "MIDI tracks not found: {} or {}",
+                                    from_track, to_track
+                                )))
+                                .await;
+                            }
+                        }
+                    }
+                };
+            }
+            Action::Disconnect {
+                ref from_track,
+                from_port,
+                ref to_track,
+                to_port,
+                kind,
+            } => {
+                let from_audio_io = if from_track == "hw:in" {
+                    self.oss_in
+                        .as_ref()
+                        .and_then(|h| h.lock().channels.get(from_port).cloned())
+                } else {
+                    let state = self.state.lock();
+                    state
+                        .tracks
+                        .get(from_track)
+                        .and_then(|t| t.lock().audio.outs.get(from_port).cloned())
+                };
+                let to_audio_io = if to_track == "hw:out" {
+                    self.oss_out
+                        .as_ref()
+                        .and_then(|h| h.lock().channels.get(to_port).cloned())
+                } else {
+                    let state = self.state.lock();
+                    state
+                        .tracks
+                        .get(to_track)
+                        .and_then(|t| t.lock().audio.ins.get(to_port).cloned())
+                };
+
+                if kind == Kind::Audio {
+                    match (from_audio_io, to_audio_io) {
+                        (Some(source), Some(target)) => {
+                            if let Err(e) = crate::audio::io::AudioIO::disconnect(&source, &target)
+                            {
+                                self.notify_clients(Err(format!("Disconnect failed: {}", e)))
+                                    .await;
+                                return;
+                            }
+                        }
+                        _ => {
+                            self.notify_clients(Err(format!(
+                                "Disconnect failed: Port not found ({} -> {})",
+                                from_track, to_track
+                            )))
+                            .await;
+                        }
+                    }
+                } else if kind == Kind::MIDI && from_track != "hw:in" && to_track != "hw:out" {
+                    let state = self.state.lock();
+                    if let (Some(f_t), Some(t_t)) =
+                        (state.tracks.get(from_track), state.tracks.get(to_track))
+                        && let Some(to_in) = t_t.lock().midi.ins.get(to_port).cloned()
+                    {
+                        if let Err(e) = f_t.lock().midi.disconnect_out(from_port, &to_in) {
+                            self.notify_clients(Err(e)).await;
+                        } else {
+                            self.notify_clients(Ok(a.clone())).await;
+                        }
+                    }
+                }
+            }
+
+            Action::OpenAudioDevice(ref device) => {
+                match oss::Audio::new(device, 48000, 32, true) {
+                    Ok(d) => {
+                        let channels = d.channels.len();
+                        let rate = d.rate as usize;
+                        self.oss_in = Some(Arc::new(UnsafeMutex::new(d)));
+                        self.notify_clients(Ok(Action::HWInfo {
+                            channels,
+                            rate,
+                            input: true,
+                        }))
+                        .await;
+                    }
+                    Err(e) => {
+                        self.notify_clients(Err(e.to_string())).await;
+                    }
+                }
+                match oss::Audio::new(device, 48000, 32, false) {
+                    Ok(d) => {
+                        let channels = d.channels.len();
+                        let rate = d.rate as usize;
+                        self.oss_out = Some(Arc::new(UnsafeMutex::new(d)));
+                        self.notify_clients(Ok(Action::HWInfo {
+                            channels,
+                            rate,
+                            input: false,
+                        }))
+                        .await;
+                    }
+                    Err(e) => {
+                        self.notify_clients(Err(e.to_string())).await;
+                    }
+                }
+
+                if self.oss_worker.is_none() && self.oss_in.is_some() && self.oss_out.is_some() {
+                    let (tx, rx) = channel::<Message>(32);
+                    let oss_in = self.oss_in.clone().unwrap();
+                    let oss_out = self.oss_out.clone().unwrap();
+                    let tx_engine = self.tx.clone();
+                    let handler = tokio::spawn(async move {
+                        let worker = OssWorker::new(oss_in, oss_out, rx, tx_engine);
+                        worker.work().await;
+                    });
+                    self.oss_worker = Some(WorkerData::new(tx, handler));
+                    if let Some(worker) = &self.oss_worker
+                        && let Err(e) = worker.tx.send(Message::TracksFinished).await
+                    {
+                        eprintln!("Error sending initial TracksFinished {e}");
+                    }
+                }
+            }
+            Action::HWInfo { .. } => {}
+        }
+        self.notify_clients(Ok(a.clone())).await;
+    }
+
     pub async fn work(&mut self) {
         let mut ready_workers: Vec<usize> = vec![];
+        let mut pending_requests: VecDeque<Action> = VecDeque::new();
         while let Some(message) = self.rx.recv().await {
             match message {
                 Message::Ready(id) => {
@@ -207,431 +578,29 @@ impl Engine {
                     self.clients.push(s);
                 }
 
-                Message::Request(a) => {
-                    match a {
-                        Action::Play => {}
-                        Action::Quit => {
-                            // Shut down OSS worker first
-                            if let Some(worker) = self.oss_worker.take() {
-                                worker
-                                    .tx
-                                    .send(Message::Request(a.clone()))
-                                    .await
-                                    .expect("Failed sending quit message to OSS worker");
-                                worker
-                                    .handle
-                                    .await
-                                    .expect("Failed waiting for OSS worker to quit");
-                            }
-
-                            // Then shut down regular workers
-                            while !self.workers.is_empty() {
-                                let worker = self.workers.remove(0);
-                                worker
-                                    .tx
-                                    .send(Message::Request(a.clone()))
-                                    .await
-                                    .expect("Failed sending quit message to worker");
-                                worker
-                                    .handle
-                                    .await
-                                    .expect("Failed waiting for worker to quit");
-                            }
-                        }
-                        Action::AddTrack {
-                            ref name,
-                            audio_ins,
-                            midi_ins,
-                            audio_outs,
-                            midi_outs,
-                        } => {
-                            let tracks = &mut self.state.lock().tracks;
-                            if tracks.contains_key(name) {
-                                self.notify_clients(Err(format!("Track {} already exists", name)))
-                                    .await;
-                                return;
-                            }
-                            match &self.oss_out {
-                                Some(oss) => {
-                                    let chsamples = oss.lock().chsamples;
-                                    tracks.insert(
-                                        name.clone(),
-                                        Arc::new(UnsafeMutex::new(Box::new(Track::new(
-                                            name.clone(),
-                                            audio_ins,
-                                            audio_outs,
-                                            midi_ins,
-                                            midi_outs,
-                                            chsamples,
-                                        )))),
-                                    );
-                                }
-                                None => {
-                                    self.notify_clients(
-                                        Err("Engine needs to open audio device before adding audio track".to_string())
-                                    ).await;
-                                }
-                            }
-                        }
-                        Action::RemoveTrack(ref name) => {
-                            self.state.lock().tracks.remove(name);
-                        }
-                        Action::TrackLevel(ref name, level) => {
-                            if let Some(track) = self.state.lock().tracks.get(name) {
-                                track.lock().set_level(level);
-                            }
-                        }
-                        Action::TrackToggleArm(ref name) => {
-                            if let Some(track) = self.state.lock().tracks.get(name) {
-                                track.lock().arm();
-                            }
-                        }
-                        Action::TrackToggleMute(ref name) => {
-                            if let Some(track) = self.state.lock().tracks.get(name) {
-                                track.lock().mute();
-                            }
-                        }
-                        Action::TrackToggleSolo(ref name) => {
-                            if let Some(track) = self.state.lock().tracks.get(name) {
-                                track.lock().solo();
-                            }
-                        }
-                        Action::ClipMove {
-                            ref kind,
-                            ref from,
-                            ref to,
-                            copy,
-                        } => {
-                            if let Some(from_track_handle) =
-                                self.state.lock().tracks.get(&from.track_name)
-                                && let Some(to_track_handle) =
-                                    self.state.lock().tracks.get(&to.track_name)
-                            {
-                                let from_track = from_track_handle.lock();
-                                let to_track = to_track_handle.lock();
-                                match kind {
-                                    Kind::Audio => {
-                                        if from.clip_index >= from_track.audio.clips.len() {
-                                            self.notify_clients(Err(format!(
-                                                "Clip index {} is too high, as track {} has only {} clips!",
-                                                from.clip_index,
-                                                from_track.name.clone(),
-                                                from_track.audio.clips.len(),
-                                            ))).await;
-                                            return;
-                                        }
-                                        let clip_copy =
-                                            from_track.audio.clips[from.clip_index].clone();
-                                        if !copy {
-                                            from_track.audio.clips.remove(from.clip_index);
-                                        }
-                                        to_track.audio.clips.push(clip_copy);
-                                    }
-                                    Kind::MIDI => {
-                                        if from.clip_index >= from_track.midi.clips.len() {
-                                            self.notify_clients(Err(format!(
-                                                "Clip index {} is too high, as track {} has only {} clips!",
-                                                from.clip_index,
-                                                from_track.name.clone(),
-                                                from_track.midi.clips.len(),
-                                            ))).await;
-                                            return;
-                                        }
-                                        let clip_copy =
-                                            from_track.midi.clips[from.clip_index].clone();
-                                        if !copy {
-                                            from_track.midi.clips.remove(from.clip_index);
-                                        }
-                                        to_track.midi.clips.push(clip_copy);
-                                    }
-                                }
-                            }
-                        }
-                        Action::AddClip {
-                            ref name,
-                            ref track_name,
-                            start,
-                            length,
-                            kind,
-                        } => {
-                            if let Some(track) = self.state.lock().tracks.get(track_name) {
-                                match kind {
-                                    Kind::Audio => {
-                                        let clip = AudioClip::new(name.clone(), start, length);
-                                        track.lock().audio.clips.push(clip);
-                                    }
-                                    Kind::MIDI => {
-                                        let clip = MIDIClip::new(name.clone(), start, length);
-                                        track.lock().midi.clips.push(clip);
-                                    }
-                                }
-                            }
-                        }
-                        Action::RemoveClip(index, ref track_name, kind) => {
-                            if let Some(track) = self.state.lock().tracks.get(track_name) {
-                                match kind {
-                                    Kind::Audio => {
-                                        if index >= track.lock().audio.clips.len() {
-                                            self.notify_clients(Err(format!(
-                                                "Clip index {} is too high, as track {} has only {} clips!",
-                                                index,
-                                                track.lock().name.clone(),
-                                                track.lock().audio.clips.len(),
-                                            ))).await;
-                                            return;
-                                        }
-                                        track.lock().audio.clips.remove(index);
-                                    }
-                                    Kind::MIDI => {
-                                        if index >= track.lock().midi.clips.len() {
-                                            self.notify_clients(Err(format!(
-                                                "Clip index {} is too high, as track {} has only {} clips!",
-                                                index,
-                                                track.lock().name.clone(),
-                                                track.lock().midi.clips.len(),
-                                            ))).await;
-                                            return;
-                                        }
-                                        track.lock().midi.clips.remove(index);
-                                    }
-                                }
-                            }
-                        }
-                        Action::Connect {
-                            ref from_track,
-                            from_port,
-                            ref to_track,
-                            to_port,
-                            kind,
-                        } => {
-                            let from_audio_io = if from_track == "hw:in" {
-                                self.oss_in
-                                    .as_ref()
-                                    .and_then(|h| h.lock().channels.get(from_port).cloned())
-                            } else {
-                                self.state
-                                    .lock()
-                                    .tracks
-                                    .get(from_track)
-                                    .and_then(|t| t.lock().audio.outs.get(from_port).cloned())
-                            };
-                            let to_audio_io = if to_track == "hw:out" {
-                                self.oss_out
-                                    .as_ref()
-                                    .and_then(|h| h.lock().channels.get(to_port).cloned())
-                            } else {
-                                self.state
-                                    .lock()
-                                    .tracks
-                                    .get(to_track)
-                                    .and_then(|t| t.lock().audio.ins.get(to_port).cloned())
-                            };
-                            if from_audio_io.is_none() {
-                                self.notify_clients(Err(format!(
-                                    "Source track '{}' not found",
-                                    from_track
-                                )))
-                                .await;
-                                return;
-                            }
-
-                            if to_audio_io.is_none() {
-                                self.notify_clients(Err(format!(
-                                    "Destination track '{}' not found",
-                                    to_track
-                                )))
-                                .await;
-                                return;
-                            }
-
-                            match kind {
-                                Kind::Audio => match (from_audio_io, to_audio_io) {
-                                    (Some(source), Some(target)) => {
-                                        if from_track != "hw:in"
-                                            && to_track != "hw:out"
-                                            && self.check_if_leads_to(to_track, from_track)
-                                        {
-                                            self.notify_clients(Err(
-                                                "Circular routing is not allowed!".into(),
-                                            ))
-                                            .await;
-                                            return;
-                                        }
-                                        crate::audio::io::AudioIO::connect(&source, &target);
-                                    }
-                                    _ => {
-                                        self.notify_clients(Err(format!(
-                                            "Connection failed: {}[{}] -> {}[{}] not found",
-                                            from_track, from_port, to_track, to_port
-                                        )))
-                                        .await;
-                                    }
-                                },
-                                Kind::MIDI => {
-                                    if from_track == "hw:in" || to_track == "hw:out" {
-                                        self.notify_clients(Err(
-                                            "Hardware MIDI connections are not supported!".into(),
-                                        ))
-                                        .await;
-                                        return;
-                                    }
-
-                                    let state = self.state.lock();
-                                    let from_track_handle = state.tracks.get(from_track);
-                                    let to_track_handle = state.tracks.get(to_track);
-
-                                    match (from_track_handle, to_track_handle) {
-                                        (Some(f_t), Some(t_t)) => {
-                                            let to_in_res =
-                                                t_t.lock().midi.ins.get(to_port).cloned();
-                                            if let Some(to_in) = to_in_res {
-                                                if let Err(e) =
-                                                    f_t.lock().midi.connect_out(from_port, to_in)
-                                                {
-                                                    self.notify_clients(Err(e)).await;
-                                                }
-                                            } else {
-                                                self.notify_clients(Err(format!(
-                                                    "MIDI input port {} not found on track '{}'",
-                                                    to_port, to_track
-                                                )))
-                                                .await;
-                                            }
-                                        }
-                                        _ => {
-                                            self.notify_clients(Err(format!(
-                                                "MIDI tracks not found: {} or {}",
-                                                from_track, to_track
-                                            )))
-                                            .await;
-                                        }
-                                    }
-                                }
-                            };
-                        }
-                        Action::Disconnect {
-                            ref from_track,
-                            from_port,
-                            ref to_track,
-                            to_port,
-                            kind,
-                        } => {
-                            let from_audio_io = if from_track == "hw:in" {
-                                self.oss_in
-                                    .as_ref()
-                                    .and_then(|h| h.lock().channels.get(from_port).cloned())
-                            } else {
-                                let state = self.state.lock();
-                                state
-                                    .tracks
-                                    .get(from_track)
-                                    .and_then(|t| t.lock().audio.outs.get(from_port).cloned())
-                            };
-                            let to_audio_io = if to_track == "hw:out" {
-                                self.oss_out
-                                    .as_ref()
-                                    .and_then(|h| h.lock().channels.get(to_port).cloned())
-                            } else {
-                                let state = self.state.lock();
-                                state
-                                    .tracks
-                                    .get(to_track)
-                                    .and_then(|t| t.lock().audio.ins.get(to_port).cloned())
-                            };
-
-                            if kind == Kind::Audio {
-                                match (from_audio_io, to_audio_io) {
-                                    (Some(source), Some(target)) => {
-                                        if let Err(e) = crate::audio::io::AudioIO::disconnect(&source, &target) {
-                                            self.notify_clients(Err(format!(
-                                                "Disconnect failed: {}",
-                                                e
-                                            )))
-                                            .await;
-                                            return;
-                                        }
-                                    }
-                                    _ => {
-                                        self.notify_clients(Err(format!(
-                                            "Disconnect failed: Port not found ({} -> {})",
-                                            from_track, to_track
-                                        )))
-                                        .await;
-                                    }
-                                }
-                            } else if kind == Kind::MIDI
-                                && from_track != "hw:in"
-                                && to_track != "hw:out"
-                            {
-                                let state = self.state.lock();
-                                if let (Some(f_t), Some(t_t)) =
-                                    (state.tracks.get(from_track), state.tracks.get(to_track))
-                                    && let Some(to_in) = t_t.lock().midi.ins.get(to_port).cloned()
-                                {
-                                    if let Err(e) =
-                                        f_t.lock().midi.disconnect_out(from_port, &to_in)
-                                    {
-                                        self.notify_clients(Err(e)).await;
-                                    } else {
-                                        self.notify_clients(Ok(a.clone())).await;
-                                    }
-                                }
-                            }
-                        }
-
-                        Action::OpenAudioDevice(ref device) => {
-                            match oss::Audio::new(device, 48000, 32, true) {
-                                Ok(d) => {
-                                    let channels = d.channels.len();
-                                    let rate = d.rate as usize;
-                                    self.oss_in = Some(Arc::new(UnsafeMutex::new(d)));
-                                    self.notify_clients(Ok(Action::HWInfo {
-                                        channels,
-                                        rate,
-                                        input: true,
-                                    }))
-                                    .await;
-                                }
-                                Err(e) => {
-                                    self.notify_clients(Err(e.to_string())).await;
-                                }
-                            }
-                            match oss::Audio::new(device, 48000, 32, false) {
-                                Ok(d) => {
-                                    let channels = d.channels.len();
-                                    let rate = d.rate as usize;
-                                    self.oss_out = Some(Arc::new(UnsafeMutex::new(d)));
-                                    self.notify_clients(Ok(Action::HWInfo {
-                                        channels,
-                                        rate,
-                                        input: false,
-                                    }))
-                                    .await;
-                                }
-                                Err(e) => {
-                                    self.notify_clients(Err(e.to_string())).await;
-                                }
-                            }
-
-                            // Initialize single OSS worker with both devices
-                            if self.oss_worker.is_none() && self.oss_in.is_some() && self.oss_out.is_some() {
-                                let (tx, rx) = channel::<Message>(32);
-                                let oss_in = self.oss_in.clone().unwrap();
-                                let oss_out = self.oss_out.clone().unwrap();
-                                let handler = tokio::spawn(async move {
-                                    let worker = OssWorker::new(oss_in, oss_out, rx);
-                                    worker.work().await;
-                                });
-                                self.oss_worker = Some(WorkerData::new(tx, handler));
-                            }
-                        }
-                        Action::HWInfo { .. } => {}
+                Message::Request(a) => match a {
+                    Action::OpenAudioDevice(_) | Action::Quit => {
+                        self.handle_request(a).await;
                     }
-                    self.notify_clients(Ok(a.clone())).await;
+                    _ => {
+                        pending_requests.push_back(a);
+                    }
+                },
+                Message::HWFinished => {
+                    while let Some(a) = pending_requests.pop_front() {
+                        self.handle_request(a).await;
+                    }
+                    for track in self.state.lock().tracks.values() {
+                        track.lock().process();
+                    }
+                    if let Some(worker) = &self.oss_worker
+                        && let Err(e) = worker.tx.send(Message::TracksFinished).await
+                    {
+                        eprintln!("Error sending TracksFinished {e}");
+                    }
                 }
                 _ => {}
             }
         }
     }
 }
-

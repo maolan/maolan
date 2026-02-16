@@ -1,6 +1,6 @@
 use crate::{
-    connections, hw, menu,
-    message::{DraggedClip, Message},
+    add_track, connections, hw, menu,
+    message::{DraggedClip, Message, Show},
     state::{
         ConnectionViewSelection, HW, HW_IN_ID, HW_OUT_ID, Resizing, State, StateData, Track, View,
     },
@@ -39,6 +39,8 @@ pub struct Maolan {
     workspace: workspace::Workspace,
     connections: connections::Connections,
     hw: hw::HW,
+    modal: Option<Show>,
+    add_track: add_track::AddTrackView,
 }
 
 impl Default for Maolan {
@@ -49,11 +51,13 @@ impl Default for Maolan {
             menu: menu::Menu::default(),
             size: Size::new(0.0, 0.0),
             state: state.clone(),
-            toolbar: toolbar::Toolbar::new(state.clone()),
+            toolbar: toolbar::Toolbar::new(),
             track: None,
             workspace: workspace::Workspace::new(state.clone()),
             connections: connections::Connections::new(state.clone()),
             hw: hw::HW::new(state.clone()),
+            modal: None,
+            add_track: add_track::AddTrackView::default(),
         }
     }
 }
@@ -251,6 +255,7 @@ impl Maolan {
         self.toolbar.update(message.clone());
         self.workspace.update(message.clone());
         self.connections.update(message.clone());
+        self.add_track.update(message.clone());
         for track in &mut self.state.blocking_write().tracks {
             track.update(message.clone());
         }
@@ -293,9 +298,12 @@ impl Maolan {
                             Message::OpenFolderSelected,
                         );
                     }
-                    Show::AddTrack => {}
+                    Show::AddTrack => {
+                        self.modal = Some(Show::AddTrack);
+                    }
                 }
             }
+            Message::Cancel => self.modal = None,
             Message::Request(ref a) => return self.send(a.clone()),
             Message::SendMessageFinished(ref result) => match result {
                 Ok(_) => debug!("Sent successfully!"),
@@ -332,6 +340,7 @@ impl Maolan {
                     {
                         track.height = height;
                     }
+                    self.modal = None;
                 }
                 Action::RemoveTrack(name) => {
                     let mut state = self.state.blocking_write();
@@ -1000,17 +1009,22 @@ impl Maolan {
     pub fn view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         if state.hw_loaded {
-            let view = match state.view {
-                View::Workspace => self.workspace.view(),
-                View::Connections => self.connections.view(),
-            };
-            column![
-                self.menu.view(),
-                self.toolbar.view(),
-                view,
-                text(format!("Last message: {}", state.message))
-            ]
-            .into()
+            match self.modal {
+                Some(Show::AddTrack) => self.add_track.view(),
+                _ => {
+                    let view = match state.view {
+                        View::Workspace => self.workspace.view(),
+                        View::Connections => self.connections.view(),
+                    };
+                    column![
+                        self.menu.view(),
+                        self.toolbar.view(),
+                        view,
+                        text(format!("Last message: {}", state.message))
+                    ]
+                    .into()
+                }
+            }
         } else {
             column![
                 self.hw.view(),

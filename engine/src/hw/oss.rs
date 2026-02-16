@@ -41,100 +41,6 @@ pub const AFMT_S32_NE: u32 = AFMT_S32_LE;
 pub const PCM_ENABLE_INPUT: i32 = 0x00000001;
 pub const PCM_ENABLE_OUTPUT: i32 = 0x00000002;
 
-#[repr(C)]
-#[derive(Debug)]
-pub struct AudioInfo {
-    pub dev: libc::c_int,
-    pub name: [libc::c_char; 64],
-    pub busy: libc::c_int,
-    pub pid: libc::c_int,
-    pub caps: libc::c_int,
-    pub iformats: libc::c_int,
-    pub oformats: libc::c_int,
-    pub magic: libc::c_int,
-    pub cmd: [libc::c_char; 64],
-    pub card_number: libc::c_int,
-    pub port_number: libc::c_int,
-    pub mixer_dev: libc::c_int,
-    pub legacy_device: libc::c_int,
-    pub enabled: libc::c_int,
-    pub flags: libc::c_int,
-    pub min_rate: libc::c_int,
-    pub max_rate: libc::c_int,
-    pub min_channels: libc::c_int,
-    pub max_channels: libc::c_int,
-    pub binding: libc::c_int,
-    pub rate_source: libc::c_int,
-    pub handle: [libc::c_char; 32],
-    pub nrates: libc::c_uint,
-    pub rates: [libc::c_uint; 20],
-    pub song_name: [libc::c_char; 64],
-    pub label: [libc::c_char; 16],
-    pub latency: libc::c_int,
-    pub devnode: [libc::c_char; 32],
-    pub next_play_engine: libc::c_int,
-    pub next_rec_engine: libc::c_int,
-    pub filler: [libc::c_int; 184],
-}
-
-impl AudioInfo {
-    pub fn new() -> Self {
-        Self {
-            dev: 0,
-            name: [0; 64],
-            busy: 0,
-            pid: 0,
-            caps: 0,
-            iformats: 0,
-            oformats: 0,
-            magic: 0,
-            cmd: [0; 64],
-            card_number: 0,
-            port_number: 0,
-            mixer_dev: 0,
-            legacy_device: 0,
-            enabled: 0,
-            flags: 0,
-            min_rate: 0,
-            max_rate: 0,
-            min_channels: 0,
-            max_channels: 0,
-            binding: 0,
-            rate_source: 0,
-            handle: [0; 32],
-            nrates: 0,
-            rates: [0; 20],
-            song_name: [0; 64],
-            label: [0; 16],
-            latency: 0,
-            devnode: [0; 32],
-            next_play_engine: 0,
-            next_rec_engine: 0,
-            filler: [0; 184],
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Debug)]
-pub struct BufferInfo {
-    pub fragments: libc::c_int,
-    pub fragstotal: libc::c_int,
-    pub fragsize: libc::c_int,
-    pub bytes: libc::c_int,
-}
-
-impl BufferInfo {
-    pub fn new() -> BufferInfo {
-        BufferInfo {
-            fragments: 0,
-            fragstotal: 0,
-            fragsize: 0,
-            bytes: 0,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Audio {
     dsp: File,
@@ -281,6 +187,7 @@ impl Audio {
             let data_i32 = self.buffer.as_mut();
 
             for (ch_idx, io_port) in self.channels.iter().enumerate() {
+                io_port.process();
                 let channel_buf_lock = io_port.buffer.lock();
                 let channel_samples = channel_buf_lock.as_ref();
 
@@ -293,6 +200,99 @@ impl Audio {
     }
 }
 
+#[repr(C)]
+#[derive(Debug)]
+pub struct AudioInfo {
+    pub dev: libc::c_int,
+    pub name: [libc::c_char; 64],
+    pub busy: libc::c_int,
+    pub pid: libc::c_int,
+    pub caps: libc::c_int,
+    pub iformats: libc::c_int,
+    pub oformats: libc::c_int,
+    pub magic: libc::c_int,
+    pub cmd: [libc::c_char; 64],
+    pub card_number: libc::c_int,
+    pub port_number: libc::c_int,
+    pub mixer_dev: libc::c_int,
+    pub legacy_device: libc::c_int,
+    pub enabled: libc::c_int,
+    pub flags: libc::c_int,
+    pub min_rate: libc::c_int,
+    pub max_rate: libc::c_int,
+    pub min_channels: libc::c_int,
+    pub max_channels: libc::c_int,
+    pub binding: libc::c_int,
+    pub rate_source: libc::c_int,
+    pub handle: [libc::c_char; 32],
+    pub nrates: libc::c_uint,
+    pub rates: [libc::c_uint; 20],
+    pub song_name: [libc::c_char; 64],
+    pub label: [libc::c_char; 16],
+    pub latency: libc::c_int,
+    pub devnode: [libc::c_char; 32],
+    pub next_play_engine: libc::c_int,
+    pub next_rec_engine: libc::c_int,
+    pub filler: [libc::c_int; 184],
+}
+
+impl AudioInfo {
+    pub fn new() -> Self {
+        Self {
+            dev: 0,
+            name: [0; 64],
+            busy: 0,
+            pid: 0,
+            caps: 0,
+            iformats: 0,
+            oformats: 0,
+            magic: 0,
+            cmd: [0; 64],
+            card_number: 0,
+            port_number: 0,
+            mixer_dev: 0,
+            legacy_device: 0,
+            enabled: 0,
+            flags: 0,
+            min_rate: 0,
+            max_rate: 0,
+            min_channels: 0,
+            max_channels: 0,
+            binding: 0,
+            rate_source: 0,
+            handle: [0; 32],
+            nrates: 0,
+            rates: [0; 20],
+            song_name: [0; 64],
+            label: [0; 16],
+            latency: 0,
+            devnode: [0; 32],
+            next_play_engine: 0,
+            next_rec_engine: 0,
+            filler: [0; 184],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct BufferInfo {
+    pub fragments: libc::c_int,
+    pub fragstotal: libc::c_int,
+    pub fragsize: libc::c_int,
+    pub bytes: libc::c_int,
+}
+
+impl BufferInfo {
+    pub fn new() -> BufferInfo {
+        BufferInfo {
+            fragments: 0,
+            fragstotal: 0,
+            fragsize: 0,
+            bytes: 0,
+        }
+    }
+}
 #[repr(C)]
 struct OssSyncGroup {
     pub id: libc::c_int,

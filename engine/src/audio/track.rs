@@ -1,11 +1,12 @@
 use super::{clip::AudioClip, io::AudioIO};
 use std::sync::Arc;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AudioTrack {
     pub clips: Vec<AudioClip>,
     pub ins: Vec<Arc<AudioIO>>,
     pub outs: Vec<Arc<AudioIO>>,
+    pub finished: bool,
 }
 
 impl AudioTrack {
@@ -14,6 +15,7 @@ impl AudioTrack {
             clips: vec![],
             ins: Vec::with_capacity(ins_count),
             outs: Vec::with_capacity(outs_count),
+            finished: false,
         };
         for _ in 0..ins_count {
             ret.ins.push(Arc::new(AudioIO::new(buffer_size)));
@@ -58,7 +60,7 @@ impl AudioTrack {
         }
     }
 
-    pub fn process(&self) {
+    pub fn process(&mut self) {
         for audio_in in &self.ins {
             audio_in.process();
         }
@@ -67,6 +69,27 @@ impl AudioTrack {
             let out_samples = audio_out.buffer.lock();
 
             out_samples.copy_from_slice(in_samples);
+            *audio_out.finished.lock() = true;
         }
+        self.finished = true;
+    }
+
+    pub fn setup(&mut self) {
+        self.finished = false;
+        for input in &self.ins {
+            input.setup();
+        }
+        for output in &self.outs {
+            output.setup();
+        }
+    }
+
+    pub fn ready(&self) -> bool {
+        for input in &self.ins {
+            if !input.ready() {
+                return false;
+            }
+        }
+        true
     }
 }

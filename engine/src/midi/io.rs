@@ -1,7 +1,7 @@
 use crate::mutex::UnsafeMutex;
 use std::sync::Arc;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MIDIIO {
     pub connections: Vec<Arc<UnsafeMutex<Box<Self>>>>,
     pub buffer: Vec<u8>,

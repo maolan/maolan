@@ -79,7 +79,7 @@ impl Track {
             audio: AudioData::new(audio_ins, audio_outs),
             midi: MIDIData::new(midi_ins, midi_outs),
             height: 60.0,
-            position: Point::new(0.0, 0.0),
+            position: Point::new(100.0, 100.0),
         }
     }
 

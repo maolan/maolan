@@ -1,9 +1,6 @@
-// use std::sync::Arc;
+use crate::{kind::Kind, mutex::UnsafeMutex, track::Track};
+use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
-// use crate::audio::track::Track as AudioTrack;
-// use crate::midi::track::Track as MIDITrack;
-// use crate::mutex::UnsafeMutex;
-use crate::kind::Kind;
 
 #[derive(Clone, Debug)]
 pub struct ClipMoveFrom {
@@ -73,11 +70,12 @@ pub enum Action {
 pub enum Message {
     Ready(usize),
     Finished(usize, String),
+    TracksFinished,
 
-    // ProcessAudio(Arc<UnsafeMutex<AudioTrack>>),
-    // ProcessMidi(Arc<UnsafeMutex<MIDITrack>>),
+    ProcessTrack(Arc<UnsafeMutex<Box<Track>>>),
     Channel(Sender<Self>),
 
     Request(Action),
     Response(Result<Action, String>),
+    HWFinished,
 }

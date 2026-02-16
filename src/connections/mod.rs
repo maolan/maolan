@@ -41,12 +41,10 @@ impl Graph {
                             } else {
                                 Kind::MIDI
                             }
+                        } else if *port_idx < t.audio.outs {
+                            Kind::Audio
                         } else {
-                            if *port_idx < t.audio.outs {
-                                Kind::Audio
-                            } else {
-                                Kind::MIDI
-                            }
+                            Kind::MIDI
                         }
                     })
                 }
@@ -63,14 +61,12 @@ impl Graph {
 }
 
 pub struct Connections {
-    state: State,
     graph: Graph,
 }
 
 impl Connections {
     pub fn new(state: State) -> Self {
         Self {
-            state: state.clone(),
             graph: Graph::new(state.clone()),
         }
     }
@@ -99,8 +95,6 @@ impl canvas::Program<Message> for Graph {
         let cursor_position = cursor.position_in(bounds)?;
         let size = iced::Size::new(140.0, 80.0);
         let hw_width = 70.0;
-        let hw_margin = 20.0;
-        let hw_height = bounds.height - (hw_margin * 2.0);
 
         if let Ok(mut data) = self.state.try_write() {
             match event {
@@ -116,11 +110,10 @@ impl canvas::Program<Message> for Graph {
 
                         let start_point = if conn.from_track == HW_IN_ID {
                             data.hw_in.as_ref().map(move |hw_in| {
-                                let py = hw_margin
-                                    + 50.0
-                                    + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
+                                let py = 50.0
+                                    + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
                                         * (conn.from_port + 1) as f32;
-                                Point::new(hw_margin + hw_width, py)
+                                Point::new(hw_width, py)
                             })
                         } else {
                             start_track_option.map(|t| {
@@ -134,11 +127,10 @@ impl canvas::Program<Message> for Graph {
 
                         let end_point = if conn.to_track == HW_OUT_ID {
                             data.hw_out.as_ref().map(move |hw_out| {
-                                let py = hw_margin
-                                    + 50.0
-                                    + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
+                                let py = 50.0
+                                    + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
                                         * (conn.to_port + 1) as f32;
-                                Point::new(bounds.width - hw_width - hw_margin, py)
+                                Point::new(bounds.width - hw_width, py)
                             })
                         } else {
                             end_track_option.map(|t| {
@@ -185,11 +177,11 @@ impl canvas::Program<Message> for Graph {
                     }
 
                     if let Some(hw_in) = &data.hw_in {
-                        let pos = Point::new(hw_margin, hw_margin);
+                        let pos = Point::new(0.0, 0.0);
                         for j in 0..hw_in.channels {
                             let py = pos.y
                                 + 50.0
-                                + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
+                                + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
                                     * (j + 1) as f32;
                             if cursor_position.distance(Point::new(pos.x + hw_width, py)) < 10.0 {
                                 data.connecting = Some(Connecting {
@@ -205,11 +197,11 @@ impl canvas::Program<Message> for Graph {
                     }
 
                     if let Some(hw_out) = &data.hw_out {
-                        let pos = Point::new(bounds.width - hw_width - hw_margin, hw_margin);
+                        let pos = Point::new(bounds.width - hw_width, 0.0);
                         for j in 0..hw_out.channels {
                             let py = pos.y
                                 + 50.0
-                                + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
+                                + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
                                     * (j + 1) as f32;
                             if cursor_position.distance(Point::new(pos.x, py)) < 10.0 {
                                 data.connecting = Some(Connecting {
@@ -321,20 +313,17 @@ impl canvas::Program<Message> for Graph {
                                 }
                             }
 
-                            if target_port.is_none() && from_t != HW_IN_ID {
-                                if let Some(hw_in) = &data.hw_in {
-                                    for j in 0..hw_in.channels {
-                                        let py = hw_margin
-                                            + 50.0
-                                            + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
-                                                * (j + 1) as f32;
-                                        if cursor_position
-                                            .distance(Point::new(hw_margin + hw_width, py))
-                                            < 10.0
-                                        {
-                                            target_port = Some((HW_IN_ID.to_string(), j));
-                                            break;
-                                        }
+                            if target_port.is_none()
+                                && from_t != HW_IN_ID
+                                && let Some(hw_in) = &data.hw_in
+                            {
+                                for j in 0..hw_in.channels {
+                                    let py = 50.0
+                                        + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
+                                            * (j + 1) as f32;
+                                    if cursor_position.distance(Point::new(hw_width, py)) < 10.0 {
+                                        target_port = Some((HW_IN_ID.to_string(), j));
+                                        break;
                                     }
                                 }
                             }
@@ -355,21 +344,20 @@ impl canvas::Program<Message> for Graph {
                                 }
                             }
 
-                            if target_port.is_none() && from_t != HW_OUT_ID {
-                                if let Some(hw_out) = &data.hw_out {
-                                    for j in 0..hw_out.channels {
-                                        let py = hw_margin
-                                            + 50.0
-                                            + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
-                                                * (j + 1) as f32;
-                                        if cursor_position.distance(Point::new(
-                                            bounds.width - hw_width - hw_margin,
-                                            py,
-                                        )) < 10.0
-                                        {
-                                            target_port = Some((HW_OUT_ID.to_string(), j));
-                                            break;
-                                        }
+                            if target_port.is_none()
+                                && from_t != HW_OUT_ID
+                                && let Some(hw_out) = &data.hw_out
+                            {
+                                for j in 0..hw_out.channels {
+                                    let py = 50.0
+                                        + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
+                                            * (j + 1) as f32;
+                                    if cursor_position
+                                        .distance(Point::new(bounds.width - hw_width, py))
+                                        < 10.0
+                                    {
+                                        target_port = Some((HW_OUT_ID.to_string(), j));
+                                        break;
                                     }
                                 }
                             }
@@ -390,12 +378,10 @@ impl canvas::Program<Message> for Graph {
                                             } else {
                                                 Kind::MIDI
                                             }
+                                        } else if to_p < t.audio.ins {
+                                            Kind::Audio
                                         } else {
-                                            if to_p < t.audio.ins {
-                                                Kind::Audio
-                                            } else {
-                                                Kind::MIDI
-                                            }
+                                            Kind::MIDI
                                         }
                                     })
                                     .unwrap_or(Kind::Audio)
@@ -450,11 +436,11 @@ impl canvas::Program<Message> for Graph {
                     let mut new_h = None;
 
                     if let Some(hw_in) = &data.hw_in {
-                        let pos = Point::new(hw_margin, hw_margin);
+                        let pos = Point::new(0.0, 0.0);
                         for j in 0..hw_in.channels {
                             let py = pos.y
                                 + 50.0
-                                + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
+                                + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
                                     * (j + 1) as f32;
                             if cursor_position.distance(Point::new(pos.x + hw_width, py)) < 10.0 {
                                 new_h = Some(Hovering::Port {
@@ -467,22 +453,22 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
-                    if new_h.is_none() {
-                        if let Some(hw_out) = &data.hw_out {
-                            let pos = Point::new(bounds.width - hw_width - hw_margin, hw_margin);
-                            for j in 0..hw_out.channels {
-                                let py = pos.y
-                                    + 50.0
-                                    + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
-                                        * (j + 1) as f32;
-                                if cursor_position.distance(Point::new(pos.x, py)) < 10.0 {
-                                    new_h = Some(Hovering::Port {
-                                        track_idx: HW_OUT_ID.to_string(),
-                                        port_idx: j,
-                                        is_input: true,
-                                    });
-                                    break;
-                                }
+                    if new_h.is_none()
+                        && let Some(hw_out) = &data.hw_out
+                    {
+                        let pos = Point::new(bounds.width - hw_width, 0.0);
+                        for j in 0..hw_out.channels {
+                            let py = pos.y
+                                + 50.0
+                                + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
+                                    * (j + 1) as f32;
+                            if cursor_position.distance(Point::new(pos.x, py)) < 10.0 {
+                                new_h = Some(Hovering::Port {
+                                    track_idx: HW_OUT_ID.to_string(),
+                                    port_idx: j,
+                                    is_input: true,
+                                });
+                                break;
                             }
                         }
                     }
@@ -540,12 +526,12 @@ impl canvas::Program<Message> for Graph {
                         conn.point = cursor_position;
                         redraw_needed = true;
                     }
-                    if let Some(mt) = data.moving_track.clone() {
-                        if let Some(t) = data.tracks.iter_mut().find(|tr| tr.name == mt.track_idx) {
-                            t.position.x = cursor_position.x - mt.offset_x;
-                            t.position.y = cursor_position.y - mt.offset_y;
-                            redraw_needed = true;
-                        }
+                    if let Some(mt) = data.moving_track.clone()
+                        && let Some(t) = data.tracks.iter_mut().find(|tr| tr.name == mt.track_idx)
+                    {
+                        t.position.x = cursor_position.x - mt.offset_x;
+                        t.position.y = cursor_position.y - mt.offset_y;
+                        redraw_needed = true;
                     }
 
                     if data.hovering != new_h {
@@ -574,8 +560,6 @@ impl canvas::Program<Message> for Graph {
         let mut frame = Frame::new(renderer, bounds.size());
         let size = iced::Size::new(140.0, 80.0);
         let hw_width = 70.0;
-        let hw_margin = 20.0;
-        let hw_height = bounds.height - (hw_margin * 2.0);
 
         if let Ok(data) = self.state.try_read() {
             use crate::state::ConnectionViewSelection;
@@ -586,11 +570,10 @@ impl canvas::Program<Message> for Graph {
 
                 let start_point = if conn.from_track == HW_IN_ID {
                     data.hw_in.as_ref().map(move |hw_in| {
-                        let py = hw_margin
-                            + 50.0
-                            + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
+                        let py = 50.0
+                            + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
                                 * (conn.from_port + 1) as f32;
-                        Point::new(hw_margin + hw_width, py)
+                        Point::new(hw_width, py)
                     })
                 } else {
                     start_track_option.map(|t| {
@@ -603,11 +586,10 @@ impl canvas::Program<Message> for Graph {
 
                 let end_point = if conn.to_track == HW_OUT_ID {
                     data.hw_out.as_ref().map(move |hw_out| {
-                        let py = hw_margin
-                            + 50.0
-                            + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
+                        let py = 50.0
+                            + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
                                 * (conn.to_port + 1) as f32;
-                        Point::new(bounds.width - hw_width - hw_margin, py)
+                        Point::new(bounds.width - hw_width, py)
                     })
                 } else {
                     end_track_option.map(|t| {
@@ -653,19 +635,17 @@ impl canvas::Program<Message> for Graph {
 
                 let start_point = if conn.from_track == HW_IN_ID {
                     data.hw_in.as_ref().map(move |hw_in| {
-                        let py = hw_margin
-                            + 50.0
-                            + ((hw_height - 60.0) / (hw_in.channels + 1) as f32)
+                        let py = 50.0
+                            + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
                                 * (conn.from_port + 1) as f32;
-                        Point::new(hw_margin + hw_width, py)
+                        Point::new(hw_width, py)
                     })
                 } else if conn.from_track == HW_OUT_ID {
                     data.hw_out.as_ref().map(move |hw_out| {
-                        let py = hw_margin
-                            + 50.0
-                            + ((hw_height - 60.0) / (hw_out.channels + 1) as f32)
+                        let py = 50.0
+                            + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
                                 * (conn.from_port + 1) as f32;
-                        Point::new(bounds.width - hw_width - hw_margin, py)
+                        Point::new(bounds.width - hw_width, py)
                     })
                 } else {
                     start_track_option.map(|t| {
@@ -710,8 +690,8 @@ impl canvas::Program<Message> for Graph {
             }
 
             if let Some(hw_in) = &data.hw_in {
-                let pos = Point::new(hw_margin, hw_margin);
-                let rect = Path::rectangle(pos, iced::Size::new(hw_width, hw_height));
+                let pos = Point::new(0.0, 0.0);
+                let rect = Path::rectangle(pos, iced::Size::new(hw_width, bounds.height));
                 frame.fill(&rect, Color::from_rgb8(30, 45, 30));
                 frame.stroke(
                     &rect,
@@ -730,7 +710,7 @@ impl canvas::Program<Message> for Graph {
                 for j in 0..hw_in.channels {
                     let py = pos.y
                         + 50.0
-                        + ((hw_height - 60.0) / (hw_in.channels + 1) as f32) * (j + 1) as f32;
+                        + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32) * (j + 1) as f32;
                     frame.fill_text(Text {
                         content: format!("{}", j + 1),
                         position: Point::new(pos.x + hw_width - 10.0, py),
@@ -768,8 +748,8 @@ impl canvas::Program<Message> for Graph {
             }
 
             if let Some(hw_out) = &data.hw_out {
-                let pos = Point::new(bounds.width - hw_width - hw_margin, hw_margin);
-                let rect = Path::rectangle(pos, iced::Size::new(hw_width, hw_height));
+                let pos = Point::new(bounds.width - hw_width, 0.0);
+                let rect = Path::rectangle(pos, iced::Size::new(hw_width, bounds.height));
                 frame.fill(&rect, Color::from_rgb8(45, 30, 30));
                 frame.stroke(
                     &rect,
@@ -788,7 +768,7 @@ impl canvas::Program<Message> for Graph {
                 for j in 0..hw_out.channels {
                     let py = pos.y
                         + 50.0
-                        + ((hw_height - 60.0) / (hw_out.channels + 1) as f32) * (j + 1) as f32;
+                        + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32) * (j + 1) as f32;
                     frame.fill_text(Text {
                         content: format!("{}", j + 1),
                         position: Point::new(pos.x + 10.0, py),

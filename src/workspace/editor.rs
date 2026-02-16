@@ -3,7 +3,7 @@ use crate::{
     state::{State, StateData, Track},
 };
 use iced::{
-    Background, Border, Color, Element, Length, Point, Renderer, Theme,
+    Background, Border, Color, Element, Length, Point,
     widget::{Stack, column, container, mouse_area, pin, row, text},
 };
 use iced_drop::droppable;

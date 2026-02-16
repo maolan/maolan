@@ -2,6 +2,7 @@ use super::{clip::MIDIClip, io::MIDIIO};
 use crate::mutex::UnsafeMutex;
 use std::sync::Arc;
 
+#[derive(Debug)]
 pub struct MIDITrack {
     pub clips: Vec<MIDIClip>,
     pub ins: Vec<Arc<UnsafeMutex<Box<MIDIIO>>>>,
@@ -92,4 +93,6 @@ impl MIDITrack {
         let out = self.outs[index].clone();
         out.lock().disconnect(to)
     }
+
+    pub fn process(&self) {}
 }

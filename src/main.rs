@@ -1,3 +1,4 @@
+mod add_track;
 mod connections;
 mod gui;
 mod hw;

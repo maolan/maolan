@@ -1,4 +1,4 @@
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct MIDIClip {
     pub name: String,
     pub start: usize,

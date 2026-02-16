@@ -17,8 +17,8 @@ pub struct AddTrackView {
 
 impl AddTrackView {
     pub fn update(&mut self, message: Message) {
-        match message {
-            Message::AddTrack(a) => match a {
+        if let Message::AddTrack(a) = message {
+            match a {
                 AddTrack::Name(name) => {
                     self.name = name;
                 }
@@ -34,8 +34,7 @@ impl AddTrackView {
                 AddTrack::MIDIOuts(outs) => {
                     self.midi_outs = outs;
                 }
-            },
-            _ => {}
+            }
         }
     }
 

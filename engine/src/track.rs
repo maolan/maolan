@@ -1,5 +1,6 @@
 use super::{audio::track::AudioTrack, midi::track::MIDITrack};
 
+#[derive(Debug)]
 pub struct Track {
     pub name: String,
     pub level: f32,
@@ -30,7 +31,10 @@ impl Track {
         }
     }
 
-    pub fn process(&mut self) {}
+    pub fn process(&mut self) {
+        self.midi.process();
+        self.audio.process();
+    }
 
     pub fn name(&self) -> String {
         self.name.clone()

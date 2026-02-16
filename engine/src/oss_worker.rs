@@ -1,12 +1,13 @@
 use crate::{hw::oss, message::Message, mutex::UnsafeMutex};
 use std::sync::Arc;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 #[derive(Debug)]
 pub struct OssWorker {
     oss_in: Arc<UnsafeMutex<oss::Audio>>,
     oss_out: Arc<UnsafeMutex<oss::Audio>>,
     rx: Receiver<Message>,
+    tx: Sender<Message>,
 }
 
 impl OssWorker {
@@ -14,48 +15,47 @@ impl OssWorker {
         oss_in: Arc<UnsafeMutex<oss::Audio>>,
         oss_out: Arc<UnsafeMutex<oss::Audio>>,
         rx: Receiver<Message>,
+        tx: Sender<Message>,
     ) -> Self {
         Self {
             oss_in,
             oss_out,
             rx,
+            tx,
         }
     }
 
     pub async fn work(mut self) {
         loop {
-            tokio::select! {
-                message = self.rx.recv() => {
-                    if let Some(msg) = message {
-                        if let Message::Request(crate::message::Action::Quit) = msg {
-                            return;
-                        }
-                    } else {
+            match self.rx.recv().await {
+                Some(msg) => match msg {
+                    Message::Request(crate::message::Action::Quit) => {
                         return;
                     }
+                    Message::TracksFinished => {
+                        {
+                            let oss_in = self.oss_in.lock();
+                            if let Err(e) = oss_in.read() {
+                                eprintln!("OSS input read error: {}", e);
+                            }
+                            oss_in.process();
+                        }
+                        if let Err(e) = self.tx.send(Message::HWFinished).await {
+                            eprintln!("OSS worker failed to send HWFinished to engine: {}", e);
+                        }
+                        {
+                            let oss_out = self.oss_out.lock();
+                            oss_out.process();
+                            if let Err(e) = oss_out.write() {
+                                eprintln!("OSS output write error: {}", e);
+                            }
+                        }
+                    }
+                    _ => {}
+                },
+                None => {
+                    return;
                 }
-                _ = async {
-                    // Read and convert input samples
-                    {
-                        let oss_in = self.oss_in.lock();
-                        if let Err(e) = oss_in.read() {
-                            eprintln!("OSS input read error: {}", e);
-                        }
-                        oss_in.process();
-                    }
-
-                    // Process output channels (pull from connections)
-                    {
-                        let oss_out = self.oss_out.lock();
-                        for channel in &oss_out.channels {
-                            channel.process();
-                        }
-                        oss_out.process();
-                        if let Err(e) = oss_out.write() {
-                            eprintln!("OSS output write error: {}", e);
-                        }
-                    }
-                } => {}
             }
         }
     }

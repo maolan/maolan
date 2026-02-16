@@ -1,4 +1,4 @@
-use crate::{message::Message, state::State};
+use crate::message::Message;
 use iced::{
     Background, Color, Length, Theme,
     widget::{button, row, tooltip, tooltip::Position},
@@ -6,13 +6,11 @@ use iced::{
 use iced_fonts::lucide::{audio_lines, cable, pause, play, square};
 
 #[derive(Default)]
-pub struct Toolbar {
-    state: State,
-}
+pub struct Toolbar {}
 
 impl Toolbar {
-    pub fn new(state: State) -> Self {
-        Self { state }
+    pub fn new() -> Self {
+        Self {}
     }
     pub fn update(&mut self, _message: Message) {}
 
