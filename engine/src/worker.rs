@@ -3,14 +3,14 @@ use tokio::sync::mpsc::{Receiver, Sender};
 
 #[derive(Debug)]
 pub struct Worker {
-    _id: usize,
+    id: usize,
     rx: Receiver<Message>,
     tx: Sender<Message>,
 }
 
 impl Worker {
     pub async fn new(id: usize, rx: Receiver<Message>, tx: Sender<Message>) -> Worker {
-        let worker = Worker { _id: id, rx, tx };
+        let worker = Worker { id, rx, tx };
         worker.send(Message::Ready(id)).await;
         worker
     }
@@ -25,21 +25,20 @@ impl Worker {
     pub async fn work(&mut self) {
         while let Some(message) = self.rx.recv().await {
             match message {
-                Message::Request(a) => match a {
-                    Action::Quit => {
-                        return;
+                Message::Request(Action::Quit) => {
+                    return;
+                }
+                Message::ProcessTrack(t) => {
+                    println!("worker");
+                    let track = t.lock();
+                    track.process();
+                    match self.tx.send(Message::Finished(self.id)).await {
+                        Ok(_) => {}
+                        Err(e) => {
+                            println!("Error while sending Finished: {e}")
+                        }
                     }
-                    _ => {}
-                },
-                // Message::ProcessAudio(t) => {
-                //     let track = t.lock();
-                //     match self.tx.send(Message::Finished(self.id, track.name())) {
-                //         Ok(_) => {}
-                //         Err(e) => {
-                //             println!("Error while sending Finished: {e}")
-                //         }
-                //     }
-                // }
+                }
                 _ => {}
             }
         }

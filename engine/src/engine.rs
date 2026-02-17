@@ -81,20 +81,24 @@ impl Engine {
         }
     }
 
-    async fn send_tracks(&mut self) {
+    async fn send_tracks(&mut self) -> bool {
+        let mut finished = true;
         for track in self.state.lock().tracks.values() {
-            if self.ready_workers.is_empty() {
-                return;
-            }
             let t = track.lock();
+            finished &= t.audio.finished;
             if !t.audio.finished && t.audio.ready() {
+                if self.ready_workers.is_empty() {
+                    return false;
+                }
                 let worker_index = self.ready_workers.remove(0);
                 let worker = &self.workers[worker_index];
                 if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
-                    self.notify_clients(Err(e.to_string())).await;
+                    self.notify_clients(Err(format!("Failed to send track to worker: {}", e)))
+                        .await;
                 }
             }
         }
+        finished
     }
 
     pub fn check_if_leads_to(&self, current_track_name: &str, target_track_name: &str) -> bool {
@@ -566,14 +570,23 @@ impl Engine {
     }
 
     pub async fn work(&mut self) {
-        let mut ready_workers: Vec<usize> = vec![];
-        let mut pending_requests: VecDeque<Action> = VecDeque::new();
         while let Some(message) = self.rx.recv().await {
             match message {
                 Message::Ready(id) => {
-                    ready_workers.push(id);
+                    self.ready_workers.push(id);
                 }
-                Message::Finished(_workid, _trackid) => {}
+                Message::Finished(workid) => {
+                    println!("Finished");
+                    self.ready_workers.push(workid);
+                    let all_finished = self.send_tracks().await;
+                    println!("Finished: {all_finished}");
+                    if all_finished
+                        && let Some(worker) = &self.oss_worker
+                        && let Err(e) = worker.tx.send(Message::TracksFinished).await
+                    {
+                        eprintln!("Error sending TracksFinished {e}");
+                    }
+                }
                 Message::Channel(s) => {
                     self.clients.push(s);
                 }
@@ -583,17 +596,18 @@ impl Engine {
                         self.handle_request(a).await;
                     }
                     _ => {
-                        pending_requests.push_back(a);
+                        self.pending_requests.push_back(a);
                     }
                 },
                 Message::HWFinished => {
-                    while let Some(a) = pending_requests.pop_front() {
+                    while let Some(a) = self.pending_requests.pop_front() {
                         self.handle_request(a).await;
                     }
                     for track in self.state.lock().tracks.values() {
-                        track.lock().process();
+                        track.lock().setup();
                     }
-                    if let Some(worker) = &self.oss_worker
+                    if self.send_tracks().await
+                        && let Some(worker) = &self.oss_worker
                         && let Err(e) = worker.tx.send(Message::TracksFinished).await
                     {
                         eprintln!("Error sending TracksFinished {e}");

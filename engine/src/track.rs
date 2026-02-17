@@ -31,6 +31,10 @@ impl Track {
         }
     }
 
+    pub fn setup(&mut self) {
+        self.audio.setup();
+    }
+
     pub fn process(&mut self) {
         self.midi.process();
         self.audio.process();

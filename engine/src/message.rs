@@ -69,7 +69,7 @@ pub enum Action {
 #[derive(Clone, Debug)]
 pub enum Message {
     Ready(usize),
-    Finished(usize, String),
+    Finished(usize),
     TracksFinished,
 
     ProcessTrack(Arc<UnsafeMutex<Box<Track>>>),

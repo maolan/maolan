@@ -181,6 +181,7 @@ impl Audio {
                     let source_idx = i * num_channels + ch_idx;
                     *sample = data_slice[source_idx] as f32 * norm_factor;
                 }
+                *io_port.finished.lock() = true;
             }
         } else {
             let scale_factor = i32::MAX as f32;
