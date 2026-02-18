@@ -1,4 +1,4 @@
-use crate::{kind::Kind, mutex::UnsafeMutex, track::Track};
+use crate::{kind::Kind, lv2::Lv2PluginInfo, mutex::UnsafeMutex, track::Track};
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 
@@ -38,6 +38,16 @@ pub enum Action {
     TrackToggleArm(String),
     TrackToggleMute(String),
     TrackToggleSolo(String),
+    TrackLoadLv2Plugin {
+        track_name: String,
+        plugin_uri: String,
+    },
+    TrackUnloadLv2Plugin {
+        track_name: String,
+        plugin_uri: String,
+    },
+    ListLv2Plugins,
+    Lv2Plugins(Vec<Lv2PluginInfo>),
     ClipMove {
         kind: Kind,
         from: ClipMoveFrom,

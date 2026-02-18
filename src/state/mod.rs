@@ -6,6 +6,7 @@ pub use clip::{AudioClip, MIDIClip};
 pub use connection::Connection;
 use iced::{Length, Point};
 use maolan_engine::kind::Kind;
+use maolan_engine::lv2::Lv2PluginInfo;
 use std::{
     collections::{HashMap, HashSet},
     fs::read_dir,
@@ -103,6 +104,7 @@ pub struct StateData {
     pub selected_hw: Option<String>,
     pub hw_in: Option<HW>,
     pub hw_out: Option<HW>,
+    pub lv2_plugins: Vec<Lv2PluginInfo>,
 }
 
 impl Default for StateData {
@@ -148,6 +150,7 @@ impl Default for StateData {
             selected_hw: None,
             hw_in: None,
             hw_out: None,
+            lv2_plugins: vec![],
         }
     }
 }

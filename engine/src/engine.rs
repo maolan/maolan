@@ -233,6 +233,7 @@ impl Engine {
                                 midi_ins,
                                 midi_outs,
                                 chsamples,
+                                oss.lock().rate as f64,
                             )))),
                         );
                     }
@@ -268,6 +269,53 @@ impl Engine {
                     track.lock().solo();
                 }
             }
+            Action::TrackLoadLv2Plugin {
+                ref track_name,
+                ref plugin_uri,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().load_lv2_plugin(plugin_uri) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackUnloadLv2Plugin {
+                ref track_name,
+                ref plugin_uri,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().unload_lv2_plugin(plugin_uri) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::ListLv2Plugins => {
+                let plugins = {
+                    let host = crate::lv2::Lv2Host::new(48_000.0);
+                    host.list_plugins()
+                };
+                self.notify_clients(Ok(Action::Lv2Plugins(plugins))).await;
+                return;
+            }
+            Action::Lv2Plugins(_) => {}
             Action::ClipMove {
                 ref kind,
                 ref from,

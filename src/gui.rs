@@ -8,7 +8,7 @@ use crate::{
 };
 use iced::futures::{Stream, StreamExt, io, stream};
 use iced::keyboard::Event as KeyEvent;
-use iced::widget::{Id, column, text};
+use iced::widget::{Id, button, column, container, row, scrollable, text};
 use iced::{Length, Point, Size, Subscription, Task, event, keyboard, mouse, window};
 use maolan_engine::{
     self as engine,
@@ -305,6 +305,18 @@ impl Maolan {
             }
             Message::Cancel => self.modal = None,
             Message::Request(ref a) => return self.send(a.clone()),
+            Message::RefreshLv2Plugins => return self.send(Action::ListLv2Plugins),
+            Message::LoadLv2Plugin(ref plugin_uri) => {
+                let selected_track = self.state.blocking_read().selected.iter().next().cloned();
+                if let Some(track_name) = selected_track {
+                    return self.send(Action::TrackLoadLv2Plugin {
+                        track_name,
+                        plugin_uri: plugin_uri.clone(),
+                    });
+                }
+                self.state.blocking_write().message =
+                    "Select a track before loading LV2 plugin".to_string();
+            }
             Message::SendMessageFinished(ref result) => match result {
                 Ok(_) => debug!("Sent successfully!"),
                 Err(e) => error!("Error: {}", e),
@@ -493,6 +505,7 @@ impl Maolan {
                 Action::OpenAudioDevice(s) => {
                     self.state.blocking_write().message = format!("Opened device {s}");
                     self.state.blocking_write().hw_loaded = true;
+                    return self.send(Action::ListLv2Plugins);
                 }
                 Action::HWInfo {
                     channels,
@@ -513,6 +526,11 @@ impl Maolan {
                             input: *input,
                         });
                     }
+                }
+                Action::Lv2Plugins(plugins) => {
+                    let mut state = self.state.blocking_write();
+                    state.lv2_plugins = plugins.clone();
+                    state.message = format!("Loaded {} LV2 plugins", state.lv2_plugins.len());
                 }
                 _ => {
                     println!("Response: {:?}", a);
@@ -1016,10 +1034,49 @@ impl Maolan {
                         View::Workspace => self.workspace.view(),
                         View::Connections => self.connections.view(),
                     };
+                    let selected_track = state
+                        .selected
+                        .iter()
+                        .next()
+                        .cloned()
+                        .unwrap_or_else(|| "(none)".to_string());
+
+                    let mut lv2_list = column![];
+                    for plugin in &state.lv2_plugins {
+                        lv2_list = lv2_list.push(
+                            row![
+                                text(format!(
+                                    "{} (a:{}/{}, m:{}/{})",
+                                    plugin.name,
+                                    plugin.audio_inputs,
+                                    plugin.audio_outputs,
+                                    plugin.midi_inputs,
+                                    plugin.midi_outputs
+                                ))
+                                .width(Length::Fill),
+                                button("Load")
+                                    .on_press(Message::LoadLv2Plugin(plugin.uri.clone())),
+                            ]
+                            .spacing(8),
+                        );
+                    }
+
                     column![
                         self.menu.view(),
                         self.toolbar.view(),
                         view,
+                        container(
+                            column![
+                                row![
+                                    text(format!("LV2 target track: {selected_track}")),
+                                    button("Refresh LV2").on_press(Message::RefreshLv2Plugins),
+                                ]
+                                .spacing(8),
+                                scrollable(lv2_list).height(Length::Fixed(180.0)),
+                            ]
+                            .spacing(8)
+                        )
+                        .padding(8),
                         text(format!("Last message: {}", state.message))
                     ]
                     .into()

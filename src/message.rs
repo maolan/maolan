@@ -99,6 +99,8 @@ pub enum Message {
 
     Workspace,
     Connections,
+    RefreshLv2Plugins,
+    LoadLv2Plugin(String),
 
     HWSelected(String),
 }

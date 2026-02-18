@@ -3,6 +3,7 @@ pub mod client;
 mod engine;
 mod hw;
 pub mod kind;
+pub mod lv2;
 pub mod message;
 mod midi;
 pub mod mutex;
