@@ -55,8 +55,8 @@ pub struct Lv2Processor {
     port_symbol_to_index: Arc<HashMap<String, u32>>,
     audio_inputs: Vec<Vec<f32>>,
     audio_outputs: Vec<Vec<f32>>,
-    atom_inputs: Vec<Vec<u8>>,
-    atom_outputs: Vec<Vec<u8>>,
+    atom_inputs: Vec<AtomBuffer>,
+    atom_outputs: Vec<AtomBuffer>,
     atom_sequence_urid: LV2Urid,
     atom_frame_time_urid: LV2Urid,
     skip_deactivate_on_drop: bool,
@@ -104,6 +104,29 @@ struct ControlPortInfo {
     name: String,
     min: f32,
     max: f32,
+}
+
+struct AtomBuffer {
+    words: Vec<u64>,
+}
+
+impl AtomBuffer {
+    fn new(len_bytes: usize) -> Self {
+        let words = len_bytes.div_ceil(std::mem::size_of::<u64>()).max(1);
+        Self {
+            words: vec![0; words],
+        }
+    }
+
+    fn bytes_mut(&mut self) -> &mut [u8] {
+        let full_len = self.words.len() * std::mem::size_of::<u64>();
+        let raw = self.words.as_mut_ptr().cast::<u8>();
+        unsafe { std::slice::from_raw_parts_mut(raw, full_len) }
+    }
+
+    fn ptr_mut(&mut self) -> *mut u8 {
+        self.words.as_mut_ptr().cast::<u8>()
+    }
 }
 
 enum UiDispatchTarget {
@@ -317,8 +340,8 @@ impl Lv2Processor {
         let mut port_symbol_to_index = HashMap::<String, u32>::new();
         let mut audio_inputs: Vec<Vec<f32>> = vec![];
         let mut audio_outputs: Vec<Vec<f32>> = vec![];
-        let mut atom_inputs: Vec<Vec<u8>> = vec![];
-        let mut atom_outputs: Vec<Vec<u8>> = vec![];
+        let mut atom_inputs: Vec<AtomBuffer> = vec![];
+        let mut atom_outputs: Vec<AtomBuffer> = vec![];
         let mut control_ports = vec![];
         let atom_sequence_urid = urid_feature.map_uri(LV2_ATOM__SEQUENCE);
         let atom_frame_time_urid = urid_feature.map_uri(LV2_ATOM__FRAMETIME);
@@ -346,15 +369,23 @@ impl Lv2Processor {
             } else if is_atom && is_input {
                 has_atom_ports = true;
                 let atom_idx = atom_inputs.len();
-                let mut buffer = vec![0_u8; LV2_ATOM_BUFFER_BYTES];
-                prepare_empty_atom_sequence(&mut buffer, atom_sequence_urid, atom_frame_time_urid);
+                let mut buffer = AtomBuffer::new(LV2_ATOM_BUFFER_BYTES);
+                prepare_empty_atom_sequence(
+                    buffer.bytes_mut(),
+                    atom_sequence_urid,
+                    atom_frame_time_urid,
+                );
                 atom_inputs.push(buffer);
                 port_bindings[index] = PortBinding::AtomInput(atom_idx);
             } else if is_atom && is_output {
                 has_atom_ports = true;
                 let atom_idx = atom_outputs.len();
-                let mut buffer = vec![0_u8; LV2_ATOM_BUFFER_BYTES];
-                prepare_empty_atom_sequence(&mut buffer, atom_sequence_urid, atom_frame_time_urid);
+                let mut buffer = AtomBuffer::new(LV2_ATOM_BUFFER_BYTES);
+                prepare_output_atom_sequence(
+                    buffer.bytes_mut(),
+                    atom_sequence_urid,
+                    atom_frame_time_urid,
+                );
                 atom_outputs.push(buffer);
                 port_bindings[index] = PortBinding::AtomOutput(atom_idx);
             } else {
@@ -447,10 +478,18 @@ impl Lv2Processor {
             buffer.fill(0.0);
         }
         for buffer in &mut self.atom_inputs {
-            prepare_empty_atom_sequence(buffer, self.atom_sequence_urid, self.atom_frame_time_urid);
+            prepare_empty_atom_sequence(
+                buffer.bytes_mut(),
+                self.atom_sequence_urid,
+                self.atom_frame_time_urid,
+            );
         }
         for buffer in &mut self.atom_outputs {
-            prepare_empty_atom_sequence(buffer, self.atom_sequence_urid, self.atom_frame_time_urid);
+            prepare_output_atom_sequence(
+                buffer.bytes_mut(),
+                self.atom_sequence_urid,
+                self.atom_frame_time_urid,
+            );
         }
 
         self.connect_ports();
@@ -523,7 +562,7 @@ impl Lv2Processor {
                     }
                 }
                 PortBinding::AtomInput(atom_index) => {
-                    let ptr = self.atom_inputs[*atom_index].as_mut_ptr();
+                    let ptr = self.atom_inputs[*atom_index].ptr_mut();
                     if let Some(instance) = self.instance.as_mut() {
                         unsafe {
                             instance.instance_mut().connect_port_mut(port_index, ptr);
@@ -531,7 +570,7 @@ impl Lv2Processor {
                     }
                 }
                 PortBinding::AtomOutput(atom_index) => {
-                    let ptr = self.atom_outputs[*atom_index].as_mut_ptr();
+                    let ptr = self.atom_outputs[*atom_index].ptr_mut();
                     if let Some(instance) = self.instance.as_mut() {
                         unsafe {
                             instance.instance_mut().connect_port_mut(port_index, ptr);
@@ -586,12 +625,13 @@ impl Drop for Lv2Processor {
             return;
         };
         if self.skip_deactivate_on_drop {
-            // Some plugins exposing atom/event ports crash inside deactivate.
-            // Leak the active instance as a process-lifetime fallback to avoid SIGSEGV on quit.
+            if let Some(cleanup) = instance.instance().descriptor().map(|d| d.cleanup) {
+                cleanup(instance.instance().handle());
+            }
             std::mem::forget(instance);
-        } else {
-            drop(instance);
+            return;
         }
+        drop(instance);
     }
 }
 
@@ -1400,6 +1440,27 @@ fn prepare_empty_atom_sequence(buffer: &mut [u8], sequence_urid: LV2Urid, frame_
     unsafe {
         (*seq).atom.mytype = sequence_urid;
         (*seq).atom.size = std::mem::size_of::<LV2AtomSequenceBody>() as u32;
+        (*seq).body.unit = frame_time_urid;
+        (*seq).body.pad = 0;
+    }
+}
+
+fn prepare_output_atom_sequence(
+    buffer: &mut [u8],
+    sequence_urid: LV2Urid,
+    frame_time_urid: LV2Urid,
+) {
+    buffer.fill(0);
+    if buffer.len() < std::mem::size_of::<LV2AtomSequence>() {
+        return;
+    }
+    let seq = buffer.as_mut_ptr() as *mut LV2AtomSequence;
+    let body_capacity = buffer
+        .len()
+        .saturating_sub(std::mem::size_of::<lv2_raw::LV2Atom>()) as u32;
+    unsafe {
+        (*seq).atom.mytype = sequence_urid;
+        (*seq).atom.size = body_capacity;
         (*seq).body.unit = frame_time_urid;
         (*seq).body.pad = 0;
     }
