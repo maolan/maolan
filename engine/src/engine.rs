@@ -86,13 +86,15 @@ impl Engine {
         for track in self.state.lock().tracks.values() {
             let t = track.lock();
             finished &= t.audio.finished;
-            if !t.audio.finished && t.audio.ready() {
+            if !t.audio.finished && !t.audio.processing && t.audio.ready() {
                 if self.ready_workers.is_empty() {
                     return false;
                 }
                 let worker_index = self.ready_workers.remove(0);
+                t.audio.processing = true;
                 let worker = &self.workers[worker_index];
                 if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
+                    t.audio.processing = false;
                     self.notify_clients(Err(format!("Failed to send track to worker: {}", e)))
                         .await;
                 }

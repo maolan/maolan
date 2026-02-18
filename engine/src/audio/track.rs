@@ -7,6 +7,7 @@ pub struct AudioTrack {
     pub ins: Vec<Arc<AudioIO>>,
     pub outs: Vec<Arc<AudioIO>>,
     pub finished: bool,
+    pub processing: bool,
 }
 
 impl AudioTrack {
@@ -16,6 +17,7 @@ impl AudioTrack {
             ins: Vec::with_capacity(ins_count),
             outs: Vec::with_capacity(outs_count),
             finished: false,
+            processing: false,
         };
         for _ in 0..ins_count {
             ret.ins.push(Arc::new(AudioIO::new(buffer_size)));
@@ -72,10 +74,12 @@ impl AudioTrack {
             *audio_out.finished.lock() = true;
         }
         self.finished = true;
+        self.processing = false;
     }
 
     pub fn setup(&mut self) {
         self.finished = false;
+        self.processing = false;
         for input in &self.ins {
             input.setup();
         }

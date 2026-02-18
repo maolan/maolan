@@ -31,6 +31,7 @@ impl Worker {
                 Message::ProcessTrack(t) => {
                     let track = t.lock();
                     track.process();
+                    track.audio.processing = false;
                     match self.tx.send(Message::Finished(self.id)).await {
                         Ok(_) => {}
                         Err(e) => {
