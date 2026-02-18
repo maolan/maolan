@@ -1,9 +1,14 @@
 use std::{
-    collections::HashMap,
-    ffi::{CStr, CString, c_char, c_void},
+    collections::{HashMap, HashSet},
+    ffi::{CStr, CString, c_char, c_uint, c_void},
     fmt,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+    },
     thread,
+    time::Duration,
 };
 
 use lilv::{World, instance::ActiveInstance, node::Node, plugin::Plugin};
@@ -37,6 +42,7 @@ enum PortBinding {
 
 pub struct Lv2Processor {
     uri: String,
+    plugin_name: String,
     instance: ActiveInstance,
     _urid_feature: UridMapFeature,
     port_bindings: Vec<PortBinding>,
@@ -44,6 +50,9 @@ pub struct Lv2Processor {
     port_symbol_to_index: Arc<HashMap<String, u32>>,
     audio_inputs: Vec<Vec<f32>>,
     audio_outputs: Vec<Vec<f32>>,
+    control_ports: Vec<ControlPortInfo>,
+    ui_feedback_cache: Vec<u32>,
+    ui_feedback_tx: Option<Sender<UiFeedbackMessage>>,
     ui_thread: Option<thread::JoinHandle<()>>,
 }
 
@@ -70,15 +79,72 @@ unsafe impl Send for UridMapFeature {}
 struct UiController {
     scalar_values: Arc<Mutex<Vec<f32>>>,
     port_symbol_to_index: Arc<HashMap<String, u32>>,
+    subscribed_ports: Arc<Mutex<HashSet<u32>>>,
 }
 
 unsafe impl Send for UiController {}
+
+enum UiFeedbackMessage {
+    ScalarChanges(Vec<(u32, f32)>),
+}
+
+#[derive(Debug, Clone)]
+struct ControlPortInfo {
+    index: u32,
+    name: String,
+    min: f32,
+    max: f32,
+}
+
+enum UiDispatchTarget {
+    Suil(*mut SuilInstance),
+    Generic(HashMap<u32, *mut c_void>),
+}
+
+struct UiDispatchState {
+    target: UiDispatchTarget,
+    pending: Mutex<Vec<(u32, f32)>>,
+    dispatch_scheduled: AtomicBool,
+    alive: AtomicBool,
+    subscribed_ports: Arc<Mutex<HashSet<u32>>>,
+}
+
+unsafe impl Send for UiDispatchState {}
+unsafe impl Sync for UiDispatchState {}
 
 #[repr(C)]
 struct LV2FeatureRaw {
     uri: *const c_char,
     data: *mut c_void,
 }
+
+#[repr(C)]
+struct LV2UiResize {
+    handle: *mut c_void,
+    ui_resize: Option<extern "C" fn(*mut c_void, i32, i32) -> i32>,
+}
+
+#[repr(C)]
+struct LV2UiIdleInterface {
+    idle: Option<extern "C" fn(*mut c_void) -> i32>,
+}
+
+#[repr(C)]
+struct LV2UiShowInterface {
+    show: Option<extern "C" fn(*mut c_void) -> i32>,
+}
+
+#[repr(C)]
+struct LV2UiHideInterface {
+    hide: Option<extern "C" fn(*mut c_void) -> i32>,
+}
+
+struct UiIdleData {
+    interface: *const LV2UiIdleInterface,
+    handle: *mut c_void,
+}
+
+unsafe impl Send for UiIdleData {}
 
 #[allow(non_camel_case_types)]
 type SuilHost = c_void;
@@ -91,6 +157,16 @@ type SuilPortIndexFunc = extern "C" fn(SuilController, *const c_char) -> u32;
 const LV2_UI_GTK3: &str = "http://lv2plug.in/ns/extensions/ui#Gtk3UI";
 const LV2_UI_GTK: &str = "http://lv2plug.in/ns/extensions/ui#GtkUI";
 const LV2_UI_X11: &str = "http://lv2plug.in/ns/extensions/ui#X11UI";
+const LV2_UI_QT4: &str = "http://lv2plug.in/ns/extensions/ui#Qt4UI";
+const LV2_UI_QT5: &str = "http://lv2plug.in/ns/extensions/ui#Qt5UI";
+const LV2_UI_QT6: &str = "http://lv2plug.in/ns/extensions/ui#Qt6UI";
+const LV2_UI_EXTERNAL: &str = "http://lv2plug.in/ns/extensions/ui#external";
+const LV2_EXT_UI_WIDGET: &str = "http://kxstudio.sf.net/ns/lv2ext/external-ui#Widget";
+const LV2_UI_PARENT: &str = "http://lv2plug.in/ns/extensions/ui#parent";
+const LV2_UI_RESIZE: &str = "http://lv2plug.in/ns/extensions/ui#resize";
+const LV2_UI_IDLE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#idleInterface";
+const LV2_UI_SHOW_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#showInterface";
+const LV2_UI_HIDE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#hideInterface";
 const GTK_WINDOW_TOPLEVEL: i32 = 0;
 
 impl fmt::Debug for Lv2Processor {
@@ -136,6 +212,16 @@ unsafe extern "C" {
     ) -> *mut SuilInstance;
     fn suil_instance_free(instance: *mut SuilInstance);
     fn suil_instance_get_widget(instance: *mut SuilInstance) -> *mut c_void;
+    fn suil_instance_get_handle(instance: *mut SuilInstance) -> *mut c_void;
+    fn suil_instance_extension_data(instance: *mut SuilInstance, uri: *const c_char)
+    -> *const c_void;
+    fn suil_instance_port_event(
+        instance: *mut SuilInstance,
+        port_index: u32,
+        buffer_size: u32,
+        protocol: u32,
+        buffer: *const c_void,
+    );
 }
 
 #[link(name = "gtk-x11-2.0")]
@@ -144,7 +230,22 @@ unsafe extern "C" {
     fn gtk_window_new(window_type: i32) -> *mut c_void;
     fn gtk_window_set_title(window: *mut c_void, title: *const c_char);
     fn gtk_window_set_default_size(window: *mut c_void, width: i32, height: i32);
+    fn gtk_window_resize(window: *mut c_void, width: i32, height: i32);
     fn gtk_container_add(container: *mut c_void, widget: *mut c_void);
+    fn gtk_vbox_new(homogeneous: i32, spacing: i32) -> *mut c_void;
+    fn gtk_hbox_new(homogeneous: i32, spacing: i32) -> *mut c_void;
+    fn gtk_label_new(text: *const c_char) -> *mut c_void;
+    fn gtk_hscale_new_with_range(min: f64, max: f64, step: f64) -> *mut c_void;
+    fn gtk_range_set_value(range: *mut c_void, value: f64);
+    fn gtk_range_get_value(range: *mut c_void) -> f64;
+    fn gtk_widget_set_size_request(widget: *mut c_void, width: i32, height: i32);
+    fn gtk_box_pack_start(
+        boxed: *mut c_void,
+        child: *mut c_void,
+        expand: i32,
+        fill: i32,
+        padding: u32,
+    );
     fn gtk_widget_show_all(widget: *mut c_void);
     fn gtk_main();
     fn gtk_main_quit();
@@ -160,6 +261,18 @@ unsafe extern "C" {
         destroy_data: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
         connect_flags: u32,
     ) -> u64;
+}
+
+#[link(name = "glib-2.0")]
+unsafe extern "C" {
+    fn g_idle_add(function: Option<extern "C" fn(*mut c_void) -> i32>, data: *mut c_void)
+    -> c_uint;
+    fn g_timeout_add(
+        interval: c_uint,
+        function: Option<extern "C" fn(*mut c_void) -> i32>,
+        data: *mut c_void,
+    ) -> c_uint;
+    fn g_source_remove(tag: c_uint) -> i32;
 }
 
 impl Lv2Processor {
@@ -183,6 +296,7 @@ impl Lv2Processor {
         let input_port = world.new_uri("http://lv2plug.in/ns/lv2core#InputPort");
         let output_port = world.new_uri("http://lv2plug.in/ns/lv2core#OutputPort");
         let audio_port = world.new_uri("http://lv2plug.in/ns/lv2core#AudioPort");
+        let control_port = world.new_uri("http://lv2plug.in/ns/lv2core#ControlPort");
 
         let ports_count = plugin.ports_count();
         let mut port_bindings = vec![PortBinding::Scalar(0); ports_count];
@@ -190,6 +304,7 @@ impl Lv2Processor {
         let mut port_symbol_to_index = HashMap::<String, u32>::new();
         let mut audio_inputs: Vec<Vec<f32>> = vec![];
         let mut audio_outputs: Vec<Vec<f32>> = vec![];
+        let mut control_ports = vec![];
 
         for port in plugin.iter_ports() {
             let index = port.index();
@@ -197,6 +312,7 @@ impl Lv2Processor {
                 port_symbol_to_index.insert(symbol, index as u32);
             }
             let is_audio = port.is_a(&audio_port);
+            let is_control = port.is_a(&control_port);
             let is_input = port.is_a(&input_port);
             let is_output = port.is_a(&output_port);
 
@@ -216,11 +332,41 @@ impl Lv2Processor {
                     .unwrap_or(0.0);
                 scalar_values[index] = default_value;
                 port_bindings[index] = PortBinding::Scalar(index);
+
+                if is_control && is_input {
+                    let range = port.range();
+                    let mut min = range.minimum.and_then(|node| node.as_float()).unwrap_or(0.0);
+                    let mut max = range.maximum.and_then(|node| node.as_float()).unwrap_or(1.0);
+                    if !matches!(min.partial_cmp(&max), Some(std::cmp::Ordering::Less)) {
+                        min = default_value - 1.0;
+                        max = default_value + 1.0;
+                    }
+                    let fallback_name = format!("Port {}", index);
+                    let name = port
+                        .name()
+                        .and_then(|node| node.as_str().map(str::to_string))
+                        .or_else(|| {
+                            port.symbol()
+                                .and_then(|node| node.as_str().map(str::to_string))
+                        })
+                        .unwrap_or(fallback_name);
+                    control_ports.push(ControlPortInfo {
+                        index: index as u32,
+                        name,
+                        min,
+                        max,
+                    });
+                }
             }
         }
 
         let mut processor = Self {
             uri: uri.to_string(),
+            plugin_name: plugin
+                .name()
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| uri.to_string()),
             instance: active_instance,
             _urid_feature: urid_feature,
             port_bindings,
@@ -228,8 +374,14 @@ impl Lv2Processor {
             port_symbol_to_index: Arc::new(port_symbol_to_index),
             audio_inputs,
             audio_outputs,
+            control_ports,
+            ui_feedback_cache: vec![],
+            ui_feedback_tx: None,
             ui_thread: None,
         };
+        if let Ok(values) = processor.scalar_values.lock() {
+            processor.ui_feedback_cache = values.iter().map(|v| v.to_bits()).collect();
+        }
         processor.connect_ports();
         Ok(processor)
     }
@@ -261,7 +413,34 @@ impl Lv2Processor {
         unsafe {
             self.instance.run(frames);
         }
+        let changes = self.collect_scalar_changes();
+        if !changes.is_empty()
+            && self
+                .ui_feedback_tx
+                .as_ref()
+                .is_some_and(|tx| tx.send(UiFeedbackMessage::ScalarChanges(changes)).is_err())
+        {
+            self.ui_feedback_tx = None;
+        }
         self.audio_outputs.clone()
+    }
+
+    fn collect_scalar_changes(&mut self) -> Vec<(u32, f32)> {
+        let Ok(values) = self.scalar_values.lock() else {
+            return vec![];
+        };
+        if self.ui_feedback_cache.len() != values.len() {
+            self.ui_feedback_cache.resize(values.len(), 0);
+        }
+        let mut changes = Vec::new();
+        for (idx, value) in values.iter().enumerate() {
+            let bits = value.to_bits();
+            if self.ui_feedback_cache[idx] != bits {
+                self.ui_feedback_cache[idx] = bits;
+                changes.push((idx as u32, *value));
+            }
+        }
+        changes
     }
 
     fn resize_buffers(&mut self, frames: usize) {
@@ -314,11 +493,17 @@ impl Lv2Processor {
             return Ok(());
         }
 
-        let ui_spec = resolve_preferred_ui(&self.uri)?;
+        let ui_spec = resolve_preferred_ui(&self.uri);
         let values = Arc::clone(&self.scalar_values);
         let symbol_map = Arc::clone(&self.port_symbol_to_index);
+        let control_ports = self.control_ports.clone();
+        let plugin_title = self.plugin_name.clone();
+        let (tx, rx) = mpsc::channel::<UiFeedbackMessage>();
+        self.ui_feedback_tx = Some(tx);
         let thread = thread::spawn(move || {
-            if let Err(e) = run_gtk_suil_ui(ui_spec, values, symbol_map) {
+            if let Err(e) =
+                run_gtk_plugin_ui(ui_spec.ok(), plugin_title, values, symbol_map, control_ports, rx)
+            {
                 eprintln!("LV2 UI failed: {e}");
             }
         });
@@ -485,8 +670,123 @@ extern "C" fn suil_port_index(controller: SuilController, port_symbol: *const c_
         .unwrap_or(u32::MAX)
 }
 
+extern "C" fn suil_subscribe_port(
+    controller: SuilController,
+    port_index: u32,
+    _protocol: u32,
+    _features: *const *const LV2FeatureRaw,
+) -> u32 {
+    if controller.is_null() {
+        return 1;
+    }
+    let controller = unsafe { &*(controller as *const UiController) };
+    if let Ok(mut subscribed) = controller.subscribed_ports.lock() {
+        subscribed.insert(port_index);
+    }
+    0
+}
+
+extern "C" fn suil_unsubscribe_port(
+    controller: SuilController,
+    port_index: u32,
+    _protocol: u32,
+    _features: *const *const LV2FeatureRaw,
+) -> u32 {
+    if controller.is_null() {
+        return 1;
+    }
+    let controller = unsafe { &*(controller as *const UiController) };
+    if let Ok(mut subscribed) = controller.subscribed_ports.lock() {
+        subscribed.remove(&port_index);
+    }
+    0
+}
+
 unsafe extern "C" fn on_gtk_destroy(_widget: *mut c_void, _data: *mut c_void) {
     unsafe { gtk_main_quit() };
+}
+
+extern "C" fn host_ui_resize(handle: *mut c_void, width: i32, height: i32) -> i32 {
+    if handle.is_null() || width <= 0 || height <= 0 {
+        return 1;
+    }
+    unsafe {
+        gtk_window_resize(handle, width, height);
+    }
+    0
+}
+
+extern "C" fn ui_idle_tick(data: *mut c_void) -> i32 {
+    if data.is_null() {
+        return 0;
+    }
+    let idle_data = unsafe { &*(data as *const UiIdleData) };
+    if idle_data.interface.is_null() {
+        return 0;
+    }
+    let interface = unsafe { &*idle_data.interface };
+    let Some(idle_fn) = interface.idle else {
+        return 0;
+    };
+    idle_fn(idle_data.handle)
+}
+
+fn schedule_ui_feedback_flush(state: &Arc<UiDispatchState>) {
+    if state.dispatch_scheduled.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let state_ptr = Arc::into_raw(Arc::clone(state)) as *mut c_void;
+    unsafe {
+        g_idle_add(Some(flush_ui_feedback), state_ptr);
+    }
+}
+
+extern "C" fn flush_ui_feedback(data: *mut c_void) -> i32 {
+    if data.is_null() {
+        return 0;
+    }
+    let state = unsafe { Arc::from_raw(data as *const UiDispatchState) };
+    if !state.alive.load(Ordering::SeqCst) {
+        state.dispatch_scheduled.store(false, Ordering::SeqCst);
+        return 0;
+    }
+    let pending = if let Ok(mut queue) = state.pending.lock() {
+        std::mem::take(&mut *queue)
+    } else {
+        vec![]
+    };
+    let subscribed = state
+        .subscribed_ports
+        .lock()
+        .map(|ports| ports.clone())
+        .unwrap_or_default();
+    for (port_index, value) in pending {
+        if !subscribed.is_empty() && !subscribed.contains(&port_index) {
+            continue;
+        }
+        match &state.target {
+            UiDispatchTarget::Suil(instance) => unsafe {
+                suil_instance_port_event(
+                    *instance,
+                    port_index,
+                    std::mem::size_of::<f32>() as u32,
+                    0,
+                    (&value as *const f32).cast::<c_void>(),
+                );
+            },
+            UiDispatchTarget::Generic(sliders) => {
+                if let Some(slider) = sliders.get(&port_index) {
+                    unsafe { gtk_range_set_value(*slider, value as f64) };
+                }
+            }
+        }
+    }
+    state.dispatch_scheduled.store(false, Ordering::SeqCst);
+    let has_more = state.pending.lock().map(|queue| !queue.is_empty()).unwrap_or(false);
+    if has_more && state.alive.load(Ordering::SeqCst) {
+        schedule_ui_feedback_flush(&state);
+    }
+    0
 }
 
 fn resolve_preferred_ui(plugin_uri: &str) -> Result<UiSpec, String> {
@@ -504,60 +804,81 @@ fn resolve_preferred_ui(plugin_uri: &str) -> Result<UiSpec, String> {
     let gtk3_uri = world.new_uri(LV2_UI_GTK3);
     let gtk_uri = world.new_uri(LV2_UI_GTK);
     let x11_uri = world.new_uri(LV2_UI_X11);
+    let qt4_uri = world.new_uri(LV2_UI_QT4);
+    let qt5_uri = world.new_uri(LV2_UI_QT5);
+    let qt6_uri = world.new_uri(LV2_UI_QT6);
+    let external_uri = world.new_uri(LV2_UI_EXTERNAL);
+    let extui_widget_uri = world.new_uri(LV2_EXT_UI_WIDGET);
 
-    let candidates = [
-        (&gtk_uri, LV2_UI_GTK, LV2_UI_GTK),
-        (&gtk3_uri, LV2_UI_GTK3, LV2_UI_GTK3),
-        (&gtk_uri, LV2_UI_GTK, LV2_UI_GTK3),
-        (&x11_uri, LV2_UI_X11, LV2_UI_X11),
+    let host_containers = [LV2_UI_GTK3, LV2_UI_GTK, LV2_UI_X11];
+    let ui_classes = [
+        (&gtk3_uri, LV2_UI_GTK3),
+        (&gtk_uri, LV2_UI_GTK),
+        (&x11_uri, LV2_UI_X11),
+        (&qt6_uri, LV2_UI_QT6),
+        (&qt5_uri, LV2_UI_QT5),
+        (&qt4_uri, LV2_UI_QT4),
+        (&external_uri, LV2_UI_EXTERNAL),
+        (&extui_widget_uri, LV2_EXT_UI_WIDGET),
     ];
-    for (class_node, class_uri, container_uri) in candidates {
-        let host_type = CString::new(container_uri).map_err(|e| e.to_string())?;
-        let class_c = CString::new(class_uri).map_err(|e| e.to_string())?;
-        let quality = unsafe { suil_ui_supported(host_type.as_ptr(), class_c.as_ptr()) };
-        if quality == 0 {
-            continue;
-        }
-        for ui in uis.iter() {
+
+    let mut best: Option<(u32, UiSpec)> = None;
+    for ui in uis.iter() {
+        let ui_uri = ui
+            .uri()
+            .as_uri()
+            .ok_or_else(|| "UI URI is invalid".to_string())?
+            .to_string();
+        let bundle_uri = ui
+            .bundle_uri()
+            .ok_or_else(|| "UI bundle URI missing".to_string())?;
+        let binary_uri = ui
+            .binary_uri()
+            .ok_or_else(|| "UI binary URI missing".to_string())?;
+        let (_, ui_bundle_path) = bundle_uri
+            .path()
+            .ok_or_else(|| "Failed to resolve UI bundle path".to_string())?;
+        let (_, ui_binary_path) = binary_uri
+            .path()
+            .ok_or_else(|| "Failed to resolve UI binary path".to_string())?;
+
+        for (class_node, class_uri) in ui_classes {
             if !ui.is_a(class_node) {
                 continue;
             }
-            let ui_uri = ui
-                .uri()
-                .as_uri()
-                .ok_or_else(|| "UI URI is invalid".to_string())?
-                .to_string();
-            let bundle_uri = ui
-                .bundle_uri()
-                .ok_or_else(|| "UI bundle URI missing".to_string())?;
-            let binary_uri = ui
-                .binary_uri()
-                .ok_or_else(|| "UI binary URI missing".to_string())?;
-            let (_, ui_bundle_path) = bundle_uri
-                .path()
-                .ok_or_else(|| "Failed to resolve UI bundle path".to_string())?;
-            let (_, ui_binary_path) = binary_uri
-                .path()
-                .ok_or_else(|| "Failed to resolve UI binary path".to_string())?;
-
-            return Ok(UiSpec {
-                plugin_uri: plugin_uri.to_string(),
-                ui_uri,
-                container_type_uri: container_uri.to_string(),
-                ui_type_uri: class_uri.to_string(),
-                ui_bundle_path,
-                ui_binary_path,
-            });
+            let class_c = CString::new(class_uri).map_err(|e| e.to_string())?;
+            for container_uri in host_containers {
+                let host_type = CString::new(container_uri).map_err(|e| e.to_string())?;
+                let quality = unsafe { suil_ui_supported(host_type.as_ptr(), class_c.as_ptr()) };
+                if quality == 0 {
+                    continue;
+                }
+                let spec = UiSpec {
+                    plugin_uri: plugin_uri.to_string(),
+                    ui_uri: ui_uri.clone(),
+                    container_type_uri: container_uri.to_string(),
+                    ui_type_uri: class_uri.to_string(),
+                    ui_bundle_path: ui_bundle_path.clone(),
+                    ui_binary_path: ui_binary_path.clone(),
+                };
+                if best.as_ref().map(|(q, _)| quality > *q).unwrap_or(true) {
+                    best = Some((quality, spec));
+                }
+            }
         }
     }
 
-    Err(format!("No supported UI found for plugin: {plugin_uri}"))
+    best.map(|(_, spec)| spec)
+        .ok_or_else(|| format!("No supported UI found for plugin: {plugin_uri}"))
 }
 
-fn run_gtk_suil_ui(
-    ui_spec: UiSpec,
+fn run_gtk_plugin_ui(
+    ui_spec: Option<UiSpec>,
+    plugin_name: String,
     scalar_values: Arc<Mutex<Vec<f32>>>,
     port_symbol_to_index: Arc<HashMap<String, u32>>,
+    control_ports: Vec<ControlPortInfo>,
+    feedback_rx: Receiver<UiFeedbackMessage>,
 ) -> Result<(), String> {
     let mut argc = 0;
     let mut argv: *mut *mut c_char = std::ptr::null_mut();
@@ -565,9 +886,75 @@ fn run_gtk_suil_ui(
         return Err("Failed to initialize GTK".to_string());
     }
 
+    if let Some(spec) = ui_spec {
+        return run_gtk_suil_ui(spec, scalar_values, port_symbol_to_index, feedback_rx);
+    }
+    run_generic_parameter_ui(plugin_name, scalar_values, control_ports, feedback_rx)
+}
+
+fn spawn_feedback_forwarder(
+    dispatch_state: Arc<UiDispatchState>,
+    feedback_rx: Receiver<UiFeedbackMessage>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || loop {
+        match feedback_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(UiFeedbackMessage::ScalarChanges(changes)) => {
+                if !dispatch_state.alive.load(Ordering::SeqCst) {
+                    return;
+                }
+                if changes.is_empty() {
+                    continue;
+                }
+                if let Ok(mut queue) = dispatch_state.pending.lock() {
+                    queue.extend(changes);
+                }
+                schedule_ui_feedback_flush(&dispatch_state);
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                if !dispatch_state.alive.load(Ordering::SeqCst) {
+                    return;
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return;
+            }
+        }
+    })
+}
+
+fn run_gtk_suil_ui(
+    ui_spec: UiSpec,
+    scalar_values: Arc<Mutex<Vec<f32>>>,
+    port_symbol_to_index: Arc<HashMap<String, u32>>,
+    feedback_rx: Receiver<UiFeedbackMessage>,
+) -> Result<(), String> {
+    let mut argc = 0;
+    let mut argv: *mut *mut c_char = std::ptr::null_mut();
+    if unsafe { gtk_init_check(&mut argc, &mut argv) } == 0 {
+        return Err("Failed to initialize GTK".to_string());
+    }
+
+    let window = unsafe { gtk_window_new(GTK_WINDOW_TOPLEVEL) };
+    if window.is_null() {
+        return Err("Failed to create GTK window".to_string());
+    }
+    unsafe {
+        gtk_window_set_default_size(window, 780, 520);
+        g_signal_connect_data(
+            window,
+            b"destroy\0".as_ptr() as *const c_char,
+            Some(on_gtk_destroy),
+            std::ptr::null_mut(),
+            None,
+            0,
+        );
+    }
+
+    let subscribed_ports = Arc::new(Mutex::new(HashSet::new()));
     let controller = Box::new(UiController {
         scalar_values,
         port_symbol_to_index,
+        subscribed_ports: Arc::clone(&subscribed_ports),
     });
     let controller_ptr = Box::into_raw(controller) as *mut c_void;
 
@@ -575,8 +962,8 @@ fn run_gtk_suil_ui(
         suil_host_new(
             Some(suil_write_port),
             Some(suil_port_index),
-            None,
-            None,
+            Some(suil_subscribe_port),
+            Some(suil_unsubscribe_port),
         )
     };
     if host.is_null() {
@@ -591,8 +978,26 @@ fn run_gtk_suil_ui(
     let ui_bundle_path = CString::new(ui_spec.ui_bundle_path).map_err(|e| e.to_string())?;
     let ui_binary_path = CString::new(ui_spec.ui_binary_path).map_err(|e| e.to_string())?;
     let mut urid_feature = UridMapFeature::new()?;
-    let feature = urid_feature.feature() as *const LV2Feature as *const LV2FeatureRaw;
-    let features = [feature, std::ptr::null()];
+    let parent_uri = CString::new(LV2_UI_PARENT).map_err(|e| e.to_string())?;
+    let resize_uri = CString::new(LV2_UI_RESIZE).map_err(|e| e.to_string())?;
+    let mut resize_feature = LV2UiResize {
+        handle: window,
+        ui_resize: Some(host_ui_resize),
+    };
+    let urid_raw = LV2FeatureRaw {
+        uri: urid_feature.feature().uri,
+        data: urid_feature.feature().data,
+    };
+    let parent_raw = LV2FeatureRaw {
+        uri: parent_uri.as_ptr(),
+        data: window,
+    };
+    let resize_raw = LV2FeatureRaw {
+        uri: resize_uri.as_ptr(),
+        data: (&mut resize_feature as *mut LV2UiResize).cast::<c_void>(),
+    };
+    let feature_ptrs: [*const LV2FeatureRaw; 4] =
+        [&urid_raw as *const LV2FeatureRaw, &parent_raw, &resize_raw, std::ptr::null()];
 
     let instance = unsafe {
         suil_instance_new(
@@ -604,7 +1009,7 @@ fn run_gtk_suil_ui(
             ui_type_uri.as_ptr(),
             ui_bundle_path.as_ptr(),
             ui_binary_path.as_ptr(),
-            features.as_ptr(),
+            feature_ptrs.as_ptr(),
         )
     };
     if instance.is_null() {
@@ -614,29 +1019,10 @@ fn run_gtk_suil_ui(
         }
         return Err("Failed to instantiate suil UI instance".to_string());
     }
-
-    let window = unsafe { gtk_window_new(GTK_WINDOW_TOPLEVEL) };
-    if window.is_null() {
-        unsafe {
-            suil_instance_free(instance);
-            suil_host_free(host);
-            drop(Box::from_raw(controller_ptr as *mut UiController));
-        }
-        return Err("Failed to create GTK window".to_string());
-    }
     let title = CString::new(format!("LV2 UI - {}", plugin_uri.to_string_lossy()))
         .map_err(|e| e.to_string())?;
     unsafe {
         gtk_window_set_title(window, title.as_ptr());
-        gtk_window_set_default_size(window, 780, 520);
-        g_signal_connect_data(
-            window,
-            b"destroy\0".as_ptr() as *const c_char,
-            Some(on_gtk_destroy),
-            std::ptr::null_mut(),
-            None,
-            0,
-        );
     }
 
     let widget = unsafe { suil_instance_get_widget(instance) };
@@ -648,15 +1034,194 @@ fn run_gtk_suil_ui(
         }
         return Err("Suil returned null UI widget".to_string());
     }
+
+    let ui_handle = unsafe { suil_instance_get_handle(instance) };
+    let idle_iface_uri = CString::new(LV2_UI_IDLE_INTERFACE).map_err(|e| e.to_string())?;
+    let show_iface_uri = CString::new(LV2_UI_SHOW_INTERFACE).map_err(|e| e.to_string())?;
+    let hide_iface_uri = CString::new(LV2_UI_HIDE_INTERFACE).map_err(|e| e.to_string())?;
+    let idle_iface_ptr = unsafe {
+        suil_instance_extension_data(instance, idle_iface_uri.as_ptr()) as *const LV2UiIdleInterface
+    };
+    let show_iface_ptr = unsafe {
+        suil_instance_extension_data(instance, show_iface_uri.as_ptr()) as *const LV2UiShowInterface
+    };
+    let hide_iface_ptr = unsafe {
+        suil_instance_extension_data(instance, hide_iface_uri.as_ptr()) as *const LV2UiHideInterface
+    };
+    let mut idle_source = 0;
+    let mut idle_data_ptr: *mut UiIdleData = std::ptr::null_mut();
+    if !idle_iface_ptr.is_null() {
+        let idle_data = Box::new(UiIdleData {
+            interface: idle_iface_ptr,
+            handle: ui_handle,
+        });
+        idle_data_ptr = Box::into_raw(idle_data);
+        unsafe {
+            idle_source = g_timeout_add(16, Some(ui_idle_tick), idle_data_ptr.cast::<c_void>());
+        }
+    }
+
+    let dispatch_state = Arc::new(UiDispatchState {
+        target: UiDispatchTarget::Suil(instance),
+        pending: Mutex::new(vec![]),
+        dispatch_scheduled: AtomicBool::new(false),
+        alive: AtomicBool::new(true),
+        subscribed_ports: Arc::clone(&subscribed_ports),
+    });
+    let forwarder = spawn_feedback_forwarder(Arc::clone(&dispatch_state), feedback_rx);
+    if !show_iface_ptr.is_null()
+        && let Some(show) = unsafe { (*show_iface_ptr).show }
+    {
+        let _ = show(ui_handle);
+    }
     unsafe {
         gtk_container_add(window, widget);
         gtk_widget_show_all(window);
         gtk_main();
+    }
+    if !hide_iface_ptr.is_null()
+        && let Some(hide) = unsafe { (*hide_iface_ptr).hide }
+    {
+        let _ = hide(ui_handle);
+    }
+    if idle_source != 0 {
+        unsafe {
+            g_source_remove(idle_source);
+        }
+    }
+    if !idle_data_ptr.is_null() {
+        unsafe {
+            drop(Box::from_raw(idle_data_ptr));
+        }
+    }
+    unsafe {
+        dispatch_state.alive.store(false, Ordering::SeqCst);
+        let _ = forwarder.join();
         suil_instance_free(instance);
         suil_host_free(host);
         drop(Box::from_raw(controller_ptr as *mut UiController));
     }
     let _ = &mut urid_feature;
+    Ok(())
+}
+
+struct GenericSliderData {
+    scalar_values: Arc<Mutex<Vec<f32>>>,
+    port_index: u32,
+}
+
+unsafe impl Send for GenericSliderData {}
+
+unsafe extern "C" fn on_slider_changed(range: *mut c_void, data: *mut c_void) {
+    if range.is_null() || data.is_null() {
+        return;
+    }
+    let data = unsafe { &*(data as *const GenericSliderData) };
+    let value = unsafe { gtk_range_get_value(range) as f32 };
+    if let Ok(mut values) = data.scalar_values.lock()
+        && (data.port_index as usize) < values.len()
+    {
+        values[data.port_index as usize] = value;
+    }
+}
+
+fn run_generic_parameter_ui(
+    plugin_name: String,
+    scalar_values: Arc<Mutex<Vec<f32>>>,
+    control_ports: Vec<ControlPortInfo>,
+    feedback_rx: Receiver<UiFeedbackMessage>,
+) -> Result<(), String> {
+    let window = unsafe { gtk_window_new(GTK_WINDOW_TOPLEVEL) };
+    if window.is_null() {
+        return Err("Failed to create generic parameter UI window".to_string());
+    }
+    let title =
+        CString::new(format!("LV2 Generic UI - {plugin_name}")).map_err(|e| e.to_string())?;
+    unsafe {
+        gtk_window_set_title(window, title.as_ptr());
+        gtk_window_set_default_size(window, 720, 480);
+        g_signal_connect_data(
+            window,
+            b"destroy\0".as_ptr() as *const c_char,
+            Some(on_gtk_destroy),
+            std::ptr::null_mut(),
+            None,
+            0,
+        );
+    }
+
+    let root = unsafe { gtk_vbox_new(0, 8) };
+    if root.is_null() {
+        return Err("Failed to create generic parameter UI root".to_string());
+    }
+
+    let mut sliders = HashMap::<u32, *mut c_void>::new();
+    let mut slider_data = vec![];
+    for port in control_ports {
+        let row = unsafe { gtk_hbox_new(0, 8) };
+        if row.is_null() {
+            continue;
+        }
+        let label_txt = CString::new(port.name).map_err(|e| e.to_string())?;
+        let label = unsafe { gtk_label_new(label_txt.as_ptr()) };
+        let step = ((port.max - port.min).abs() / 200.0).max(0.0001) as f64;
+        let slider = unsafe { gtk_hscale_new_with_range(port.min as f64, port.max as f64, step) };
+        if slider.is_null() {
+            continue;
+        }
+        unsafe {
+            gtk_widget_set_size_request(slider, 420, -1);
+        }
+        if let Ok(values) = scalar_values.lock()
+            && let Some(value) = values.get(port.index as usize)
+        {
+            unsafe {
+                gtk_range_set_value(slider, *value as f64);
+            }
+        }
+
+        let data = Box::new(GenericSliderData {
+            scalar_values: Arc::clone(&scalar_values),
+            port_index: port.index,
+        });
+        let data_ptr = Box::into_raw(data);
+        slider_data.push(data_ptr);
+        unsafe {
+            g_signal_connect_data(
+                slider,
+                b"value-changed\0".as_ptr() as *const c_char,
+                Some(on_slider_changed),
+                data_ptr.cast::<c_void>(),
+                None,
+                0,
+            );
+            gtk_box_pack_start(row, label, 0, 0, 0);
+            gtk_box_pack_start(row, slider, 1, 1, 0);
+            gtk_box_pack_start(root, row, 0, 0, 0);
+        }
+        sliders.insert(port.index, slider);
+    }
+
+    let dispatch_state = Arc::new(UiDispatchState {
+        target: UiDispatchTarget::Generic(sliders),
+        pending: Mutex::new(vec![]),
+        dispatch_scheduled: AtomicBool::new(false),
+        alive: AtomicBool::new(true),
+        subscribed_ports: Arc::new(Mutex::new(HashSet::new())),
+    });
+    let forwarder = spawn_feedback_forwarder(Arc::clone(&dispatch_state), feedback_rx);
+    unsafe {
+        gtk_container_add(window, root);
+        gtk_widget_show_all(window);
+        gtk_main();
+    }
+    dispatch_state.alive.store(false, Ordering::SeqCst);
+    let _ = forwarder.join();
+    for data_ptr in slider_data {
+        unsafe {
+            drop(Box::from_raw(data_ptr));
+        }
+    }
     Ok(())
 }
 
