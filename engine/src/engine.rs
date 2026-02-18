@@ -41,6 +41,7 @@ pub struct Engine {
     oss_worker: Option<WorkerData>,
     ready_workers: Vec<usize>,
     pending_requests: VecDeque<Action>,
+    awaiting_hwfinished: bool,
 }
 
 impl Engine {
@@ -56,6 +57,7 @@ impl Engine {
             oss_worker: None,
             ready_workers: vec![],
             pending_requests: VecDeque::new(),
+            awaiting_hwfinished: false,
         }
     }
 
@@ -81,25 +83,69 @@ impl Engine {
         }
     }
 
+    async fn request_hw_cycle(&mut self, reason: &str) {
+        if self.awaiting_hwfinished {
+            println!(
+                "[engine/work] skip TracksFinished ({reason}), already awaiting HWFinished"
+            );
+            return;
+        }
+        if let Some(worker) = &self.oss_worker {
+            match worker.tx.send(Message::TracksFinished).await {
+                Ok(_) => {
+                    self.awaiting_hwfinished = true;
+                    println!(
+                        "[engine/work] sent TracksFinished ({reason}), awaiting_hwfinished=true"
+                    );
+                }
+                Err(e) => {
+                    eprintln!("Error sending TracksFinished {e}");
+                }
+            }
+        }
+    }
+
     async fn send_tracks(&mut self) -> bool {
         let mut finished = true;
+        let mut considered = 0usize;
+        let mut dispatched = 0usize;
         for track in self.state.lock().tracks.values() {
             let t = track.lock();
+            considered += 1;
             finished &= t.audio.finished;
             if !t.audio.finished && !t.audio.processing && t.audio.ready() {
                 if self.ready_workers.is_empty() {
+                    println!(
+                        "[engine/send_tracks] stall: no ready workers, considered={}, dispatched={}, track={}",
+                        considered, dispatched, t.name
+                    );
                     return false;
                 }
                 let worker_index = self.ready_workers.remove(0);
                 t.audio.processing = true;
                 let worker = &self.workers[worker_index];
+                dispatched += 1;
+                println!(
+                    "[engine/send_tracks] dispatch worker={} track={} ready_workers_left={}",
+                    worker_index,
+                    t.name,
+                    self.ready_workers.len()
+                );
                 if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
                     t.audio.processing = false;
+                    println!(
+                        "[engine/send_tracks] failed dispatch worker={} track={} err={}",
+                        worker_index, t.name, e
+                    );
                     self.notify_clients(Err(format!("Failed to send track to worker: {}", e)))
                         .await;
                 }
             }
         }
+        println!(
+            "[engine/send_tracks] done: considered={}, dispatched={}, all_finished={}",
+            considered, dispatched, finished
+        );
         finished
     }
 
@@ -559,11 +605,7 @@ impl Engine {
                         worker.work().await;
                     });
                     self.oss_worker = Some(WorkerData::new(tx, handler));
-                    if let Some(worker) = &self.oss_worker
-                        && let Err(e) = worker.tx.send(Message::TracksFinished).await
-                    {
-                        eprintln!("Error sending initial TracksFinished {e}");
-                    }
+                    self.request_hw_cycle("initial").await;
                 }
             }
             Action::HWInfo { .. } => {}
@@ -576,15 +618,22 @@ impl Engine {
             match message {
                 Message::Ready(id) => {
                     self.ready_workers.push(id);
+                    println!(
+                        "[engine/work] worker ready id={} total_ready={}",
+                        id,
+                        self.ready_workers.len()
+                    );
                 }
                 Message::Finished(workid) => {
                     self.ready_workers.push(workid);
+                    println!(
+                        "[engine/work] worker finished id={} total_ready={}",
+                        workid,
+                        self.ready_workers.len()
+                    );
                     let all_finished = self.send_tracks().await;
-                    if all_finished
-                        && let Some(worker) = &self.oss_worker
-                        && let Err(e) = worker.tx.send(Message::TracksFinished).await
-                    {
-                        eprintln!("Error sending TracksFinished {e}");
+                    if all_finished {
+                        self.request_hw_cycle("all_finished_from_worker").await;
                     }
                 }
                 Message::Channel(s) => {
@@ -593,24 +642,51 @@ impl Engine {
 
                 Message::Request(a) => match a {
                     Action::OpenAudioDevice(_) | Action::Quit => {
+                        println!(
+                            "[engine/work] immediate request={:?} pending_requests={}",
+                            a,
+                            self.pending_requests.len()
+                        );
                         self.handle_request(a).await;
                     }
                     _ => {
+                        println!(
+                            "[engine/work] enqueue request={:?} pending_before={}",
+                            a,
+                            self.pending_requests.len()
+                        );
                         self.pending_requests.push_back(a);
+                        println!(
+                            "[engine/work] enqueued pending_after={}",
+                            self.pending_requests.len()
+                        );
                     }
                 },
                 Message::HWFinished => {
+                    if !self.awaiting_hwfinished {
+                        println!("[engine/work] ignoring out-of-phase HWFinished");
+                        continue;
+                    }
+                    self.awaiting_hwfinished = false;
+                    println!(
+                        "[engine/work] HWFinished begin pending_requests={}",
+                        self.pending_requests.len()
+                    );
                     while let Some(a) = self.pending_requests.pop_front() {
+                        println!(
+                            "[engine/work] handling pending request={:?} pending_left={}",
+                            a,
+                            self.pending_requests.len()
+                        );
                         self.handle_request(a).await;
                     }
                     for track in self.state.lock().tracks.values() {
                         track.lock().setup();
                     }
-                    if self.send_tracks().await
-                        && let Some(worker) = &self.oss_worker
-                        && let Err(e) = worker.tx.send(Message::TracksFinished).await
-                    {
-                        eprintln!("Error sending TracksFinished {e}");
+                    println!("[engine/work] setup complete, calling send_tracks");
+                    if self.send_tracks().await {
+                        println!("[engine/work] send_tracks returned all_finished=true");
+                        self.request_hw_cycle("all_finished_from_hwfinished").await;
                     }
                 }
                 _ => {}
