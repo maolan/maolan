@@ -29,7 +29,6 @@ impl Worker {
                     return;
                 }
                 Message::ProcessTrack(t) => {
-                    println!("worker");
                     let track = t.lock();
                     track.process();
                     match self.tx.send(Message::Finished(self.id)).await {

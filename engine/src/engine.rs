@@ -576,10 +576,8 @@ impl Engine {
                     self.ready_workers.push(id);
                 }
                 Message::Finished(workid) => {
-                    println!("Finished");
                     self.ready_workers.push(workid);
                     let all_finished = self.send_tracks().await;
-                    println!("Finished: {all_finished}");
                     if all_finished
                         && let Some(worker) = &self.oss_worker
                         && let Err(e) = worker.tx.send(Message::TracksFinished).await
