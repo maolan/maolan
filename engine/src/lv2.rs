@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    ffi::{CStr, CString, c_char, c_uint, c_void},
+    ffi::{CStr, CString, c_char, c_uint, c_ulong, c_void},
     fmt,
     sync::{
         Arc, Mutex,
@@ -200,6 +200,10 @@ const LV2_UI_RESIZE: &str = "http://lv2plug.in/ns/extensions/ui#resize";
 const LV2_UI_IDLE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#idleInterface";
 const LV2_UI_SHOW_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#showInterface";
 const LV2_UI_HIDE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#hideInterface";
+const LV2_INSTANCE_ACCESS: &str = "http://lv2plug.in/ns/ext/instance-access";
+const LV2_EXTERNAL_UI_HOST_KX: &str = "http://kxstudio.sf.net/ns/lv2ext/external-ui#Host";
+// RTLD_NOW | RTLD_GLOBAL on FreeBSD (dlfcn.h: RTLD_NOW=2, RTLD_GLOBAL=0x100)
+const RTLD_NOW_GLOBAL: i32 = 0x102;
 const GTK_WINDOW_TOPLEVEL: i32 = 0;
 const LV2_ATOM_BUFFER_BYTES: usize = 8192;
 
@@ -213,6 +217,16 @@ impl fmt::Debug for Lv2Processor {
     }
 }
 
+/// Spec for plugins whose UI type is `LV2_UI_EXTERNAL` or `LV2_EXT_UI_WIDGET`.
+/// These are instantiated directly via dlopen rather than through suil.
+#[derive(Debug, Clone)]
+struct ExternalUiSpec {
+    binary_path: String,
+    bundle_path: String,
+    plugin_uri: String,
+    ui_uri: String,
+}
+
 #[derive(Debug, Clone)]
 struct UiSpec {
     plugin_uri: String,
@@ -222,6 +236,52 @@ struct UiSpec {
     ui_bundle_path: String,
     ui_binary_path: String,
 }
+
+/// Raw LV2 UI descriptor as defined in lv2/ui.h.
+#[repr(C)]
+struct LV2UiDescriptor {
+    uri: *const c_char,
+    instantiate: unsafe extern "C" fn(
+        descriptor: *const LV2UiDescriptor,
+        plugin_uri: *const c_char,
+        bundle_path: *const c_char,
+        write_function: SuilPortWriteFunc,
+        controller: *mut c_void,
+        widget: *mut *mut c_void,
+        features: *const *const LV2FeatureRaw,
+    ) -> *mut c_void,
+    cleanup: unsafe extern "C" fn(*mut c_void),
+    extension_data: unsafe extern "C" fn(*const c_char) -> *const c_void,
+}
+
+/// External UI widget vtable (kxstudio / lv2plug.in external-ui spec).
+#[repr(C)]
+struct LV2ExternalUiWidget {
+    run: unsafe extern "C" fn(*mut LV2ExternalUiWidget),
+    show: unsafe extern "C" fn(*mut LV2ExternalUiWidget),
+    hide: unsafe extern "C" fn(*mut LV2ExternalUiWidget),
+}
+
+unsafe impl Send for LV2ExternalUiWidget {}
+
+/// Host descriptor passed as the `LV2_EXTERNAL_UI_HOST_KX` feature data.
+#[repr(C)]
+struct LV2ExternalUiHost {
+    ui_closed: Option<unsafe extern "C" fn(*mut c_void)>,
+    plugin_human_id: *const c_char,
+}
+
+unsafe impl Send for LV2ExternalUiHost {}
+
+/// Controller for external UIs: handles parameter writes and close signals.
+struct ExternalUiController {
+    scalar_values: Arc<Mutex<Vec<f32>>>,
+    closed: AtomicBool,
+}
+
+unsafe impl Send for ExternalUiController {}
+
+type LV2UiDescriptorFn = unsafe extern "C" fn(u32) -> *const LV2UiDescriptor;
 
 #[link(name = "suil-0")]
 unsafe extern "C" {
@@ -281,6 +341,9 @@ unsafe extern "C" {
         padding: u32,
     );
     fn gtk_widget_show_all(widget: *mut c_void);
+    fn gtk_widget_realize(widget: *mut c_void);
+    fn gtk_socket_new() -> *mut c_void;
+    fn gtk_socket_get_id(socket: *mut c_void) -> c_ulong;
     fn gtk_main();
     fn gtk_main_quit();
 }
@@ -307,6 +370,13 @@ unsafe extern "C" {
         data: *mut c_void,
     ) -> c_uint;
     fn g_source_remove(tag: c_uint) -> i32;
+}
+
+// dlopen/dlsym/dlclose are in FreeBSD's libc (no separate -ldl needed).
+unsafe extern "C" {
+    fn dlopen(filename: *const c_char, flags: i32) -> *mut c_void;
+    fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    fn dlclose(handle: *mut c_void) -> i32;
 }
 
 impl Lv2Processor {
@@ -601,16 +671,34 @@ impl Lv2Processor {
         }
 
         let ui_spec = resolve_preferred_ui(&self.uri);
+        // Fall back to external UI only when no suil-supported UI is found.
+        let ext_spec = if ui_spec.is_err() { resolve_external_ui(&self.uri) } else { None };
         let values = Arc::clone(&self.scalar_values);
         let symbol_map = Arc::clone(&self.port_symbol_to_index);
         let control_ports = self.control_ports.clone();
         let plugin_title = self.plugin_name.clone();
+        // Transmit as usize so the raw pointer can cross the thread boundary.
+        let lv2_handle: Option<usize> = self
+            .instance
+            .as_ref()
+            .map(|i| i.instance().handle() as usize)
+            .filter(|&h| h != 0);
         let (tx, rx) = mpsc::channel::<UiFeedbackMessage>();
         self.ui_feedback_tx = Some(tx);
         let thread = thread::spawn(move || {
-            if let Err(e) =
-                run_gtk_plugin_ui(ui_spec.ok(), plugin_title, values, symbol_map, control_ports, rx)
-            {
+            if let Some(ext) = ext_spec {
+                if let Err(e) = run_external_ui(ext, values, lv2_handle) {
+                    eprintln!("LV2 external UI failed: {e}");
+                }
+            } else if let Err(e) = run_gtk_plugin_ui(
+                ui_spec.ok(),
+                plugin_title,
+                values,
+                symbol_map,
+                control_ports,
+                lv2_handle,
+                rx,
+            ) {
                 eprintln!("LV2 UI failed: {e}");
             }
         });
@@ -933,7 +1021,12 @@ fn resolve_preferred_ui(plugin_uri: &str) -> Result<UiSpec, String> {
     let external_uri = world.new_uri(LV2_UI_EXTERNAL);
     let extui_widget_uri = world.new_uri(LV2_EXT_UI_WIDGET);
 
-    let host_containers = [LV2_UI_GTK3, LV2_UI_GTK, LV2_UI_X11];
+    // Only GTK2 and X11 are supported as host containers.  GTK3 is intentionally
+    // omitted: the host creates GTK2 windows, so a GTK3-wrapped suil widget
+    // (returned by libsuil_qt5_in_gtk3 or libsuil_x11_in_gtk3) would be added
+    // to a GTK2 container – a toolkit conflict that crashes at runtime.
+    // Qt plugins will therefore be wrapped by libsuil_qt5_in_gtk2 instead.
+    let host_containers = [LV2_UI_GTK, LV2_UI_X11];
     let ui_classes = [
         (&gtk3_uri, LV2_UI_GTK3),
         (&gtk_uri, LV2_UI_GTK),
@@ -1001,6 +1094,7 @@ fn run_gtk_plugin_ui(
     scalar_values: Arc<Mutex<Vec<f32>>>,
     port_symbol_to_index: Arc<HashMap<String, u32>>,
     control_ports: Vec<ControlPortInfo>,
+    lv2_handle: Option<usize>,
     feedback_rx: Receiver<UiFeedbackMessage>,
 ) -> Result<(), String> {
     let mut argc = 0;
@@ -1010,7 +1104,7 @@ fn run_gtk_plugin_ui(
     }
 
     if let Some(spec) = ui_spec {
-        return run_gtk_suil_ui(spec, scalar_values, port_symbol_to_index, feedback_rx);
+        return run_gtk_suil_ui(spec, scalar_values, port_symbol_to_index, lv2_handle, feedback_rx);
     }
     run_generic_parameter_ui(plugin_name, scalar_values, control_ports, feedback_rx)
 }
@@ -1049,6 +1143,7 @@ fn run_gtk_suil_ui(
     ui_spec: UiSpec,
     scalar_values: Arc<Mutex<Vec<f32>>>,
     port_symbol_to_index: Arc<HashMap<String, u32>>,
+    lv2_handle: Option<usize>,
     feedback_rx: Receiver<UiFeedbackMessage>,
 ) -> Result<(), String> {
     let mut argc = 0;
@@ -1073,6 +1168,28 @@ fn run_gtk_suil_ui(
         );
     }
 
+    // For X11 plugin UIs, create a GtkSocket and use its XID as the parent.
+    // This avoids suil's SuilX11Wrapper (which subclasses GtkSocket internally) that
+    // can fail to register as a GType when suil was compiled against a different GTK2
+    // version than the one currently loaded.  With X11 as both container and plugin
+    // type, suil uses libsuil_x11.so (standalone) which just forwards the XID.
+    let is_x11_ui = ui_spec.ui_type_uri == LV2_UI_X11;
+    let (effective_container, parent_data): (String, *mut c_void) = if is_x11_ui {
+        let socket = unsafe { gtk_socket_new() };
+        if socket.is_null() {
+            return Err("Failed to create GtkSocket for X11 UI embedding".to_string());
+        }
+        unsafe {
+            gtk_container_add(window, socket);
+            gtk_widget_show_all(window);
+            gtk_widget_realize(socket);
+        }
+        let xid = unsafe { gtk_socket_get_id(socket) };
+        (LV2_UI_X11.to_string(), xid as *mut c_void)
+    } else {
+        (ui_spec.container_type_uri.clone(), window)
+    };
+
     let subscribed_ports = Arc::new(Mutex::new(HashSet::new()));
     let controller = Box::new(UiController {
         scalar_values,
@@ -1094,7 +1211,7 @@ fn run_gtk_suil_ui(
         return Err("Failed to create suil host".to_string());
     }
 
-    let container_type_uri = CString::new(ui_spec.container_type_uri).map_err(|e| e.to_string())?;
+    let container_type_uri = CString::new(effective_container).map_err(|e| e.to_string())?;
     let plugin_uri = CString::new(ui_spec.plugin_uri).map_err(|e| e.to_string())?;
     let ui_uri = CString::new(ui_spec.ui_uri).map_err(|e| e.to_string())?;
     let ui_type_uri = CString::new(ui_spec.ui_type_uri).map_err(|e| e.to_string())?;
@@ -1113,14 +1230,23 @@ fn run_gtk_suil_ui(
     };
     let parent_raw = LV2FeatureRaw {
         uri: parent_uri.as_ptr(),
-        data: window,
+        data: parent_data,
     };
     let resize_raw = LV2FeatureRaw {
         uri: resize_uri.as_ptr(),
         data: (&mut resize_feature as *mut LV2UiResize).cast::<c_void>(),
     };
-    let feature_ptrs: [*const LV2FeatureRaw; 4] =
-        [&urid_raw as *const LV2FeatureRaw, &parent_raw, &resize_raw, std::ptr::null()];
+    let instance_access_uri = CString::new(LV2_INSTANCE_ACCESS).map_err(|e| e.to_string())?;
+    let instance_access_raw = lv2_handle.map(|h| LV2FeatureRaw {
+        uri: instance_access_uri.as_ptr(),
+        data: h as *mut c_void,
+    });
+    let mut feature_ptrs: Vec<*const LV2FeatureRaw> =
+        vec![&urid_raw, &parent_raw, &resize_raw];
+    if let Some(ref raw) = instance_access_raw {
+        feature_ptrs.push(raw as *const LV2FeatureRaw);
+    }
+    feature_ptrs.push(std::ptr::null());
 
     let instance = unsafe {
         suil_instance_new(
@@ -1198,8 +1324,15 @@ fn run_gtk_suil_ui(
         let _ = show(ui_handle);
     }
     unsafe {
-        gtk_container_add(window, widget);
-        gtk_widget_show_all(window);
+        // For X11 UIs the window was already shown before suil instantiation so
+        // the socket could be realized and its XID obtained.  The plugin embeds
+        // its own X11 window into the socket's XID directly, so there is no suil
+        // widget to add to the GTK container.  For GTK-native plugin UIs, add the
+        // suil-provided widget and show everything normally.
+        if !is_x11_ui {
+            gtk_container_add(window, widget);
+            gtk_widget_show_all(window);
+        }
         gtk_main();
     }
     if !hide_iface_ptr.is_null()
@@ -1345,6 +1478,191 @@ fn run_generic_parameter_ui(
             drop(Box::from_raw(data_ptr));
         }
     }
+    Ok(())
+}
+
+/// Returns an `ExternalUiSpec` if the plugin has an external UI
+/// (`LV2_UI_EXTERNAL` or `LV2_EXT_UI_WIDGET`) that we can load directly.
+fn resolve_external_ui(plugin_uri: &str) -> Option<ExternalUiSpec> {
+    let world = World::new();
+    world.load_all();
+    let uri_node = world.new_uri(plugin_uri);
+    let plugin = world.plugins().plugin(&uri_node)?;
+    let uis = plugin.uis()?;
+    let external_node = world.new_uri(LV2_UI_EXTERNAL);
+    let kx_node = world.new_uri(LV2_EXT_UI_WIDGET);
+    for ui in uis.iter() {
+        if !ui.is_a(&external_node) && !ui.is_a(&kx_node) {
+            continue;
+        }
+        let ui_uri = ui.uri().as_uri()?.to_string();
+        let (_, bundle_path) = ui.bundle_uri()?.path()?;
+        let (_, binary_path) = ui.binary_uri()?.path()?;
+        return Some(ExternalUiSpec {
+            binary_path,
+            bundle_path,
+            plugin_uri: plugin_uri.to_string(),
+            ui_uri,
+        });
+    }
+    None
+}
+
+/// Write-function callback forwarded from external UI → audio thread.
+extern "C" fn external_write_port(
+    controller: *mut c_void,
+    port_index: u32,
+    buffer_size: u32,
+    protocol: u32,
+    buffer: *const c_void,
+) {
+    if controller.is_null() || buffer.is_null() || protocol != 0 || buffer_size != 4 {
+        return;
+    }
+    let ctrl = unsafe { &*(controller as *const ExternalUiController) };
+    let value = unsafe { *(buffer as *const f32) };
+    if let Ok(mut values) = ctrl.scalar_values.lock() {
+        if (port_index as usize) < values.len() {
+            values[port_index as usize] = value;
+        }
+    }
+}
+
+/// Called by the external UI when the user closes its window.
+unsafe extern "C" fn external_ui_closed(controller: *mut c_void) {
+    if !controller.is_null() {
+        let ctrl = unsafe { &*(controller as *const ExternalUiController) };
+        ctrl.closed.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Run an external UI plugin (LV2_UI_EXTERNAL / LV2_EXT_UI_WIDGET) without GTK.
+/// The binary is loaded with dlopen, instantiated directly, then shown and driven
+/// via the widget's own run/show/hide vtable in a tight ~30 fps loop.
+fn run_external_ui(
+    spec: ExternalUiSpec,
+    scalar_values: Arc<Mutex<Vec<f32>>>,
+    lv2_handle: Option<usize>,
+) -> Result<(), String> {
+    let binary_cstr = CString::new(spec.binary_path.as_str()).map_err(|e| e.to_string())?;
+    let lib = unsafe { dlopen(binary_cstr.as_ptr(), RTLD_NOW_GLOBAL) };
+    if lib.is_null() {
+        return Err(format!("dlopen failed for {}", spec.binary_path));
+    }
+
+    let sym = unsafe { dlsym(lib, b"lv2ui_descriptor\0".as_ptr() as *const c_char) };
+    if sym.is_null() {
+        unsafe { dlclose(lib) };
+        return Err("lv2ui_descriptor symbol not found".to_string());
+    }
+    let descriptor_fn: LV2UiDescriptorFn = unsafe { std::mem::transmute(sym) };
+
+    // Walk the descriptor table to find the one matching our UI URI.
+    let descriptor: *const LV2UiDescriptor = unsafe {
+        let mut idx = 0u32;
+        loop {
+            let d = descriptor_fn(idx);
+            if d.is_null() {
+                break std::ptr::null();
+            }
+            if CStr::from_ptr((*d).uri).to_str().unwrap_or("") == spec.ui_uri {
+                break d;
+            }
+            idx += 1;
+        }
+    };
+    if descriptor.is_null() {
+        unsafe { dlclose(lib) };
+        return Err(format!("no descriptor for UI URI {}", spec.ui_uri));
+    }
+
+    let mut urid_feature = UridMapFeature::new().map_err(|e| {
+        unsafe { dlclose(lib) };
+        e
+    })?;
+    let urid_raw = LV2FeatureRaw {
+        uri: urid_feature.feature().uri,
+        data: urid_feature.feature().data,
+    };
+    let instance_access_uri = CString::new(LV2_INSTANCE_ACCESS).map_err(|e| e.to_string())?;
+    let instance_access_raw = lv2_handle.map(|h| LV2FeatureRaw {
+        uri: instance_access_uri.as_ptr(),
+        data: h as *mut c_void,
+    });
+    let ext_host_uri = CString::new(LV2_EXTERNAL_UI_HOST_KX).map_err(|e| e.to_string())?;
+    let plugin_id = CString::new(spec.plugin_uri.as_str()).map_err(|e| e.to_string())?;
+
+    let controller = Box::new(ExternalUiController {
+        scalar_values,
+        closed: AtomicBool::new(false),
+    });
+    let controller_ptr = Box::into_raw(controller);
+
+    let mut ext_ui_host = LV2ExternalUiHost {
+        ui_closed: Some(external_ui_closed),
+        plugin_human_id: plugin_id.as_ptr(),
+    };
+    let ext_host_raw = LV2FeatureRaw {
+        uri: ext_host_uri.as_ptr(),
+        data: (&mut ext_ui_host as *mut LV2ExternalUiHost).cast::<c_void>(),
+    };
+
+    let mut feature_ptrs: Vec<*const LV2FeatureRaw> = vec![&urid_raw, &ext_host_raw];
+    if let Some(ref raw) = instance_access_raw {
+        feature_ptrs.push(raw as *const LV2FeatureRaw);
+    }
+    feature_ptrs.push(std::ptr::null());
+
+    let plugin_uri_cstr = CString::new(spec.plugin_uri.as_str()).map_err(|e| e.to_string())?;
+    let bundle_cstr = CString::new(spec.bundle_path.as_str()).map_err(|e| e.to_string())?;
+
+    let mut widget_ptr: *mut c_void = std::ptr::null_mut();
+    let ui_handle = unsafe {
+        ((*descriptor).instantiate)(
+            descriptor,
+            plugin_uri_cstr.as_ptr(),
+            bundle_cstr.as_ptr(),
+            external_write_port,
+            controller_ptr as *mut c_void,
+            &mut widget_ptr,
+            feature_ptrs.as_ptr(),
+        )
+    };
+    if ui_handle.is_null() {
+        unsafe {
+            drop(Box::from_raw(controller_ptr));
+            dlclose(lib);
+        }
+        return Err("External UI instantiate() returned null".to_string());
+    }
+
+    let widget = widget_ptr as *mut LV2ExternalUiWidget;
+    if widget.is_null() {
+        unsafe {
+            ((*descriptor).cleanup)(ui_handle);
+            drop(Box::from_raw(controller_ptr));
+            dlclose(lib);
+        }
+        return Err("External UI widget pointer is null".to_string());
+    }
+
+    unsafe { ((*widget).show)(widget) };
+
+    loop {
+        unsafe { ((*widget).run)(widget) };
+        if unsafe { (*controller_ptr).closed.load(Ordering::SeqCst) } {
+            break;
+        }
+        thread::sleep(Duration::from_millis(33));
+    }
+
+    unsafe {
+        ((*widget).hide)(widget);
+        ((*descriptor).cleanup)(ui_handle);
+        drop(Box::from_raw(controller_ptr));
+        dlclose(lib);
+    }
+    let _ = &mut urid_feature;
     Ok(())
 }
 
