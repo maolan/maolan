@@ -46,6 +46,10 @@ pub enum Action {
         track_name: String,
         plugin_uri: String,
     },
+    TrackShowLv2PluginUi {
+        track_name: String,
+        plugin_uri: String,
+    },
     ListLv2Plugins,
     Lv2Plugins(Vec<Lv2PluginInfo>),
     ClipMove {

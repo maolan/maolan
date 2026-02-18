@@ -101,6 +101,7 @@ pub enum Message {
     Connections,
     RefreshLv2Plugins,
     LoadLv2Plugin(String),
+    ShowLv2PluginUi(String),
 
     HWSelected(String),
 }

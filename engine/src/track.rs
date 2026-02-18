@@ -157,4 +157,18 @@ impl Track {
             .map(|processor| processor.uri().to_string())
             .collect()
     }
+
+    pub fn show_lv2_plugin_ui(&mut self, uri: &str) -> Result<(), String> {
+        let Some(processor) = self
+            .lv2_processors
+            .iter_mut()
+            .find(|processor| processor.uri() == uri)
+        else {
+            return Err(format!(
+                "Track '{}' does not have LV2 plugin loaded: {uri}",
+                self.name
+            ));
+        };
+        processor.show_ui()
+    }
 }

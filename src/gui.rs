@@ -317,6 +317,17 @@ impl Maolan {
                 self.state.blocking_write().message =
                     "Select a track before loading LV2 plugin".to_string();
             }
+            Message::ShowLv2PluginUi(ref plugin_uri) => {
+                let selected_track = self.state.blocking_read().selected.iter().next().cloned();
+                if let Some(track_name) = selected_track {
+                    return self.send(Action::TrackShowLv2PluginUi {
+                        track_name,
+                        plugin_uri: plugin_uri.clone(),
+                    });
+                }
+                self.state.blocking_write().message =
+                    "Select a track before opening LV2 UI".to_string();
+            }
             Message::SendMessageFinished(ref result) => match result {
                 Ok(_) => debug!("Sent successfully!"),
                 Err(e) => error!("Error: {}", e),
@@ -1056,6 +1067,8 @@ impl Maolan {
                                 .width(Length::Fill),
                                 button("Load")
                                     .on_press(Message::LoadLv2Plugin(plugin.uri.clone())),
+                                button("Show UI")
+                                    .on_press(Message::ShowLv2PluginUi(plugin.uri.clone())),
                             ]
                             .spacing(8),
                         );

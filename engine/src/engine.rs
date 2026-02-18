@@ -307,6 +307,25 @@ impl Engine {
                     }
                 }
             }
+            Action::TrackShowLv2PluginUi {
+                ref track_name,
+                ref plugin_uri,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().show_lv2_plugin_ui(plugin_uri) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
             Action::ListLv2Plugins => {
                 let plugins = {
                     let host = crate::lv2::Lv2Host::new(48_000.0);
