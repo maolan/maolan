@@ -12,7 +12,10 @@ use std::{
 };
 
 use lilv::{World, instance::ActiveInstance, node::Node, plugin::Plugin};
-use lv2_raw::{LV2Feature, LV2Urid, LV2UridMap, LV2UridMapHandle, LV2_URID__MAP};
+use lv2_raw::{
+    LV2_ATOM__FRAMETIME, LV2_ATOM__SEQUENCE, LV2AtomSequence, LV2AtomSequenceBody, LV2Feature,
+    LV2Urid, LV2UridMap, LV2UridMapHandle, LV2_URID__MAP,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lv2PluginInfo {
@@ -37,19 +40,26 @@ pub struct Lv2Host {
 enum PortBinding {
     AudioInput(usize),
     AudioOutput(usize),
+    AtomInput(usize),
+    AtomOutput(usize),
     Scalar(usize),
 }
 
 pub struct Lv2Processor {
     uri: String,
     plugin_name: String,
-    instance: ActiveInstance,
+    instance: Option<ActiveInstance>,
     _urid_feature: UridMapFeature,
     port_bindings: Vec<PortBinding>,
     scalar_values: Arc<Mutex<Vec<f32>>>,
     port_symbol_to_index: Arc<HashMap<String, u32>>,
     audio_inputs: Vec<Vec<f32>>,
     audio_outputs: Vec<Vec<f32>>,
+    atom_inputs: Vec<Vec<u8>>,
+    atom_outputs: Vec<Vec<u8>>,
+    atom_sequence_urid: LV2Urid,
+    atom_frame_time_urid: LV2Urid,
+    skip_deactivate_on_drop: bool,
     control_ports: Vec<ControlPortInfo>,
     ui_feedback_cache: Vec<u32>,
     ui_feedback_tx: Option<Sender<UiFeedbackMessage>>,
@@ -168,6 +178,7 @@ const LV2_UI_IDLE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#idleInte
 const LV2_UI_SHOW_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#showInterface";
 const LV2_UI_HIDE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#hideInterface";
 const GTK_WINDOW_TOPLEVEL: i32 = 0;
+const LV2_ATOM_BUFFER_BYTES: usize = 8192;
 
 impl fmt::Debug for Lv2Processor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -297,6 +308,8 @@ impl Lv2Processor {
         let output_port = world.new_uri("http://lv2plug.in/ns/lv2core#OutputPort");
         let audio_port = world.new_uri("http://lv2plug.in/ns/lv2core#AudioPort");
         let control_port = world.new_uri("http://lv2plug.in/ns/lv2core#ControlPort");
+        let atom_port = world.new_uri("http://lv2plug.in/ns/ext/atom#AtomPort");
+        let event_port = world.new_uri("http://lv2plug.in/ns/ext/event#EventPort");
 
         let ports_count = plugin.ports_count();
         let mut port_bindings = vec![PortBinding::Scalar(0); ports_count];
@@ -304,7 +317,12 @@ impl Lv2Processor {
         let mut port_symbol_to_index = HashMap::<String, u32>::new();
         let mut audio_inputs: Vec<Vec<f32>> = vec![];
         let mut audio_outputs: Vec<Vec<f32>> = vec![];
+        let mut atom_inputs: Vec<Vec<u8>> = vec![];
+        let mut atom_outputs: Vec<Vec<u8>> = vec![];
         let mut control_ports = vec![];
+        let atom_sequence_urid = urid_feature.map_uri(LV2_ATOM__SEQUENCE);
+        let atom_frame_time_urid = urid_feature.map_uri(LV2_ATOM__FRAMETIME);
+        let mut has_atom_ports = false;
 
         for port in plugin.iter_ports() {
             let index = port.index();
@@ -313,6 +331,7 @@ impl Lv2Processor {
             }
             let is_audio = port.is_a(&audio_port);
             let is_control = port.is_a(&control_port);
+            let is_atom = port.is_a(&atom_port) || port.is_a(&event_port);
             let is_input = port.is_a(&input_port);
             let is_output = port.is_a(&output_port);
 
@@ -324,6 +343,20 @@ impl Lv2Processor {
                 let channel = audio_outputs.len();
                 audio_outputs.push(vec![0.0]);
                 port_bindings[index] = PortBinding::AudioOutput(channel);
+            } else if is_atom && is_input {
+                has_atom_ports = true;
+                let atom_idx = atom_inputs.len();
+                let mut buffer = vec![0_u8; LV2_ATOM_BUFFER_BYTES];
+                prepare_empty_atom_sequence(&mut buffer, atom_sequence_urid, atom_frame_time_urid);
+                atom_inputs.push(buffer);
+                port_bindings[index] = PortBinding::AtomInput(atom_idx);
+            } else if is_atom && is_output {
+                has_atom_ports = true;
+                let atom_idx = atom_outputs.len();
+                let mut buffer = vec![0_u8; LV2_ATOM_BUFFER_BYTES];
+                prepare_empty_atom_sequence(&mut buffer, atom_sequence_urid, atom_frame_time_urid);
+                atom_outputs.push(buffer);
+                port_bindings[index] = PortBinding::AtomOutput(atom_idx);
             } else {
                 let default_value = port
                     .range()
@@ -367,13 +400,18 @@ impl Lv2Processor {
                 .as_str()
                 .map(str::to_string)
                 .unwrap_or_else(|| uri.to_string()),
-            instance: active_instance,
+            instance: Some(active_instance),
             _urid_feature: urid_feature,
             port_bindings,
             scalar_values: Arc::new(Mutex::new(scalar_values)),
             port_symbol_to_index: Arc::new(port_symbol_to_index),
             audio_inputs,
             audio_outputs,
+            atom_inputs,
+            atom_outputs,
+            atom_sequence_urid,
+            atom_frame_time_urid,
+            skip_deactivate_on_drop: has_atom_ports,
             control_ports,
             ui_feedback_cache: vec![],
             ui_feedback_tx: None,
@@ -408,10 +446,18 @@ impl Lv2Processor {
         for buffer in &mut self.audio_outputs {
             buffer.fill(0.0);
         }
+        for buffer in &mut self.atom_inputs {
+            prepare_empty_atom_sequence(buffer, self.atom_sequence_urid, self.atom_frame_time_urid);
+        }
+        for buffer in &mut self.atom_outputs {
+            prepare_empty_atom_sequence(buffer, self.atom_sequence_urid, self.atom_frame_time_urid);
+        }
 
         self.connect_ports();
-        unsafe {
-            self.instance.run(frames);
+        if let Some(instance) = self.instance.as_mut() {
+            unsafe {
+                instance.run(frames);
+            }
         }
         let changes = self.collect_scalar_changes();
         if !changes.is_empty()
@@ -462,22 +508,44 @@ impl Lv2Processor {
             match binding {
                 PortBinding::AudioInput(channel) => {
                     let ptr = self.audio_inputs[*channel].as_mut_ptr();
-                    unsafe {
-                        self.instance.instance_mut().connect_port_mut(port_index, ptr);
+                    if let Some(instance) = self.instance.as_mut() {
+                        unsafe {
+                            instance.instance_mut().connect_port_mut(port_index, ptr);
+                        }
                     }
                 }
                 PortBinding::AudioOutput(channel) => {
                     let ptr = self.audio_outputs[*channel].as_mut_ptr();
-                    unsafe {
-                        self.instance.instance_mut().connect_port_mut(port_index, ptr);
+                    if let Some(instance) = self.instance.as_mut() {
+                        unsafe {
+                            instance.instance_mut().connect_port_mut(port_index, ptr);
+                        }
+                    }
+                }
+                PortBinding::AtomInput(atom_index) => {
+                    let ptr = self.atom_inputs[*atom_index].as_mut_ptr();
+                    if let Some(instance) = self.instance.as_mut() {
+                        unsafe {
+                            instance.instance_mut().connect_port_mut(port_index, ptr);
+                        }
+                    }
+                }
+                PortBinding::AtomOutput(atom_index) => {
+                    let ptr = self.atom_outputs[*atom_index].as_mut_ptr();
+                    if let Some(instance) = self.instance.as_mut() {
+                        unsafe {
+                            instance.instance_mut().connect_port_mut(port_index, ptr);
+                        }
                     }
                 }
                 PortBinding::Scalar(index) => {
                     if let Ok(mut values) = self.scalar_values.lock() {
                         if *index < values.len() {
                             let ptr = (&mut values[*index]) as *mut f32;
-                            unsafe {
-                                self.instance.instance_mut().connect_port_mut(port_index, ptr);
+                            if let Some(instance) = self.instance.as_mut() {
+                                unsafe {
+                                    instance.instance_mut().connect_port_mut(port_index, ptr);
+                                }
                             }
                         }
                     }
@@ -509,6 +577,21 @@ impl Lv2Processor {
         });
         self.ui_thread = Some(thread);
         Ok(())
+    }
+}
+
+impl Drop for Lv2Processor {
+    fn drop(&mut self) {
+        let Some(instance) = self.instance.take() else {
+            return;
+        };
+        if self.skip_deactivate_on_drop {
+            // Some plugins exposing atom/event ports crash inside deactivate.
+            // Leak the active instance as a process-lifetime fallback to avoid SIGSEGV on quit.
+            std::mem::forget(instance);
+        } else {
+            drop(instance);
+        }
     }
 }
 
@@ -1288,6 +1371,37 @@ impl UridMapFeature {
 
     fn feature(&self) -> &LV2Feature {
         &self.feature
+    }
+
+    fn map_uri(&self, uri: &[u8]) -> LV2Urid {
+        let Ok(uri_str) = std::str::from_utf8(uri) else {
+            return 0;
+        };
+        let uri_str = uri_str.trim_end_matches('\0');
+        let Ok(mut state) = self._state.lock() else {
+            return 0;
+        };
+        if let Some(existing) = state.by_uri.get(uri_str).copied() {
+            return existing;
+        }
+        let mapped = state.next_urid;
+        state.next_urid = state.next_urid.saturating_add(1);
+        state.by_uri.insert(uri_str.to_string(), mapped);
+        mapped
+    }
+}
+
+fn prepare_empty_atom_sequence(buffer: &mut [u8], sequence_urid: LV2Urid, frame_time_urid: LV2Urid) {
+    buffer.fill(0);
+    if buffer.len() < std::mem::size_of::<LV2AtomSequence>() {
+        return;
+    }
+    let seq = buffer.as_mut_ptr() as *mut LV2AtomSequence;
+    unsafe {
+        (*seq).atom.mytype = sequence_urid;
+        (*seq).atom.size = std::mem::size_of::<LV2AtomSequenceBody>() as u32;
+        (*seq).body.unit = frame_time_urid;
+        (*seq).body.pad = 0;
     }
 }
 
