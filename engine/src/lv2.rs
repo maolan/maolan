@@ -13,8 +13,8 @@ use std::{
 
 use lilv::{World, instance::ActiveInstance, node::Node, plugin::Plugin};
 use lv2_raw::{
-    LV2_ATOM__FRAMETIME, LV2_ATOM__SEQUENCE, LV2AtomSequence, LV2AtomSequenceBody, LV2Feature,
-    LV2Urid, LV2UridMap, LV2UridMapHandle, LV2_URID__MAP,
+    LV2_ATOM__FRAMETIME, LV2_ATOM__SEQUENCE, LV2_URID__MAP, LV2AtomSequence, LV2AtomSequenceBody,
+    LV2Feature, LV2Urid, LV2UridMap, LV2UridMapHandle,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -288,8 +288,12 @@ unsafe extern "C" {
     fn suil_host_new(
         write_func: Option<SuilPortWriteFunc>,
         index_func: Option<SuilPortIndexFunc>,
-        subscribe_func: Option<extern "C" fn(SuilController, u32, u32, *const *const LV2FeatureRaw) -> u32>,
-        unsubscribe_func: Option<extern "C" fn(SuilController, u32, u32, *const *const LV2FeatureRaw) -> u32>,
+        subscribe_func: Option<
+            extern "C" fn(SuilController, u32, u32, *const *const LV2FeatureRaw) -> u32,
+        >,
+        unsubscribe_func: Option<
+            extern "C" fn(SuilController, u32, u32, *const *const LV2FeatureRaw) -> u32,
+        >,
     ) -> *mut SuilHost;
     fn suil_host_free(host: *mut SuilHost);
     fn suil_ui_supported(host_type_uri: *const c_char, ui_type_uri: *const c_char) -> u32;
@@ -307,8 +311,10 @@ unsafe extern "C" {
     fn suil_instance_free(instance: *mut SuilInstance);
     fn suil_instance_get_widget(instance: *mut SuilInstance) -> *mut c_void;
     fn suil_instance_get_handle(instance: *mut SuilInstance) -> *mut c_void;
-    fn suil_instance_extension_data(instance: *mut SuilInstance, uri: *const c_char)
-    -> *const c_void;
+    fn suil_instance_extension_data(
+        instance: *mut SuilInstance,
+        uri: *const c_char,
+    ) -> *const c_void;
     fn suil_instance_port_event(
         instance: *mut SuilInstance,
         port_index: u32,
@@ -469,8 +475,14 @@ impl Lv2Processor {
 
                 if is_control && is_input {
                     let range = port.range();
-                    let mut min = range.minimum.and_then(|node| node.as_float()).unwrap_or(0.0);
-                    let mut max = range.maximum.and_then(|node| node.as_float()).unwrap_or(1.0);
+                    let mut min = range
+                        .minimum
+                        .and_then(|node| node.as_float())
+                        .unwrap_or(0.0);
+                    let mut max = range
+                        .maximum
+                        .and_then(|node| node.as_float())
+                        .unwrap_or(1.0);
                     if !matches!(min.partial_cmp(&max), Some(std::cmp::Ordering::Less)) {
                         min = default_value - 1.0;
                         max = default_value + 1.0;
@@ -672,7 +684,11 @@ impl Lv2Processor {
 
         let ui_spec = resolve_preferred_ui(&self.uri);
         // Fall back to external UI only when no suil-supported UI is found.
-        let ext_spec = if ui_spec.is_err() { resolve_external_ui(&self.uri) } else { None };
+        let ext_spec = if ui_spec.is_err() {
+            resolve_external_ui(&self.uri)
+        } else {
+            None
+        };
         let values = Arc::clone(&self.scalar_values);
         let symbol_map = Arc::clone(&self.port_symbol_to_index);
         let control_ports = self.control_ports.clone();
@@ -736,11 +752,17 @@ impl Lv2Host {
 
     pub fn list_plugins(&self) -> Vec<Lv2PluginInfo> {
         let input_port = self.world.new_uri("http://lv2plug.in/ns/lv2core#InputPort");
-        let output_port = self.world.new_uri("http://lv2plug.in/ns/lv2core#OutputPort");
+        let output_port = self
+            .world
+            .new_uri("http://lv2plug.in/ns/lv2core#OutputPort");
         let audio_port = self.world.new_uri("http://lv2plug.in/ns/lv2core#AudioPort");
         let atom_port = self.world.new_uri("http://lv2plug.in/ns/ext/atom#AtomPort");
-        let event_port = self.world.new_uri("http://lv2plug.in/ns/ext/event#EventPort");
-        let midi_event = self.world.new_uri("http://lv2plug.in/ns/ext/midi#MidiEvent");
+        let event_port = self
+            .world
+            .new_uri("http://lv2plug.in/ns/ext/event#EventPort");
+        let midi_event = self
+            .world
+            .new_uri("http://lv2plug.in/ns/ext/midi#MidiEvent");
 
         let mut plugins = self
             .world
@@ -758,16 +780,15 @@ impl Lv2Host {
                     .to_string();
                 let bundle_uri = plugin.bundle_uri().as_uri().unwrap_or("").to_string();
                 let required_features = plugin_feature_uris(&plugin);
-                let (audio_inputs, audio_outputs, midi_inputs, midi_outputs) =
-                    plugin_port_counts(
-                        &plugin,
-                        &input_port,
-                        &output_port,
-                        &audio_port,
-                        &atom_port,
-                        &event_port,
-                        &midi_event,
-                    );
+                let (audio_inputs, audio_outputs, midi_inputs, midi_outputs) = plugin_port_counts(
+                    &plugin,
+                    &input_port,
+                    &output_port,
+                    &audio_port,
+                    &atom_port,
+                    &event_port,
+                    &midi_event,
+                );
 
                 Some(Lv2PluginInfo {
                     uri,
@@ -993,7 +1014,11 @@ extern "C" fn flush_ui_feedback(data: *mut c_void) -> i32 {
         }
     }
     state.dispatch_scheduled.store(false, Ordering::SeqCst);
-    let has_more = state.pending.lock().map(|queue| !queue.is_empty()).unwrap_or(false);
+    let has_more = state
+        .pending
+        .lock()
+        .map(|queue| !queue.is_empty())
+        .unwrap_or(false);
     if has_more && state.alive.load(Ordering::SeqCst) {
         schedule_ui_feedback_flush(&state);
     }
@@ -1104,7 +1129,13 @@ fn run_gtk_plugin_ui(
     }
 
     if let Some(spec) = ui_spec {
-        return run_gtk_suil_ui(spec, scalar_values, port_symbol_to_index, lv2_handle, feedback_rx);
+        return run_gtk_suil_ui(
+            spec,
+            scalar_values,
+            port_symbol_to_index,
+            lv2_handle,
+            feedback_rx,
+        );
     }
     run_generic_parameter_ui(plugin_name, scalar_values, control_ports, feedback_rx)
 }
@@ -1113,27 +1144,29 @@ fn spawn_feedback_forwarder(
     dispatch_state: Arc<UiDispatchState>,
     feedback_rx: Receiver<UiFeedbackMessage>,
 ) -> thread::JoinHandle<()> {
-    thread::spawn(move || loop {
-        match feedback_rx.recv_timeout(Duration::from_millis(50)) {
-            Ok(UiFeedbackMessage::ScalarChanges(changes)) => {
-                if !dispatch_state.alive.load(Ordering::SeqCst) {
+    thread::spawn(move || {
+        loop {
+            match feedback_rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(UiFeedbackMessage::ScalarChanges(changes)) => {
+                    if !dispatch_state.alive.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    if changes.is_empty() {
+                        continue;
+                    }
+                    if let Ok(mut queue) = dispatch_state.pending.lock() {
+                        queue.extend(changes);
+                    }
+                    schedule_ui_feedback_flush(&dispatch_state);
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    if !dispatch_state.alive.load(Ordering::SeqCst) {
+                        return;
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => {
                     return;
                 }
-                if changes.is_empty() {
-                    continue;
-                }
-                if let Ok(mut queue) = dispatch_state.pending.lock() {
-                    queue.extend(changes);
-                }
-                schedule_ui_feedback_flush(&dispatch_state);
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                if !dispatch_state.alive.load(Ordering::SeqCst) {
-                    return;
-                }
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                return;
             }
         }
     })
@@ -1241,8 +1274,7 @@ fn run_gtk_suil_ui(
         uri: instance_access_uri.as_ptr(),
         data: h as *mut c_void,
     });
-    let mut feature_ptrs: Vec<*const LV2FeatureRaw> =
-        vec![&urid_raw, &parent_raw, &resize_raw];
+    let mut feature_ptrs: Vec<*const LV2FeatureRaw> = vec![&urid_raw, &parent_raw, &resize_raw];
     if let Some(ref raw) = instance_access_raw {
         feature_ptrs.push(raw as *const LV2FeatureRaw);
     }
@@ -1713,7 +1745,8 @@ impl UridMapFeature {
         }));
         map.handle = (&*state as *const Mutex<UridMapState>) as *mut c_void;
 
-        let uri = CString::new(LV2_URID__MAP).map_err(|e| format!("Invalid URID feature URI: {e}"))?;
+        let uri =
+            CString::new(LV2_URID__MAP).map_err(|e| format!("Invalid URID feature URI: {e}"))?;
         let feature = LV2Feature {
             uri: uri.as_ptr(),
             data: (&mut *map as *mut LV2UridMap).cast::<c_void>(),
@@ -1749,7 +1782,11 @@ impl UridMapFeature {
     }
 }
 
-fn prepare_empty_atom_sequence(buffer: &mut [u8], sequence_urid: LV2Urid, frame_time_urid: LV2Urid) {
+fn prepare_empty_atom_sequence(
+    buffer: &mut [u8],
+    sequence_urid: LV2Urid,
+    frame_time_urid: LV2Urid,
+) {
     buffer.fill(0);
     if buffer.len() < std::mem::size_of::<LV2AtomSequence>() {
         return;

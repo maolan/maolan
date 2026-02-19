@@ -516,7 +516,6 @@ impl Maolan {
                 Action::OpenAudioDevice(s) => {
                     self.state.blocking_write().message = format!("Opened device {s}");
                     self.state.blocking_write().hw_loaded = true;
-                    return self.send(Action::ListLv2Plugins);
                 }
                 Action::HWInfo {
                     channels,
@@ -1065,8 +1064,7 @@ impl Maolan {
                                     plugin.midi_outputs
                                 ))
                                 .width(Length::Fill),
-                                button("Load")
-                                    .on_press(Message::LoadLv2Plugin(plugin.uri.clone())),
+                                button("Load").on_press(Message::LoadLv2Plugin(plugin.uri.clone())),
                                 button("Show UI")
                                     .on_press(Message::ShowLv2PluginUi(plugin.uri.clone())),
                             ]
@@ -1107,18 +1105,21 @@ impl Maolan {
     pub fn subscription(&self) -> Subscription<Message> {
         fn listener() -> impl Stream<Item = Message> {
             stream::once(CLIENT.subscribe()).flat_map(|receiver| {
-                stream::unfold(receiver, |mut rx| async move {
-                    match rx.recv().await {
-                        Some(m) => match m {
-                            EngineMessage::Response(r) => {
-                                let result = Message::Response(r);
-                                Some((result, rx))
-                            }
-                            _ => Some((Message::None, rx)),
-                        },
-                        None => None,
-                    }
-                })
+                stream::once(async { Message::RefreshLv2Plugins }).chain(stream::unfold(
+                    receiver,
+                    |mut rx| async move {
+                        match rx.recv().await {
+                            Some(m) => match m {
+                                EngineMessage::Response(r) => {
+                                    let result = Message::Response(r);
+                                    Some((result, rx))
+                                }
+                                _ => Some((Message::None, rx)),
+                            },
+                            None => None,
+                        }
+                    },
+                ))
             })
         }
         let engine_sub = Subscription::run(listener);

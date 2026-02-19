@@ -52,7 +52,12 @@ impl Track {
             .ins
             .first()
             .map(|audio_in| audio_in.buffer.lock().len())
-            .or_else(|| self.audio.outs.first().map(|audio_out| audio_out.buffer.lock().len()))
+            .or_else(|| {
+                self.audio
+                    .outs
+                    .first()
+                    .map(|audio_out| audio_out.buffer.lock().len())
+            })
             .unwrap_or(0);
 
         let mut stage: Vec<Vec<f32>> = self
@@ -141,7 +146,8 @@ impl Track {
 
     pub fn unload_lv2_plugin(&mut self, uri: &str) -> Result<(), String> {
         let original_len = self.lv2_processors.len();
-        self.lv2_processors.retain(|processor| processor.uri() != uri);
+        self.lv2_processors
+            .retain(|processor| processor.uri() != uri);
         if self.lv2_processors.len() == original_len {
             return Err(format!(
                 "Track '{}' does not have LV2 plugin loaded: {uri}",

@@ -670,7 +670,7 @@ impl Engine {
                 }
 
                 Message::Request(a) => match a {
-                    Action::OpenAudioDevice(_) | Action::Quit => {
+                    Action::OpenAudioDevice(_) | Action::Quit | Action::ListLv2Plugins => {
                         self.handle_request(a).await;
                     }
                     _ => {
