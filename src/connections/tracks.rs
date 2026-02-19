@@ -556,11 +556,12 @@ impl canvas::Program<Message> for Graph {
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
-        _cursor: mouse::Cursor,
+        cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let size = iced::Size::new(140.0, 80.0);
         let hw_width = 70.0;
+        let cursor_position = cursor.position_in(bounds);
 
         if let Ok(data) = self.state.try_read() {
             use crate::state::ConnectionViewSelection;
@@ -613,8 +614,16 @@ impl canvas::Program<Message> for Graph {
                     });
 
                     let is_selected = matches!(&data.connection_view_selection, ConnectionViewSelection::Connections(set) if set.contains(&idx));
+                    let is_hovered = cursor_position
+                        .is_some_and(|cursor| is_bezier_hit(start, end, cursor, 20, 10.0));
                     let (color, width) = if is_selected {
                         (Color::from_rgb(1.0, 1.0, 0.0), 4.0)
+                    } else if is_hovered {
+                        let c = match conn.kind {
+                            Kind::Audio => Color::from_rgb(0.2, 0.5, 1.0),
+                            Kind::MIDI => Color::from_rgb(1.0, 0.6, 0.0),
+                        };
+                        (c, 3.0)
                     } else {
                         let c = match conn.kind {
                             Kind::Audio => Color::from_rgb(0.2, 0.5, 1.0),

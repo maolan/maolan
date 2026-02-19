@@ -369,9 +369,10 @@ impl canvas::Program<Message> for Graph {
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
-        _cursor: mouse::Cursor,
+        cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
+        let cursor_position = cursor.position_in(bounds);
         if let Ok(data) = self.state.try_read() {
             let Some(track_name) = data.lv2_graph_track.as_ref() else {
                 return vec![frame.into_geometry()];
@@ -517,6 +518,9 @@ impl canvas::Program<Message> for Graph {
                     Lv2GraphNode::TrackInput => continue,
                 };
                 let dist = (end.x - start.x).abs() / 2.0;
+                let is_hovered = cursor_position
+                    .is_some_and(|cursor| is_bezier_hit(start, end, cursor, 100, 12.0));
+                let is_selected = data.lv2_graph_selected_connections.contains(&conn_idx);
                 frame.stroke(
                     &Path::new(|p| {
                         p.move_to(start);
@@ -527,13 +531,15 @@ impl canvas::Program<Message> for Graph {
                         );
                     }),
                     canvas::Stroke::default()
-                        .with_color(if data.lv2_graph_selected_connections.contains(&conn_idx) {
+                        .with_color(if is_selected {
                             Color::from_rgb(1.0, 1.0, 0.0)
                         } else {
                             Color::from_rgb(0.2, 0.5, 1.0)
                         })
-                        .with_width(if data.lv2_graph_selected_connections.contains(&conn_idx) {
+                        .with_width(if is_selected {
                             4.0
+                        } else if is_hovered {
+                            3.0
                         } else {
                             2.0
                         }),
