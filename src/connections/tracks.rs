@@ -57,6 +57,14 @@ impl Graph {
         }
     }
 
+    fn connection_port_index(track: &crate::state::Track, kind: Kind, port: usize, is_input: bool) -> usize {
+        if kind == Kind::MIDI {
+            port + if is_input { track.audio.ins } else { track.audio.outs }
+        } else {
+            port
+        }
+    }
+
 }
 
 impl canvas::Program<Message> for Graph {
@@ -95,9 +103,11 @@ impl canvas::Program<Message> for Graph {
                         } else {
                             start_track_option.map(|t| {
                                 let total_outs = t.audio.outs + t.midi.outs;
+                                let port_idx =
+                                    Self::connection_port_index(t, conn.kind, conn.from_port, false);
                                 let py = t.position.y
                                     + (size.height / (total_outs + 1) as f32)
-                                        * (conn.from_port + 1) as f32;
+                                        * (port_idx + 1) as f32;
                                 Point::new(t.position.x + size.width, py)
                             })
                         };
@@ -112,9 +122,11 @@ impl canvas::Program<Message> for Graph {
                         } else {
                             end_track_option.map(|t| {
                                 let total_ins = t.audio.ins + t.midi.ins;
+                                let port_idx =
+                                    Self::connection_port_index(t, conn.kind, conn.to_port, true);
                                 let py = t.position.y
                                     + (size.height / (total_ins + 1) as f32)
-                                        * (conn.to_port + 1) as f32;
+                                        * (port_idx + 1) as f32;
                                 Point::new(t.position.x, py)
                             })
                         };
@@ -554,9 +566,10 @@ impl canvas::Program<Message> for Graph {
                     })
                 } else {
                     start_track_option.map(|t| {
+                        let port_idx = Self::connection_port_index(t, conn.kind, conn.from_port, false);
                         let total_outs = t.audio.outs + t.midi.outs;
                         let py = t.position.y
-                            + (size.height / (total_outs + 1) as f32) * (conn.from_port + 1) as f32;
+                            + (size.height / (total_outs + 1) as f32) * (port_idx + 1) as f32;
                         Point::new(t.position.x + size.width, py)
                     })
                 };
@@ -570,9 +583,10 @@ impl canvas::Program<Message> for Graph {
                     })
                 } else {
                     end_track_option.map(|t| {
+                        let port_idx = Self::connection_port_index(t, conn.kind, conn.to_port, true);
                         let total_ins = t.audio.ins + t.midi.ins;
                         let py = t.position.y
-                            + (size.height / (total_ins + 1) as f32) * (conn.to_port + 1) as f32;
+                            + (size.height / (total_ins + 1) as f32) * (port_idx + 1) as f32;
                         Point::new(t.position.x, py)
                     })
                 };

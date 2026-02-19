@@ -660,6 +660,11 @@ impl Engine {
                             .await;
                             return;
                         }
+                        if from_track == to_track {
+                            self.notify_clients(Err("Circular routing is not allowed!".into()))
+                                .await;
+                            return;
+                        }
 
                         let state = self.state.lock();
                         let from_track_handle = state.tracks.get(from_track);
