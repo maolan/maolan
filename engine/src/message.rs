@@ -73,6 +73,10 @@ pub enum Action {
         track_name: String,
         plugin_uri: String,
     },
+    TrackUnloadLv2PluginInstance {
+        track_name: String,
+        instance_id: usize,
+    },
     TrackShowLv2PluginUi {
         track_name: String,
         plugin_uri: String,

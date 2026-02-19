@@ -341,6 +341,25 @@ impl Engine {
                     }
                 }
             }
+            Action::TrackUnloadLv2PluginInstance {
+                ref track_name,
+                instance_id,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().unload_lv2_plugin_instance(instance_id) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
             Action::TrackShowLv2PluginUi {
                 ref track_name,
                 ref plugin_uri,

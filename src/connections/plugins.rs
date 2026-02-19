@@ -430,6 +430,7 @@ impl canvas::Program<Message> for Graph {
                             idx,
                             ctrl,
                         );
+                        data.lv2_graph_selected_plugin = None;
                         return Some(Action::request_redraw());
                     }
 
@@ -441,6 +442,8 @@ impl canvas::Program<Message> for Graph {
                             iced::Size::new(PLUGIN_W, Self::plugin_height(plugin)),
                         );
                         if rect.contains(cursor_position) {
+                            data.lv2_graph_selected_plugin = Some(instance_id);
+                            data.lv2_graph_selected_connections.clear();
                             let now = Instant::now();
                             if let Some((last_instance, last_time)) = data.lv2_graph_last_plugin_click
                                 && last_instance == instance_id
@@ -469,6 +472,7 @@ impl canvas::Program<Message> for Graph {
                     }
 
                     data.lv2_graph_selected_connections.clear();
+                    data.lv2_graph_selected_plugin = None;
                     return Some(Action::request_redraw());
                 }
                 Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -708,11 +712,17 @@ impl canvas::Program<Message> for Graph {
                 let plugin_h = Self::plugin_height(plugin);
                 let rect = Path::rectangle(pos, iced::Size::new(PLUGIN_W, plugin_h));
                 frame.fill(&rect, Color::from_rgb8(28, 28, 42));
+                let is_selected_plugin =
+                    data.lv2_graph_selected_plugin == Some(plugin.instance_id);
                 frame.stroke(
                     &rect,
                     canvas::Stroke::default()
-                        .with_color(Color::from_rgb(0.55, 0.55, 0.85))
-                        .with_width(2.0),
+                        .with_color(if is_selected_plugin {
+                            Color::from_rgb(1.0, 1.0, 0.0)
+                        } else {
+                            Color::from_rgb(0.55, 0.55, 0.85)
+                        })
+                        .with_width(if is_selected_plugin { 3.0 } else { 2.0 }),
                 );
                 frame.fill_text(Text {
                     content: plugin.name.clone(),

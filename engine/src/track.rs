@@ -193,6 +193,27 @@ impl Track {
             ));
         };
 
+        self.remove_lv2_instance(index);
+        Ok(())
+    }
+
+    pub fn unload_lv2_plugin_instance(&mut self, instance_id: usize) -> Result<(), String> {
+        let Some(index) = self
+            .lv2_processors
+            .iter()
+            .position(|instance| instance.id == instance_id)
+        else {
+            return Err(format!(
+                "Track '{}' does not have LV2 instance id: {}",
+                self.name, instance_id
+            ));
+        };
+
+        self.remove_lv2_instance(index);
+        Ok(())
+    }
+
+    fn remove_lv2_instance(&mut self, index: usize) {
         let removed = self.lv2_processors.remove(index);
         for port in removed.processor.audio_inputs() {
             Self::disconnect_all(port);
@@ -204,7 +225,6 @@ impl Track {
             conn.from_node != Lv2GraphNode::PluginInstance(removed.id)
                 && conn.to_node != Lv2GraphNode::PluginInstance(removed.id)
         });
-        Ok(())
     }
 
     pub fn loaded_lv2_plugins(&self) -> Vec<String> {
