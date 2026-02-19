@@ -14,6 +14,30 @@ pub struct ClipMoveTo {
     pub sample_offset: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Lv2GraphNode {
+    TrackInput,
+    TrackOutput,
+    PluginInstance(usize),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lv2GraphPlugin {
+    pub instance_id: usize,
+    pub uri: String,
+    pub name: String,
+    pub audio_inputs: usize,
+    pub audio_outputs: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lv2GraphConnection {
+    pub from_node: Lv2GraphNode,
+    pub from_port: usize,
+    pub to_node: Lv2GraphNode,
+    pub to_port: usize,
+}
+
 #[derive(Clone, Debug)]
 pub enum Action {
     Quit,
@@ -49,6 +73,28 @@ pub enum Action {
     TrackShowLv2PluginUi {
         track_name: String,
         plugin_uri: String,
+    },
+    TrackGetLv2Graph {
+        track_name: String,
+    },
+    TrackLv2Graph {
+        track_name: String,
+        plugins: Vec<Lv2GraphPlugin>,
+        connections: Vec<Lv2GraphConnection>,
+    },
+    TrackConnectLv2Audio {
+        track_name: String,
+        from_node: Lv2GraphNode,
+        from_port: usize,
+        to_node: Lv2GraphNode,
+        to_port: usize,
+    },
+    TrackDisconnectLv2Audio {
+        track_name: String,
+        from_node: Lv2GraphNode,
+        from_port: usize,
+        to_node: Lv2GraphNode,
+        to_port: usize,
     },
     ListLv2Plugins,
     Lv2Plugins(Vec<Lv2PluginInfo>),

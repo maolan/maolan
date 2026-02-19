@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 
+use crate::audio::io::AudioIO;
 use lilv::{World, instance::ActiveInstance, node::Node, plugin::Plugin};
 use lv2_raw::{
     LV2_ATOM__FRAMETIME, LV2_ATOM__SEQUENCE, LV2_URID__MAP, LV2AtomSequence, LV2AtomSequenceBody,
@@ -53,8 +54,8 @@ pub struct Lv2Processor {
     port_bindings: Vec<PortBinding>,
     scalar_values: Arc<Mutex<Vec<f32>>>,
     port_symbol_to_index: Arc<HashMap<String, u32>>,
-    audio_inputs: Vec<Vec<f32>>,
-    audio_outputs: Vec<Vec<f32>>,
+    audio_inputs: Vec<Arc<AudioIO>>,
+    audio_outputs: Vec<Arc<AudioIO>>,
     atom_inputs: Vec<AtomBuffer>,
     atom_outputs: Vec<AtomBuffer>,
     atom_sequence_urid: LV2Urid,
@@ -414,8 +415,8 @@ impl Lv2Processor {
         let mut port_bindings = vec![PortBinding::Scalar(0); ports_count];
         let mut scalar_values = vec![0.0_f32; ports_count.max(1)];
         let mut port_symbol_to_index = HashMap::<String, u32>::new();
-        let mut audio_inputs: Vec<Vec<f32>> = vec![];
-        let mut audio_outputs: Vec<Vec<f32>> = vec![];
+        let mut audio_inputs: Vec<Arc<AudioIO>> = vec![];
+        let mut audio_outputs: Vec<Arc<AudioIO>> = vec![];
         let mut atom_inputs: Vec<AtomBuffer> = vec![];
         let mut atom_outputs: Vec<AtomBuffer> = vec![];
         let mut control_ports = vec![];
@@ -436,11 +437,11 @@ impl Lv2Processor {
 
             if is_audio && is_input {
                 let channel = audio_inputs.len();
-                audio_inputs.push(vec![0.0]);
+                audio_inputs.push(Arc::new(AudioIO::new(1)));
                 port_bindings[index] = PortBinding::AudioInput(channel);
             } else if is_audio && is_output {
                 let channel = audio_outputs.len();
-                audio_outputs.push(vec![0.0]);
+                audio_outputs.push(Arc::new(AudioIO::new(1)));
                 port_bindings[index] = PortBinding::AudioOutput(channel);
             } else if is_atom && is_input {
                 has_atom_ports = true;
@@ -541,22 +542,52 @@ impl Lv2Processor {
         &self.uri
     }
 
+    pub fn name(&self) -> &str {
+        &self.plugin_name
+    }
+
+    pub fn audio_inputs(&self) -> &[Arc<AudioIO>] {
+        &self.audio_inputs
+    }
+
+    pub fn audio_outputs(&self) -> &[Arc<AudioIO>] {
+        &self.audio_outputs
+    }
+
+    pub fn audio_input_count(&self) -> usize {
+        self.audio_inputs.len()
+    }
+
+    pub fn audio_output_count(&self) -> usize {
+        self.audio_outputs.len()
+    }
+
+    pub fn setup_audio_ports(&self) {
+        for io in &self.audio_inputs {
+            io.setup();
+        }
+        for io in &self.audio_outputs {
+            io.setup();
+        }
+    }
+
     pub fn process(&mut self, input_channels: &[Vec<f32>], frames: usize) -> Vec<Vec<f32>> {
         if let Ok(mut values) = self.scalar_values.lock() {
             if values.is_empty() {
                 values.push(0.0);
             }
         }
-        self.resize_buffers(frames);
 
-        for (channel, buffer) in self.audio_inputs.iter_mut().enumerate() {
+        for (channel, io) in self.audio_inputs.iter_mut().enumerate() {
+            let buffer = io.buffer.lock();
             buffer.fill(0.0);
             if let Some(input) = input_channels.get(channel) {
                 let copy_len = input.len().min(frames);
                 buffer[..copy_len].copy_from_slice(&input[..copy_len]);
             }
         }
-        for buffer in &mut self.audio_outputs {
+        for io in &self.audio_outputs {
+            let buffer = io.buffer.lock();
             buffer.fill(0.0);
         }
         for buffer in &mut self.atom_inputs {
@@ -589,7 +620,58 @@ impl Lv2Processor {
         {
             self.ui_feedback_tx = None;
         }
-        self.audio_outputs.clone()
+        self.audio_outputs
+            .iter()
+            .map(|io| io.buffer.lock().as_ref().to_vec())
+            .collect()
+    }
+
+    pub fn process_with_audio_io(&mut self, frames: usize) {
+        if let Ok(mut values) = self.scalar_values.lock() {
+            if values.is_empty() {
+                values.push(0.0);
+            }
+        }
+
+        for io in &self.audio_outputs {
+            let buffer = io.buffer.lock();
+            buffer.fill(0.0);
+            *io.finished.lock() = false;
+        }
+        for buffer in &mut self.atom_inputs {
+            prepare_empty_atom_sequence(
+                buffer.bytes_mut(),
+                self.atom_sequence_urid,
+                self.atom_frame_time_urid,
+            );
+        }
+        for buffer in &mut self.atom_outputs {
+            prepare_output_atom_sequence(
+                buffer.bytes_mut(),
+                self.atom_sequence_urid,
+                self.atom_frame_time_urid,
+            );
+        }
+
+        self.connect_ports();
+        if let Some(instance) = self.instance.as_mut() {
+            unsafe {
+                instance.run(frames);
+            }
+        }
+
+        for io in &self.audio_outputs {
+            *io.finished.lock() = true;
+        }
+        let changes = self.collect_scalar_changes();
+        if !changes.is_empty()
+            && self
+                .ui_feedback_tx
+                .as_ref()
+                .is_some_and(|tx| tx.send(UiFeedbackMessage::ScalarChanges(changes)).is_err())
+        {
+            self.ui_feedback_tx = None;
+        }
     }
 
     fn collect_scalar_changes(&mut self) -> Vec<(u32, f32)> {
@@ -610,25 +692,11 @@ impl Lv2Processor {
         changes
     }
 
-    fn resize_buffers(&mut self, frames: usize) {
-        let frames = frames.max(1);
-        for buffer in &mut self.audio_inputs {
-            if buffer.len() != frames {
-                buffer.resize(frames, 0.0);
-            }
-        }
-        for buffer in &mut self.audio_outputs {
-            if buffer.len() != frames {
-                buffer.resize(frames, 0.0);
-            }
-        }
-    }
-
     fn connect_ports(&mut self) {
         for (port_index, binding) in self.port_bindings.iter().enumerate() {
             match binding {
                 PortBinding::AudioInput(channel) => {
-                    let ptr = self.audio_inputs[*channel].as_mut_ptr();
+                    let ptr = self.audio_inputs[*channel].buffer.lock().as_mut_ptr();
                     if let Some(instance) = self.instance.as_mut() {
                         unsafe {
                             instance.instance_mut().connect_port_mut(port_index, ptr);
@@ -636,7 +704,7 @@ impl Lv2Processor {
                     }
                 }
                 PortBinding::AudioOutput(channel) => {
-                    let ptr = self.audio_outputs[*channel].as_mut_ptr();
+                    let ptr = self.audio_outputs[*channel].buffer.lock().as_mut_ptr();
                     if let Some(instance) = self.instance.as_mut() {
                         unsafe {
                             instance.instance_mut().connect_port_mut(port_index, ptr);

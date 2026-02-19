@@ -37,7 +37,8 @@ pub struct Maolan {
     toolbar: toolbar::Toolbar,
     track: Option<String>,
     workspace: workspace::Workspace,
-    connections: connections::Connections,
+    connections: connections::tracks::Connections,
+    track_plugins: connections::plugins::TrackPlugins,
     hw: hw::HW,
     modal: Option<Show>,
     add_track: add_track::AddTrackView,
@@ -54,7 +55,8 @@ impl Default for Maolan {
             toolbar: toolbar::Toolbar::new(),
             track: None,
             workspace: workspace::Workspace::new(state.clone()),
-            connections: connections::Connections::new(state.clone()),
+            connections: connections::tracks::Connections::new(state.clone()),
+            track_plugins: connections::plugins::TrackPlugins::new(state.clone()),
             hw: hw::HW::new(state.clone()),
             modal: None,
             add_track: add_track::AddTrackView::default(),
@@ -255,6 +257,7 @@ impl Maolan {
         self.toolbar.update(message.clone());
         self.workspace.update(message.clone());
         self.connections.update(message.clone());
+        self.track_plugins.update(message.clone());
         self.add_track.update(message.clone());
         for track in &mut self.state.blocking_write().tracks {
             track.update(message.clone());
@@ -542,6 +545,39 @@ impl Maolan {
                     state.lv2_plugins = plugins.clone();
                     state.message = format!("Loaded {} LV2 plugins", state.lv2_plugins.len());
                 }
+                Action::TrackLoadLv2Plugin { track_name, .. }
+                | Action::TrackUnloadLv2Plugin { track_name, .. }
+                | Action::TrackConnectLv2Audio { track_name, .. }
+                | Action::TrackDisconnectLv2Audio { track_name, .. } => {
+                    let lv2_track = self.state.blocking_read().lv2_graph_track.clone();
+                    if lv2_track.as_deref() == Some(track_name.as_str()) {
+                        return self.send(Action::TrackGetLv2Graph {
+                            track_name: track_name.clone(),
+                        });
+                    }
+                }
+                Action::TrackLv2Graph {
+                    track_name,
+                    plugins,
+                    connections,
+                } => {
+                    let mut state = self.state.blocking_write();
+                    state.lv2_graph_track = Some(track_name.clone());
+                    state.lv2_graph_plugins = plugins.clone();
+                    state.lv2_graph_connections = connections.clone();
+                    state.lv2_graph_selected_connections.clear();
+                    let mut new_positions = std::collections::HashMap::new();
+                    for (idx, plugin) in plugins.iter().enumerate() {
+                        let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
+                        let pos = state
+                            .lv2_graph_plugin_positions
+                            .get(&plugin.instance_id)
+                            .copied()
+                            .unwrap_or(fallback);
+                        new_positions.insert(plugin.instance_id, pos);
+                    }
+                    state.lv2_graph_plugin_positions = new_positions;
+                }
                 _ => {
                     println!("Response: {:?}", a);
                 }
@@ -758,6 +794,39 @@ impl Maolan {
                     }
                     crate::state::View::Workspace => {
                         return self.update(Message::RemoveSelectedTracks);
+                    }
+                    crate::state::View::TrackPlugins => {
+                        let (track_name, selected_indices, connections) = {
+                            let state = self.state.blocking_read();
+                            (
+                                state.lv2_graph_track.clone(),
+                                state
+                                    .lv2_graph_selected_connections
+                                    .iter()
+                                    .copied()
+                                    .collect::<Vec<_>>(),
+                                state.lv2_graph_connections.clone(),
+                            )
+                        };
+                        if let Some(track_name) = track_name {
+                            let mut tasks = vec![];
+                            for idx in selected_indices {
+                                if let Some(conn) = connections.get(idx) {
+                                    tasks.push(self.send(Action::TrackDisconnectLv2Audio {
+                                        track_name: track_name.clone(),
+                                        from_node: conn.from_node.clone(),
+                                        from_port: conn.from_port,
+                                        to_node: conn.to_node.clone(),
+                                        to_port: conn.to_port,
+                                    }));
+                                }
+                            }
+                            self.state
+                                .blocking_write()
+                                .lv2_graph_selected_connections
+                                .clear();
+                            return Task::batch(tasks);
+                        }
                     }
                 }
             }
@@ -1018,6 +1087,28 @@ impl Maolan {
             Message::Connections => {
                 self.state.blocking_write().view = View::Connections;
             }
+            Message::OpenTrackPlugins(track_name) => {
+                {
+                    let mut state = self.state.blocking_write();
+                    state.view = View::TrackPlugins;
+                    state.lv2_graph_track = Some(track_name.clone());
+                    state.lv2_graph_connecting = None;
+                    state.lv2_graph_moving_plugin = None;
+                }
+                return self.send(Action::TrackGetLv2Graph { track_name });
+            }
+            Message::CloseTrackPlugins => {
+                let mut state = self.state.blocking_write();
+                state.view = View::Connections;
+                state.lv2_graph_connecting = None;
+                state.lv2_graph_moving_plugin = None;
+            }
+            Message::RefreshTrackLv2Graph => {
+                let track_name = self.state.blocking_read().lv2_graph_track.clone();
+                if let Some(track_name) = track_name {
+                    return self.send(Action::TrackGetLv2Graph { track_name });
+                }
+            }
             Message::HWSelected(ref hw) => {
                 self.state.blocking_write().selected_hw = Some(hw.to_string());
             }
@@ -1043,6 +1134,7 @@ impl Maolan {
                     let view = match state.view {
                         View::Workspace => self.workspace.view(),
                         View::Connections => self.connections.view(),
+                        View::TrackPlugins => self.track_plugins.view(),
                     };
                     let selected_track = state
                         .selected
@@ -1072,15 +1164,36 @@ impl Maolan {
                         );
                     }
 
-                    column![
-                        self.menu.view(),
-                        self.toolbar.view(),
-                        view,
+                    let maybe_plugin_header = if matches!(state.view, View::TrackPlugins) {
+                        let title = state
+                            .lv2_graph_track
+                            .clone()
+                            .unwrap_or_else(|| "(no track)".to_string());
+                        Some(
+                            row![
+                                button("Back to Connections")
+                                    .on_press(Message::CloseTrackPlugins),
+                                text(format!("Plugin Graph: {title}")),
+                            ]
+                            .spacing(8),
+                        )
+                    } else {
+                        None
+                    };
+
+                    let mut content = column![self.menu.view(), self.toolbar.view()];
+                    if let Some(header) = maybe_plugin_header {
+                        content = content.push(container(header).padding(8));
+                    }
+                    content = content.push(view);
+                    content = content.push(
                         container(
                             column![
                                 row![
                                     text(format!("LV2 target track: {selected_track}")),
                                     button("Refresh LV2").on_press(Message::RefreshLv2Plugins),
+                                    button("Refresh Plugin Graph")
+                                        .on_press(Message::RefreshTrackLv2Graph),
                                 ]
                                 .spacing(8),
                                 scrollable(lv2_list).height(Length::Fixed(180.0)),
@@ -1088,9 +1201,10 @@ impl Maolan {
                             .spacing(8)
                         )
                         .padding(8),
-                        text(format!("Last message: {}", state.message))
-                    ]
-                    .into()
+                    );
+                    content = content.push(text(format!("Last message: {}", state.message)));
+
+                    content.into()
                 }
             }
         } else {

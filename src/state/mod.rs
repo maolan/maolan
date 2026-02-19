@@ -7,10 +7,12 @@ pub use connection::Connection;
 use iced::{Length, Point};
 use maolan_engine::kind::Kind;
 use maolan_engine::lv2::Lv2PluginInfo;
+use maolan_engine::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin};
 use std::{
     collections::{HashMap, HashSet},
     fs::read_dir,
     sync::Arc,
+    time::Instant,
 };
 use tokio::sync::RwLock;
 pub use track::Track;
@@ -70,6 +72,7 @@ pub enum ConnectionViewSelection {
 pub enum View {
     Workspace,
     Connections,
+    TrackPlugins,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +80,21 @@ pub struct HW {
     pub channels: usize,
     pub rate: usize,
     pub input: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct Lv2Connecting {
+    pub from_node: Lv2GraphNode,
+    pub from_port: usize,
+    pub point: Point,
+    pub is_input: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct MovingPlugin {
+    pub instance_id: usize,
+    pub offset_x: f32,
+    pub offset_y: f32,
 }
 
 #[derive(Debug)]
@@ -105,6 +123,14 @@ pub struct StateData {
     pub hw_in: Option<HW>,
     pub hw_out: Option<HW>,
     pub lv2_plugins: Vec<Lv2PluginInfo>,
+    pub lv2_graph_track: Option<String>,
+    pub lv2_graph_plugins: Vec<Lv2GraphPlugin>,
+    pub lv2_graph_connections: Vec<Lv2GraphConnection>,
+    pub lv2_graph_selected_connections: std::collections::HashSet<usize>,
+    pub lv2_graph_plugin_positions: HashMap<usize, Point>,
+    pub lv2_graph_connecting: Option<Lv2Connecting>,
+    pub lv2_graph_moving_plugin: Option<MovingPlugin>,
+    pub connections_last_track_click: Option<(String, Instant)>,
 }
 
 impl Default for StateData {
@@ -151,6 +177,14 @@ impl Default for StateData {
             hw_in: None,
             hw_out: None,
             lv2_plugins: vec![],
+            lv2_graph_track: None,
+            lv2_graph_plugins: vec![],
+            lv2_graph_connections: vec![],
+            lv2_graph_selected_connections: HashSet::new(),
+            lv2_graph_plugin_positions: HashMap::new(),
+            lv2_graph_connecting: None,
+            lv2_graph_moving_plugin: None,
+            connections_last_track_click: None,
         }
     }
 }

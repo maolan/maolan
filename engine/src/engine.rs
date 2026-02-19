@@ -236,6 +236,9 @@ impl Engine {
                                 oss.lock().rate as f64,
                             )))),
                         );
+                        if let Some(track) = tracks.get(name) {
+                            track.lock().ensure_default_audio_passthrough();
+                        }
                     }
                     None => {
                         self.notify_clients(Err(
@@ -315,6 +318,84 @@ impl Engine {
                 match track_handle {
                     Some(track) => {
                         if let Err(e) = track.lock().show_lv2_plugin_ui(plugin_uri) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackGetLv2Graph { ref track_name } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        let (plugins, connections) = {
+                            let track = track.lock();
+                            (track.lv2_graph_plugins(), track.lv2_graph_connections())
+                        };
+                        self.notify_clients(Ok(Action::TrackLv2Graph {
+                            track_name: track_name.clone(),
+                            plugins,
+                            connections,
+                        }))
+                        .await;
+                        return;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackLv2Graph { .. } => {}
+            Action::TrackConnectLv2Audio {
+                ref track_name,
+                ref from_node,
+                from_port,
+                ref to_node,
+                to_port,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().connect_lv2_audio(
+                            from_node.clone(),
+                            from_port,
+                            to_node.clone(),
+                            to_port,
+                        ) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackDisconnectLv2Audio {
+                ref track_name,
+                ref from_node,
+                from_port,
+                ref to_node,
+                to_port,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().disconnect_lv2_audio(
+                            from_node.clone(),
+                            from_port,
+                            to_node.clone(),
+                            to_port,
+                        ) {
                             self.notify_clients(Err(e)).await;
                             return;
                         }
@@ -675,6 +756,7 @@ impl Engine {
                     }
                     _ => {
                         self.pending_requests.push_back(a);
+                        self.request_hw_cycle().await;
                     }
                 },
                 Message::HWFinished => {

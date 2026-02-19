@@ -99,7 +99,10 @@ pub enum Message {
 
     Workspace,
     Connections,
+    OpenTrackPlugins(String),
+    CloseTrackPlugins,
     RefreshLv2Plugins,
+    RefreshTrackLv2Graph,
     LoadLv2Plugin(String),
     ShowLv2PluginUi(String),
 
