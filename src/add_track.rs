@@ -39,6 +39,18 @@ impl AddTrackView {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
+        let create = if self.name.trim().is_empty() {
+            button("Create")
+        } else {
+            button("Create").on_press(Message::Request(Action::AddTrack {
+                name: self.name.clone(),
+                audio_ins: self.audio_ins,
+                midi_ins: self.midi_ins,
+                audio_outs: self.audio_outs,
+                midi_outs: self.midi_outs,
+            }))
+        };
+
         container(
             column![
                 row![
@@ -77,13 +89,7 @@ impl AddTrackView {
                 ]
                 .spacing(10),
                 row![
-                    button("Create").on_press(Message::Request(Action::AddTrack {
-                        name: self.name.clone(),
-                        audio_ins: self.audio_ins,
-                        midi_ins: self.midi_ins,
-                        audio_outs: self.audio_outs,
-                        midi_outs: self.midi_outs,
-                    })),
+                    create,
                     button("Cancel")
                         .on_press(Message::Cancel)
                         .style(button::secondary)
