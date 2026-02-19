@@ -269,6 +269,7 @@ impl Engine {
                         );
                         if let Some(track) = tracks.get(name) {
                             track.lock().ensure_default_audio_passthrough();
+                            track.lock().ensure_default_midi_passthrough();
                         }
                     }
                     None => {

@@ -51,7 +51,7 @@ impl Track {
             next_lv2_instance_id: 0,
             sample_rate,
         }
-        .with_default_audio_passthrough()
+        .with_default_passthrough()
     }
 
     pub fn setup(&mut self) {
@@ -310,6 +310,25 @@ impl Track {
                 }
             }
         }
+        for (to_port, to_io) in self.midi.outs.iter().enumerate() {
+            for conn in to_io.lock().connections.iter() {
+                if let Some((from_port, _)) = self
+                    .midi
+                    .ins
+                    .iter()
+                    .enumerate()
+                    .find(|(_, in_io)| Arc::ptr_eq(in_io, conn))
+                {
+                    connections.push(Lv2GraphConnection {
+                        from_node: Lv2GraphNode::TrackInput,
+                        from_port,
+                        to_node: Lv2GraphNode::TrackOutput,
+                        to_port,
+                        kind: Kind::MIDI,
+                    });
+                }
+            }
+        }
         connections.extend(self.lv2_midi_connections.iter().cloned());
         connections
     }
@@ -415,8 +434,9 @@ impl Track {
         instance.processor.show_ui()
     }
 
-    fn with_default_audio_passthrough(self) -> Self {
+    fn with_default_passthrough(self) -> Self {
         self.ensure_default_audio_passthrough();
+        self.ensure_default_midi_passthrough();
         self
     }
 
@@ -429,6 +449,16 @@ impl Track {
                 .any(|conn| Arc::ptr_eq(conn, audio_in));
             if !exists {
                 AudioIO::connect(audio_in, audio_out);
+            }
+        }
+    }
+
+    pub(crate) fn ensure_default_midi_passthrough(&self) {
+        for (midi_in, midi_out) in self.midi.ins.iter().zip(self.midi.outs.iter()) {
+            let out = midi_out.lock();
+            let exists = out.connections.iter().any(|conn| Arc::ptr_eq(conn, midi_in));
+            if !exists {
+                out.connect(midi_in.clone());
             }
         }
     }
@@ -522,5 +552,77 @@ impl Track {
                     format!("Plugin instance {instance_id} MIDI input port {port} missing")
                 }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Track;
+    use crate::{kind::Kind, message::Lv2GraphNode};
+    use std::sync::Arc;
+
+    #[test]
+    fn default_audio_passthrough_uses_minimum_port_count() {
+        let track = Track::new("t".to_string(), 1, 2, 0, 0, 64, 48_000.0);
+
+        assert_eq!(track.audio.ins.len(), 1);
+        assert_eq!(track.audio.outs.len(), 2);
+        assert!(
+            track.audio.outs[0]
+                .connections
+                .lock()
+                .iter()
+                .any(|conn| Arc::ptr_eq(conn, &track.audio.ins[0]))
+        );
+        assert!(
+            track.audio.outs[1]
+                .connections
+                .lock()
+                .iter()
+                .all(|conn| !Arc::ptr_eq(conn, &track.audio.ins[0]))
+        );
+    }
+
+    #[test]
+    fn default_midi_passthrough_uses_minimum_port_count() {
+        let track = Track::new("t".to_string(), 0, 0, 1, 2, 64, 48_000.0);
+
+        assert_eq!(track.midi.ins.len(), 1);
+        assert_eq!(track.midi.outs.len(), 2);
+        assert!(
+            track.midi.outs[0]
+                .lock()
+                .connections
+                .iter()
+                .any(|conn| Arc::ptr_eq(conn, &track.midi.ins[0]))
+        );
+        assert!(
+            track.midi.outs[1]
+                .lock()
+                .connections
+                .iter()
+                .all(|conn| !Arc::ptr_eq(conn, &track.midi.ins[0]))
+        );
+    }
+
+    #[test]
+    fn lv2_graph_includes_default_track_midi_passthrough() {
+        let track = Track::new("t".to_string(), 0, 0, 1, 2, 64, 48_000.0);
+        let connections = track.lv2_graph_connections();
+
+        assert!(connections.iter().any(|c| {
+            c.kind == Kind::MIDI
+                && c.from_node == Lv2GraphNode::TrackInput
+                && c.from_port == 0
+                && c.to_node == Lv2GraphNode::TrackOutput
+                && c.to_port == 0
+        }));
+        assert!(connections.iter().all(|c| {
+            !(c.kind == Kind::MIDI
+                && c.from_node == Lv2GraphNode::TrackInput
+                && c.from_port == 0
+                && c.to_node == Lv2GraphNode::TrackOutput
+                && c.to_port == 1)
+        }));
     }
 }
