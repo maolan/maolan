@@ -1,4 +1,5 @@
 use crate::{
+    connections::selection::is_bezier_hit,
     message::Message,
     state::{Lv2Connecting, MovingPlugin, State},
 };
@@ -245,31 +246,18 @@ impl canvas::Program<Message> for Graph {
                             Lv2GraphNode::TrackInput => continue,
                         };
 
-                        let dist_x = (end.x - start.x).abs() / 2.0;
-                        let mut min_dist = f32::MAX;
-                        for i in 0..=100 {
-                            let t = i as f32 / 100.0;
-                            let mt = 1.0 - t;
-                            let p1 = Point::new(start.x + dist_x, start.y);
-                            let p2 = Point::new(end.x - dist_x, end.y);
-                            let x = mt.powi(3) * start.x
-                                + 3.0 * mt.powi(2) * t * p1.x
-                                + 3.0 * mt * t.powi(2) * p2.x
-                                + t.powi(3) * end.x;
-                            let y = mt.powi(3) * start.y
-                                + 3.0 * mt.powi(2) * t * p1.y
-                                + 3.0 * mt * t.powi(2) * p2.y
-                                + t.powi(3) * end.y;
-                            min_dist = min_dist.min(cursor_position.distance(Point::new(x, y)));
-                        }
-                        if min_dist < 12.0 {
+                        if is_bezier_hit(start, end, cursor_position, 100, 12.0) {
                             clicked_connection = Some(idx);
                             break;
                         }
                     }
                     if let Some(idx) = clicked_connection {
-                        data.lv2_graph_selected_connections.clear();
-                        data.lv2_graph_selected_connections.insert(idx);
+                        let ctrl = data.ctrl;
+                        crate::connections::selection::select_connection_indices(
+                            &mut data.lv2_graph_selected_connections,
+                            idx,
+                            ctrl,
+                        );
                         return Some(Action::request_redraw());
                     }
 

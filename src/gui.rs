@@ -2,7 +2,7 @@ use crate::{
     add_track, connections, hw, menu,
     message::{DraggedClip, Message, Show},
     state::{
-        ConnectionViewSelection, HW, HW_IN_ID, HW_OUT_ID, Resizing, State, StateData, Track, View,
+        ConnectionViewSelection, HW, Resizing, State, StateData, Track, View,
     },
     toolbar, workspace,
 };
@@ -708,21 +708,7 @@ impl Maolan {
             Message::ConnectionViewSelectConnection(idx) => {
                 let ctrl = self.state.blocking_read().ctrl;
                 let mut state = self.state.blocking_write();
-
-                match &mut state.connection_view_selection {
-                    ConnectionViewSelection::Connections(set) if ctrl => {
-                        if set.contains(&idx) {
-                            set.remove(&idx);
-                        } else {
-                            set.insert(idx);
-                        }
-                    }
-                    _ => {
-                        let mut set = std::collections::HashSet::new();
-                        set.insert(idx);
-                        state.connection_view_selection = ConnectionViewSelection::Connections(set);
-                    }
-                }
+                connections::selection::apply_track_connection_selection(&mut state, idx, ctrl);
             }
             Message::RemoveSelected => {
                 let state = self.state.blocking_read();
@@ -738,45 +724,8 @@ impl Maolan {
                         return Task::batch(tasks);
                     }
                     ConnectionViewSelection::Connections(set) => {
-                        let mut tasks = vec![];
-                        for &idx in set {
-                            if let Some(conn) = state.connections.get(idx) {
-                                let from_name = if conn.from_track == HW_IN_ID {
-                                    HW_IN_ID.to_string()
-                                } else if conn.from_track == HW_OUT_ID {
-                                    HW_OUT_ID.to_string()
-                                } else {
-                                    state
-                                        .tracks
-                                        .iter()
-                                        .find(|t| t.name == conn.from_track)
-                                        .map(|t| t.name.clone())
-                                        .unwrap_or_default()
-                                };
-                                let to_name = if conn.to_track == HW_OUT_ID {
-                                    HW_OUT_ID.to_string()
-                                } else if conn.to_track == HW_IN_ID {
-                                    HW_IN_ID.to_string()
-                                } else {
-                                    state
-                                        .tracks
-                                        .iter()
-                                        .find(|t| t.name == conn.to_track)
-                                        .map(|t| t.name.clone())
-                                        .unwrap_or_default()
-                                };
-
-                                if !from_name.is_empty() && !to_name.is_empty() {
-                                    tasks.push(self.send(Action::Disconnect {
-                                        from_track: from_name,
-                                        from_port: conn.from_port,
-                                        to_track: to_name,
-                                        to_port: conn.to_port,
-                                        kind: conn.kind,
-                                    }));
-                                }
-                            }
-                        }
+                        let actions = connections::selection::track_disconnect_actions(&state, set);
+                        let tasks = actions.into_iter().map(|a| self.send(a)).collect::<Vec<_>>();
                         drop(state);
                         self.state.blocking_write().connection_view_selection =
                             ConnectionViewSelection::None;
@@ -800,27 +749,17 @@ impl Maolan {
                             let state = self.state.blocking_read();
                             (
                                 state.lv2_graph_track.clone(),
-                                state
-                                    .lv2_graph_selected_connections
-                                    .iter()
-                                    .copied()
-                                    .collect::<Vec<_>>(),
+                                state.lv2_graph_selected_connections.clone(),
                                 state.lv2_graph_connections.clone(),
                             )
                         };
                         if let Some(track_name) = track_name {
-                            let mut tasks = vec![];
-                            for idx in selected_indices {
-                                if let Some(conn) = connections.get(idx) {
-                                    tasks.push(self.send(Action::TrackDisconnectLv2Audio {
-                                        track_name: track_name.clone(),
-                                        from_node: conn.from_node.clone(),
-                                        from_port: conn.from_port,
-                                        to_node: conn.to_node.clone(),
-                                        to_port: conn.to_port,
-                                    }));
-                                }
-                            }
+                            let actions = connections::selection::plugin_disconnect_actions(
+                                &track_name,
+                                &connections,
+                                &selected_indices,
+                            );
+                            let tasks = actions.into_iter().map(|a| self.send(a)).collect::<Vec<_>>();
                             self.state
                                 .blocking_write()
                                 .lv2_graph_selected_connections
