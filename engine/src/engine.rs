@@ -121,13 +121,19 @@ impl Engine {
         finished
     }
 
-    pub fn check_if_leads_to(&self, current_track_name: &str, target_track_name: &str) -> bool {
+    pub fn check_if_leads_to_kind(
+        &self,
+        kind: Kind,
+        current_track_name: &str,
+        target_track_name: &str,
+    ) -> bool {
         let mut visited = HashSet::new();
-        self.check_if_leads_to_inner(current_track_name, target_track_name, &mut visited)
+        self.check_if_leads_to_inner(kind, current_track_name, target_track_name, &mut visited)
     }
 
     fn check_if_leads_to_inner(
         &self,
+        kind: Kind,
         current_track_name: &str,
         target_track_name: &str,
         visited: &mut HashSet<String>,
@@ -141,41 +147,66 @@ impl Engine {
         }
         visited.insert(current_track_name.to_string());
 
-        let neighbors: Vec<String> = {
-            let state = self.state.lock();
-            let mut found_neighbors = Vec::new();
-
-            if let Some(current_track_handle) = state.tracks.get(current_track_name) {
-                let current_track = current_track_handle.lock();
-
-                for out_port in &current_track.audio.outs {
-                    let conns = out_port.connections.lock();
-                    for conn in conns.iter() {
-                        for (name, next_track_handle) in &state.tracks {
-                            let next_track = next_track_handle.lock();
-                            let is_connected = next_track
-                                .audio
-                                .ins
-                                .iter()
-                                .any(|ins_port| Arc::ptr_eq(&ins_port.buffer, &conn.buffer));
-
-                            if is_connected {
-                                found_neighbors.push(name.clone());
-                            }
-                        }
-                    }
-                }
-            }
-            found_neighbors
-        };
+        let neighbors = self.connected_neighbors(kind, current_track_name);
 
         for neighbor in neighbors {
-            if self.check_if_leads_to_inner(&neighbor, target_track_name, visited) {
+            if self.check_if_leads_to_inner(kind, &neighbor, target_track_name, visited) {
                 return true;
             }
         }
 
         false
+    }
+
+    fn connected_neighbors(&self, kind: Kind, current_track_name: &str) -> Vec<String> {
+        let state = self.state.lock();
+        let mut found_neighbors = Vec::new();
+
+        if let Some(current_track_handle) = state.tracks.get(current_track_name) {
+            let current_track = current_track_handle.lock();
+
+            match kind {
+                Kind::Audio => {
+                    for out_port in &current_track.audio.outs {
+                        let conns = out_port.connections.lock();
+                        for conn in conns.iter() {
+                            for (name, next_track_handle) in &state.tracks {
+                                let next_track = next_track_handle.lock();
+                                let is_connected = next_track
+                                    .audio
+                                    .ins
+                                    .iter()
+                                    .any(|ins_port| Arc::ptr_eq(&ins_port.buffer, &conn.buffer));
+
+                                if is_connected {
+                                    found_neighbors.push(name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                Kind::MIDI => {
+                    for out_port in &current_track.midi.outs {
+                        let conns = out_port.lock().connections.clone();
+                        for conn in conns.iter() {
+                            for (name, next_track_handle) in &state.tracks {
+                                let next_track = next_track_handle.lock();
+                                let is_connected = next_track
+                                    .midi
+                                    .ins
+                                    .iter()
+                                    .any(|ins_port| Arc::ptr_eq(ins_port, conn));
+
+                                if is_connected {
+                                    found_neighbors.push(name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        found_neighbors
     }
 
     async fn handle_request(&mut self, a: Action) {
@@ -597,61 +628,60 @@ impl Engine {
                 to_port,
                 kind,
             } => {
-                let from_audio_io = if from_track == "hw:in" {
-                    self.oss_in
-                        .as_ref()
-                        .and_then(|h| h.lock().channels.get(from_port).cloned())
-                } else {
-                    self.state
-                        .lock()
-                        .tracks
-                        .get(from_track)
-                        .and_then(|t| t.lock().audio.outs.get(from_port).cloned())
-                };
-                let to_audio_io = if to_track == "hw:out" {
-                    self.oss_out
-                        .as_ref()
-                        .and_then(|h| h.lock().channels.get(to_port).cloned())
-                } else {
-                    self.state
-                        .lock()
-                        .tracks
-                        .get(to_track)
-                        .and_then(|t| t.lock().audio.ins.get(to_port).cloned())
-                };
-                if from_audio_io.is_none() {
-                    self.notify_clients(Err(format!("Source track '{}' not found", from_track)))
-                        .await;
-                    return;
-                }
-
-                if to_audio_io.is_none() {
-                    self.notify_clients(Err(format!("Destination track '{}' not found", to_track)))
-                        .await;
-                    return;
-                }
-
                 match kind {
-                    Kind::Audio => match (from_audio_io, to_audio_io) {
-                        (Some(source), Some(target)) => {
-                            if from_track != "hw:in"
-                                && to_track != "hw:out"
-                                && self.check_if_leads_to(to_track, from_track)
-                            {
-                                self.notify_clients(Err("Circular routing is not allowed!".into()))
-                                    .await;
+                    Kind::Audio => {
+                        let from_audio_io = if from_track == "hw:in" {
+                            self.oss_in
+                                .as_ref()
+                                .and_then(|h| h.lock().channels.get(from_port).cloned())
+                        } else {
+                            self.state
+                                .lock()
+                                .tracks
+                                .get(from_track)
+                                .and_then(|t| t.lock().audio.outs.get(from_port).cloned())
+                        };
+                        let to_audio_io = if to_track == "hw:out" {
+                            self.oss_out
+                                .as_ref()
+                                .and_then(|h| h.lock().channels.get(to_port).cloned())
+                        } else {
+                            self.state
+                                .lock()
+                                .tracks
+                                .get(to_track)
+                                .and_then(|t| t.lock().audio.ins.get(to_port).cloned())
+                        };
+                        match (from_audio_io, to_audio_io) {
+                            (Some(source), Some(target)) => {
+                                if from_track != "hw:in"
+                                    && to_track != "hw:out"
+                                    && self.check_if_leads_to_kind(Kind::Audio, to_track, from_track)
+                                {
+                                    self.notify_clients(Err("Circular routing is not allowed!".into()))
+                                        .await;
+                                    return;
+                                }
+                                crate::audio::io::AudioIO::connect(&source, &target);
+                            }
+                            (None, _) => {
+                                self.notify_clients(Err(format!(
+                                    "Source track '{}' not found",
+                                    from_track
+                                )))
+                                .await;
                                 return;
                             }
-                            crate::audio::io::AudioIO::connect(&source, &target);
+                            (_, None) => {
+                                self.notify_clients(Err(format!(
+                                    "Destination track '{}' not found",
+                                    to_track
+                                )))
+                                .await;
+                                return;
+                            }
                         }
-                        _ => {
-                            self.notify_clients(Err(format!(
-                                "Connection failed: {}[{}] -> {}[{}] not found",
-                                from_track, from_port, to_track, to_port
-                            )))
-                            .await;
-                        }
-                    },
+                    }
                     Kind::MIDI => {
                         if from_track == "hw:in" || to_track == "hw:out" {
                             self.notify_clients(Err(
@@ -660,7 +690,7 @@ impl Engine {
                             .await;
                             return;
                         }
-                        if from_track == to_track {
+                        if self.check_if_leads_to_kind(Kind::MIDI, to_track, from_track) {
                             self.notify_clients(Err("Circular routing is not allowed!".into()))
                                 .await;
                             return;
