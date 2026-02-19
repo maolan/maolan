@@ -5,14 +5,13 @@ use crate::{
     state::{Connecting, HW_IN_ID, HW_OUT_ID, Hovering, MovingTrack, State, StateData},
 };
 use iced::{
-    Color, Element, Length, Point, Rectangle, Renderer, Theme,
+    Color, Point, Rectangle, Renderer, Theme,
     alignment::{Horizontal, Vertical},
     event::Event,
     mouse,
     widget::{
         canvas,
         canvas::{Action, Frame, Geometry, Path, Text},
-        container,
     },
 };
 use maolan_engine::{kind::Kind, message::Action as EngineAction};
@@ -56,33 +55,6 @@ impl Graph {
         }
     }
 
-    pub fn update(&mut self, _message: Message) {}
-
-    pub fn view(&self) -> Element<'_, Message> {
-        canvas(self).width(Length::Fill).height(Length::Fill).into()
-    }
-}
-
-pub struct Connections {
-    graph: Graph,
-}
-
-impl Connections {
-    pub fn new(state: State) -> Self {
-        Self {
-            graph: Graph::new(state.clone()),
-        }
-    }
-    pub fn update(&mut self, message: Message) {
-        self.graph.update(message.clone());
-    }
-
-    pub fn view(&self) -> iced::Element<'_, Message> {
-        container(self.graph.view())
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    }
 }
 
 impl canvas::Program<Message> for Graph {

@@ -5,21 +5,23 @@ use crate::{
     state::{Lv2Connecting, MovingPlugin, State},
 };
 use iced::{
-    Color, Element, Length, Point, Rectangle, Renderer, Theme,
+    Color, Point, Rectangle, Renderer, Theme,
     alignment::{Horizontal, Vertical},
     event::Event,
     mouse,
     widget::{
         canvas,
         canvas::{Action, Frame, Geometry, Path, Text},
-        container,
     },
 };
 use maolan_engine::message::{Action as EngineAction, Lv2GraphNode, Lv2GraphPlugin};
 use std::time::{Duration, Instant};
 
 const PLUGIN_W: f32 = 170.0;
-const PLUGIN_H: f32 = 96.0;
+const MIN_PLUGIN_H: f32 = 96.0;
+const AUDIO_PORT_RADIUS: f32 = 4.5;
+const MIDI_PORT_RADIUS: f32 = 3.5;
+const MIN_PORT_GAP: f32 = 2.0;
 const TRACK_IO_W: f32 = 86.0;
 const TRACK_IO_H: f32 = 200.0;
 const TRACK_IO_MARGIN_X: f32 = 24.0;
@@ -33,6 +35,28 @@ impl Graph {
         Self { state }
     }
 
+    fn required_height_for_ports(port_count: usize, radius: f32) -> f32 {
+        if port_count == 0 {
+            0.0
+        } else {
+            (port_count + 1) as f32 * (radius * 2.0 + MIN_PORT_GAP)
+        }
+    }
+
+    fn plugin_height(plugin: &Lv2GraphPlugin) -> f32 {
+        MIN_PLUGIN_H
+            .max(Self::required_height_for_ports(
+                plugin.audio_inputs,
+                AUDIO_PORT_RADIUS,
+            ))
+            .max(Self::required_height_for_ports(
+                plugin.audio_outputs,
+                AUDIO_PORT_RADIUS,
+            ))
+            .max(Self::required_height_for_ports(plugin.midi_inputs, MIDI_PORT_RADIUS))
+            .max(Self::required_height_for_ports(plugin.midi_outputs, MIDI_PORT_RADIUS))
+    }
+
     fn plugin_pos(
         data: &crate::state::StateData,
         plugin: &Lv2GraphPlugin,
@@ -43,10 +67,11 @@ impl Graph {
             .get(&plugin.instance_id)
             .copied()
             .unwrap_or_else(|| {
+                let plugin_h = Self::plugin_height(plugin);
                 let start_x = TRACK_IO_MARGIN_X + TRACK_IO_W + 60.0;
                 let max_x = (bounds.width - TRACK_IO_MARGIN_X - TRACK_IO_W - PLUGIN_W).max(start_x);
                 let x = (start_x + idx as f32 * (PLUGIN_W + 24.0)).min(max_x);
-                Point::new(x, bounds.height / 2.0 - PLUGIN_H / 2.0)
+                Point::new(x, bounds.height / 2.0 - plugin_h / 2.0)
             })
     }
 
@@ -65,27 +90,6 @@ impl Graph {
             ),
             iced::Size::new(TRACK_IO_W, TRACK_IO_H),
         )
-    }
-}
-
-pub struct TrackPlugins {
-    graph: Graph,
-}
-
-impl TrackPlugins {
-    pub fn new(state: State) -> Self {
-        Self {
-            graph: Graph::new(state),
-        }
-    }
-
-    pub fn update(&mut self, _message: Message) {}
-
-    pub fn view(&self) -> Element<'_, Message> {
-        container(canvas(&self.graph).width(Length::Fill).height(Length::Fill))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
     }
 }
 
@@ -150,8 +154,10 @@ impl canvas::Program<Message> for Graph {
             }
             for (idx, plugin) in data.lv2_graph_plugins.iter().enumerate() {
                 let pos = Self::plugin_pos(&data, plugin, idx, bounds);
+                let plugin_h = Self::plugin_height(plugin);
                 for port in 0..plugin.audio_inputs {
-                    let py = pos.y + (PLUGIN_H / (plugin.audio_inputs + 1) as f32) * (port + 1) as f32;
+                    let py =
+                        pos.y + (plugin_h / (plugin.audio_inputs + 1) as f32) * (port + 1) as f32;
                     all_ports.push(PortHit {
                         node: Lv2GraphNode::PluginInstance(plugin.instance_id),
                         port,
@@ -160,8 +166,8 @@ impl canvas::Program<Message> for Graph {
                     });
                 }
                 for port in 0..plugin.audio_outputs {
-                    let py =
-                        pos.y + (PLUGIN_H / (plugin.audio_outputs + 1) as f32) * (port + 1) as f32;
+                    let py = pos.y
+                        + (plugin_h / (plugin.audio_outputs + 1) as f32) * (port + 1) as f32;
                     all_ports.push(PortHit {
                         node: Lv2GraphNode::PluginInstance(plugin.instance_id),
                         port,
@@ -204,8 +210,9 @@ impl canvas::Program<Message> for Graph {
                                     continue;
                                 }
                                 let pos = Self::plugin_pos(&data, plugin, pidx, bounds);
+                                let plugin_h = Self::plugin_height(plugin);
                                 let py = pos.y
-                                    + (PLUGIN_H / (plugin.audio_outputs + 1) as f32)
+                                    + (plugin_h / (plugin.audio_outputs + 1) as f32)
                                         * (conn.from_port + 1) as f32;
                                 Point::new(pos.x + PLUGIN_W, py)
                             }
@@ -240,8 +247,9 @@ impl canvas::Program<Message> for Graph {
                                     continue;
                                 }
                                 let pos = Self::plugin_pos(&data, plugin, pidx, bounds);
+                                let plugin_h = Self::plugin_height(plugin);
                                 let py = pos.y
-                                    + (PLUGIN_H / (plugin.audio_inputs + 1) as f32)
+                                    + (plugin_h / (plugin.audio_inputs + 1) as f32)
                                         * (conn.to_port + 1) as f32;
                                 Point::new(pos.x, py)
                             }
@@ -280,7 +288,10 @@ impl canvas::Program<Message> for Graph {
                     for (idx, plugin) in data.lv2_graph_plugins.iter().enumerate().rev() {
                         let instance_id = plugin.instance_id;
                         let pos = Self::plugin_pos(&data, plugin, idx, bounds);
-                        let rect = Rectangle::new(pos, iced::Size::new(PLUGIN_W, PLUGIN_H));
+                        let rect = Rectangle::new(
+                            pos,
+                            iced::Size::new(PLUGIN_W, Self::plugin_height(plugin)),
+                        );
                         if rect.contains(cursor_position) {
                             let now = Instant::now();
                             if let Some((last_instance, last_time)) = data.lv2_graph_last_plugin_click
@@ -470,7 +481,8 @@ impl canvas::Program<Message> for Graph {
 
             for (idx, plugin) in data.lv2_graph_plugins.iter().enumerate() {
                 let pos = Self::plugin_pos(&data, plugin, idx, bounds);
-                let rect = Path::rectangle(pos, iced::Size::new(PLUGIN_W, PLUGIN_H));
+                let plugin_h = Self::plugin_height(plugin);
+                let rect = Path::rectangle(pos, iced::Size::new(PLUGIN_W, plugin_h));
                 frame.fill(&rect, Color::from_rgb8(28, 28, 42));
                 frame.stroke(
                     &rect,
@@ -479,7 +491,7 @@ impl canvas::Program<Message> for Graph {
                         .with_width(2.0),
                 );
                 frame.fill_text(Text {
-                    content: format!("{} #{}", plugin.name, plugin.instance_id),
+                    content: plugin.name.clone(),
                     position: Point::new(pos.x + PLUGIN_W / 2.0, pos.y + 16.0),
                     color: Color::WHITE,
                     size: 14.0.into(),
@@ -489,32 +501,33 @@ impl canvas::Program<Message> for Graph {
                 });
                 for port in 0..plugin.audio_inputs {
                     let py =
-                        pos.y + (PLUGIN_H / (plugin.audio_inputs + 1) as f32) * (port + 1) as f32;
+                        pos.y + (plugin_h / (plugin.audio_inputs + 1) as f32) * (port + 1) as f32;
                     frame.fill(
-                        &Path::circle(Point::new(pos.x, py), 4.5),
+                        &Path::circle(Point::new(pos.x, py), AUDIO_PORT_RADIUS),
                         audio_port_color(),
                     );
                 }
                 for port in 0..plugin.audio_outputs {
                     let py =
-                        pos.y + (PLUGIN_H / (plugin.audio_outputs + 1) as f32) * (port + 1) as f32;
+                        pos.y + (plugin_h / (plugin.audio_outputs + 1) as f32) * (port + 1) as f32;
                     frame.fill(
-                        &Path::circle(Point::new(pos.x + PLUGIN_W, py), 4.5),
+                        &Path::circle(Point::new(pos.x + PLUGIN_W, py), AUDIO_PORT_RADIUS),
                         audio_port_color(),
                     );
                 }
                 for port in 0..plugin.midi_inputs {
-                    let py = pos.y + (PLUGIN_H / (plugin.midi_inputs + 1) as f32) * (port + 1) as f32;
+                    let py =
+                        pos.y + (plugin_h / (plugin.midi_inputs + 1) as f32) * (port + 1) as f32;
                     frame.fill(
-                        &Path::circle(Point::new(pos.x + 12.0, py), 3.5),
+                        &Path::circle(Point::new(pos.x, py), MIDI_PORT_RADIUS),
                         midi_port_color(),
                     );
                 }
                 for port in 0..plugin.midi_outputs {
-                    let py =
-                        pos.y + (PLUGIN_H / (plugin.midi_outputs + 1) as f32) * (port + 1) as f32;
+                    let py = pos.y
+                        + (plugin_h / (plugin.midi_outputs + 1) as f32) * (port + 1) as f32;
                     frame.fill(
-                        &Path::circle(Point::new(pos.x + PLUGIN_W - 12.0, py), 3.5),
+                        &Path::circle(Point::new(pos.x + PLUGIN_W, py), MIDI_PORT_RADIUS),
                         midi_port_color(),
                     );
                 }
@@ -537,8 +550,9 @@ impl canvas::Program<Message> for Graph {
                             continue;
                         };
                         let pos = Self::plugin_pos(&data, plugin, idx, bounds);
+                        let plugin_h = Self::plugin_height(plugin);
                         let py = pos.y
-                            + (PLUGIN_H / (plugin.audio_outputs + 1) as f32)
+                            + (plugin_h / (plugin.audio_outputs + 1) as f32)
                                 * (conn.from_port + 1) as f32;
                         Point::new(pos.x + PLUGIN_W, py)
                     }
@@ -561,8 +575,9 @@ impl canvas::Program<Message> for Graph {
                             continue;
                         };
                         let pos = Self::plugin_pos(&data, plugin, idx, bounds);
+                        let plugin_h = Self::plugin_height(plugin);
                         let py = pos.y
-                            + (PLUGIN_H / (plugin.audio_inputs + 1) as f32)
+                            + (plugin_h / (plugin.audio_inputs + 1) as f32)
                                 * (conn.to_port + 1) as f32;
                         Point::new(pos.x, py)
                     }
@@ -619,14 +634,15 @@ impl canvas::Program<Message> for Graph {
                             return vec![frame.into_geometry()];
                         };
                         let pos = Self::plugin_pos(&data, plugin, idx, bounds);
+                        let plugin_h = Self::plugin_height(plugin);
                         if connecting.is_input {
                             let py = pos.y
-                                + (PLUGIN_H / (plugin.audio_inputs + 1) as f32)
+                                + (plugin_h / (plugin.audio_inputs + 1) as f32)
                                     * (connecting.from_port + 1) as f32;
                             Point::new(pos.x, py)
                         } else {
                             let py = pos.y
-                                + (PLUGIN_H / (plugin.audio_outputs + 1) as f32)
+                                + (plugin_h / (plugin.audio_outputs + 1) as f32)
                                     * (connecting.from_port + 1) as f32;
                             Point::new(pos.x + PLUGIN_W, py)
                         }
