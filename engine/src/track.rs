@@ -223,6 +223,8 @@ impl Track {
                 name: instance.processor.name().to_string(),
                 audio_inputs: instance.processor.audio_input_count(),
                 audio_outputs: instance.processor.audio_output_count(),
+                midi_inputs: instance.processor.midi_input_count(),
+                midi_outputs: instance.processor.midi_output_count(),
             })
             .collect()
     }
@@ -316,6 +318,20 @@ impl Track {
             return Err(format!(
                 "Track '{}' does not have LV2 plugin loaded: {uri}",
                 self.name
+            ));
+        };
+        instance.processor.show_ui()
+    }
+
+    pub fn show_lv2_plugin_ui_instance(&mut self, instance_id: usize) -> Result<(), String> {
+        let Some(instance) = self
+            .lv2_processors
+            .iter_mut()
+            .find(|instance| instance.id == instance_id)
+        else {
+            return Err(format!(
+                "Track '{}' does not have LV2 instance id: {}",
+                self.name, instance_id
             ));
         };
         instance.processor.show_ui()

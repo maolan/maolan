@@ -130,6 +130,7 @@ pub struct StateData {
     pub lv2_graph_plugin_positions: HashMap<usize, Point>,
     pub lv2_graph_connecting: Option<Lv2Connecting>,
     pub lv2_graph_moving_plugin: Option<MovingPlugin>,
+    pub lv2_graph_last_plugin_click: Option<(usize, Instant)>,
     pub connections_last_track_click: Option<(String, Instant)>,
 }
 
@@ -184,6 +185,7 @@ impl Default for StateData {
             lv2_graph_plugin_positions: HashMap::new(),
             lv2_graph_connecting: None,
             lv2_graph_moving_plugin: None,
+            lv2_graph_last_plugin_click: None,
             connections_last_track_click: None,
         }
     }

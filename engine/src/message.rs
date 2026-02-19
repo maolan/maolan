@@ -28,6 +28,8 @@ pub struct Lv2GraphPlugin {
     pub name: String,
     pub audio_inputs: usize,
     pub audio_outputs: usize,
+    pub midi_inputs: usize,
+    pub midi_outputs: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,6 +75,10 @@ pub enum Action {
     TrackShowLv2PluginUi {
         track_name: String,
         plugin_uri: String,
+    },
+    TrackShowLv2PluginUiInstance {
+        track_name: String,
+        instance_id: usize,
     },
     TrackGetLv2Graph {
         track_name: String,

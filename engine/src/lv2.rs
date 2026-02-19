@@ -60,6 +60,8 @@ pub struct Lv2Processor {
     atom_outputs: Vec<AtomBuffer>,
     atom_sequence_urid: LV2Urid,
     atom_frame_time_urid: LV2Urid,
+    midi_inputs: usize,
+    midi_outputs: usize,
     skip_deactivate_on_drop: bool,
     control_ports: Vec<ControlPortInfo>,
     ui_feedback_cache: Vec<u32>,
@@ -419,6 +421,8 @@ impl Lv2Processor {
         let mut audio_outputs: Vec<Arc<AudioIO>> = vec![];
         let mut atom_inputs: Vec<AtomBuffer> = vec![];
         let mut atom_outputs: Vec<AtomBuffer> = vec![];
+        let mut midi_inputs = 0_usize;
+        let mut midi_outputs = 0_usize;
         let mut control_ports = vec![];
         let atom_sequence_urid = urid_feature.map_uri(LV2_ATOM__SEQUENCE);
         let atom_frame_time_urid = urid_feature.map_uri(LV2_ATOM__FRAMETIME);
@@ -444,6 +448,7 @@ impl Lv2Processor {
                 audio_outputs.push(Arc::new(AudioIO::new(1)));
                 port_bindings[index] = PortBinding::AudioOutput(channel);
             } else if is_atom && is_input {
+                midi_inputs += 1;
                 has_atom_ports = true;
                 let atom_idx = atom_inputs.len();
                 let mut buffer = AtomBuffer::new(LV2_ATOM_BUFFER_BYTES);
@@ -455,6 +460,7 @@ impl Lv2Processor {
                 atom_inputs.push(buffer);
                 port_bindings[index] = PortBinding::AtomInput(atom_idx);
             } else if is_atom && is_output {
+                midi_outputs += 1;
                 has_atom_ports = true;
                 let atom_idx = atom_outputs.len();
                 let mut buffer = AtomBuffer::new(LV2_ATOM_BUFFER_BYTES);
@@ -525,6 +531,8 @@ impl Lv2Processor {
             atom_outputs,
             atom_sequence_urid,
             atom_frame_time_urid,
+            midi_inputs,
+            midi_outputs,
             skip_deactivate_on_drop: has_atom_ports,
             control_ports,
             ui_feedback_cache: vec![],
@@ -560,6 +568,14 @@ impl Lv2Processor {
 
     pub fn audio_output_count(&self) -> usize {
         self.audio_outputs.len()
+    }
+
+    pub fn midi_input_count(&self) -> usize {
+        self.midi_inputs
+    }
+
+    pub fn midi_output_count(&self) -> usize {
+        self.midi_outputs
     }
 
     pub fn setup_audio_ports(&self) {

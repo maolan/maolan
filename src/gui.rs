@@ -1033,6 +1033,7 @@ impl Maolan {
                     state.lv2_graph_track = Some(track_name.clone());
                     state.lv2_graph_connecting = None;
                     state.lv2_graph_moving_plugin = None;
+                    state.lv2_graph_last_plugin_click = None;
                 }
                 return self.send(Action::TrackGetLv2Graph { track_name });
             }
@@ -1041,6 +1042,7 @@ impl Maolan {
                 state.view = View::Connections;
                 state.lv2_graph_connecting = None;
                 state.lv2_graph_moving_plugin = None;
+                state.lv2_graph_last_plugin_click = None;
             }
             Message::RefreshTrackLv2Graph => {
                 let track_name = self.state.blocking_read().lv2_graph_track.clone();

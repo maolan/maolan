@@ -1,4 +1,5 @@
 use crate::{
+    connections::colors::{audio_port_color, midi_port_color},
     connections::selection::is_bezier_hit,
     message::Message,
     state::{Connecting, HW_IN_ID, HW_OUT_ID, Hovering, MovingTrack, State, StateData},
@@ -752,7 +753,7 @@ impl canvas::Program<Message> for Graph {
                             Point::new(pos.x + hw_width, py),
                             if can_highlight_port { 8.0 } else { 5.0 },
                         ),
-                        Color::from_rgb(0.0, 1.0, 0.5),
+                        audio_port_color(),
                     );
                 }
             }
@@ -810,7 +811,7 @@ impl canvas::Program<Message> for Graph {
                             Point::new(pos.x, py),
                             if can_highlight_port { 8.0 } else { 5.0 },
                         ),
-                        Color::from_rgb(1.0, 0.3, 0.3),
+                        audio_port_color(),
                     );
                 }
             }
@@ -838,9 +839,9 @@ impl canvas::Program<Message> for Graph {
                 for j in 0..total_ins {
                     let py = pos.y + (size.height / (total_ins + 1) as f32) * (j + 1) as f32;
                     let c = if j < track.audio.ins {
-                        Color::from_rgb(0.2, 0.5, 1.0)
+                        audio_port_color()
                     } else {
-                        Color::from_rgb(1.0, 0.6, 0.0)
+                        midi_port_color()
                     };
                     let h_port = Hovering::Port {
                         track_idx: track.name.clone(),
@@ -872,9 +873,9 @@ impl canvas::Program<Message> for Graph {
                 for j in 0..total_outs {
                     let py = pos.y + (size.height / (total_outs + 1) as f32) * (j + 1) as f32;
                     let c = if j < track.audio.outs {
-                        Color::from_rgb(0.2, 0.5, 1.0)
+                        audio_port_color()
                     } else {
-                        Color::from_rgb(1.0, 0.6, 0.0)
+                        midi_port_color()
                     };
                     let h_port = Hovering::Port {
                         track_idx: track.name.clone(),

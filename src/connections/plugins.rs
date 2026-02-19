@@ -1,4 +1,5 @@
 use crate::{
+    connections::colors::{audio_port_color, midi_port_color},
     connections::selection::is_bezier_hit,
     message::Message,
     state::{Lv2Connecting, MovingPlugin, State},
@@ -15,6 +16,7 @@ use iced::{
     },
 };
 use maolan_engine::message::{Action as EngineAction, Lv2GraphNode, Lv2GraphPlugin};
+use std::time::{Duration, Instant};
 
 const PLUGIN_W: f32 = 170.0;
 const PLUGIN_H: f32 = 96.0;
@@ -276,11 +278,30 @@ impl canvas::Program<Message> for Graph {
                     }
 
                     for (idx, plugin) in data.lv2_graph_plugins.iter().enumerate().rev() {
+                        let instance_id = plugin.instance_id;
                         let pos = Self::plugin_pos(&data, plugin, idx, bounds);
                         let rect = Rectangle::new(pos, iced::Size::new(PLUGIN_W, PLUGIN_H));
                         if rect.contains(cursor_position) {
+                            let now = Instant::now();
+                            if let Some((last_instance, last_time)) = data.lv2_graph_last_plugin_click
+                                && last_instance == instance_id
+                                && now.duration_since(last_time) <= Duration::from_millis(350)
+                            {
+                                data.lv2_graph_last_plugin_click = None;
+                                if let Some(track_name) = data.lv2_graph_track.clone() {
+                                    return Some(Action::publish(Message::Request(
+                                        EngineAction::TrackShowLv2PluginUiInstance {
+                                            track_name,
+                                            instance_id,
+                                        },
+                                    )));
+                                }
+                                return Some(Action::capture());
+                            }
+                            data.lv2_graph_last_plugin_click = Some((instance_id, now));
+
                             data.lv2_graph_moving_plugin = Some(MovingPlugin {
-                                instance_id: plugin.instance_id,
+                                instance_id,
                                 offset_x: cursor_position.x - pos.x,
                                 offset_y: cursor_position.y - pos.y,
                             });
@@ -421,14 +442,29 @@ impl canvas::Program<Message> for Graph {
                 let py = in_rect.y + (in_rect.height / (track.audio.ins + 1) as f32) * (port + 1) as f32;
                 frame.fill(
                     &Path::circle(Point::new(in_rect.x + in_rect.width, py), 5.0),
-                    Color::from_rgb(0.0, 0.95, 0.55),
+                    audio_port_color(),
+                );
+            }
+            for port in 0..track.midi.ins {
+                let py = in_rect.y + (in_rect.height / (track.midi.ins + 1) as f32) * (port + 1) as f32;
+                frame.fill(
+                    &Path::circle(Point::new(in_rect.x + 10.0, py), 4.0),
+                    midi_port_color(),
                 );
             }
             for port in 0..track.audio.outs {
                 let py = out_rect.y + (out_rect.height / (track.audio.outs + 1) as f32) * (port + 1) as f32;
                 frame.fill(
                     &Path::circle(Point::new(out_rect.x, py), 5.0),
-                    Color::from_rgb(1.0, 0.36, 0.36),
+                    audio_port_color(),
+                );
+            }
+            for port in 0..track.midi.outs {
+                let py =
+                    out_rect.y + (out_rect.height / (track.midi.outs + 1) as f32) * (port + 1) as f32;
+                frame.fill(
+                    &Path::circle(Point::new(out_rect.x + out_rect.width - 10.0, py), 4.0),
+                    midi_port_color(),
                 );
             }
 
@@ -456,7 +492,7 @@ impl canvas::Program<Message> for Graph {
                         pos.y + (PLUGIN_H / (plugin.audio_inputs + 1) as f32) * (port + 1) as f32;
                     frame.fill(
                         &Path::circle(Point::new(pos.x, py), 4.5),
-                        Color::from_rgb(0.35, 0.72, 1.0),
+                        audio_port_color(),
                     );
                 }
                 for port in 0..plugin.audio_outputs {
@@ -464,7 +500,22 @@ impl canvas::Program<Message> for Graph {
                         pos.y + (PLUGIN_H / (plugin.audio_outputs + 1) as f32) * (port + 1) as f32;
                     frame.fill(
                         &Path::circle(Point::new(pos.x + PLUGIN_W, py), 4.5),
-                        Color::from_rgb(1.0, 0.62, 0.12),
+                        audio_port_color(),
+                    );
+                }
+                for port in 0..plugin.midi_inputs {
+                    let py = pos.y + (PLUGIN_H / (plugin.midi_inputs + 1) as f32) * (port + 1) as f32;
+                    frame.fill(
+                        &Path::circle(Point::new(pos.x + 12.0, py), 3.5),
+                        midi_port_color(),
+                    );
+                }
+                for port in 0..plugin.midi_outputs {
+                    let py =
+                        pos.y + (PLUGIN_H / (plugin.midi_outputs + 1) as f32) * (port + 1) as f32;
+                    frame.fill(
+                        &Path::circle(Point::new(pos.x + PLUGIN_W - 12.0, py), 3.5),
+                        midi_port_color(),
                     );
                 }
             }
