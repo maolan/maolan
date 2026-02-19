@@ -399,6 +399,33 @@ impl Engine {
                     }
                 }
             }
+            Action::TrackConnectLv2Midi {
+                ref track_name,
+                ref from_node,
+                from_port,
+                ref to_node,
+                to_port,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().connect_lv2_midi(
+                            from_node.clone(),
+                            from_port,
+                            to_node.clone(),
+                            to_port,
+                        ) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
             Action::TrackDisconnectLv2Audio {
                 ref track_name,
                 ref from_node,
@@ -410,6 +437,33 @@ impl Engine {
                 match track_handle {
                     Some(track) => {
                         if let Err(e) = track.lock().disconnect_lv2_audio(
+                            from_node.clone(),
+                            from_port,
+                            to_node.clone(),
+                            to_port,
+                        ) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackDisconnectLv2Midi {
+                ref track_name,
+                ref from_node,
+                from_port,
+                ref to_node,
+                to_port,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().disconnect_lv2_midi(
                             from_node.clone(),
                             from_port,
                             to_node.clone(),

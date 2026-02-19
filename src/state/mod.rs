@@ -86,6 +86,7 @@ pub struct HW {
 pub struct Lv2Connecting {
     pub from_node: Lv2GraphNode,
     pub from_port: usize,
+    pub kind: Kind,
     pub point: Point,
     pub is_input: bool,
 }

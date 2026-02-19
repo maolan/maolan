@@ -1,6 +1,7 @@
 use super::{audio::track::AudioTrack, midi::track::MIDITrack};
 use crate::{
     audio::io::AudioIO,
+    kind::Kind,
     lv2::Lv2Processor,
     message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin},
 };
@@ -22,6 +23,7 @@ pub struct Track {
     pub audio: AudioTrack,
     pub midi: MIDITrack,
     pub lv2_processors: Vec<Lv2Instance>,
+    pub lv2_midi_connections: Vec<Lv2GraphConnection>,
     pub next_lv2_instance_id: usize,
     pub sample_rate: f64,
 }
@@ -45,6 +47,7 @@ impl Track {
             audio: AudioTrack::new(audio_ins, audio_outs, buffer_size),
             midi: MIDITrack::new(midi_ins, midi_outs),
             lv2_processors: Vec::new(),
+            lv2_midi_connections: Vec::new(),
             next_lv2_instance_id: 0,
             sample_rate,
         }
@@ -197,6 +200,10 @@ impl Track {
         for port in removed.processor.audio_outputs() {
             Self::disconnect_all(port);
         }
+        self.lv2_midi_connections.retain(|conn| {
+            conn.from_node != Lv2GraphNode::PluginInstance(removed.id)
+                && conn.to_node != Lv2GraphNode::PluginInstance(removed.id)
+        });
         Ok(())
     }
 
@@ -260,6 +267,7 @@ impl Track {
                         from_port: *from_port,
                         to_node: Lv2GraphNode::TrackOutput,
                         to_port,
+                        kind: Kind::Audio,
                     });
                 }
             }
@@ -276,11 +284,13 @@ impl Track {
                             from_port: *from_port,
                             to_node: Lv2GraphNode::PluginInstance(instance.id),
                             to_port,
+                            kind: Kind::Audio,
                         });
                     }
                 }
             }
         }
+        connections.extend(self.lv2_midi_connections.iter().cloned());
         connections
     }
 
@@ -307,6 +317,54 @@ impl Track {
         let source = self.lv2_source_io(&from_node, from_port)?;
         let target = self.lv2_target_io(&to_node, to_port)?;
         AudioIO::disconnect(&source, &target)
+    }
+
+    pub fn connect_lv2_midi(
+        &mut self,
+        from_node: Lv2GraphNode,
+        from_port: usize,
+        to_node: Lv2GraphNode,
+        to_port: usize,
+    ) -> Result<(), String> {
+        self.validate_lv2_midi_source(&from_node, from_port)?;
+        self.validate_lv2_midi_target(&to_node, to_port)?;
+        if from_node == to_node && from_port == to_port {
+            return Err("Cannot connect a MIDI port to itself".to_string());
+        }
+        let new_conn = Lv2GraphConnection {
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+            kind: Kind::MIDI,
+        };
+        if self.lv2_midi_connections.iter().any(|c| c == &new_conn) {
+            return Ok(());
+        }
+        self.lv2_midi_connections.push(new_conn);
+        Ok(())
+    }
+
+    pub fn disconnect_lv2_midi(
+        &mut self,
+        from_node: Lv2GraphNode,
+        from_port: usize,
+        to_node: Lv2GraphNode,
+        to_port: usize,
+    ) -> Result<(), String> {
+        let before = self.lv2_midi_connections.len();
+        self.lv2_midi_connections.retain(|c| {
+            !(c.kind == Kind::MIDI
+                && c.from_node == from_node
+                && c.from_port == from_port
+                && c.to_node == to_node
+                && c.to_port == to_port)
+        });
+        if self.lv2_midi_connections.len() == before {
+            Err("MIDI LV2 graph connection not found".to_string())
+        } else {
+            Ok(())
+        }
     }
 
     pub fn show_lv2_plugin_ui(&mut self, uri: &str) -> Result<(), String> {
@@ -403,6 +461,46 @@ impl Track {
                 .find(|instance| instance.id == *instance_id)
                 .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
                 .ok_or_else(|| format!("Plugin instance {instance_id} input port {port} missing")),
+        }
+    }
+
+    fn validate_lv2_midi_source(&self, node: &Lv2GraphNode, port: usize) -> Result<(), String> {
+        match node {
+            Lv2GraphNode::TrackInput => self
+                .midi
+                .ins
+                .get(port)
+                .map(|_| ())
+                .ok_or_else(|| format!("Track MIDI input port {port} not found")),
+            Lv2GraphNode::TrackOutput => Err("Track output node cannot be MIDI source".to_string()),
+            Lv2GraphNode::PluginInstance(instance_id) => self
+                .lv2_processors
+                .iter()
+                .find(|instance| instance.id == *instance_id)
+                .and_then(|instance| (port < instance.processor.midi_output_count()).then_some(()))
+                .ok_or_else(|| {
+                    format!("Plugin instance {instance_id} MIDI output port {port} missing")
+                }),
+        }
+    }
+
+    fn validate_lv2_midi_target(&self, node: &Lv2GraphNode, port: usize) -> Result<(), String> {
+        match node {
+            Lv2GraphNode::TrackInput => Err("Track input node cannot be MIDI target".to_string()),
+            Lv2GraphNode::TrackOutput => self
+                .midi
+                .outs
+                .get(port)
+                .map(|_| ())
+                .ok_or_else(|| format!("Track MIDI output port {port} not found")),
+            Lv2GraphNode::PluginInstance(instance_id) => self
+                .lv2_processors
+                .iter()
+                .find(|instance| instance.id == *instance_id)
+                .and_then(|instance| (port < instance.processor.midi_input_count()).then_some(()))
+                .ok_or_else(|| {
+                    format!("Plugin instance {instance_id} MIDI input port {port} missing")
+                }),
         }
     }
 }

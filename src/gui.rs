@@ -552,7 +552,9 @@ impl Maolan {
                 Action::TrackLoadLv2Plugin { track_name, .. }
                 | Action::TrackUnloadLv2Plugin { track_name, .. }
                 | Action::TrackConnectLv2Audio { track_name, .. }
-                | Action::TrackDisconnectLv2Audio { track_name, .. } => {
+                | Action::TrackDisconnectLv2Audio { track_name, .. }
+                | Action::TrackConnectLv2Midi { track_name, .. }
+                | Action::TrackDisconnectLv2Midi { track_name, .. } => {
                     let lv2_track = self.state.blocking_read().lv2_graph_track.clone();
                     if lv2_track.as_deref() == Some(track_name.as_str()) {
                         return self.send(Action::TrackGetLv2Graph {

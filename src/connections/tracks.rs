@@ -1,5 +1,7 @@
 use crate::{
     connections::colors::{audio_port_color, midi_port_color},
+    connections::port_kind::{can_connect_kinds, should_highlight_port},
+    connections::ports::hover_radius,
     connections::selection::is_bezier_hit,
     message::Message,
     state::{Connecting, HW_IN_ID, HW_OUT_ID, Hovering, MovingTrack, State, StateData},
@@ -361,7 +363,7 @@ impl canvas::Program<Message> for Graph {
                                     .unwrap_or(Kind::Audio)
                             };
 
-                            if kind == target_kind {
+                            if can_connect_kinds(kind, target_kind) {
                                 let f_p_idx = if from_t == HW_IN_ID || from_t == HW_OUT_ID {
                                     from_p
                                 } else {
@@ -710,20 +712,16 @@ impl canvas::Program<Message> for Graph {
                     };
                     let h = data.hovering == Some(h_port.clone());
 
-                    let can_highlight_port = if let Some(ref connecting) = data.connecting {
-                        if let Some(hovered_kind) = Self::get_port_kind(&data, &h_port) {
-                            h && connecting.kind == hovered_kind
-                        } else {
-                            false
-                        }
-                    } else {
-                        h
-                    };
+                    let can_highlight_port = should_highlight_port(
+                        h,
+                        data.connecting.as_ref().map(|c| c.kind),
+                        Self::get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
+                    );
 
                     frame.fill(
                         &Path::circle(
                             Point::new(pos.x + hw_width, py),
-                            if can_highlight_port { 8.0 } else { 5.0 },
+                            hover_radius(5.0, can_highlight_port),
                         ),
                         audio_port_color(),
                     );
@@ -768,20 +766,16 @@ impl canvas::Program<Message> for Graph {
                     };
                     let h = data.hovering == Some(h_port.clone());
 
-                    let can_highlight_port = if let Some(ref connecting) = data.connecting {
-                        if let Some(hovered_kind) = Self::get_port_kind(&data, &h_port) {
-                            h && connecting.kind == hovered_kind
-                        } else {
-                            false
-                        }
-                    } else {
-                        h
-                    };
+                    let can_highlight_port = should_highlight_port(
+                        h,
+                        data.connecting.as_ref().map(|c| c.kind),
+                        Self::get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
+                    );
 
                     frame.fill(
                         &Path::circle(
                             Point::new(pos.x, py),
-                            if can_highlight_port { 8.0 } else { 5.0 },
+                            hover_radius(5.0, can_highlight_port),
                         ),
                         audio_port_color(),
                     );
@@ -822,20 +816,16 @@ impl canvas::Program<Message> for Graph {
                     };
                     let h = data.hovering == Some(h_port.clone());
 
-                    let can_highlight_port = if let Some(ref connecting) = data.connecting {
-                        if let Some(hovered_kind) = Self::get_port_kind(&data, &h_port) {
-                            h && connecting.kind == hovered_kind
-                        } else {
-                            false
-                        }
-                    } else {
-                        h
-                    };
+                    let can_highlight_port = should_highlight_port(
+                        h,
+                        data.connecting.as_ref().map(|c| c.kind),
+                        Self::get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
+                    );
 
                     frame.fill(
                         &Path::circle(
                             Point::new(pos.x, py),
-                            if can_highlight_port { 7.0 } else { 4.0 },
+                            hover_radius(4.0, can_highlight_port),
                         ),
                         c,
                     );
@@ -856,20 +846,16 @@ impl canvas::Program<Message> for Graph {
                     };
                     let h = data.hovering == Some(h_port.clone());
 
-                    let can_highlight_port = if let Some(ref connecting) = data.connecting {
-                        if let Some(hovered_kind) = Self::get_port_kind(&data, &h_port) {
-                            h && connecting.kind == hovered_kind
-                        } else {
-                            false
-                        }
-                    } else {
-                        h
-                    };
+                    let can_highlight_port = should_highlight_port(
+                        h,
+                        data.connecting.as_ref().map(|c| c.kind),
+                        Self::get_port_kind(&data, &h_port).unwrap_or(Kind::Audio),
+                    );
 
                     frame.fill(
                         &Path::circle(
                             Point::new(pos.x + size.width, py),
-                            if can_highlight_port { 7.0 } else { 4.0 },
+                            hover_radius(4.0, can_highlight_port),
                         ),
                         c,
                     );

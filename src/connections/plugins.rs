@@ -1,5 +1,7 @@
 use crate::{
     connections::colors::{audio_port_color, midi_port_color},
+    connections::port_kind::{can_connect_kinds, should_highlight_port},
+    connections::ports::hover_radius,
     connections::selection::is_bezier_hit,
     message::Message,
     state::{Lv2Connecting, MovingPlugin, State},
@@ -15,6 +17,7 @@ use iced::{
     },
 };
 use maolan_engine::message::{Action as EngineAction, Lv2GraphNode, Lv2GraphPlugin};
+use maolan_engine::kind::Kind;
 use std::time::{Duration, Instant};
 
 const PLUGIN_W: f32 = 170.0;
@@ -22,6 +25,8 @@ const MIN_PLUGIN_H: f32 = 96.0;
 const AUDIO_PORT_RADIUS: f32 = 4.5;
 const MIDI_PORT_RADIUS: f32 = 3.5;
 const MIN_PORT_GAP: f32 = 2.0;
+const PORT_HIT_RADIUS: f32 = AUDIO_PORT_RADIUS + 2.0;
+const MIDI_HIT_RADIUS: f32 = MIDI_PORT_RADIUS + 2.0;
 const TRACK_IO_W: f32 = 86.0;
 const TRACK_IO_H: f32 = 200.0;
 const TRACK_IO_MARGIN_X: f32 = 24.0;
@@ -98,7 +103,21 @@ struct PortHit {
     node: Lv2GraphNode,
     port: usize,
     is_input: bool,
+    kind: Kind,
     pos: Point,
+}
+
+impl Graph {
+    fn closest_port(ports: &[PortHit], cursor: Point, hit_radius: f32) -> Option<&PortHit> {
+        ports
+            .iter()
+            .filter_map(|p| {
+                let dist = cursor.distance(p.pos);
+                (dist <= hit_radius).then_some((dist, p))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, p)| p)
+    }
 }
 
 impl canvas::Program<Message> for Graph {
@@ -118,7 +137,8 @@ impl canvas::Program<Message> for Graph {
                 return None;
             }
 
-            let mut all_ports: Vec<PortHit> = vec![];
+            let mut audio_ports: Vec<PortHit> = vec![];
+            let mut midi_ports: Vec<PortHit> = vec![];
             let in_rect = Self::track_input_rect(bounds);
             let out_rect = Self::track_output_rect(bounds);
 
@@ -130,10 +150,11 @@ impl canvas::Program<Message> for Graph {
                 .unwrap_or(0)
             {
                 let py = in_rect.y + (in_rect.height / (data.tracks.iter().find(|t| Some(&t.name) == data.lv2_graph_track.as_ref()).map(|t| t.audio.ins).unwrap_or(0) + 1) as f32) * (port + 1) as f32;
-                all_ports.push(PortHit {
+                audio_ports.push(PortHit {
                     node: Lv2GraphNode::TrackInput,
                     port,
                     is_input: false,
+                    kind: Kind::Audio,
                     pos: Point::new(in_rect.x + in_rect.width, py),
                 });
             }
@@ -145,11 +166,60 @@ impl canvas::Program<Message> for Graph {
                 .unwrap_or(0)
             {
                 let py = out_rect.y + (out_rect.height / (data.tracks.iter().find(|t| Some(&t.name) == data.lv2_graph_track.as_ref()).map(|t| t.audio.outs).unwrap_or(0) + 1) as f32) * (port + 1) as f32;
-                all_ports.push(PortHit {
+                audio_ports.push(PortHit {
                     node: Lv2GraphNode::TrackOutput,
                     port,
                     is_input: true,
+                    kind: Kind::Audio,
                     pos: Point::new(out_rect.x, py),
+                });
+            }
+            for port in 0..data
+                .tracks
+                .iter()
+                .find(|t| Some(&t.name) == data.lv2_graph_track.as_ref())
+                .map(|t| t.midi.ins)
+                .unwrap_or(0)
+            {
+                let py = in_rect.y + (in_rect.height
+                    / (data
+                        .tracks
+                        .iter()
+                        .find(|t| Some(&t.name) == data.lv2_graph_track.as_ref())
+                        .map(|t| t.midi.ins)
+                        .unwrap_or(0)
+                        + 1) as f32)
+                    * (port + 1) as f32;
+                midi_ports.push(PortHit {
+                    node: Lv2GraphNode::TrackInput,
+                    port,
+                    is_input: false,
+                    kind: Kind::MIDI,
+                    pos: Point::new(in_rect.x, py),
+                });
+            }
+            for port in 0..data
+                .tracks
+                .iter()
+                .find(|t| Some(&t.name) == data.lv2_graph_track.as_ref())
+                .map(|t| t.midi.outs)
+                .unwrap_or(0)
+            {
+                let py = out_rect.y + (out_rect.height
+                    / (data
+                        .tracks
+                        .iter()
+                        .find(|t| Some(&t.name) == data.lv2_graph_track.as_ref())
+                        .map(|t| t.midi.outs)
+                        .unwrap_or(0)
+                        + 1) as f32)
+                    * (port + 1) as f32;
+                midi_ports.push(PortHit {
+                    node: Lv2GraphNode::TrackOutput,
+                    port,
+                    is_input: true,
+                    kind: Kind::MIDI,
+                    pos: Point::new(out_rect.x + out_rect.width, py),
                 });
             }
             for (idx, plugin) in data.lv2_graph_plugins.iter().enumerate() {
@@ -158,20 +228,48 @@ impl canvas::Program<Message> for Graph {
                 for port in 0..plugin.audio_inputs {
                     let py =
                         pos.y + (plugin_h / (plugin.audio_inputs + 1) as f32) * (port + 1) as f32;
-                    all_ports.push(PortHit {
+                    audio_ports.push(PortHit {
                         node: Lv2GraphNode::PluginInstance(plugin.instance_id),
                         port,
                         is_input: true,
+                        kind: Kind::Audio,
                         pos: Point::new(pos.x, py),
                     });
                 }
                 for port in 0..plugin.audio_outputs {
                     let py = pos.y
                         + (plugin_h / (plugin.audio_outputs + 1) as f32) * (port + 1) as f32;
-                    all_ports.push(PortHit {
+                    audio_ports.push(PortHit {
                         node: Lv2GraphNode::PluginInstance(plugin.instance_id),
                         port,
                         is_input: false,
+                        kind: Kind::Audio,
+                        pos: Point::new(pos.x + PLUGIN_W, py),
+                    });
+                }
+            }
+            for (idx, plugin) in data.lv2_graph_plugins.iter().enumerate() {
+                let pos = Self::plugin_pos(&data, plugin, idx, bounds);
+                let plugin_h = Self::plugin_height(plugin);
+                for port in 0..plugin.midi_inputs {
+                    let py =
+                        pos.y + (plugin_h / (plugin.midi_inputs + 1) as f32) * (port + 1) as f32;
+                    midi_ports.push(PortHit {
+                        node: Lv2GraphNode::PluginInstance(plugin.instance_id),
+                        port,
+                        is_input: true,
+                        kind: Kind::MIDI,
+                        pos: Point::new(pos.x, py),
+                    });
+                }
+                for port in 0..plugin.midi_outputs {
+                    let py = pos.y
+                        + (plugin_h / (plugin.midi_outputs + 1) as f32) * (port + 1) as f32;
+                    midi_ports.push(PortHit {
+                        node: Lv2GraphNode::PluginInstance(plugin.instance_id),
+                        port,
+                        is_input: false,
+                        kind: Kind::MIDI,
                         pos: Point::new(pos.x + PLUGIN_W, py),
                     });
                 }
@@ -179,6 +277,22 @@ impl canvas::Program<Message> for Graph {
 
             match event {
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                    let port_hit = Self::closest_port(&audio_ports, cursor_position, PORT_HIT_RADIUS)
+                        .cloned()
+                        .or_else(|| {
+                            Self::closest_port(&midi_ports, cursor_position, MIDI_HIT_RADIUS).cloned()
+                        });
+                    if let Some(hit) = port_hit {
+                        data.lv2_graph_connecting = Some(Lv2Connecting {
+                            from_node: hit.node,
+                            from_port: hit.port,
+                            kind: hit.kind,
+                            point: cursor_position,
+                            is_input: hit.is_input,
+                        });
+                        return Some(Action::capture());
+                    }
+
                     let mut clicked_connection = None;
                     for (idx, conn) in data.lv2_graph_connections.iter().enumerate() {
                         let start = match &conn.from_node {
@@ -187,7 +301,13 @@ impl canvas::Program<Message> for Graph {
                                     .tracks
                                     .iter()
                                     .find(|t| Some(&t.name) == data.lv2_graph_track.as_ref())
-                                    .map(|t| t.audio.ins)
+                                    .map(|t| {
+                                        if conn.kind == Kind::Audio {
+                                            t.audio.ins
+                                        } else {
+                                            t.midi.ins
+                                        }
+                                    })
                                     .unwrap_or(0);
                                 if track_ins == 0 {
                                     continue;
@@ -195,7 +315,14 @@ impl canvas::Program<Message> for Graph {
                                 let py = in_rect.y
                                     + (in_rect.height / (track_ins + 1) as f32)
                                         * (conn.from_port + 1) as f32;
-                                Point::new(in_rect.x + in_rect.width, py)
+                                Point::new(
+                                    if conn.kind == Kind::Audio {
+                                        in_rect.x + in_rect.width
+                                    } else {
+                                        in_rect.x
+                                    },
+                                    py,
+                                )
                             }
                             Lv2GraphNode::PluginInstance(id) => {
                                 let Some((pidx, plugin)) = data
@@ -206,13 +333,18 @@ impl canvas::Program<Message> for Graph {
                                 else {
                                     continue;
                                 };
-                                if plugin.audio_outputs == 0 {
+                                let outs = if conn.kind == Kind::Audio {
+                                    plugin.audio_outputs
+                                } else {
+                                    plugin.midi_outputs
+                                };
+                                if outs == 0 {
                                     continue;
                                 }
                                 let pos = Self::plugin_pos(&data, plugin, pidx, bounds);
                                 let plugin_h = Self::plugin_height(plugin);
                                 let py = pos.y
-                                    + (plugin_h / (plugin.audio_outputs + 1) as f32)
+                                    + (plugin_h / (outs + 1) as f32)
                                         * (conn.from_port + 1) as f32;
                                 Point::new(pos.x + PLUGIN_W, py)
                             }
@@ -224,7 +356,13 @@ impl canvas::Program<Message> for Graph {
                                     .tracks
                                     .iter()
                                     .find(|t| Some(&t.name) == data.lv2_graph_track.as_ref())
-                                    .map(|t| t.audio.outs)
+                                    .map(|t| {
+                                        if conn.kind == Kind::Audio {
+                                            t.audio.outs
+                                        } else {
+                                            t.midi.outs
+                                        }
+                                    })
                                     .unwrap_or(0);
                                 if track_outs == 0 {
                                     continue;
@@ -232,7 +370,14 @@ impl canvas::Program<Message> for Graph {
                                 let py = out_rect.y
                                     + (out_rect.height / (track_outs + 1) as f32)
                                         * (conn.to_port + 1) as f32;
-                                Point::new(out_rect.x, py)
+                                Point::new(
+                                    if conn.kind == Kind::Audio {
+                                        out_rect.x
+                                    } else {
+                                        out_rect.x + out_rect.width
+                                    },
+                                    py,
+                                )
                             }
                             Lv2GraphNode::PluginInstance(id) => {
                                 let Some((pidx, plugin)) = data
@@ -243,13 +388,18 @@ impl canvas::Program<Message> for Graph {
                                 else {
                                     continue;
                                 };
-                                if plugin.audio_inputs == 0 {
+                                let ins = if conn.kind == Kind::Audio {
+                                    plugin.audio_inputs
+                                } else {
+                                    plugin.midi_inputs
+                                };
+                                if ins == 0 {
                                     continue;
                                 }
                                 let pos = Self::plugin_pos(&data, plugin, pidx, bounds);
                                 let plugin_h = Self::plugin_height(plugin);
                                 let py = pos.y
-                                    + (plugin_h / (plugin.audio_inputs + 1) as f32)
+                                    + (plugin_h / (ins + 1) as f32)
                                         * (conn.to_port + 1) as f32;
                                 Point::new(pos.x, py)
                             }
@@ -269,20 +419,6 @@ impl canvas::Program<Message> for Graph {
                             ctrl,
                         );
                         return Some(Action::request_redraw());
-                    }
-
-                    if let Some(hit) = all_ports
-                        .iter()
-                        .find(|p| cursor_position.distance(p.pos) <= 10.0)
-                        .cloned()
-                    {
-                        data.lv2_graph_connecting = Some(Lv2Connecting {
-                            from_node: hit.node,
-                            from_port: hit.port,
-                            point: cursor_position,
-                            is_input: hit.is_input,
-                        });
-                        return Some(Action::capture());
                     }
 
                     for (idx, plugin) in data.lv2_graph_plugins.iter().enumerate().rev() {
@@ -324,7 +460,7 @@ impl canvas::Program<Message> for Graph {
                     return Some(Action::request_redraw());
                 }
                 Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                    let mut redraw = false;
+                    let mut redraw = true;
                     if let Some(connecting) = data.lv2_graph_connecting.as_mut() {
                         connecting.point = cursor_position;
                         redraw = true;
@@ -346,13 +482,25 @@ impl canvas::Program<Message> for Graph {
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                     data.lv2_graph_moving_plugin = None;
                     if let Some(connecting) = data.lv2_graph_connecting.take() {
-                        let target = all_ports
+                        let opposite_ports: Vec<PortHit> = audio_ports
                             .iter()
-                            .find(|p| {
+                            .chain(midi_ports.iter())
+                            .filter(|p| {
                                 p.is_input != connecting.is_input
-                                    && cursor_position.distance(p.pos) <= 10.0
+                                    && can_connect_kinds(p.kind, connecting.kind)
                             })
-                            .cloned();
+                            .cloned()
+                            .collect();
+                        let target = Self::closest_port(
+                            &opposite_ports,
+                            cursor_position,
+                            if connecting.kind == Kind::Audio {
+                                PORT_HIT_RADIUS
+                            } else {
+                                MIDI_HIT_RADIUS
+                            },
+                        )
+                        .cloned();
 
                         if let Some(target) = target {
                             let Some(track_name) = data.lv2_graph_track.clone() else {
@@ -375,15 +523,24 @@ impl canvas::Program<Message> for Graph {
                                 )
                             };
                             if from_node != to_node || from_port != to_port {
-                                return Some(Action::publish(Message::Request(
+                                let action = if connecting.kind == Kind::Audio {
                                     EngineAction::TrackConnectLv2Audio {
                                         track_name,
                                         from_node,
                                         from_port,
                                         to_node,
                                         to_port,
-                                    },
-                                )));
+                                    }
+                                } else {
+                                    EngineAction::TrackConnectLv2Midi {
+                                        track_name,
+                                        from_node,
+                                        from_port,
+                                        to_node,
+                                        to_port,
+                                    }
+                                };
+                                return Some(Action::publish(Message::Request(action)));
                             }
                         }
                         return Some(Action::request_redraw());
@@ -412,6 +569,7 @@ impl canvas::Program<Message> for Graph {
             let Some(track) = data.tracks.iter().find(|t| &t.name == track_name) else {
                 return vec![frame.into_geometry()];
             };
+            let active_connecting = data.lv2_graph_connecting.as_ref();
 
             let in_rect = Self::track_input_rect(bounds);
             let out_rect = Self::track_output_rect(bounds);
@@ -451,30 +609,74 @@ impl canvas::Program<Message> for Graph {
 
             for port in 0..track.audio.ins {
                 let py = in_rect.y + (in_rect.height / (track.audio.ins + 1) as f32) * (port + 1) as f32;
+                let is_hovered = cursor_position.is_some_and(|cursor| {
+                    cursor.distance(Point::new(in_rect.x + in_rect.width, py)) <= PORT_HIT_RADIUS
+                });
+                let kind_ok =
+                    should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::Audio);
+                let can_highlight = if let Some(connecting) = active_connecting {
+                    kind_ok && connecting.is_input
+                } else {
+                    kind_ok
+                };
                 frame.fill(
-                    &Path::circle(Point::new(in_rect.x + in_rect.width, py), 5.0),
+                    &Path::circle(
+                        Point::new(in_rect.x + in_rect.width, py),
+                        hover_radius(5.0, can_highlight),
+                    ),
                     audio_port_color(),
                 );
             }
             for port in 0..track.midi.ins {
                 let py = in_rect.y + (in_rect.height / (track.midi.ins + 1) as f32) * (port + 1) as f32;
+                let is_hovered = cursor_position
+                    .is_some_and(|cursor| cursor.distance(Point::new(in_rect.x, py)) <= MIDI_HIT_RADIUS);
+                let kind_ok =
+                    should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::MIDI);
+                let can_highlight = if let Some(connecting) = active_connecting {
+                    kind_ok && connecting.is_input
+                } else {
+                    kind_ok
+                };
                 frame.fill(
-                    &Path::circle(Point::new(in_rect.x + 10.0, py), 4.0),
+                    &Path::circle(Point::new(in_rect.x, py), hover_radius(4.0, can_highlight)),
                     midi_port_color(),
                 );
             }
             for port in 0..track.audio.outs {
                 let py = out_rect.y + (out_rect.height / (track.audio.outs + 1) as f32) * (port + 1) as f32;
+                let is_hovered = cursor_position
+                    .is_some_and(|cursor| cursor.distance(Point::new(out_rect.x, py)) <= PORT_HIT_RADIUS);
+                let kind_ok =
+                    should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::Audio);
+                let can_highlight = if let Some(connecting) = active_connecting {
+                    kind_ok && !connecting.is_input
+                } else {
+                    kind_ok
+                };
                 frame.fill(
-                    &Path::circle(Point::new(out_rect.x, py), 5.0),
+                    &Path::circle(Point::new(out_rect.x, py), hover_radius(5.0, can_highlight)),
                     audio_port_color(),
                 );
             }
             for port in 0..track.midi.outs {
                 let py =
                     out_rect.y + (out_rect.height / (track.midi.outs + 1) as f32) * (port + 1) as f32;
+                let is_hovered = cursor_position.is_some_and(|cursor| {
+                    cursor.distance(Point::new(out_rect.x + out_rect.width, py)) <= MIDI_HIT_RADIUS
+                });
+                let kind_ok =
+                    should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::MIDI);
+                let can_highlight = if let Some(connecting) = active_connecting {
+                    kind_ok && !connecting.is_input
+                } else {
+                    kind_ok
+                };
                 frame.fill(
-                    &Path::circle(Point::new(out_rect.x + out_rect.width - 10.0, py), 4.0),
+                    &Path::circle(
+                        Point::new(out_rect.x + out_rect.width, py),
+                        hover_radius(4.0, can_highlight),
+                    ),
                     midi_port_color(),
                 );
             }
@@ -502,32 +704,88 @@ impl canvas::Program<Message> for Graph {
                 for port in 0..plugin.audio_inputs {
                     let py =
                         pos.y + (plugin_h / (plugin.audio_inputs + 1) as f32) * (port + 1) as f32;
+                    let is_hovered = cursor_position
+                        .is_some_and(|cursor| cursor.distance(Point::new(pos.x, py)) <= PORT_HIT_RADIUS);
+                    let kind_ok =
+                        should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::Audio);
+                    let can_highlight = if let Some(connecting) = active_connecting {
+                        kind_ok && !connecting.is_input
+                    } else {
+                        kind_ok
+                    };
                     frame.fill(
-                        &Path::circle(Point::new(pos.x, py), AUDIO_PORT_RADIUS),
+                        &Path::circle(
+                            Point::new(pos.x, py),
+                            hover_radius(AUDIO_PORT_RADIUS, can_highlight),
+                        ),
                         audio_port_color(),
                     );
                 }
                 for port in 0..plugin.audio_outputs {
                     let py =
                         pos.y + (plugin_h / (plugin.audio_outputs + 1) as f32) * (port + 1) as f32;
+                    let is_hovered = cursor_position.is_some_and(|cursor| {
+                        cursor.distance(Point::new(pos.x + PLUGIN_W, py)) <= PORT_HIT_RADIUS
+                    });
+                    let kind_ok =
+                        should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::Audio);
+                    let can_highlight = if let Some(connecting) = active_connecting {
+                        kind_ok && connecting.is_input
+                    } else {
+                        kind_ok
+                    };
                     frame.fill(
-                        &Path::circle(Point::new(pos.x + PLUGIN_W, py), AUDIO_PORT_RADIUS),
+                        &Path::circle(
+                            Point::new(pos.x + PLUGIN_W, py),
+                            hover_radius(AUDIO_PORT_RADIUS, can_highlight),
+                        ),
                         audio_port_color(),
                     );
                 }
                 for port in 0..plugin.midi_inputs {
                     let py =
                         pos.y + (plugin_h / (plugin.midi_inputs + 1) as f32) * (port + 1) as f32;
+                    let is_hovered = cursor_position
+                        .is_some_and(|cursor| cursor.distance(Point::new(pos.x, py)) <= MIDI_HIT_RADIUS);
+                    let kind_ok = should_highlight_port(
+                        is_hovered,
+                        active_connecting.map(|c| c.kind),
+                        Kind::MIDI,
+                    );
+                    let can_highlight = if let Some(connecting) = active_connecting {
+                        kind_ok && !connecting.is_input
+                    } else {
+                        kind_ok
+                    };
                     frame.fill(
-                        &Path::circle(Point::new(pos.x, py), MIDI_PORT_RADIUS),
+                        &Path::circle(
+                            Point::new(pos.x, py),
+                            hover_radius(MIDI_PORT_RADIUS, can_highlight),
+                        ),
                         midi_port_color(),
                     );
                 }
                 for port in 0..plugin.midi_outputs {
                     let py = pos.y
                         + (plugin_h / (plugin.midi_outputs + 1) as f32) * (port + 1) as f32;
+                    let is_hovered = cursor_position.is_some_and(|cursor| {
+                        cursor.distance(Point::new(pos.x + PLUGIN_W, py)) <= MIDI_HIT_RADIUS
+                    });
+                    let kind_ok = should_highlight_port(
+                        is_hovered,
+                        active_connecting.map(|c| c.kind),
+                        Kind::MIDI,
+                    );
+                    let can_highlight = if let Some(connecting) = active_connecting {
+                        kind_ok && connecting.is_input
+                    } else {
+                        kind_ok
+                    };
                     frame.fill(
-                        &Path::circle(Point::new(pos.x + PLUGIN_W, py), MIDI_PORT_RADIUS),
+                        &Path::circle(
+                            Point::new(pos.x + PLUGIN_W, py),
+                            hover_radius(MIDI_PORT_RADIUS, can_highlight),
+                        ),
                         midi_port_color(),
                     );
                 }
@@ -536,9 +794,16 @@ impl canvas::Program<Message> for Graph {
             for (conn_idx, conn) in data.lv2_graph_connections.iter().enumerate() {
                 let start = match &conn.from_node {
                     Lv2GraphNode::TrackInput => {
-                        let py =
-                            in_rect.y + (in_rect.height / (track.audio.ins + 1) as f32) * (conn.from_port + 1) as f32;
-                        Point::new(in_rect.x + in_rect.width, py)
+                        let ins = if conn.kind == Kind::Audio {
+                            track.audio.ins
+                        } else {
+                            track.midi.ins
+                        };
+                        if ins == 0 {
+                            continue;
+                        }
+                        let py = in_rect.y + (in_rect.height / (ins + 1) as f32) * (conn.from_port + 1) as f32;
+                        Point::new(if conn.kind == Kind::Audio { in_rect.x + in_rect.width } else { in_rect.x }, py)
                     }
                     Lv2GraphNode::PluginInstance(id) => {
                         let Some((idx, plugin)) = data
@@ -549,10 +814,18 @@ impl canvas::Program<Message> for Graph {
                         else {
                             continue;
                         };
+                        let outs = if conn.kind == Kind::Audio {
+                            plugin.audio_outputs
+                        } else {
+                            plugin.midi_outputs
+                        };
+                        if outs == 0 {
+                            continue;
+                        }
                         let pos = Self::plugin_pos(&data, plugin, idx, bounds);
                         let plugin_h = Self::plugin_height(plugin);
                         let py = pos.y
-                            + (plugin_h / (plugin.audio_outputs + 1) as f32)
+                            + (plugin_h / (outs + 1) as f32)
                                 * (conn.from_port + 1) as f32;
                         Point::new(pos.x + PLUGIN_W, py)
                     }
@@ -560,10 +833,25 @@ impl canvas::Program<Message> for Graph {
                 };
                 let end = match &conn.to_node {
                     Lv2GraphNode::TrackOutput => {
+                        let outs = if conn.kind == Kind::Audio {
+                            track.audio.outs
+                        } else {
+                            track.midi.outs
+                        };
+                        if outs == 0 {
+                            continue;
+                        }
                         let py = out_rect.y
-                            + (out_rect.height / (track.audio.outs + 1) as f32)
+                            + (out_rect.height / (outs + 1) as f32)
                                 * (conn.to_port + 1) as f32;
-                        Point::new(out_rect.x, py)
+                        Point::new(
+                            if conn.kind == Kind::Audio {
+                                out_rect.x
+                            } else {
+                                out_rect.x + out_rect.width
+                            },
+                            py,
+                        )
                     }
                     Lv2GraphNode::PluginInstance(id) => {
                         let Some((idx, plugin)) = data
@@ -574,10 +862,18 @@ impl canvas::Program<Message> for Graph {
                         else {
                             continue;
                         };
+                        let ins = if conn.kind == Kind::Audio {
+                            plugin.audio_inputs
+                        } else {
+                            plugin.midi_inputs
+                        };
+                        if ins == 0 {
+                            continue;
+                        }
                         let pos = Self::plugin_pos(&data, plugin, idx, bounds);
                         let plugin_h = Self::plugin_height(plugin);
                         let py = pos.y
-                            + (plugin_h / (plugin.audio_inputs + 1) as f32)
+                            + (plugin_h / (ins + 1) as f32)
                                 * (conn.to_port + 1) as f32;
                         Point::new(pos.x, py)
                     }
@@ -599,6 +895,8 @@ impl canvas::Program<Message> for Graph {
                     canvas::Stroke::default()
                         .with_color(if is_selected {
                             Color::from_rgb(1.0, 1.0, 0.0)
+                        } else if conn.kind == Kind::MIDI {
+                            midi_port_color()
                         } else {
                             Color::from_rgb(0.2, 0.5, 1.0)
                         })
@@ -615,14 +913,44 @@ impl canvas::Program<Message> for Graph {
             if let Some(connecting) = &data.lv2_graph_connecting {
                 let start = match &connecting.from_node {
                     Lv2GraphNode::TrackInput => {
+                        let ins = if connecting.kind == Kind::Audio {
+                            track.audio.ins
+                        } else {
+                            track.midi.ins
+                        };
+                        if ins == 0 {
+                            return vec![frame.into_geometry()];
+                        }
                         let py =
-                            in_rect.y + (in_rect.height / (track.audio.ins + 1) as f32) * (connecting.from_port + 1) as f32;
-                        Point::new(in_rect.x + in_rect.width, py)
+                            in_rect.y + (in_rect.height / (ins + 1) as f32) * (connecting.from_port + 1) as f32;
+                        Point::new(
+                            if connecting.kind == Kind::Audio {
+                                in_rect.x + in_rect.width
+                            } else {
+                                in_rect.x
+                            },
+                            py,
+                        )
                     }
                     Lv2GraphNode::TrackOutput => {
+                        let outs = if connecting.kind == Kind::Audio {
+                            track.audio.outs
+                        } else {
+                            track.midi.outs
+                        };
+                        if outs == 0 {
+                            return vec![frame.into_geometry()];
+                        }
                         let py =
-                            out_rect.y + (out_rect.height / (track.audio.outs + 1) as f32) * (connecting.from_port + 1) as f32;
-                        Point::new(out_rect.x, py)
+                            out_rect.y + (out_rect.height / (outs + 1) as f32) * (connecting.from_port + 1) as f32;
+                        Point::new(
+                            if connecting.kind == Kind::Audio {
+                                out_rect.x
+                            } else {
+                                out_rect.x + out_rect.width
+                            },
+                            py,
+                        )
                     }
                     Lv2GraphNode::PluginInstance(id) => {
                         let Some((idx, plugin)) = data
@@ -635,14 +963,28 @@ impl canvas::Program<Message> for Graph {
                         };
                         let pos = Self::plugin_pos(&data, plugin, idx, bounds);
                         let plugin_h = Self::plugin_height(plugin);
+                        let count = if connecting.is_input {
+                            if connecting.kind == Kind::Audio {
+                                plugin.audio_inputs
+                            } else {
+                                plugin.midi_inputs
+                            }
+                        } else if connecting.kind == Kind::Audio {
+                            plugin.audio_outputs
+                        } else {
+                            plugin.midi_outputs
+                        };
+                        if count == 0 {
+                            return vec![frame.into_geometry()];
+                        }
                         if connecting.is_input {
                             let py = pos.y
-                                + (plugin_h / (plugin.audio_inputs + 1) as f32)
+                                + (plugin_h / (count + 1) as f32)
                                     * (connecting.from_port + 1) as f32;
                             Point::new(pos.x, py)
                         } else {
                             let py = pos.y
-                                + (plugin_h / (plugin.audio_outputs + 1) as f32)
+                                + (plugin_h / (count + 1) as f32)
                                     * (connecting.from_port + 1) as f32;
                             Point::new(pos.x + PLUGIN_W, py)
                         }
@@ -667,7 +1009,16 @@ impl canvas::Program<Message> for Graph {
                         p.bezier_curve_to(c1, c2, end);
                     }),
                     canvas::Stroke::default()
-                        .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.6))
+                        .with_color(if connecting.kind == Kind::Audio {
+                            Color::from_rgba(1.0, 1.0, 1.0, 0.6)
+                        } else {
+                            Color::from_rgba(
+                                midi_port_color().r,
+                                midi_port_color().g,
+                                midi_port_color().b,
+                                0.7,
+                            )
+                        })
                         .with_width(2.0),
                 );
             }

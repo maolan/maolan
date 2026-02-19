@@ -38,6 +38,7 @@ pub struct Lv2GraphConnection {
     pub from_port: usize,
     pub to_node: Lv2GraphNode,
     pub to_port: usize,
+    pub kind: Kind,
 }
 
 #[derive(Clone, Debug)]
@@ -95,7 +96,21 @@ pub enum Action {
         to_node: Lv2GraphNode,
         to_port: usize,
     },
+    TrackConnectLv2Midi {
+        track_name: String,
+        from_node: Lv2GraphNode,
+        from_port: usize,
+        to_node: Lv2GraphNode,
+        to_port: usize,
+    },
     TrackDisconnectLv2Audio {
+        track_name: String,
+        from_node: Lv2GraphNode,
+        from_port: usize,
+        to_node: Lv2GraphNode,
+        to_port: usize,
+    },
+    TrackDisconnectLv2Midi {
         track_name: String,
         from_node: Lv2GraphNode,
         from_port: usize,
