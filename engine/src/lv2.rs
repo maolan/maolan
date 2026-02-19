@@ -1147,7 +1147,7 @@ fn resolve_preferred_ui(plugin_uri: &str) -> Result<UiSpec, String> {
         (&extui_widget_uri, LV2_EXT_UI_WIDGET),
     ];
 
-    let mut best: Option<(u32, UiSpec)> = None;
+    let mut best: Option<(usize, usize, u32, UiSpec)> = None;
     for ui in uis.iter() {
         let ui_uri = ui
             .uri()
@@ -1167,33 +1167,47 @@ fn resolve_preferred_ui(plugin_uri: &str) -> Result<UiSpec, String> {
             .path()
             .ok_or_else(|| "Failed to resolve UI binary path".to_string())?;
 
-        for (class_node, class_uri) in ui_classes {
+        for (class_rank, (class_node, class_uri)) in ui_classes.iter().enumerate() {
             if !ui.is_a(class_node) {
                 continue;
             }
-            let class_c = CString::new(class_uri).map_err(|e| e.to_string())?;
+            let class_c = CString::new(*class_uri).map_err(|e| e.to_string())?;
             for container_uri in host_containers {
                 let host_type = CString::new(container_uri).map_err(|e| e.to_string())?;
                 let quality = unsafe { suil_ui_supported(host_type.as_ptr(), class_c.as_ptr()) };
                 if quality == 0 {
                     continue;
                 }
+                // Prefer GTK host container for all UI classes (including X11UI),
+                // matching jalv.gtk's embedding model and avoiding direct X11-only
+                // parenting paths that can produce blank shells for some plugins.
+                let container_rank = usize::from(container_uri != LV2_UI_GTK);
                 let spec = UiSpec {
                     plugin_uri: plugin_uri.to_string(),
                     ui_uri: ui_uri.clone(),
                     container_type_uri: container_uri.to_string(),
-                    ui_type_uri: class_uri.to_string(),
+                    ui_type_uri: (*class_uri).to_string(),
                     ui_bundle_path: ui_bundle_path.clone(),
                     ui_binary_path: ui_binary_path.clone(),
                 };
-                if best.as_ref().map(|(q, _)| quality > *q).unwrap_or(true) {
-                    best = Some((quality, spec));
+                let is_better = match &best {
+                    None => true,
+                    Some((best_class_rank, best_container_rank, best_quality, _)) => {
+                        class_rank < *best_class_rank
+                            || (class_rank == *best_class_rank
+                                && (container_rank < *best_container_rank
+                                    || (container_rank == *best_container_rank
+                                        && quality > *best_quality)))
+                    }
+                };
+                if is_better {
+                    best = Some((class_rank, container_rank, quality, spec));
                 }
             }
         }
     }
 
-    best.map(|(_, spec)| spec)
+    best.map(|(_, _, _, spec)| spec)
         .ok_or_else(|| format!("No supported UI found for plugin: {plugin_uri}"))
 }
 
@@ -1285,13 +1299,12 @@ fn run_gtk_suil_ui(
         );
     }
 
-    // For X11 plugin UIs, create a GtkSocket and use its XID as the parent.
-    // This avoids suil's SuilX11Wrapper (which subclasses GtkSocket internally) that
-    // can fail to register as a GType when suil was compiled against a different GTK2
-    // version than the one currently loaded.  With X11 as both container and plugin
-    // type, suil uses libsuil_x11.so (standalone) which just forwards the XID.
-    let is_x11_ui = ui_spec.ui_type_uri == LV2_UI_X11;
-    let (effective_container, parent_data): (String, *mut c_void) = if is_x11_ui {
+    // Use a GtkSocket/XID parent whenever suil's effective container is X11.
+    // This is required not only for X11-native UIs, but also for wrapped UIs
+    // (e.g. Qt) when suil chooses an X11 container.
+    let effective_container = ui_spec.container_type_uri.clone();
+    let use_x11_parent = effective_container == LV2_UI_X11;
+    let parent_data: *mut c_void = if use_x11_parent {
         let socket = unsafe { gtk_socket_new() };
         if socket.is_null() {
             return Err("Failed to create GtkSocket for X11 UI embedding".to_string());
@@ -1302,9 +1315,9 @@ fn run_gtk_suil_ui(
             gtk_widget_realize(socket);
         }
         let xid = unsafe { gtk_socket_get_id(socket) };
-        (LV2_UI_X11.to_string(), xid as *mut c_void)
+        xid as *mut c_void
     } else {
-        (ui_spec.container_type_uri.clone(), window)
+        window
     };
 
     let subscribed_ports = Arc::new(Mutex::new(HashSet::new()));
@@ -1440,12 +1453,11 @@ fn run_gtk_suil_ui(
         let _ = show(ui_handle);
     }
     unsafe {
-        // For X11 UIs the window was already shown before suil instantiation so
-        // the socket could be realized and its XID obtained.  The plugin embeds
-        // its own X11 window into the socket's XID directly, so there is no suil
-        // widget to add to the GTK container.  For GTK-native plugin UIs, add the
-        // suil-provided widget and show everything normally.
-        if !is_x11_ui {
+        // For X11-container UIs the window was already shown before suil
+        // instantiation so the socket could be realized and its XID obtained.
+        // The plugin embeds directly into that XID, so there is no GTK widget
+        // to pack here. For GTK-container UIs, add suil's widget normally.
+        if !use_x11_parent {
             gtk_container_add(window, widget);
             gtk_widget_show_all(window);
         }
