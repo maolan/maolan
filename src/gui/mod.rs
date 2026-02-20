@@ -1,0 +1,490 @@
+mod platform;
+mod session;
+mod subscriptions;
+mod update;
+mod view;
+
+use crate::{
+    add_track, connections, hw, menu,
+    message::{DraggedClip, Message, Show},
+    state::{State, StateData},
+    toolbar,
+    workspace,
+};
+use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::{Length, Size, Task};
+use maolan_engine::{
+    self as engine,
+    kind::Kind,
+    message::{Action, Message as EngineMessage},
+};
+use serde_json::{Value, json};
+use std::collections::{BTreeSet, HashMap};
+use std::{
+    fs::File,
+    io::{self, BufReader},
+    path::{Path, PathBuf},
+    sync::{Arc, LazyLock},
+    time::Instant,
+};
+use tokio::sync::RwLock;
+use wavers::Wav;
+
+static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
+const MIN_CLIP_WIDTH_PX: f32 = 12.0;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct AudioClipKey {
+    track_name: String,
+    clip_name: String,
+    start: usize,
+    length: usize,
+    offset: usize,
+}
+
+pub struct Maolan {
+    clip: Option<DraggedClip>,
+    menu: menu::Menu,
+    size: Size,
+    state: State,
+    toolbar: toolbar::Toolbar,
+    track: Option<String>,
+    workspace: workspace::Workspace,
+    connections: connections::canvas_host::CanvasHost<connections::tracks::Graph>,
+    track_plugins: connections::canvas_host::CanvasHost<connections::plugins::Graph>,
+    hw: hw::HW,
+    modal: Option<Show>,
+    add_track: add_track::AddTrackView,
+    plugin_filter: String,
+    selected_lv2_plugins: BTreeSet<String>,
+    session_dir: Option<PathBuf>,
+    pending_save_path: Option<String>,
+    pending_save_tracks: std::collections::HashSet<String>,
+    pending_audio_peaks: HashMap<AudioClipKey, Vec<Vec<f32>>>,
+    playing: bool,
+    transport_samples: f64,
+    last_playback_tick: Option<Instant>,
+    playback_rate_hz: f64,
+    zoom_visible_bars: f32,
+    tracks_resize_hovered: bool,
+    mixer_resize_hovered: bool,
+    record_armed: bool,
+    pending_record_after_save: bool,
+    recording_preview_start_sample: Option<usize>,
+    recording_preview_sample: Option<usize>,
+    recording_preview_peaks: HashMap<String, Vec<Vec<f32>>>,
+}
+
+impl Default for Maolan {
+    fn default() -> Self {
+        let state = Arc::new(RwLock::new(StateData::default()));
+        Self {
+            clip: None,
+            menu: menu::Menu::default(),
+            size: Size::new(0.0, 0.0),
+            state: state.clone(),
+            toolbar: toolbar::Toolbar::new(),
+            track: None,
+            workspace: workspace::Workspace::new(state.clone()),
+            connections: connections::canvas_host::CanvasHost::new(
+                connections::tracks::Graph::new(state.clone()),
+            ),
+            track_plugins: connections::canvas_host::CanvasHost::new(
+                connections::plugins::Graph::new(state.clone()),
+            ),
+            hw: hw::HW::new(state.clone()),
+            modal: None,
+            add_track: add_track::AddTrackView::default(),
+            plugin_filter: String::new(),
+            selected_lv2_plugins: BTreeSet::new(),
+            session_dir: None,
+            pending_save_path: None,
+            pending_save_tracks: std::collections::HashSet::new(),
+            pending_audio_peaks: HashMap::new(),
+            playing: false,
+            transport_samples: 0.0,
+            last_playback_tick: None,
+            playback_rate_hz: 48_000.0,
+            zoom_visible_bars: 127.0,
+            tracks_resize_hovered: false,
+            mixer_resize_hovered: false,
+            record_armed: false,
+            pending_record_after_save: false,
+            recording_preview_start_sample: None,
+            recording_preview_sample: None,
+            recording_preview_peaks: HashMap::new(),
+        }
+    }
+}
+
+impl Maolan {
+    fn samples_per_beat(&self) -> f64 {
+        self.playback_rate_hz * 0.5
+    }
+
+    fn samples_per_bar(&self) -> f64 {
+        self.samples_per_beat() * 4.0
+    }
+
+    fn tracks_width_px(&self) -> f32 {
+        match self.state.blocking_read().tracks_width {
+            Length::Fixed(v) => v,
+            _ => 200.0,
+        }
+    }
+
+    fn editor_width_px(&self) -> f32 {
+        (self.size.width - self.tracks_width_px() - 3.0).max(1.0)
+    }
+
+    fn pixels_per_sample(&self) -> f32 {
+        let total_samples = self.samples_per_bar() * self.zoom_visible_bars as f64;
+        if total_samples <= 0.0 {
+            return 1.0;
+        }
+        (self.editor_width_px() as f64 / total_samples) as f32
+    }
+
+    fn beat_pixels(&self) -> f32 {
+        (self.samples_per_beat() as f32 * self.pixels_per_sample()).max(0.01)
+    }
+
+    fn start_recording_preview(&mut self) {
+        let sample = self.transport_samples.max(0.0) as usize;
+        self.recording_preview_start_sample = Some(sample);
+        self.recording_preview_sample = Some(sample);
+        self.recording_preview_peaks.clear();
+    }
+
+    fn stop_recording_preview(&mut self) {
+        self.recording_preview_start_sample = None;
+        self.recording_preview_sample = None;
+        self.recording_preview_peaks.clear();
+    }
+
+    fn recording_preview_bounds(&self) -> Option<(usize, usize)> {
+        let start = self.recording_preview_start_sample?;
+        let current = self.recording_preview_sample?;
+        if current > start {
+            Some((start, current))
+        } else {
+            None
+        }
+    }
+
+    fn audio_clip_key(
+        track_name: &str,
+        clip_name: &str,
+        start: usize,
+        length: usize,
+        offset: usize,
+    ) -> AudioClipKey {
+        AudioClipKey {
+            track_name: track_name.to_string(),
+            clip_name: clip_name.to_string(),
+            start,
+            length,
+            offset,
+        }
+    }
+
+    fn sanitize_peak_file_component(value: &str) -> String {
+        let mut out = String::with_capacity(value.len());
+        for ch in value.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                out.push(ch);
+            } else {
+                out.push('_');
+            }
+        }
+        if out.is_empty() {
+            "clip".to_string()
+        } else {
+            out
+        }
+    }
+
+    fn build_peak_file_rel(track_name: &str, clip_idx: usize, clip_name: &str) -> String {
+        let track = Self::sanitize_peak_file_component(track_name);
+        let clip = Self::sanitize_peak_file_component(clip_name);
+        format!("peaks/{}_{:04}_{}.json", track, clip_idx, clip)
+    }
+
+    fn read_clip_peaks_file(path: &Path) -> std::io::Result<Vec<Vec<f32>>> {
+        let file = File::open(path)?;
+        let json: Value = serde_json::from_reader(BufReader::new(file))?;
+        let peaks_val = &json["peaks"];
+
+        // Backward-compatible with legacy single-channel format: "peaks": [..]
+        if peaks_val.as_array().is_some_and(|arr| {
+            arr.first().is_some_and(|first| first.is_number())
+        }) {
+            let mono = peaks_val
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(Value::as_f64)
+                        .map(|v| v as f32)
+                        .collect::<Vec<f32>>()
+                })
+                .unwrap_or_default();
+            return Ok(if mono.is_empty() { vec![] } else { vec![mono] });
+        }
+
+        let per_channel = peaks_val
+            .as_array()
+            .map(|channels| {
+                channels
+                    .iter()
+                    .map(|channel| {
+                        channel
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(Value::as_f64)
+                                    .map(|v| v as f32)
+                                    .collect::<Vec<f32>>()
+                            })
+                            .unwrap_or_default()
+                    })
+                    .collect::<Vec<Vec<f32>>>()
+            })
+            .unwrap_or_default();
+        Ok(per_channel)
+    }
+
+    fn compute_audio_clip_peaks(path: &Path, bins: usize) -> std::io::Result<Vec<Vec<f32>>> {
+        let mut wav = Wav::<f32>::from_path(path).map_err(|e| {
+            io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
+        })?;
+        let channels = wav.n_channels().max(1) as usize;
+        let samples: wavers::Samples<f32> = wav
+            .read()
+            .map_err(|e| io::Error::other(format!("WAV read error '{}': {e}", path.display())))?;
+        let mut per_channel_abs = vec![Vec::with_capacity(samples.len() / channels + 1); channels];
+        for frame in samples.chunks(channels) {
+            for (channel_idx, sample) in frame.iter().enumerate() {
+                per_channel_abs[channel_idx].push(sample.abs());
+            }
+        }
+
+        if per_channel_abs.iter().all(|ch| ch.is_empty()) {
+            return Ok(vec![]);
+        }
+        let target_bins = bins.max(16);
+        let mut peaks = vec![vec![0.0_f32; target_bins]; channels];
+        for channel_idx in 0..channels {
+            let samples = &per_channel_abs[channel_idx];
+            if samples.is_empty() {
+                continue;
+            }
+            for (i, peak) in samples.iter().enumerate() {
+                let bin = (i * target_bins) / samples.len();
+                let idx = bin.min(target_bins - 1);
+                peaks[channel_idx][idx] = peaks[channel_idx][idx].max(*peak);
+            }
+        }
+        Ok(peaks)
+    }
+
+    fn lv2_node_to_json(
+        node: &maolan_engine::message::Lv2GraphNode,
+        id_to_index: &std::collections::HashMap<usize, usize>,
+    ) -> Option<Value> {
+        use maolan_engine::message::Lv2GraphNode;
+        match node {
+            Lv2GraphNode::TrackInput => Some(json!({"type":"track_input"})),
+            Lv2GraphNode::TrackOutput => Some(json!({"type":"track_output"})),
+            Lv2GraphNode::PluginInstance(id) => id_to_index
+                .get(id)
+                .copied()
+                .map(|idx| json!({"type":"plugin","plugin_index":idx})),
+        }
+    }
+
+    fn lv2_node_from_json(v: &Value) -> Option<maolan_engine::message::Lv2GraphNode> {
+        use maolan_engine::message::Lv2GraphNode;
+        let t = v["type"].as_str()?;
+        match t {
+            "track_input" => Some(Lv2GraphNode::TrackInput),
+            "track_output" => Some(Lv2GraphNode::TrackOutput),
+            "plugin" => Some(Lv2GraphNode::PluginInstance(
+                v["plugin_index"].as_u64()? as usize,
+            )),
+            _ => None,
+        }
+    }
+
+    fn kind_to_json(kind: Kind) -> Value {
+        match kind {
+            Kind::Audio => json!("audio"),
+            Kind::MIDI => json!("midi"),
+        }
+    }
+
+    fn kind_from_json(v: &Value) -> Option<Kind> {
+        match v.as_str()? {
+            "audio" => Some(Kind::Audio),
+            "midi" => Some(Kind::MIDI),
+            _ => None,
+        }
+    }
+
+    fn lv2_state_to_json(state: &maolan_engine::message::Lv2PluginState) -> Value {
+        let port_values = state
+            .port_values
+            .iter()
+            .map(|p| json!({"index": p.index, "value": p.value}))
+            .collect::<Vec<_>>();
+        let properties = state
+            .properties
+            .iter()
+            .map(|p| {
+                json!({
+                    "key_uri": p.key_uri,
+                    "type_uri": p.type_uri,
+                    "flags": p.flags,
+                    "value": p.value,
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "port_values": port_values,
+            "properties": properties,
+        })
+    }
+
+    fn lv2_state_from_json(v: &Value) -> Option<maolan_engine::message::Lv2PluginState> {
+        let port_values = v["port_values"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| {
+                        Some(maolan_engine::message::Lv2StatePortValue {
+                            index: item["index"].as_u64()? as u32,
+                            value: item["value"].as_f64()? as f32,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let properties = v["properties"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| {
+                        Some(maolan_engine::message::Lv2StateProperty {
+                            key_uri: item["key_uri"].as_str()?.to_string(),
+                            type_uri: item["type_uri"].as_str()?.to_string(),
+                            flags: item["flags"].as_u64().unwrap_or(0) as u32,
+                            value: item["value"]
+                                .as_array()?
+                                .iter()
+                                .map(|b| b.as_u64().unwrap_or(0) as u8)
+                                .collect(),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        Some(maolan_engine::message::Lv2PluginState {
+            port_values,
+            properties,
+        })
+    }
+
+    fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
+        let state = self.state.blocking_read();
+        let title = state
+            .lv2_graph_track
+            .clone()
+            .unwrap_or_else(|| "(no track)".to_string());
+
+        let mut lv2_list = column![];
+        let filter = self.plugin_filter.trim().to_lowercase();
+        for plugin in &state.lv2_plugins {
+            if !filter.is_empty() {
+                let name = plugin.name.to_lowercase();
+                let uri = plugin.uri.to_lowercase();
+                if !name.contains(&filter) && !uri.contains(&filter) {
+                    continue;
+                }
+            }
+            let is_selected = self.selected_lv2_plugins.contains(&plugin.uri);
+            let row_content = row![
+                text(if is_selected { "[x]" } else { "[ ]" }),
+                text(format!(
+                    "{} (a:{}/{}, m:{}/{})",
+                    plugin.name,
+                    plugin.audio_inputs,
+                    plugin.audio_outputs,
+                    plugin.midi_inputs,
+                    plugin.midi_outputs
+                ))
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+            .width(Length::Fill);
+
+            let row_button = if is_selected {
+                button(row_content).style(button::primary)
+            } else {
+                button(row_content).style(button::text)
+            };
+            lv2_list = lv2_list.push(
+                row_button
+                    .width(Length::Fill)
+                    .on_press(Message::SelectLv2Plugin(plugin.uri.clone())),
+            );
+        }
+
+        let load_button = if self.selected_lv2_plugins.is_empty() {
+            button("Load")
+        } else {
+            button(text(format!("Load ({})", self.selected_lv2_plugins.len())))
+                .on_press(Message::LoadSelectedLv2Plugins)
+        };
+
+        container(
+            column![
+                text(format!("Track Plugins: {title}")),
+                text_input("Filter plugins...", &self.plugin_filter)
+                    .on_input(Message::FilterLv2Plugins)
+                    .width(Length::Fill),
+                scrollable(lv2_list).height(Length::Fill),
+                row![
+                    load_button,
+                    button("Close").on_press(Message::Cancel).style(button::secondary),
+                ]
+                .spacing(10),
+            ]
+            .spacing(10),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn send(&self, action: Action) -> Task<Message> {
+        Task::perform(
+            async move { CLIENT.send(EngineMessage::Request(action)).await },
+            |result| match result {
+                Ok(_) => Message::SendMessageFinished(Ok(())),
+                Err(_) => Message::Response(Err("Channel closed".to_string())),
+            },
+        )
+    }
+    fn update_children(&mut self, message: &Message) {
+        self.menu.update(message.clone());
+        self.toolbar.update(message.clone());
+        self.workspace.update(message.clone());
+        self.connections.update(message.clone());
+        self.track_plugins.update(message.clone());
+        self.add_track.update(message.clone());
+        for track in &mut self.state.blocking_write().tracks {
+            track.update(message.clone());
+        }
+    }
+
+}
