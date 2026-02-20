@@ -57,14 +57,22 @@ impl Graph {
         }
     }
 
-    fn connection_port_index(track: &crate::state::Track, kind: Kind, port: usize, is_input: bool) -> usize {
+    fn connection_port_index(
+        track: &crate::state::Track,
+        kind: Kind,
+        port: usize,
+        is_input: bool,
+    ) -> usize {
         if kind == Kind::MIDI {
-            port + if is_input { track.audio.ins } else { track.audio.outs }
+            port + if is_input {
+                track.audio.ins
+            } else {
+                track.audio.outs
+            }
         } else {
             port
         }
     }
-
 }
 
 impl canvas::Program<Message> for Graph {
@@ -103,8 +111,12 @@ impl canvas::Program<Message> for Graph {
                         } else {
                             start_track_option.map(|t| {
                                 let total_outs = t.audio.outs + t.midi.outs;
-                                let port_idx =
-                                    Self::connection_port_index(t, conn.kind, conn.from_port, false);
+                                let port_idx = Self::connection_port_index(
+                                    t,
+                                    conn.kind,
+                                    conn.from_port,
+                                    false,
+                                );
                                 let py = t.position.y
                                     + (size.height / (total_outs + 1) as f32)
                                         * (port_idx + 1) as f32;
@@ -194,8 +206,8 @@ impl canvas::Program<Message> for Graph {
                         let track_midi_outs = track.midi.outs;
                         let t_ins = track_audio_ins + track_midi_ins;
                         for j in 0..t_ins {
-                            let py = track_pos.y
-                                + (size.height / (t_ins + 1) as f32) * (j + 1) as f32;
+                            let py =
+                                track_pos.y + (size.height / (t_ins + 1) as f32) * (j + 1) as f32;
                             if cursor_position.distance(Point::new(track_pos.x, py)) < 10.0 {
                                 data.connecting = Some(Connecting {
                                     from_track: track_name.clone(),
@@ -214,10 +226,9 @@ impl canvas::Program<Message> for Graph {
 
                         let t_outs = track_audio_outs + track_midi_outs;
                         for j in 0..t_outs {
-                            let py = track_pos.y
-                                + (size.height / (t_outs + 1) as f32) * (j + 1) as f32;
-                            if cursor_position
-                                .distance(Point::new(track_pos.x + size.width, py))
+                            let py =
+                                track_pos.y + (size.height / (t_outs + 1) as f32) * (j + 1) as f32;
+                            if cursor_position.distance(Point::new(track_pos.x + size.width, py))
                                 < 10.0
                             {
                                 data.connecting = Some(Connecting {
@@ -237,7 +248,8 @@ impl canvas::Program<Message> for Graph {
 
                         if Rectangle::new(track_pos, size).contains(cursor_position) {
                             let now = Instant::now();
-                            if let Some((last_track, last_time)) = &data.connections_last_track_click
+                            if let Some((last_track, last_time)) =
+                                &data.connections_last_track_click
                                 && *last_track == track_name
                                 && now.duration_since(*last_time) <= Duration::from_millis(350)
                             {
@@ -246,8 +258,7 @@ impl canvas::Program<Message> for Graph {
                                     track_name.clone(),
                                 )));
                             }
-                            data.connections_last_track_click =
-                                Some((track_name.clone(), now));
+                            data.connections_last_track_click = Some((track_name.clone(), now));
 
                             if ctrl {
                                 pending_action = Some(Action::publish(
@@ -566,7 +577,8 @@ impl canvas::Program<Message> for Graph {
                     })
                 } else {
                     start_track_option.map(|t| {
-                        let port_idx = Self::connection_port_index(t, conn.kind, conn.from_port, false);
+                        let port_idx =
+                            Self::connection_port_index(t, conn.kind, conn.from_port, false);
                         let total_outs = t.audio.outs + t.midi.outs;
                         let py = t.position.y
                             + (size.height / (total_outs + 1) as f32) * (port_idx + 1) as f32;
@@ -583,7 +595,8 @@ impl canvas::Program<Message> for Graph {
                     })
                 } else {
                     end_track_option.map(|t| {
-                        let port_idx = Self::connection_port_index(t, conn.kind, conn.to_port, true);
+                        let port_idx =
+                            Self::connection_port_index(t, conn.kind, conn.to_port, true);
                         let total_ins = t.audio.ins + t.midi.ins;
                         let py = t.position.y
                             + (size.height / (total_ins + 1) as f32) * (port_idx + 1) as f32;
@@ -787,10 +800,7 @@ impl canvas::Program<Message> for Graph {
                     );
 
                     frame.fill(
-                        &Path::circle(
-                            Point::new(pos.x, py),
-                            hover_radius(5.0, can_highlight_port),
-                        ),
+                        &Path::circle(Point::new(pos.x, py), hover_radius(5.0, can_highlight_port)),
                         audio_port_color(),
                     );
                 }
@@ -837,10 +847,7 @@ impl canvas::Program<Message> for Graph {
                     );
 
                     frame.fill(
-                        &Path::circle(
-                            Point::new(pos.x, py),
-                            hover_radius(4.0, can_highlight_port),
-                        ),
+                        &Path::circle(Point::new(pos.x, py), hover_radius(4.0, can_highlight_port)),
                         c,
                     );
                 }

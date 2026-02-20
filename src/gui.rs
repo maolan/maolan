@@ -1,9 +1,7 @@
 use crate::{
     add_track, connections, hw, menu,
     message::{DraggedClip, Message, Show},
-    state::{
-        ConnectionViewSelection, HW, Resizing, State, StateData, Track, View,
-    },
+    state::{ConnectionViewSelection, HW, Resizing, State, StateData, Track, View},
     toolbar, workspace,
 };
 use iced::futures::{Stream, StreamExt, io, stream};
@@ -735,7 +733,10 @@ impl Maolan {
                     }
                     ConnectionViewSelection::Connections(set) => {
                         let actions = connections::selection::track_disconnect_actions(&state, set);
-                        let tasks = actions.into_iter().map(|a| self.send(a)).collect::<Vec<_>>();
+                        let tasks = actions
+                            .into_iter()
+                            .map(|a| self.send(a))
+                            .collect::<Vec<_>>();
                         drop(state);
                         self.state.blocking_write().connection_view_selection =
                             ConnectionViewSelection::None;
@@ -781,7 +782,10 @@ impl Maolan {
                                 &connections,
                                 &selected_indices,
                             );
-                            let tasks = actions.into_iter().map(|a| self.send(a)).collect::<Vec<_>>();
+                            let tasks = actions
+                                .into_iter()
+                                .map(|a| self.send(a))
+                                .collect::<Vec<_>>();
                             self.state
                                 .blocking_write()
                                 .lv2_graph_selected_connections
@@ -1137,8 +1141,7 @@ impl Maolan {
                             .unwrap_or_else(|| "(no track)".to_string());
                         Some(
                             row![
-                                button("Back to Connections")
-                                    .on_press(Message::CloseTrackPlugins),
+                                button("Back to Connections").on_press(Message::CloseTrackPlugins),
                                 text(format!("Plugin Graph: {title}")),
                             ]
                             .spacing(8),
@@ -1164,7 +1167,7 @@ impl Maolan {
                                 .spacing(8),
                                 scrollable(lv2_list).height(Length::Fixed(180.0)),
                             ]
-                            .spacing(8)
+                            .spacing(8),
                         )
                         .padding(8),
                     );

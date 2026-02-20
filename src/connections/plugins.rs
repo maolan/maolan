@@ -16,8 +16,8 @@ use iced::{
         canvas::{Action, Frame, Geometry, Path, Text},
     },
 };
-use maolan_engine::message::{Action as EngineAction, Lv2GraphNode, Lv2GraphPlugin};
 use maolan_engine::kind::Kind;
+use maolan_engine::message::{Action as EngineAction, Lv2GraphNode, Lv2GraphPlugin};
 use std::time::{Duration, Instant};
 
 const PLUGIN_W: f32 = 170.0;
@@ -58,8 +58,14 @@ impl Graph {
                 plugin.audio_outputs,
                 AUDIO_PORT_RADIUS,
             ))
-            .max(Self::required_height_for_ports(plugin.midi_inputs, MIDI_PORT_RADIUS))
-            .max(Self::required_height_for_ports(plugin.midi_outputs, MIDI_PORT_RADIUS))
+            .max(Self::required_height_for_ports(
+                plugin.midi_inputs,
+                MIDI_PORT_RADIUS,
+            ))
+            .max(Self::required_height_for_ports(
+                plugin.midi_outputs,
+                MIDI_PORT_RADIUS,
+            ))
     }
 
     fn plugin_pos(
@@ -116,8 +122,20 @@ impl Graph {
         (slot < total).then_some(y + (h / (total + 1) as f32) * (slot + 1) as f32)
     }
 
-    fn track_input_port_y(track: &crate::state::Track, rect: Rectangle, kind: Kind, port: usize) -> Option<f32> {
-        Self::edge_port_y(rect.y, rect.height, track.audio.ins, track.midi.ins, kind, port)
+    fn track_input_port_y(
+        track: &crate::state::Track,
+        rect: Rectangle,
+        kind: Kind,
+        port: usize,
+    ) -> Option<f32> {
+        Self::edge_port_y(
+            rect.y,
+            rect.height,
+            track.audio.ins,
+            track.midi.ins,
+            kind,
+            port,
+        )
     }
 
     fn track_output_port_y(
@@ -136,7 +154,13 @@ impl Graph {
         )
     }
 
-    fn plugin_input_port_y(plugin: &Lv2GraphPlugin, plugin_h: f32, y: f32, kind: Kind, port: usize) -> Option<f32> {
+    fn plugin_input_port_y(
+        plugin: &Lv2GraphPlugin,
+        plugin_h: f32,
+        y: f32,
+        kind: Kind,
+        port: usize,
+    ) -> Option<f32> {
         Self::edge_port_y(
             y,
             plugin_h,
@@ -225,7 +249,8 @@ impl canvas::Program<Message> for Graph {
                     }
                 }
                 for port in 0..track.audio.outs {
-                    if let Some(py) = Self::track_output_port_y(track, out_rect, Kind::Audio, port) {
+                    if let Some(py) = Self::track_output_port_y(track, out_rect, Kind::Audio, port)
+                    {
                         audio_ports.push(PortHit {
                             node: Lv2GraphNode::TrackOutput,
                             port,
@@ -321,11 +346,13 @@ impl canvas::Program<Message> for Graph {
 
             match event {
                 Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                    let port_hit = Self::closest_port(&audio_ports, cursor_position, PORT_HIT_RADIUS)
-                        .cloned()
-                        .or_else(|| {
-                            Self::closest_port(&midi_ports, cursor_position, MIDI_HIT_RADIUS).cloned()
-                        });
+                    let port_hit =
+                        Self::closest_port(&audio_ports, cursor_position, PORT_HIT_RADIUS)
+                            .cloned()
+                            .or_else(|| {
+                                Self::closest_port(&midi_ports, cursor_position, MIDI_HIT_RADIUS)
+                                    .cloned()
+                            });
                     if let Some(hit) = port_hit {
                         data.lv2_graph_connecting = Some(Lv2Connecting {
                             from_node: hit.node,
@@ -348,8 +375,12 @@ impl canvas::Program<Message> for Graph {
                                 else {
                                     continue;
                                 };
-                                let Some(py) = Self::track_input_port_y(track, in_rect, conn.kind, conn.from_port)
-                                else {
+                                let Some(py) = Self::track_input_port_y(
+                                    track,
+                                    in_rect,
+                                    conn.kind,
+                                    conn.from_port,
+                                ) else {
                                     continue;
                                 };
                                 Point::new(in_rect.x + in_rect.width, py)
@@ -387,8 +418,12 @@ impl canvas::Program<Message> for Graph {
                                 else {
                                     continue;
                                 };
-                                let Some(py) = Self::track_output_port_y(track, out_rect, conn.kind, conn.to_port)
-                                else {
+                                let Some(py) = Self::track_output_port_y(
+                                    track,
+                                    out_rect,
+                                    conn.kind,
+                                    conn.to_port,
+                                ) else {
                                     continue;
                                 };
                                 Point::new(out_rect.x, py)
@@ -445,7 +480,8 @@ impl canvas::Program<Message> for Graph {
                             data.lv2_graph_selected_plugin = Some(instance_id);
                             data.lv2_graph_selected_connections.clear();
                             let now = Instant::now();
-                            if let Some((last_instance, last_time)) = data.lv2_graph_last_plugin_click
+                            if let Some((last_instance, last_time)) =
+                                data.lv2_graph_last_plugin_click
                                 && last_instance == instance_id
                                 && now.duration_since(last_time) <= Duration::from_millis(350)
                             {
@@ -630,8 +666,11 @@ impl canvas::Program<Message> for Graph {
                 let is_hovered = cursor_position.is_some_and(|cursor| {
                     cursor.distance(Point::new(in_rect.x + in_rect.width, py)) <= PORT_HIT_RADIUS
                 });
-                let kind_ok =
-                    should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::Audio);
+                let kind_ok = should_highlight_port(
+                    is_hovered,
+                    active_connecting.map(|c| c.kind),
+                    Kind::Audio,
+                );
                 let can_highlight = if let Some(connecting) = active_connecting {
                     kind_ok && connecting.is_input
                 } else {
@@ -649,10 +688,14 @@ impl canvas::Program<Message> for Graph {
                 let Some(py) = Self::track_input_port_y(track, in_rect, Kind::MIDI, port) else {
                     continue;
                 };
-                let is_hovered = cursor_position
-                    .is_some_and(|cursor| cursor.distance(Point::new(in_rect.x + in_rect.width, py)) <= MIDI_HIT_RADIUS);
-                let kind_ok =
-                    should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::MIDI);
+                let is_hovered = cursor_position.is_some_and(|cursor| {
+                    cursor.distance(Point::new(in_rect.x + in_rect.width, py)) <= MIDI_HIT_RADIUS
+                });
+                let kind_ok = should_highlight_port(
+                    is_hovered,
+                    active_connecting.map(|c| c.kind),
+                    Kind::MIDI,
+                );
                 let can_highlight = if let Some(connecting) = active_connecting {
                     kind_ok && connecting.is_input
                 } else {
@@ -670,10 +713,14 @@ impl canvas::Program<Message> for Graph {
                 let Some(py) = Self::track_output_port_y(track, out_rect, Kind::Audio, port) else {
                     continue;
                 };
-                let is_hovered = cursor_position
-                    .is_some_and(|cursor| cursor.distance(Point::new(out_rect.x, py)) <= PORT_HIT_RADIUS);
-                let kind_ok =
-                    should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::Audio);
+                let is_hovered = cursor_position.is_some_and(|cursor| {
+                    cursor.distance(Point::new(out_rect.x, py)) <= PORT_HIT_RADIUS
+                });
+                let kind_ok = should_highlight_port(
+                    is_hovered,
+                    active_connecting.map(|c| c.kind),
+                    Kind::Audio,
+                );
                 let can_highlight = if let Some(connecting) = active_connecting {
                     kind_ok && !connecting.is_input
                 } else {
@@ -691,18 +738,18 @@ impl canvas::Program<Message> for Graph {
                 let is_hovered = cursor_position.is_some_and(|cursor| {
                     cursor.distance(Point::new(out_rect.x, py)) <= MIDI_HIT_RADIUS
                 });
-                let kind_ok =
-                    should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::MIDI);
+                let kind_ok = should_highlight_port(
+                    is_hovered,
+                    active_connecting.map(|c| c.kind),
+                    Kind::MIDI,
+                );
                 let can_highlight = if let Some(connecting) = active_connecting {
                     kind_ok && !connecting.is_input
                 } else {
                     kind_ok
                 };
                 frame.fill(
-                    &Path::circle(
-                        Point::new(out_rect.x, py),
-                        hover_radius(4.0, can_highlight),
-                    ),
+                    &Path::circle(Point::new(out_rect.x, py), hover_radius(4.0, can_highlight)),
                     midi_port_color(),
                 );
             }
@@ -712,8 +759,7 @@ impl canvas::Program<Message> for Graph {
                 let plugin_h = Self::plugin_height(plugin);
                 let rect = Path::rectangle(pos, iced::Size::new(PLUGIN_W, plugin_h));
                 frame.fill(&rect, Color::from_rgb8(28, 28, 42));
-                let is_selected_plugin =
-                    data.lv2_graph_selected_plugin == Some(plugin.instance_id);
+                let is_selected_plugin = data.lv2_graph_selected_plugin == Some(plugin.instance_id);
                 frame.stroke(
                     &rect,
                     canvas::Stroke::default()
@@ -739,10 +785,14 @@ impl canvas::Program<Message> for Graph {
                     else {
                         continue;
                     };
-                    let is_hovered = cursor_position
-                        .is_some_and(|cursor| cursor.distance(Point::new(pos.x, py)) <= PORT_HIT_RADIUS);
-                    let kind_ok =
-                        should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::Audio);
+                    let is_hovered = cursor_position.is_some_and(|cursor| {
+                        cursor.distance(Point::new(pos.x, py)) <= PORT_HIT_RADIUS
+                    });
+                    let kind_ok = should_highlight_port(
+                        is_hovered,
+                        active_connecting.map(|c| c.kind),
+                        Kind::Audio,
+                    );
                     let can_highlight = if let Some(connecting) = active_connecting {
                         kind_ok && !connecting.is_input
                     } else {
@@ -765,8 +815,11 @@ impl canvas::Program<Message> for Graph {
                     let is_hovered = cursor_position.is_some_and(|cursor| {
                         cursor.distance(Point::new(pos.x + PLUGIN_W, py)) <= PORT_HIT_RADIUS
                     });
-                    let kind_ok =
-                        should_highlight_port(is_hovered, active_connecting.map(|c| c.kind), Kind::Audio);
+                    let kind_ok = should_highlight_port(
+                        is_hovered,
+                        active_connecting.map(|c| c.kind),
+                        Kind::Audio,
+                    );
                     let can_highlight = if let Some(connecting) = active_connecting {
                         kind_ok && connecting.is_input
                     } else {
@@ -786,8 +839,9 @@ impl canvas::Program<Message> for Graph {
                     else {
                         continue;
                     };
-                    let is_hovered = cursor_position
-                        .is_some_and(|cursor| cursor.distance(Point::new(pos.x, py)) <= MIDI_HIT_RADIUS);
+                    let is_hovered = cursor_position.is_some_and(|cursor| {
+                        cursor.distance(Point::new(pos.x, py)) <= MIDI_HIT_RADIUS
+                    });
                     let kind_ok = should_highlight_port(
                         is_hovered,
                         active_connecting.map(|c| c.kind),

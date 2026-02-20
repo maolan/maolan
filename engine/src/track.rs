@@ -4,8 +4,9 @@ use crate::{
     kind::Kind,
     lv2::Lv2Processor,
     message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin},
+    routing,
 };
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 #[derive(Debug)]
 pub struct Lv2Instance {
@@ -102,7 +103,9 @@ impl Track {
                     for audio_in in self.lv2_processors[idx].processor.audio_inputs() {
                         audio_in.process();
                     }
-                    self.lv2_processors[idx].processor.process_with_audio_io(frames);
+                    self.lv2_processors[idx]
+                        .processor
+                        .process_with_audio_io(frames);
                     *already_processed = true;
                     remaining -= 1;
                     progressed = true;
@@ -121,7 +124,9 @@ impl Track {
                     for audio_in in self.lv2_processors[idx].processor.audio_inputs() {
                         audio_in.process();
                     }
-                    self.lv2_processors[idx].processor.process_with_audio_io(frames);
+                    self.lv2_processors[idx]
+                        .processor
+                        .process_with_audio_io(frames);
                 }
             }
         }
@@ -342,6 +347,11 @@ impl Track {
     ) -> Result<(), String> {
         let source = self.lv2_source_io(&from_node, from_port)?;
         let target = self.lv2_target_io(&to_node, to_port)?;
+        if routing::would_create_cycle(&from_node, &to_node, |node| {
+            self.lv2_connected_neighbors(Kind::Audio, node)
+        }) {
+            return Err("Circular routing is not allowed!".to_string());
+        }
         AudioIO::connect(&source, &target);
         Ok(())
     }
@@ -369,6 +379,11 @@ impl Track {
         self.validate_lv2_midi_target(&to_node, to_port)?;
         if from_node == to_node && from_port == to_port {
             return Err("Cannot connect a MIDI port to itself".to_string());
+        }
+        if routing::would_create_cycle(&from_node, &to_node, |node| {
+            self.lv2_connected_neighbors(Kind::MIDI, node)
+        }) {
+            return Err("Circular routing is not allowed!".to_string());
         }
         let new_conn = Lv2GraphConnection {
             from_node,
@@ -456,7 +471,10 @@ impl Track {
     pub(crate) fn ensure_default_midi_passthrough(&self) {
         for (midi_in, midi_out) in self.midi.ins.iter().zip(self.midi.outs.iter()) {
             let out = midi_out.lock();
-            let exists = out.connections.iter().any(|conn| Arc::ptr_eq(conn, midi_in));
+            let exists = out
+                .connections
+                .iter()
+                .any(|conn| Arc::ptr_eq(conn, midi_in));
             if !exists {
                 out.connect(midi_in.clone());
             }
@@ -552,6 +570,20 @@ impl Track {
                     format!("Plugin instance {instance_id} MIDI input port {port} missing")
                 }),
         }
+    }
+
+    fn lv2_connected_neighbors(
+        &self,
+        kind: Kind,
+        current_node: &Lv2GraphNode,
+    ) -> Vec<Lv2GraphNode> {
+        let mut nodes = HashSet::new();
+        for conn in self.lv2_graph_connections() {
+            if conn.kind == kind && &conn.from_node == current_node {
+                nodes.insert(conn.to_node);
+            }
+        }
+        nodes.into_iter().collect()
     }
 }
 

@@ -1,7 +1,4 @@
-use std::{
-    collections::{HashSet, VecDeque},
-    sync::Arc,
-};
+use std::{collections::VecDeque, sync::Arc};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 
@@ -13,6 +10,7 @@ use crate::{
     midi::clip::MIDIClip,
     mutex::UnsafeMutex,
     oss_worker::OssWorker,
+    routing,
     state::State,
     track::Track,
     worker::Worker,
@@ -127,35 +125,11 @@ impl Engine {
         current_track_name: &str,
         target_track_name: &str,
     ) -> bool {
-        let mut visited = HashSet::new();
-        self.check_if_leads_to_inner(kind, current_track_name, target_track_name, &mut visited)
-    }
-
-    fn check_if_leads_to_inner(
-        &self,
-        kind: Kind,
-        current_track_name: &str,
-        target_track_name: &str,
-        visited: &mut HashSet<String>,
-    ) -> bool {
-        if current_track_name == target_track_name {
-            return true;
-        }
-
-        if visited.contains(current_track_name) {
-            return false;
-        }
-        visited.insert(current_track_name.to_string());
-
-        let neighbors = self.connected_neighbors(kind, current_track_name);
-
-        for neighbor in neighbors {
-            if self.check_if_leads_to_inner(kind, &neighbor, target_track_name, visited) {
-                return true;
-            }
-        }
-
-        false
+        routing::would_create_cycle(
+            &target_track_name.to_string(),
+            &current_track_name.to_string(),
+            |track_name| self.connected_neighbors(kind, track_name),
+        )
     }
 
     fn connected_neighbors(&self, kind: Kind, current_track_name: &str) -> Vec<String> {
@@ -172,11 +146,10 @@ impl Engine {
                         for conn in conns.iter() {
                             for (name, next_track_handle) in &state.tracks {
                                 let next_track = next_track_handle.lock();
-                                let is_connected = next_track
-                                    .audio
-                                    .ins
-                                    .iter()
-                                    .any(|ins_port| Arc::ptr_eq(&ins_port.buffer, &conn.buffer));
+                                let is_connected =
+                                    next_track.audio.ins.iter().any(|ins_port| {
+                                        Arc::ptr_eq(&ins_port.buffer, &conn.buffer)
+                                    });
 
                                 if is_connected {
                                     found_neighbors.push(name.clone());
@@ -676,10 +649,16 @@ impl Engine {
                             (Some(source), Some(target)) => {
                                 if from_track != "hw:in"
                                     && to_track != "hw:out"
-                                    && self.check_if_leads_to_kind(Kind::Audio, to_track, from_track)
+                                    && self.check_if_leads_to_kind(
+                                        Kind::Audio,
+                                        to_track,
+                                        from_track,
+                                    )
                                 {
-                                    self.notify_clients(Err("Circular routing is not allowed!".into()))
-                                        .await;
+                                    self.notify_clients(Err(
+                                        "Circular routing is not allowed!".into()
+                                    ))
+                                    .await;
                                     return;
                                 }
                                 crate::audio::io::AudioIO::connect(&source, &target);
