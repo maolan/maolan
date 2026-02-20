@@ -425,6 +425,14 @@ impl Maolan {
         fs::create_dir_all(session_root.join("midi"))?;
         let file = File::create(&p)?;
         let state = self.state.blocking_read();
+        let tracks_width = match state.tracks_width {
+            Length::Fixed(v) => v,
+            _ => 200.0,
+        };
+        let mixer_height = match state.mixer_height {
+            Length::Fixed(v) => v,
+            _ => 300.0,
+        };
         let mut tracks_json = serde_json::to_value(&state.tracks).map_err(io::Error::other)?;
         if let Some(tracks) = tracks_json.as_array_mut() {
             for track in tracks {
@@ -506,6 +514,10 @@ impl Maolan {
             "tracks": tracks_json,
             "connections": &state.connections,
             "graphs": Value::Object(graphs),
+            "ui": {
+                "tracks_width": tracks_width,
+                "mixer_height": mixer_height,
+            }
         });
         serde_json::to_writer_pretty(file, &result)?;
         Ok(())
@@ -545,6 +557,15 @@ impl Maolan {
             let mut state = self.state.blocking_write();
             state.pending_track_positions.clear();
             state.pending_track_heights.clear();
+
+            let tracks_width = session["ui"]["tracks_width"].as_f64().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "No 'ui.tracks_width' in session")
+            })?;
+            let mixer_height = session["ui"]["mixer_height"].as_f64().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "No 'ui.mixer_height' in session")
+            })?;
+            state.tracks_width = Length::Fixed(tracks_width as f32);
+            state.mixer_height = Length::Fixed(mixer_height as f32);
         }
 
         if let Some(arr) = session["tracks"].as_array() {
