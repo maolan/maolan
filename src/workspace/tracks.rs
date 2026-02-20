@@ -106,7 +106,8 @@ impl Tracks {
                             ..container::Style::default()
                         }),
                 )
-                .on_press(Message::SelectTrack(track.name.clone())),
+                .on_press(Message::SelectTrack(track.name.clone()))
+                .on_double_click(Message::OpenTrackPlugins(track.name.clone())),
             )
             .on_drag(move |_, _| Message::TrackDrag(index))
             .on_drop(Message::TrackDropped)

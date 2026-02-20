@@ -454,7 +454,6 @@ impl Maolan {
                     Show::TrackPluginList => {
                         self.modal = Some(Show::TrackPluginList);
                         self.selected_lv2_plugins.clear();
-                        return self.send(Action::ListLv2Plugins);
                     }
                 }
             }
