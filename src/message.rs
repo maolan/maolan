@@ -93,6 +93,7 @@ pub enum Message {
     CtrlReleased,
 
     WindowResized(Size),
+    PlaybackTick,
 
     OpenFileImporter,
     ImportFilesSelected(Option<Vec<std::path::PathBuf>>),
@@ -107,14 +108,10 @@ pub enum Message {
     Workspace,
     Connections,
     OpenTrackPlugins(String),
-    CloseTrackPlugins,
     RefreshLv2Plugins,
-    RefreshTrackLv2Graph,
     FilterLv2Plugins(String),
     SelectLv2Plugin(String),
     LoadSelectedLv2Plugins,
-    LoadLv2Plugin(String),
-    ShowLv2PluginUi(String),
 
     HWSelected(String),
 }

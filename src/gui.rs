@@ -22,6 +22,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, exit},
     sync::{Arc, LazyLock},
+    time::{Duration, Instant},
 };
 use tokio::sync::RwLock;
 use tracing::{debug, error};
@@ -114,6 +115,10 @@ pub struct Maolan {
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
     playing: bool,
+    transport_samples: f64,
+    play_start_instant: Option<Instant>,
+    play_start_samples: f64,
+    playback_rate_hz: f64,
     record_armed: bool,
     pending_record_after_save: bool,
 }
@@ -144,6 +149,10 @@ impl Default for Maolan {
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
             playing: false,
+            transport_samples: 0.0,
+            play_start_instant: None,
+            play_start_samples: 0.0,
+            playback_rate_hz: 48_000.0,
             record_armed: false,
             pending_record_after_save: false,
         }
@@ -151,6 +160,20 @@ impl Default for Maolan {
 }
 
 impl Maolan {
+    fn sync_transport_snapshot(&mut self) {
+        if let Some(started_at) = self.play_start_instant {
+            let elapsed = started_at.elapsed().as_secs_f64();
+            self.transport_samples = self.play_start_samples + elapsed * self.playback_rate_hz;
+        }
+    }
+
+    fn current_transport_samples(&self) -> f64 {
+        if self.playing && let Some(started_at) = self.play_start_instant {
+            return self.play_start_samples + started_at.elapsed().as_secs_f64() * self.playback_rate_hz;
+        }
+        self.transport_samples
+    }
+
     fn lv2_node_to_json(
         node: &maolan_engine::message::Lv2GraphNode,
         id_to_index: &std::collections::HashMap<usize, usize>,
@@ -873,7 +896,11 @@ impl Maolan {
                 }
             }
             Message::NewSession => {
+                self.sync_transport_snapshot();
                 self.playing = false;
+                self.transport_samples = 0.0;
+                self.play_start_samples = 0.0;
+                self.play_start_instant = None;
                 self.record_armed = false;
                 self.pending_record_after_save = false;
                 self.pending_save_path = None;
@@ -911,17 +938,28 @@ impl Maolan {
             Message::Cancel => self.modal = None,
             Message::Request(ref a) => return self.send(a.clone()),
             Message::TransportPlay => {
+                if !self.playing {
+                    self.play_start_samples = self.transport_samples;
+                    self.play_start_instant = Some(Instant::now());
+                }
                 self.playing = true;
                 return self.send(Action::Play);
             }
             Message::TransportPause => {
+                self.sync_transport_snapshot();
                 self.playing = false;
+                self.play_start_samples = self.transport_samples;
+                self.play_start_instant = None;
                 return self.send(Action::Stop);
             }
             Message::TransportStop => {
+                self.sync_transport_snapshot();
                 self.playing = false;
+                self.play_start_samples = self.transport_samples;
+                self.play_start_instant = None;
                 return self.send(Action::Stop);
             }
+            Message::PlaybackTick => {}
             Message::TransportRecordToggle => {
                 if self.record_armed {
                     self.record_armed = false;
@@ -982,40 +1020,6 @@ impl Maolan {
                 }
                 self.state.blocking_write().message =
                     "Select a track before loading LV2 plugin".to_string();
-            }
-            Message::LoadLv2Plugin(ref plugin_uri) => {
-                let track_name = {
-                    let state = self.state.blocking_read();
-                    state
-                        .lv2_graph_track
-                        .clone()
-                        .or_else(|| state.selected.iter().next().cloned())
-                };
-                if let Some(track_name) = track_name {
-                    return self.send(Action::TrackLoadLv2Plugin {
-                        track_name,
-                        plugin_uri: plugin_uri.clone(),
-                    });
-                }
-                self.state.blocking_write().message =
-                    "Select a track before loading LV2 plugin".to_string();
-            }
-            Message::ShowLv2PluginUi(ref plugin_uri) => {
-                let track_name = {
-                    let state = self.state.blocking_read();
-                    state
-                        .lv2_graph_track
-                        .clone()
-                        .or_else(|| state.selected.iter().next().cloned())
-                };
-                if let Some(track_name) = track_name {
-                    return self.send(Action::TrackShowLv2PluginUi {
-                        track_name,
-                        plugin_uri: plugin_uri.clone(),
-                    });
-                }
-                self.state.blocking_write().message =
-                    "Select a track before opening LV2 UI".to_string();
             }
             Message::SendMessageFinished(ref result) => match result {
                 Ok(_) => debug!("Sent successfully!"),
@@ -1234,18 +1238,17 @@ impl Maolan {
                     rate,
                     input,
                 } => {
+                    if *rate > 0 {
+                        self.playback_rate_hz = *rate as f64;
+                    }
                     let mut state = self.state.blocking_write();
                     if *input {
                         state.hw_in = Some(HW {
                             channels: *channels,
-                            rate: *rate,
-                            input: *input,
                         });
                     } else {
                         state.hw_out = Some(HW {
                             channels: *channels,
-                            rate: *rate,
-                            input: *input,
                         });
                     }
                 }
@@ -1257,7 +1260,6 @@ impl Maolan {
                 Action::TrackLoadLv2Plugin { track_name, .. }
                 | Action::TrackClearDefaultPassthrough { track_name, .. }
                 | Action::TrackSetLv2PluginState { track_name, .. }
-                | Action::TrackUnloadLv2Plugin { track_name, .. }
                 | Action::TrackUnloadLv2PluginInstance { track_name, .. }
                 | Action::TrackConnectLv2Audio { track_name, .. }
                 | Action::TrackDisconnectLv2Audio { track_name, .. }
@@ -1805,20 +1807,6 @@ impl Maolan {
                 }
                 return self.send(Action::TrackGetLv2Graph { track_name });
             }
-            Message::CloseTrackPlugins => {
-                let mut state = self.state.blocking_write();
-                state.view = View::Connections;
-                state.lv2_graph_connecting = None;
-                state.lv2_graph_moving_plugin = None;
-                state.lv2_graph_last_plugin_click = None;
-                state.lv2_graph_selected_plugin = None;
-            }
-            Message::RefreshTrackLv2Graph => {
-                let track_name = self.state.blocking_read().lv2_graph_track.clone();
-                if let Some(track_name) = track_name {
-                    return self.send(Action::TrackGetLv2Graph { track_name });
-                }
-            }
             Message::HWSelected(ref hw) => {
                 self.state.blocking_write().selected_hw = Some(hw.to_string());
             }
@@ -1843,7 +1831,9 @@ impl Maolan {
                 Some(Show::TrackPluginList) => self.track_plugin_list_view(),
                 _ => {
                     let view = match state.view {
-                        View::Workspace => self.workspace.view(),
+                        View::Workspace => {
+                            self.workspace.view(Some(self.current_transport_samples() as f32))
+                        }
                         View::Connections => self.connections.view(),
                         View::TrackPlugins => self.track_plugins.view(),
                     };
@@ -1938,7 +1928,9 @@ impl Maolan {
             _ => Message::None,
         });
 
-        Subscription::batch(vec![engine_sub, keyboard_sub, event_sub])
+        let playback_sub = iced::time::every(Duration::from_millis(16)).map(|_| Message::PlaybackTick);
+
+        Subscription::batch(vec![engine_sub, keyboard_sub, event_sub, playback_sub])
     }
 }
     fn compact_desc(desc: String) -> String {

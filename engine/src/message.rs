@@ -85,7 +85,6 @@ pub enum Action {
         offset: usize,
         kind: Kind,
     },
-    RemoveClip(usize, String, Kind),
     RemoveTrack(String),
     TrackLevel(String, f32),
     TrackToggleArm(String),
@@ -103,17 +102,9 @@ pub enum Action {
         instance_id: usize,
         state: Lv2PluginState,
     },
-    TrackUnloadLv2Plugin {
-        track_name: String,
-        plugin_uri: String,
-    },
     TrackUnloadLv2PluginInstance {
         track_name: String,
         instance_id: usize,
-    },
-    TrackShowLv2PluginUi {
-        track_name: String,
-        plugin_uri: String,
     },
     TrackShowLv2PluginUiInstance {
         track_name: String,

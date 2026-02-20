@@ -251,12 +251,12 @@ struct StatePathContext {
 }
 
 struct StatePathFeature {
-    map_uri: CString,
-    make_uri: CString,
-    free_uri: CString,
-    map: Box<Lv2StateMapPath>,
-    make: Box<Lv2StateMakePath>,
-    free: Box<Lv2StateFreePath>,
+    _map_uri: CString,
+    _make_uri: CString,
+    _free_uri: CString,
+    _map: Box<Lv2StateMapPath>,
+    _make: Box<Lv2StateMakePath>,
+    _free: Box<Lv2StateFreePath>,
     map_feature: LV2Feature,
     make_feature: LV2Feature,
     free_feature: LV2Feature,
@@ -2296,12 +2296,12 @@ impl StatePathFeature {
         };
 
         let instance = Self {
-            map_uri,
-            make_uri,
-            free_uri,
-            map,
-            make,
-            free,
+            _map_uri: map_uri,
+            _make_uri: make_uri,
+            _free_uri: free_uri,
+            _map: map,
+            _make: make,
+            _free: free,
             map_feature,
             make_feature,
             free_feature,
@@ -2322,10 +2322,6 @@ impl StatePathFeature {
             ctx.base_dir = base_dir;
             let _ = std::fs::create_dir_all(&ctx.base_dir);
         }
-    }
-
-    fn features(&self) -> [&LV2Feature; 3] {
-        [&self.map_feature, &self.make_feature, &self.free_feature]
     }
 
     fn feature_ptrs(&self) -> [*const LV2Feature; 3] {

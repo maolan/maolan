@@ -80,8 +80,6 @@ pub enum View {
 #[derive(Debug, Clone)]
 pub struct HW {
     pub channels: usize,
-    pub rate: usize,
-    pub input: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -764,25 +764,6 @@ impl Engine {
                     }
                 }
             }
-            Action::TrackUnloadLv2Plugin {
-                ref track_name,
-                ref plugin_uri,
-            } => {
-                let track_handle = self.state.lock().tracks.get(track_name).cloned();
-                match track_handle {
-                    Some(track) => {
-                        if let Err(e) = track.lock().unload_lv2_plugin(plugin_uri) {
-                            self.notify_clients(Err(e)).await;
-                            return;
-                        }
-                    }
-                    None => {
-                        self.notify_clients(Err(format!("Track not found: {track_name}")))
-                            .await;
-                        return;
-                    }
-                }
-            }
             Action::TrackUnloadLv2PluginInstance {
                 ref track_name,
                 instance_id,
@@ -791,25 +772,6 @@ impl Engine {
                 match track_handle {
                     Some(track) => {
                         if let Err(e) = track.lock().unload_lv2_plugin_instance(instance_id) {
-                            self.notify_clients(Err(e)).await;
-                            return;
-                        }
-                    }
-                    None => {
-                        self.notify_clients(Err(format!("Track not found: {track_name}")))
-                            .await;
-                        return;
-                    }
-                }
-            }
-            Action::TrackShowLv2PluginUi {
-                ref track_name,
-                ref plugin_uri,
-            } => {
-                let track_handle = self.state.lock().tracks.get(track_name).cloned();
-                match track_handle {
-                    Some(track) => {
-                        if let Err(e) = track.lock().show_lv2_plugin_ui(plugin_uri) {
                             self.notify_clients(Err(e)).await;
                             return;
                         }
@@ -1049,38 +1011,6 @@ impl Engine {
                             let mut clip = MIDIClip::new(name.clone(), start, length);
                             clip.offset = offset;
                             track.lock().midi.clips.push(clip);
-                        }
-                    }
-                }
-            }
-            Action::RemoveClip(index, ref track_name, kind) => {
-                if let Some(track) = self.state.lock().tracks.get(track_name) {
-                    match kind {
-                        Kind::Audio => {
-                            if index >= track.lock().audio.clips.len() {
-                                self.notify_clients(Err(format!(
-                                    "Clip index {} is too high, as track {} has only {} clips!",
-                                    index,
-                                    track.lock().name.clone(),
-                                    track.lock().audio.clips.len(),
-                                )))
-                                .await;
-                                return;
-                            }
-                            track.lock().audio.clips.remove(index);
-                        }
-                        Kind::MIDI => {
-                            if index >= track.lock().midi.clips.len() {
-                                self.notify_clients(Err(format!(
-                                    "Clip index {} is too high, as track {} has only {} clips!",
-                                    index,
-                                    track.lock().name.clone(),
-                                    track.lock().midi.clips.len(),
-                                )))
-                                .await;
-                                return;
-                            }
-                            track.lock().midi.clips.remove(index);
                         }
                     }
                 }
