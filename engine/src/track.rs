@@ -29,6 +29,7 @@ pub struct Track {
     pub midi: MIDITrack,
     pub lv2_processors: Vec<Lv2Instance>,
     pub lv2_midi_connections: Vec<Lv2GraphConnection>,
+    pub pending_hw_midi_out_events: Vec<MidiEvent>,
     pub next_lv2_instance_id: usize,
     pub sample_rate: f64,
 }
@@ -53,6 +54,7 @@ impl Track {
             midi: MIDITrack::new(midi_ins, midi_outs),
             lv2_processors: Vec::new(),
             lv2_midi_connections: Vec::new(),
+            pending_hw_midi_out_events: vec![],
             next_lv2_instance_id: 0,
             sample_rate,
         }
@@ -165,6 +167,7 @@ impl Track {
 
         self.route_track_inputs_to_track_outputs(&track_input_midi_events);
         self.dispatch_track_output_midi_to_connected_inputs();
+        self.collect_hw_midi_output_events();
         self.clear_local_midi_inputs();
 
         let internal_sources = self.internal_audio_sources();
@@ -747,6 +750,18 @@ impl Track {
         for input in &self.midi.ins {
             input.lock().buffer.clear();
         }
+    }
+
+    fn collect_hw_midi_output_events(&mut self) {
+        self.pending_hw_midi_out_events.clear();
+        for out in &self.midi.outs {
+            self.pending_hw_midi_out_events
+                .extend(out.lock().buffer.iter().cloned());
+        }
+    }
+
+    pub fn take_hw_midi_out_events(&mut self) -> Vec<MidiEvent> {
+        std::mem::take(&mut self.pending_hw_midi_out_events)
     }
 }
 

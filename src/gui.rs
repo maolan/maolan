@@ -522,12 +522,19 @@ impl Maolan {
                     self.state.blocking_write().message = format!("Opened device {s}");
                     self.state.blocking_write().hw_loaded = true;
                 }
-                Action::OpenMidiDevice(s) => {
+                Action::OpenMidiInputDevice(s) => {
                     let mut state = self.state.blocking_write();
-                    if !state.opened_midi_hw.iter().any(|name| name == s) {
-                        state.opened_midi_hw.push(s.clone());
+                    if !state.opened_midi_in_hw.iter().any(|name| name == s) {
+                        state.opened_midi_in_hw.push(s.clone());
                     }
                     state.message = format!("Opened MIDI input {s}");
+                }
+                Action::OpenMidiOutputDevice(s) => {
+                    let mut state = self.state.blocking_write();
+                    if !state.opened_midi_out_hw.iter().any(|name| name == s) {
+                        state.opened_midi_out_hw.push(s.clone());
+                    }
+                    state.message = format!("Opened MIDI output {s}");
                 }
                 Action::HWInfo {
                     channels,
@@ -1090,7 +1097,10 @@ impl Maolan {
                 self.state.blocking_write().selected_hw = Some(hw.to_string());
             }
             Message::MIDIHWSelected(ref hw) => {
-                self.state.blocking_write().selected_midi_hw = Some(hw.to_string());
+                self.state.blocking_write().selected_midi_in_hw = Some(hw.to_string());
+            }
+            Message::MIDIHWOutSelected(ref hw) => {
+                self.state.blocking_write().selected_midi_out_hw = Some(hw.to_string());
             }
             Message::StartMovingTrackAndSelect(moving_track, track_name) => {
                 let mut state = self.state.blocking_write();

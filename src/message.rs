@@ -108,4 +108,5 @@ pub enum Message {
 
     HWSelected(String),
     MIDIHWSelected(String),
+    MIDIHWOutSelected(String),
 }

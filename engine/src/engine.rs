@@ -40,6 +40,7 @@ pub struct Engine {
     midi_hub: Arc<UnsafeMutex<MidiHub>>,
     oss_worker: Option<WorkerData>,
     pending_hw_midi_events: Vec<MidiEvent>,
+    pending_hw_midi_out_events: Vec<MidiEvent>,
     ready_workers: Vec<usize>,
     pending_requests: VecDeque<Action>,
     awaiting_hwfinished: bool,
@@ -58,6 +59,7 @@ impl Engine {
             midi_hub: Arc::new(UnsafeMutex::new(MidiHub::default())),
             oss_worker: None,
             pending_hw_midi_events: vec![],
+            pending_hw_midi_out_events: vec![],
             ready_workers: vec![],
             pending_requests: VecDeque::new(),
             awaiting_hwfinished: false,
@@ -91,6 +93,12 @@ impl Engine {
             return;
         }
         if let Some(worker) = &self.oss_worker {
+            if !self.pending_hw_midi_out_events.is_empty() {
+                let out_events = std::mem::take(&mut self.pending_hw_midi_out_events);
+                if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(out_events)).await {
+                    eprintln!("Error sending HWMidiOutEvents {e}");
+                }
+            }
             match worker.tx.send(Message::TracksFinished).await {
                 Ok(_) => {
                     self.awaiting_hwfinished = true;
@@ -841,9 +849,16 @@ impl Engine {
                     self.request_hw_cycle().await;
                 }
             }
-            Action::OpenMidiDevice(ref device) => {
+            Action::OpenMidiInputDevice(ref device) => {
                 let midi_hub = self.midi_hub.lock();
                 if let Err(e) = midi_hub.open_input(device) {
+                    self.notify_clients(Err(e)).await;
+                    return;
+                }
+            }
+            Action::OpenMidiOutputDevice(ref device) => {
+                let midi_hub = self.midi_hub.lock();
+                if let Err(e) = midi_hub.open_output(device) {
                     self.notify_clients(Err(e)).await;
                     return;
                 }
@@ -863,6 +878,7 @@ impl Engine {
                     self.ready_workers.push(workid);
                     let all_finished = self.send_tracks().await;
                     if all_finished {
+                        self.pending_hw_midi_out_events = self.collect_hw_midi_output_events();
                         self.request_hw_cycle().await;
                     }
                 }
@@ -872,7 +888,8 @@ impl Engine {
 
                 Message::Request(a) => match a {
                     Action::OpenAudioDevice(_)
-                    | Action::OpenMidiDevice(_)
+                    | Action::OpenMidiInputDevice(_)
+                    | Action::OpenMidiOutputDevice(_)
                     | Action::Quit
                     | Action::ListLv2Plugins => {
                         self.handle_request(a).await;
@@ -909,5 +926,14 @@ impl Engine {
                 _ => {}
             }
         }
+    }
+
+    fn collect_hw_midi_output_events(&self) -> Vec<MidiEvent> {
+        let mut events = vec![];
+        for track in self.state.lock().tracks.values() {
+            events.extend(track.lock().take_hw_midi_out_events());
+        }
+        events.sort_by(|a, b| a.frame.cmp(&b.frame));
+        events
     }
 }

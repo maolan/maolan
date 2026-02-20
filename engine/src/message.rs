@@ -145,7 +145,8 @@ pub enum Action {
         kind: Kind,
     },
     OpenAudioDevice(String),
-    OpenMidiDevice(String),
+    OpenMidiInputDevice(String),
+    OpenMidiOutputDevice(String),
     HWInfo {
         channels: usize,
         rate: usize,
@@ -165,5 +166,6 @@ pub enum Message {
     Request(Action),
     Response(Result<Action, String>),
     HWMidiEvents(Vec<MidiEvent>),
+    HWMidiOutEvents(Vec<MidiEvent>),
     HWFinished,
 }

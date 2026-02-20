@@ -1,12 +1,13 @@
 use crate::midi::io::MidiEvent;
 use nix::libc;
 use std::fs::File;
-use std::io::{ErrorKind, Read};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
 
 #[derive(Debug, Default)]
 pub struct MidiHub {
     inputs: Vec<MidiInputDevice>,
+    outputs: Vec<MidiOutputDevice>,
 }
 
 impl MidiHub {
@@ -17,11 +18,26 @@ impl MidiHub {
         let file = File::options()
             .read(true)
             .write(false)
-            .custom_flags(libc::O_RDONLY | libc::O_NONBLOCK | libc::O_EXCL)
+            .custom_flags(libc::O_RDONLY | libc::O_NONBLOCK)
             .open(path)
             .map_err(|e| format!("Failed to open MIDI device '{path}': {e}"))?;
         self.inputs
             .push(MidiInputDevice::new(path.to_string(), file));
+        Ok(())
+    }
+
+    pub fn open_output(&mut self, path: &str) -> Result<(), String> {
+        if self.outputs.iter().any(|output| output.path == path) {
+            return Ok(());
+        }
+        let file = File::options()
+            .read(false)
+            .write(true)
+            .custom_flags(libc::O_WRONLY | libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|e| format!("Failed to open MIDI output '{path}': {e}"))?;
+        self.outputs
+            .push(MidiOutputDevice::new(path.to_string(), file));
         Ok(())
     }
 
@@ -32,6 +48,15 @@ impl MidiHub {
         }
         events
     }
+
+    pub fn write_events(&mut self, events: &[MidiEvent]) {
+        if events.is_empty() {
+            return;
+        }
+        for output in &mut self.outputs {
+            output.write_events(events);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -39,6 +64,32 @@ struct MidiInputDevice {
     path: String,
     file: File,
     parser: MidiParser,
+}
+
+#[derive(Debug)]
+struct MidiOutputDevice {
+    path: String,
+    file: File,
+}
+
+impl MidiOutputDevice {
+    fn new(path: String, file: File) -> Self {
+        Self { path, file }
+    }
+
+    fn write_events(&mut self, events: &[MidiEvent]) {
+        for event in events {
+            if event.data.is_empty() {
+                continue;
+            }
+            if let Err(err) = self.file.write_all(&event.data) {
+                if err.kind() != ErrorKind::WouldBlock {
+                    eprintln!("MIDI write error on {}: {}", self.path, err);
+                }
+                break;
+            }
+        }
+    }
 }
 
 impl MidiInputDevice {
