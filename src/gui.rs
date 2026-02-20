@@ -1317,6 +1317,28 @@ impl Maolan {
                         state.hw_out = Some(HW {
                             channels: *channels,
                         });
+                        if state.hw_out_meter_db.len() != *channels {
+                            state.hw_out_meter_db = vec![-90.0; *channels];
+                        }
+                    }
+                }
+                Action::TrackLevel(name, level) => {
+                    if name == "hw:out" {
+                        self.state.blocking_write().hw_out_level = *level;
+                    }
+                }
+                Action::TrackToggleMute(name) => {
+                    if name == "hw:out" {
+                        let mut state = self.state.blocking_write();
+                        state.hw_out_muted = !state.hw_out_muted;
+                    }
+                }
+                Action::TrackMeters {
+                    track_name,
+                    output_db,
+                } => {
+                    if track_name == "hw:out" {
+                        self.state.blocking_write().hw_out_meter_db = output_db.clone();
                     }
                 }
                 Action::Lv2Plugins(plugins) => {

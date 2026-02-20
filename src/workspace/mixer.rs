@@ -9,7 +9,6 @@ use maolan_engine::message::Action;
 #[derive(Debug, Default)]
 pub struct Mixer {
     state: State,
-    master: f32,
 }
 
 impl Mixer {
@@ -17,7 +16,7 @@ impl Mixer {
     const FADER_MAX_DB: f32 = 6.0;
 
     pub fn new(state: State) -> Self {
-        Self { state, master: 0.0 }
+        Self { state }
     }
 
     fn level_to_meter_fill(level_db: f32) -> f32 {
@@ -96,7 +95,7 @@ impl Mixer {
 
     fn vu_meter(channels: usize, levels_db: &[f32], meter_h: f32) -> Element<'static, Message> {
         let channels = channels.max(1);
-        let strip_w = 3.5;
+        let strip_w = 1.0;
 
         let mut strips = row![].spacing(3).align_y(Alignment::End);
         for channel_idx in 0..channels {
@@ -148,12 +147,16 @@ impl Mixer {
 
     pub fn view(&self) -> Element<'_, Message> {
         let mut strips = row![].width(Length::Fill);
-        let (tracks, selected, height) = {
+        let (tracks, selected, height, hw_out_channels, hw_out_level, hw_out_muted, hw_out_meter_db) = {
             let state = self.state.blocking_read();
             (
                 state.tracks.clone(),
                 state.selected.clone(),
                 state.mixer_height,
+                state.hw_out.as_ref().map(|hw| hw.channels).unwrap_or(0),
+                state.hw_out_level,
+                state.hw_out_muted,
+                state.hw_out_meter_db.clone(),
             )
         };
         let fader_height = Self::fader_height_from_panel(height);
@@ -247,12 +250,12 @@ impl Mixer {
             container(
                 column![
                     row![
-                        Self::slider_with_ticks(self.master, fader_height, {
+                        Self::slider_with_ticks(hw_out_level, fader_height, {
                             move |new_val| {
-                                Message::Request(Action::TrackLevel("master".to_string(), new_val))
+                                Message::Request(Action::TrackLevel("hw:out".to_string(), new_val))
                             }
                         }),
-                        Self::vu_meter(2, &[self.master, self.master], fader_height),
+                        Self::vu_meter(hw_out_channels.max(1), &hw_out_meter_db, fader_height),
                     ]
                     .height(Length::Fill)
                     .spacing(6)
@@ -261,15 +264,9 @@ impl Mixer {
                     row![
                         button("M")
                             .padding(3)
-                            .style(move |theme, _state| { style::mute::style(theme, false) })
+                            .style(move |theme, _state| { style::mute::style(theme, hw_out_muted) })
                             .on_press(Message::Request(Action::TrackToggleMute(
-                                "master".to_string()
-                            ))),
-                        button("S")
-                            .padding(3)
-                            .style(move |theme, _state| { style::solo::style(theme, false) })
-                            .on_press(Message::Request(Action::TrackToggleSolo(
-                                "master".to_string()
+                                "hw:out".to_string()
                             ))),
                     ]
                 ]

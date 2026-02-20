@@ -25,7 +25,7 @@ impl<'a, Message> Slider<'a, Message> {
             on_change: Box::new(on_change),
             width: Length::Fixed(14.0),
             height: Length::Fixed(300.0),
-            handle_height: 10.0,
+            handle_height: 1.0,
         }
     }
 

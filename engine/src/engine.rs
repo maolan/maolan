@@ -78,6 +78,8 @@ pub struct Engine {
     playing: bool,
     record_enabled: bool,
     session_dir: Option<PathBuf>,
+    hw_out_level_db: f32,
+    hw_out_muted: bool,
 }
 
 impl Engine {
@@ -144,6 +146,8 @@ impl Engine {
             playing: false,
             record_enabled: false,
             session_dir: None,
+            hw_out_level_db: 0.0,
+            hw_out_muted: false,
         }
     }
 
@@ -478,6 +482,7 @@ impl Engine {
         if self.awaiting_hwfinished {
             return;
         }
+        self.apply_hw_out_gain_and_meter().await;
         if let Some(worker) = &self.oss_worker {
             if !self.pending_hw_midi_out_events.is_empty() {
                 let out_events = std::mem::take(&mut self.pending_hw_midi_out_events);
@@ -494,6 +499,40 @@ impl Engine {
                 }
             }
         }
+    }
+
+    async fn apply_hw_out_gain_and_meter(&self) {
+        let Some(oss_out) = &self.oss_out else {
+            return;
+        };
+        let gain = if self.hw_out_muted {
+            0.0
+        } else {
+            10.0_f32.powf(self.hw_out_level_db / 20.0)
+        };
+        let mut meter_db = Vec::new();
+        {
+            let hw_out = oss_out.lock();
+            for channel in &hw_out.channels {
+                let buf = channel.buffer.lock();
+                let mut peak = 0.0_f32;
+                for sample in buf.iter_mut() {
+                    *sample *= gain;
+                    peak = peak.max(sample.abs());
+                }
+                let db = if peak <= 1.0e-6 {
+                    -90.0
+                } else {
+                    (20.0 * peak.log10()).clamp(-90.0, 6.0)
+                };
+                meter_db.push(db);
+            }
+        }
+        self.notify_clients(Ok(Action::TrackMeters {
+            track_name: "hw:out".to_string(),
+            output_db: meter_db,
+        }))
+        .await;
     }
 
     async fn send_tracks(&mut self) -> bool {
@@ -705,7 +744,9 @@ impl Engine {
                 self.midi_recordings.remove(name);
             }
             Action::TrackLevel(ref name, level) => {
-                if let Some(track) = self.state.lock().tracks.get(name) {
+                if name == "hw:out" {
+                    self.hw_out_level_db = level;
+                } else if let Some(track) = self.state.lock().tracks.get(name) {
                     track.lock().set_level(level);
                 }
             }
@@ -721,11 +762,16 @@ impl Engine {
                 }
             }
             Action::TrackToggleMute(ref name) => {
-                if let Some(track) = self.state.lock().tracks.get(name) {
+                if name == "hw:out" {
+                    self.hw_out_muted = !self.hw_out_muted;
+                } else if let Some(track) = self.state.lock().tracks.get(name) {
                     track.lock().mute();
                 }
             }
             Action::TrackToggleSolo(ref name) => {
+                if name == "hw:out" {
+                    return;
+                }
                 if let Some(track) = self.state.lock().tracks.get(name) {
                     track.lock().solo();
                 }
