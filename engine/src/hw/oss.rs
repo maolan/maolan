@@ -79,11 +79,16 @@ impl MidiHub {
     }
 
     pub fn read_events(&mut self) -> Vec<MidiEvent> {
-        let mut events = Vec::new();
-        for input in &mut self.inputs {
-            input.read_events_into(&mut events);
-        }
+        let mut events = Vec::with_capacity(32);
+        self.read_events_into(&mut events);
         events
+    }
+
+    pub fn read_events_into(&mut self, out: &mut Vec<MidiEvent>) {
+        out.clear();
+        for input in &mut self.inputs {
+            input.read_events_into(out);
+        }
     }
 
     pub fn write_events(&mut self, events: &[MidiEvent]) {
@@ -229,6 +234,21 @@ pub struct Audio {
 }
 
 impl Audio {
+    pub fn fd(&self) -> i32 {
+        self.dsp.as_raw_fd()
+    }
+
+    pub fn start_trigger(&self) -> std::io::Result<()> {
+        let trig: i32 = if self.input {
+            PCM_ENABLE_INPUT
+        } else {
+            PCM_ENABLE_OUTPUT
+        };
+        unsafe { oss_set_trigger(self.dsp.as_raw_fd(), &trig) }
+            .map(|_| ())
+            .map_err(|_| std::io::Error::last_os_error())
+    }
+
     pub fn new(path: &str, rate: i32, bits: i32, input: bool) -> Result<Audio, std::io::Error> {
         let mut binding = File::options();
 
@@ -547,6 +567,13 @@ pub fn add_to_sync_group(fd: i32, group: i32, input: bool) -> i32 {
         oss_add_sync_group(fd, &mut sync_group).expect("Failed to set sync group");
     }
     sync_group.id
+}
+
+pub fn start_sync_group(fd: i32, group: i32) -> std::io::Result<()> {
+    let mut id = group;
+    unsafe { oss_start_group(fd, &mut id) }
+        .map(|_| ())
+        .map_err(|_| std::io::Error::last_os_error())
 }
 
 unsafe impl Send for Audio {}

@@ -14,6 +14,8 @@ pub struct OssWorker {
     rx: Receiver<Message>,
     tx: Sender<Message>,
     pending_midi_out_events: Vec<crate::midi::io::MidiEvent>,
+    midi_in_events: Vec<crate::midi::io::MidiEvent>,
+    pending_midi_out_sorted: bool,
 }
 
 impl OssWorker {
@@ -31,6 +33,8 @@ impl OssWorker {
             rx,
             tx,
             pending_midi_out_events: vec![],
+            midi_in_events: Vec::with_capacity(64),
+            pending_midi_out_sorted: true,
         }
     }
 
@@ -46,16 +50,21 @@ impl OssWorker {
                             let oss_in = self.oss_in.lock();
                             oss_in.chsamples as u32
                         };
-                        let midi_events = {
-                            let midi_hub = self.midi_hub.lock();
-                            midi_hub.read_events()
-                        };
-                        let mut midi_events = midi_events;
-                        spread_event_frames(&mut midi_events, frames);
-                        if !midi_events.is_empty()
-                            && let Err(e) = self.tx.send(Message::HWMidiEvents(midi_events)).await
                         {
-                            eprintln!("OSS worker failed to send HWMidiEvents to engine: {}", e);
+                            let midi_hub = self.midi_hub.lock();
+                            midi_hub.read_events_into(&mut self.midi_in_events);
+                        }
+                        spread_event_frames(&mut self.midi_in_events, frames);
+                        if !self.midi_in_events.is_empty() {
+                            let cap = self.midi_in_events.capacity();
+                            let out = std::mem::replace(
+                                &mut self.midi_in_events,
+                                Vec::with_capacity(cap.max(64)),
+                            );
+                            if let Err(e) = self.tx.send(Message::HWMidiEvents(out)).await
+                            {
+                                eprintln!("OSS worker failed to send HWMidiEvents to engine: {}", e);
+                            }
                         }
                         {
                             let oss_in = self.oss_in.lock();
@@ -69,6 +78,11 @@ impl OssWorker {
                         }
                         {
                             if !self.pending_midi_out_events.is_empty() {
+                                if !self.pending_midi_out_sorted {
+                                    self.pending_midi_out_events
+                                        .sort_by(|a, b| a.frame.cmp(&b.frame));
+                                    self.pending_midi_out_sorted = true;
+                                }
                                 let midi_hub = self.midi_hub.lock();
                                 midi_hub.write_events(&self.pending_midi_out_events);
                                 self.pending_midi_out_events.clear();
@@ -82,8 +96,7 @@ impl OssWorker {
                     }
                     Message::HWMidiOutEvents(mut events) => {
                         self.pending_midi_out_events.append(&mut events);
-                        self.pending_midi_out_events
-                            .sort_by(|a, b| a.frame.cmp(&b.frame));
+                        self.pending_midi_out_sorted = false;
                     }
                     _ => {}
                 },

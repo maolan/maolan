@@ -856,6 +856,29 @@ impl Engine {
                     }
                 }
 
+                if let (Some(oss_in), Some(oss_out)) = (&self.oss_in, &self.oss_out) {
+                    let in_fd = oss_in.lock().fd();
+                    let out_fd = oss_out.lock().fd();
+                    let mut group = 0;
+                    let in_group = oss::add_to_sync_group(in_fd, group, true);
+                    if in_group > 0 {
+                        group = in_group;
+                    }
+                    let out_group = oss::add_to_sync_group(out_fd, group, false);
+                    if out_group > 0 {
+                        group = out_group;
+                    }
+                    let sync_started = if group > 0 {
+                        oss::start_sync_group(in_fd, group).is_ok()
+                    } else {
+                        false
+                    };
+                    if !sync_started {
+                        let _ = oss_in.lock().start_trigger();
+                        let _ = oss_out.lock().start_trigger();
+                    }
+                }
+
                 if self.oss_worker.is_none() && self.oss_in.is_some() && self.oss_out.is_some() {
                     let (tx, rx) = channel::<Message>(32);
                     let oss_in = self.oss_in.clone().unwrap();
