@@ -306,6 +306,9 @@ impl Maolan {
                     Show::AddTrack => {
                         self.modal = Some(Show::AddTrack);
                     }
+                    Show::MIDIHardware => {
+                        self.modal = Some(Show::MIDIHardware);
+                    }
                 }
             }
             Message::Cancel => self.modal = None,
@@ -1120,6 +1123,7 @@ impl Maolan {
         if state.hw_loaded {
             match self.modal {
                 Some(Show::AddTrack) => self.add_track.view(),
+                Some(Show::MIDIHardware) => self.hw.midi_view(),
                 _ => {
                     let view = match state.view {
                         View::Workspace => self.workspace.view(),
@@ -1198,7 +1202,7 @@ impl Maolan {
             }
         } else {
             column![
-                self.hw.view(),
+                self.hw.audio_view(),
                 text(format!("Last message: {}", state.message)),
             ]
             .into()

@@ -112,11 +112,15 @@ impl Menu {
                     (menu_item("Remove", Message::RemoveSelectedTracks)),
                 ))
             }),
+            (menu_dropdown("Hardware", Message::None), {
+                menu_tpl(menu_items!(
+                    (menu_item("MIDI Devices", Message::Show(Show::MIDIHardware))),
+                ))
+            }),
         )
         .draw_path(DrawPath::Backdrop)
         .close_on_item_click_global(true)
         .width(Length::Fill);
-
         mb.into()
     }
 }

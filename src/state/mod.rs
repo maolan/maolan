@@ -19,6 +19,8 @@ pub use track::Track;
 
 pub const HW_IN_ID: &str = "hw:in";
 pub const HW_OUT_ID: &str = "hw:out";
+pub const MIDI_HW_IN_ID: &str = "midi:hw:in";
+pub const MIDI_HW_OUT_ID: &str = "midi:hw:out";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ClipId {
@@ -126,6 +128,8 @@ pub struct StateData {
     pub selected_midi_out_hw: Option<String>,
     pub opened_midi_in_hw: Vec<String>,
     pub opened_midi_out_hw: Vec<String>,
+    pub midi_hw_in_position: Point,
+    pub midi_hw_out_position: Point,
     pub hw_in: Option<HW>,
     pub hw_out: Option<HW>,
     pub lv2_plugins: Vec<Lv2PluginInfo>,
@@ -203,6 +207,8 @@ impl Default for StateData {
             selected_midi_out_hw: None,
             opened_midi_in_hw: vec![],
             opened_midi_out_hw: vec![],
+            midi_hw_in_position: Point::new(80.0, 10.0),
+            midi_hw_out_position: Point::new(0.0, 10.0),
             hw_in: None,
             hw_out: None,
             lv2_plugins: vec![],

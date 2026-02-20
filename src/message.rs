@@ -7,6 +7,7 @@ pub enum Show {
     AddTrack,
     Save,
     Open,
+    MIDIHardware,
 }
 
 #[derive(Debug, Clone)]

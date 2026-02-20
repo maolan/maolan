@@ -4,7 +4,10 @@ use crate::{
     connections::ports::hover_radius,
     connections::selection::is_bezier_hit,
     message::Message,
-    state::{Connecting, HW_IN_ID, HW_OUT_ID, Hovering, MovingTrack, State, StateData},
+    state::{
+        Connecting, HW_IN_ID, HW_OUT_ID, Hovering, MIDI_HW_IN_ID, MIDI_HW_OUT_ID, MovingTrack,
+        State, StateData,
+    },
 };
 use iced::{
     Color, Point, Rectangle, Renderer, Theme,
@@ -37,6 +40,8 @@ impl Graph {
             } => {
                 if track_idx == HW_IN_ID || track_idx == HW_OUT_ID {
                     Some(Kind::Audio)
+                } else if track_idx == MIDI_HW_IN_ID || track_idx == MIDI_HW_OUT_ID {
+                    Some(Kind::MIDI)
                 } else {
                     data.tracks.iter().find(|t| t.name == *track_idx).map(|t| {
                         if *is_input {
@@ -88,6 +93,10 @@ impl canvas::Program<Message> for Graph {
         let cursor_position = cursor.position_in(bounds)?;
         let size = iced::Size::new(140.0, 80.0);
         let hw_width = 70.0;
+        let midi_hw_box_w = 120.0;
+        let midi_hw_box_h = 80.0;
+        let default_midi_out_pos =
+            Point::new(bounds.width - hw_width - 10.0 - midi_hw_box_w, 10.0);
 
         if let Ok(mut data) = self.state.try_write() {
             match event {
@@ -195,6 +204,35 @@ impl canvas::Program<Message> for Graph {
                                 return Some(Action::capture());
                             }
                         }
+                    }
+
+                    let midi_in_pos = data.midi_hw_in_position;
+                    let midi_out_pos = if data.midi_hw_out_position.x <= 0.0 {
+                        default_midi_out_pos
+                    } else {
+                        data.midi_hw_out_position
+                    };
+
+                    if Rectangle::new(midi_in_pos, iced::Size::new(midi_hw_box_w, midi_hw_box_h))
+                        .contains(cursor_position)
+                    {
+                        data.moving_track = Some(MovingTrack {
+                            track_idx: MIDI_HW_IN_ID.to_string(),
+                            offset_x: cursor_position.x - midi_in_pos.x,
+                            offset_y: cursor_position.y - midi_in_pos.y,
+                        });
+                        return Some(Action::capture());
+                    }
+
+                    if Rectangle::new(midi_out_pos, iced::Size::new(midi_hw_box_w, midi_hw_box_h))
+                        .contains(cursor_position)
+                    {
+                        data.moving_track = Some(MovingTrack {
+                            track_idx: MIDI_HW_OUT_ID.to_string(),
+                            offset_x: cursor_position.x - midi_out_pos.x,
+                            offset_y: cursor_position.y - midi_out_pos.y,
+                        });
+                        return Some(Action::capture());
                     }
 
                     for track in data.tracks.iter().rev() {
@@ -526,11 +564,24 @@ impl canvas::Program<Message> for Graph {
                         redraw_needed = true;
                     }
                     if let Some(mt) = data.moving_track.clone()
-                        && let Some(t) = data.tracks.iter_mut().find(|tr| tr.name == mt.track_idx)
                     {
-                        t.position.x = cursor_position.x - mt.offset_x;
-                        t.position.y = cursor_position.y - mt.offset_y;
-                        redraw_needed = true;
+                        if let Some(t) = data.tracks.iter_mut().find(|tr| tr.name == mt.track_idx) {
+                            t.position.x = cursor_position.x - mt.offset_x;
+                            t.position.y = cursor_position.y - mt.offset_y;
+                            redraw_needed = true;
+                        } else if mt.track_idx == MIDI_HW_IN_ID {
+                            data.midi_hw_in_position = Point::new(
+                                cursor_position.x - mt.offset_x,
+                                cursor_position.y - mt.offset_y,
+                            );
+                            redraw_needed = true;
+                        } else if mt.track_idx == MIDI_HW_OUT_ID {
+                            data.midi_hw_out_position = Point::new(
+                                cursor_position.x - mt.offset_x,
+                                cursor_position.y - mt.offset_y,
+                            );
+                            redraw_needed = true;
+                        }
                     }
 
                     if data.hovering != new_h {
@@ -559,6 +610,8 @@ impl canvas::Program<Message> for Graph {
         let mut frame = Frame::new(renderer, bounds.size());
         let size = iced::Size::new(140.0, 80.0);
         let hw_width = 70.0;
+        let midi_hw_box_w = 120.0;
+        let midi_hw_box_h = 80.0;
         let cursor_position = cursor.position_in(bounds);
 
         if let Ok(data) = self.state.try_read() {
@@ -718,7 +771,6 @@ impl canvas::Program<Message> for Graph {
                     align_x: Horizontal::Center.into(),
                     ..Default::default()
                 });
-
                 for j in 0..hw_in.channels {
                     let py = pos.y
                         + 50.0
@@ -772,7 +824,6 @@ impl canvas::Program<Message> for Graph {
                     align_x: Horizontal::Center.into(),
                     ..Default::default()
                 });
-
                 for j in 0..hw_out.channels {
                     let py = pos.y
                         + 50.0
@@ -802,6 +853,85 @@ impl canvas::Program<Message> for Graph {
                     frame.fill(
                         &Path::circle(Point::new(pos.x, py), hover_radius(5.0, can_highlight_port)),
                         audio_port_color(),
+                    );
+                }
+            }
+
+            // Draw MIDI hardware as track-like nodes:
+            // - MIDI IN: source-like ports on the right edge
+            // - MIDI OUT: sink-like ports on the left edge
+            let midi_in_pos = data.midi_hw_in_position;
+            let midi_in_rect = Path::rectangle(
+                midi_in_pos,
+                iced::Size::new(midi_hw_box_w, midi_hw_box_h),
+            );
+            frame.fill(&midi_in_rect, Color::from_rgb8(45, 40, 20));
+            frame.stroke(
+                &midi_in_rect,
+                canvas::Stroke::default()
+                    .with_color(midi_port_color())
+                    .with_width(2.0),
+            );
+            frame.fill_text(Text {
+                content: "midi:in".into(),
+                position: Point::new(
+                    midi_in_pos.x + midi_hw_box_w / 2.0,
+                    midi_in_pos.y + midi_hw_box_h / 2.0,
+                ),
+                color: Color::WHITE,
+                align_x: Horizontal::Center.into(),
+                align_y: Vertical::Center,
+                ..Default::default()
+            });
+
+            let midi_in_ports = data.opened_midi_in_hw.len();
+            if midi_in_ports > 0 {
+                for j in 0..midi_in_ports {
+                    let py = midi_in_pos.y
+                        + (midi_hw_box_h / (midi_in_ports + 1) as f32) * (j + 1) as f32;
+                    frame.fill(
+                        &Path::circle(Point::new(midi_in_pos.x + midi_hw_box_w, py), 5.0),
+                        midi_port_color(),
+                    );
+                }
+            }
+
+            let midi_out_pos = if data.midi_hw_out_position.x <= 0.0 {
+                Point::new(bounds.width - hw_width - 10.0 - midi_hw_box_w, 10.0)
+            } else {
+                data.midi_hw_out_position
+            };
+            let midi_out_rect = Path::rectangle(
+                midi_out_pos,
+                iced::Size::new(midi_hw_box_w, midi_hw_box_h),
+            );
+            frame.fill(&midi_out_rect, Color::from_rgb8(45, 40, 20));
+            frame.stroke(
+                &midi_out_rect,
+                canvas::Stroke::default()
+                    .with_color(midi_port_color())
+                    .with_width(2.0),
+            );
+            frame.fill_text(Text {
+                content: "midi:out".into(),
+                position: Point::new(
+                    midi_out_pos.x + midi_hw_box_w / 2.0,
+                    midi_out_pos.y + midi_hw_box_h / 2.0,
+                ),
+                color: Color::WHITE,
+                align_x: Horizontal::Center.into(),
+                align_y: Vertical::Center,
+                ..Default::default()
+            });
+
+            let midi_out_ports = data.opened_midi_out_hw.len();
+            if midi_out_ports > 0 {
+                for j in 0..midi_out_ports {
+                    let py = midi_out_pos.y
+                        + (midi_hw_box_h / (midi_out_ports + 1) as f32) * (j + 1) as f32;
+                    frame.fill(
+                        &Path::circle(Point::new(midi_out_pos.x, py), 5.0),
+                        midi_port_color(),
                     );
                 }
             }
