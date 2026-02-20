@@ -22,7 +22,7 @@ pub enum Lv2GraphNode {
     PluginInstance(usize),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Lv2GraphPlugin {
     pub instance_id: usize,
     pub uri: String,
@@ -31,6 +31,27 @@ pub struct Lv2GraphPlugin {
     pub audio_outputs: usize,
     pub midi_inputs: usize,
     pub midi_outputs: usize,
+    pub state: Lv2PluginState,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lv2StatePortValue {
+    pub index: u32,
+    pub value: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lv2StateProperty {
+    pub key_uri: String,
+    pub type_uri: String,
+    pub flags: u32,
+    pub value: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lv2PluginState {
+    pub port_values: Vec<Lv2StatePortValue>,
+    pub properties: Vec<Lv2StateProperty>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,6 +67,9 @@ pub struct Lv2GraphConnection {
 pub enum Action {
     Quit,
     Play,
+    Stop,
+    SetRecordEnabled(bool),
+    SetSessionPath(String),
     AddTrack {
         name: String,
         audio_ins: usize,
@@ -58,6 +82,7 @@ pub enum Action {
         track_name: String,
         start: usize,
         length: usize,
+        offset: usize,
         kind: Kind,
     },
     RemoveClip(usize, String, Kind),
@@ -69,6 +94,14 @@ pub enum Action {
     TrackLoadLv2Plugin {
         track_name: String,
         plugin_uri: String,
+    },
+    TrackClearDefaultPassthrough {
+        track_name: String,
+    },
+    TrackSetLv2PluginState {
+        track_name: String,
+        instance_id: usize,
+        state: Lv2PluginState,
     },
     TrackUnloadLv2Plugin {
         track_name: String,

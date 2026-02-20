@@ -3,12 +3,13 @@ use crate::{
     audio::io::AudioIO,
     kind::Kind,
     lv2::Lv2Processor,
-    message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin},
+    message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin, Lv2PluginState},
     midi::io::MidiEvent,
     routing,
 };
 use std::{
     collections::{HashMap, HashSet},
+    path::PathBuf,
     sync::Arc,
 };
 
@@ -32,6 +33,9 @@ pub struct Track {
     pub pending_hw_midi_out_events: Vec<MidiEvent>,
     pub next_lv2_instance_id: usize,
     pub sample_rate: f64,
+    pub output_enabled: bool,
+    pub record_tap_outs: Vec<Vec<f32>>,
+    pub lv2_state_base_dir: Option<PathBuf>,
 }
 
 impl Track {
@@ -57,6 +61,9 @@ impl Track {
             pending_hw_midi_out_events: vec![],
             next_lv2_instance_id: 0,
             sample_rate,
+            output_enabled: true,
+            record_tap_outs: vec![vec![0.0; buffer_size]; audio_outs],
+            lv2_state_base_dir: None,
         }
         .with_default_passthrough()
     }
@@ -171,9 +178,19 @@ impl Track {
         self.clear_local_midi_inputs();
 
         let internal_sources = self.internal_audio_sources();
-        for audio_out in &self.audio.outs {
+        for out_idx in 0..self.audio.outs.len() {
+            let audio_out = &self.audio.outs[out_idx];
             let out_samples = audio_out.buffer.lock();
             out_samples.fill(0.0);
+            if self.record_tap_outs.len() <= out_idx {
+                self.record_tap_outs
+                    .push(vec![0.0; out_samples.len()]);
+            }
+            let tap = &mut self.record_tap_outs[out_idx];
+            if tap.len() != out_samples.len() {
+                tap.resize(out_samples.len(), 0.0);
+            }
+            tap.fill(0.0);
             for source in audio_out.connections.lock().iter() {
                 if !internal_sources
                     .iter()
@@ -182,8 +199,15 @@ impl Track {
                     continue;
                 }
                 let source_buf = source.buffer.lock();
-                for (out_sample, in_sample) in out_samples.iter_mut().zip(source_buf.iter()) {
-                    *out_sample += *in_sample;
+                for ((tap_sample, out_sample), in_sample) in tap
+                    .iter_mut()
+                    .zip(out_samples.iter_mut())
+                    .zip(source_buf.iter())
+                {
+                    *tap_sample += *in_sample;
+                    if self.output_enabled {
+                        *out_sample += *in_sample;
+                    }
                 }
             }
             *audio_out.finished.lock() = true;
@@ -210,6 +234,10 @@ impl Track {
     pub fn arm(&mut self) {
         self.armed = !self.armed;
     }
+
+    pub fn set_output_enabled(&mut self, enabled: bool) {
+        self.output_enabled = enabled;
+    }
     pub fn mute(&mut self) {
         self.muted = !self.muted;
     }
@@ -226,6 +254,10 @@ impl Track {
             .or_else(|| self.audio.outs.first().map(|io| io.buffer.lock().len()))
             .unwrap_or(0);
         let processor = Lv2Processor::new(self.sample_rate, buffer_size, uri)?;
+        let mut processor = processor;
+        if let Some(base_dir) = &self.lv2_state_base_dir {
+            processor.set_state_base_dir(base_dir.clone());
+        }
         let id = self.next_lv2_instance_id;
         self.next_lv2_instance_id = self.next_lv2_instance_id.saturating_add(1);
         self.lv2_processors.push(Lv2Instance { id, processor });
@@ -303,8 +335,46 @@ impl Track {
                 audio_outputs: instance.processor.audio_output_count(),
                 midi_inputs: instance.processor.midi_input_count(),
                 midi_outputs: instance.processor.midi_output_count(),
+                state: instance.processor.snapshot_state(),
             })
             .collect()
+    }
+
+    pub fn set_lv2_plugin_state(
+        &mut self,
+        instance_id: usize,
+        state: Lv2PluginState,
+    ) -> Result<(), String> {
+        let Some(instance) = self
+            .lv2_processors
+            .iter_mut()
+            .find(|instance| instance.id == instance_id)
+        else {
+            return Err(format!(
+                "Track '{}' does not have LV2 instance id: {}",
+                self.name, instance_id
+            ));
+        };
+        instance.processor.restore_state(&state)
+    }
+
+    pub fn set_lv2_state_base_dir(&mut self, base_dir: Option<PathBuf>) {
+        self.lv2_state_base_dir = base_dir.clone();
+        if let Some(path) = base_dir {
+            for instance in &mut self.lv2_processors {
+                instance.processor.set_state_base_dir(path.clone());
+            }
+        }
+    }
+
+    pub fn clear_default_passthrough(&self) {
+        for (audio_in, audio_out) in self.audio.ins.iter().zip(self.audio.outs.iter()) {
+            let _ = AudioIO::disconnect(audio_in, audio_out);
+            let _ = AudioIO::disconnect(audio_out, audio_in);
+        }
+        for (midi_in, midi_out) in self.midi.ins.iter().zip(self.midi.outs.iter()) {
+            let _ = midi_out.lock().disconnect(midi_in);
+        }
     }
 
     pub fn lv2_graph_connections(&self) -> Vec<Lv2GraphConnection> {

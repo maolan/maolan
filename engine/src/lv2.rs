@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     ffi::{CStr, CString, c_char, c_uint, c_ulong, c_void},
     fmt,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -12,6 +13,7 @@ use std::{
 };
 
 use crate::audio::io::AudioIO;
+use crate::message::{Lv2PluginState, Lv2StatePortValue, Lv2StateProperty};
 use crate::midi::io::MidiEvent;
 use lilv::{World, instance::ActiveInstance, node::Node, plugin::Plugin};
 use lv2_raw::{
@@ -53,6 +55,7 @@ pub struct Lv2Processor {
     plugin_name: String,
     instance: Option<ActiveInstance>,
     _urid_feature: UridMapFeature,
+    _state_path_feature: StatePathFeature,
     port_bindings: Vec<PortBinding>,
     scalar_values: Arc<Mutex<Vec<f32>>>,
     port_symbol_to_index: Arc<HashMap<String, u32>>,
@@ -75,6 +78,7 @@ pub struct Lv2Processor {
 struct LoadedPlugin {
     instance: ActiveInstance,
     _urid_feature: UridMapFeature,
+    _state_path_feature: StatePathFeature,
 }
 
 #[derive(Default)]
@@ -151,11 +155,115 @@ struct UiDispatchState {
 unsafe impl Send for UiDispatchState {}
 unsafe impl Sync for UiDispatchState {}
 
+#[derive(Debug)]
+struct RawStateProperty {
+    key: u32,
+    type_: u32,
+    flags: u32,
+    value: Vec<u8>,
+}
+
+struct StateSaveContext {
+    properties: Vec<RawStateProperty>,
+}
+
+struct StateRestoreContext {
+    properties: Vec<RawStateProperty>,
+    by_key: HashMap<u32, usize>,
+}
+
 #[repr(C)]
 struct LV2FeatureRaw {
     uri: *const c_char,
     data: *mut c_void,
 }
+
+type Lv2Handle = *mut c_void;
+type Lv2StateHandle = *mut c_void;
+type Lv2StateStatus = u32;
+type Lv2StateStoreFn = Option<
+    unsafe extern "C" fn(
+        handle: Lv2StateHandle,
+        key: u32,
+        value: *const c_void,
+        size: usize,
+        type_: u32,
+        flags: u32,
+    ) -> Lv2StateStatus,
+>;
+type Lv2StateRetrieveFn = Option<
+    unsafe extern "C" fn(
+        handle: Lv2StateHandle,
+        key: u32,
+        size: *mut usize,
+        type_: *mut u32,
+        flags: *mut u32,
+    ) -> *const c_void,
+>;
+const LV2_STATE_STATUS_SUCCESS: Lv2StateStatus = 0;
+const LV2_STATE_STATUS_ERR_NO_PROPERTY: Lv2StateStatus = 5;
+
+#[repr(C)]
+struct Lv2StateInterface {
+    save: Option<
+        unsafe extern "C" fn(
+            instance: Lv2Handle,
+            store: Lv2StateStoreFn,
+            handle: Lv2StateHandle,
+            flags: u32,
+            features: *const *const LV2Feature,
+        ) -> Lv2StateStatus,
+    >,
+    restore: Option<
+        unsafe extern "C" fn(
+            instance: Lv2Handle,
+            retrieve: Lv2StateRetrieveFn,
+            handle: Lv2StateHandle,
+            flags: u32,
+            features: *const *const LV2Feature,
+        ) -> Lv2StateStatus,
+    >,
+}
+
+#[repr(C)]
+struct Lv2StateMapPath {
+    handle: *mut c_void,
+    abstract_path: Option<extern "C" fn(*mut c_void, *const c_char) -> *mut c_char>,
+    absolute_path: Option<extern "C" fn(*mut c_void, *const c_char) -> *mut c_char>,
+}
+
+#[repr(C)]
+struct Lv2StateMakePath {
+    handle: *mut c_void,
+    path: Option<extern "C" fn(*mut c_void, *const c_char) -> *mut c_char>,
+}
+
+#[repr(C)]
+struct Lv2StateFreePath {
+    handle: *mut c_void,
+    free_path: Option<extern "C" fn(*mut c_void, *mut c_char)>,
+}
+
+#[derive(Default)]
+struct StatePathContext {
+    base_dir: PathBuf,
+    copy_counter: u64,
+}
+
+struct StatePathFeature {
+    map_uri: CString,
+    make_uri: CString,
+    free_uri: CString,
+    map: Box<Lv2StateMapPath>,
+    make: Box<Lv2StateMakePath>,
+    free: Box<Lv2StateFreePath>,
+    map_feature: LV2Feature,
+    make_feature: LV2Feature,
+    free_feature: LV2Feature,
+    _context: Box<Mutex<StatePathContext>>,
+}
+
+unsafe impl Send for StatePathFeature {}
 
 #[repr(C)]
 struct LV2UiResize {
@@ -208,6 +316,10 @@ const LV2_UI_SHOW_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#showInte
 const LV2_UI_HIDE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#hideInterface";
 const LV2_INSTANCE_ACCESS: &str = "http://lv2plug.in/ns/ext/instance-access";
 const LV2_EXTERNAL_UI_HOST_KX: &str = "http://kxstudio.sf.net/ns/lv2ext/external-ui#Host";
+const LV2_STATE_INTERFACE_URI: &str = "http://lv2plug.in/ns/ext/state#interface";
+const LV2_STATE_MAP_PATH_URI: &str = "http://lv2plug.in/ns/ext/state#mapPath";
+const LV2_STATE_MAKE_PATH_URI: &str = "http://lv2plug.in/ns/ext/state#makePath";
+const LV2_STATE_FREE_PATH_URI: &str = "http://lv2plug.in/ns/ext/state#freePath";
 // RTLD_NOW | RTLD_GLOBAL on FreeBSD (dlfcn.h: RTLD_NOW=2, RTLD_GLOBAL=0x100)
 const RTLD_NOW_GLOBAL: i32 = 0x102;
 const GTK_WINDOW_TOPLEVEL: i32 = 0;
@@ -406,7 +518,14 @@ impl Lv2Processor {
         }
 
         let mut urid_feature = UridMapFeature::new()?;
-        let instance = instantiate_plugin(&plugin, sample_rate, uri, &mut urid_feature)?;
+        let mut state_path_feature = StatePathFeature::new(default_state_base_dir());
+        let instance = instantiate_plugin(
+            &plugin,
+            sample_rate,
+            uri,
+            &mut urid_feature,
+            &mut state_path_feature,
+        )?;
         let active_instance = unsafe { instance.activate() };
 
         let input_port = world.new_uri("http://lv2plug.in/ns/lv2core#InputPort");
@@ -526,6 +645,7 @@ impl Lv2Processor {
                 .unwrap_or_else(|| uri.to_string()),
             instance: Some(active_instance),
             _urid_feature: urid_feature,
+            _state_path_feature: state_path_feature,
             port_bindings,
             scalar_values: Arc::new(Mutex::new(scalar_values)),
             port_symbol_to_index: Arc::new(port_symbol_to_index),
@@ -823,6 +943,159 @@ impl Lv2Processor {
         Ok(())
     }
 
+    pub fn snapshot_state(&self) -> Lv2PluginState {
+        let mut state = Lv2PluginState {
+            port_values: self.control_port_values(),
+            properties: vec![],
+        };
+        let Some(interface) = self.state_interface() else {
+            return state;
+        };
+        let Some(save_fn) = interface.save else {
+            return state;
+        };
+
+        let mut ctx = StateSaveContext { properties: vec![] };
+        let features = self.state_feature_ptrs();
+        let status = unsafe {
+            save_fn(
+                self.instance_handle(),
+                Some(lv2_state_store_callback),
+                (&mut ctx as *mut StateSaveContext).cast::<c_void>(),
+                0,
+                features.as_ptr(),
+            )
+        };
+        if status != LV2_STATE_STATUS_SUCCESS {
+            return state;
+        }
+
+        state.properties = ctx
+            .properties
+            .into_iter()
+            .filter_map(|p| {
+                let key_uri = self._urid_feature.unmap_urid(p.key)?;
+                let type_uri = self._urid_feature.unmap_urid(p.type_)?;
+                Some(Lv2StateProperty {
+                    key_uri,
+                    type_uri,
+                    flags: p.flags,
+                    value: p.value,
+                })
+            })
+            .collect();
+        state
+    }
+
+    pub fn restore_state(&mut self, state: &Lv2PluginState) -> Result<(), String> {
+        self.set_control_port_values(&state.port_values);
+        if state.properties.is_empty() {
+            return Ok(());
+        }
+        let Some(interface) = self.state_interface() else {
+            return Ok(());
+        };
+        let Some(restore_fn) = interface.restore else {
+            return Ok(());
+        };
+
+        let mut properties: Vec<RawStateProperty> = vec![];
+        let mut by_key: HashMap<u32, usize> = HashMap::new();
+        for prop in &state.properties {
+            let key = self._urid_feature.map_uri(prop.key_uri.as_bytes());
+            let type_ = self._urid_feature.map_uri(prop.type_uri.as_bytes());
+            if key == 0 || type_ == 0 {
+                continue;
+            }
+            let idx = properties.len();
+            properties.push(RawStateProperty {
+                key,
+                type_,
+                flags: prop.flags,
+                value: prop.value.clone(),
+            });
+            by_key.insert(key, idx);
+        }
+        let mut ctx = StateRestoreContext { properties, by_key };
+        let features = self.state_feature_ptrs();
+
+        let status = unsafe {
+            restore_fn(
+                self.instance_handle(),
+                Some(lv2_state_retrieve_callback),
+                (&mut ctx as *mut StateRestoreContext).cast::<c_void>(),
+                0,
+                features.as_ptr(),
+            )
+        };
+        if status == LV2_STATE_STATUS_SUCCESS {
+            Ok(())
+        } else {
+            Err(format!(
+                "LV2 state restore failed for '{}': status {}",
+                self.uri, status
+            ))
+        }
+    }
+
+    fn state_interface(&self) -> Option<&Lv2StateInterface> {
+        let instance = self.instance.as_ref()?;
+        let ptr = unsafe {
+            instance
+                .instance()
+                .extension_data::<Lv2StateInterface>(LV2_STATE_INTERFACE_URI)?
+        };
+        Some(unsafe { ptr.as_ref() })
+    }
+
+    fn instance_handle(&self) -> Lv2Handle {
+        self.instance
+            .as_ref()
+            .map(|i| i.instance().handle() as Lv2Handle)
+            .unwrap_or(std::ptr::null_mut())
+    }
+
+    fn state_feature_ptrs(&self) -> [*const LV2Feature; 5] {
+        let sp = self._state_path_feature.feature_ptrs();
+        [
+            self._urid_feature.feature() as *const LV2Feature,
+            sp[0],
+            sp[1],
+            sp[2],
+            std::ptr::null(),
+        ]
+    }
+
+    fn control_port_values(&self) -> Vec<Lv2StatePortValue> {
+        let Ok(values) = self.scalar_values.lock() else {
+            return vec![];
+        };
+        self.control_ports
+            .iter()
+            .filter_map(|port| {
+                values.get(port.index as usize).map(|v| Lv2StatePortValue {
+                    index: port.index,
+                    value: *v,
+                })
+            })
+            .collect()
+    }
+
+    fn set_control_port_values(&mut self, port_values: &[Lv2StatePortValue]) {
+        let Ok(mut values) = self.scalar_values.lock() else {
+            return;
+        };
+        for port in port_values {
+            if let Some(slot) = values.get_mut(port.index as usize) {
+                *slot = port.value;
+            }
+        }
+    }
+
+    pub fn set_state_base_dir(&mut self, base_dir: PathBuf) {
+        self._state_path_feature.set_base_dir(base_dir);
+    }
+
     fn write_midi_input_events(&mut self, port: usize, events: &[MidiEvent]) {
         let Some(buffer) = self.atom_inputs.get_mut(port) else {
             return;
@@ -982,13 +1255,21 @@ impl Lv2Host {
             .ok_or_else(|| format!("Plugin not found for URI: {uri}"))?;
 
         let mut urid_feature = UridMapFeature::new()?;
-        let instance = instantiate_plugin(&plugin, self.sample_rate, uri, &mut urid_feature)?;
+        let mut state_path_feature = StatePathFeature::new(default_state_base_dir());
+        let instance = instantiate_plugin(
+            &plugin,
+            self.sample_rate,
+            uri,
+            &mut urid_feature,
+            &mut state_path_feature,
+        )?;
         let active_instance = unsafe { instance.activate() };
         self.loaded_plugins.insert(
             uri.to_string(),
             LoadedPlugin {
                 instance: active_instance,
                 _urid_feature: urid_feature,
+                _state_path_feature: state_path_feature,
             },
         );
         Ok(())
@@ -1892,6 +2173,7 @@ fn instantiate_plugin(
     sample_rate: f64,
     uri: &str,
     urid_feature: &mut UridMapFeature,
+    _state_path_feature: &mut StatePathFeature,
 ) -> Result<lilv::instance::Instance, String> {
     let required_features = plugin_feature_uris(plugin);
     let features = [urid_feature.feature()];
@@ -1956,6 +2238,279 @@ impl UridMapFeature {
         state.by_uri.insert(uri_str.to_string(), mapped);
         mapped
     }
+
+    fn unmap_urid(&self, urid: LV2Urid) -> Option<String> {
+        let Ok(state) = self._state.lock() else {
+            return None;
+        };
+        state
+            .by_uri
+            .iter()
+            .find_map(|(uri, mapped)| (*mapped == urid).then(|| uri.clone()))
+    }
+}
+
+fn default_state_base_dir() -> PathBuf {
+    std::env::temp_dir().join("maolan-lv2-state")
+}
+
+impl StatePathFeature {
+    fn new(base_dir: PathBuf) -> Self {
+        let context = Box::new(Mutex::new(StatePathContext {
+            base_dir,
+            copy_counter: 0,
+        }));
+        let handle = (&*context as *const Mutex<StatePathContext>) as *mut c_void;
+
+        let map = Box::new(Lv2StateMapPath {
+            handle,
+            abstract_path: Some(lv2_state_abstract_path_callback),
+            absolute_path: Some(lv2_state_absolute_path_callback),
+        });
+        let make = Box::new(Lv2StateMakePath {
+            handle,
+            path: Some(lv2_state_make_path_callback),
+        });
+        let free = Box::new(Lv2StateFreePath {
+            handle,
+            free_path: Some(lv2_state_free_path_callback),
+        });
+
+        let map_uri = CString::new(LV2_STATE_MAP_PATH_URI).expect("valid LV2 state mapPath URI");
+        let make_uri =
+            CString::new(LV2_STATE_MAKE_PATH_URI).expect("valid LV2 state makePath URI");
+        let free_uri =
+            CString::new(LV2_STATE_FREE_PATH_URI).expect("valid LV2 state freePath URI");
+
+        let map_feature = LV2Feature {
+            uri: map_uri.as_ptr(),
+            data: (&*map as *const Lv2StateMapPath).cast_mut().cast::<c_void>(),
+        };
+        let make_feature = LV2Feature {
+            uri: make_uri.as_ptr(),
+            data: (&*make as *const Lv2StateMakePath).cast_mut().cast::<c_void>(),
+        };
+        let free_feature = LV2Feature {
+            uri: free_uri.as_ptr(),
+            data: (&*free as *const Lv2StateFreePath).cast_mut().cast::<c_void>(),
+        };
+
+        let instance = Self {
+            map_uri,
+            make_uri,
+            free_uri,
+            map,
+            make,
+            free,
+            map_feature,
+            make_feature,
+            free_feature,
+            _context: context,
+        };
+        instance.ensure_base_dir();
+        instance
+    }
+
+    fn ensure_base_dir(&self) {
+        if let Ok(ctx) = self._context.lock() {
+            let _ = std::fs::create_dir_all(&ctx.base_dir);
+        }
+    }
+
+    fn set_base_dir(&self, base_dir: PathBuf) {
+        if let Ok(mut ctx) = self._context.lock() {
+            ctx.base_dir = base_dir;
+            let _ = std::fs::create_dir_all(&ctx.base_dir);
+        }
+    }
+
+    fn features(&self) -> [&LV2Feature; 3] {
+        [&self.map_feature, &self.make_feature, &self.free_feature]
+    }
+
+    fn feature_ptrs(&self) -> [*const LV2Feature; 3] {
+        [
+            &self.map_feature as *const LV2Feature,
+            &self.make_feature as *const LV2Feature,
+            &self.free_feature as *const LV2Feature,
+        ]
+    }
+}
+
+extern "C" fn lv2_state_free_path_callback(_handle: *mut c_void, path: *mut c_char) {
+    if path.is_null() {
+        return;
+    }
+    unsafe {
+        let _ = CString::from_raw(path);
+    }
+}
+
+fn state_ctx_from_handle(handle: *mut c_void) -> Option<&'static Mutex<StatePathContext>> {
+    if handle.is_null() {
+        return None;
+    }
+    Some(unsafe { &*(handle as *const Mutex<StatePathContext>) })
+}
+
+fn copy_into_state_assets(ctx: &mut StatePathContext, src: &Path) -> Option<String> {
+    let file_name = src.file_name()?.to_str()?.to_string();
+    let assets_dir = ctx.base_dir.join("assets");
+    let _ = std::fs::create_dir_all(&assets_dir);
+    ctx.copy_counter = ctx.copy_counter.saturating_add(1);
+    let dst_name = format!("{}-{}", ctx.copy_counter, file_name);
+    let dst = assets_dir.join(&dst_name);
+    std::fs::copy(src, &dst).ok()?;
+    Some(format!("assets/{dst_name}"))
+}
+
+extern "C" fn lv2_state_abstract_path_callback(
+    handle: *mut c_void,
+    absolute_path: *const c_char,
+) -> *mut c_char {
+    let Some(ctx_lock) = state_ctx_from_handle(handle) else {
+        return std::ptr::null_mut();
+    };
+    if absolute_path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Some(path_str) = (unsafe { CStr::from_ptr(absolute_path) }).to_str().ok() else {
+        return std::ptr::null_mut();
+    };
+    let path = PathBuf::from(path_str);
+    let mut mapped = None;
+    if let Ok(mut ctx) = ctx_lock.lock() {
+        if let Ok(rel) = path.strip_prefix(&ctx.base_dir) {
+            mapped = Some(rel.to_string_lossy().to_string());
+        } else if path.exists() {
+            mapped = copy_into_state_assets(&mut ctx, &path);
+        }
+    }
+    let out = mapped.unwrap_or_else(|| path_str.to_string());
+    CString::new(out)
+        .ok()
+        .map(CString::into_raw)
+        .unwrap_or(std::ptr::null_mut())
+}
+
+extern "C" fn lv2_state_absolute_path_callback(
+    handle: *mut c_void,
+    abstract_path: *const c_char,
+) -> *mut c_char {
+    let Some(ctx_lock) = state_ctx_from_handle(handle) else {
+        return std::ptr::null_mut();
+    };
+    if abstract_path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let Some(path_str) = (unsafe { CStr::from_ptr(abstract_path) }).to_str().ok() else {
+        return std::ptr::null_mut();
+    };
+    let output = if Path::new(path_str).is_absolute() {
+        path_str.to_string()
+    } else if let Ok(ctx) = ctx_lock.lock() {
+        ctx.base_dir.join(path_str).to_string_lossy().to_string()
+    } else {
+        path_str.to_string()
+    };
+    CString::new(output)
+        .ok()
+        .map(CString::into_raw)
+        .unwrap_or(std::ptr::null_mut())
+}
+
+extern "C" fn lv2_state_make_path_callback(
+    handle: *mut c_void,
+    requested: *const c_char,
+) -> *mut c_char {
+    let Some(ctx_lock) = state_ctx_from_handle(handle) else {
+        return std::ptr::null_mut();
+    };
+
+    let requested_name = if requested.is_null() {
+        "state.bin".to_string()
+    } else {
+        (unsafe { CStr::from_ptr(requested) })
+            .to_str()
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.replace("..", "_"))
+            .unwrap_or_else(|| "state.bin".to_string())
+    };
+
+    let output = if let Ok(mut ctx) = ctx_lock.lock() {
+        ctx.copy_counter = ctx.copy_counter.saturating_add(1);
+        let file_name = format!("generated-{}-{}", ctx.copy_counter, requested_name);
+        let path = ctx.base_dir.join("generated").join(file_name);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        path.to_string_lossy().to_string()
+    } else {
+        requested_name
+    };
+
+    CString::new(output)
+        .ok()
+        .map(CString::into_raw)
+        .unwrap_or(std::ptr::null_mut())
+}
+
+extern "C" fn lv2_state_store_callback(
+    handle: Lv2StateHandle,
+    key: u32,
+    value: *const c_void,
+    size: usize,
+    type_: u32,
+    flags: u32,
+) -> Lv2StateStatus {
+    if handle.is_null() || value.is_null() || size == 0 {
+        return LV2_STATE_STATUS_ERR_NO_PROPERTY;
+    }
+    let ctx = unsafe { &mut *(handle as *mut StateSaveContext) };
+    let bytes = unsafe { std::slice::from_raw_parts(value.cast::<u8>(), size) };
+    ctx.properties.push(RawStateProperty {
+        key,
+        type_,
+        flags,
+        value: bytes.to_vec(),
+    });
+    LV2_STATE_STATUS_SUCCESS
+}
+
+extern "C" fn lv2_state_retrieve_callback(
+    handle: Lv2StateHandle,
+    key: u32,
+    size: *mut usize,
+    type_: *mut u32,
+    flags: *mut u32,
+) -> *const c_void {
+    if handle.is_null() {
+        return std::ptr::null();
+    }
+    let ctx = unsafe { &mut *(handle as *mut StateRestoreContext) };
+    let Some(idx) = ctx.by_key.get(&key).copied() else {
+        return std::ptr::null();
+    };
+    let Some(prop) = ctx.properties.get(idx) else {
+        return std::ptr::null();
+    };
+    if !size.is_null() {
+        unsafe {
+            *size = prop.value.len();
+        }
+    }
+    if !type_.is_null() {
+        unsafe {
+            *type_ = prop.type_;
+        }
+    }
+    if !flags.is_null() {
+        unsafe {
+            *flags = prop.flags;
+        }
+    }
+    prop.value.as_ptr().cast::<c_void>()
 }
 
 fn prepare_empty_atom_sequence(

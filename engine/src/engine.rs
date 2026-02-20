@@ -1,6 +1,13 @@
-use std::{collections::VecDeque, fs::read_dir, sync::Arc};
+use std::{
+    collections::VecDeque,
+    fs::read_dir,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
+use wavers::write as write_wav;
 
 use crate::{
     audio::clip::AudioClip,
@@ -29,6 +36,14 @@ impl WorkerData {
     }
 }
 
+#[derive(Debug, Clone)]
+struct RecordingSession {
+    start_sample: usize,
+    samples: Vec<f32>,
+    channels: usize,
+    file_name: String,
+}
+
 pub struct Engine {
     clients: Vec<Sender<Message>>,
     rx: Receiver<Message>,
@@ -44,9 +59,30 @@ pub struct Engine {
     ready_workers: Vec<usize>,
     pending_requests: VecDeque<Action>,
     awaiting_hwfinished: bool,
+    transport_sample: usize,
+    audio_recordings: std::collections::HashMap<String, RecordingSession>,
+    playing: bool,
+    record_enabled: bool,
+    session_dir: Option<PathBuf>,
 }
 
 impl Engine {
+    fn session_plugins_dir(&self) -> Option<PathBuf> {
+        self.session_dir.as_ref().map(|d| d.join("plugins"))
+    }
+
+    fn session_audio_dir(&self) -> Option<PathBuf> {
+        self.session_dir.as_ref().map(|d| d.join("audio"))
+    }
+
+    fn ensure_session_subdirs(&self) {
+        if let Some(root) = &self.session_dir {
+            let _ = std::fs::create_dir_all(root.join("plugins"));
+            let _ = std::fs::create_dir_all(root.join("audio"));
+            let _ = std::fs::create_dir_all(root.join("midi"));
+        }
+    }
+
     fn discover_midi_hw_devices() -> Vec<String> {
         let mut devices: Vec<String> = read_dir("/dev")
             .map(|rd| {
@@ -84,7 +120,178 @@ impl Engine {
             ready_workers: vec![],
             pending_requests: VecDeque::new(),
             awaiting_hwfinished: false,
+            transport_sample: 0,
+            audio_recordings: std::collections::HashMap::new(),
+            playing: false,
+            record_enabled: false,
+            session_dir: None,
         }
+    }
+
+    fn current_cycle_samples(&self) -> usize {
+        self.oss_out
+            .as_ref()
+            .map(|o| o.lock().chsamples)
+            .or_else(|| self.oss_in.as_ref().map(|i| i.lock().chsamples))
+            .unwrap_or(0)
+    }
+
+    fn apply_mute_solo_policy(&self) {
+        let tracks = &self.state.lock().tracks;
+        let any_soloed = tracks.values().any(|t| t.lock().soloed);
+        for track in tracks.values() {
+            let t = track.lock();
+            let enabled = if any_soloed {
+                t.soloed && !t.muted
+            } else {
+                !t.muted
+            };
+            t.set_output_enabled(enabled);
+        }
+    }
+
+    fn sanitize_file_stem(name: &str) -> String {
+        let mut out = String::with_capacity(name.len());
+        for c in name.chars() {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                out.push(c);
+            } else {
+                out.push('_');
+            }
+        }
+        if out.is_empty() {
+            "track".to_string()
+        } else {
+            out
+        }
+    }
+
+    fn next_recording_file_name(track_name: &str) -> String {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        format!("{}_{}.wav", Self::sanitize_file_stem(track_name), ts)
+    }
+
+    fn append_recorded_cycle(&mut self) {
+        if !self.playing || !self.record_enabled {
+            return;
+        }
+        for (name, track_handle) in &self.state.lock().tracks {
+            let track = track_handle.lock();
+            if !track.armed {
+                continue;
+            }
+            if track.record_tap_outs.is_empty() {
+                continue;
+            }
+            let channels = track.record_tap_outs.len();
+            let frames = track.record_tap_outs[0].len();
+            if frames == 0 {
+                continue;
+            }
+            let entry = self.audio_recordings.entry(name.clone()).or_insert_with(|| RecordingSession {
+                start_sample: self.transport_sample,
+                samples: Vec::with_capacity(frames * channels * 4),
+                channels,
+                file_name: Self::next_recording_file_name(name),
+            });
+            if entry.channels != channels {
+                continue;
+            }
+            for frame in 0..frames {
+                for ch in 0..channels {
+                    entry.samples.push(track.record_tap_outs[ch][frame]);
+                }
+            }
+        }
+    }
+
+    async fn flush_recordings(&mut self) {
+        let Some(audio_dir) = self.session_audio_dir() else {
+            if !self.audio_recordings.is_empty() {
+                self.notify_clients(Err("Recording stopped: session path is not set".to_string()))
+                    .await;
+            }
+            self.audio_recordings.clear();
+            return;
+        };
+        if std::fs::create_dir_all(&audio_dir).is_err() {
+            self.notify_clients(Err(format!(
+                "Recording stopped: failed to create audio directory {}",
+                audio_dir.display()
+            )))
+            .await;
+            self.audio_recordings.clear();
+            return;
+        }
+        let rate = self
+            .oss_out
+            .as_ref()
+            .map(|o| o.lock().rate)
+            .unwrap_or(48_000);
+        let recordings = std::mem::take(&mut self.audio_recordings);
+        for (track_name, rec) in recordings {
+            self.flush_recording_entry(&audio_dir, rate, track_name, rec)
+                .await;
+        }
+    }
+
+    async fn flush_recording_entry(
+        &mut self,
+        audio_dir: &Path,
+        rate: i32,
+        track_name: String,
+        rec: RecordingSession,
+    ) {
+        if rec.samples.is_empty() || rec.channels == 0 {
+            return;
+        }
+        let file_path = audio_dir.join(&rec.file_name);
+        if let Err(e) = write_wav::<f32, _>(&file_path, &rec.samples, rate, rec.channels as u16) {
+            self.notify_clients(Err(format!(
+                "Failed to write recording {}: {}",
+                file_path.display(),
+                e
+            )))
+            .await;
+            return;
+        }
+        let length = rec.samples.len() / rec.channels;
+        let clip_rel_name = format!("audio/{}", rec.file_name);
+        let clip = AudioClip::new(clip_rel_name.clone(), rec.start_sample, length);
+        if let Some(track) = self.state.lock().tracks.get(&track_name) {
+            track.lock().audio.clips.push(clip);
+        }
+        self.notify_clients(Ok(Action::AddClip {
+            name: clip_rel_name,
+            track_name: track_name.clone(),
+            start: rec.start_sample,
+            length,
+            offset: 0,
+            kind: Kind::Audio,
+        }))
+        .await;
+    }
+
+    async fn flush_track_recording(&mut self, track_name: &str) {
+        let Some(rec) = self.audio_recordings.remove(track_name) else {
+            return;
+        };
+        let Some(audio_dir) = self.session_audio_dir() else {
+            return;
+        };
+        if std::fs::create_dir_all(&audio_dir).is_err() {
+            return;
+        }
+        let rate = self
+            .oss_out
+            .as_ref()
+            .map(|o| o.lock().rate)
+            .unwrap_or(48_000);
+        self.flush_recording_entry(&audio_dir, rate, track_name.to_string(), rec)
+            .await;
     }
 
     pub async fn init(&mut self) {
@@ -218,8 +425,34 @@ impl Engine {
 
     async fn handle_request(&mut self, a: Action) {
         match a {
-            Action::Play => {}
+            Action::Play => {
+                self.playing = true;
+            }
+            Action::Stop => {
+                self.playing = false;
+                self.flush_recordings().await;
+            }
+            Action::SetRecordEnabled(enabled) => {
+                self.record_enabled = enabled;
+                if !enabled {
+                    self.flush_recordings().await;
+                } else if self.session_dir.is_none() {
+                    self.notify_clients(Err(
+                        "Recording enabled but session path is not set".to_string(),
+                    ))
+                    .await;
+                }
+            }
+            Action::SetSessionPath(ref path) => {
+                self.session_dir = Some(Path::new(path).to_path_buf());
+                self.ensure_session_subdirs();
+                let lv2_dir = self.session_plugins_dir();
+                for track in self.state.lock().tracks.values() {
+                    track.lock().set_lv2_state_base_dir(lv2_dir.clone());
+                }
+            }
             Action::Quit => {
+                self.flush_recordings().await;
                 if let Some(worker) = self.oss_worker.take() {
                     worker
                         .tx
@@ -277,6 +510,8 @@ impl Engine {
                         if let Some(track) = tracks.get(name) {
                             track.lock().ensure_default_audio_passthrough();
                             track.lock().ensure_default_midi_passthrough();
+                            let lv2_dir = self.session_plugins_dir();
+                            track.lock().set_lv2_state_base_dir(lv2_dir);
                         }
                     }
                     None => {
@@ -290,6 +525,7 @@ impl Engine {
             }
             Action::RemoveTrack(ref name) => {
                 self.state.lock().tracks.remove(name);
+                self.audio_recordings.remove(name);
             }
             Action::TrackLevel(ref name, level) => {
                 if let Some(track) = self.state.lock().tracks.get(name) {
@@ -297,8 +533,13 @@ impl Engine {
                 }
             }
             Action::TrackToggleArm(ref name) => {
-                if let Some(track) = self.state.lock().tracks.get(name) {
+                if let Some(track) = self.state.lock().tracks.get(name).cloned() {
                     track.lock().arm();
+                    if !track.lock().armed
+                        && self.audio_recordings.contains_key(name)
+                    {
+                        self.flush_track_recording(name).await;
+                    }
                 }
             }
             Action::TrackToggleMute(ref name) => {
@@ -319,6 +560,40 @@ impl Engine {
                 match track_handle {
                     Some(track) => {
                         if let Err(e) = track.lock().load_lv2_plugin(plugin_uri) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackClearDefaultPassthrough { ref track_name } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        track.lock().clear_default_passthrough();
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackSetLv2PluginState {
+                ref track_name,
+                instance_id,
+                ref state,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().set_lv2_plugin_state(instance_id, state.clone())
+                        {
                             self.notify_clients(Err(e)).await;
                             return;
                         }
@@ -601,16 +876,19 @@ impl Engine {
                 ref track_name,
                 start,
                 length,
+                offset,
                 kind,
             } => {
                 if let Some(track) = self.state.lock().tracks.get(track_name) {
                     match kind {
                         Kind::Audio => {
-                            let clip = AudioClip::new(name.clone(), start, length);
+                            let mut clip = AudioClip::new(name.clone(), start, length);
+                            clip.offset = offset;
                             track.lock().audio.clips.push(clip);
                         }
                         Kind::MIDI => {
-                            let clip = MIDIClip::new(name.clone(), start, length);
+                            let mut clip = MIDIClip::new(name.clone(), start, length);
+                            clip.offset = offset;
                             track.lock().midi.clips.push(clip);
                         }
                     }
@@ -953,7 +1231,11 @@ impl Engine {
                     | Action::OpenMidiInputDevice(_)
                     | Action::OpenMidiOutputDevice(_)
                     | Action::Quit
-                    | Action::ListLv2Plugins => {
+                    | Action::ListLv2Plugins
+                    | Action::Play
+                    | Action::Stop
+                    | Action::SetRecordEnabled(_)
+                    | Action::SetSessionPath(_) => {
                         self.handle_request(a).await;
                     }
                     _ => {
@@ -969,6 +1251,8 @@ impl Engine {
                     while let Some(a) = self.pending_requests.pop_front() {
                         self.handle_request(a).await;
                     }
+                    self.apply_mute_solo_policy();
+                    self.append_recorded_cycle();
                     for track in self.state.lock().tracks.values() {
                         if !self.pending_hw_midi_events.is_empty() {
                             track
@@ -978,6 +1262,10 @@ impl Engine {
                         track.lock().setup();
                     }
                     self.pending_hw_midi_events.clear();
+                    if self.playing {
+                        self.transport_sample =
+                            self.transport_sample.saturating_add(self.current_cycle_samples());
+                    }
                     if self.send_tracks().await {
                         self.request_hw_cycle().await;
                     }

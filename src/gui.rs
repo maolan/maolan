@@ -110,6 +110,12 @@ pub struct Maolan {
     add_track: add_track::AddTrackView,
     plugin_filter: String,
     selected_lv2_plugins: BTreeSet<String>,
+    session_dir: Option<PathBuf>,
+    pending_save_path: Option<String>,
+    pending_save_tracks: std::collections::HashSet<String>,
+    playing: bool,
+    record_armed: bool,
+    pending_record_after_save: bool,
 }
 
 impl Default for Maolan {
@@ -134,11 +140,138 @@ impl Default for Maolan {
             add_track: add_track::AddTrackView::default(),
             plugin_filter: String::new(),
             selected_lv2_plugins: BTreeSet::new(),
+            session_dir: None,
+            pending_save_path: None,
+            pending_save_tracks: std::collections::HashSet::new(),
+            playing: false,
+            record_armed: false,
+            pending_record_after_save: false,
         }
     }
 }
 
 impl Maolan {
+    fn lv2_node_to_json(
+        node: &maolan_engine::message::Lv2GraphNode,
+        id_to_index: &std::collections::HashMap<usize, usize>,
+    ) -> Option<Value> {
+        use maolan_engine::message::Lv2GraphNode;
+        match node {
+            Lv2GraphNode::TrackInput => Some(json!({"type":"track_input"})),
+            Lv2GraphNode::TrackOutput => Some(json!({"type":"track_output"})),
+            Lv2GraphNode::PluginInstance(id) => id_to_index
+                .get(id)
+                .copied()
+                .map(|idx| json!({"type":"plugin","plugin_index":idx})),
+        }
+    }
+
+    fn lv2_node_from_json(v: &Value) -> Option<maolan_engine::message::Lv2GraphNode> {
+        use maolan_engine::message::Lv2GraphNode;
+        let t = v["type"].as_str()?;
+        match t {
+            "track_input" => Some(Lv2GraphNode::TrackInput),
+            "track_output" => Some(Lv2GraphNode::TrackOutput),
+            "plugin" => Some(Lv2GraphNode::PluginInstance(
+                v["plugin_index"].as_u64()? as usize,
+            )),
+            _ => None,
+        }
+    }
+
+    fn kind_to_json(kind: Kind) -> Value {
+        match kind {
+            Kind::Audio => json!("audio"),
+            Kind::MIDI => json!("midi"),
+        }
+    }
+
+    fn kind_from_json(v: &Value) -> Option<Kind> {
+        match v.as_str()? {
+            "audio" => Some(Kind::Audio),
+            "midi" => Some(Kind::MIDI),
+            _ => None,
+        }
+    }
+
+    fn lv2_state_to_json(state: &maolan_engine::message::Lv2PluginState) -> Value {
+        let port_values = state
+            .port_values
+            .iter()
+            .map(|p| json!({"index": p.index, "value": p.value}))
+            .collect::<Vec<_>>();
+        let properties = state
+            .properties
+            .iter()
+            .map(|p| {
+                json!({
+                    "key_uri": p.key_uri,
+                    "type_uri": p.type_uri,
+                    "flags": p.flags,
+                    "value": p.value,
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "port_values": port_values,
+            "properties": properties,
+        })
+    }
+
+    fn lv2_state_from_json(v: &Value) -> Option<maolan_engine::message::Lv2PluginState> {
+        let port_values = v["port_values"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| {
+                        Some(maolan_engine::message::Lv2StatePortValue {
+                            index: item["index"].as_u64()? as u32,
+                            value: item["value"].as_f64()? as f32,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let properties = v["properties"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|item| {
+                        Some(maolan_engine::message::Lv2StateProperty {
+                            key_uri: item["key_uri"].as_str()?.to_string(),
+                            type_uri: item["type_uri"].as_str()?.to_string(),
+                            flags: item["flags"].as_u64().unwrap_or(0) as u32,
+                            value: item["value"]
+                                .as_array()?
+                                .iter()
+                                .map(|b| b.as_u64().unwrap_or(0) as u8)
+                                .collect(),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        Some(maolan_engine::message::Lv2PluginState {
+            port_values,
+            properties,
+        })
+    }
+
+    fn restore_actions_task(actions: Vec<Action>) -> Task<Message> {
+        Task::perform(
+            async move {
+                for action in actions {
+                    CLIENT
+                        .send(EngineMessage::Request(action))
+                        .await
+                        .map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            },
+            Message::SendMessageFinished,
+        )
+    }
+
     fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = state
@@ -225,11 +358,49 @@ impl Maolan {
         let filename = "session.json";
         let mut p = PathBuf::from(path.clone());
         p.push(filename);
-        fs::create_dir_all(path)?;
+        fs::create_dir_all(&path)?;
+        fs::create_dir_all(PathBuf::from(&path).join("plugins"))?;
+        fs::create_dir_all(PathBuf::from(&path).join("audio"))?;
+        fs::create_dir_all(PathBuf::from(&path).join("midi"))?;
         let file = File::create(&p)?;
+        let state = self.state.blocking_read();
+        let mut graphs = serde_json::Map::new();
+        for (track_name, (plugins, connections)) in &state.lv2_graphs_by_track {
+            let id_to_index: std::collections::HashMap<usize, usize> = plugins
+                .iter()
+                .enumerate()
+                .map(|(idx, p)| (p.instance_id, idx))
+                .collect();
+            let plugins_json: Vec<Value> = plugins
+                .iter()
+                .map(|p| json!({"uri":p.uri, "state": Self::lv2_state_to_json(&p.state)}))
+                .collect();
+            let conns_json: Vec<Value> = connections
+                .iter()
+                .filter_map(|c| {
+                    let from_node = Self::lv2_node_to_json(&c.from_node, &id_to_index)?;
+                    let to_node = Self::lv2_node_to_json(&c.to_node, &id_to_index)?;
+                    Some(json!({
+                        "from_node": from_node,
+                        "from_port": c.from_port,
+                        "to_node": to_node,
+                        "to_port": c.to_port,
+                        "kind": Self::kind_to_json(c.kind),
+                    }))
+                })
+                .collect();
+            graphs.insert(
+                track_name.clone(),
+                json!({
+                    "plugins": plugins_json,
+                    "connections": conns_json,
+                }),
+            );
+        }
         let result = json!({
             "tracks": &self.state.blocking_read().tracks,
             "connections": &self.state.blocking_read().connections,
+            "graphs": Value::Object(graphs),
         });
         serde_json::to_writer_pretty(file, &result)?;
         Ok(())
@@ -237,6 +408,27 @@ impl Maolan {
 
     fn load(&self, path: String) -> std::io::Result<Task<Message>> {
         let mut tasks = vec![];
+        let mut restore_actions: Vec<Action> = vec![Action::SetSessionPath(path.clone())];
+        let mut warnings: Vec<String> = Vec::new();
+        let session_root = PathBuf::from(path.clone());
+        let existing_tracks: Vec<String> = self
+            .state
+            .blocking_read()
+            .tracks
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        for name in existing_tracks {
+            tasks.push(self.send(Action::RemoveTrack(name)));
+        }
+        {
+            let mut state = self.state.blocking_write();
+            state.connections.clear();
+            state.selected.clear();
+            state.selected_clips.clear();
+            state.connection_view_selection = ConnectionViewSelection::None;
+            state.lv2_graphs_by_track.clear();
+        }
         let filename = "session.json";
         let mut p = PathBuf::from(path.clone());
         p.push(filename);
@@ -311,7 +503,7 @@ impl Maolan {
                     }
                 };
                 let midi_outs = {
-                    if let Some(value) = track["audio"]["outs"].as_u64() {
+                    if let Some(value) = track["midi"]["outs"].as_u64() {
                         value as usize
                     } else {
                         return Err(io::Error::new(
@@ -363,12 +555,43 @@ impl Maolan {
                         let clip_name = clip["name"].as_str().unwrap_or("").to_string();
                         let start = clip["start"].as_u64().unwrap_or(0) as usize;
                         let length = clip["length"].as_u64().unwrap_or(0) as usize;
+                        let offset = clip["offset"].as_u64().unwrap_or(0) as usize;
+
+                        if clip_name.trim().is_empty() {
+                            warnings.push(format!(
+                                "Track '{}' has an audio clip with empty name",
+                                name
+                            ));
+                        }
+                        if length == 0 {
+                            warnings.push(format!(
+                                "Audio clip '{}' on track '{}' has zero length",
+                                clip_name, name
+                            ));
+                        }
+                        if clip_name.to_ascii_lowercase().ends_with(".wav") {
+                            let wav_path = session_root.join(&clip_name);
+                            if !wav_path.exists() {
+                                warnings.push(format!(
+                                    "Missing WAV file for clip '{}': {}",
+                                    clip_name,
+                                    wav_path.display()
+                                ));
+                            } else if !wav_path.is_file() {
+                                warnings.push(format!(
+                                    "WAV clip path is not a file '{}': {}",
+                                    clip_name,
+                                    wav_path.display()
+                                ));
+                            }
+                        }
 
                         tasks.push(self.send(Action::AddClip {
                             name: clip_name,
                             track_name: name.clone(),
                             start,
                             length,
+                            offset,
                             kind: Kind::Audio,
                         }));
                     }
@@ -379,12 +602,27 @@ impl Maolan {
                         let clip_name = clip["name"].as_str().unwrap_or("").to_string();
                         let start = clip["start"].as_u64().unwrap_or(0) as usize;
                         let length = clip["length"].as_u64().unwrap_or(0) as usize;
+                        let offset = clip["offset"].as_u64().unwrap_or(0) as usize;
+
+                        if clip_name.trim().is_empty() {
+                            warnings.push(format!(
+                                "Track '{}' has a MIDI clip with empty name",
+                                name
+                            ));
+                        }
+                        if length == 0 {
+                            warnings.push(format!(
+                                "MIDI clip '{}' on track '{}' has zero length",
+                                clip_name, name
+                            ));
+                        }
 
                         tasks.push(self.send(Action::AddClip {
                             name: clip_name,
                             track_name: name.clone(),
                             start,
                             length,
+                            offset,
                             kind: Kind::MIDI,
                         }));
                     }
@@ -396,7 +634,121 @@ impl Maolan {
                 "'tracks' is not an array",
             ));
         }
+        if let Some(graphs) = session["graphs"].as_object() {
+            for (track_name, graph_v) in graphs {
+                restore_actions.push(Action::TrackClearDefaultPassthrough {
+                    track_name: track_name.clone(),
+                });
+                let Some(plugins_arr) = graph_v["plugins"].as_array() else {
+                    continue;
+                };
+                let mut plugin_count = 0usize;
+                for p in plugins_arr {
+                    let Some(uri) = p["uri"].as_str() else {
+                        continue;
+                    };
+                    let plugin_index = plugin_count;
+                    restore_actions.push(Action::TrackLoadLv2Plugin {
+                        track_name: track_name.clone(),
+                        plugin_uri: uri.to_string(),
+                    });
+                    if let Some(state) = Self::lv2_state_from_json(&p["state"]) {
+                        restore_actions.push(Action::TrackSetLv2PluginState {
+                            track_name: track_name.clone(),
+                            instance_id: plugin_index,
+                            state,
+                        });
+                    }
+                    plugin_count += 1;
+                }
+
+                if let Some(connections_arr) = graph_v["connections"].as_array() {
+                    for c in connections_arr {
+                        let Some(from_node) = Self::lv2_node_from_json(&c["from_node"]) else {
+                            continue;
+                        };
+                        let Some(to_node) = Self::lv2_node_from_json(&c["to_node"]) else {
+                            continue;
+                        };
+                        let Some(kind) = Self::kind_from_json(&c["kind"]) else {
+                            continue;
+                        };
+                        let from_port = c["from_port"].as_u64().unwrap_or(0) as usize;
+                        let to_port = c["to_port"].as_u64().unwrap_or(0) as usize;
+                        let valid_node = |n: &maolan_engine::message::Lv2GraphNode| match n {
+                            maolan_engine::message::Lv2GraphNode::PluginInstance(idx) => {
+                                *idx < plugin_count
+                            }
+                            _ => true,
+                        };
+                        if !valid_node(&from_node) || !valid_node(&to_node) {
+                            continue;
+                        }
+                        match kind {
+                            Kind::Audio => restore_actions.push(Action::TrackConnectLv2Audio {
+                                track_name: track_name.clone(),
+                                from_node,
+                                from_port,
+                                to_node,
+                                to_port,
+                            }),
+                            Kind::MIDI => restore_actions.push(Action::TrackConnectLv2Midi {
+                                track_name: track_name.clone(),
+                                from_node,
+                                from_port,
+                                to_node,
+                                to_port,
+                            }),
+                        }
+                    }
+                }
+            }
+        }
+        if warnings.is_empty() {
+            self.state.blocking_write().message = "Session loaded".to_string();
+        } else {
+            let shown = warnings.len().min(8);
+            let mut msg = format!("Session loaded with {} warning(s):", warnings.len());
+            for warning in warnings.iter().take(shown) {
+                msg.push_str("\n- ");
+                msg.push_str(warning);
+            }
+            if warnings.len() > shown {
+                msg.push_str(&format!("\n- ... and {} more", warnings.len() - shown));
+            }
+            self.state.blocking_write().message = msg;
+        }
+        if !restore_actions.is_empty() {
+            tasks.push(Self::restore_actions_task(restore_actions));
+        }
         Ok(Task::batch(tasks))
+    }
+
+    fn refresh_graphs_then_save(&mut self, path: String) -> Task<Message> {
+        let track_names: Vec<String> = self
+            .state
+            .blocking_read()
+            .tracks
+            .iter()
+            .map(|t| t.name.clone())
+            .collect();
+        self.pending_save_path = Some(path);
+        self.pending_save_tracks = track_names.iter().cloned().collect();
+        if self.pending_save_tracks.is_empty() {
+            let Some(path) = self.pending_save_path.take() else {
+                return Task::none();
+            };
+            if let Err(e) = self.save(path.clone()) {
+                error!("{}", e);
+                return Task::none();
+            }
+            return self.send(Action::SetSessionPath(path));
+        }
+        let tasks = track_names
+            .into_iter()
+            .map(|track_name| self.send(Action::TrackGetLv2Graph { track_name }))
+            .collect::<Vec<_>>();
+        Task::batch(tasks)
     }
 
     fn update_children(&mut self, message: &Message) {
@@ -459,6 +811,41 @@ impl Maolan {
             }
             Message::Cancel => self.modal = None,
             Message::Request(ref a) => return self.send(a.clone()),
+            Message::TransportPlay => {
+                self.playing = true;
+                return self.send(Action::Play);
+            }
+            Message::TransportPause => {
+                self.playing = false;
+                return self.send(Action::Stop);
+            }
+            Message::TransportStop => {
+                self.playing = false;
+                return self.send(Action::Stop);
+            }
+            Message::TransportRecordToggle => {
+                if self.record_armed {
+                    self.record_armed = false;
+                    self.pending_record_after_save = false;
+                    return self.send(Action::SetRecordEnabled(false));
+                }
+                if self.session_dir.is_none() {
+                    self.pending_record_after_save = true;
+                    return Task::perform(
+                        async {
+                            AsyncFileDialog::new()
+                                .set_title("Select folder to save session")
+                                .set_directory("/tmp")
+                                .pick_folder()
+                                .await
+                                .map(|handle| handle.path().to_path_buf())
+                        },
+                        Message::RecordFolderSelected,
+                    );
+                }
+                self.record_armed = true;
+                return self.send(Action::SetRecordEnabled(true));
+            }
             Message::RefreshLv2Plugins => return self.send(Action::ListLv2Plugins),
             Message::FilterLv2Plugins(ref query) => {
                 self.plugin_filter = query.clone();
@@ -653,6 +1040,7 @@ impl Maolan {
                     track_name,
                     start,
                     length,
+                    offset,
                     kind,
                 } => {
                     let mut state = self.state.blocking_write();
@@ -663,7 +1051,7 @@ impl Maolan {
                                     name: name.clone(),
                                     start: *start,
                                     length: *length,
-                                    offset: 0,
+                                    offset: *offset,
                                 });
                             }
                             Kind::MIDI => {
@@ -671,7 +1059,7 @@ impl Maolan {
                                     name: name.clone(),
                                     start: *start,
                                     length: *length,
-                                    offset: 0,
+                                    offset: *offset,
                                 });
                             }
                         }
@@ -768,6 +1156,8 @@ impl Maolan {
                     state.message = format!("Loaded {} LV2 plugins", state.lv2_plugins.len());
                 }
                 Action::TrackLoadLv2Plugin { track_name, .. }
+                | Action::TrackClearDefaultPassthrough { track_name, .. }
+                | Action::TrackSetLv2PluginState { track_name, .. }
                 | Action::TrackUnloadLv2Plugin { track_name, .. }
                 | Action::TrackUnloadLv2PluginInstance { track_name, .. }
                 | Action::TrackConnectLv2Audio { track_name, .. }
@@ -787,27 +1177,47 @@ impl Maolan {
                     connections,
                 } => {
                     let mut state = self.state.blocking_write();
-                    state.lv2_graph_track = Some(track_name.clone());
-                    state.lv2_graph_plugins = plugins.clone();
-                    state.lv2_graph_connections = connections.clone();
-                    state.lv2_graph_selected_connections.clear();
-                    state.lv2_graph_selected_plugin = state
-                        .lv2_graph_selected_plugin
-                        .filter(|id| plugins.iter().any(|p| p.instance_id == *id));
-                    let mut new_positions = std::collections::HashMap::new();
-                    for (idx, plugin) in plugins.iter().enumerate() {
-                        let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
-                        let pos = state
-                            .lv2_graph_plugin_positions
-                            .get(&plugin.instance_id)
-                            .copied()
-                            .unwrap_or(fallback);
-                        new_positions.insert(plugin.instance_id, pos);
+                    state
+                        .lv2_graphs_by_track
+                        .insert(track_name.clone(), (plugins.clone(), connections.clone()));
+                    if state.lv2_graph_track.as_deref() == Some(track_name.as_str()) {
+                        state.lv2_graph_track = Some(track_name.clone());
+                        state.lv2_graph_plugins = plugins.clone();
+                        state.lv2_graph_connections = connections.clone();
+                        state.lv2_graph_selected_connections.clear();
+                        state.lv2_graph_selected_plugin = state
+                            .lv2_graph_selected_plugin
+                            .filter(|id| plugins.iter().any(|p| p.instance_id == *id));
+                        let mut new_positions = std::collections::HashMap::new();
+                        for (idx, plugin) in plugins.iter().enumerate() {
+                            let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
+                            let pos = state
+                                .lv2_graph_plugin_positions
+                                .get(&plugin.instance_id)
+                                .copied()
+                                .unwrap_or(fallback);
+                            new_positions.insert(plugin.instance_id, pos);
+                        }
+                        state.lv2_graph_plugin_positions = new_positions;
                     }
-                    state.lv2_graph_plugin_positions = new_positions;
+                    drop(state);
+
+                    if self.pending_save_path.is_some() {
+                        self.pending_save_tracks.remove(track_name);
+                        if self.pending_save_tracks.is_empty() {
+                            let path = self.pending_save_path.take().unwrap_or_default();
+                            if !path.is_empty() {
+                                if let Err(e) = self.save(path.clone()) {
+                                    error!("{}", e);
+                                } else {
+                                    return self.send(Action::SetSessionPath(path));
+                                }
+                            }
+                        }
+                    }
                 }
                 _ => {
-                    println!("Response: {:?}", a);
+                    // Intentionally ignore responses that do not need explicit GUI handling.
                 }
             },
             Message::Response(Err(ref e)) => {
@@ -815,13 +1225,24 @@ impl Maolan {
                 error!("Engine error: {e}");
             }
             Message::SaveFolderSelected(ref path_opt) => {
-                if let Some(path) = path_opt
-                    && let Err(s) = self.save(path.to_string_lossy().to_string())
-                {
-                    error!("{}", s);
+                if let Some(path) = path_opt {
+                    self.session_dir = Some(path.clone());
+                    return self.refresh_graphs_then_save(path.to_string_lossy().to_string());
+                }
+            }
+            Message::RecordFolderSelected(ref path_opt) => {
+                if let Some(path) = path_opt {
+                    self.session_dir = Some(path.clone());
+                    self.record_armed = true;
+                    self.pending_record_after_save = false;
+                    let save_task = self.refresh_graphs_then_save(path.to_string_lossy().to_string());
+                    return Task::batch(vec![save_task, self.send(Action::SetRecordEnabled(true))]);
+                } else {
+                    self.pending_record_after_save = false;
                 }
             }
             Message::OpenFolderSelected(Some(path)) => {
+                self.session_dir = Some(path.clone());
                 match self.load(path.to_string_lossy().to_string()) {
                     Ok(task) => return task,
                     Err(e) => {
@@ -1328,7 +1749,7 @@ impl Maolan {
                         View::TrackPlugins => self.track_plugins.view(),
                     };
 
-                    let mut content = column![self.menu.view(), self.toolbar.view()];
+                    let mut content = column![self.menu.view(), self.toolbar.view(self.playing, self.record_armed)];
                     if matches!(state.view, View::TrackPlugins) {
                         content = content.push(
                             container(

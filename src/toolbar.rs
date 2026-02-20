@@ -14,7 +14,7 @@ impl Toolbar {
     }
     pub fn update(&mut self, _message: Message) {}
 
-    pub fn view(&self) -> iced::Element<'_, Message> {
+    pub fn view(&self, _playing: bool, recording: bool) -> iced::Element<'_, Message> {
         let btn_style = |theme: &Theme, status: button::Status| {
             let mut style = button::primary(theme, status);
 
@@ -27,22 +27,35 @@ impl Toolbar {
         row![
             row![
                 tooltip(
-                    button(play()).style(btn_style).on_press(Message::Workspace),
+                    button(play()).style(btn_style).on_press(Message::TransportPlay),
                     "Play",
                     Position::Bottom
                 ),
                 tooltip(
                     button(pause())
                         .style(btn_style)
-                        .on_press(Message::Workspace),
+                        .on_press(Message::TransportPause),
                     "Pause",
                     Position::Bottom
                 ),
                 tooltip(
                     button(square())
                         .style(btn_style)
-                        .on_press(Message::Workspace),
+                        .on_press(Message::TransportStop),
                     "Stop",
+                    Position::Bottom
+                ),
+                tooltip(
+                    if recording {
+                        button("REC")
+                            .style(button::danger)
+                            .on_press(Message::TransportRecordToggle)
+                    } else {
+                        button("REC")
+                            .style(btn_style)
+                            .on_press(Message::TransportRecordToggle)
+                    },
+                    "Record",
                     Position::Bottom
                 ),
             ]

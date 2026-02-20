@@ -95,6 +95,11 @@ pub enum Message {
 
     OpenFileImporter,
     ImportFilesSelected(Option<Vec<std::path::PathBuf>>),
+    TransportPlay,
+    TransportPause,
+    TransportStop,
+    TransportRecordToggle,
+    RecordFolderSelected(Option<PathBuf>),
 
     SendMessageFinished(Result<(), String>),
 
