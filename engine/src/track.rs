@@ -23,6 +23,7 @@ pub struct Lv2Instance {
 pub struct Track {
     pub name: String,
     pub level: f32,
+    pub balance: f32,
     pub armed: bool,
     pub muted: bool,
     pub soloed: bool,
@@ -52,6 +53,7 @@ impl Track {
         Self {
             name,
             level: 0.0,
+            balance: 0.0,
             armed: false,
             muted: false,
             soloed: false,
@@ -179,6 +181,12 @@ impl Track {
         self.collect_hw_midi_output_events();
         self.clear_local_midi_inputs();
         let linear_gain = 10.0_f32.powf(self.level / 20.0);
+        let (left_balance, right_balance) = if self.audio.outs.len() == 2 {
+            let b = self.balance.clamp(-1.0, 1.0);
+            ((1.0 - b).clamp(0.0, 1.0), (1.0 + b).clamp(0.0, 1.0))
+        } else {
+            (1.0, 1.0)
+        };
 
         let internal_sources = self.internal_audio_sources();
         for out_idx in 0..self.audio.outs.len() {
@@ -209,7 +217,16 @@ impl Track {
                 {
                     *tap_sample += *in_sample;
                     if self.output_enabled {
-                        *out_sample += *in_sample * linear_gain;
+                        let balance_gain = if self.audio.outs.len() == 2 {
+                            if out_idx == 0 {
+                                left_balance
+                            } else {
+                                right_balance
+                            }
+                        } else {
+                            1.0
+                        };
+                        *out_sample += *in_sample * linear_gain * balance_gain;
                     }
                 }
             }
@@ -232,6 +249,9 @@ impl Track {
     }
     pub fn set_level(&mut self, level: f32) {
         self.level = level;
+    }
+    pub fn set_balance(&mut self, balance: f32) {
+        self.balance = balance.clamp(-1.0, 1.0);
     }
 
     pub fn output_meter_db(&self) -> Vec<f32> {

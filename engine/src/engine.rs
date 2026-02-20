@@ -80,6 +80,7 @@ pub struct Engine {
     record_enabled: bool,
     session_dir: Option<PathBuf>,
     hw_out_level_db: f32,
+    hw_out_balance: f32,
     hw_out_muted: bool,
     last_hw_out_meter_publish: Option<Instant>,
     last_track_meter_publish: Option<Instant>,
@@ -152,6 +153,7 @@ impl Engine {
             record_enabled: false,
             session_dir: None,
             hw_out_level_db: 0.0,
+            hw_out_balance: 0.0,
             hw_out_muted: false,
             last_hw_out_meter_publish: None,
             last_track_meter_publish: None,
@@ -542,6 +544,7 @@ impl Engine {
         {
             let hw_out = oss_out.lock();
             hw_out.output_gain_linear = gain;
+            hw_out.output_balance = self.hw_out_balance;
         }
         if !self.should_publish_hw_out_meters() {
             return;
@@ -551,12 +554,24 @@ impl Engine {
             hw_out
                 .channels
                 .iter()
-                .map(|channel| {
+                .enumerate()
+                .map(|(channel_idx, channel)| {
+                    let balance_gain = if hw_out.channels.len() == 2 {
+                        let b = self.hw_out_balance.clamp(-1.0, 1.0);
+                        if channel_idx == 0 {
+                            (1.0 - b).clamp(0.0, 1.0)
+                        } else {
+                            (1.0 + b).clamp(0.0, 1.0)
+                        }
+                    } else {
+                        1.0
+                    };
                     let buf = channel.buffer.lock();
                     let peak = buf
                         .iter()
                         .fold(0.0_f32, |acc, sample| acc.max(sample.abs()))
-                        * gain;
+                        * gain
+                        * balance_gain;
                     if peak <= 1.0e-6 {
                         -90.0
                     } else {
@@ -793,6 +808,13 @@ impl Engine {
                     self.hw_out_level_db = level;
                 } else if let Some(track) = self.state.lock().tracks.get(name) {
                     track.lock().set_level(level);
+                }
+            }
+            Action::TrackBalance(ref name, balance) => {
+                if name == "hw:out" {
+                    self.hw_out_balance = balance.clamp(-1.0, 1.0);
+                } else if let Some(track) = self.state.lock().tracks.get(name) {
+                    track.lock().set_balance(balance);
                 }
             }
             Action::TrackMeters { .. } => {}

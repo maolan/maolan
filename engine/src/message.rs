@@ -88,6 +88,7 @@ pub enum Action {
     },
     RemoveTrack(String),
     TrackLevel(String, f32),
+    TrackBalance(String, f32),
     TrackMeters {
         track_name: String,
         output_db: Vec<f32>,

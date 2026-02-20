@@ -50,6 +50,7 @@ pub struct Track {
     id: usize,
     pub name: String,
     pub level: f32,
+    pub balance: f32,
     #[serde(skip, default)]
     pub meter_out_db: Vec<f32>,
     pub armed: bool,
@@ -75,6 +76,7 @@ impl Track {
             id: 0,
             name,
             level,
+            balance: 0.0,
             meter_out_db: vec![-90.0; audio_outs],
             armed: false,
             muted: false,
@@ -92,6 +94,11 @@ impl Track {
                 Action::TrackLevel(name, level) => {
                     if name == self.name {
                         self.level = level;
+                    }
+                }
+                Action::TrackBalance(name, balance) => {
+                    if name == self.name {
+                        self.balance = balance;
                     }
                 }
                 Action::TrackMeters {

@@ -516,6 +516,11 @@ impl Maolan {
                         self.state.blocking_write().hw_out_level = *level;
                     }
                 }
+                Action::TrackBalance(name, balance) => {
+                    if name == "hw:out" {
+                        self.state.blocking_write().hw_out_balance = *balance;
+                    }
+                }
                 Action::TrackToggleMute(name) => {
                     if name == "hw:out" {
                         let mut state = self.state.blocking_write();

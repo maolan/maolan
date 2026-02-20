@@ -1,4 +1,9 @@
-use crate::{message::Message, state::State, style, widget::slider::Slider};
+use crate::{
+    message::Message,
+    state::State,
+    style,
+    widget::{horizontal_slider::HorizontalSlider, slider::Slider},
+};
 
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Point,
@@ -14,6 +19,7 @@ pub struct Mixer {
 impl Mixer {
     const FADER_MIN_DB: f32 = -90.0;
     const FADER_MAX_DB: f32 = 20.0;
+    const FADER_WITH_TICKS_WIDTH: f32 = 58.0;
 
     pub fn new(state: State) -> Self {
         Self { state }
@@ -93,6 +99,16 @@ impl Mixer {
         .into()
     }
 
+    fn balance_slider<F>(value: f32, on_change: F) -> Element<'static, Message>
+    where
+        F: Fn(f32) -> Message + 'static,
+    {
+        HorizontalSlider::new(-1.0..=1.0, value.clamp(-1.0, 1.0), on_change)
+            .width(Length::Fixed(Self::FADER_WITH_TICKS_WIDTH))
+            .height(Length::Fixed(14.0))
+            .into()
+    }
+
     fn vu_meter(channels: usize, levels_db: &[f32], meter_h: f32) -> Element<'static, Message> {
         let channels = channels.max(1);
         let strip_w = 1.0;
@@ -147,7 +163,16 @@ impl Mixer {
 
     pub fn view(&self) -> Element<'_, Message> {
         let mut strips = row![].width(Length::Fill);
-        let (tracks, selected, height, hw_out_channels, hw_out_level, hw_out_muted, hw_out_meter_db) = {
+        let (
+            tracks,
+            selected,
+            height,
+            hw_out_channels,
+            hw_out_level,
+            hw_out_balance,
+            hw_out_muted,
+            hw_out_meter_db,
+        ) = {
             let state = self.state.blocking_read();
             (
                 state.tracks.clone(),
@@ -155,6 +180,7 @@ impl Mixer {
                 state.mixer_height,
                 state.hw_out.as_ref().map(|hw| hw.channels).unwrap_or(0),
                 state.hw_out_level,
+                state.hw_out_balance,
                 state.hw_out_muted,
                 state.hw_out_meter_db.clone(),
             )
@@ -170,12 +196,31 @@ impl Mixer {
                     container(
                         column![
                             row![
-                                Self::slider_with_ticks(track.level, fader_height, {
-                                    let name = track.name.clone();
-                                    move |new_val| {
-                                        Message::Request(Action::TrackLevel(name.clone(), new_val))
-                                    }
-                                }),
+                                column![
+                                    if track.audio.outs == 2 {
+                                        Self::balance_slider(track.balance, {
+                                            let name = track.name.clone();
+                                            move |new_val| {
+                                                Message::Request(Action::TrackBalance(
+                                                    name.clone(),
+                                                    new_val
+                                                ))
+                                            }
+                                        })
+                                    } else {
+                                        Space::new()
+                                            .width(Length::Fixed(Self::FADER_WITH_TICKS_WIDTH))
+                                            .height(Length::Fixed(14.0))
+                                            .into()
+                                    },
+                                    Self::slider_with_ticks(track.level, fader_height, {
+                                        let name = track.name.clone();
+                                        move |new_val| {
+                                            Message::Request(Action::TrackLevel(name.clone(), new_val))
+                                        }
+                                    }),
+                                ]
+                                .spacing(4),
                                 Self::vu_meter(track.audio.outs, &track.meter_out_db, fader_height),
                             ]
                             .height(Length::Fill)
@@ -250,11 +295,24 @@ impl Mixer {
             container(
                 column![
                     row![
-                        Self::slider_with_ticks(hw_out_level, fader_height, {
-                            move |new_val| {
-                                Message::Request(Action::TrackLevel("hw:out".to_string(), new_val))
-                            }
-                        }),
+                        column![
+                            if hw_out_channels == 2 {
+                                Self::balance_slider(hw_out_balance, move |new_val| {
+                                    Message::Request(Action::TrackBalance("hw:out".to_string(), new_val))
+                                })
+                            } else {
+                                Space::new()
+                                    .width(Length::Fixed(Self::FADER_WITH_TICKS_WIDTH))
+                                    .height(Length::Fixed(14.0))
+                                    .into()
+                            },
+                            Self::slider_with_ticks(hw_out_level, fader_height, {
+                                move |new_val| {
+                                    Message::Request(Action::TrackLevel("hw:out".to_string(), new_val))
+                                }
+                            }),
+                        ]
+                        .spacing(4),
                         Self::vu_meter(hw_out_channels.max(1), &hw_out_meter_db, fader_height),
                     ]
                     .height(Length::Fill)

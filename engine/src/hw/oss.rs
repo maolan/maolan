@@ -225,6 +225,7 @@ pub struct Audio {
     pub channels: Vec<Arc<AudioIO>>,
     pub input: bool,
     pub output_gain_linear: f32,
+    pub output_balance: f32,
     pub rate: i32,
     pub format: u32,
     pub samples: usize,
@@ -268,6 +269,7 @@ impl Audio {
             dsp: binding.open(path)?,
             input,
             output_gain_linear: 1.0,
+            output_balance: 0.0,
             rate,
             channels: vec![],
             format: AFMT_S32_NE,
@@ -381,6 +383,12 @@ impl Audio {
         } else {
             let scale_factor = i32::MAX as f32;
             let output_gain = self.output_gain_linear;
+            let (left_balance, right_balance) = if num_channels == 2 {
+                let b = self.output_balance.clamp(-1.0, 1.0);
+                ((1.0 - b).clamp(0.0, 1.0), (1.0 + b).clamp(0.0, 1.0))
+            } else {
+                (1.0, 1.0)
+            };
             let data_i32 = self.buffer.as_mut();
 
             for (ch_idx, io_port) in self.channels.iter().enumerate() {
@@ -390,8 +398,17 @@ impl Audio {
 
                 for (i, &sample) in channel_samples.iter().enumerate().take(self.chsamples) {
                     let target_idx = i * num_channels + ch_idx;
+                    let balance_gain = if num_channels == 2 {
+                        if ch_idx == 0 {
+                            left_balance
+                        } else {
+                            right_balance
+                        }
+                    } else {
+                        1.0
+                    };
                     data_i32[target_idx] =
-                        ((sample * output_gain).clamp(-1.0, 1.0) * scale_factor) as i32;
+                        ((sample * output_gain * balance_gain).clamp(-1.0, 1.0) * scale_factor) as i32;
                 }
             }
         }
