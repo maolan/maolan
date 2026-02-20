@@ -1,5 +1,5 @@
 use crate::{
-    hw::{midi::MidiHub, oss},
+    hw::oss::{self, MidiHub},
     message::Message,
     mutex::UnsafeMutex,
 };

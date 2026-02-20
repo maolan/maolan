@@ -4,7 +4,7 @@ use tokio::task::JoinHandle;
 
 use crate::{
     audio::clip::AudioClip,
-    hw::{midi::MidiHub, oss},
+    hw::oss::{self, MidiHub},
     kind::Kind,
     message::{Action, Message},
     midi::clip::MIDIClip,
