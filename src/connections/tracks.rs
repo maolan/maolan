@@ -79,11 +79,20 @@ impl Graph {
         }
     }
 
-    fn midi_device_label(path: &str) -> String {
-        path.rsplit('/').next().unwrap_or(path).to_string()
+    fn midi_device_label(data: &StateData, path: &str) -> String {
+        data.midi_hw_labels
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| path.rsplit('/').next().unwrap_or(path).to_string())
     }
 
-    fn default_midi_in_rect(index: usize, box_w: f32, box_h: f32, gap: f32) -> Rectangle {
+    fn midi_box_width(label: &str) -> f32 {
+        let width = label.chars().count() as f32 * 7.2 + 13.0;
+        width.clamp(90.0, 360.0)
+    }
+
+    fn default_midi_in_rect(index: usize, label: &str, box_h: f32, gap: f32) -> Rectangle {
+        let box_w = Self::midi_box_width(label);
         Rectangle::new(
             Point::new(80.0, 10.0 + index as f32 * (box_h + gap)),
             iced::Size::new(box_w, box_h),
@@ -92,12 +101,13 @@ impl Graph {
 
     fn default_midi_out_rect(
         index: usize,
+        label: &str,
         bounds: Rectangle,
         hw_width: f32,
-        box_w: f32,
         box_h: f32,
         gap: f32,
     ) -> Rectangle {
+        let box_w = Self::midi_box_width(label);
         Rectangle::new(
             Point::new(
                 bounds.width - hw_width - 10.0 - box_w,
@@ -121,7 +131,6 @@ impl canvas::Program<Message> for Graph {
         let cursor_position = cursor.position_in(bounds)?;
         let size = iced::Size::new(140.0, 80.0);
         let hw_width = 70.0;
-        let midi_hw_box_w = 170.0;
         let midi_hw_box_h = 24.0;
         let midi_hw_box_gap = 6.0;
 
@@ -234,9 +243,10 @@ impl canvas::Program<Message> for Graph {
                     }
 
                     for (idx, device) in data.opened_midi_in_hw.iter().enumerate() {
+                        let label = Self::midi_device_label(&data, device);
                         let default_rect = Self::default_midi_in_rect(
                             idx,
-                            midi_hw_box_w,
+                            &label,
                             midi_hw_box_h,
                             midi_hw_box_gap,
                         );
@@ -258,11 +268,12 @@ impl canvas::Program<Message> for Graph {
                     }
 
                     for (idx, device) in data.opened_midi_out_hw.iter().enumerate() {
+                        let label = Self::midi_device_label(&data, device);
                         let default_rect = Self::default_midi_out_rect(
                             idx,
+                            &label,
                             bounds,
                             hw_width,
-                            midi_hw_box_w,
                             midi_hw_box_h,
                             midi_hw_box_gap,
                         );
@@ -660,7 +671,6 @@ impl canvas::Program<Message> for Graph {
         let mut frame = Frame::new(renderer, bounds.size());
         let size = iced::Size::new(140.0, 80.0);
         let hw_width = 70.0;
-        let midi_hw_box_w = 170.0;
         let midi_hw_box_h = 24.0;
         let midi_hw_box_gap = 6.0;
         let cursor_position = cursor.position_in(bounds);
@@ -912,8 +922,9 @@ impl canvas::Program<Message> for Graph {
             // - MIDI IN: source-like ports on the right edge
             // - MIDI OUT: sink-like ports on the left edge
             for (j, device) in data.opened_midi_in_hw.iter().enumerate() {
+                let label = Self::midi_device_label(&data, device);
                 let default_rect =
-                    Self::default_midi_in_rect(j, midi_hw_box_w, midi_hw_box_h, midi_hw_box_gap);
+                    Self::default_midi_in_rect(j, &label, midi_hw_box_h, midi_hw_box_gap);
                 let pos = data
                     .midi_hw_in_positions
                     .get(device)
@@ -946,7 +957,7 @@ impl canvas::Program<Message> for Graph {
                         .with_width(2.0),
                 );
                 frame.fill_text(Text {
-                    content: Self::midi_device_label(device),
+                    content: label,
                     position: Point::new(
                         pos.x + default_rect.width / 2.0,
                         pos.y + default_rect.height / 2.0,
@@ -967,11 +978,12 @@ impl canvas::Program<Message> for Graph {
             }
 
             for (j, device) in data.opened_midi_out_hw.iter().enumerate() {
+                let label = Self::midi_device_label(&data, device);
                 let default_rect = Self::default_midi_out_rect(
                     j,
+                    &label,
                     bounds,
                     hw_width,
-                    midi_hw_box_w,
                     midi_hw_box_h,
                     midi_hw_box_gap,
                 );
@@ -1007,7 +1019,7 @@ impl canvas::Program<Message> for Graph {
                         .with_width(2.0),
                 );
                 frame.fill_text(Text {
-                    content: Self::midi_device_label(device),
+                    content: label,
                     position: Point::new(
                         pos.x + default_rect.width / 2.0,
                         pos.y + default_rect.height / 2.0,

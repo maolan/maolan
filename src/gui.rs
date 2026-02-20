@@ -18,14 +18,81 @@ use serde_json::{Value, json};
 use std::{
     fs::{self, File},
     io::BufReader,
-    path::PathBuf,
-    process::exit,
+    path::{Path, PathBuf},
+    process::{Command, exit},
     sync::{Arc, LazyLock},
 };
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
 static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
+
+fn kernel_midi_label(path: &str) -> String {
+    let basename = Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(path)
+        .to_string();
+
+    fn sysctl_value(key: &str) -> Option<String> {
+        let output = Command::new("sysctl").arg("-n").arg(key).output().ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!value.is_empty()).then_some(value)
+    }
+
+    // FreeBSD maps umidi nodes through uaudio units on many systems.
+    let dev_id: String = basename
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    if !dev_id.is_empty() {
+        if basename.starts_with("umidi")
+            && let Some(desc) = sysctl_value(&format!("dev.uaudio.{dev_id}.%desc"))
+        {
+            return compact_desc(desc);
+        }
+        if basename.starts_with("midi")
+            && let Some(desc) = sysctl_value(&format!("dev.midi.{dev_id}.%desc"))
+        {
+            return compact_desc(desc);
+        }
+    }
+
+    let probe_keys = {
+        let short = basename.split('.').next().unwrap_or(&basename).to_string();
+        if short == basename {
+            vec![basename.clone()]
+        } else {
+            vec![basename.clone(), short]
+        }
+    };
+
+    if let Ok(sndstat) = fs::read_to_string("/dev/sndstat") {
+        for line in sndstat.lines() {
+            if !probe_keys.iter().any(|key| line.contains(key)) {
+                continue;
+            }
+            if let (Some(start), Some(end)) = (line.find('<'), line.rfind('>'))
+                && start < end
+            {
+                let label = line[start + 1..end].trim();
+                if !label.is_empty() {
+                    return label.to_string();
+                }
+            }
+            let compact = line.trim();
+            if !compact.is_empty() {
+                return compact.to_string();
+            }
+        }
+    }
+
+    basename
+}
 
 pub struct Maolan {
     clip: Option<DraggedClip>,
@@ -527,6 +594,10 @@ impl Maolan {
                     if !state.opened_midi_in_hw.iter().any(|name| name == s) {
                         state.opened_midi_in_hw.push(s.clone());
                     }
+                    state
+                        .midi_hw_labels
+                        .entry(s.clone())
+                        .or_insert_with(|| kernel_midi_label(s));
                     state.message = format!("Opened MIDI input {s}");
                 }
                 Action::OpenMidiOutputDevice(s) => {
@@ -534,6 +605,10 @@ impl Maolan {
                     if !state.opened_midi_out_hw.iter().any(|name| name == s) {
                         state.opened_midi_out_hw.push(s.clone());
                     }
+                    state
+                        .midi_hw_labels
+                        .entry(s.clone())
+                        .or_insert_with(|| kernel_midi_label(s));
                     state.message = format!("Opened MIDI output {s}");
                 }
                 Action::HWInfo {
@@ -1249,3 +1324,6 @@ impl Maolan {
         Subscription::batch(vec![engine_sub, keyboard_sub, event_sub])
     }
 }
+    fn compact_desc(desc: String) -> String {
+        desc.split(',').next().unwrap_or(&desc).trim().to_string()
+    }
