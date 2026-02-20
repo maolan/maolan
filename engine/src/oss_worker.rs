@@ -3,6 +3,7 @@ use crate::{
     message::Message,
     mutex::UnsafeMutex,
 };
+use nix::libc;
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -19,6 +20,29 @@ pub struct OssWorker {
 }
 
 impl OssWorker {
+    #[cfg(unix)]
+    fn try_enable_realtime() -> Result<(), String> {
+        // Best-effort RT priority for the OS thread running this worker task.
+        // Requires appropriate system privileges (e.g. rtprio/limits).
+        let thread = unsafe { libc::pthread_self() };
+        let policy = libc::SCHED_FIFO;
+        let param = libc::sched_param { sched_priority: 10 };
+        let rc = unsafe { libc::pthread_setschedparam(thread, policy, &param) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "pthread_setschedparam failed with errno {}",
+                rc
+            ))
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn try_enable_realtime() -> Result<(), String> {
+        Err("Realtime thread priority is not supported on this platform".to_string())
+    }
+
     pub fn new(
         oss_in: Arc<UnsafeMutex<oss::Audio>>,
         oss_out: Arc<UnsafeMutex<oss::Audio>>,
@@ -39,6 +63,9 @@ impl OssWorker {
     }
 
     pub async fn work(mut self) {
+        if let Err(e) = Self::try_enable_realtime() {
+            eprintln!("OSS worker realtime priority not enabled: {}", e);
+        }
         loop {
             match self.rx.recv().await {
                 Some(msg) => match msg {
