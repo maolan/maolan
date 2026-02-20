@@ -356,14 +356,59 @@ impl Maolan {
     }
     fn save(&self, path: String) -> std::io::Result<()> {
         let filename = "session.json";
-        let mut p = PathBuf::from(path.clone());
+        let session_root = PathBuf::from(path.clone());
+        let mut p = session_root.clone();
         p.push(filename);
         fs::create_dir_all(&path)?;
-        fs::create_dir_all(PathBuf::from(&path).join("plugins"))?;
-        fs::create_dir_all(PathBuf::from(&path).join("audio"))?;
-        fs::create_dir_all(PathBuf::from(&path).join("midi"))?;
+        fs::create_dir_all(session_root.join("plugins"))?;
+        fs::create_dir_all(session_root.join("audio"))?;
+        fs::create_dir_all(session_root.join("midi"))?;
         let file = File::create(&p)?;
         let state = self.state.blocking_read();
+        let mut tracks_json = serde_json::to_value(&state.tracks).map_err(io::Error::other)?;
+        if let Some(tracks) = tracks_json.as_array_mut() {
+            for track in tracks {
+                let Some(midi_clips) = track
+                    .get_mut("midi")
+                    .and_then(|m| m.get_mut("clips"))
+                    .and_then(Value::as_array_mut)
+                else {
+                    continue;
+                };
+                for clip in midi_clips {
+                    let Some(name) = clip.get("name").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let lower = name.to_ascii_lowercase();
+                    if !(lower.ends_with(".mid") || lower.ends_with(".midi")) {
+                        continue;
+                    }
+                    let src_path = {
+                        let p = PathBuf::from(name);
+                        if p.is_absolute() {
+                            p
+                        } else {
+                            let in_session = session_root.join(&p);
+                            if in_session.exists() {
+                                in_session
+                            } else {
+                                p
+                            }
+                        }
+                    };
+                    let basename = Path::new(name)
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("clip.mid");
+                    let rel = format!("midi/{basename}");
+                    let dst_path = session_root.join(&rel);
+                    if src_path.exists() && src_path.is_file() && src_path != dst_path {
+                        let _ = fs::copy(&src_path, &dst_path);
+                    }
+                    clip["name"] = Value::String(rel);
+                }
+            }
+        }
         let mut graphs = serde_json::Map::new();
         for (track_name, (plugins, connections)) in &state.lv2_graphs_by_track {
             let id_to_index: std::collections::HashMap<usize, usize> = plugins
@@ -398,8 +443,8 @@ impl Maolan {
             );
         }
         let result = json!({
-            "tracks": &self.state.blocking_read().tracks,
-            "connections": &self.state.blocking_read().connections,
+            "tracks": tracks_json,
+            "connections": &state.connections,
             "graphs": Value::Object(graphs),
         });
         serde_json::to_writer_pretty(file, &result)?;
@@ -615,6 +660,24 @@ impl Maolan {
                                 "MIDI clip '{}' on track '{}' has zero length",
                                 clip_name, name
                             ));
+                        }
+                        if clip_name.to_ascii_lowercase().ends_with(".mid")
+                            || clip_name.to_ascii_lowercase().ends_with(".midi")
+                        {
+                            let mid_path = session_root.join(&clip_name);
+                            if !mid_path.exists() {
+                                warnings.push(format!(
+                                    "Missing MIDI file for clip '{}': {}",
+                                    clip_name,
+                                    mid_path.display()
+                                ));
+                            } else if !mid_path.is_file() {
+                                warnings.push(format!(
+                                    "MIDI clip path is not a file '{}': {}",
+                                    clip_name,
+                                    mid_path.display()
+                                ));
+                            }
                         }
 
                         tasks.push(self.send(Action::AddClip {

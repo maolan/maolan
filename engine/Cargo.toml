@@ -13,3 +13,4 @@ byteorder = "1.5.0"
 nix = { version = "0.31.1", features = ["ioctl"] }
 lilv = "0.2.4"
 lv2_raw = "0.2.0"
+midly = "0.5.3"

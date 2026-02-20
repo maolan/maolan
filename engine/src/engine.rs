@@ -1,9 +1,15 @@
 use std::{
     collections::VecDeque,
+    fs::File,
     fs::read_dir,
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
+};
+use midly::{
+    Arena, Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
+    live::LiveEvent,
+    num::{u15, u24, u28},
 };
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
@@ -44,6 +50,13 @@ struct RecordingSession {
     file_name: String,
 }
 
+#[derive(Debug, Clone)]
+struct MidiRecordingSession {
+    start_sample: usize,
+    events: Vec<(u64, Vec<u8>)>,
+    file_name: String,
+}
+
 pub struct Engine {
     clients: Vec<Sender<Message>>,
     rx: Receiver<Message>,
@@ -61,6 +74,7 @@ pub struct Engine {
     awaiting_hwfinished: bool,
     transport_sample: usize,
     audio_recordings: std::collections::HashMap<String, RecordingSession>,
+    midi_recordings: std::collections::HashMap<String, MidiRecordingSession>,
     playing: bool,
     record_enabled: bool,
     session_dir: Option<PathBuf>,
@@ -73,6 +87,10 @@ impl Engine {
 
     fn session_audio_dir(&self) -> Option<PathBuf> {
         self.session_dir.as_ref().map(|d| d.join("audio"))
+    }
+
+    fn session_midi_dir(&self) -> Option<PathBuf> {
+        self.session_dir.as_ref().map(|d| d.join("midi"))
     }
 
     fn ensure_session_subdirs(&self) {
@@ -122,6 +140,7 @@ impl Engine {
             awaiting_hwfinished: false,
             transport_sample: 0,
             audio_recordings: std::collections::HashMap::new(),
+            midi_recordings: std::collections::HashMap::new(),
             playing: false,
             record_enabled: false,
             session_dir: None,
@@ -174,6 +193,14 @@ impl Engine {
         format!("{}_{}.wav", Self::sanitize_file_stem(track_name), ts)
     }
 
+    fn next_midi_recording_file_name(track_name: &str) -> String {
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        format!("{}_{}.mid", Self::sanitize_file_stem(track_name), ts)
+    }
+
     fn append_recorded_cycle(&mut self) {
         if !self.playing || !self.record_enabled {
             return;
@@ -205,16 +232,30 @@ impl Engine {
                     entry.samples.push(track.record_tap_outs[ch][frame]);
                 }
             }
+
+            let midi_entry = self
+                .midi_recordings
+                .entry(name.clone())
+                .or_insert_with(|| MidiRecordingSession {
+                    start_sample: self.transport_sample,
+                    events: Vec::new(),
+                    file_name: Self::next_midi_recording_file_name(name),
+                });
+            for event in &track.record_tap_midi_in {
+                let abs_sample = self.transport_sample as u64 + event.frame as u64;
+                midi_entry.events.push((abs_sample, event.data.clone()));
+            }
         }
     }
 
     async fn flush_recordings(&mut self) {
         let Some(audio_dir) = self.session_audio_dir() else {
-            if !self.audio_recordings.is_empty() {
+            if !self.audio_recordings.is_empty() || !self.midi_recordings.is_empty() {
                 self.notify_clients(Err("Recording stopped: session path is not set".to_string()))
                     .await;
             }
             self.audio_recordings.clear();
+            self.midi_recordings.clear();
             return;
         };
         if std::fs::create_dir_all(&audio_dir).is_err() {
@@ -224,6 +265,17 @@ impl Engine {
             )))
             .await;
             self.audio_recordings.clear();
+            self.midi_recordings.clear();
+            return;
+        }
+        let Some(midi_dir) = self.session_midi_dir() else {
+            self.audio_recordings.clear();
+            self.midi_recordings.clear();
+            return;
+        };
+        if std::fs::create_dir_all(&midi_dir).is_err() {
+            self.audio_recordings.clear();
+            self.midi_recordings.clear();
             return;
         }
         let rate = self
@@ -234,6 +286,11 @@ impl Engine {
         let recordings = std::mem::take(&mut self.audio_recordings);
         for (track_name, rec) in recordings {
             self.flush_recording_entry(&audio_dir, rate, track_name, rec)
+                .await;
+        }
+        let midi_recordings = std::mem::take(&mut self.midi_recordings);
+        for (track_name, rec) in midi_recordings {
+            self.flush_midi_recording_entry(&midi_dir, rate as u32, track_name, rec)
                 .await;
         }
     }
@@ -277,6 +334,18 @@ impl Engine {
 
     async fn flush_track_recording(&mut self, track_name: &str) {
         let Some(rec) = self.audio_recordings.remove(track_name) else {
+            if let Some(mrec) = self.midi_recordings.remove(track_name)
+                && let Some(midi_dir) = self.session_midi_dir()
+            {
+                let _ = std::fs::create_dir_all(&midi_dir);
+                let rate = self
+                    .oss_out
+                    .as_ref()
+                    .map(|o| o.lock().rate as u32)
+                    .unwrap_or(48_000);
+                self.flush_midi_recording_entry(&midi_dir, rate, track_name.to_string(), mrec)
+                    .await;
+            }
             return;
         };
         let Some(audio_dir) = self.session_audio_dir() else {
@@ -292,6 +361,95 @@ impl Engine {
             .unwrap_or(48_000);
         self.flush_recording_entry(&audio_dir, rate, track_name.to_string(), rec)
             .await;
+        if let Some(mrec) = self.midi_recordings.remove(track_name)
+            && let Some(midi_dir) = self.session_midi_dir()
+        {
+            let _ = std::fs::create_dir_all(&midi_dir);
+            self.flush_midi_recording_entry(&midi_dir, rate as u32, track_name.to_string(), mrec)
+                .await;
+        }
+    }
+
+    async fn flush_midi_recording_entry(
+        &mut self,
+        midi_dir: &Path,
+        sample_rate: u32,
+        track_name: String,
+        mut rec: MidiRecordingSession,
+    ) {
+        if rec.events.is_empty() {
+            return;
+        }
+        rec.events.sort_by_key(|(sample, _)| *sample);
+        let path = midi_dir.join(&rec.file_name);
+        if let Err(e) = Self::write_midi_file(&path, sample_rate, &rec.events) {
+            self.notify_clients(Err(format!(
+                "Failed to write MIDI recording {}: {}",
+                path.display(),
+                e
+            )))
+            .await;
+            return;
+        }
+        let clip_rel_name = format!("midi/{}", rec.file_name);
+        let clip_len_samples = rec
+            .events
+            .last()
+            .map(|(s, _)| s.saturating_sub(rec.start_sample as u64) as usize + 1)
+            .unwrap_or(1);
+        let mut clip = MIDIClip::new(clip_rel_name.clone(), rec.start_sample, clip_len_samples);
+        clip.offset = 0;
+        if let Some(track) = self.state.lock().tracks.get(&track_name) {
+            track.lock().midi.clips.push(clip);
+        }
+        self.notify_clients(Ok(Action::AddClip {
+            name: clip_rel_name,
+            track_name,
+            start: rec.start_sample,
+            length: clip_len_samples,
+            offset: 0,
+            kind: Kind::MIDI,
+        }))
+        .await;
+    }
+
+    fn write_midi_file(
+        path: &Path,
+        sample_rate: u32,
+        events: &[(u64, Vec<u8>)],
+    ) -> Result<(), String> {
+        let ppq: u16 = 480;
+        let ticks_per_second: u64 = 960; // 120 BPM at 480 PPQ
+        let arena = Arena::new();
+        let mut track_events: Vec<TrackEvent<'_>> = vec![TrackEvent {
+            delta: u28::new(0),
+            kind: TrackEventKind::Meta(MetaMessage::Tempo(u24::new(500_000))),
+        }];
+        let mut prev_ticks = 0_u64;
+        for (sample, data) in events {
+            let ticks = sample.saturating_mul(ticks_per_second) / sample_rate.max(1) as u64;
+            let delta = ticks.saturating_sub(prev_ticks).min(u32::MAX as u64) as u32;
+            prev_ticks = ticks;
+            let Ok(live) = LiveEvent::parse(data) else {
+                continue;
+            };
+            let kind = live.as_track_event(&arena);
+            track_events.push(TrackEvent {
+                delta: u28::new(delta),
+                kind,
+            });
+        }
+        track_events.push(TrackEvent {
+            delta: u28::new(0),
+            kind: TrackEventKind::Meta(MetaMessage::EndOfTrack),
+        });
+
+        let smf = Smf {
+            header: Header::new(Format::SingleTrack, Timing::Metrical(u15::new(ppq))),
+            tracks: vec![track_events],
+        };
+        let mut file = File::create(path).map_err(|e| e.to_string())?;
+        smf.write_std(&mut file).map_err(|e| e.to_string())
     }
 
     pub async fn init(&mut self) {
@@ -526,6 +684,7 @@ impl Engine {
             Action::RemoveTrack(ref name) => {
                 self.state.lock().tracks.remove(name);
                 self.audio_recordings.remove(name);
+                self.midi_recordings.remove(name);
             }
             Action::TrackLevel(ref name, level) => {
                 if let Some(track) = self.state.lock().tracks.get(name) {

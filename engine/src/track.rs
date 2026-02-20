@@ -35,6 +35,7 @@ pub struct Track {
     pub sample_rate: f64,
     pub output_enabled: bool,
     pub record_tap_outs: Vec<Vec<f32>>,
+    pub record_tap_midi_in: Vec<MidiEvent>,
     pub lv2_state_base_dir: Option<PathBuf>,
 }
 
@@ -63,6 +64,7 @@ impl Track {
             sample_rate,
             output_enabled: true,
             record_tap_outs: vec![vec![0.0; buffer_size]; audio_outs],
+            record_tap_midi_in: vec![],
             lv2_state_base_dir: None,
         }
         .with_default_passthrough()
@@ -728,17 +730,27 @@ impl Track {
         input.lock().buffer.extend_from_slice(events);
     }
 
-    fn collect_track_input_midi_events(&self) -> Vec<Vec<MidiEvent>> {
-        self.midi
+    fn collect_track_input_midi_events(&mut self) -> Vec<Vec<MidiEvent>> {
+        let events: Vec<Vec<MidiEvent>> = self
+            .midi
             .ins
             .iter()
             .map(|input| input.lock().buffer.clone())
-            .collect()
+            .collect();
+        self.record_tap_midi_in = events
+            .iter()
+            .flat_map(|port_events| port_events.iter().cloned())
+            .collect();
+        self.record_tap_midi_in.sort_by_key(|e| e.frame);
+        events
     }
 
     fn route_track_inputs_to_track_outputs(&self, input_events: &[Vec<MidiEvent>]) {
         for out in &self.midi.outs {
             out.lock().buffer.clear();
+        }
+        if !self.output_enabled {
+            return;
         }
         for (input_idx, events) in input_events.iter().enumerate() {
             if events.is_empty() {
@@ -802,6 +814,9 @@ impl Track {
         &self,
         node_events: &HashMap<(Lv2GraphNode, usize), Vec<MidiEvent>>,
     ) {
+        if !self.output_enabled {
+            return;
+        }
         for conn in self
             .lv2_midi_connections
             .iter()
