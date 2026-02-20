@@ -34,6 +34,7 @@ use tracing::{debug, error};
 use wavers::Wav;
 
 static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
+const MIN_CLIP_WIDTH_PX: f32 = 12.0;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct AudioClipKey {
@@ -1989,6 +1990,7 @@ impl Maolan {
                     Some(Resizing::Mixer(initial_height, initial_mouse_y));
             }
             Message::ClipResizeStart(ref kind, ref track_name, clip_index, is_right_side) => {
+                self.clip = None;
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter().find(|t| t.name == *track_name) {
                     match kind {
@@ -2006,6 +2008,7 @@ impl Maolan {
                                 is_right_side,
                                 initial_value as f32,
                                 state.cursor.x,
+                                clip.length as f32,
                             ));
                         }
                         Kind::MIDI => {
@@ -2022,6 +2025,7 @@ impl Maolan {
                                 is_right_side,
                                 initial_value as f32,
                                 state.cursor.x,
+                                clip.length as f32,
                             ));
                         }
                     }
@@ -2046,8 +2050,11 @@ impl Maolan {
                         is_right_side,
                         initial_value,
                         initial_mouse_x,
+                        initial_length,
                     )) => {
                         let pixels_per_sample = self.pixels_per_sample().max(1.0e-6);
+                        let min_length_samples =
+                            (MIN_CLIP_WIDTH_PX / pixels_per_sample).ceil().max(1.0);
                         let mut state = self.state.blocking_write();
                         if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name)
                         {
@@ -2056,25 +2063,41 @@ impl Maolan {
                                 Kind::Audio => {
                                     let clip = &mut track.audio.clips[index];
                                     if is_right_side {
-                                        clip.length =
-                                            (initial_value + delta_samples).max(10.0) as usize;
+                                        let updated_length = (initial_value + delta_samples)
+                                            .clamp(min_length_samples, usize::MAX as f32);
+                                        clip.length = updated_length as usize;
                                     } else {
-                                        let new_start = (initial_value + delta_samples).max(0.0);
-                                        let start_delta = new_start - clip.start as f32;
+                                        let max_start = (initial_value
+                                            + initial_length
+                                            - min_length_samples)
+                                            .max(0.0);
+                                        let new_start =
+                                            (initial_value + delta_samples).clamp(0.0, max_start);
+                                        let updated_length = (initial_length
+                                            - (new_start - initial_value))
+                                            .clamp(min_length_samples, usize::MAX as f32);
                                         clip.start = new_start as usize;
-                                        clip.length = (clip.length - start_delta as usize).max(10);
+                                        clip.length = updated_length as usize;
                                     }
                                 }
                                 Kind::MIDI => {
                                     let clip = &mut track.midi.clips[index];
                                     if is_right_side {
-                                        clip.length =
-                                            (initial_value + delta_samples).max(10.0) as usize;
+                                        let updated_length = (initial_value + delta_samples)
+                                            .clamp(min_length_samples, usize::MAX as f32);
+                                        clip.length = updated_length as usize;
                                     } else {
-                                        let new_start = (initial_value + delta_samples).max(0.0);
-                                        let start_delta = new_start - clip.start as f32;
+                                        let max_start = (initial_value
+                                            + initial_length
+                                            - min_length_samples)
+                                            .max(0.0);
+                                        let new_start =
+                                            (initial_value + delta_samples).clamp(0.0, max_start);
+                                        let updated_length = (initial_length
+                                            - (new_start - initial_value))
+                                            .clamp(min_length_samples, usize::MAX as f32);
                                         clip.start = new_start as usize;
-                                        clip.length = (clip.length - start_delta as usize).max(10);
+                                        clip.length = updated_length as usize;
                                     }
                                 }
                             }
@@ -2098,6 +2121,25 @@ impl Maolan {
                 state.resizing = None;
             }
             Message::ClipDrag(ref clip) => {
+                if matches!(
+                    self.state.blocking_read().resizing,
+                    Some(Resizing::Clip(_, _, _, _, _, _, _))
+                ) {
+                    return Task::none();
+                }
+                {
+                    let state = self.state.blocking_read();
+                    if !state.selected_clips.is_empty() {
+                        let clip_id = crate::state::ClipId {
+                            track_idx: clip.track_index.clone(),
+                            clip_idx: clip.index,
+                            kind: clip.kind,
+                        };
+                        if !state.selected_clips.contains(&clip_id) {
+                            return Task::none();
+                        }
+                    }
+                }
                 match &mut self.clip {
                     Some(active)
                         if active.kind == clip.kind
@@ -2106,12 +2148,22 @@ impl Maolan {
                     {
                         active.end = clip.start;
                     }
-                    _ => {
+                    Some(_) => {
+                        // Keep the original drag source locked until drop.
+                    }
+                    None => {
                         self.clip = Some(clip.clone());
                     }
                 }
             }
             Message::ClipDropped(point, _rect) => {
+                if matches!(
+                    self.state.blocking_read().resizing,
+                    Some(Resizing::Clip(_, _, _, _, _, _, _))
+                ) {
+                    self.clip = None;
+                    return Task::none();
+                }
                 if let Some(clip) = &mut self.clip {
                     clip.end = point;
                     return iced_drop::zones_on_point(Message::HandleClipZones, point, None, None);

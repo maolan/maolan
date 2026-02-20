@@ -31,7 +31,7 @@ pub struct ClipId {
 
 #[derive(Debug, Clone)]
 pub enum Resizing {
-    Clip(Kind, String, usize, bool, f32, f32),
+    Clip(Kind, String, usize, bool, f32, f32, f32),
     Mixer(f32, f32),
     Track(String, f32, f32),
     Tracks(f32, f32),
