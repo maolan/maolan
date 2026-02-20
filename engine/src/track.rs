@@ -399,6 +399,15 @@ impl Track {
             return Err("Circular routing is not allowed!".to_string());
         }
         AudioIO::connect(&source, &target);
+        // Keep TrackInput -> PluginInput routing directional.
+        // A reverse edge back into TrackInput can make the track wait on its
+        // own downstream graph and result in silence.
+        if matches!(from_node, Lv2GraphNode::TrackInput) {
+            source
+                .connections
+                .lock()
+                .retain(|conn| !Arc::ptr_eq(conn, &target));
+        }
         Ok(())
     }
 
