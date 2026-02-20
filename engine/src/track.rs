@@ -218,7 +218,14 @@ impl Track {
     }
 
     pub fn load_lv2_plugin(&mut self, uri: &str) -> Result<(), String> {
-        let processor = Lv2Processor::new(self.sample_rate, uri)?;
+        let buffer_size = self
+            .audio
+            .ins
+            .first()
+            .map(|io| io.buffer.lock().len())
+            .or_else(|| self.audio.outs.first().map(|io| io.buffer.lock().len()))
+            .unwrap_or(0);
+        let processor = Lv2Processor::new(self.sample_rate, buffer_size, uri)?;
         let id = self.next_lv2_instance_id;
         self.next_lv2_instance_id = self.next_lv2_instance_id.saturating_add(1);
         self.lv2_processors.push(Lv2Instance { id, processor });

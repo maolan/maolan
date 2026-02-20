@@ -392,7 +392,7 @@ unsafe extern "C" {
 }
 
 impl Lv2Processor {
-    pub fn new(sample_rate: f64, uri: &str) -> Result<Self, String> {
+    pub fn new(sample_rate: f64, buffer_size: usize, uri: &str) -> Result<Self, String> {
         let world = World::new();
         world.load_all();
 
@@ -445,11 +445,11 @@ impl Lv2Processor {
 
             if is_audio && is_input {
                 let channel = audio_inputs.len();
-                audio_inputs.push(Arc::new(AudioIO::new(1)));
+                audio_inputs.push(Arc::new(AudioIO::new(buffer_size)));
                 port_bindings[index] = PortBinding::AudioInput(channel);
             } else if is_audio && is_output {
                 let channel = audio_outputs.len();
-                audio_outputs.push(Arc::new(AudioIO::new(1)));
+                audio_outputs.push(Arc::new(AudioIO::new(buffer_size)));
                 port_bindings[index] = PortBinding::AudioOutput(channel);
             } else if is_atom && is_input {
                 midi_inputs += 1;
