@@ -116,8 +116,7 @@ pub struct Maolan {
     pending_save_tracks: std::collections::HashSet<String>,
     playing: bool,
     transport_samples: f64,
-    play_start_instant: Option<Instant>,
-    play_start_samples: f64,
+    last_playback_tick: Option<Instant>,
     playback_rate_hz: f64,
     zoom_visible_bars: f32,
     tracks_resize_hovered: bool,
@@ -153,8 +152,7 @@ impl Default for Maolan {
             pending_save_tracks: std::collections::HashSet::new(),
             playing: false,
             transport_samples: 0.0,
-            play_start_instant: None,
-            play_start_samples: 0.0,
+            last_playback_tick: None,
             playback_rate_hz: 48_000.0,
             zoom_visible_bars: 127.0,
             tracks_resize_hovered: false,
@@ -195,20 +193,6 @@ impl Maolan {
 
     fn beat_pixels(&self) -> f32 {
         (self.samples_per_beat() as f32 * self.pixels_per_sample()).max(0.01)
-    }
-
-    fn sync_transport_snapshot(&mut self) {
-        if let Some(started_at) = self.play_start_instant {
-            let elapsed = started_at.elapsed().as_secs_f64();
-            self.transport_samples = self.play_start_samples + elapsed * self.playback_rate_hz;
-        }
-    }
-
-    fn current_transport_samples(&self) -> f64 {
-        if self.playing && let Some(started_at) = self.play_start_instant {
-            return self.play_start_samples + started_at.elapsed().as_secs_f64() * self.playback_rate_hz;
-        }
-        self.transport_samples
     }
 
     fn lv2_node_to_json(
@@ -954,11 +938,9 @@ impl Maolan {
                 }
             }
             Message::NewSession => {
-                self.sync_transport_snapshot();
                 self.playing = false;
                 self.transport_samples = 0.0;
-                self.play_start_samples = 0.0;
-                self.play_start_instant = None;
+                self.last_playback_tick = None;
                 self.record_armed = false;
                 self.pending_record_after_save = false;
                 self.pending_save_path = None;
@@ -996,28 +978,28 @@ impl Maolan {
             Message::Cancel => self.modal = None,
             Message::Request(ref a) => return self.send(a.clone()),
             Message::TransportPlay => {
-                if !self.playing {
-                    self.play_start_samples = self.transport_samples;
-                    self.play_start_instant = Some(Instant::now());
-                }
                 self.playing = true;
+                self.last_playback_tick = Some(Instant::now());
                 return self.send(Action::Play);
             }
             Message::TransportPause => {
-                self.sync_transport_snapshot();
                 self.playing = false;
-                self.play_start_samples = self.transport_samples;
-                self.play_start_instant = None;
+                self.last_playback_tick = None;
                 return self.send(Action::Stop);
             }
             Message::TransportStop => {
-                self.sync_transport_snapshot();
                 self.playing = false;
-                self.play_start_samples = self.transport_samples;
-                self.play_start_instant = None;
+                self.last_playback_tick = None;
                 return self.send(Action::Stop);
             }
-            Message::PlaybackTick => {}
+            Message::PlaybackTick => {
+                if self.playing && let Some(last) = self.last_playback_tick {
+                    let now = Instant::now();
+                    let delta_s = now.duration_since(last).as_secs_f64();
+                    self.last_playback_tick = Some(now);
+                    self.transport_samples += delta_s * self.playback_rate_hz;
+                }
+            }
             Message::ZoomVisibleBarsChanged(value) => {
                 self.zoom_visible_bars = value.clamp(1.0, 256.0);
             }
@@ -1339,6 +1321,12 @@ impl Maolan {
                 } => {
                     if track_name == "hw:out" {
                         self.state.blocking_write().hw_out_meter_db = output_db.clone();
+                    }
+                }
+                Action::TransportPosition(sample) => {
+                    self.transport_samples = *sample as f64;
+                    if self.playing {
+                        self.last_playback_tick = Some(Instant::now());
                     }
                 }
                 Action::Lv2Plugins(plugins) => {
@@ -1947,7 +1935,7 @@ impl Maolan {
                 _ => {
                     let view = match state.view {
                         View::Workspace => self.workspace.view(
-                            Some(self.current_transport_samples()),
+                            Some(self.transport_samples),
                             self.pixels_per_sample(),
                             self.beat_pixels(),
                             self.zoom_visible_bars,
@@ -2050,7 +2038,11 @@ impl Maolan {
             _ => Message::None,
         });
 
-        let playback_sub = iced::time::every(Duration::from_millis(16)).map(|_| Message::PlaybackTick);
+        let playback_sub = if self.playing {
+            iced::time::every(Duration::from_millis(333)).map(|_| Message::PlaybackTick)
+        } else {
+            Subscription::none()
+        };
 
         Subscription::batch(vec![engine_sub, keyboard_sub, event_sub, playback_sub])
     }

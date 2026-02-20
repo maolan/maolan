@@ -68,6 +68,7 @@ pub enum Action {
     Quit,
     Play,
     Stop,
+    TransportPosition(usize),
     SetRecordEnabled(bool),
     SetSessionPath(String),
     AddTrack {

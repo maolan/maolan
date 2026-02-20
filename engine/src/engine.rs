@@ -30,6 +30,8 @@ use crate::{
     worker::Worker,
 };
 
+const VU_METERS_ENABLED: bool = false;
+
 #[derive(Debug)]
 struct WorkerData {
     tx: Sender<Message>,
@@ -510,24 +512,34 @@ impl Engine {
         } else {
             10.0_f32.powf(self.hw_out_level_db / 20.0)
         };
-        let mut meter_db = Vec::new();
         {
             let hw_out = oss_out.lock();
             for channel in &hw_out.channels {
                 let buf = channel.buffer.lock();
-                let mut peak = 0.0_f32;
                 for sample in buf.iter_mut() {
                     *sample *= gain;
-                    peak = peak.max(sample.abs());
                 }
-                let db = if peak <= 1.0e-6 {
-                    -90.0
-                } else {
-                    (20.0 * peak.log10()).clamp(-90.0, 6.0)
-                };
-                meter_db.push(db);
             }
         }
+        if !VU_METERS_ENABLED {
+            return;
+        }
+        let meter_db = {
+            let hw_out = oss_out.lock();
+            hw_out
+                .channels
+                .iter()
+                .map(|channel| {
+                    let buf = channel.buffer.lock();
+                    let peak = buf.iter().fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
+                    if peak <= 1.0e-6 {
+                        -90.0
+                    } else {
+                        (20.0 * peak.log10()).clamp(-90.0, 6.0)
+                    }
+                })
+                .collect()
+        };
         self.notify_clients(Ok(Action::TrackMeters {
             track_name: "hw:out".to_string(),
             output_db: meter_db,
@@ -558,6 +570,9 @@ impl Engine {
     }
 
     async fn publish_track_meters(&self) {
+        if !VU_METERS_ENABLED {
+            return;
+        }
         let meters: Vec<(String, Vec<f32>)> = self
             .state
             .lock()
@@ -642,11 +657,16 @@ impl Engine {
         match a {
             Action::Play => {
                 self.playing = true;
+                self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
+                    .await;
             }
             Action::Stop => {
                 self.playing = false;
                 self.flush_recordings().await;
+                self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
+                    .await;
             }
+            Action::TransportPosition(_) => {}
             Action::SetRecordEnabled(enabled) => {
                 self.record_enabled = enabled;
                 if !enabled {
