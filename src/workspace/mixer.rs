@@ -32,7 +32,7 @@ impl Mixer {
 
     fn fader_height_from_panel(height: Length) -> f32 {
         match height {
-            Length::Fixed(panel_h) => (panel_h - 84.0).max(80.0),
+            Length::Fixed(panel_h) => (panel_h - 118.0).max(80.0),
             _ => 300.0,
         }
     }
@@ -106,6 +106,32 @@ impl Mixer {
         HorizontalSlider::new(-1.0..=1.0, value.clamp(-1.0, 1.0), on_change)
             .width(Length::Fixed(Self::FADER_WITH_TICKS_WIDTH))
             .height(Length::Fixed(14.0))
+            .into()
+    }
+
+    fn format_level_db(level: f32) -> String {
+        if level <= Self::FADER_MIN_DB {
+            "-inf dB".to_string()
+        } else {
+            format!("{:+.1} dB", level)
+        }
+    }
+
+    fn format_balance(balance: f32) -> String {
+        let b = balance.clamp(-1.0, 1.0);
+        if b.abs() < 0.005 {
+            "C".to_string()
+        } else if b < 0.0 {
+            format!("L{}", (-b * 100.0).round() as i32)
+        } else {
+            format!("R{}", (b * 100.0).round() as i32)
+        }
+    }
+
+    fn centered_readout(content: String) -> Element<'static, Message> {
+        container(text(content).size(11))
+            .width(Length::Fixed(Self::FADER_WITH_TICKS_WIDTH))
+            .align_x(Alignment::Center)
             .into()
     }
 
@@ -213,12 +239,18 @@ impl Mixer {
                                             .height(Length::Fixed(14.0))
                                             .into()
                                     },
+                                    Self::centered_readout(if track.audio.outs == 2 {
+                                        Self::format_balance(track.balance)
+                                    } else {
+                                        String::new()
+                                    }),
                                     Self::slider_with_ticks(track.level, fader_height, {
                                         let name = track.name.clone();
                                         move |new_val| {
                                             Message::Request(Action::TrackLevel(name.clone(), new_val))
                                         }
                                     }),
+                                    Self::centered_readout(Self::format_level_db(track.level)),
                                 ]
                                 .spacing(4),
                                 Self::vu_meter(track.audio.outs, &track.meter_out_db, fader_height),
@@ -306,11 +338,17 @@ impl Mixer {
                                     .height(Length::Fixed(14.0))
                                     .into()
                             },
+                            Self::centered_readout(if hw_out_channels == 2 {
+                                Self::format_balance(hw_out_balance)
+                            } else {
+                                String::new()
+                            }),
                             Self::slider_with_ticks(hw_out_level, fader_height, {
                                 move |new_val| {
                                     Message::Request(Action::TrackLevel("hw:out".to_string(), new_val))
                                 }
                             }),
+                            Self::centered_readout(Self::format_level_db(hw_out_level)),
                         ]
                         .spacing(4),
                         Self::vu_meter(hw_out_channels.max(1), &hw_out_meter_db, fader_height),
