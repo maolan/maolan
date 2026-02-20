@@ -7,6 +7,7 @@ mod message;
 mod state;
 mod style;
 mod toolbar;
+mod ui_timing;
 mod widget;
 mod workspace;
 

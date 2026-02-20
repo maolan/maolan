@@ -4,6 +4,9 @@ use iced::advanced::renderer;
 use iced::advanced::widget::{self, Tree, Widget};
 use iced::mouse;
 use iced::{Border, Color, Element, Event, Length, Point, Rectangle, Size};
+use std::time::Instant;
+
+use crate::ui_timing::DOUBLE_CLICK;
 
 pub struct Slider<'a, Message> {
     range: std::ops::RangeInclusive<f32>,
@@ -43,6 +46,7 @@ impl<'a, Message> Slider<'a, Message> {
 #[derive(Default)]
 struct State {
     is_dragging: bool,
+    last_click_at: Option<Instant>,
 }
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer> for Slider<'a, Message>
@@ -201,8 +205,16 @@ where
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if cursor.is_over(bounds) {
+                    let now = Instant::now();
+                    let is_double_click = state
+                        .last_click_at
+                        .is_some_and(|last| now.duration_since(last) <= DOUBLE_CLICK);
+                    state.last_click_at = Some(now);
                     state.is_dragging = true;
-                    if let Some(cursor_position) = cursor.position() {
+                    if is_double_click {
+                        let default_value = 0.0_f32.clamp(*self.range.start(), *self.range.end());
+                        shell.publish((self.on_change)(default_value));
+                    } else if let Some(cursor_position) = cursor.position() {
                         let new_value = self.calculate_value(cursor_position, bounds);
                         shell.publish((self.on_change)(new_value));
                     }

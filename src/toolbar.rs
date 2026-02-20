@@ -1,7 +1,7 @@
 use crate::message::Message;
 use iced::{
     Background, Color, Length, Theme,
-    widget::{button, row, tooltip, tooltip::Position},
+    widget::{button, row},
 };
 use iced_fonts::lucide::{audio_lines, cable, pause, play, square};
 
@@ -26,54 +26,30 @@ impl Toolbar {
         };
         row![
             row![
-                tooltip(
-                    button(play()).style(btn_style).on_press(Message::TransportPlay),
-                    "Play",
-                    Position::Bottom
-                ),
-                tooltip(
-                    button(pause())
+                button(play()).style(btn_style).on_press(Message::TransportPlay),
+                button(pause())
+                    .style(btn_style)
+                    .on_press(Message::TransportPause),
+                button(square())
+                    .style(btn_style)
+                    .on_press(Message::TransportStop),
+                if recording {
+                    button("REC")
+                        .style(button::danger)
+                        .on_press(Message::TransportRecordToggle)
+                } else {
+                    button("REC")
                         .style(btn_style)
-                        .on_press(Message::TransportPause),
-                    "Pause",
-                    Position::Bottom
-                ),
-                tooltip(
-                    button(square())
-                        .style(btn_style)
-                        .on_press(Message::TransportStop),
-                    "Stop",
-                    Position::Bottom
-                ),
-                tooltip(
-                    if recording {
-                        button("REC")
-                            .style(button::danger)
-                            .on_press(Message::TransportRecordToggle)
-                    } else {
-                        button("REC")
-                            .style(btn_style)
-                            .on_press(Message::TransportRecordToggle)
-                    },
-                    "Record",
-                    Position::Bottom
-                ),
+                        .on_press(Message::TransportRecordToggle)
+                },
             ]
             .width(Length::Fill),
-            tooltip(
-                button(audio_lines())
-                    .style(btn_style)
-                    .on_press(Message::Workspace),
-                "Workspace",
-                Position::Bottom
-            ),
-            tooltip(
-                button(cable())
-                    .style(btn_style)
-                    .on_press(Message::Connections),
-                "Connections",
-                Position::Bottom
-            ),
+            button(audio_lines())
+                .style(btn_style)
+                .on_press(Message::Workspace),
+            button(cable())
+                .style(btn_style)
+                .on_press(Message::Connections),
         ]
         .into()
     }

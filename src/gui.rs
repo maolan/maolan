@@ -2,7 +2,9 @@ use crate::{
     add_track, connections, hw, menu,
     message::{DraggedClip, Message, Show},
     state::{ConnectionViewSelection, HW, Resizing, State, StateData, Track, View},
-    toolbar, workspace,
+    toolbar,
+    ui_timing::PLAYHEAD_UPDATE_INTERVAL,
+    workspace,
 };
 use iced::futures::{Stream, StreamExt, io, stream};
 use iced::keyboard::Event as KeyEvent;
@@ -22,7 +24,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, exit},
     sync::{Arc, LazyLock},
-    time::{Duration, Instant},
+    time::Instant,
 };
 use tokio::sync::RwLock;
 use tracing::{debug, error};
@@ -2077,7 +2079,7 @@ impl Maolan {
         });
 
         let playback_sub = if self.playing {
-            iced::time::every(Duration::from_millis(333)).map(|_| Message::PlaybackTick)
+            iced::time::every(PLAYHEAD_UPDATE_INTERVAL).map(|_| Message::PlaybackTick)
         } else {
             Subscription::none()
         };

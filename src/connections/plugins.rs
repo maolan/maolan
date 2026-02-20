@@ -5,6 +5,7 @@ use crate::{
     connections::selection::is_bezier_hit,
     message::Message,
     state::{Lv2Connecting, MovingPlugin, State},
+    ui_timing::DOUBLE_CLICK,
 };
 use iced::{
     Color, Point, Rectangle, Renderer, Theme,
@@ -18,7 +19,7 @@ use iced::{
 };
 use maolan_engine::kind::Kind;
 use maolan_engine::message::{Action as EngineAction, Lv2GraphNode, Lv2GraphPlugin};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 const PLUGIN_W: f32 = 170.0;
 const MIN_PLUGIN_H: f32 = 96.0;
@@ -483,7 +484,7 @@ impl canvas::Program<Message> for Graph {
                             if let Some((last_instance, last_time)) =
                                 data.lv2_graph_last_plugin_click
                                 && last_instance == instance_id
-                                && now.duration_since(last_time) <= Duration::from_millis(350)
+                                && now.duration_since(last_time) <= DOUBLE_CLICK
                             {
                                 data.lv2_graph_last_plugin_click = None;
                                 if let Some(track_name) = data.lv2_graph_track.clone() {

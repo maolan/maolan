@@ -8,6 +8,7 @@ use crate::{
         Connecting, HW_IN_ID, HW_OUT_ID, Hovering, MIDI_HW_IN_ID, MIDI_HW_OUT_ID, MovingTrack,
         State, StateData,
     },
+    ui_timing::DOUBLE_CLICK,
 };
 use iced::{
     Color, Point, Rectangle, Renderer, Theme,
@@ -20,7 +21,7 @@ use iced::{
     },
 };
 use maolan_engine::{kind::Kind, message::Action as EngineAction};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 pub struct Graph {
     state: State,
@@ -286,7 +287,7 @@ impl canvas::Program<Message> for Graph {
                             if let Some((last_track, last_time)) =
                                 &data.connections_last_track_click
                                 && *last_track == track_name
-                                && now.duration_since(*last_time) <= Duration::from_millis(350)
+                                && now.duration_since(*last_time) <= DOUBLE_CLICK
                             {
                                 data.connections_last_track_click = None;
                                 return Some(Action::publish(Message::OpenTrackPlugins(

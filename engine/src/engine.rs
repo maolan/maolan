@@ -4,7 +4,7 @@ use std::{
     fs::read_dir,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use midly::{
     Arena, Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
@@ -30,7 +30,6 @@ use crate::{
     worker::Worker,
 };
 
-const VU_METERS_ENABLED: bool = false;
 
 #[derive(Debug)]
 struct WorkerData {
@@ -82,9 +81,13 @@ pub struct Engine {
     session_dir: Option<PathBuf>,
     hw_out_level_db: f32,
     hw_out_muted: bool,
+    last_hw_out_meter_publish: Option<Instant>,
+    last_track_meter_publish: Option<Instant>,
 }
 
 impl Engine {
+    const METER_PUBLISH_INTERVAL: Duration = Duration::from_millis(200);
+
     fn session_plugins_dir(&self) -> Option<PathBuf> {
         self.session_dir.as_ref().map(|d| d.join("plugins"))
     }
@@ -150,6 +153,8 @@ impl Engine {
             session_dir: None,
             hw_out_level_db: 0.0,
             hw_out_muted: false,
+            last_hw_out_meter_publish: None,
+            last_track_meter_publish: None,
         }
     }
 
@@ -503,8 +508,30 @@ impl Engine {
         }
     }
 
-    async fn apply_hw_out_gain_and_meter(&self) {
-        let Some(oss_out) = &self.oss_out else {
+    fn should_publish_hw_out_meters(&mut self) -> bool {
+        let now = Instant::now();
+        match self.last_hw_out_meter_publish {
+            Some(last) if now.duration_since(last) < Self::METER_PUBLISH_INTERVAL => false,
+            _ => {
+                self.last_hw_out_meter_publish = Some(now);
+                true
+            }
+        }
+    }
+
+    fn should_publish_track_meters(&mut self) -> bool {
+        let now = Instant::now();
+        match self.last_track_meter_publish {
+            Some(last) if now.duration_since(last) < Self::METER_PUBLISH_INTERVAL => false,
+            _ => {
+                self.last_track_meter_publish = Some(now);
+                true
+            }
+        }
+    }
+
+    async fn apply_hw_out_gain_and_meter(&mut self) {
+        let Some(oss_out) = self.oss_out.clone() else {
             return;
         };
         let gain = if self.hw_out_muted {
@@ -514,14 +541,9 @@ impl Engine {
         };
         {
             let hw_out = oss_out.lock();
-            for channel in &hw_out.channels {
-                let buf = channel.buffer.lock();
-                for sample in buf.iter_mut() {
-                    *sample *= gain;
-                }
-            }
+            hw_out.output_gain_linear = gain;
         }
-        if !VU_METERS_ENABLED {
+        if !self.should_publish_hw_out_meters() {
             return;
         }
         let meter_db = {
@@ -531,11 +553,14 @@ impl Engine {
                 .iter()
                 .map(|channel| {
                     let buf = channel.buffer.lock();
-                    let peak = buf.iter().fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
+                    let peak = buf
+                        .iter()
+                        .fold(0.0_f32, |acc, sample| acc.max(sample.abs()))
+                        * gain;
                     if peak <= 1.0e-6 {
                         -90.0
                     } else {
-                        (20.0 * peak.log10()).clamp(-90.0, 6.0)
+                        (20.0 * peak.log10()).clamp(-90.0, 20.0)
                     }
                 })
                 .collect()
@@ -569,8 +594,8 @@ impl Engine {
         finished
     }
 
-    async fn publish_track_meters(&self) {
-        if !VU_METERS_ENABLED {
+    async fn publish_track_meters(&mut self) {
+        if !self.should_publish_track_meters() {
             return;
         }
         let meters: Vec<(String, Vec<f32>)> = self

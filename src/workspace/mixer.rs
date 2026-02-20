@@ -13,7 +13,7 @@ pub struct Mixer {
 
 impl Mixer {
     const FADER_MIN_DB: f32 = -90.0;
-    const FADER_MAX_DB: f32 = 6.0;
+    const FADER_MAX_DB: f32 = 20.0;
 
     pub fn new(state: State) -> Self {
         Self { state }
@@ -46,7 +46,7 @@ impl Mixer {
         F: Fn(f32) -> Message + 'static,
     {
         let tick_values = [
-            6.0, 0.0, -6.0, -12.0, -18.0, -24.0, -36.0, -48.0, -60.0, -72.0, -90.0,
+            20.0, 12.0, 6.0, 0.0, -6.0, -12.0, -18.0, -24.0, -36.0, -48.0, -60.0, -72.0, -90.0,
         ];
         let mut marks: Vec<Element<'static, Message>> = vec![];
         for db in tick_values {
