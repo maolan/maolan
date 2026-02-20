@@ -140,68 +140,6 @@ impl canvas::Program<Message> for Graph {
                     let ctrl = data.ctrl;
                     let mut pending_action: Option<Action<Message>> = None;
 
-                    let mut clicked_connection = None;
-                    for (idx, conn) in data.connections.iter().enumerate() {
-                        let start_track_option =
-                            data.tracks.iter().find(|t| t.name == conn.from_track);
-                        let end_track_option = data.tracks.iter().find(|t| t.name == conn.to_track);
-
-                        let start_point = if conn.from_track == HW_IN_ID {
-                            data.hw_in.as_ref().map(move |hw_in| {
-                                let py = 50.0
-                                    + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
-                                        * (conn.from_port + 1) as f32;
-                                Point::new(hw_width, py)
-                            })
-                        } else {
-                            start_track_option.map(|t| {
-                                let total_outs = t.audio.outs + t.midi.outs;
-                                let port_idx = Self::connection_port_index(
-                                    t,
-                                    conn.kind,
-                                    conn.from_port,
-                                    false,
-                                );
-                                let py = t.position.y
-                                    + (size.height / (total_outs + 1) as f32)
-                                        * (port_idx + 1) as f32;
-                                Point::new(t.position.x + size.width, py)
-                            })
-                        };
-
-                        let end_point = if conn.to_track == HW_OUT_ID {
-                            data.hw_out.as_ref().map(move |hw_out| {
-                                let py = 50.0
-                                    + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
-                                        * (conn.to_port + 1) as f32;
-                                Point::new(bounds.width - hw_width, py)
-                            })
-                        } else {
-                            end_track_option.map(|t| {
-                                let total_ins = t.audio.ins + t.midi.ins;
-                                let port_idx =
-                                    Self::connection_port_index(t, conn.kind, conn.to_port, true);
-                                let py = t.position.y
-                                    + (size.height / (total_ins + 1) as f32)
-                                        * (port_idx + 1) as f32;
-                                Point::new(t.position.x, py)
-                            })
-                        };
-
-                        if let (Some(start), Some(end)) = (start_point, end_point) {
-                            if is_bezier_hit(start, end, cursor_position, 20, 10.0) {
-                                clicked_connection = Some(idx);
-                                break;
-                            }
-                        }
-                    }
-
-                    if let Some(idx) = clicked_connection {
-                        return Some(Action::publish(Message::ConnectionViewSelectConnection(
-                            idx,
-                        )));
-                    }
-
                     if let Some(hw_in) = &data.hw_in {
                         let pos = Point::new(0.0, 0.0);
                         for j in 0..hw_in.channels {
@@ -375,6 +313,68 @@ impl canvas::Program<Message> for Graph {
                             }
                             break;
                         }
+                    }
+
+                    let mut clicked_connection = None;
+                    for (idx, conn) in data.connections.iter().enumerate() {
+                        let start_track_option =
+                            data.tracks.iter().find(|t| t.name == conn.from_track);
+                        let end_track_option = data.tracks.iter().find(|t| t.name == conn.to_track);
+
+                        let start_point = if conn.from_track == HW_IN_ID {
+                            data.hw_in.as_ref().map(move |hw_in| {
+                                let py = 50.0
+                                    + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
+                                        * (conn.from_port + 1) as f32;
+                                Point::new(hw_width, py)
+                            })
+                        } else {
+                            start_track_option.map(|t| {
+                                let total_outs = t.audio.outs + t.midi.outs;
+                                let port_idx = Self::connection_port_index(
+                                    t,
+                                    conn.kind,
+                                    conn.from_port,
+                                    false,
+                                );
+                                let py = t.position.y
+                                    + (size.height / (total_outs + 1) as f32)
+                                        * (port_idx + 1) as f32;
+                                Point::new(t.position.x + size.width, py)
+                            })
+                        };
+
+                        let end_point = if conn.to_track == HW_OUT_ID {
+                            data.hw_out.as_ref().map(move |hw_out| {
+                                let py = 50.0
+                                    + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
+                                        * (conn.to_port + 1) as f32;
+                                Point::new(bounds.width - hw_width, py)
+                            })
+                        } else {
+                            end_track_option.map(|t| {
+                                let total_ins = t.audio.ins + t.midi.ins;
+                                let port_idx =
+                                    Self::connection_port_index(t, conn.kind, conn.to_port, true);
+                                let py = t.position.y
+                                    + (size.height / (total_ins + 1) as f32)
+                                        * (port_idx + 1) as f32;
+                                Point::new(t.position.x, py)
+                            })
+                        };
+
+                        if let (Some(start), Some(end)) = (start_point, end_point) {
+                            if is_bezier_hit(start, end, cursor_position, 20, 10.0) {
+                                clicked_connection = Some(idx);
+                                break;
+                            }
+                        }
+                    }
+
+                    if let Some(idx) = clicked_connection {
+                        return Some(Action::publish(Message::ConnectionViewSelectConnection(
+                            idx,
+                        )));
                     }
 
                     if let Some(action) = pending_action {
