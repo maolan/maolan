@@ -496,13 +496,20 @@ impl Track {
 
     pub(crate) fn ensure_default_audio_passthrough(&self) {
         for (audio_in, audio_out) in self.audio.ins.iter().zip(self.audio.outs.iter()) {
+            // Keep passthrough directional (in -> out). A reverse edge (out -> in)
+            // can deadlock input readiness for processing.
+            audio_in
+                .connections
+                .lock()
+                .retain(|conn| !Arc::ptr_eq(conn, audio_out));
+
             let exists = audio_out
                 .connections
                 .lock()
                 .iter()
                 .any(|conn| Arc::ptr_eq(conn, audio_in));
             if !exists {
-                AudioIO::connect(audio_in, audio_out);
+                audio_out.connections.lock().push(audio_in.clone());
             }
         }
     }
