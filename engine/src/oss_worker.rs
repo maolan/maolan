@@ -1,4 +1,8 @@
-use crate::{hw::oss, message::Message, mutex::UnsafeMutex};
+use crate::{
+    hw::{midi::MidiHub, oss},
+    message::Message,
+    mutex::UnsafeMutex,
+};
 use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -6,6 +10,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 pub struct OssWorker {
     oss_in: Arc<UnsafeMutex<oss::Audio>>,
     oss_out: Arc<UnsafeMutex<oss::Audio>>,
+    midi_hub: Arc<UnsafeMutex<MidiHub>>,
     rx: Receiver<Message>,
     tx: Sender<Message>,
 }
@@ -14,12 +19,14 @@ impl OssWorker {
     pub fn new(
         oss_in: Arc<UnsafeMutex<oss::Audio>>,
         oss_out: Arc<UnsafeMutex<oss::Audio>>,
+        midi_hub: Arc<UnsafeMutex<MidiHub>>,
         rx: Receiver<Message>,
         tx: Sender<Message>,
     ) -> Self {
         Self {
             oss_in,
             oss_out,
+            midi_hub,
             rx,
             tx,
         }
@@ -33,6 +40,15 @@ impl OssWorker {
                         return;
                     }
                     Message::TracksFinished => {
+                        let midi_events = {
+                            let midi_hub = self.midi_hub.lock();
+                            midi_hub.read_events()
+                        };
+                        if !midi_events.is_empty()
+                            && let Err(e) = self.tx.send(Message::HWMidiEvents(midi_events)).await
+                        {
+                            eprintln!("OSS worker failed to send HWMidiEvents to engine: {}", e);
+                        }
                         {
                             let oss_in = self.oss_in.lock();
                             if let Err(e) = oss_in.read() {

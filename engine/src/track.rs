@@ -4,9 +4,13 @@ use crate::{
     kind::Kind,
     lv2::Lv2Processor,
     message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin},
+    midi::io::MidiEvent,
     routing,
 };
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 #[derive(Debug)]
 pub struct Lv2Instance {
@@ -63,10 +67,10 @@ impl Track {
     }
 
     pub fn process(&mut self) {
-        self.midi.process();
         for audio_in in &self.audio.ins {
             audio_in.process();
         }
+        let track_input_midi_events = self.collect_track_input_midi_events();
 
         let frames = self
             .audio
@@ -84,6 +88,11 @@ impl Track {
         if !self.lv2_processors.is_empty() {
             let mut processed = vec![false; self.lv2_processors.len()];
             let mut remaining = self.lv2_processors.len();
+            let mut processed_midi_plugins = HashSet::new();
+            let mut midi_node_events = HashMap::<(Lv2GraphNode, usize), Vec<MidiEvent>>::new();
+            for (port, events) in track_input_midi_events.iter().enumerate() {
+                midi_node_events.insert((Lv2GraphNode::TrackInput, port), events.clone());
+            }
 
             while remaining > 0 {
                 let mut progressed = false;
@@ -99,15 +108,27 @@ impl Track {
                     if !all_inputs_ready {
                         continue;
                     }
+                    let instance_id = self.lv2_processors[idx].id;
+                    if !self.lv2_plugin_midi_ready(instance_id, &processed_midi_plugins) {
+                        continue;
+                    }
 
                     for audio_in in self.lv2_processors[idx].processor.audio_inputs() {
                         audio_in.process();
                     }
-                    self.lv2_processors[idx]
+                    let midi_inputs = self.lv2_plugin_input_events(instance_id, &midi_node_events);
+                    let midi_outputs = self.lv2_processors[idx]
                         .processor
-                        .process_with_audio_io(frames);
+                        .process_with_audio_io(frames, &midi_inputs);
+                    for (port, events) in midi_outputs.into_iter().enumerate() {
+                        if !events.is_empty() {
+                            midi_node_events
+                                .insert((Lv2GraphNode::PluginInstance(instance_id), port), events);
+                        }
+                    }
                     *already_processed = true;
                     remaining -= 1;
+                    processed_midi_plugins.insert(instance_id);
                     progressed = true;
                 }
 
@@ -124,12 +145,27 @@ impl Track {
                     for audio_in in self.lv2_processors[idx].processor.audio_inputs() {
                         audio_in.process();
                     }
-                    self.lv2_processors[idx]
+                    let instance_id = self.lv2_processors[idx].id;
+                    let midi_inputs = self.lv2_plugin_input_events(instance_id, &midi_node_events);
+                    let midi_outputs = self.lv2_processors[idx]
                         .processor
-                        .process_with_audio_io(frames);
+                        .process_with_audio_io(frames, &midi_inputs);
+                    for (port, events) in midi_outputs.into_iter().enumerate() {
+                        if !events.is_empty() {
+                            midi_node_events
+                                .insert((Lv2GraphNode::PluginInstance(instance_id), port), events);
+                        }
+                    }
+                    processed_midi_plugins.insert(instance_id);
                 }
             }
+
+            self.route_lv2_midi_to_track_outputs(&midi_node_events);
         }
+
+        self.route_track_inputs_to_track_outputs(&track_input_midi_events);
+        self.dispatch_track_output_midi_to_connected_inputs();
+        self.clear_local_midi_inputs();
 
         let internal_sources = self.internal_audio_sources();
         for audio_out in &self.audio.outs {
@@ -584,6 +620,133 @@ impl Track {
             }
         }
         nodes.into_iter().collect()
+    }
+
+    pub fn push_hw_midi_events(&mut self, events: &[MidiEvent]) {
+        let Some(input) = self.midi.ins.first() else {
+            return;
+        };
+        if events.is_empty() {
+            return;
+        }
+        input.lock().buffer.extend_from_slice(events);
+    }
+
+    fn collect_track_input_midi_events(&self) -> Vec<Vec<MidiEvent>> {
+        self.midi
+            .ins
+            .iter()
+            .map(|input| input.lock().buffer.clone())
+            .collect()
+    }
+
+    fn route_track_inputs_to_track_outputs(&self, input_events: &[Vec<MidiEvent>]) {
+        for out in &self.midi.outs {
+            out.lock().buffer.clear();
+        }
+        for (input_idx, events) in input_events.iter().enumerate() {
+            if events.is_empty() {
+                continue;
+            }
+            let Some(local_input) = self.midi.ins.get(input_idx) else {
+                continue;
+            };
+            for out in &self.midi.outs {
+                let should_route = out
+                    .lock()
+                    .connections
+                    .iter()
+                    .any(|conn| Arc::ptr_eq(conn, local_input));
+                if should_route {
+                    out.lock().buffer.extend_from_slice(events);
+                }
+            }
+        }
+    }
+
+    fn lv2_plugin_midi_ready(&self, instance_id: usize, processed: &HashSet<usize>) -> bool {
+        self.lv2_midi_connections
+            .iter()
+            .filter(|conn| {
+                conn.kind == Kind::MIDI
+                    && conn.to_node == Lv2GraphNode::PluginInstance(instance_id)
+                    && matches!(conn.from_node, Lv2GraphNode::PluginInstance(_))
+            })
+            .all(|conn| match conn.from_node {
+                Lv2GraphNode::PluginInstance(from_id) => processed.contains(&from_id),
+                _ => true,
+            })
+    }
+
+    fn lv2_plugin_input_events(
+        &self,
+        instance_id: usize,
+        node_events: &HashMap<(Lv2GraphNode, usize), Vec<MidiEvent>>,
+    ) -> Vec<Vec<MidiEvent>> {
+        let midi_inputs = self
+            .lv2_processors
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .map(|instance| instance.processor.midi_input_count())
+            .unwrap_or(0);
+        let mut per_port = vec![Vec::new(); midi_inputs];
+        for conn in self.lv2_midi_connections.iter().filter(|conn| {
+            conn.kind == Kind::MIDI
+                && conn.to_node == Lv2GraphNode::PluginInstance(instance_id)
+                && conn.to_port < midi_inputs
+        }) {
+            if let Some(events) = node_events.get(&(conn.from_node.clone(), conn.from_port)) {
+                per_port[conn.to_port].extend_from_slice(events);
+            }
+        }
+        per_port
+    }
+
+    fn route_lv2_midi_to_track_outputs(
+        &self,
+        node_events: &HashMap<(Lv2GraphNode, usize), Vec<MidiEvent>>,
+    ) {
+        for conn in self
+            .lv2_midi_connections
+            .iter()
+            .filter(|conn| conn.kind == Kind::MIDI && conn.to_node == Lv2GraphNode::TrackOutput)
+        {
+            let Some(out) = self.midi.outs.get(conn.to_port) else {
+                continue;
+            };
+            if let Some(events) = node_events.get(&(conn.from_node.clone(), conn.from_port)) {
+                out.lock().buffer.extend_from_slice(events);
+            }
+        }
+    }
+
+    fn dispatch_track_output_midi_to_connected_inputs(&self) {
+        for out in &self.midi.outs {
+            let (events, targets) = {
+                let out_lock = out.lock();
+                (out_lock.buffer.clone(), out_lock.connections.clone())
+            };
+            if events.is_empty() {
+                continue;
+            }
+            for target in targets {
+                if self
+                    .midi
+                    .ins
+                    .iter()
+                    .any(|input| Arc::ptr_eq(input, &target))
+                {
+                    continue;
+                }
+                target.lock().buffer.extend_from_slice(&events);
+            }
+        }
+    }
+
+    fn clear_local_midi_inputs(&self) {
+        for input in &self.midi.ins {
+            input.lock().buffer.clear();
+        }
     }
 }
 

@@ -107,4 +107,5 @@ pub enum Message {
     ShowLv2PluginUi(String),
 
     HWSelected(String),
+    MIDIHWSelected(String),
 }

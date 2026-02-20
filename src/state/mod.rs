@@ -121,6 +121,9 @@ pub struct StateData {
     pub hw_loaded: bool,
     pub available_hw: Vec<String>,
     pub selected_hw: Option<String>,
+    pub available_midi_hw: Vec<String>,
+    pub selected_midi_hw: Option<String>,
+    pub opened_midi_hw: Vec<String>,
     pub hw_in: Option<HW>,
     pub hw_out: Option<HW>,
     pub lv2_plugins: Vec<Lv2PluginInfo>,
@@ -153,8 +156,24 @@ impl Default for StateData {
                     .collect()
             })
             .unwrap_or_else(|_| vec![]);
+        let mut midi_hw: Vec<String> = read_dir("/dev")
+            .map(|rd| {
+                rd.filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter_map(|path| {
+                        let name = path.file_name()?.to_str()?;
+                        if name.starts_with("umidi") {
+                            Some(path.to_string_lossy().into_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|_| vec![]);
 
         hw.sort();
+        midi_hw.sort();
         Self {
             shift: false,
             ctrl: false,
@@ -177,6 +196,9 @@ impl Default for StateData {
             hw_loaded: false,
             available_hw: hw,
             selected_hw: None,
+            available_midi_hw: midi_hw,
+            selected_midi_hw: None,
+            opened_midi_hw: vec![],
             hw_in: None,
             hw_out: None,
             lv2_plugins: vec![],

@@ -522,6 +522,13 @@ impl Maolan {
                     self.state.blocking_write().message = format!("Opened device {s}");
                     self.state.blocking_write().hw_loaded = true;
                 }
+                Action::OpenMidiDevice(s) => {
+                    let mut state = self.state.blocking_write();
+                    if !state.opened_midi_hw.iter().any(|name| name == s) {
+                        state.opened_midi_hw.push(s.clone());
+                    }
+                    state.message = format!("Opened MIDI input {s}");
+                }
                 Action::HWInfo {
                     channels,
                     rate,
@@ -1081,6 +1088,9 @@ impl Maolan {
             }
             Message::HWSelected(ref hw) => {
                 self.state.blocking_write().selected_hw = Some(hw.to_string());
+            }
+            Message::MIDIHWSelected(ref hw) => {
+                self.state.blocking_write().selected_midi_hw = Some(hw.to_string());
             }
             Message::StartMovingTrackAndSelect(moving_track, track_name) => {
                 let mut state = self.state.blocking_write();

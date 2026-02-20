@@ -12,10 +12,12 @@ use std::{
 };
 
 use crate::audio::io::AudioIO;
+use crate::midi::io::MidiEvent;
 use lilv::{World, instance::ActiveInstance, node::Node, plugin::Plugin};
 use lv2_raw::{
     LV2_ATOM__FRAMETIME, LV2_ATOM__SEQUENCE, LV2_URID__MAP, LV2AtomSequence, LV2AtomSequenceBody,
-    LV2Feature, LV2Urid, LV2UridMap, LV2UridMapHandle,
+    LV2Feature, LV2Urid, LV2UridMap, LV2UridMapHandle, lv2_atom_sequence_append_event,
+    lv2_atom_sequence_begin, lv2_atom_sequence_is_end, lv2_atom_sequence_next,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +62,7 @@ pub struct Lv2Processor {
     atom_outputs: Vec<AtomBuffer>,
     atom_sequence_urid: LV2Urid,
     atom_frame_time_urid: LV2Urid,
+    midi_event_urid: LV2Urid,
     midi_inputs: usize,
     midi_outputs: usize,
     skip_deactivate_on_drop: bool,
@@ -426,6 +429,7 @@ impl Lv2Processor {
         let mut control_ports = vec![];
         let atom_sequence_urid = urid_feature.map_uri(LV2_ATOM__SEQUENCE);
         let atom_frame_time_urid = urid_feature.map_uri(LV2_ATOM__FRAMETIME);
+        let midi_event_urid = urid_feature.map_uri(lv2_raw::LV2_MIDI__MIDIEVENT);
         let mut has_atom_ports = false;
 
         for port in plugin.iter_ports() {
@@ -531,6 +535,7 @@ impl Lv2Processor {
             atom_outputs,
             atom_sequence_urid,
             atom_frame_time_urid,
+            midi_event_urid,
             midi_inputs,
             midi_outputs,
             skip_deactivate_on_drop: has_atom_ports,
@@ -642,7 +647,11 @@ impl Lv2Processor {
             .collect()
     }
 
-    pub fn process_with_audio_io(&mut self, frames: usize) {
+    pub fn process_with_audio_io(
+        &mut self,
+        frames: usize,
+        midi_inputs: &[Vec<MidiEvent>],
+    ) -> Vec<Vec<MidiEvent>> {
         if let Ok(mut values) = self.scalar_values.lock() {
             if values.is_empty() {
                 values.push(0.0);
@@ -668,6 +677,9 @@ impl Lv2Processor {
                 self.atom_frame_time_urid,
             );
         }
+        for (port, events) in midi_inputs.iter().enumerate() {
+            self.write_midi_input_events(port, events);
+        }
 
         self.connect_ports();
         if let Some(instance) = self.instance.as_mut() {
@@ -679,6 +691,10 @@ impl Lv2Processor {
         for io in &self.audio_outputs {
             *io.finished.lock() = true;
         }
+        let mut midi_outputs = vec![];
+        for port in 0..self.midi_outputs {
+            midi_outputs.push(self.read_midi_output_events(port));
+        }
         let changes = self.collect_scalar_changes();
         if !changes.is_empty()
             && self
@@ -688,6 +704,7 @@ impl Lv2Processor {
         {
             self.ui_feedback_tx = None;
         }
+        midi_outputs
     }
 
     fn collect_scalar_changes(&mut self) -> Vec<(u32, f32)> {
@@ -804,6 +821,69 @@ impl Lv2Processor {
         });
         self.ui_thread = Some(thread);
         Ok(())
+    }
+
+    fn write_midi_input_events(&mut self, port: usize, events: &[MidiEvent]) {
+        let Some(buffer) = self.atom_inputs.get_mut(port) else {
+            return;
+        };
+        let bytes = buffer.bytes_mut();
+        if bytes.len() < std::mem::size_of::<LV2AtomSequence>() {
+            return;
+        }
+        let seq = bytes.as_mut_ptr() as *mut LV2AtomSequence;
+        let capacity = bytes
+            .len()
+            .saturating_sub(std::mem::size_of::<lv2_raw::LV2Atom>()) as u32;
+        for event in events {
+            if event.data.is_empty() {
+                continue;
+            }
+            let mut raw =
+                vec![0_u8; std::mem::size_of::<lv2_raw::LV2AtomEvent>() + event.data.len()];
+            let raw_event = raw.as_mut_ptr() as *mut lv2_raw::LV2AtomEvent;
+            unsafe {
+                (*raw_event).time_in_frames = event.frame as i64;
+                (*raw_event).body.mytype = self.midi_event_urid;
+                (*raw_event).body.size = event.data.len() as u32;
+                let data_ptr =
+                    (raw_event as *mut u8).add(std::mem::size_of::<lv2_raw::LV2AtomEvent>());
+                std::ptr::copy_nonoverlapping(event.data.as_ptr(), data_ptr, event.data.len());
+                if lv2_atom_sequence_append_event(seq, capacity, raw_event).is_null() {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn read_midi_output_events(&mut self, port: usize) -> Vec<MidiEvent> {
+        let Some(buffer) = self.atom_outputs.get_mut(port) else {
+            return vec![];
+        };
+        let bytes = buffer.bytes_mut();
+        if bytes.len() < std::mem::size_of::<LV2AtomSequence>() {
+            return vec![];
+        }
+
+        let mut result = Vec::new();
+        let seq = bytes.as_mut_ptr() as *mut LV2AtomSequence;
+        unsafe {
+            let body = &(*seq).body as *const LV2AtomSequenceBody;
+            let size = (*seq).atom.size;
+            let mut it = lv2_atom_sequence_begin(body);
+            while !lv2_atom_sequence_is_end(body, size, it) {
+                let event = &*it;
+                if event.body.mytype == self.midi_event_urid && event.body.size > 0 {
+                    let data_ptr =
+                        (it as *const u8).add(std::mem::size_of::<lv2_raw::LV2AtomEvent>());
+                    let data_len = event.body.size as usize;
+                    let data = std::slice::from_raw_parts(data_ptr, data_len).to_vec();
+                    result.push(MidiEvent::new(event.time_in_frames.max(0) as u32, data));
+                }
+                it = lv2_atom_sequence_next(it);
+            }
+        }
+        result
     }
 }
 

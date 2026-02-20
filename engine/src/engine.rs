@@ -4,10 +4,11 @@ use tokio::task::JoinHandle;
 
 use crate::{
     audio::clip::AudioClip,
-    hw::oss,
+    hw::{midi::MidiHub, oss},
     kind::Kind,
     message::{Action, Message},
     midi::clip::MIDIClip,
+    midi::io::MidiEvent,
     mutex::UnsafeMutex,
     oss_worker::OssWorker,
     routing,
@@ -36,7 +37,9 @@ pub struct Engine {
     workers: Vec<WorkerData>,
     oss_in: Option<Arc<UnsafeMutex<oss::Audio>>>,
     oss_out: Option<Arc<UnsafeMutex<oss::Audio>>>,
+    midi_hub: Arc<UnsafeMutex<MidiHub>>,
     oss_worker: Option<WorkerData>,
+    pending_hw_midi_events: Vec<MidiEvent>,
     ready_workers: Vec<usize>,
     pending_requests: VecDeque<Action>,
     awaiting_hwfinished: bool,
@@ -52,7 +55,9 @@ impl Engine {
             workers: vec![],
             oss_in: None,
             oss_out: None,
+            midi_hub: Arc::new(UnsafeMutex::new(MidiHub::default())),
             oss_worker: None,
+            pending_hw_midi_events: vec![],
             ready_workers: vec![],
             pending_requests: VecDeque::new(),
             awaiting_hwfinished: false,
@@ -826,13 +831,21 @@ impl Engine {
                     let (tx, rx) = channel::<Message>(32);
                     let oss_in = self.oss_in.clone().unwrap();
                     let oss_out = self.oss_out.clone().unwrap();
+                    let midi_hub = self.midi_hub.clone();
                     let tx_engine = self.tx.clone();
                     let handler = tokio::spawn(async move {
-                        let worker = OssWorker::new(oss_in, oss_out, rx, tx_engine);
+                        let worker = OssWorker::new(oss_in, oss_out, midi_hub, rx, tx_engine);
                         worker.work().await;
                     });
                     self.oss_worker = Some(WorkerData::new(tx, handler));
                     self.request_hw_cycle().await;
+                }
+            }
+            Action::OpenMidiDevice(ref device) => {
+                let midi_hub = self.midi_hub.lock();
+                if let Err(e) = midi_hub.open_input(device) {
+                    self.notify_clients(Err(e)).await;
+                    return;
                 }
             }
             Action::HWInfo { .. } => {}
@@ -858,7 +871,10 @@ impl Engine {
                 }
 
                 Message::Request(a) => match a {
-                    Action::OpenAudioDevice(_) | Action::Quit | Action::ListLv2Plugins => {
+                    Action::OpenAudioDevice(_)
+                    | Action::OpenMidiDevice(_)
+                    | Action::Quit
+                    | Action::ListLv2Plugins => {
                         self.handle_request(a).await;
                     }
                     _ => {
@@ -875,11 +891,20 @@ impl Engine {
                         self.handle_request(a).await;
                     }
                     for track in self.state.lock().tracks.values() {
+                        if !self.pending_hw_midi_events.is_empty() {
+                            track
+                                .lock()
+                                .push_hw_midi_events(&self.pending_hw_midi_events);
+                        }
                         track.lock().setup();
                     }
+                    self.pending_hw_midi_events.clear();
                     if self.send_tracks().await {
                         self.request_hw_cycle().await;
                     }
+                }
+                Message::HWMidiEvents(events) => {
+                    self.pending_hw_midi_events.extend(events);
                 }
                 _ => {}
             }

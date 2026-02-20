@@ -1,3 +1,4 @@
+use crate::midi::io::MidiEvent;
 use crate::{kind::Kind, lv2::Lv2PluginInfo, mutex::UnsafeMutex, track::Track};
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
@@ -144,6 +145,7 @@ pub enum Action {
         kind: Kind,
     },
     OpenAudioDevice(String),
+    OpenMidiDevice(String),
     HWInfo {
         channels: usize,
         rate: usize,
@@ -162,5 +164,6 @@ pub enum Message {
 
     Request(Action),
     Response(Result<Action, String>),
+    HWMidiEvents(Vec<MidiEvent>),
     HWFinished,
 }
