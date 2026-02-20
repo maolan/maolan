@@ -119,6 +119,7 @@ pub struct Maolan {
     play_start_instant: Option<Instant>,
     play_start_samples: f64,
     playback_rate_hz: f64,
+    zoom_visible_bars: f32,
     record_armed: bool,
     pending_record_after_save: bool,
 }
@@ -153,6 +154,7 @@ impl Default for Maolan {
             play_start_instant: None,
             play_start_samples: 0.0,
             playback_rate_hz: 48_000.0,
+            zoom_visible_bars: 127.0,
             record_armed: false,
             pending_record_after_save: false,
         }
@@ -160,6 +162,37 @@ impl Default for Maolan {
 }
 
 impl Maolan {
+    fn samples_per_beat(&self) -> f64 {
+        self.playback_rate_hz * 0.5
+    }
+
+    fn samples_per_bar(&self) -> f64 {
+        self.samples_per_beat() * 4.0
+    }
+
+    fn tracks_width_px(&self) -> f32 {
+        match self.state.blocking_read().tracks_width {
+            Length::Fixed(v) => v,
+            _ => 200.0,
+        }
+    }
+
+    fn editor_width_px(&self) -> f32 {
+        (self.size.width - self.tracks_width_px() - 3.0).max(1.0)
+    }
+
+    fn pixels_per_sample(&self) -> f32 {
+        let total_samples = self.samples_per_bar() * self.zoom_visible_bars as f64;
+        if total_samples <= 0.0 {
+            return 1.0;
+        }
+        (self.editor_width_px() as f64 / total_samples) as f32
+    }
+
+    fn beat_pixels(&self) -> f32 {
+        (self.samples_per_beat() as f32 * self.pixels_per_sample()).max(0.01)
+    }
+
     fn sync_transport_snapshot(&mut self) {
         if let Some(started_at) = self.play_start_instant {
             let elapsed = started_at.elapsed().as_secs_f64();
@@ -960,6 +993,9 @@ impl Maolan {
                 return self.send(Action::Stop);
             }
             Message::PlaybackTick => {}
+            Message::ZoomVisibleBarsChanged(value) => {
+                self.zoom_visible_bars = value.clamp(1.0, 256.0);
+            }
             Message::TransportRecordToggle => {
                 if self.record_armed {
                     self.record_armed = false;
@@ -1610,17 +1646,19 @@ impl Maolan {
                         initial_value,
                         initial_mouse_x,
                     )) => {
+                        let pixels_per_sample = self.pixels_per_sample().max(1.0e-6);
                         let mut state = self.state.blocking_write();
                         if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name)
                         {
-                            let delta = position.x - initial_mouse_x;
+                            let delta_samples = (position.x - initial_mouse_x) / pixels_per_sample;
                             match kind {
                                 Kind::Audio => {
                                     let clip = &mut track.audio.clips[index];
                                     if is_right_side {
-                                        clip.length = (initial_value + delta).max(10.0) as usize;
+                                        clip.length =
+                                            (initial_value + delta_samples).max(10.0) as usize;
                                     } else {
-                                        let new_start = (initial_value + delta).max(0.0);
+                                        let new_start = (initial_value + delta_samples).max(0.0);
                                         let start_delta = new_start - clip.start as f32;
                                         clip.start = new_start as usize;
                                         clip.length = (clip.length - start_delta as usize).max(10);
@@ -1629,9 +1667,10 @@ impl Maolan {
                                 Kind::MIDI => {
                                     let clip = &mut track.midi.clips[index];
                                     if is_right_side {
-                                        clip.length = (initial_value + delta).max(10.0) as usize;
+                                        clip.length =
+                                            (initial_value + delta_samples).max(10.0) as usize;
                                     } else {
-                                        let new_start = (initial_value + delta).max(0.0);
+                                        let new_start = (initial_value + delta_samples).max(0.0);
                                         let start_delta = new_start - clip.start as f32;
                                         clip.start = new_start as usize;
                                         clip.length = (clip.length - start_delta as usize).max(10);
@@ -1687,7 +1726,8 @@ impl Maolan {
                                 let clip_index_in_from_track = clip_index;
                                 let mut clip_copy =
                                     from_track.audio.clips[clip_index_in_from_track].clone();
-                                let offset = clip.end.x - clip.start.x;
+                                let offset = (clip.end.x - clip.start.x)
+                                    / self.pixels_per_sample().max(1.0e-6);
                                 clip_copy.start =
                                     (clip_copy.start as f32 + offset).max(0.0) as usize;
                                 let task = self.send(Action::ClipMove {
@@ -1709,7 +1749,8 @@ impl Maolan {
                                 let clip_index_in_from_track = clip_index;
                                 let mut clip_copy =
                                     from_track.midi.clips[clip_index_in_from_track].clone();
-                                let offset = clip.end.x - clip.start.x;
+                                let offset = (clip.end.x - clip.start.x)
+                                    / self.pixels_per_sample().max(1.0e-6);
                                 clip_copy.start =
                                     (clip_copy.start as f32 + offset).max(0.0) as usize;
                                 let task = self.send(Action::ClipMove {
@@ -1831,9 +1872,12 @@ impl Maolan {
                 Some(Show::TrackPluginList) => self.track_plugin_list_view(),
                 _ => {
                     let view = match state.view {
-                        View::Workspace => {
-                            self.workspace.view(Some(self.current_transport_samples() as f32))
-                        }
+                        View::Workspace => self.workspace.view(
+                            Some(self.current_transport_samples()),
+                            self.pixels_per_sample(),
+                            self.beat_pixels(),
+                            self.zoom_visible_bars,
+                        ),
                         View::Connections => self.connections.view(),
                         View::TrackPlugins => self.track_plugins.view(),
                     };
@@ -1852,8 +1896,10 @@ impl Maolan {
                     }
                     content = content.push(view);
                     content = content.push(text(format!("Last message: {}", state.message)));
-
-                    content.into()
+                    container(content)
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into()
                 }
             }
         } else {

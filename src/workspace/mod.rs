@@ -6,7 +6,7 @@ mod tracks;
 use crate::{message::Message, state::State};
 use iced::{
     Background, Color, Element, Length, Point,
-    widget::{Stack, column, container, mouse_area, pin, row},
+    widget::{Stack, column, container, mouse_area, pin, row, slider},
 };
 
 pub struct Workspace {
@@ -46,12 +46,19 @@ impl Workspace {
             .into()
     }
 
-    pub fn view(&self, playhead_x: Option<f32>) -> Element<'_, Message> {
+    pub fn view(
+        &self,
+        playhead_samples: Option<f64>,
+        pixels_per_sample: f32,
+        beat_pixels: f32,
+        zoom_visible_bars: f32,
+    ) -> Element<'_, Message> {
         let tracks_width = self.state.blocking_read().tracks_width;
+        let playhead_x = playhead_samples.map(|sample| (sample as f32 * pixels_per_sample).max(0.0));
 
         let editor_with_playhead = if let Some(x) = playhead_x {
             Stack::from_vec(vec![
-                self.editor.view(),
+                self.editor.view(pixels_per_sample),
                 pin(Self::playhead_line())
                     .position(Point::new(x.max(0.0), 0.0))
                     .into(),
@@ -60,8 +67,30 @@ impl Workspace {
             .height(Length::Fill)
             .into()
         } else {
-            self.editor.view()
+            self.editor.view(pixels_per_sample)
         };
+
+        let editor_with_zoom = Stack::from_vec(vec![
+            editor_with_playhead,
+            pin(
+                container(
+                    slider(
+                        1.0..=256.0,
+                        zoom_visible_bars,
+                        Message::ZoomVisibleBarsChanged,
+                    )
+                    .width(Length::Fixed(105.0)),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(8)
+                .align_x(iced::alignment::Horizontal::Right)
+                .align_y(iced::alignment::Vertical::Bottom),
+            )
+            .into(),
+        ])
+        .width(Length::Fill)
+        .height(Length::Fill);
 
         column![
             row![
@@ -91,7 +120,7 @@ impl Workspace {
                             ..container::Style::default()
                         }
                     }),
-                self.ruler.view(playhead_x),
+                self.ruler.view(playhead_x, beat_pixels),
             ]
             .height(Length::Fixed(self.ruler.height())),
             row![
@@ -113,7 +142,7 @@ impl Workspace {
                         }),
                 )
                 .on_press(Message::TracksResizeStart),
-                editor_with_playhead,
+                editor_with_zoom,
             ]
             .height(Length::Fill),
             mouse_area(

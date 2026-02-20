@@ -9,7 +9,11 @@ use iced::{
 use iced_drop::droppable;
 use maolan_engine::kind::Kind;
 
-fn view_track_elements(state: &StateData, track: Track) -> Element<'static, Message> {
+fn view_track_elements(
+    state: &StateData,
+    track: Track,
+    pixels_per_sample: f32,
+) -> Element<'static, Message> {
     let mut clips: Vec<Element<'static, Message>> = vec![];
     let height = track.height;
     let track_name_cloned = track.name.clone();
@@ -64,7 +68,7 @@ fn view_track_elements(state: &StateData, track: Track) -> Element<'static, Mess
                 }),
         )
         .on_press(Message::ClipResizeStart(
-            Kind::MIDI,
+            Kind::Audio,
             track_name_cloned.clone(),
             index,
             true,
@@ -104,7 +108,7 @@ fn view_track_elements(state: &StateData, track: Track) -> Element<'static, Mess
         });
 
         let clip_widget = container(row![left_handle, clip_content, right_handle])
-            .width(Length::Fixed(clip.length as f32))
+            .width(Length::Fixed((clip.length as f32 * pixels_per_sample).max(12.0)))
             .height(Length::Fill)
             .style(|_theme| container::Style {
                 background: None,
@@ -122,7 +126,9 @@ fn view_track_elements(state: &StateData, track: Track) -> Element<'static, Mess
             });
 
         clips.push(
-            droppable(pin(clip_widget).position(Point::new(clip.start as f32, 0.0)))
+            droppable(
+                pin(clip_widget).position(Point::new(clip.start as f32 * pixels_per_sample, 0.0)),
+            )
                 .on_drag({
                     let track_name_for_drag_closure = track_name_cloned.clone();
                     move |point, _| {
@@ -180,11 +186,11 @@ impl Editor {
         Self { state }
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view(&self, pixels_per_sample: f32) -> Element<'_, Message> {
         let mut result = column![];
         let state = self.state.blocking_read();
         for track in state.tracks.iter() {
-            result = result.push(view_track_elements(&state, track.clone()));
+            result = result.push(view_track_elements(&state, track.clone(), pixels_per_sample));
         }
         mouse_area(result.width(Length::Fill).height(Length::Fill))
             .on_press(Message::DeselectAll)
