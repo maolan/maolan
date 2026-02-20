@@ -165,6 +165,9 @@ impl Default for StateData {
             })
             .unwrap_or_else(|_| vec![]);
         hw.sort();
+        hw.push("jack".to_string());
+        hw.sort();
+        hw.dedup();
         Self {
             shift: false,
             ctrl: false,

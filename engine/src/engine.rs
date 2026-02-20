@@ -17,6 +17,8 @@ use wavers::write as write_wav;
 
 use crate::{
     audio::clip::AudioClip,
+    audio::io::AudioIO,
+    hw::jack::JackRuntime,
     hw::oss::{self, MidiHub},
     kind::Kind,
     message::{Action, Message},
@@ -66,6 +68,7 @@ pub struct Engine {
     workers: Vec<WorkerData>,
     oss_in: Option<Arc<UnsafeMutex<oss::Audio>>>,
     oss_out: Option<Arc<UnsafeMutex<oss::Audio>>>,
+    jack_runtime: Option<Arc<UnsafeMutex<JackRuntime>>>,
     midi_hub: Arc<UnsafeMutex<MidiHub>>,
     oss_worker: Option<WorkerData>,
     pending_hw_midi_events: Vec<MidiEvent>,
@@ -139,6 +142,7 @@ impl Engine {
             workers: vec![],
             oss_in: None,
             oss_out: None,
+            jack_runtime: None,
             midi_hub: Arc::new(UnsafeMutex::new(MidiHub::default())),
             oss_worker: None,
             pending_hw_midi_events: vec![],
@@ -164,8 +168,31 @@ impl Engine {
         self.oss_out
             .as_ref()
             .map(|o| o.lock().chsamples)
+            .or_else(|| self.jack_runtime.as_ref().map(|j| j.lock().buffer_size))
             .or_else(|| self.oss_in.as_ref().map(|i| i.lock().chsamples))
             .unwrap_or(0)
+    }
+
+    fn hw_input_audio_port(&self, from_port: usize) -> Option<Arc<AudioIO>> {
+        self.oss_in
+            .as_ref()
+            .and_then(|h| h.lock().channels.get(from_port).cloned())
+            .or_else(|| {
+                self.jack_runtime
+                    .as_ref()
+                    .and_then(|j| j.lock().audio_ins.get(from_port).cloned())
+            })
+    }
+
+    fn hw_output_audio_port(&self, to_port: usize) -> Option<Arc<AudioIO>> {
+        self.oss_out
+            .as_ref()
+            .and_then(|h| h.lock().channels.get(to_port).cloned())
+            .or_else(|| {
+                self.jack_runtime
+                    .as_ref()
+                    .and_then(|j| j.lock().audio_outs.get(to_port).cloned())
+            })
     }
 
     fn apply_mute_solo_policy(&self) {
@@ -533,23 +560,17 @@ impl Engine {
     }
 
     async fn apply_hw_out_gain_and_meter(&mut self) {
-        let Some(oss_out) = self.oss_out.clone() else {
-            return;
-        };
         let gain = if self.hw_out_muted {
             0.0
         } else {
             10.0_f32.powf(self.hw_out_level_db / 20.0)
         };
-        {
-            let hw_out = oss_out.lock();
-            hw_out.output_gain_linear = gain;
-            hw_out.output_balance = self.hw_out_balance;
-        }
-        if !self.should_publish_hw_out_meters() {
-            return;
-        }
-        let meter_db = {
+        let meter_db = if let Some(oss_out) = self.oss_out.clone() {
+            {
+                let hw_out = oss_out.lock();
+                hw_out.output_gain_linear = gain;
+                hw_out.output_balance = self.hw_out_balance;
+            }
             let hw_out = oss_out.lock();
             hw_out
                 .channels
@@ -578,8 +599,43 @@ impl Engine {
                         (20.0 * peak.log10()).clamp(-90.0, 20.0)
                     }
                 })
-                .collect()
+                .collect::<Vec<f32>>()
+        } else if let Some(jack) = self.jack_runtime.clone() {
+            jack.lock().set_output_gain_linear(gain);
+            jack.lock().set_output_balance(self.hw_out_balance);
+            let outs = jack.lock().audio_outs.clone();
+            outs.iter()
+                .enumerate()
+                .map(|(channel_idx, channel)| {
+                    let balance_gain = if outs.len() == 2 {
+                        let b = self.hw_out_balance.clamp(-1.0, 1.0);
+                        if channel_idx == 0 {
+                            (1.0 - b).clamp(0.0, 1.0)
+                        } else {
+                            (1.0 + b).clamp(0.0, 1.0)
+                        }
+                    } else {
+                        1.0
+                    };
+                    let buf = channel.buffer.lock();
+                    let peak = buf
+                        .iter()
+                        .fold(0.0_f32, |acc, sample| acc.max(sample.abs()))
+                        * gain
+                        * balance_gain;
+                    if peak <= 1.0e-6 {
+                        -90.0
+                    } else {
+                        (20.0 * peak.log10()).clamp(-90.0, 20.0)
+                    }
+                })
+                .collect::<Vec<f32>>()
+        } else {
+            return;
         };
+        if !self.should_publish_hw_out_meters() {
+            return;
+        }
         self.notify_clients(Ok(Action::TrackMeters {
             track_name: "hw:out".to_string(),
             output_db: meter_db,
@@ -739,6 +795,7 @@ impl Engine {
                         .await
                         .expect("Failed waiting for OSS worker to quit");
                 }
+                self.jack_runtime = None;
 
                 // Then shut down regular workers
                 while !self.workers.is_empty() {
@@ -767,35 +824,40 @@ impl Engine {
                         .await;
                     return;
                 }
-                match &self.oss_out {
-                    Some(oss) => {
-                        let chsamples = oss.lock().chsamples;
-                        tracks.insert(
+                let maybe_hw = if let Some(oss) = &self.oss_out {
+                    let hw = oss.lock();
+                    Some((hw.chsamples, hw.rate as f64))
+                } else if let Some(jack) = &self.jack_runtime {
+                    let j = jack.lock();
+                    Some((j.buffer_size, j.sample_rate as f64))
+                } else {
+                    None
+                };
+
+                if let Some((chsamples, sample_rate)) = maybe_hw {
+                    tracks.insert(
+                        name.clone(),
+                        Arc::new(UnsafeMutex::new(Box::new(Track::new(
                             name.clone(),
-                            Arc::new(UnsafeMutex::new(Box::new(Track::new(
-                                name.clone(),
-                                audio_ins,
-                                audio_outs,
-                                midi_ins,
-                                midi_outs,
-                                chsamples,
-                                oss.lock().rate as f64,
-                            )))),
-                        );
-                        if let Some(track) = tracks.get(name) {
-                            track.lock().ensure_default_audio_passthrough();
-                            track.lock().ensure_default_midi_passthrough();
-                            let lv2_dir = self.session_plugins_dir();
-                            track.lock().set_lv2_state_base_dir(lv2_dir);
-                        }
+                            audio_ins,
+                            audio_outs,
+                            midi_ins,
+                            midi_outs,
+                            chsamples,
+                            sample_rate,
+                        )))),
+                    );
+                    if let Some(track) = tracks.get(name) {
+                        track.lock().ensure_default_audio_passthrough();
+                        track.lock().ensure_default_midi_passthrough();
+                        let lv2_dir = self.session_plugins_dir();
+                        track.lock().set_lv2_state_base_dir(lv2_dir);
                     }
-                    None => {
-                        self.notify_clients(Err(
-                            "Engine needs to open audio device before adding audio track"
-                                .to_string(),
-                        ))
-                        .await;
-                    }
+                } else {
+                    self.notify_clients(Err(
+                        "Engine needs to open audio device before adding audio track".to_string(),
+                    ))
+                    .await;
                 }
             }
             Action::RemoveTrack(ref name) => {
@@ -1157,9 +1219,7 @@ impl Engine {
                 match kind {
                     Kind::Audio => {
                         let from_audio_io = if from_track == "hw:in" {
-                            self.oss_in
-                                .as_ref()
-                                .and_then(|h| h.lock().channels.get(from_port).cloned())
+                            self.hw_input_audio_port(from_port)
                         } else {
                             self.state
                                 .lock()
@@ -1168,9 +1228,7 @@ impl Engine {
                                 .and_then(|t| t.lock().audio.outs.get(from_port).cloned())
                         };
                         let to_audio_io = if to_track == "hw:out" {
-                            self.oss_out
-                                .as_ref()
-                                .and_then(|h| h.lock().channels.get(to_port).cloned())
+                            self.hw_output_audio_port(to_port)
                         } else {
                             self.state
                                 .lock()
@@ -1266,9 +1324,7 @@ impl Engine {
                 kind,
             } => {
                 let from_audio_io = if from_track == "hw:in" {
-                    self.oss_in
-                        .as_ref()
-                        .and_then(|h| h.lock().channels.get(from_port).cloned())
+                    self.hw_input_audio_port(from_port)
                 } else {
                     let state = self.state.lock();
                     state
@@ -1277,9 +1333,7 @@ impl Engine {
                         .and_then(|t| t.lock().audio.outs.get(from_port).cloned())
                 };
                 let to_audio_io = if to_track == "hw:out" {
-                    self.oss_out
-                        .as_ref()
-                        .and_then(|h| h.lock().channels.get(to_port).cloned())
+                    self.hw_output_audio_port(to_port)
                 } else {
                     let state = self.state.lock();
                     state
@@ -1322,10 +1376,60 @@ impl Engine {
             }
 
             Action::OpenAudioDevice(ref device) => {
+                if device.eq_ignore_ascii_case("jack") {
+                    match JackRuntime::new(
+                        "maolan",
+                        crate::hw::jack::Config::default(),
+                        self.tx.clone(),
+                    ) {
+                        Ok(runtime) => {
+                            let input_channels = runtime.audio_ins.len();
+                            let output_channels = runtime.audio_outs.len();
+                            let midi_inputs = runtime.midi_input_devices();
+                            let midi_outputs = runtime.midi_output_devices();
+                            let rate = runtime.sample_rate;
+                            self.oss_in = None;
+                            self.oss_out = None;
+                            if let Some(worker) = self.oss_worker.take() {
+                                let _ = worker.tx.send(Message::Request(Action::Quit)).await;
+                                let _ = worker.handle.await;
+                            }
+                            self.jack_runtime = Some(Arc::new(UnsafeMutex::new(runtime)));
+                            self.notify_clients(Ok(Action::HWInfo {
+                                channels: input_channels,
+                                rate,
+                                input: true,
+                            }))
+                            .await;
+                            self.notify_clients(Ok(Action::HWInfo {
+                                channels: output_channels,
+                                rate,
+                                input: false,
+                            }))
+                            .await;
+                            for device in midi_inputs {
+                                self.notify_clients(Ok(Action::OpenMidiInputDevice(device)))
+                                    .await;
+                            }
+                            for device in midi_outputs {
+                                self.notify_clients(Ok(Action::OpenMidiOutputDevice(device)))
+                                    .await;
+                            }
+                            self.notify_clients(Ok(Action::OpenAudioDevice(device.clone())))
+                                .await;
+                            self.awaiting_hwfinished = true;
+                        }
+                        Err(e) => {
+                            self.notify_clients(Err(e)).await;
+                        }
+                    }
+                    return;
+                }
                 match oss::Audio::new(device, 48000, 32, true) {
                     Ok(d) => {
                         let channels = d.channels.len();
                         let rate = d.rate as usize;
+                        self.jack_runtime = None;
                         self.oss_in = Some(Arc::new(UnsafeMutex::new(d)));
                         self.notify_clients(Ok(Action::HWInfo {
                             channels,
@@ -1469,6 +1573,17 @@ impl Engine {
                         continue;
                     }
                     self.awaiting_hwfinished = false;
+                    if let Some(jack) = &self.jack_runtime {
+                        if !self.pending_hw_midi_out_events.is_empty() {
+                            let out_events = std::mem::take(&mut self.pending_hw_midi_out_events);
+                            jack.lock().write_events(&out_events);
+                        }
+                        let mut in_events = vec![];
+                        jack.lock().read_events_into(&mut in_events);
+                        if !in_events.is_empty() {
+                            self.pending_hw_midi_events.extend(in_events);
+                        }
+                    }
                     while let Some(a) = self.pending_requests.pop_front() {
                         self.handle_request(a).await;
                     }
@@ -1488,8 +1603,11 @@ impl Engine {
                         self.transport_sample =
                             self.transport_sample.saturating_add(self.current_cycle_samples());
                     }
-                    if self.send_tracks().await {
+                    if self.send_tracks().await && self.oss_worker.is_some() {
                         self.request_hw_cycle().await;
+                    }
+                    if self.jack_runtime.is_some() {
+                        self.awaiting_hwfinished = true;
                     }
                 }
                 Message::HWMidiEvents(events) => {
