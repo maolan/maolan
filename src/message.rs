@@ -5,6 +5,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Copy)]
 pub enum Show {
     AddTrack,
+    TrackPluginList,
     Save,
     Open,
 }
@@ -103,6 +104,9 @@ pub enum Message {
     CloseTrackPlugins,
     RefreshLv2Plugins,
     RefreshTrackLv2Graph,
+    FilterLv2Plugins(String),
+    SelectLv2Plugin(String),
+    LoadSelectedLv2Plugins,
     LoadLv2Plugin(String),
     ShowLv2PluginUi(String),
 

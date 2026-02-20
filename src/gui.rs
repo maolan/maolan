@@ -6,7 +6,7 @@ use crate::{
 };
 use iced::futures::{Stream, StreamExt, io, stream};
 use iced::keyboard::Event as KeyEvent;
-use iced::widget::{Id, button, column, container, row, scrollable, text};
+use iced::widget::{Id, button, column, container, row, scrollable, text, text_input};
 use iced::{Length, Point, Size, Subscription, Task, event, keyboard, mouse, window};
 use maolan_engine::{
     self as engine,
@@ -15,6 +15,7 @@ use maolan_engine::{
 };
 use rfd::AsyncFileDialog;
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::{
     fs::{self, File},
     io::BufReader,
@@ -107,6 +108,8 @@ pub struct Maolan {
     hw: hw::HW,
     modal: Option<Show>,
     add_track: add_track::AddTrackView,
+    plugin_filter: String,
+    selected_lv2_plugins: BTreeSet<String>,
 }
 
 impl Default for Maolan {
@@ -129,11 +132,86 @@ impl Default for Maolan {
             hw: hw::HW::new(state.clone()),
             modal: None,
             add_track: add_track::AddTrackView::default(),
+            plugin_filter: String::new(),
+            selected_lv2_plugins: BTreeSet::new(),
         }
     }
 }
 
 impl Maolan {
+    fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
+        let state = self.state.blocking_read();
+        let title = state
+            .lv2_graph_track
+            .clone()
+            .unwrap_or_else(|| "(no track)".to_string());
+
+        let mut lv2_list = column![];
+        let filter = self.plugin_filter.trim().to_lowercase();
+        for plugin in &state.lv2_plugins {
+            if !filter.is_empty() {
+                let name = plugin.name.to_lowercase();
+                let uri = plugin.uri.to_lowercase();
+                if !name.contains(&filter) && !uri.contains(&filter) {
+                    continue;
+                }
+            }
+            let is_selected = self.selected_lv2_plugins.contains(&plugin.uri);
+            let row_content = row![
+                text(if is_selected { "[x]" } else { "[ ]" }),
+                text(format!(
+                    "{} (a:{}/{}, m:{}/{})",
+                    plugin.name,
+                    plugin.audio_inputs,
+                    plugin.audio_outputs,
+                    plugin.midi_inputs,
+                    plugin.midi_outputs
+                ))
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+            .width(Length::Fill);
+
+            let row_button = if is_selected {
+                button(row_content).style(button::primary)
+            } else {
+                button(row_content).style(button::text)
+            };
+            lv2_list = lv2_list.push(
+                row_button
+                    .width(Length::Fill)
+                    .on_press(Message::SelectLv2Plugin(plugin.uri.clone())),
+            );
+        }
+
+        let load_button = if self.selected_lv2_plugins.is_empty() {
+            button("Load")
+        } else {
+            button(text(format!("Load ({})", self.selected_lv2_plugins.len())))
+                .on_press(Message::LoadSelectedLv2Plugins)
+        };
+
+        container(
+            column![
+                text(format!("Track Plugins: {title}")),
+                text_input("Filter plugins...", &self.plugin_filter)
+                    .on_input(Message::FilterLv2Plugins)
+                    .width(Length::Fill),
+                scrollable(lv2_list).height(Length::Fill),
+                row![
+                    load_button,
+                    button("Close").on_press(Message::Cancel).style(button::secondary),
+                ]
+                .spacing(10),
+            ]
+            .spacing(10),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
     fn send(&self, action: Action) -> Task<Message> {
         Task::perform(
             async move { CLIENT.send(EngineMessage::Request(action)).await },
@@ -373,14 +451,62 @@ impl Maolan {
                     Show::AddTrack => {
                         self.modal = Some(Show::AddTrack);
                     }
+                    Show::TrackPluginList => {
+                        self.modal = Some(Show::TrackPluginList);
+                        self.selected_lv2_plugins.clear();
+                        return self.send(Action::ListLv2Plugins);
+                    }
                 }
             }
             Message::Cancel => self.modal = None,
             Message::Request(ref a) => return self.send(a.clone()),
             Message::RefreshLv2Plugins => return self.send(Action::ListLv2Plugins),
+            Message::FilterLv2Plugins(ref query) => {
+                self.plugin_filter = query.clone();
+            }
+            Message::SelectLv2Plugin(ref plugin_uri) => {
+                if self.selected_lv2_plugins.contains(plugin_uri) {
+                    self.selected_lv2_plugins.remove(plugin_uri);
+                } else {
+                    self.selected_lv2_plugins.insert(plugin_uri.clone());
+                }
+            }
+            Message::LoadSelectedLv2Plugins => {
+                let track_name = {
+                    let state = self.state.blocking_read();
+                    state
+                        .lv2_graph_track
+                        .clone()
+                        .or_else(|| state.selected.iter().next().cloned())
+                };
+                if let Some(track_name) = track_name {
+                    let tasks: Vec<Task<Message>> = self
+                        .selected_lv2_plugins
+                        .iter()
+                        .cloned()
+                        .map(|plugin_uri| {
+                            self.send(Action::TrackLoadLv2Plugin {
+                                track_name: track_name.clone(),
+                                plugin_uri,
+                            })
+                        })
+                        .collect();
+                    self.selected_lv2_plugins.clear();
+                    self.modal = None;
+                    return Task::batch(tasks);
+                }
+                self.state.blocking_write().message =
+                    "Select a track before loading LV2 plugin".to_string();
+            }
             Message::LoadLv2Plugin(ref plugin_uri) => {
-                let selected_track = self.state.blocking_read().selected.iter().next().cloned();
-                if let Some(track_name) = selected_track {
+                let track_name = {
+                    let state = self.state.blocking_read();
+                    state
+                        .lv2_graph_track
+                        .clone()
+                        .or_else(|| state.selected.iter().next().cloned())
+                };
+                if let Some(track_name) = track_name {
                     return self.send(Action::TrackLoadLv2Plugin {
                         track_name,
                         plugin_uri: plugin_uri.clone(),
@@ -390,8 +516,14 @@ impl Maolan {
                     "Select a track before loading LV2 plugin".to_string();
             }
             Message::ShowLv2PluginUi(ref plugin_uri) => {
-                let selected_track = self.state.blocking_read().selected.iter().next().cloned();
-                if let Some(track_name) = selected_track {
+                let track_name = {
+                    let state = self.state.blocking_read();
+                    state
+                        .lv2_graph_track
+                        .clone()
+                        .or_else(|| state.selected.iter().next().cloned())
+                };
+                if let Some(track_name) = track_name {
                     return self.send(Action::TrackShowLv2PluginUi {
                         track_name,
                         plugin_uri: plugin_uri.clone(),
@@ -1189,77 +1321,27 @@ impl Maolan {
         if state.hw_loaded {
             match self.modal {
                 Some(Show::AddTrack) => self.add_track.view(),
+                Some(Show::TrackPluginList) => self.track_plugin_list_view(),
                 _ => {
                     let view = match state.view {
                         View::Workspace => self.workspace.view(),
                         View::Connections => self.connections.view(),
                         View::TrackPlugins => self.track_plugins.view(),
                     };
-                    let selected_track = state
-                        .selected
-                        .iter()
-                        .next()
-                        .cloned()
-                        .unwrap_or_else(|| "(none)".to_string());
-
-                    let mut lv2_list = column![];
-                    for plugin in &state.lv2_plugins {
-                        lv2_list = lv2_list.push(
-                            row![
-                                text(format!(
-                                    "{} (a:{}/{}, m:{}/{})",
-                                    plugin.name,
-                                    plugin.audio_inputs,
-                                    plugin.audio_outputs,
-                                    plugin.midi_inputs,
-                                    plugin.midi_outputs
-                                ))
-                                .width(Length::Fill),
-                                button("Load").on_press(Message::LoadLv2Plugin(plugin.uri.clone())),
-                                button("Show UI")
-                                    .on_press(Message::ShowLv2PluginUi(plugin.uri.clone())),
-                            ]
-                            .spacing(8),
-                        );
-                    }
-
-                    let maybe_plugin_header = if matches!(state.view, View::TrackPlugins) {
-                        let title = state
-                            .lv2_graph_track
-                            .clone()
-                            .unwrap_or_else(|| "(no track)".to_string());
-                        Some(
-                            row![
-                                button("Back to Connections").on_press(Message::CloseTrackPlugins),
-                                text(format!("Plugin Graph: {title}")),
-                            ]
-                            .spacing(8),
-                        )
-                    } else {
-                        None
-                    };
 
                     let mut content = column![self.menu.view(), self.toolbar.view()];
-                    if let Some(header) = maybe_plugin_header {
-                        content = content.push(container(header).padding(8));
+                    if matches!(state.view, View::TrackPlugins) {
+                        content = content.push(
+                            container(
+                                row![button("Plugin List").on_press(Message::Show(
+                                    Show::TrackPluginList
+                                ))]
+                                .spacing(8),
+                            )
+                            .padding(8),
+                        );
                     }
                     content = content.push(view);
-                    content = content.push(
-                        container(
-                            column![
-                                row![
-                                    text(format!("LV2 target track: {selected_track}")),
-                                    button("Refresh LV2").on_press(Message::RefreshLv2Plugins),
-                                    button("Refresh Plugin Graph")
-                                        .on_press(Message::RefreshTrackLv2Graph),
-                                ]
-                                .spacing(8),
-                                scrollable(lv2_list).height(Length::Fixed(180.0)),
-                            ]
-                            .spacing(8),
-                        )
-                        .padding(8),
-                    );
                     content = content.push(text(format!("Last message: {}", state.message)));
 
                     content.into()

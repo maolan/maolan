@@ -623,6 +623,16 @@ impl canvas::Program<Message> for Graph {
             };
             let active_connecting = data.lv2_graph_connecting.as_ref();
 
+            frame.fill_text(Text {
+                content: format!("Track: {}", track.name),
+                position: Point::new(bounds.width / 2.0, 16.0),
+                color: Color::WHITE,
+                size: 16.0.into(),
+                align_x: Horizontal::Center.into(),
+                align_y: Vertical::Center,
+                ..Default::default()
+            });
+
             let in_rect = Self::track_input_rect(bounds);
             let out_rect = Self::track_output_rect(bounds);
             let left_box = Path::rectangle(in_rect.position(), in_rect.size());
