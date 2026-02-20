@@ -25,11 +25,13 @@ impl Maolan {
                     return Task::none();
                 }
                 if self.playing {
+                    self.toolbar.update(message.clone());
                     self.playing = false;
                     self.last_playback_tick = None;
                     self.stop_recording_preview();
                     return self.send(Action::Stop);
                 }
+                self.toolbar.update(message.clone());
                 self.playing = true;
                 self.last_playback_tick = Some(Instant::now());
                 if self.record_armed {
@@ -128,6 +130,7 @@ impl Maolan {
             Message::Cancel => self.modal = None,
             Message::Request(ref a) => return self.send(a.clone()),
             Message::TransportPlay => {
+                self.toolbar.update(message.clone());
                 self.playing = true;
                 self.last_playback_tick = Some(Instant::now());
                 if self.record_armed {
@@ -136,12 +139,14 @@ impl Maolan {
                 return self.send(Action::Play);
             }
             Message::TransportPause => {
+                self.toolbar.update(message.clone());
                 self.playing = false;
                 self.last_playback_tick = None;
                 self.stop_recording_preview();
                 return self.send(Action::Stop);
             }
             Message::TransportStop => {
+                self.toolbar.update(message.clone());
                 self.playing = false;
                 self.last_playback_tick = None;
                 self.stop_recording_preview();
@@ -194,6 +199,7 @@ impl Maolan {
                 self.mixer_resize_hovered = hovered;
             }
             Message::TransportRecordToggle => {
+                self.toolbar.update(message.clone());
                 if self.record_armed {
                     self.record_armed = false;
                     self.pending_record_after_save = false;
