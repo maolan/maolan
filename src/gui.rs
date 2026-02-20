@@ -3,7 +3,10 @@ use crate::{
     message::{DraggedClip, Message, Show},
     state::{ConnectionViewSelection, HW, Resizing, State, StateData, Track, View},
     toolbar,
-    ui_timing::PLAYHEAD_UPDATE_INTERVAL,
+    ui_timing::{
+        PLAYHEAD_UPDATE_INTERVAL, RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL,
+        RECORDING_PREVIEW_UPDATE_INTERVAL,
+    },
     workspace,
 };
 use iced::futures::{Stream, StreamExt, io, stream};
@@ -17,10 +20,10 @@ use maolan_engine::{
 };
 use rfd::AsyncFileDialog;
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::{
     fs::{self, File},
-    io::BufReader,
+    io::{BufReader, BufWriter},
     path::{Path, PathBuf},
     process::{Command, exit},
     sync::{Arc, LazyLock},
@@ -28,8 +31,18 @@ use std::{
 };
 use tokio::sync::RwLock;
 use tracing::{debug, error};
+use wavers::Wav;
 
 static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct AudioClipKey {
+    track_name: String,
+    clip_name: String,
+    start: usize,
+    length: usize,
+    offset: usize,
+}
 
 fn kernel_midi_label(path: &str) -> String {
     let basename = Path::new(path)
@@ -116,6 +129,7 @@ pub struct Maolan {
     session_dir: Option<PathBuf>,
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
+    pending_audio_peaks: HashMap<AudioClipKey, Vec<Vec<f32>>>,
     playing: bool,
     transport_samples: f64,
     last_playback_tick: Option<Instant>,
@@ -125,6 +139,9 @@ pub struct Maolan {
     mixer_resize_hovered: bool,
     record_armed: bool,
     pending_record_after_save: bool,
+    recording_preview_start_sample: Option<usize>,
+    recording_preview_sample: Option<usize>,
+    recording_preview_peaks: HashMap<String, Vec<Vec<f32>>>,
 }
 
 impl Default for Maolan {
@@ -152,6 +169,7 @@ impl Default for Maolan {
             session_dir: None,
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
+            pending_audio_peaks: HashMap::new(),
             playing: false,
             transport_samples: 0.0,
             last_playback_tick: None,
@@ -161,6 +179,9 @@ impl Default for Maolan {
             mixer_resize_hovered: false,
             record_armed: false,
             pending_record_after_save: false,
+            recording_preview_start_sample: None,
+            recording_preview_sample: None,
+            recording_preview_peaks: HashMap::new(),
         }
     }
 }
@@ -195,6 +216,144 @@ impl Maolan {
 
     fn beat_pixels(&self) -> f32 {
         (self.samples_per_beat() as f32 * self.pixels_per_sample()).max(0.01)
+    }
+
+    fn start_recording_preview(&mut self) {
+        let sample = self.transport_samples.max(0.0) as usize;
+        self.recording_preview_start_sample = Some(sample);
+        self.recording_preview_sample = Some(sample);
+        self.recording_preview_peaks.clear();
+    }
+
+    fn stop_recording_preview(&mut self) {
+        self.recording_preview_start_sample = None;
+        self.recording_preview_sample = None;
+        self.recording_preview_peaks.clear();
+    }
+
+    fn recording_preview_bounds(&self) -> Option<(usize, usize)> {
+        let start = self.recording_preview_start_sample?;
+        let current = self.recording_preview_sample?;
+        if current > start {
+            Some((start, current))
+        } else {
+            None
+        }
+    }
+
+    fn audio_clip_key(
+        track_name: &str,
+        clip_name: &str,
+        start: usize,
+        length: usize,
+        offset: usize,
+    ) -> AudioClipKey {
+        AudioClipKey {
+            track_name: track_name.to_string(),
+            clip_name: clip_name.to_string(),
+            start,
+            length,
+            offset,
+        }
+    }
+
+    fn sanitize_peak_file_component(value: &str) -> String {
+        let mut out = String::with_capacity(value.len());
+        for ch in value.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                out.push(ch);
+            } else {
+                out.push('_');
+            }
+        }
+        if out.is_empty() {
+            "clip".to_string()
+        } else {
+            out
+        }
+    }
+
+    fn build_peak_file_rel(track_name: &str, clip_idx: usize, clip_name: &str) -> String {
+        let track = Self::sanitize_peak_file_component(track_name);
+        let clip = Self::sanitize_peak_file_component(clip_name);
+        format!("peaks/{}_{:04}_{}.json", track, clip_idx, clip)
+    }
+
+    fn read_clip_peaks_file(path: &Path) -> std::io::Result<Vec<Vec<f32>>> {
+        let file = File::open(path)?;
+        let json: Value = serde_json::from_reader(BufReader::new(file))?;
+        let peaks_val = &json["peaks"];
+
+        // Backward-compatible with legacy single-channel format: "peaks": [..]
+        if peaks_val.as_array().is_some_and(|arr| {
+            arr.first().is_some_and(|first| first.is_number())
+        }) {
+            let mono = peaks_val
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(Value::as_f64)
+                        .map(|v| v as f32)
+                        .collect::<Vec<f32>>()
+                })
+                .unwrap_or_default();
+            return Ok(if mono.is_empty() { vec![] } else { vec![mono] });
+        }
+
+        let per_channel = peaks_val
+            .as_array()
+            .map(|channels| {
+                channels
+                    .iter()
+                    .map(|channel| {
+                        channel
+                            .as_array()
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(Value::as_f64)
+                                    .map(|v| v as f32)
+                                    .collect::<Vec<f32>>()
+                            })
+                            .unwrap_or_default()
+                    })
+                    .collect::<Vec<Vec<f32>>>()
+            })
+            .unwrap_or_default();
+        Ok(per_channel)
+    }
+
+    fn compute_audio_clip_peaks(path: &Path, bins: usize) -> std::io::Result<Vec<Vec<f32>>> {
+        let mut wav = Wav::<f32>::from_path(path).map_err(|e| {
+            io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
+        })?;
+        let channels = wav.n_channels().max(1) as usize;
+        let samples: wavers::Samples<f32> = wav
+            .read()
+            .map_err(|e| io::Error::other(format!("WAV read error '{}': {e}", path.display())))?;
+        let mut per_channel_abs = vec![Vec::with_capacity(samples.len() / channels + 1); channels];
+        for frame in samples.chunks(channels) {
+            for (channel_idx, sample) in frame.iter().enumerate() {
+                per_channel_abs[channel_idx].push(sample.abs());
+            }
+        }
+
+        if per_channel_abs.iter().all(|ch| ch.is_empty()) {
+            return Ok(vec![]);
+        }
+        let target_bins = bins.max(16);
+        let mut peaks = vec![vec![0.0_f32; target_bins]; channels];
+        for channel_idx in 0..channels {
+            let samples = &per_channel_abs[channel_idx];
+            if samples.is_empty() {
+                continue;
+            }
+            for (i, peak) in samples.iter().enumerate() {
+                let bin = (i * target_bins) / samples.len();
+                let idx = bin.min(target_bins - 1);
+                peaks[channel_idx][idx] = peaks[channel_idx][idx].max(*peak);
+            }
+        }
+        Ok(peaks)
     }
 
     fn lv2_node_to_json(
@@ -409,6 +568,7 @@ impl Maolan {
         fs::create_dir_all(session_root.join("plugins"))?;
         fs::create_dir_all(session_root.join("audio"))?;
         fs::create_dir_all(session_root.join("midi"))?;
+        fs::create_dir_all(session_root.join("peaks"))?;
         let file = File::create(&p)?;
         let state = self.state.blocking_read();
         let tracks_width = match state.tracks_width {
@@ -421,7 +581,48 @@ impl Maolan {
         };
         let mut tracks_json = serde_json::to_value(&state.tracks).map_err(io::Error::other)?;
         if let Some(tracks) = tracks_json.as_array_mut() {
-            for track in tracks {
+            for (track_idx, track) in tracks.iter_mut().enumerate() {
+                let track_name = track["name"].as_str().unwrap_or("").to_string();
+                let state_track = state.tracks.get(track_idx);
+                if let Some(audio_clips) = track
+                    .get_mut("audio")
+                    .and_then(|m| m.get_mut("clips"))
+                    .and_then(Value::as_array_mut)
+                {
+                    for (clip_idx, clip) in audio_clips.iter_mut().enumerate() {
+                        let clip_name = clip
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        let mut peaks = state_track
+                            .and_then(|t| t.audio.clips.get(clip_idx))
+                            .map(|c| c.peaks.clone())
+                            .unwrap_or_default();
+                        if peaks.is_empty() && clip_name.to_ascii_lowercase().ends_with(".wav") {
+                            let wav_path = session_root.join(&clip_name);
+                            if wav_path.exists()
+                                && let Ok(computed) =
+                                    Self::compute_audio_clip_peaks(&wav_path, 512)
+                            {
+                                peaks = computed;
+                            }
+                        }
+                        if !peaks.is_empty() {
+                            let rel = Self::build_peak_file_rel(&track_name, clip_idx, &clip_name);
+                            let abs = session_root.join(&rel);
+                            let peak_json = json!({
+                                "version": 1,
+                                "track": track_name,
+                                "clip": clip_name,
+                                "peaks": peaks,
+                            });
+                            let peak_file = File::create(&abs)?;
+                            serde_json::to_writer_pretty(BufWriter::new(peak_file), &peak_json)?;
+                            clip["peaks_file"] = Value::String(rel);
+                        }
+                    }
+                }
                 let Some(midi_clips) = track
                     .get_mut("midi")
                     .and_then(|m| m.get_mut("clips"))
@@ -509,11 +710,12 @@ impl Maolan {
         Ok(())
     }
 
-    fn load(&self, path: String) -> std::io::Result<Task<Message>> {
+    fn load(&mut self, path: String) -> std::io::Result<Task<Message>> {
         let mut tasks = vec![];
         let mut restore_actions: Vec<Action> = vec![Action::SetSessionPath(path.clone())];
         let mut warnings: Vec<String> = Vec::new();
         let session_root = PathBuf::from(path.clone());
+        self.pending_audio_peaks.clear();
         let existing_tracks: Vec<String> = self
             .state
             .blocking_read()
@@ -668,6 +870,7 @@ impl Maolan {
                         let start = clip["start"].as_u64().unwrap_or(0) as usize;
                         let length = clip["length"].as_u64().unwrap_or(0) as usize;
                         let offset = clip["offset"].as_u64().unwrap_or(0) as usize;
+                        let peaks_file = clip["peaks_file"].as_str().map(|s| s.to_string());
 
                         if clip_name.trim().is_empty() {
                             warnings.push(format!(
@@ -695,6 +898,28 @@ impl Maolan {
                                     clip_name,
                                     wav_path.display()
                                 ));
+                            }
+
+                            let mut peaks = vec![];
+                            if let Some(peaks_rel) = peaks_file.as_ref() {
+                                let peaks_path = session_root.join(peaks_rel);
+                                if peaks_path.exists()
+                                    && let Ok(loaded) = Self::read_clip_peaks_file(&peaks_path)
+                                {
+                                    peaks = loaded;
+                                }
+                            }
+                            if peaks.is_empty()
+                                && let Ok(computed) =
+                                    Self::compute_audio_clip_peaks(&wav_path, 512)
+                            {
+                                peaks = computed;
+                            }
+                            if !peaks.is_empty() {
+                                let key = Self::audio_clip_key(
+                                    &name, &clip_name, start, length, offset,
+                                );
+                                self.pending_audio_peaks.insert(key, peaks);
                             }
                         }
 
@@ -905,10 +1130,14 @@ impl Maolan {
                 if self.playing {
                     self.playing = false;
                     self.last_playback_tick = None;
+                    self.stop_recording_preview();
                     return self.send(Action::Stop);
                 }
                 self.playing = true;
                 self.last_playback_tick = Some(Instant::now());
+                if self.record_armed {
+                    self.start_recording_preview();
+                }
                 return self.send(Action::Play);
             }
             Message::WindowResized(size) => {
@@ -967,7 +1196,9 @@ impl Maolan {
                 self.pending_record_after_save = false;
                 self.pending_save_path = None;
                 self.pending_save_tracks.clear();
+                self.pending_audio_peaks.clear();
                 self.session_dir = None;
+                self.stop_recording_preview();
 
                 let existing_tracks: Vec<String> = self
                     .state
@@ -1002,16 +1233,21 @@ impl Maolan {
             Message::TransportPlay => {
                 self.playing = true;
                 self.last_playback_tick = Some(Instant::now());
+                if self.record_armed {
+                    self.start_recording_preview();
+                }
                 return self.send(Action::Play);
             }
             Message::TransportPause => {
                 self.playing = false;
                 self.last_playback_tick = None;
+                self.stop_recording_preview();
                 return self.send(Action::Stop);
             }
             Message::TransportStop => {
                 self.playing = false;
                 self.last_playback_tick = None;
+                self.stop_recording_preview();
                 return self.send(Action::Stop);
             }
             Message::PlaybackTick => {
@@ -1020,6 +1256,35 @@ impl Maolan {
                     let delta_s = now.duration_since(last).as_secs_f64();
                     self.last_playback_tick = Some(now);
                     self.transport_samples += delta_s * self.playback_rate_hz;
+                }
+            }
+            Message::RecordingPreviewTick => {
+                if self.playing && self.record_armed && self.recording_preview_start_sample.is_some() {
+                    self.recording_preview_sample = Some(self.transport_samples.max(0.0) as usize);
+                }
+            }
+            Message::RecordingPreviewPeaksTick => {
+                if self.playing && self.record_armed && self.recording_preview_start_sample.is_some() {
+                    let tracks = self.state.blocking_read().tracks.clone();
+                    for track in tracks.iter().filter(|t| t.armed) {
+                        let channels = track.audio.outs.max(1);
+                        let entry = self
+                            .recording_preview_peaks
+                            .entry(track.name.clone())
+                            .or_insert_with(|| vec![vec![]; channels]);
+                        if entry.len() != channels {
+                            entry.resize_with(channels, Vec::new);
+                        }
+                        for channel_idx in 0..channels {
+                            let db = track.meter_out_db.get(channel_idx).copied().unwrap_or(-90.0);
+                            let amp = if db <= -90.0 {
+                                0.0
+                            } else {
+                                10.0_f32.powf(db / 20.0).clamp(0.0, 1.0)
+                            };
+                            entry[channel_idx].push(amp);
+                        }
+                    }
                 }
             }
             Message::ZoomVisibleBarsChanged(value) => {
@@ -1035,6 +1300,7 @@ impl Maolan {
                 if self.record_armed {
                     self.record_armed = false;
                     self.pending_record_after_save = false;
+                    self.stop_recording_preview();
                     return self.send(Action::SetRecordEnabled(false));
                 }
                 if self.session_dir.is_none() {
@@ -1052,6 +1318,9 @@ impl Maolan {
                     );
                 }
                 self.record_armed = true;
+                if self.playing {
+                    self.start_recording_preview();
+                }
                 return self.send(Action::SetRecordEnabled(true));
             }
             Message::RefreshLv2Plugins => return self.send(Action::ListLv2Plugins),
@@ -1217,6 +1486,23 @@ impl Maolan {
                     offset,
                     kind,
                 } => {
+                    let mut audio_peaks = vec![];
+                    if *kind == Kind::Audio {
+                        let key =
+                            Self::audio_clip_key(track_name, name, *start, *length, *offset);
+                        audio_peaks = self.pending_audio_peaks.remove(&key).unwrap_or_default();
+                        if audio_peaks.is_empty()
+                            && name.to_ascii_lowercase().ends_with(".wav")
+                            && let Some(session_root) = &self.session_dir
+                        {
+                            let wav_path = session_root.join(name);
+                            if wav_path.exists()
+                                && let Ok(computed) = Self::compute_audio_clip_peaks(&wav_path, 512)
+                            {
+                                audio_peaks = computed;
+                            }
+                        }
+                    }
                     let mut state = self.state.blocking_write();
                     if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name) {
                         match kind {
@@ -1226,6 +1512,8 @@ impl Maolan {
                                     start: *start,
                                     length: *length,
                                     offset: *offset,
+                                    peaks_file: None,
+                                    peaks: audio_peaks,
                                 });
                             }
                             Kind::MIDI => {
@@ -1345,6 +1633,12 @@ impl Maolan {
                         self.state.blocking_write().hw_out_meter_db = output_db.clone();
                     }
                 }
+                Action::SetSessionPath(_) => {
+                    if self.pending_record_after_save {
+                        self.pending_record_after_save = false;
+                        return self.send(Action::SetRecordEnabled(true));
+                    }
+                }
                 Action::TransportPosition(sample) => {
                     self.transport_samples = *sample as f64;
                     if self.playing {
@@ -1434,15 +1728,18 @@ impl Maolan {
                 if let Some(path) = path_opt {
                     self.session_dir = Some(path.clone());
                     self.record_armed = true;
-                    self.pending_record_after_save = false;
-                    let save_task = self.refresh_graphs_then_save(path.to_string_lossy().to_string());
-                    return Task::batch(vec![save_task, self.send(Action::SetRecordEnabled(true))]);
+                    self.pending_record_after_save = true;
+                    if self.playing {
+                        self.start_recording_preview();
+                    }
+                    return self.refresh_graphs_then_save(path.to_string_lossy().to_string());
                 } else {
                     self.pending_record_after_save = false;
                 }
             }
             Message::OpenFolderSelected(Some(path)) => {
                 self.session_dir = Some(path.clone());
+                self.stop_recording_preview();
                 match self.load(path.to_string_lossy().to_string()) {
                     Ok(task) => return task,
                     Err(e) => {
@@ -1978,6 +2275,8 @@ impl Maolan {
                             self.zoom_visible_bars,
                             self.tracks_resize_hovered,
                             self.mixer_resize_hovered,
+                            self.recording_preview_bounds(),
+                            Some(self.recording_preview_peaks.clone()),
                         ),
                         View::Connections => self.connections.view(),
                         View::TrackPlugins => self.track_plugins.view(),
@@ -2083,8 +2382,33 @@ impl Maolan {
         } else {
             Subscription::none()
         };
+        let recording_preview_sub = if self.playing
+            && self.record_armed
+            && self.recording_preview_start_sample.is_some()
+        {
+            iced::time::every(RECORDING_PREVIEW_UPDATE_INTERVAL)
+                .map(|_| Message::RecordingPreviewTick)
+        } else {
+            Subscription::none()
+        };
+        let recording_preview_peaks_sub = if self.playing
+            && self.record_armed
+            && self.recording_preview_start_sample.is_some()
+        {
+            iced::time::every(RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL)
+                .map(|_| Message::RecordingPreviewPeaksTick)
+        } else {
+            Subscription::none()
+        };
 
-        Subscription::batch(vec![engine_sub, keyboard_sub, event_sub, playback_sub])
+        Subscription::batch(vec![
+            engine_sub,
+            keyboard_sub,
+            event_sub,
+            playback_sub,
+            recording_preview_sub,
+            recording_preview_peaks_sub,
+        ])
     }
 }
     fn compact_desc(desc: String) -> String {

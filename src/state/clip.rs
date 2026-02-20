@@ -6,6 +6,9 @@ pub struct AudioClip {
     pub start: usize,
     pub length: usize,
     pub offset: usize,
+    pub peaks_file: Option<String>,
+    #[serde(skip, default)]
+    pub peaks: Vec<Vec<f32>>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

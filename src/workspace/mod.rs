@@ -8,6 +8,7 @@ use iced::{
     Background, Color, Element, Length, Point,
     widget::{Stack, column, container, mouse_area, pin, row, slider},
 };
+use std::collections::HashMap;
 
 pub struct Workspace {
     state: State,
@@ -54,13 +55,20 @@ impl Workspace {
         zoom_visible_bars: f32,
         tracks_resize_hovered: bool,
         mixer_resize_hovered: bool,
+        recording_preview_bounds: Option<(usize, usize)>,
+        recording_preview_peaks: Option<HashMap<String, Vec<Vec<f32>>>>,
     ) -> Element<'_, Message> {
         let tracks_width = self.state.blocking_read().tracks_width;
         let playhead_x = playhead_samples.map(|sample| (sample as f32 * pixels_per_sample).max(0.0));
 
         let editor_with_playhead = if let Some(x) = playhead_x {
             Stack::from_vec(vec![
-                self.editor.view(pixels_per_sample),
+                self.editor
+                    .view(
+                        pixels_per_sample,
+                        recording_preview_bounds,
+                        recording_preview_peaks.clone(),
+                    ),
                 pin(Self::playhead_line())
                     .position(Point::new(x.max(0.0), 0.0))
                     .into(),
@@ -69,7 +77,12 @@ impl Workspace {
             .height(Length::Fill)
             .into()
         } else {
-            self.editor.view(pixels_per_sample)
+            self.editor
+                .view(
+                    pixels_per_sample,
+                    recording_preview_bounds,
+                    recording_preview_peaks.clone(),
+                )
         };
 
         let editor_with_zoom = Stack::from_vec(vec![

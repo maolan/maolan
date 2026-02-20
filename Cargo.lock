@@ -2105,6 +2105,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wavers",
 ]
 
 [[package]]
