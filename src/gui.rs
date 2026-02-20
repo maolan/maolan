@@ -896,11 +896,28 @@ impl Maolan {
             Message::None => {
                 return Task::none();
             }
+            Message::ToggleTransport => {
+                if !self.state.blocking_read().hw_loaded {
+                    return Task::none();
+                }
+                if self.playing {
+                    self.playing = false;
+                    self.last_playback_tick = None;
+                    return self.send(Action::Stop);
+                }
+                self.playing = true;
+                self.last_playback_tick = Some(Instant::now());
+                return self.send(Action::Play);
+            }
             Message::WindowResized(size) => {
                 self.size = size;
             }
             Message::Show(ref show) => {
                 use crate::message::Show;
+                if !self.state.blocking_read().hw_loaded && matches!(show, Show::Save | Show::Open)
+                {
+                    return Task::none();
+                }
                 match show {
                     Show::Save => {
                         return Task::perform(
@@ -938,6 +955,9 @@ impl Maolan {
                 }
             }
             Message::NewSession => {
+                if !self.state.blocking_read().hw_loaded {
+                    return Task::none();
+                }
                 self.playing = false;
                 self.transport_samples = 0.0;
                 self.last_playback_tick = None;
@@ -1430,15 +1450,27 @@ impl Maolan {
                 }
             }
             Message::ShiftPressed => {
+                if !self.state.blocking_read().hw_loaded {
+                    return Task::none();
+                }
                 self.state.blocking_write().shift = true;
             }
             Message::ShiftReleased => {
+                if !self.state.blocking_read().hw_loaded {
+                    return Task::none();
+                }
                 self.state.blocking_write().shift = false;
             }
             Message::CtrlPressed => {
+                if !self.state.blocking_read().hw_loaded {
+                    return Task::none();
+                }
                 self.state.blocking_write().ctrl = true;
             }
             Message::CtrlReleased => {
+                if !self.state.blocking_read().hw_loaded {
+                    return Task::none();
+                }
                 self.state.blocking_write().ctrl = false;
             }
             Message::SelectTrack(ref name) => {
@@ -1566,6 +1598,9 @@ impl Maolan {
             }
 
             Message::Remove => {
+                if !self.state.blocking_read().hw_loaded {
+                    return Task::none();
+                }
                 let view = self.state.blocking_read().view.clone();
                 match view {
                     crate::state::View::Connections => {
@@ -1997,7 +2032,8 @@ impl Maolan {
         }
         let engine_sub = Subscription::run(listener);
 
-        let keyboard_sub = keyboard::listen().map(|event| match event {
+        let keyboard_sub = keyboard::listen().map(|event| {
+            match event {
             KeyEvent::KeyPressed { key, modifiers, .. } => {
                 if modifiers.control()
                     && let keyboard::Key::Character(ch) = &key
@@ -2014,6 +2050,7 @@ impl Maolan {
                     }
                 }
                 match key {
+                    keyboard::Key::Named(keyboard::key::Named::Space) => Message::ToggleTransport,
                     keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
                     keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
                     keyboard::Key::Named(keyboard::key::Named::Delete) => Message::Remove,
@@ -2026,6 +2063,7 @@ impl Maolan {
                 _ => Message::None,
             },
             _ => Message::None,
+            }
         });
 
         let event_sub = event::listen().map(|event| match event {

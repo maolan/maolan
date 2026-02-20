@@ -94,6 +94,7 @@ pub enum Message {
 
     WindowResized(Size),
     PlaybackTick,
+    ToggleTransport,
     ZoomVisibleBarsChanged(f32),
     TracksResizeHover(bool),
     MixerResizeHover(bool),
