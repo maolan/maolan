@@ -78,6 +78,34 @@ impl Graph {
             port
         }
     }
+
+    fn midi_device_label(path: &str) -> String {
+        path.rsplit('/').next().unwrap_or(path).to_string()
+    }
+
+    fn default_midi_in_rect(index: usize, box_w: f32, box_h: f32, gap: f32) -> Rectangle {
+        Rectangle::new(
+            Point::new(80.0, 10.0 + index as f32 * (box_h + gap)),
+            iced::Size::new(box_w, box_h),
+        )
+    }
+
+    fn default_midi_out_rect(
+        index: usize,
+        bounds: Rectangle,
+        hw_width: f32,
+        box_w: f32,
+        box_h: f32,
+        gap: f32,
+    ) -> Rectangle {
+        Rectangle::new(
+            Point::new(
+                bounds.width - hw_width - 10.0 - box_w,
+                10.0 + index as f32 * (box_h + gap),
+            ),
+            iced::Size::new(box_w, box_h),
+        )
+    }
 }
 
 impl canvas::Program<Message> for Graph {
@@ -93,10 +121,9 @@ impl canvas::Program<Message> for Graph {
         let cursor_position = cursor.position_in(bounds)?;
         let size = iced::Size::new(140.0, 80.0);
         let hw_width = 70.0;
-        let midi_hw_box_w = 120.0;
-        let midi_hw_box_h = 80.0;
-        let default_midi_out_pos =
-            Point::new(bounds.width - hw_width - 10.0 - midi_hw_box_w, 10.0);
+        let midi_hw_box_w = 170.0;
+        let midi_hw_box_h = 24.0;
+        let midi_hw_box_gap = 6.0;
 
         if let Ok(mut data) = self.state.try_write() {
             match event {
@@ -206,33 +233,54 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
 
-                    let midi_in_pos = data.midi_hw_in_position;
-                    let midi_out_pos = if data.midi_hw_out_position.x <= 0.0 {
-                        default_midi_out_pos
-                    } else {
-                        data.midi_hw_out_position
-                    };
-
-                    if Rectangle::new(midi_in_pos, iced::Size::new(midi_hw_box_w, midi_hw_box_h))
-                        .contains(cursor_position)
-                    {
-                        data.moving_track = Some(MovingTrack {
-                            track_idx: MIDI_HW_IN_ID.to_string(),
-                            offset_x: cursor_position.x - midi_in_pos.x,
-                            offset_y: cursor_position.y - midi_in_pos.y,
-                        });
-                        return Some(Action::capture());
+                    for (idx, device) in data.opened_midi_in_hw.iter().enumerate() {
+                        let default_rect = Self::default_midi_in_rect(
+                            idx,
+                            midi_hw_box_w,
+                            midi_hw_box_h,
+                            midi_hw_box_gap,
+                        );
+                        let pos = data
+                            .midi_hw_in_positions
+                            .get(device)
+                            .copied()
+                            .unwrap_or(Point::new(default_rect.x, default_rect.y));
+                        let rect =
+                            Rectangle::new(pos, iced::Size::new(default_rect.width, default_rect.height));
+                        if rect.contains(cursor_position) {
+                            data.moving_track = Some(MovingTrack {
+                                track_idx: format!("{MIDI_HW_IN_ID}:{device}"),
+                                offset_x: cursor_position.x - pos.x,
+                                offset_y: cursor_position.y - pos.y,
+                            });
+                            return Some(Action::capture());
+                        }
                     }
 
-                    if Rectangle::new(midi_out_pos, iced::Size::new(midi_hw_box_w, midi_hw_box_h))
-                        .contains(cursor_position)
-                    {
-                        data.moving_track = Some(MovingTrack {
-                            track_idx: MIDI_HW_OUT_ID.to_string(),
-                            offset_x: cursor_position.x - midi_out_pos.x,
-                            offset_y: cursor_position.y - midi_out_pos.y,
-                        });
-                        return Some(Action::capture());
+                    for (idx, device) in data.opened_midi_out_hw.iter().enumerate() {
+                        let default_rect = Self::default_midi_out_rect(
+                            idx,
+                            bounds,
+                            hw_width,
+                            midi_hw_box_w,
+                            midi_hw_box_h,
+                            midi_hw_box_gap,
+                        );
+                        let pos = data
+                            .midi_hw_out_positions
+                            .get(device)
+                            .copied()
+                            .unwrap_or(Point::new(default_rect.x, default_rect.y));
+                        let rect =
+                            Rectangle::new(pos, iced::Size::new(default_rect.width, default_rect.height));
+                        if rect.contains(cursor_position) {
+                            data.moving_track = Some(MovingTrack {
+                                track_idx: format!("{MIDI_HW_OUT_ID}:{device}"),
+                                offset_x: cursor_position.x - pos.x,
+                                offset_y: cursor_position.y - pos.y,
+                            });
+                            return Some(Action::capture());
+                        }
                     }
 
                     for track in data.tracks.iter().rev() {
@@ -569,16 +617,18 @@ impl canvas::Program<Message> for Graph {
                             t.position.x = cursor_position.x - mt.offset_x;
                             t.position.y = cursor_position.y - mt.offset_y;
                             redraw_needed = true;
-                        } else if mt.track_idx == MIDI_HW_IN_ID {
-                            data.midi_hw_in_position = Point::new(
-                                cursor_position.x - mt.offset_x,
-                                cursor_position.y - mt.offset_y,
+                        } else if let Some(device) = mt.track_idx.strip_prefix(&format!("{MIDI_HW_IN_ID}:")) {
+                            data.midi_hw_in_positions.insert(
+                                device.to_string(),
+                                Point::new(cursor_position.x - mt.offset_x, cursor_position.y - mt.offset_y),
                             );
                             redraw_needed = true;
-                        } else if mt.track_idx == MIDI_HW_OUT_ID {
-                            data.midi_hw_out_position = Point::new(
-                                cursor_position.x - mt.offset_x,
-                                cursor_position.y - mt.offset_y,
+                        } else if let Some(device) =
+                            mt.track_idx.strip_prefix(&format!("{MIDI_HW_OUT_ID}:"))
+                        {
+                            data.midi_hw_out_positions.insert(
+                                device.to_string(),
+                                Point::new(cursor_position.x - mt.offset_x, cursor_position.y - mt.offset_y),
                             );
                             redraw_needed = true;
                         }
@@ -610,8 +660,9 @@ impl canvas::Program<Message> for Graph {
         let mut frame = Frame::new(renderer, bounds.size());
         let size = iced::Size::new(140.0, 80.0);
         let hw_width = 70.0;
-        let midi_hw_box_w = 120.0;
-        let midi_hw_box_h = 80.0;
+        let midi_hw_box_w = 170.0;
+        let midi_hw_box_h = 24.0;
+        let midi_hw_box_gap = 6.0;
         let cursor_position = cursor.position_in(bounds);
 
         if let Ok(data) = self.state.try_read() {
@@ -860,80 +911,117 @@ impl canvas::Program<Message> for Graph {
             // Draw MIDI hardware as track-like nodes:
             // - MIDI IN: source-like ports on the right edge
             // - MIDI OUT: sink-like ports on the left edge
-            let midi_in_pos = data.midi_hw_in_position;
-            let midi_in_rect = Path::rectangle(
-                midi_in_pos,
-                iced::Size::new(midi_hw_box_w, midi_hw_box_h),
-            );
-            frame.fill(&midi_in_rect, Color::from_rgb8(45, 40, 20));
-            frame.stroke(
-                &midi_in_rect,
-                canvas::Stroke::default()
-                    .with_color(midi_port_color())
-                    .with_width(2.0),
-            );
-            frame.fill_text(Text {
-                content: "midi:in".into(),
-                position: Point::new(
-                    midi_in_pos.x + midi_hw_box_w / 2.0,
-                    midi_in_pos.y + midi_hw_box_h / 2.0,
-                ),
-                color: Color::WHITE,
-                align_x: Horizontal::Center.into(),
-                align_y: Vertical::Center,
-                ..Default::default()
-            });
-
-            let midi_in_ports = data.opened_midi_in_hw.len();
-            if midi_in_ports > 0 {
-                for j in 0..midi_in_ports {
-                    let py = midi_in_pos.y
-                        + (midi_hw_box_h / (midi_in_ports + 1) as f32) * (j + 1) as f32;
-                    frame.fill(
-                        &Path::circle(Point::new(midi_in_pos.x + midi_hw_box_w, py), 5.0),
-                        midi_port_color(),
-                    );
-                }
+            for (j, device) in data.opened_midi_in_hw.iter().enumerate() {
+                let default_rect =
+                    Self::default_midi_in_rect(j, midi_hw_box_w, midi_hw_box_h, midi_hw_box_gap);
+                let pos = data
+                    .midi_hw_in_positions
+                    .get(device)
+                    .copied()
+                    .unwrap_or(Point::new(default_rect.x, default_rect.y));
+                let selected_id = format!("{MIDI_HW_IN_ID}:{device}");
+                let is_selected = data
+                    .moving_track
+                    .as_ref()
+                    .is_some_and(|mt| mt.track_idx == selected_id);
+                let rect = Path::rectangle(
+                    pos,
+                    iced::Size::new(default_rect.width, default_rect.height),
+                );
+                let fill_color = if is_selected {
+                    Color::from_rgb8(45, 40, 20)
+                } else {
+                    Color::from_rgb8(28, 24, 14)
+                };
+                let stroke_color = if is_selected {
+                    midi_port_color()
+                } else {
+                    Color::from_rgb(0.45, 0.28, 0.12)
+                };
+                frame.fill(&rect, fill_color);
+                frame.stroke(
+                    &rect,
+                    canvas::Stroke::default()
+                        .with_color(stroke_color)
+                        .with_width(2.0),
+                );
+                frame.fill_text(Text {
+                    content: Self::midi_device_label(device),
+                    position: Point::new(
+                        pos.x + default_rect.width / 2.0,
+                        pos.y + default_rect.height / 2.0,
+                    ),
+                    color: Color::WHITE,
+                    size: 11.0.into(),
+                    align_x: Horizontal::Center.into(),
+                    align_y: Vertical::Center,
+                    ..Default::default()
+                });
+                frame.fill(
+                    &Path::circle(
+                        Point::new(pos.x + default_rect.width, pos.y + default_rect.height / 2.0),
+                        5.0,
+                    ),
+                    midi_port_color(),
+                );
             }
 
-            let midi_out_pos = if data.midi_hw_out_position.x <= 0.0 {
-                Point::new(bounds.width - hw_width - 10.0 - midi_hw_box_w, 10.0)
-            } else {
-                data.midi_hw_out_position
-            };
-            let midi_out_rect = Path::rectangle(
-                midi_out_pos,
-                iced::Size::new(midi_hw_box_w, midi_hw_box_h),
-            );
-            frame.fill(&midi_out_rect, Color::from_rgb8(45, 40, 20));
-            frame.stroke(
-                &midi_out_rect,
-                canvas::Stroke::default()
-                    .with_color(midi_port_color())
-                    .with_width(2.0),
-            );
-            frame.fill_text(Text {
-                content: "midi:out".into(),
-                position: Point::new(
-                    midi_out_pos.x + midi_hw_box_w / 2.0,
-                    midi_out_pos.y + midi_hw_box_h / 2.0,
-                ),
-                color: Color::WHITE,
-                align_x: Horizontal::Center.into(),
-                align_y: Vertical::Center,
-                ..Default::default()
-            });
-
-            let midi_out_ports = data.opened_midi_out_hw.len();
-            if midi_out_ports > 0 {
-                for j in 0..midi_out_ports {
-                    let py = midi_out_pos.y
-                        + (midi_hw_box_h / (midi_out_ports + 1) as f32) * (j + 1) as f32;
-                    frame.fill(
-                        &Path::circle(Point::new(midi_out_pos.x, py), 5.0),
-                        midi_port_color(),
-                    );
-                }
+            for (j, device) in data.opened_midi_out_hw.iter().enumerate() {
+                let default_rect = Self::default_midi_out_rect(
+                    j,
+                    bounds,
+                    hw_width,
+                    midi_hw_box_w,
+                    midi_hw_box_h,
+                    midi_hw_box_gap,
+                );
+                let pos = data
+                    .midi_hw_out_positions
+                    .get(device)
+                    .copied()
+                    .unwrap_or(Point::new(default_rect.x, default_rect.y));
+                let selected_id = format!("{MIDI_HW_OUT_ID}:{device}");
+                let is_selected = data
+                    .moving_track
+                    .as_ref()
+                    .is_some_and(|mt| mt.track_idx == selected_id);
+                let rect = Path::rectangle(
+                    pos,
+                    iced::Size::new(default_rect.width, default_rect.height),
+                );
+                let fill_color = if is_selected {
+                    Color::from_rgb8(45, 40, 20)
+                } else {
+                    Color::from_rgb8(28, 24, 14)
+                };
+                let stroke_color = if is_selected {
+                    midi_port_color()
+                } else {
+                    Color::from_rgb(0.45, 0.28, 0.12)
+                };
+                frame.fill(&rect, fill_color);
+                frame.stroke(
+                    &rect,
+                    canvas::Stroke::default()
+                        .with_color(stroke_color)
+                        .with_width(2.0),
+                );
+                frame.fill_text(Text {
+                    content: Self::midi_device_label(device),
+                    position: Point::new(
+                        pos.x + default_rect.width / 2.0,
+                        pos.y + default_rect.height / 2.0,
+                    ),
+                    color: Color::WHITE,
+                    size: 11.0.into(),
+                    align_x: Horizontal::Center.into(),
+                    align_y: Vertical::Center,
+                    ..Default::default()
+                });
+                frame.fill(
+                    &Path::circle(Point::new(pos.x, pos.y + default_rect.height / 2.0), 5.0),
+                    midi_port_color(),
+                );
             }
 
             for track in data.tracks.iter() {

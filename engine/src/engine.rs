@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque, fs::read_dir, sync::Arc};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 
@@ -47,6 +47,27 @@ pub struct Engine {
 }
 
 impl Engine {
+    fn discover_midi_hw_devices() -> Vec<String> {
+        let mut devices: Vec<String> = read_dir("/dev")
+            .map(|rd| {
+                rd.filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter_map(|path| {
+                        let name = path.file_name()?.to_str()?;
+                        if name.starts_with("umidi") || name.starts_with("midi") {
+                            Some(path.to_string_lossy().into_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        devices.sort();
+        devices.dedup();
+        devices
+    }
+
     pub fn new(rx: Receiver<Message>, tx: Sender<Message>) -> Self {
         Self {
             rx,
@@ -847,6 +868,24 @@ impl Engine {
                     });
                     self.oss_worker = Some(WorkerData::new(tx, handler));
                     self.request_hw_cycle().await;
+                }
+
+                for device in Self::discover_midi_hw_devices() {
+                    let (opened_in, opened_out) = {
+                        let midi_hub = self.midi_hub.lock();
+                        let opened_in = midi_hub.open_input(&device).is_ok();
+                        let opened_out = midi_hub.open_output(&device).is_ok();
+                        (opened_in, opened_out)
+                    };
+
+                    if opened_in {
+                        self.notify_clients(Ok(Action::OpenMidiInputDevice(device.clone())))
+                            .await;
+                    }
+                    if opened_out {
+                        self.notify_clients(Ok(Action::OpenMidiOutputDevice(device.clone())))
+                            .await;
+                    }
                 }
             }
             Action::OpenMidiInputDevice(ref device) => {

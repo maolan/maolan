@@ -306,9 +306,6 @@ impl Maolan {
                     Show::AddTrack => {
                         self.modal = Some(Show::AddTrack);
                     }
-                    Show::MIDIHardware => {
-                        self.modal = Some(Show::MIDIHardware);
-                    }
                 }
             }
             Message::Cancel => self.modal = None,
@@ -1099,12 +1096,6 @@ impl Maolan {
             Message::HWSelected(ref hw) => {
                 self.state.blocking_write().selected_hw = Some(hw.to_string());
             }
-            Message::MIDIHWSelected(ref hw) => {
-                self.state.blocking_write().selected_midi_in_hw = Some(hw.to_string());
-            }
-            Message::MIDIHWOutSelected(ref hw) => {
-                self.state.blocking_write().selected_midi_out_hw = Some(hw.to_string());
-            }
             Message::StartMovingTrackAndSelect(moving_track, track_name) => {
                 let mut state = self.state.blocking_write();
                 state.moving_track = Some(moving_track);
@@ -1123,7 +1114,6 @@ impl Maolan {
         if state.hw_loaded {
             match self.modal {
                 Some(Show::AddTrack) => self.add_track.view(),
-                Some(Show::MIDIHardware) => self.hw.midi_view(),
                 _ => {
                     let view = match state.view {
                         View::Workspace => self.workspace.view(),

@@ -7,7 +7,6 @@ pub enum Show {
     AddTrack,
     Save,
     Open,
-    MIDIHardware,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +107,4 @@ pub enum Message {
     ShowLv2PluginUi(String),
 
     HWSelected(String),
-    MIDIHWSelected(String),
-    MIDIHWOutSelected(String),
 }
