@@ -94,7 +94,7 @@ impl Menu {
         let mb = menu_bar!(
             (menu_dropdown("File", Message::None), {
                 menu_tpl(menu_items!(
-                    (menu_item("New", Message::None)),
+                    (menu_item("New", Message::NewSession)),
                     (menu_item("Open", Message::Show(Show::Open))),
                     (menu_item("Save", Message::Show(Show::Save))),
                     (menu_item("Import", Message::OpenFileImporter)),

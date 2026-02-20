@@ -872,6 +872,42 @@ impl Maolan {
                     }
                 }
             }
+            Message::NewSession => {
+                self.playing = false;
+                self.record_armed = false;
+                self.pending_record_after_save = false;
+                self.pending_save_path = None;
+                self.pending_save_tracks.clear();
+                self.session_dir = None;
+
+                let existing_tracks: Vec<String> = self
+                    .state
+                    .blocking_read()
+                    .tracks
+                    .iter()
+                    .map(|t| t.name.clone())
+                    .collect();
+                let mut tasks = vec![
+                    self.send(Action::Stop),
+                    self.send(Action::SetRecordEnabled(false)),
+                ];
+                for name in existing_tracks {
+                    tasks.push(self.send(Action::RemoveTrack(name)));
+                }
+                {
+                    let mut state = self.state.blocking_write();
+                    state.connections.clear();
+                    state.selected.clear();
+                    state.selected_clips.clear();
+                    state.connection_view_selection = ConnectionViewSelection::None;
+                    state.lv2_graph_track = None;
+                    state.lv2_graph_plugins.clear();
+                    state.lv2_graph_connections.clear();
+                    state.lv2_graphs_by_track.clear();
+                    state.message = "New session".to_string();
+                }
+                return Task::batch(tasks);
+            }
             Message::Cancel => self.modal = None,
             Message::Request(ref a) => return self.send(a.clone()),
             Message::TransportPlay => {
@@ -1862,12 +1898,28 @@ impl Maolan {
         let engine_sub = Subscription::run(listener);
 
         let keyboard_sub = keyboard::listen().map(|event| match event {
-            KeyEvent::KeyPressed { key, .. } => match key {
-                keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
-                keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
-                keyboard::Key::Named(keyboard::key::Named::Delete) => Message::Remove,
-                _ => Message::None,
-            },
+            KeyEvent::KeyPressed { key, modifiers, .. } => {
+                if modifiers.control()
+                    && let keyboard::Key::Character(ch) = &key
+                {
+                    let s = ch.to_ascii_lowercase();
+                    if s == "n" {
+                        return Message::NewSession;
+                    }
+                    if s == "o" {
+                        return Message::Show(Show::Open);
+                    }
+                    if s == "s" {
+                        return Message::Show(Show::Save);
+                    }
+                }
+                match key {
+                    keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
+                    keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
+                    keyboard::Key::Named(keyboard::key::Named::Delete) => Message::Remove,
+                    _ => Message::None,
+                }
+            }
             KeyEvent::KeyReleased { key, .. } => match key {
                 keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftReleased,
                 keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlReleased,

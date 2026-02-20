@@ -49,6 +49,7 @@ pub enum Message {
 
     Show(Show),
     Cancel,
+    NewSession,
 
     AddTrack(AddTrack),
     SelectTrack(String),
