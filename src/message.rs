@@ -95,6 +95,8 @@ pub enum Message {
     WindowResized(Size),
     PlaybackTick,
     ZoomVisibleBarsChanged(f32),
+    TracksResizeHover(bool),
+    MixerResizeHover(bool),
 
     OpenFileImporter,
     ImportFilesSelected(Option<Vec<std::path::PathBuf>>),

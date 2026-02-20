@@ -52,6 +52,8 @@ impl Workspace {
         pixels_per_sample: f32,
         beat_pixels: f32,
         zoom_visible_bars: f32,
+        tracks_resize_hovered: bool,
+        mixer_resize_hovered: bool,
     ) -> Element<'_, Message> {
         let tracks_width = self.state.blocking_read().tracks_width;
         let playhead_x = playhead_samples.map(|sample| (sample as f32 * pixels_per_sample).max(0.0));
@@ -129,18 +131,18 @@ impl Workspace {
                     container("")
                         .width(Length::Fixed(3.0))
                         .height(Length::Fill)
-                        .style(|_theme| {
-                            container::Style {
-                                background: Some(Background::Color(Color {
-                                    r: 0.5,
-                                    g: 0.5,
-                                    b: 0.5,
-                                    a: 0.5,
-                                })),
-                                ..container::Style::default()
-                            }
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.7,
+                                g: 0.7,
+                                b: 0.7,
+                                a: if tracks_resize_hovered { 0.95 } else { 0.6 },
+                            })),
+                            ..container::Style::default()
                         }),
                 )
+                .on_enter(Message::TracksResizeHover(true))
+                .on_exit(Message::TracksResizeHover(false))
                 .on_press(Message::TracksResizeStart),
                 editor_with_zoom,
             ]
@@ -149,18 +151,18 @@ impl Workspace {
                 container("")
                     .width(Length::Fill)
                     .height(Length::Fixed(3.0))
-                    .style(|_theme| {
-                        container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.5,
-                                g: 0.5,
-                                b: 0.5,
-                                a: 0.5,
-                            })),
-                            ..container::Style::default()
-                        }
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.7,
+                            g: 0.7,
+                            b: 0.7,
+                            a: if mixer_resize_hovered { 0.95 } else { 0.6 },
+                        })),
+                        ..container::Style::default()
                     }),
             )
+            .on_enter(Message::MixerResizeHover(true))
+            .on_exit(Message::MixerResizeHover(false))
             .on_press(Message::MixerResizeStart),
             self.mixer.view(),
         ]

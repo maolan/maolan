@@ -120,6 +120,8 @@ pub struct Maolan {
     play_start_samples: f64,
     playback_rate_hz: f64,
     zoom_visible_bars: f32,
+    tracks_resize_hovered: bool,
+    mixer_resize_hovered: bool,
     record_armed: bool,
     pending_record_after_save: bool,
 }
@@ -155,6 +157,8 @@ impl Default for Maolan {
             play_start_samples: 0.0,
             playback_rate_hz: 48_000.0,
             zoom_visible_bars: 127.0,
+            tracks_resize_hovered: false,
+            mixer_resize_hovered: false,
             record_armed: false,
             pending_record_after_save: false,
         }
@@ -996,6 +1000,12 @@ impl Maolan {
             Message::ZoomVisibleBarsChanged(value) => {
                 self.zoom_visible_bars = value.clamp(1.0, 256.0);
             }
+            Message::TracksResizeHover(hovered) => {
+                self.tracks_resize_hovered = hovered;
+            }
+            Message::MixerResizeHover(hovered) => {
+                self.mixer_resize_hovered = hovered;
+            }
             Message::TransportRecordToggle => {
                 if self.record_armed {
                     self.record_armed = false;
@@ -1582,10 +1592,28 @@ impl Maolan {
                 }
             }
             Message::TracksResizeStart => {
-                self.state.blocking_write().resizing = Some(Resizing::Tracks);
+                let (initial_width, initial_mouse_x) = {
+                    let state = self.state.blocking_read();
+                    let width = match state.tracks_width {
+                        Length::Fixed(v) => v,
+                        _ => 200.0,
+                    };
+                    (width, state.cursor.x)
+                };
+                self.state.blocking_write().resizing =
+                    Some(Resizing::Tracks(initial_width, initial_mouse_x));
             }
             Message::MixerResizeStart => {
-                self.state.blocking_write().resizing = Some(Resizing::Mixer);
+                let (initial_height, initial_mouse_y) = {
+                    let state = self.state.blocking_read();
+                    let height = match state.mixer_height {
+                        Length::Fixed(v) => v,
+                        _ => 300.0,
+                    };
+                    (height, state.cursor.y)
+                };
+                self.state.blocking_write().resizing =
+                    Some(Resizing::Mixer(initial_height, initial_mouse_y));
             }
             Message::ClipResizeStart(ref kind, ref track_name, clip_index, is_right_side) => {
                 let mut state = self.state.blocking_write();
@@ -1679,12 +1707,15 @@ impl Maolan {
                             }
                         }
                     }
-                    Some(Resizing::Tracks) => {
-                        self.state.blocking_write().tracks_width = Length::Fixed(position.x);
+                    Some(Resizing::Tracks(initial_width, initial_mouse_x)) => {
+                        let delta = position.x - initial_mouse_x;
+                        self.state.blocking_write().tracks_width =
+                            Length::Fixed((initial_width + delta).max(80.0));
                     }
-                    Some(Resizing::Mixer) => {
+                    Some(Resizing::Mixer(initial_height, initial_mouse_y)) => {
+                        let delta = position.y - initial_mouse_y;
                         self.state.blocking_write().mixer_height =
-                            Length::Fixed(self.size.height - position.y);
+                            Length::Fixed((initial_height - delta).max(60.0));
                     }
                     _ => {}
                 }
@@ -1877,6 +1908,8 @@ impl Maolan {
                             self.pixels_per_sample(),
                             self.beat_pixels(),
                             self.zoom_visible_bars,
+                            self.tracks_resize_hovered,
+                            self.mixer_resize_hovered,
                         ),
                         View::Connections => self.connections.view(),
                         View::TrackPlugins => self.track_plugins.view(),

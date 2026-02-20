@@ -32,9 +32,9 @@ pub struct ClipId {
 #[derive(Debug, Clone)]
 pub enum Resizing {
     Clip(Kind, String, usize, bool, f32, f32),
-    Mixer,
+    Mixer(f32, f32),
     Track(String, f32, f32),
-    Tracks,
+    Tracks(f32, f32),
 }
 
 #[derive(Debug, Clone)]
@@ -174,7 +174,7 @@ impl Default for StateData {
             hovering: None,
             connection_view_selection: ConnectionViewSelection::None,
             cursor: Point::new(0.0, 0.0),
-            mixer_height: Length::Shrink,
+            mixer_height: Length::Fixed(300.0),
             tracks_width: Length::Fixed(200.0),
             view: View::Workspace,
             pending_track_positions: HashMap::new(),
