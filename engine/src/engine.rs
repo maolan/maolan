@@ -518,6 +518,24 @@ impl Engine {
         finished
     }
 
+    async fn publish_track_meters(&self) {
+        let meters: Vec<(String, Vec<f32>)> = self
+            .state
+            .lock()
+            .tracks
+            .iter()
+            .map(|(name, track)| (name.clone(), track.lock().output_meter_db()))
+            .collect();
+
+        for (track_name, output_db) in meters {
+            self.notify_clients(Ok(Action::TrackMeters {
+                track_name,
+                output_db,
+            }))
+            .await;
+        }
+    }
+
     pub fn check_if_leads_to_kind(
         &self,
         kind: Kind,
@@ -691,6 +709,7 @@ impl Engine {
                     track.lock().set_level(level);
                 }
             }
+            Action::TrackMeters { .. } => {}
             Action::TrackToggleArm(ref name) => {
                 if let Some(track) = self.state.lock().tracks.get(name).cloned() {
                     track.lock().arm();
@@ -1350,6 +1369,7 @@ impl Engine {
                         }
                         track.lock().setup();
                     }
+                    self.publish_track_meters().await;
                     self.pending_hw_midi_events.clear();
                     if self.playing {
                         self.transport_sample =

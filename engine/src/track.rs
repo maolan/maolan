@@ -178,6 +178,7 @@ impl Track {
         self.dispatch_track_output_midi_to_connected_inputs();
         self.collect_hw_midi_output_events();
         self.clear_local_midi_inputs();
+        let linear_gain = 10.0_f32.powf(self.level / 20.0);
 
         let internal_sources = self.internal_audio_sources();
         for out_idx in 0..self.audio.outs.len() {
@@ -208,7 +209,7 @@ impl Track {
                 {
                     *tap_sample += *in_sample;
                     if self.output_enabled {
-                        *out_sample += *in_sample;
+                        *out_sample += *in_sample * linear_gain;
                     }
                 }
             }
@@ -231,6 +232,24 @@ impl Track {
     }
     pub fn set_level(&mut self, level: f32) {
         self.level = level;
+    }
+
+    pub fn output_meter_db(&self) -> Vec<f32> {
+        self.audio
+            .outs
+            .iter()
+            .map(|audio_out| {
+                let buffer = audio_out.buffer.lock();
+                let peak = buffer
+                    .iter()
+                    .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
+                if peak <= 1.0e-6 {
+                    -90.0
+                } else {
+                    (20.0 * peak.log10()).clamp(-90.0, 20.0)
+                }
+            })
+            .collect()
     }
 
     pub fn arm(&mut self) {

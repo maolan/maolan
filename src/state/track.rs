@@ -50,6 +50,8 @@ pub struct Track {
     id: usize,
     pub name: String,
     pub level: f32,
+    #[serde(skip, default)]
+    pub meter_out_db: Vec<f32>,
     pub armed: bool,
     pub muted: bool,
     pub soloed: bool,
@@ -73,6 +75,7 @@ impl Track {
             id: 0,
             name,
             level,
+            meter_out_db: vec![-90.0; audio_outs],
             armed: false,
             muted: false,
             soloed: false,
@@ -89,6 +92,14 @@ impl Track {
                 Action::TrackLevel(name, level) => {
                     if name == self.name {
                         self.level = level;
+                    }
+                }
+                Action::TrackMeters {
+                    track_name,
+                    output_db,
+                } => {
+                    if track_name == self.name {
+                        self.meter_out_db = output_db;
                     }
                 }
                 Action::TrackToggleArm(name) => {

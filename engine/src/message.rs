@@ -87,6 +87,10 @@ pub enum Action {
     },
     RemoveTrack(String),
     TrackLevel(String, f32),
+    TrackMeters {
+        track_name: String,
+        output_db: Vec<f32>,
+    },
     TrackToggleArm(String),
     TrackToggleMute(String),
     TrackToggleSolo(String),
