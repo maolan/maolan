@@ -130,44 +130,37 @@ fn view_track_elements(
             true,
         ));
 
-        let clip_content = mouse_area(
-            container(Stack::with_children(vec![
-                audio_waveform_overlay(&clip_peaks, clip_width, clip_height),
-                container(text(clip_name.clone()).size(12))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .padding(5)
-                    .into(),
-            ]))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(0)
-            .style(move |_theme| {
-                use container::Style;
-                Style {
-                    background: Some(Background::Color(if is_selected {
-                        Color {
-                            r: 0.4,
-                            g: 0.6,
-                            b: 0.8,
-                            a: 1.0,
-                        }
-                    } else {
-                        Color {
-                            r: 0.3,
-                            g: 0.5,
-                            b: 0.7,
-                            a: 0.8,
-                        }
-                    })),
-                    ..Style::default()
-                }
-            }),
-        )
-        .on_press(Message::SelectClip {
-            track_idx: track_name_cloned.clone(),
-            clip_idx: index,
-            kind: Kind::Audio,
+        let clip_content = container(Stack::with_children(vec![
+            audio_waveform_overlay(&clip_peaks, clip_width, clip_height),
+            container(text(clip_name.clone()).size(12))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(5)
+                .into(),
+        ]))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(0)
+        .style(move |_theme| {
+            use container::Style;
+            Style {
+                background: Some(Background::Color(if is_selected {
+                    Color {
+                        r: 0.4,
+                        g: 0.6,
+                        b: 0.8,
+                        a: 1.0,
+                    }
+                } else {
+                    Color {
+                        r: 0.3,
+                        g: 0.5,
+                        b: 0.7,
+                        a: 0.8,
+                    }
+                })),
+                ..Style::default()
+            }
         });
 
         let clip_widget = container(row![left_handle, clip_content, right_handle])
@@ -189,9 +182,11 @@ fn view_track_elements(
             });
 
         clips.push(
-            droppable(
-                pin(clip_widget).position(Point::new(clip.start as f32 * pixels_per_sample, 0.0)),
-            )
+            mouse_area(
+                droppable(
+                    pin(clip_widget)
+                        .position(Point::new(clip.start as f32 * pixels_per_sample, 0.0)),
+                )
                 .on_drag({
                     let track_name_for_drag_closure = track_name_cloned.clone();
                     move |point, _| {
@@ -204,8 +199,14 @@ fn view_track_elements(
                         Message::ClipDrag(clip_data)
                     }
                 })
-                .on_drop(Message::ClipDropped)
-                .into(),
+                .on_drop(Message::ClipDropped),
+            )
+            .on_press(Message::SelectClip {
+                track_idx: track_name_cloned.clone(),
+                clip_idx: index,
+                kind: Kind::Audio,
+            })
+            .into(),
         );
     }
     if track.armed

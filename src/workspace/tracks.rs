@@ -17,18 +17,20 @@ impl Tracks {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let (tracks, selected, width) = {
+        let (tracks, selected, width, hovered_resize_track) = {
             let state = self.state.blocking_read();
             (
                 state.tracks.clone(),
                 state.selected.clone(),
                 state.tracks_width,
+                state.hovered_track_resize_handle.clone(),
             )
         };
 
         let result = Column::with_children(tracks.into_iter().enumerate().map(|(index, track)| {
             let selected = selected.contains(&track.name);
             let height = track.height;
+            let is_resize_hovered = hovered_resize_track.as_deref() == Some(track.name.as_str());
             let track_ui: Column<'_, Message> = column![
                 text(track.name.clone()),
                 row![
@@ -54,19 +56,21 @@ impl Tracks {
                     container("")
                         .width(Length::Fill)
                         .height(Length::Fixed(3.0))
-                        .style(|_theme| {
+                        .style(move |_theme| {
                             use container::Style;
                             Style {
                                 background: Some(Background::Color(Color {
                                     r: 0.5,
                                     g: 0.5,
                                     b: 0.5,
-                                    a: 0.5,
+                                    a: if is_resize_hovered { 0.8 } else { 0.5 },
                                 })),
                                 ..Style::default()
                             }
                         }),
                 )
+                .on_enter(Message::TrackResizeHover(track.name.clone(), true))
+                .on_exit(Message::TrackResizeHover(track.name.clone(), false))
                 .on_press(Message::TrackResizeStart(track.name.clone())),
             ];
 

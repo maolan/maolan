@@ -1956,6 +1956,14 @@ impl Maolan {
                     state.resizing = Some(Resizing::Track(index.clone(), height, state.cursor.y));
                 }
             }
+            Message::TrackResizeHover(ref track_name, hovered) => {
+                let mut state = self.state.blocking_write();
+                if hovered {
+                    state.hovered_track_resize_handle = Some(track_name.clone());
+                } else if state.hovered_track_resize_handle.as_deref() == Some(track_name.as_str()) {
+                    state.hovered_track_resize_handle = None;
+                }
+            }
             Message::TracksResizeStart => {
                 let (initial_width, initial_mouse_x) = {
                     let state = self.state.blocking_read();
@@ -2090,8 +2098,17 @@ impl Maolan {
                 state.resizing = None;
             }
             Message::ClipDrag(ref clip) => {
-                if self.clip.is_none() {
-                    self.clip = Some(clip.clone());
+                match &mut self.clip {
+                    Some(active)
+                        if active.kind == clip.kind
+                            && active.index == clip.index
+                            && active.track_index == clip.track_index =>
+                    {
+                        active.end = clip.start;
+                    }
+                    _ => {
+                        self.clip = Some(clip.clone());
+                    }
                 }
             }
             Message::ClipDropped(point, _rect) => {
@@ -2101,11 +2118,17 @@ impl Maolan {
                 }
             }
             Message::HandleClipZones(ref zones) => {
-                if let Some(clip) = &self.clip
-                    && let Some((to_track_id, _)) = zones.first()
-                {
+                if let Some(clip) = &self.clip {
                     let state = self.state.blocking_read();
                     let from_track_name = &clip.track_index;
+                    let to_track_id = zones
+                        .iter()
+                        .map(|(id, _)| id)
+                        .find(|id| state.tracks.iter().any(|t| Id::from(t.name.clone()) == **id));
+                    let Some(to_track_id) = to_track_id else {
+                        self.clip = None;
+                        return Task::none();
+                    };
 
                     let from_track_option =
                         state.tracks.iter().find(|t| t.name == *from_track_name);
@@ -2119,6 +2142,10 @@ impl Maolan {
                         let clip_index = clip.index;
                         match clip.kind {
                             Kind::Audio => {
+                                if clip_index >= from_track.audio.clips.len() {
+                                    self.clip = None;
+                                    return Task::none();
+                                }
                                 let clip_index_in_from_track = clip_index;
                                 let mut clip_copy =
                                     from_track.audio.clips[clip_index_in_from_track].clone();
@@ -2142,6 +2169,10 @@ impl Maolan {
                                 return task;
                             }
                             Kind::MIDI => {
+                                if clip_index >= from_track.midi.clips.len() {
+                                    self.clip = None;
+                                    return Task::none();
+                                }
                                 let clip_index_in_from_track = clip_index;
                                 let mut clip_copy =
                                     from_track.midi.clips[clip_index_in_from_track].clone();
@@ -2167,6 +2198,8 @@ impl Maolan {
                         }
                     }
                 }
+                self.clip = None;
+                return Task::none();
             }
             Message::TrackDrag(index) => {
                 if self.track.is_none() {

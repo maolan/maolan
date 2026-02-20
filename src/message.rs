@@ -70,6 +70,7 @@ pub enum Message {
     OpenFolderSelected(Option<PathBuf>),
 
     TrackResizeStart(String),
+    TrackResizeHover(String, bool),
     TracksResizeStart,
     MixerResizeStart,
     ClipResizeStart(Kind, String, usize, bool),
