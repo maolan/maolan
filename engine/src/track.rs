@@ -189,6 +189,8 @@ impl Track {
         };
 
         let internal_sources = self.internal_audio_sources();
+        let internal_source_ptrs: HashSet<*const AudioIO> =
+            internal_sources.iter().map(Arc::as_ptr).collect();
         for out_idx in 0..self.audio.outs.len() {
             let audio_out = &self.audio.outs[out_idx];
             let out_samples = audio_out.buffer.lock();
@@ -201,31 +203,33 @@ impl Track {
                 tap.resize(out_samples.len(), 0.0);
             }
             tap.fill(0.0);
-            for source in audio_out.connections.lock().iter() {
-                if !internal_sources
-                    .iter()
-                    .any(|internal| Arc::ptr_eq(internal, source))
-                {
+            let balance_gain = if self.audio.outs.len() == 2 {
+                if out_idx == 0 {
+                    left_balance
+                } else {
+                    right_balance
+                }
+            } else {
+                1.0
+            };
+            let connections = audio_out.connections.lock();
+            for source in connections.iter() {
+                if !internal_source_ptrs.contains(&Arc::as_ptr(source)) {
                     continue;
                 }
                 let source_buf = source.buffer.lock();
-                for ((tap_sample, out_sample), in_sample) in tap
-                    .iter_mut()
-                    .zip(out_samples.iter_mut())
-                    .zip(source_buf.iter())
-                {
-                    *tap_sample += *in_sample;
-                    if self.output_enabled {
-                        let balance_gain = if self.audio.outs.len() == 2 {
-                            if out_idx == 0 {
-                                left_balance
-                            } else {
-                                right_balance
-                            }
-                        } else {
-                            1.0
-                        };
+                if self.output_enabled {
+                    for ((tap_sample, out_sample), in_sample) in tap
+                        .iter_mut()
+                        .zip(out_samples.iter_mut())
+                        .zip(source_buf.iter())
+                    {
+                        *tap_sample += *in_sample;
                         *out_sample += *in_sample * linear_gain * balance_gain;
+                    }
+                } else {
+                    for (tap_sample, in_sample) in tap.iter_mut().zip(source_buf.iter()) {
+                        *tap_sample += *in_sample;
                     }
                 }
             }
