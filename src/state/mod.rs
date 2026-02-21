@@ -202,27 +202,35 @@ pub struct StateData {
 impl Default for StateData {
     fn default() -> Self {
         #[cfg(target_os = "freebsd")]
-        let mut hw: Vec<String> = read_dir("/dev")
-            .map(|rd| {
-                rd.filter_map(Result::ok)
-                    .map(|e| e.path())
-                    .filter_map(|path| {
-                        let name = path.file_name()?.to_str()?;
-                        if name.starts_with("dsp") {
-                            Some(path.to_string_lossy().into_owned())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(|_| vec![]);
+        let hw: Vec<String> = {
+            let mut devices: Vec<String> = read_dir("/dev")
+                .map(|rd| {
+                    rd.filter_map(Result::ok)
+                        .map(|e| e.path())
+                        .filter_map(|path| {
+                            let name = path.file_name()?.to_str()?;
+                            if name.starts_with("dsp") {
+                                Some(path.to_string_lossy().into_owned())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(|_| vec![]);
+            devices.push("jack".to_string());
+            devices.sort_by_key(|a| a.to_lowercase());
+            devices.dedup();
+            devices
+        };
         #[cfg(target_os = "linux")]
-        let mut hw: Vec<AudioDeviceOption> = discover_alsa_devices();
-        hw.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
-        hw.push(AudioDeviceOption::new("jack", "JACK"));
-        hw.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
-        hw.dedup_by(|a, b| a.id == b.id);
+        let hw: Vec<AudioDeviceOption> = {
+            let mut devices = discover_alsa_devices();
+            devices.push(AudioDeviceOption::new("jack", "JACK"));
+            devices.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+            devices.dedup_by(|a, b| a.id == b.id);
+            devices
+        };
         Self {
             shift: false,
             ctrl: false,
