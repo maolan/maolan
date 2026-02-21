@@ -21,6 +21,7 @@ use lv2_raw::{
     LV2Feature, LV2Urid, LV2UridMap, LV2UridMapHandle, lv2_atom_sequence_append_event,
     lv2_atom_sequence_begin, lv2_atom_sequence_is_end, lv2_atom_sequence_next,
 };
+use tracing::error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lv2PluginInfo {
@@ -925,7 +926,7 @@ impl Lv2Processor {
         let thread = thread::spawn(move || {
             if let Some(ext) = ext_spec {
                 if let Err(e) = run_external_ui(ext, values, lv2_handle) {
-                    eprintln!("LV2 external UI failed: {e}");
+                    error!("LV2 external UI failed: {e}");
                 }
             } else if let Err(e) = run_gtk_plugin_ui(
                 ui_spec.ok(),
@@ -936,7 +937,7 @@ impl Lv2Processor {
                 lv2_handle,
                 rx,
             ) {
-                eprintln!("LV2 UI failed: {e}");
+                error!("LV2 UI failed: {e}");
             }
         });
         self.ui_thread = Some(thread);

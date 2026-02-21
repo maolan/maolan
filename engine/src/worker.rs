@@ -1,6 +1,7 @@
 use crate::message::{Action, Message};
 use nix::libc;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tracing::error;
 
 #[derive(Debug)]
 pub struct Worker {
@@ -48,7 +49,7 @@ impl Worker {
 
     pub async fn work(&mut self) {
         if let Err(e) = Self::try_enable_realtime() {
-            eprintln!("Worker {} realtime priority not enabled: {}", self.id, e);
+            error!("Worker {} realtime priority not enabled: {}", self.id, e);
         }
         while let Some(message) = self.rx.recv().await {
             match message {
