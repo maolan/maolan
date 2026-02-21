@@ -121,4 +121,8 @@ pub enum Message {
     LoadSelectedLv2Plugins,
 
     HWSelected(String),
+    HWExclusiveToggled(bool),
+    HWPeriodFramesChanged(usize),
+    HWNPeriodsChanged(usize),
+    HWSyncModeToggled(bool),
 }

@@ -18,17 +18,17 @@ impl Maolan {
                 stream::once(async { Message::RefreshLv2Plugins }).chain(stream::unfold(
                     receiver,
                     |mut rx| async move {
-                        match rx.recv().await {
-                            Some(m) => match m {
-                                EngineMessage::Response(r) => {
-                                    let result = Message::Response(r);
-                                    Some((result, rx))
-                                }
-                                _ => Some((Message::None, rx)),
-                            },
-                            None => None,
-                        }
-                    },
+                    match rx.recv().await {
+                        Some(m) => match m {
+                            EngineMessage::Response(r) => {
+                                let result = Message::Response(r);
+                                Some((result, rx))
+                            }
+                            _ => Some((Message::None, rx)),
+                        },
+                        None => None,
+                    }
+                },
                 ))
             })
         }

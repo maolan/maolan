@@ -1351,7 +1351,13 @@ impl Engine {
                 }
             }
 
-            Action::OpenAudioDevice(ref device) => {
+            Action::OpenAudioDevice {
+                ref device,
+                exclusive,
+                period_frames,
+                nperiods,
+                sync_mode,
+            } => {
                 if device.eq_ignore_ascii_case("jack") {
                     match JackRuntime::new(
                         "maolan",
@@ -1390,7 +1396,13 @@ impl Engine {
                                 self.notify_clients(Ok(Action::OpenMidiOutputDevice(device)))
                                     .await;
                             }
-                            self.notify_clients(Ok(Action::OpenAudioDevice(device.clone())))
+                            self.notify_clients(Ok(Action::OpenAudioDevice {
+                                device: device.clone(),
+                                exclusive,
+                                period_frames,
+                                nperiods,
+                                sync_mode,
+                            }))
                                 .await;
                             self.awaiting_hwfinished = true;
                         }
@@ -1400,12 +1412,12 @@ impl Engine {
                     }
                     return;
                 }
-                let oss_opts = match oss::OSSOptions::from_env() {
-                    Ok(v) => v,
-                    Err(e) => {
-                        self.notify_clients(Err(e)).await;
-                        return;
-                    }
+                let oss_opts = oss::OSSOptions {
+                    exclusive,
+                    period_frames: period_frames.max(1).next_power_of_two(),
+                    nperiods: nperiods.max(1),
+                    sync_mode,
+                    ..Default::default()
                 };
                 let oss_profile_enabled = std::env::var("MAOLAN_OSS_PROFILE")
                     .ok()
@@ -1546,7 +1558,7 @@ impl Engine {
                 }
 
                 Message::Request(a) => match a {
-                    Action::OpenAudioDevice(_)
+                    Action::OpenAudioDevice { .. }
                     | Action::OpenMidiInputDevice(_)
                     | Action::OpenMidiOutputDevice(_)
                     | Action::Quit

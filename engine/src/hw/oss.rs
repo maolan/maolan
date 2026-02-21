@@ -1011,6 +1011,7 @@ pub struct Audio {
     mapped: bool,
     map: *mut libc::c_void,
     map_progress_bytes: usize,
+    last_published_balance: i64,
     frame_clock: FrameClock,
     frame_stamp: i64,
     sync_path: String,
@@ -1244,6 +1245,7 @@ impl Audio {
             mapped,
             map,
             map_progress_bytes: 0,
+            last_published_balance: i64::MIN,
             frame_clock,
             frame_stamp: 0,
             sync_path: path.to_string(),
@@ -1287,7 +1289,11 @@ impl Audio {
             .cycle_end
     }
 
-    fn publish_balance(&self, balance: i64) {
+    fn publish_balance(&mut self, balance: i64) {
+        if self.last_published_balance == balance {
+            return;
+        }
+        self.last_published_balance = balance;
         let mut sync = self.duplex_sync.lock().expect("duplex sync poisoned");
         if self.input {
             sync.capture_balance = Some(balance);
@@ -1581,7 +1587,6 @@ impl Audio {
         }
 
         let mut buf = self.channel.take_buffer();
-        buf.clear();
         convert_out_from_i32_interleaved(
             self.format,
             self.channels.len(),
@@ -1603,24 +1608,37 @@ impl Audio {
 
     pub fn process(&mut self) {
         let num_channels = self.channels.len();
+        let all_connected = self.channels.iter().all(has_audio_connections);
 
         if self.input {
             let norm_factor = 1.0 / i32::MAX as f32;
             let data_slice: &mut [i32] = self.buffer.as_mut();
 
-            for (ch_idx, io_port) in self.channels.iter().enumerate() {
-                if !has_audio_connections(io_port) {
+            if all_connected {
+                for (ch_idx, io_port) in self.channels.iter().enumerate() {
+                    let channel_buf_lock = io_port.buffer.lock();
+                    let channel_samples = channel_buf_lock.as_mut();
+                    for (i, sample) in channel_samples.iter_mut().enumerate().take(self.chsamples) {
+                        let source_idx = i * num_channels + ch_idx;
+                        *sample = data_slice[source_idx] as f32 * norm_factor;
+                    }
                     *io_port.finished.lock() = true;
-                    continue;
                 }
-                let channel_buf_lock = io_port.buffer.lock();
-                let channel_samples = channel_buf_lock.as_mut();
+            } else {
+                for (ch_idx, io_port) in self.channels.iter().enumerate() {
+                    if !has_audio_connections(io_port) {
+                        *io_port.finished.lock() = true;
+                        continue;
+                    }
+                    let channel_buf_lock = io_port.buffer.lock();
+                    let channel_samples = channel_buf_lock.as_mut();
 
-                for (i, sample) in channel_samples.iter_mut().enumerate().take(self.chsamples) {
-                    let source_idx = i * num_channels + ch_idx;
-                    *sample = data_slice[source_idx] as f32 * norm_factor;
+                    for (i, sample) in channel_samples.iter_mut().enumerate().take(self.chsamples) {
+                        let source_idx = i * num_channels + ch_idx;
+                        *sample = data_slice[source_idx] as f32 * norm_factor;
+                    }
+                    *io_port.finished.lock() = true;
                 }
-                *io_port.finished.lock() = true;
             }
         } else {
             let scale_factor = i32::MAX as f32;
@@ -1632,18 +1650,15 @@ impl Audio {
                 (1.0, 1.0)
             };
             let data_i32 = self.buffer.as_mut();
-            data_i32.fill(0);
+            if !all_connected {
+                data_i32.fill(0);
+            }
 
-            for (ch_idx, io_port) in self.channels.iter().enumerate() {
-                if !has_audio_connections(io_port) {
-                    continue;
-                }
-                io_port.process();
-                let channel_buf_lock = io_port.buffer.lock();
-                let channel_samples = channel_buf_lock.as_ref();
-
-                for (i, &sample) in channel_samples.iter().enumerate().take(self.chsamples) {
-                    let target_idx = i * num_channels + ch_idx;
+            if all_connected {
+                for (ch_idx, io_port) in self.channels.iter().enumerate() {
+                    io_port.process();
+                    let channel_buf_lock = io_port.buffer.lock();
+                    let channel_samples = channel_buf_lock.as_ref();
                     let balance_gain = if num_channels == 2 {
                         if ch_idx == 0 {
                             left_balance
@@ -1653,9 +1668,36 @@ impl Audio {
                     } else {
                         1.0
                     };
-                    data_i32[target_idx] =
-                        ((sample * output_gain * balance_gain).clamp(-1.0, 1.0) * scale_factor)
-                            as i32;
+                    for (i, &sample) in channel_samples.iter().enumerate().take(self.chsamples) {
+                        let target_idx = i * num_channels + ch_idx;
+                        data_i32[target_idx] =
+                            ((sample * output_gain * balance_gain).clamp(-1.0, 1.0) * scale_factor)
+                                as i32;
+                    }
+                }
+            } else {
+                for (ch_idx, io_port) in self.channels.iter().enumerate() {
+                    if !has_audio_connections(io_port) {
+                        continue;
+                    }
+                    io_port.process();
+                    let channel_buf_lock = io_port.buffer.lock();
+                    let channel_samples = channel_buf_lock.as_ref();
+                    let balance_gain = if num_channels == 2 {
+                        if ch_idx == 0 {
+                            left_balance
+                        } else {
+                            right_balance
+                        }
+                    } else {
+                        1.0
+                    };
+                    for (i, &sample) in channel_samples.iter().enumerate().take(self.chsamples) {
+                        let target_idx = i * num_channels + ch_idx;
+                        data_i32[target_idx] =
+                            ((sample * output_gain * balance_gain).clamp(-1.0, 1.0) * scale_factor)
+                                as i32;
+                    }
                 }
             }
         }
@@ -2175,49 +2217,10 @@ impl Default for OSSOptions {
             period_frames: 1024,
             nperiods: 1,
             ignore_hwbuf: false,
-            sync_mode: true,
+            sync_mode: false,
             input_latency_frames: 0,
             output_latency_frames: 0,
         }
-    }
-}
-
-impl OSSOptions {
-    pub fn from_env() -> Result<Self, String> {
-        Ok(Self {
-            exclusive: parse_env_bool("MAOLAN_OSS_EXCLUSIVE")?.unwrap_or(false),
-            period_frames: parse_env_usize("MAOLAN_OSS_PERIOD")?.unwrap_or(1024).max(1),
-            nperiods: parse_env_usize("MAOLAN_OSS_NPERIODS")?.unwrap_or(1).max(1),
-            ignore_hwbuf: parse_env_bool("MAOLAN_OSS_IGNORE_HWBUF")?.unwrap_or(false),
-            sync_mode: parse_env_bool("MAOLAN_OSS_SYNC_MODE")?.unwrap_or(true),
-            input_latency_frames: parse_env_usize("MAOLAN_OSS_INPUT_LATENCY")?.unwrap_or(0),
-            output_latency_frames: parse_env_usize("MAOLAN_OSS_OUTPUT_LATENCY")?.unwrap_or(0),
-        })
-    }
-}
-
-fn parse_env_usize(name: &str) -> Result<Option<usize>, String> {
-    let Some(v) = std::env::var(name).ok() else {
-        return Ok(None);
-    };
-    let parsed = v
-        .trim()
-        .parse::<usize>()
-        .map_err(|_| format!("{name} must be an unsigned integer, got '{v}'"))?;
-    Ok(Some(parsed))
-}
-
-fn parse_env_bool(name: &str) -> Result<Option<bool>, String> {
-    let Some(v) = std::env::var(name).ok() else {
-        return Ok(None);
-    };
-    let lower = v.trim().to_ascii_lowercase();
-    match lower.as_str() {
-        "1" | "true" | "yes" | "on" => Ok(Some(true)),
-        "0" | "false" | "no" | "off" => Ok(Some(false)),
-        _ => Err(format!(
-            "{name} must be one of 0/1/false/true/no/yes/off/on, got '{v}'"
-        )),
     }
 }
 
@@ -2445,7 +2448,6 @@ impl<'a> DuplexChannelApi<'a> {
 
         self.playback.process();
         let mut outbuf = self.playback.channel.take_buffer();
-        outbuf.clear();
         convert_out_from_i32_interleaved(
             self.playback.format,
             self.playback.channels.len(),

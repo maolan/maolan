@@ -174,7 +174,13 @@ pub enum Action {
         to_port: usize,
         kind: Kind,
     },
-    OpenAudioDevice(String),
+    OpenAudioDevice {
+        device: String,
+        exclusive: bool,
+        period_frames: usize,
+        nperiods: usize,
+        sync_mode: bool,
+    },
     OpenMidiInputDevice(String),
     OpenMidiOutputDevice(String),
     HWInfo {

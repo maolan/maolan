@@ -15,6 +15,15 @@ use std::{process::exit, time::Instant};
 use tracing::{debug, error};
 
 impl Maolan {
+    fn normalize_period_frames(period_frames: usize) -> usize {
+        let v = period_frames.clamp(64, 8192);
+        if v.is_power_of_two() {
+            v
+        } else {
+            v.next_power_of_two().min(8192)
+        }
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::None => {
@@ -469,8 +478,17 @@ impl Maolan {
                     }
                 }
 
-                Action::OpenAudioDevice(s) => {
-                    self.state.blocking_write().message = format!("Opened device {s}");
+                Action::OpenAudioDevice {
+                    device,
+                    exclusive,
+                    period_frames,
+                    nperiods,
+                    sync_mode,
+                } => {
+                    self.state.blocking_write().message = format!(
+                        "Opened device {} (exclusive={}, period={}, nperiods={}, sync_mode={})",
+                        device, exclusive, period_frames, nperiods, sync_mode
+                    );
                     self.state.blocking_write().hw_loaded = true;
                 }
                 Action::OpenMidiInputDevice(s) => {
@@ -1238,6 +1256,19 @@ impl Maolan {
             }
             Message::HWSelected(ref hw) => {
                 self.state.blocking_write().selected_hw = Some(hw.to_string());
+            }
+            Message::HWExclusiveToggled(exclusive) => {
+                self.state.blocking_write().oss_exclusive = exclusive;
+            }
+            Message::HWPeriodFramesChanged(period_frames) => {
+                self.state.blocking_write().oss_period_frames =
+                    Self::normalize_period_frames(period_frames);
+            }
+            Message::HWNPeriodsChanged(nperiods) => {
+                self.state.blocking_write().oss_nperiods = nperiods.max(1);
+            }
+            Message::HWSyncModeToggled(sync_mode) => {
+                self.state.blocking_write().oss_sync_mode = sync_mode;
             }
             Message::StartMovingTrackAndSelect(moving_track, track_name) => {
                 let mut state = self.state.blocking_write();
