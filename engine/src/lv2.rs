@@ -2278,22 +2278,26 @@ impl StatePathFeature {
         });
 
         let map_uri = CString::new(LV2_STATE_MAP_PATH_URI).expect("valid LV2 state mapPath URI");
-        let make_uri =
-            CString::new(LV2_STATE_MAKE_PATH_URI).expect("valid LV2 state makePath URI");
-        let free_uri =
-            CString::new(LV2_STATE_FREE_PATH_URI).expect("valid LV2 state freePath URI");
+        let make_uri = CString::new(LV2_STATE_MAKE_PATH_URI).expect("valid LV2 state makePath URI");
+        let free_uri = CString::new(LV2_STATE_FREE_PATH_URI).expect("valid LV2 state freePath URI");
 
         let map_feature = LV2Feature {
             uri: map_uri.as_ptr(),
-            data: (&*map as *const Lv2StateMapPath).cast_mut().cast::<c_void>(),
+            data: (&*map as *const Lv2StateMapPath)
+                .cast_mut()
+                .cast::<c_void>(),
         };
         let make_feature = LV2Feature {
             uri: make_uri.as_ptr(),
-            data: (&*make as *const Lv2StateMakePath).cast_mut().cast::<c_void>(),
+            data: (&*make as *const Lv2StateMakePath)
+                .cast_mut()
+                .cast::<c_void>(),
         };
         let free_feature = LV2Feature {
             uri: free_uri.as_ptr(),
-            data: (&*free as *const Lv2StateFreePath).cast_mut().cast::<c_void>(),
+            data: (&*free as *const Lv2StateFreePath)
+                .cast_mut()
+                .cast::<c_void>(),
         };
 
         let instance = Self {

@@ -42,8 +42,10 @@ impl HW {
                 sync_mode,
             }));
         }
-        let mut content = column![pick_list(available_hw, selected_hw, Message::HWSelected)
-            .placeholder("Choose audio device")]
+        let mut content = column![
+            pick_list(available_hw, selected_hw, Message::HWSelected)
+                .placeholder("Choose audio device")
+        ]
         .spacing(10);
 
         if !selected_is_jack {
@@ -87,10 +89,10 @@ impl HW {
         content = content.push(submit);
 
         container(content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center)
-        .into()
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .into()
     }
 }

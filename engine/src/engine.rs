@@ -1,3 +1,8 @@
+use midly::{
+    Arena, Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
+    live::LiveEvent,
+    num::{u15, u24, u28},
+};
 use std::{
     collections::VecDeque,
     fs::File,
@@ -5,11 +10,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
-use midly::{
-    Arena, Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
-    live::LiveEvent,
-    num::{u15, u24, u28},
 };
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
@@ -32,7 +32,6 @@ use crate::{
     track::Track,
     worker::Worker,
 };
-
 
 #[derive(Debug)]
 struct WorkerData {
@@ -256,12 +255,15 @@ impl Engine {
             if frames == 0 {
                 continue;
             }
-            let entry = self.audio_recordings.entry(name.clone()).or_insert_with(|| RecordingSession {
-                start_sample: self.transport_sample,
-                samples: Vec::with_capacity(frames * channels * 4),
-                channels,
-                file_name: Self::next_recording_file_name(name),
-            });
+            let entry = self
+                .audio_recordings
+                .entry(name.clone())
+                .or_insert_with(|| RecordingSession {
+                    start_sample: self.transport_sample,
+                    samples: Vec::with_capacity(frames * channels * 4),
+                    channels,
+                    file_name: Self::next_recording_file_name(name),
+                });
             if entry.channels != channels {
                 continue;
             }
@@ -271,14 +273,14 @@ impl Engine {
                 }
             }
 
-            let midi_entry = self
-                .midi_recordings
-                .entry(name.clone())
-                .or_insert_with(|| MidiRecordingSession {
-                    start_sample: self.transport_sample,
-                    events: Vec::new(),
-                    file_name: Self::next_midi_recording_file_name(name),
-                });
+            let midi_entry =
+                self.midi_recordings
+                    .entry(name.clone())
+                    .or_insert_with(|| MidiRecordingSession {
+                        start_sample: self.transport_sample,
+                        events: Vec::new(),
+                        file_name: Self::next_midi_recording_file_name(name),
+                    });
             for event in &track.record_tap_midi_in {
                 let abs_sample = self.transport_sample as u64 + event.frame as u64;
                 midi_entry.events.push((abs_sample, event.data.clone()));
@@ -745,7 +747,7 @@ impl Engine {
                     self.flush_recordings().await;
                 } else if self.session_dir.is_none() {
                     self.notify_clients(Err(
-                        "Recording enabled but session path is not set".to_string(),
+                        "Recording enabled but session path is not set".to_string()
                     ))
                     .await;
                 }
@@ -859,9 +861,7 @@ impl Engine {
             Action::TrackToggleArm(ref name) => {
                 if let Some(track) = self.state.lock().tracks.get(name).cloned() {
                     track.lock().arm();
-                    if !track.lock().armed
-                        && self.audio_recordings.contains_key(name)
-                    {
+                    if !track.lock().armed && self.audio_recordings.contains_key(name) {
                         self.flush_track_recording(name).await;
                     }
                 }
@@ -921,7 +921,9 @@ impl Engine {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        if let Err(e) = track.lock().set_lv2_plugin_state(instance_id, state.clone())
+                        if let Err(e) = track
+                            .lock()
+                            .set_lv2_plugin_state(instance_id, state.clone())
                         {
                             self.notify_clients(Err(e)).await;
                             return;
@@ -1403,7 +1405,7 @@ impl Engine {
                                 nperiods,
                                 sync_mode,
                             }))
-                                .await;
+                            .await;
                             self.awaiting_hwfinished = true;
                         }
                         Err(e) => {
@@ -1606,8 +1608,9 @@ impl Engine {
                     self.publish_track_meters().await;
                     self.pending_hw_midi_events.clear();
                     if self.playing {
-                        self.transport_sample =
-                            self.transport_sample.saturating_add(self.current_cycle_samples());
+                        self.transport_sample = self
+                            .transport_sample
+                            .saturating_add(self.current_cycle_samples());
                     }
                     if self.send_tracks().await && self.oss_worker.is_some() {
                         self.request_hw_cycle().await;

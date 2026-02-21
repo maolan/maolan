@@ -251,8 +251,7 @@ impl OssWorker {
                                 &mut self.midi_in_events,
                                 Vec::with_capacity(cap.max(64)),
                             );
-                            if let Err(e) = self.tx.send(Message::HWMidiEvents(out)).await
-                            {
+                            if let Err(e) = self.tx.send(Message::HWMidiEvents(out)).await {
                                 error!("OSS worker failed to send HWMidiEvents to engine: {}", e);
                             }
                         }
@@ -413,7 +412,9 @@ impl OssWorker {
 
     fn run_assist_cycle(assist_state: &Arc<(Mutex<AssistState>, Condvar)>) -> Result<(), String> {
         let (lock, cvar) = &**assist_state;
-        let mut st = lock.lock().map_err(|_| "assist mutex poisoned".to_string())?;
+        let mut st = lock
+            .lock()
+            .map_err(|_| "assist mutex poisoned".to_string())?;
         st.request_seq = st.request_seq.saturating_add(1);
         let target = st.request_seq;
         cvar.notify_one();

@@ -183,19 +183,17 @@ impl canvas::Program<Message> for Graph {
 
                     for (idx, device) in data.opened_midi_in_hw.iter().enumerate() {
                         let label = Self::midi_device_label(&data, device);
-                        let default_rect = Self::default_midi_in_rect(
-                            idx,
-                            &label,
-                            midi_hw_box_h,
-                            midi_hw_box_gap,
-                        );
+                        let default_rect =
+                            Self::default_midi_in_rect(idx, &label, midi_hw_box_h, midi_hw_box_gap);
                         let pos = data
                             .midi_hw_in_positions
                             .get(device)
                             .copied()
                             .unwrap_or(Point::new(default_rect.x, default_rect.y));
-                        let rect =
-                            Rectangle::new(pos, iced::Size::new(default_rect.width, default_rect.height));
+                        let rect = Rectangle::new(
+                            pos,
+                            iced::Size::new(default_rect.width, default_rect.height),
+                        );
                         if rect.contains(cursor_position) {
                             data.moving_track = Some(MovingTrack {
                                 track_idx: format!("{MIDI_HW_IN_ID}:{device}"),
@@ -221,8 +219,10 @@ impl canvas::Program<Message> for Graph {
                             .get(device)
                             .copied()
                             .unwrap_or(Point::new(default_rect.x, default_rect.y));
-                        let rect =
-                            Rectangle::new(pos, iced::Size::new(default_rect.width, default_rect.height));
+                        let rect = Rectangle::new(
+                            pos,
+                            iced::Size::new(default_rect.width, default_rect.height),
+                        );
                         if rect.contains(cursor_position) {
                             data.moving_track = Some(MovingTrack {
                                 track_idx: format!("{MIDI_HW_OUT_ID}:{device}"),
@@ -623,16 +623,20 @@ impl canvas::Program<Message> for Graph {
                         conn.point = cursor_position;
                         redraw_needed = true;
                     }
-                    if let Some(mt) = data.moving_track.clone()
-                    {
+                    if let Some(mt) = data.moving_track.clone() {
                         if let Some(t) = data.tracks.iter_mut().find(|tr| tr.name == mt.track_idx) {
                             t.position.x = cursor_position.x - mt.offset_x;
                             t.position.y = cursor_position.y - mt.offset_y;
                             redraw_needed = true;
-                        } else if let Some(device) = mt.track_idx.strip_prefix(&format!("{MIDI_HW_IN_ID}:")) {
+                        } else if let Some(device) =
+                            mt.track_idx.strip_prefix(&format!("{MIDI_HW_IN_ID}:"))
+                        {
                             data.midi_hw_in_positions.insert(
                                 device.to_string(),
-                                Point::new(cursor_position.x - mt.offset_x, cursor_position.y - mt.offset_y),
+                                Point::new(
+                                    cursor_position.x - mt.offset_x,
+                                    cursor_position.y - mt.offset_y,
+                                ),
                             );
                             redraw_needed = true;
                         } else if let Some(device) =
@@ -640,7 +644,10 @@ impl canvas::Program<Message> for Graph {
                         {
                             data.midi_hw_out_positions.insert(
                                 device.to_string(),
-                                Point::new(cursor_position.x - mt.offset_x, cursor_position.y - mt.offset_y),
+                                Point::new(
+                                    cursor_position.x - mt.offset_x,
+                                    cursor_position.y - mt.offset_y,
+                                ),
                             );
                             redraw_needed = true;
                         }
@@ -971,7 +978,10 @@ impl canvas::Program<Message> for Graph {
                 });
                 frame.fill(
                     &Path::circle(
-                        Point::new(pos.x + default_rect.width, pos.y + default_rect.height / 2.0),
+                        Point::new(
+                            pos.x + default_rect.width,
+                            pos.y + default_rect.height / 2.0,
+                        ),
                         5.0,
                     ),
                     midi_port_color(),

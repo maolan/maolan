@@ -18,17 +18,17 @@ impl Maolan {
                 stream::once(async { Message::RefreshLv2Plugins }).chain(stream::unfold(
                     receiver,
                     |mut rx| async move {
-                    match rx.recv().await {
-                        Some(m) => match m {
-                            EngineMessage::Response(r) => {
-                                let result = Message::Response(r);
-                                Some((result, rx))
-                            }
-                            _ => Some((Message::None, rx)),
-                        },
-                        None => None,
-                    }
-                },
+                        match rx.recv().await {
+                            Some(m) => match m {
+                                EngineMessage::Response(r) => {
+                                    let result = Message::Response(r);
+                                    Some((result, rx))
+                                }
+                                _ => Some((Message::None, rx)),
+                            },
+                            None => None,
+                        }
+                    },
                 ))
             })
         }
@@ -36,7 +36,9 @@ impl Maolan {
 
         let keyboard_sub = keyboard::listen().map(|event| match event {
             KeyEvent::KeyPressed { key, modifiers, .. } => {
-                if modifiers.control() && let keyboard::Key::Character(ch) = &key {
+                if modifiers.control()
+                    && let keyboard::Key::Character(ch) = &key
+                {
                     let s = ch.to_ascii_lowercase();
                     if s == "n" {
                         return Message::NewSession;
@@ -93,7 +95,6 @@ impl Maolan {
             } else {
                 Subscription::none()
             };
-
         Subscription::batch(vec![
             engine_sub,
             keyboard_sub,

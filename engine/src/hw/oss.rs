@@ -386,7 +386,11 @@ fn duplex_registry() -> &'static Mutex<HashMap<String, Weak<Mutex<DuplexSync>>>>
     REG.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn get_or_create_duplex_sync(path: &str, sample_rate: i32, buffer_frames: usize) -> Arc<Mutex<DuplexSync>> {
+fn get_or_create_duplex_sync(
+    path: &str,
+    sample_rate: i32,
+    buffer_frames: usize,
+) -> Arc<Mutex<DuplexSync>> {
     let reg = duplex_registry();
     let mut map = reg.lock().expect("duplex registry poisoned");
     if let Some(existing) = map.get(path).and_then(Weak::upgrade) {
@@ -452,8 +456,12 @@ impl FrameClock {
             tv_nsec: (self.zero.tv_nsec + ns) % 1_000_000_000,
         };
         unsafe {
-            libc::clock_nanosleep(libc::CLOCK_MONOTONIC, libc::TIMER_ABSTIME, &wake, std::ptr::null_mut())
-                == 0
+            libc::clock_nanosleep(
+                libc::CLOCK_MONOTONIC,
+                libc::TIMER_ABSTIME,
+                &wake,
+                std::ptr::null_mut(),
+            ) == 0
         }
     }
 
@@ -704,7 +712,8 @@ impl DoubleBufferedChannel {
         }
         if self.buffer_b.valid() {
             self.buffer_b.buffer.clear();
-            self.buffer_b.end_frames = end_frames + (self.buffer_b.buffer.len() / frame_size) as i64;
+            self.buffer_b.end_frames =
+                end_frames + (self.buffer_b.buffer.len() / frame_size) as i64;
         }
     }
 
@@ -716,11 +725,7 @@ impl DoubleBufferedChannel {
         }
     }
 
-    fn process(
-        &mut self,
-        audio: &mut Audio,
-        now: i64,
-    ) -> std::io::Result<()> {
+    fn process(&mut self, audio: &mut Audio, now: i64) -> std::io::Result<()> {
         let now = now - (now % audio.stepping());
         match &mut self.kind {
             ChannelKind::Read(read) => {
@@ -767,7 +772,8 @@ impl DoubleBufferedChannel {
                 if (overdue > 0 && audio.get_rec_overruns() > 0) || overdue > read.st.max_progress {
                     let progress = audio.buffer_frames() - queued;
                     let loss = read.st.mark_loss_from(progress, now);
-                    read.st.mark_progress(progress + loss, now, audio.stepping());
+                    read.st
+                        .mark_progress(progress + loss, now, audio.stepping());
                     read.read_position = read.st.last_progress - audio.buffer_frames();
                 } else {
                     let progress = queued - (read.st.last_progress - read.read_position);
@@ -790,18 +796,22 @@ impl DoubleBufferedChannel {
         }
 
         if audio.mapped {
-            let cur_position = rec.end_frames - (rec.buffer.remaining() / audio.frame_size()) as i64;
+            let cur_position =
+                rec.end_frames - (rec.buffer.remaining() / audio.frame_size()) as i64;
             let mut oldest = read.st.last_progress - audio.buffer_frames();
             if read.map_progress < audio.buffer_frames() {
                 oldest = read.st.last_progress - read.map_progress;
             }
-            if cur_position >= oldest && cur_position < read.st.last_progress && !rec.buffer.done() {
+            if cur_position >= oldest && cur_position < read.st.last_progress && !rec.buffer.done()
+            {
                 let offset = (read.st.last_progress - cur_position) as usize;
                 let mut len = rec.buffer.remaining().min(offset * audio.frame_size());
-                let pointer = (read.map_progress as usize).saturating_sub(offset) % (audio.buffer_frames() as usize);
+                let pointer = (read.map_progress as usize).saturating_sub(offset)
+                    % (audio.buffer_frames() as usize);
                 len = audio.read_map(rec.buffer.position(), pointer * audio.frame_size(), len);
                 rec.buffer.advance(len);
-                read.read_position = rec.end_frames - (rec.buffer.remaining() / audio.frame_size()) as i64;
+                read.read_position =
+                    rec.end_frames - (rec.buffer.remaining() / audio.frame_size()) as i64;
             }
         } else if audio.queued_samples() > 0 && !rec.buffer.done() {
             let mut bytes_read = 0_usize;
@@ -834,11 +844,14 @@ impl DoubleBufferedChannel {
                     let delta = audio.update_map_progress_from_count(&info).unwrap_or(0);
                     let progress = (delta / audio.frame_size()) as i64;
                     if progress > 0 {
-                        let start = (write.map_progress as usize % audio.buffer_frames() as usize) * audio.frame_size();
+                        let start = (write.map_progress as usize % audio.buffer_frames() as usize)
+                            * audio.frame_size();
                         audio.write_map(None, start, (progress as usize) * audio.frame_size());
                         write.map_progress += progress;
                     }
-                    let loss = write.st.mark_loss(write.st.last_progress + progress - write.write_position);
+                    let loss = write
+                        .st
+                        .mark_loss(write.st.last_progress + progress - write.write_position);
                     write.st.mark_progress(progress, now, audio.stepping());
                     if loss > 0 {
                         write.write_position = write.st.last_progress;
@@ -847,10 +860,14 @@ impl DoubleBufferedChannel {
             } else {
                 let queued = audio.queued_samples() as i64;
                 let overdue = now - write.st.estimated_dropout(queued, audio.buffer_frames());
-                if (overdue > 0 && audio.get_play_underruns() > 0) || overdue > write.st.max_progress {
+                if (overdue > 0 && audio.get_play_underruns() > 0)
+                    || overdue > write.st.max_progress
+                {
                     let progress = write.write_position - write.st.last_progress;
                     let loss = write.st.mark_loss_from(progress, now);
-                    write.st.mark_progress(progress + loss, now, audio.stepping());
+                    write
+                        .st
+                        .mark_progress(progress + loss, now, audio.stepping());
                     write.write_position = write.st.last_progress;
                 } else {
                     let progress = (write.write_position - write.st.last_progress) - queued;
@@ -875,14 +892,24 @@ impl DoubleBufferedChannel {
 
         if audio.mapped {
             let pos = rec.end_frames - (rec.buffer.remaining() / audio.frame_size()) as i64;
-            if !rec.buffer.done() && pos >= write.st.last_progress && pos < write.st.last_progress + audio.buffer_frames() {
+            if !rec.buffer.done()
+                && pos >= write.st.last_progress
+                && pos < write.st.last_progress + audio.buffer_frames()
+            {
                 let offset = (pos - write.st.last_progress) as usize;
-                let pointer = ((write.map_progress as usize) + offset) % audio.buffer_frames() as usize;
-                let mut len = ((audio.buffer_frames() as usize).saturating_sub(offset)) * audio.frame_size();
+                let pointer =
+                    ((write.map_progress as usize) + offset) % audio.buffer_frames() as usize;
+                let mut len =
+                    ((audio.buffer_frames() as usize).saturating_sub(offset)) * audio.frame_size();
                 len = len.min(rec.buffer.remaining());
-                let written = audio.write_map(Some(rec.buffer.position()), pointer * audio.frame_size(), len);
+                let written = audio.write_map(
+                    Some(rec.buffer.position()),
+                    pointer * audio.frame_size(),
+                    len,
+                );
                 rec.buffer.advance(written);
-                write.write_position = rec.end_frames - (rec.buffer.remaining() / audio.frame_size()) as i64;
+                write.write_position =
+                    rec.end_frames - (rec.buffer.remaining() / audio.frame_size()) as i64;
             }
         } else if audio.queued_samples() < audio.buffer_frames() as i32 && !rec.buffer.done() {
             let mut bytes_written = 0_usize;
@@ -1144,7 +1171,8 @@ impl Audio {
 
         let mut caps = 0_i32;
         unsafe {
-            oss_get_caps(dsp.as_raw_fd(), &mut caps).map_err(|_| std::io::Error::last_os_error())?;
+            oss_get_caps(dsp.as_raw_fd(), &mut caps)
+                .map_err(|_| std::io::Error::last_os_error())?;
         }
         let mut sys = OssSysInfo::default();
         unsafe {
@@ -1188,7 +1216,11 @@ impl Audio {
         let mut map = std::ptr::null_mut();
         let mut mapped = false;
         if (caps & PCM_CAP_MMAP) != 0 {
-            let prot = if input { libc::PROT_READ } else { libc::PROT_WRITE };
+            let prot = if input {
+                libc::PROT_READ
+            } else {
+                libc::PROT_WRITE
+            };
             let addr = unsafe {
                 libc::mmap(
                     std::ptr::null_mut(),
@@ -1350,13 +1382,7 @@ impl Audio {
         if len == 0 {
             return Ok(());
         }
-        let n = unsafe {
-            libc::read(
-                self.dsp.as_raw_fd(),
-                dst.as_ptr() as *mut libc::c_void,
-                len,
-            )
-        };
+        let n = unsafe { libc::read(self.dsp.as_raw_fd(), dst.as_ptr() as *mut libc::c_void, len) };
         if n >= 0 {
             *count += n as usize;
             return Ok(());
@@ -1453,31 +1479,19 @@ impl Audio {
         } else {
             unsafe { oss_current_optr(self.dsp.as_raw_fd(), &mut ptr) }
         };
-        if req.is_ok() {
-            ptr.fifo_samples
-        } else {
-            0
-        }
+        if req.is_ok() { ptr.fifo_samples } else { 0 }
     }
 
     fn get_play_underruns(&self) -> i32 {
         let mut err = AudioErrInfo::default();
         let rc = unsafe { oss_get_error(self.dsp.as_raw_fd(), &mut err) };
-        if rc.is_ok() {
-            err.play_underruns
-        } else {
-            0
-        }
+        if rc.is_ok() { err.play_underruns } else { 0 }
     }
 
     fn get_rec_overruns(&self) -> i32 {
         let mut err = AudioErrInfo::default();
         let rc = unsafe { oss_get_error(self.dsp.as_raw_fd(), &mut err) };
-        if rc.is_ok() {
-            err.rec_overruns
-        } else {
-            0
-        }
+        if rc.is_ok() { err.rec_overruns } else { 0 }
     }
 
     fn check_time_and_run(&mut self) -> std::io::Result<()> {
@@ -1670,9 +1684,9 @@ impl Audio {
                     };
                     for (i, &sample) in channel_samples.iter().enumerate().take(self.chsamples) {
                         let target_idx = i * num_channels + ch_idx;
-                        data_i32[target_idx] =
-                            ((sample * output_gain * balance_gain).clamp(-1.0, 1.0) * scale_factor)
-                                as i32;
+                        data_i32[target_idx] = ((sample * output_gain * balance_gain)
+                            .clamp(-1.0, 1.0)
+                            * scale_factor) as i32;
                     }
                 }
             } else {
@@ -1694,9 +1708,9 @@ impl Audio {
                     };
                     for (i, &sample) in channel_samples.iter().enumerate().take(self.chsamples) {
                         let target_idx = i * num_channels + ch_idx;
-                        data_i32[target_idx] =
-                            ((sample * output_gain * balance_gain).clamp(-1.0, 1.0) * scale_factor)
-                                as i32;
+                        data_i32[target_idx] = ((sample * output_gain * balance_gain)
+                            .clamp(-1.0, 1.0)
+                            * scale_factor) as i32;
                     }
                 }
             }
@@ -2129,9 +2143,24 @@ nix::ioctl_write_ptr!(
     SNDCTL_DSP_SETTRIGGER,
     i32
 );
-nix::ioctl_read!(oss_get_iptr, SNDCTL_DSP_MAGIC, SNDCTL_DSP_GETIPTR, CountInfo);
-nix::ioctl_read!(oss_get_optr, SNDCTL_DSP_MAGIC, SNDCTL_DSP_GETOPTR, CountInfo);
-nix::ioctl_read!(oss_get_error, SNDCTL_DSP_MAGIC, SNDCTL_DSP_GETERROR, AudioErrInfo);
+nix::ioctl_read!(
+    oss_get_iptr,
+    SNDCTL_DSP_MAGIC,
+    SNDCTL_DSP_GETIPTR,
+    CountInfo
+);
+nix::ioctl_read!(
+    oss_get_optr,
+    SNDCTL_DSP_MAGIC,
+    SNDCTL_DSP_GETOPTR,
+    CountInfo
+);
+nix::ioctl_read!(
+    oss_get_error,
+    SNDCTL_DSP_MAGIC,
+    SNDCTL_DSP_GETERROR,
+    AudioErrInfo
+);
 nix::ioctl_read!(
     oss_current_iptr,
     SNDCTL_DSP_MAGIC,
@@ -2409,12 +2438,14 @@ impl<'a> DuplexChannelApi<'a> {
         if xrun > 0 {
             let skip = xrun + frames;
             cycle_end = self.capture.shared_cycle_end_add(skip);
-            self.capture
-                .channel
-                .reset_buffers(self.capture.channel.end_frames() + skip, self.capture.frame_size());
-            self.playback
-                .channel
-                .reset_buffers(self.playback.channel.end_frames() + skip, self.playback.frame_size());
+            self.capture.channel.reset_buffers(
+                self.capture.channel.end_frames() + skip,
+                self.capture.frame_size(),
+            );
+            self.playback.channel.reset_buffers(
+                self.playback.channel.end_frames() + skip,
+                self.playback.frame_size(),
+            );
         }
 
         while !self.capture.channel.finished(self.now) {
@@ -2515,7 +2546,8 @@ impl<'a> DuplexChannelApi<'a> {
     }
 
     fn all_finished(&self) -> bool {
-        self.capture.channel.total_finished(self.now) && self.playback.channel.total_finished(self.now)
+        self.capture.channel.total_finished(self.now)
+            && self.playback.channel.total_finished(self.now)
     }
 
     fn sleep(&self) -> std::io::Result<()> {

@@ -22,10 +22,7 @@ impl Worker {
         if rc == 0 {
             Ok(())
         } else {
-            Err(format!(
-                "pthread_setschedparam failed with errno {}",
-                rc
-            ))
+            Err(format!("pthread_setschedparam failed with errno {}", rc))
         }
     }
 

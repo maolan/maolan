@@ -16,7 +16,10 @@ fn audio_waveform_overlay(
     clip_height: f32,
 ) -> Element<'static, Message> {
     if peaks.is_empty() {
-        return container("").width(Length::Fill).height(Length::Fill).into();
+        return container("")
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
     }
     let inner_w = (clip_width - 10.0).max(2.0);
     let inner_h = (clip_height - 8.0).max(6.0);
@@ -35,20 +38,18 @@ fn audio_waveform_overlay(
             let amp = channel_peaks[src_idx].clamp(0.0, 1.0);
             let bar_h = (amp * channel_h).max(1.0);
             bars.push(
-                pin(
-                    container("")
-                        .width(Length::Fixed(1.0))
-                        .height(Length::Fixed(bar_h))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.8,
-                                g: 0.9,
-                                b: 1.0,
-                                a: 0.45,
-                            })),
-                            ..container::Style::default()
-                        }),
-                )
+                pin(container("")
+                    .width(Length::Fixed(1.0))
+                    .height(Length::Fixed(bar_h))
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.8,
+                            g: 0.9,
+                            b: 1.0,
+                            a: 0.45,
+                        })),
+                        ..container::Style::default()
+                    }))
                 .position(Point::new(i as f32 * x_step, center_y - bar_h * 0.5))
                 .into(),
             );
@@ -213,7 +214,8 @@ fn view_track_elements(
         && let Some((preview_start, preview_current)) = recording_preview_bounds
         && preview_current > preview_start
     {
-        let preview_width = ((preview_current - preview_start) as f32 * pixels_per_sample).max(12.0);
+        let preview_width =
+            ((preview_current - preview_start) as f32 * pixels_per_sample).max(12.0);
         let preview_height = (height - 10.0).max(12.0);
         let preview_peaks = recording_preview_peaks
             .and_then(|map| map.get(&track.name))

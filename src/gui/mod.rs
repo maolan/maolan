@@ -8,8 +8,7 @@ use crate::{
     add_track, connections, hw, menu,
     message::{DraggedClip, Message, Show},
     state::{State, StateData},
-    toolbar,
-    workspace,
+    toolbar, workspace,
 };
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Length, Size, Task};
@@ -216,9 +215,10 @@ impl Maolan {
         let peaks_val = &json["peaks"];
 
         // Backward-compatible with legacy single-channel format: "peaks": [..]
-        if peaks_val.as_array().is_some_and(|arr| {
-            arr.first().is_some_and(|first| first.is_number())
-        }) {
+        if peaks_val
+            .as_array()
+            .is_some_and(|arr| arr.first().is_some_and(|first| first.is_number()))
+        {
             let mono = peaks_val
                 .as_array()
                 .map(|arr| {
@@ -309,7 +309,7 @@ impl Maolan {
             "track_input" => Some(Lv2GraphNode::TrackInput),
             "track_output" => Some(Lv2GraphNode::TrackOutput),
             "plugin" => Some(Lv2GraphNode::PluginInstance(
-                v["plugin_index"].as_u64()? as usize,
+                v["plugin_index"].as_u64()? as usize
             )),
             _ => None,
         }
@@ -454,7 +454,9 @@ impl Maolan {
                 scrollable(lv2_list).height(Length::Fill),
                 row![
                     load_button,
-                    button("Close").on_press(Message::Cancel).style(button::secondary),
+                    button("Close")
+                        .on_press(Message::Cancel)
+                        .style(button::secondary),
                 ]
                 .spacing(10),
             ]
@@ -486,5 +488,4 @@ impl Maolan {
             track.update(message.clone());
         }
     }
-
 }

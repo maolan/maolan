@@ -194,8 +194,7 @@ impl Track {
             let out_samples = audio_out.buffer.lock();
             out_samples.fill(0.0);
             if self.record_tap_outs.len() <= out_idx {
-                self.record_tap_outs
-                    .push(vec![0.0; out_samples.len()]);
+                self.record_tap_outs.push(vec![0.0; out_samples.len()]);
             }
             let tap = &mut self.record_tap_outs[out_idx];
             if tap.len() != out_samples.len() {

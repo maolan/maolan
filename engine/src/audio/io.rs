@@ -59,12 +59,31 @@ impl AudioIO {
 
     pub fn process(&self) {
         let local_buf = self.buffer.lock();
+        let connections = self.connections.lock();
 
-        local_buf.fill(0.0);
-        for source in self.connections.lock() {
-            let source_buf = source.buffer.lock();
-            for (out_sample, in_sample) in local_buf.iter_mut().zip(source_buf.iter()) {
-                *out_sample += *in_sample;
+        match connections.len() {
+            0 => {
+                local_buf.fill(0.0);
+            }
+            1 => {
+                let source_buf = connections[0].buffer.lock();
+                if local_buf.len() == source_buf.len() {
+                    local_buf.copy_from_slice(source_buf.as_ref());
+                } else {
+                    local_buf.fill(0.0);
+                    for (out_sample, in_sample) in local_buf.iter_mut().zip(source_buf.iter()) {
+                        *out_sample = *in_sample;
+                    }
+                }
+            }
+            _ => {
+                local_buf.fill(0.0);
+                for source in connections.iter() {
+                    let source_buf = source.buffer.lock();
+                    for (out_sample, in_sample) in local_buf.iter_mut().zip(source_buf.iter()) {
+                        *out_sample += *in_sample;
+                    }
+                }
             }
         }
         *self.finished.lock() = true;

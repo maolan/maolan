@@ -31,14 +31,17 @@ impl Maolan {
                         View::TrackPlugins => self.track_plugins.view(),
                     };
 
-                    let mut content =
-                        column![self.menu.view(), self.toolbar.view(self.playing, self.record_armed)];
+                    let mut content = column![
+                        self.menu.view(),
+                        self.toolbar.view(self.playing, self.record_armed)
+                    ];
                     if matches!(state.view, View::TrackPlugins) {
                         content = content.push(
                             container(
-                                row![button("Plugin List").on_press(Message::Show(
-                                    Show::TrackPluginList
-                                ))]
+                                row![
+                                    button("Plugin List")
+                                        .on_press(Message::Show(Show::TrackPluginList))
+                                ]
                                 .spacing(8),
                             )
                             .padding(8),

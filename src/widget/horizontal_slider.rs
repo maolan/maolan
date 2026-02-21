@@ -49,7 +49,8 @@ struct State {
     last_click_at: Option<Instant>,
 }
 
-impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer> for HorizontalSlider<'a, Message>
+impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for HorizontalSlider<'a, Message>
 where
     Renderer: renderer::Renderer,
 {
@@ -162,7 +163,8 @@ where
                 );
             }
         } else {
-            let filled_x_start = (handle_offset + self.handle_width + handle_filled_gap).max(bounds.x);
+            let filled_x_start =
+                (handle_offset + self.handle_width + handle_filled_gap).max(bounds.x);
             let filled_width = (center_x - filled_x_start).max(0.0);
             if filled_width > 0.0 {
                 renderer.fill_quad(

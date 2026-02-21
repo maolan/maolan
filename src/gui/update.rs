@@ -4,8 +4,8 @@ use crate::{
     message::Message,
     state::{ConnectionViewSelection, HW, Resizing, Track, View},
 };
-use iced::{Length, Point, Task, mouse};
 use iced::widget::Id;
+use iced::{Length, Point, Task, mouse};
 use maolan_engine::{
     kind::Kind,
     message::{Action, ClipMoveFrom, ClipMoveTo},
@@ -162,7 +162,9 @@ impl Maolan {
                 return self.send(Action::Stop);
             }
             Message::PlaybackTick => {
-                if self.playing && let Some(last) = self.last_playback_tick {
+                if self.playing
+                    && let Some(last) = self.last_playback_tick
+                {
                     let now = Instant::now();
                     let delta_s = now.duration_since(last).as_secs_f64();
                     self.last_playback_tick = Some(now);
@@ -170,12 +172,18 @@ impl Maolan {
                 }
             }
             Message::RecordingPreviewTick => {
-                if self.playing && self.record_armed && self.recording_preview_start_sample.is_some() {
+                if self.playing
+                    && self.record_armed
+                    && self.recording_preview_start_sample.is_some()
+                {
                     self.recording_preview_sample = Some(self.transport_samples.max(0.0) as usize);
                 }
             }
             Message::RecordingPreviewPeaksTick => {
-                if self.playing && self.record_armed && self.recording_preview_start_sample.is_some() {
+                if self.playing
+                    && self.record_armed
+                    && self.recording_preview_start_sample.is_some()
+                {
                     let tracks = self.state.blocking_read().tracks.clone();
                     for track in tracks.iter().filter(|t| t.armed) {
                         let channels = track.audio.outs.max(1);
@@ -187,7 +195,11 @@ impl Maolan {
                             entry.resize_with(channels, Vec::new);
                         }
                         for channel_idx in 0..channels {
-                            let db = track.meter_out_db.get(channel_idx).copied().unwrap_or(-90.0);
+                            let db = track
+                                .meter_out_db
+                                .get(channel_idx)
+                                .copied()
+                                .unwrap_or(-90.0);
                             let amp = if db <= -90.0 {
                                 0.0
                             } else {
@@ -400,8 +412,7 @@ impl Maolan {
                 } => {
                     let mut audio_peaks = vec![];
                     if *kind == Kind::Audio {
-                        let key =
-                            Self::audio_clip_key(track_name, name, *start, *length, *offset);
+                        let key = Self::audio_clip_key(track_name, name, *start, *length, *offset);
                         audio_peaks = self.pending_audio_peaks.remove(&key).unwrap_or_default();
                         if audio_peaks.is_empty()
                             && name.to_ascii_lowercase().ends_with(".wav")
@@ -886,7 +897,8 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 if hovered {
                     state.hovered_track_resize_handle = Some(track_name.clone());
-                } else if state.hovered_track_resize_handle.as_deref() == Some(track_name.as_str()) {
+                } else if state.hovered_track_resize_handle.as_deref() == Some(track_name.as_str())
+                {
                     state.hovered_track_resize_handle = None;
                 }
             }
@@ -992,8 +1004,7 @@ impl Maolan {
                                             .clamp(min_length_samples, usize::MAX as f32);
                                         clip.length = updated_length as usize;
                                     } else {
-                                        let max_start = (initial_value
-                                            + initial_length
+                                        let max_start = (initial_value + initial_length
                                             - min_length_samples)
                                             .max(0.0);
                                         let new_start =
@@ -1012,8 +1023,7 @@ impl Maolan {
                                             .clamp(min_length_samples, usize::MAX as f32);
                                         clip.length = updated_length as usize;
                                     } else {
-                                        let max_start = (initial_value
-                                            + initial_length
+                                        let max_start = (initial_value + initial_length
                                             - min_length_samples)
                                             .max(0.0);
                                         let new_start =
@@ -1098,10 +1108,12 @@ impl Maolan {
                 if let Some(clip) = &self.clip {
                     let state = self.state.blocking_read();
                     let from_track_name = &clip.track_index;
-                    let to_track_id = zones
-                        .iter()
-                        .map(|(id, _)| id)
-                        .find(|id| state.tracks.iter().any(|t| Id::from(t.name.clone()) == **id));
+                    let to_track_id = zones.iter().map(|(id, _)| id).find(|id| {
+                        state
+                            .tracks
+                            .iter()
+                            .any(|t| Id::from(t.name.clone()) == **id)
+                    });
                     let Some(to_track_id) = to_track_id else {
                         self.clip = None;
                         return Task::none();

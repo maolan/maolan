@@ -229,7 +229,7 @@ impl Mixer {
                                             move |new_val| {
                                                 Message::Request(Action::TrackBalance(
                                                     name.clone(),
-                                                    new_val
+                                                    new_val,
                                                 ))
                                             }
                                         })
@@ -247,7 +247,10 @@ impl Mixer {
                                     Self::slider_with_ticks(track.level, fader_height, {
                                         let name = track.name.clone();
                                         move |new_val| {
-                                            Message::Request(Action::TrackLevel(name.clone(), new_val))
+                                            Message::Request(Action::TrackLevel(
+                                                name.clone(),
+                                                new_val,
+                                            ))
                                         }
                                     }),
                                     Self::centered_readout(Self::format_level_db(track.level)),
@@ -330,7 +333,10 @@ impl Mixer {
                         column![
                             if hw_out_channels == 2 {
                                 Self::balance_slider(hw_out_balance, move |new_val| {
-                                    Message::Request(Action::TrackBalance("hw:out".to_string(), new_val))
+                                    Message::Request(Action::TrackBalance(
+                                        "hw:out".to_string(),
+                                        new_val,
+                                    ))
                                 })
                             } else {
                                 Space::new()
@@ -345,7 +351,10 @@ impl Mixer {
                             }),
                             Self::slider_with_ticks(hw_out_level, fader_height, {
                                 move |new_val| {
-                                    Message::Request(Action::TrackLevel("hw:out".to_string(), new_val))
+                                    Message::Request(Action::TrackLevel(
+                                        "hw:out".to_string(),
+                                        new_val,
+                                    ))
                                 }
                             }),
                             Self::centered_readout(Self::format_level_db(hw_out_level)),

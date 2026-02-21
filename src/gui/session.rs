@@ -1,8 +1,5 @@
 use super::{CLIENT, Maolan};
-use crate::{
-    message::Message,
-    state::ConnectionViewSelection,
-};
+use crate::{message::Message, state::ConnectionViewSelection};
 use iced::{Length, Point, Task};
 use maolan_engine::{
     kind::Kind,
@@ -75,8 +72,7 @@ impl Maolan {
                         if peaks.is_empty() && clip_name.to_ascii_lowercase().ends_with(".wav") {
                             let wav_path = session_root.join(&clip_name);
                             if wav_path.exists()
-                                && let Ok(computed) =
-                                    Self::compute_audio_clip_peaks(&wav_path, 512)
+                                && let Ok(computed) = Self::compute_audio_clip_peaks(&wav_path, 512)
                             {
                                 peaks = computed;
                             }
@@ -117,11 +113,7 @@ impl Maolan {
                             p
                         } else {
                             let in_session = session_root.join(&p);
-                            if in_session.exists() {
-                                in_session
-                            } else {
-                                p
-                            }
+                            if in_session.exists() { in_session } else { p }
                         }
                     };
                     let basename = Path::new(name)
@@ -220,10 +212,16 @@ impl Maolan {
             state.pending_track_heights.clear();
 
             let tracks_width = session["ui"]["tracks_width"].as_f64().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "No 'ui.tracks_width' in session")
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "No 'ui.tracks_width' in session",
+                )
             })?;
             let mixer_height = session["ui"]["mixer_height"].as_f64().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidInput, "No 'ui.mixer_height' in session")
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "No 'ui.mixer_height' in session",
+                )
             })?;
             state.tracks_width = Length::Fixed(tracks_width as f32);
             state.mixer_height = Length::Fixed(mixer_height as f32);
@@ -383,15 +381,13 @@ impl Maolan {
                                 }
                             }
                             if peaks.is_empty()
-                                && let Ok(computed) =
-                                    Self::compute_audio_clip_peaks(&wav_path, 512)
+                                && let Ok(computed) = Self::compute_audio_clip_peaks(&wav_path, 512)
                             {
                                 peaks = computed;
                             }
                             if !peaks.is_empty() {
-                                let key = Self::audio_clip_key(
-                                    &name, &clip_name, start, length, offset,
-                                );
+                                let key =
+                                    Self::audio_clip_key(&name, &clip_name, start, length, offset);
                                 self.pending_audio_peaks.insert(key, peaks);
                             }
                         }
@@ -415,10 +411,8 @@ impl Maolan {
                         let offset = clip["offset"].as_u64().unwrap_or(0) as usize;
 
                         if clip_name.trim().is_empty() {
-                            warnings.push(format!(
-                                "Track '{}' has a MIDI clip with empty name",
-                                name
-                            ));
+                            warnings
+                                .push(format!("Track '{}' has a MIDI clip with empty name", name));
                         }
                         if length == 0 {
                             warnings.push(format!(
