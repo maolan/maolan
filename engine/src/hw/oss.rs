@@ -762,14 +762,14 @@ impl DoubleBufferedChannel {
                     }
                 }
             } else {
-                let overdue = now - read.st.estimated_dropout(audio.queued_samples() as i64, audio.buffer_frames());
+                let queued = audio.queued_samples() as i64;
+                let overdue = now - read.st.estimated_dropout(queued, audio.buffer_frames());
                 if (overdue > 0 && audio.get_rec_overruns() > 0) || overdue > read.st.max_progress {
-                    let progress = audio.buffer_frames() - audio.queued_samples() as i64;
+                    let progress = audio.buffer_frames() - queued;
                     let loss = read.st.mark_loss_from(progress, now);
                     read.st.mark_progress(progress + loss, now, audio.stepping());
                     read.read_position = read.st.last_progress - audio.buffer_frames();
                 } else {
-                    let queued = audio.queued_samples() as i64;
                     let progress = queued - (read.st.last_progress - read.read_position);
                     read.st.mark_progress(progress, now, audio.stepping());
                     read.read_position = read.st.last_progress - queued;
@@ -845,14 +845,14 @@ impl DoubleBufferedChannel {
                     }
                 }
             } else {
-                let overdue = now - write.st.estimated_dropout(audio.queued_samples() as i64, audio.buffer_frames());
+                let queued = audio.queued_samples() as i64;
+                let overdue = now - write.st.estimated_dropout(queued, audio.buffer_frames());
                 if (overdue > 0 && audio.get_play_underruns() > 0) || overdue > write.st.max_progress {
                     let progress = write.write_position - write.st.last_progress;
                     let loss = write.st.mark_loss_from(progress, now);
                     write.st.mark_progress(progress + loss, now, audio.stepping());
                     write.write_position = write.st.last_progress;
                 } else {
-                    let queued = audio.queued_samples() as i64;
                     let progress = (write.write_position - write.st.last_progress) - queued;
                     write.st.mark_progress(progress, now, audio.stepping());
                     write.write_position = write.st.last_progress + queued;
@@ -1005,6 +1005,8 @@ pub struct Audio {
     buffer: Samples<i32>,
     pub audio_info: AudioInfo,
     pub buffer_info: BufferInfo,
+    frame_size_bytes: usize,
+    buffer_frames_cached: i64,
     caps: i32,
     mapped: bool,
     map: *mut libc::c_void,
@@ -1222,6 +1224,7 @@ impl Audio {
 
         let correction = Correction::default();
 
+        let buffer_frames_cached = (buffer_info.bytes as usize / frame_size) as i64;
         let audio = Audio {
             dsp,
             channels: io_channels,
@@ -1235,6 +1238,8 @@ impl Audio {
             buffer: Samples::new(vec![0_i32; chsamples * (channels as usize)].into_boxed_slice()),
             audio_info,
             buffer_info,
+            frame_size_bytes: frame_size,
+            buffer_frames_cached,
             caps,
             mapped,
             map,
@@ -1251,14 +1256,11 @@ impl Audio {
     }
 
     fn frame_size(&self) -> usize {
-        self.channels.len() * bytes_per_sample(self.format).unwrap_or(4)
+        self.frame_size_bytes
     }
 
     fn buffer_frames(&self) -> i64 {
-        if self.frame_size() == 0 {
-            return 0;
-        }
-        (self.buffer_info.bytes as usize / self.frame_size()) as i64
+        self.buffer_frames_cached
     }
 
     fn stepping(&self) -> i64 {
@@ -1707,6 +1709,17 @@ fn convert_in_to_i32_interleaved(
     src: &[u8],
     dst: &mut [i32],
 ) {
+    if format == AFMT_S32_NE {
+        let samples = frames
+            .saturating_mul(channels)
+            .min(dst.len())
+            .min(src.len() / 4);
+        let bytes = samples * 4;
+        unsafe {
+            std::ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr().cast::<u8>(), bytes);
+        }
+        return;
+    }
     let bps = bytes_per_sample(format).unwrap_or(4);
     let n = frames.saturating_mul(channels);
     for i in 0..n.min(dst.len()) {
@@ -1741,6 +1754,10 @@ fn convert_in_to_i32_connected(
     dst: &mut [i32],
     channels: &[Arc<AudioIO>],
 ) {
+    if channels.iter().all(has_audio_connections) {
+        convert_in_to_i32_interleaved(format, channels.len(), frames, src, dst);
+        return;
+    }
     let bps = bytes_per_sample(format).unwrap_or(4);
     let channel_count = channels.len();
     for (ch, port) in channels.iter().enumerate() {
@@ -1784,6 +1801,17 @@ fn convert_out_from_i32_interleaved(
     src: &mut [i32],
     dst: &mut [u8],
 ) {
+    if format == AFMT_S32_NE {
+        let samples = frames
+            .saturating_mul(channels)
+            .min(src.len())
+            .min(dst.len() / 4);
+        let bytes = samples * 4;
+        unsafe {
+            std::ptr::copy_nonoverlapping(src.as_ptr().cast::<u8>(), dst.as_mut_ptr(), bytes);
+        }
+        return;
+    }
     let bps = bytes_per_sample(format).unwrap_or(4);
     let n = frames.saturating_mul(channels);
     for i in 0..n.min(src.len()) {

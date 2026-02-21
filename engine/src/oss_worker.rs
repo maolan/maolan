@@ -16,6 +16,7 @@ pub struct OssWorker {
     midi_hub: Arc<UnsafeMutex<MidiHub>>,
     rx: Receiver<Message>,
     tx: Sender<Message>,
+    cycle_frames: u32,
     pending_midi_out_events: Vec<crate::midi::io::MidiEvent>,
     midi_in_events: Vec<crate::midi::io::MidiEvent>,
     pending_midi_out_sorted: bool,
@@ -206,11 +207,16 @@ impl OssWorker {
         rx: Receiver<Message>,
         tx: Sender<Message>,
     ) -> Self {
+        let cycle_frames = {
+            let o = oss.lock();
+            o.cycle_samples() as u32
+        };
         Self {
             oss,
             midi_hub,
             rx,
             tx,
+            cycle_frames,
             pending_midi_out_events: vec![],
             midi_in_events: Vec::with_capacity(64),
             pending_midi_out_sorted: true,
@@ -234,15 +240,11 @@ impl OssWorker {
                         return;
                     }
                     Message::TracksFinished => {
-                        let frames = {
-                            let oss = self.oss.lock();
-                            oss.cycle_samples() as u32
-                        };
                         {
                             let midi_hub = self.midi_hub.lock();
                             midi_hub.read_events_into(&mut self.midi_in_events);
                         }
-                        spread_event_frames(&mut self.midi_in_events, frames);
+                        spread_event_frames(&mut self.midi_in_events, self.cycle_frames);
                         if !self.midi_in_events.is_empty() {
                             let cap = self.midi_in_events.capacity();
                             let out = std::mem::replace(
