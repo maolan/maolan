@@ -21,13 +21,20 @@ use tracing_subscriber::{
 };
 
 pub fn main() -> iced::Result {
-    let stdout_layer =
-        FmtLayer::new().with_writer(std::io::stdout.with_max_level(tracing::Level::INFO));
+    let debug_logging = std::env::args().any(|arg| arg == "--debug");
+    if debug_logging {
+        let stdout_layer =
+            FmtLayer::new().with_writer(std::io::stdout.with_max_level(tracing::Level::INFO));
+        tracing_subscriber::registry().with(stdout_layer).init();
+        let my_span = span!(Level::INFO, "main");
+        let _enter = my_span.enter();
+        return run_app();
+    }
 
-    tracing_subscriber::registry().with(stdout_layer).init();
+    run_app()
+}
 
-    let my_span = span!(Level::INFO, "main");
-    let _enter = my_span.enter();
+fn run_app() -> iced::Result {
     let settings = Settings {
         default_text_size: Pixels(16.0),
         ..Default::default()

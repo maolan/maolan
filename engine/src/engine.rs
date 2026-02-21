@@ -585,32 +585,39 @@ impl Engine {
             jack.lock().set_output_gain_linear(gain);
             jack.lock().set_output_balance(self.hw_out_balance);
             let outs = jack.lock().audio_outs.clone();
-            outs.iter()
-                .enumerate()
-                .map(|(channel_idx, channel)| {
-                    let balance_gain = if outs.len() == 2 {
-                        let b = self.hw_out_balance.clamp(-1.0, 1.0);
-                        if channel_idx == 0 {
-                            (1.0 - b).clamp(0.0, 1.0)
-                        } else {
-                            (1.0 + b).clamp(0.0, 1.0)
-                        }
+            let out_count = outs.len();
+            let b = if out_count == 2 {
+                self.hw_out_balance.clamp(-1.0, 1.0)
+            } else {
+                0.0
+            };
+            let mut meters = Vec::with_capacity(out_count);
+            for (channel_idx, channel) in outs.iter().enumerate() {
+                let balance_gain = if out_count == 2 {
+                    if channel_idx == 0 {
+                        (1.0 - b).clamp(0.0, 1.0)
                     } else {
-                        1.0
-                    };
-                    let buf = channel.buffer.lock();
-                    let peak = buf
-                        .iter()
-                        .fold(0.0_f32, |acc, sample| acc.max(sample.abs()))
-                        * gain
-                        * balance_gain;
-                    if peak <= 1.0e-6 {
-                        -90.0
-                    } else {
-                        (20.0 * peak.log10()).clamp(-90.0, 20.0)
+                        (1.0 + b).clamp(0.0, 1.0)
                     }
-                })
-                .collect::<Vec<f32>>()
+                } else {
+                    1.0
+                };
+                let buf = channel.buffer.lock();
+                let mut peak = 0.0_f32;
+                for &sample in buf.iter() {
+                    let v = if sample >= 0.0 { sample } else { -sample };
+                    if v > peak {
+                        peak = v;
+                    }
+                }
+                let peak = peak * gain * balance_gain;
+                meters.push(if peak <= 1.0e-6 {
+                    -90.0
+                } else {
+                    (20.0 * peak.log10()).clamp(-90.0, 20.0)
+                });
+            }
+            meters
         } else {
             return;
         };

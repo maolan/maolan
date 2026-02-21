@@ -12,7 +12,7 @@ use maolan_engine::{
 };
 use rfd::AsyncFileDialog;
 use std::{process::exit, time::Instant};
-use tracing::{debug, error};
+use tracing::error;
 
 impl Maolan {
     fn normalize_period_frames(period_frames: usize) -> usize {
@@ -285,10 +285,11 @@ impl Maolan {
                 self.state.blocking_write().message =
                     "Select a track before loading LV2 plugin".to_string();
             }
-            Message::SendMessageFinished(ref result) => match result {
-                Ok(_) => debug!("Sent successfully!"),
-                Err(e) => error!("Error: {}", e),
-            },
+            Message::SendMessageFinished(ref result) => {
+                if let Err(e) = result {
+                    error!("Error: {}", e);
+                }
+            }
             Message::Response(Ok(ref a)) => match a {
                 Action::Quit => {
                     exit(0);
