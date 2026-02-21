@@ -10,10 +10,11 @@ use maolan_engine::lv2::Lv2PluginInfo;
 use maolan_engine::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin};
 use std::{
     collections::{HashMap, HashSet},
-    fs::read_dir,
     sync::Arc,
     time::Instant,
 };
+#[cfg(target_os = "freebsd")]
+use std::fs::read_dir;
 use tokio::sync::RwLock;
 pub use track::Track;
 
@@ -21,6 +22,47 @@ pub const HW_IN_ID: &str = "hw:in";
 pub const HW_OUT_ID: &str = "hw:out";
 pub const MIDI_HW_IN_ID: &str = "midi:hw:in";
 pub const MIDI_HW_OUT_ID: &str = "midi:hw:out";
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Debug)]
+pub struct AudioDeviceOption {
+    pub id: String,
+    pub label: String,
+}
+
+#[cfg(target_os = "linux")]
+impl AudioDeviceOption {
+    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl std::fmt::Display for AudioDeviceOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl PartialEq for AudioDeviceOption {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Eq for AudioDeviceOption {}
+
+#[cfg(target_os = "linux")]
+impl std::hash::Hash for AudioDeviceOption {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ClipId {
@@ -120,7 +162,13 @@ pub struct StateData {
     pub pending_track_heights: HashMap<String, f32>,
     pub hovered_track_resize_handle: Option<String>,
     pub hw_loaded: bool,
+    #[cfg(target_os = "linux")]
+    pub available_hw: Vec<AudioDeviceOption>,
+    #[cfg(target_os = "linux")]
+    pub selected_hw: Option<AudioDeviceOption>,
+    #[cfg(not(target_os = "linux"))]
     pub available_hw: Vec<String>,
+    #[cfg(not(target_os = "linux"))]
     pub selected_hw: Option<String>,
     pub oss_exclusive: bool,
     pub oss_period_frames: usize,
@@ -153,6 +201,7 @@ pub struct StateData {
 
 impl Default for StateData {
     fn default() -> Self {
+        #[cfg(target_os = "freebsd")]
         let mut hw: Vec<String> = read_dir("/dev")
             .map(|rd| {
                 rd.filter_map(Result::ok)
@@ -168,10 +217,12 @@ impl Default for StateData {
                     .collect()
             })
             .unwrap_or_else(|_| vec![]);
-        hw.sort();
-        hw.push("jack".to_string());
-        hw.sort();
-        hw.dedup();
+        #[cfg(target_os = "linux")]
+        let mut hw: Vec<AudioDeviceOption> = discover_alsa_devices();
+        hw.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        hw.push(AudioDeviceOption::new("jack", "JACK"));
+        hw.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        hw.dedup_by(|a, b| a.id == b.id);
         Self {
             shift: false,
             ctrl: false,
@@ -227,3 +278,71 @@ impl Default for StateData {
 }
 
 pub type State = Arc<RwLock<StateData>>;
+
+#[cfg(target_os = "linux")]
+fn read_alsa_card_labels() -> std::collections::HashMap<u32, String> {
+    let mut labels = std::collections::HashMap::new();
+    let Ok(contents) = std::fs::read_to_string("/proc/asound/cards") else {
+        return labels;
+    };
+    for line in contents.lines() {
+        let line = line.trim_start();
+        let Some((num_str, rest)) = line.split_once(' ') else {
+            continue;
+        };
+        let Ok(card) = num_str.parse::<u32>() else {
+            continue;
+        };
+        let Some((_, desc)) = rest.split_once("]:") else {
+            continue;
+        };
+        let desc = desc.trim();
+        if !desc.is_empty() {
+            labels.insert(card, desc.to_string());
+        }
+    }
+    labels
+}
+
+#[cfg(target_os = "linux")]
+fn discover_alsa_devices() -> Vec<AudioDeviceOption> {
+    let mut devices = Vec::new();
+    let card_labels = read_alsa_card_labels();
+    if let Ok(contents) = std::fs::read_to_string("/proc/asound/pcm") {
+        for line in contents.lines() {
+            let Some((card_dev, rest)) = line.split_once(':') else {
+                continue;
+            };
+            if !rest.contains("playback") && !rest.contains("capture") {
+                continue;
+            }
+            let mut parts = card_dev.trim().split('-');
+            let (Some(card), Some(dev)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            let Ok(card) = card.parse::<u32>() else {
+                continue;
+            };
+            let Ok(dev) = dev.parse::<u32>() else {
+                continue;
+            };
+            let device_name = rest.split(':').next().unwrap_or("").trim();
+            let card_label = card_labels
+                .get(&card)
+                .cloned()
+                .unwrap_or_else(|| format!("Card {card}"));
+            let base_label = if device_name.is_empty() {
+                card_label
+            } else {
+                format!("{card_label} - {device_name}")
+            };
+            devices.push(AudioDeviceOption::new(
+                format!("hw:{card},{dev}"),
+                format!("{base_label} (hw:{card},{dev})"),
+            ));
+        }
+    }
+    devices.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    devices.dedup_by(|a, b| a.id == b.id);
+    devices
+}

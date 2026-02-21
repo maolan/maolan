@@ -1,5 +1,5 @@
 use crate::{
-    hw::oss::{self, MidiHub},
+    hw::alsa::{self, MidiHub},
     message::Message,
     mutex::UnsafeMutex,
 };
@@ -12,7 +12,7 @@ use tracing::error;
 
 #[derive(Debug)]
 pub struct HwWorker {
-    oss: Arc<UnsafeMutex<oss::HwDriver>>,
+    alsa: Arc<UnsafeMutex<alsa::HwDriver>>,
     midi_hub: Arc<UnsafeMutex<MidiHub>>,
     rx: Receiver<Message>,
     tx: Sender<Message>,
@@ -91,7 +91,7 @@ impl AssistProfiler {
             0.0
         };
         error!(
-            "OSS profile: expected_cps={:.1} cycles={} cycle_err={} cycle_avg_us={:.1} steps={} steps_work={} step_err={} step_avg_us={:.1} waits={} wait_avg_us={:.1}",
+            "ALSA profile: expected_cps={:.1} cycles={} cycle_err={} cycle_avg_us={:.1} steps={} steps_work={} step_err={} step_avg_us={:.1} waits={} wait_avg_us={:.1}",
             expected_cycles_per_sec,
             self.cycle_count,
             self.cycle_err_count,
@@ -142,7 +142,7 @@ impl HwWorker {
         {
             let thread = unsafe { libc::pthread_self() };
             let c_name = std::ffi::CString::new(name).map_err(|e| e.to_string())?;
-            let _ = unsafe { libc::pthread_set_name_np(thread, c_name.as_ptr()) };
+            let _ = unsafe { libc::pthread_setname_np(thread, c_name.as_ptr()) };
 
             let param = libc::sched_param {
                 sched_priority: priority,
@@ -202,17 +202,17 @@ impl HwWorker {
     }
 
     pub fn new(
-        oss: Arc<UnsafeMutex<oss::HwDriver>>,
+        alsa: Arc<UnsafeMutex<alsa::HwDriver>>,
         midi_hub: Arc<UnsafeMutex<MidiHub>>,
         rx: Receiver<Message>,
         tx: Sender<Message>,
     ) -> Self {
         let cycle_frames = {
-            let o = oss.lock();
+            let o = alsa.lock();
             o.cycle_samples() as u32
         };
         Self {
-            oss,
+            alsa,
             midi_hub,
             rx,
             tx,
@@ -225,13 +225,13 @@ impl HwWorker {
 
     pub async fn work(mut self) {
         if let Err(e) = Self::lock_memory_pages() {
-            error!("OSS worker memory lock not enabled: {}", e);
+            error!("ALSA worker memory lock not enabled: {}", e);
         }
-        if let Err(e) = Self::configure_rt_thread("oss-worker", RT_PRIORITY_WORKER) {
-            error!("OSS worker realtime priority not enabled: {}", e);
+        if let Err(e) = Self::configure_rt_thread("alsa-worker", RT_PRIORITY_WORKER) {
+            error!("ALSA worker realtime priority not enabled: {}", e);
         }
         let assist_state = Arc::new((Mutex::new(AssistState::default()), Condvar::new()));
-        let assist_handle = Self::start_assist_thread(self.oss.clone(), assist_state.clone());
+        let assist_handle = Self::start_assist_thread(self.alsa.clone(), assist_state.clone());
         loop {
             match self.rx.recv().await {
                 Some(msg) => match msg {
@@ -252,7 +252,7 @@ impl HwWorker {
                                 Vec::with_capacity(cap.max(64)),
                             );
                             if let Err(e) = self.tx.send(Message::HWMidiEvents(out)).await {
-                                error!("OSS worker failed to send HWMidiEvents to engine: {}", e);
+                                error!("ALSA worker failed to send HWMidiEvents to engine: {}", e);
                             }
                         }
                         {
@@ -268,10 +268,10 @@ impl HwWorker {
                             }
                         }
                         if let Err(e) = Self::run_assist_cycle(&assist_state) {
-                            error!("OSS assist cycle error: {}", e);
+                            error!("ALSA assist cycle error: {}", e);
                         }
                         if let Err(e) = self.tx.send(Message::HWFinished).await {
-                            error!("OSS worker failed to send HWFinished to engine: {}", e);
+                            error!("ALSA worker failed to send HWFinished to engine: {}", e);
                         }
                     }
                     Message::HWMidiOutEvents(mut events) => {
@@ -289,22 +289,22 @@ impl HwWorker {
     }
 
     fn start_assist_thread(
-        oss: Arc<UnsafeMutex<oss::HwDriver>>,
+        alsa: Arc<UnsafeMutex<alsa::HwDriver>>,
         assist_state: Arc<(Mutex<AssistState>, Condvar)>,
     ) -> JoinHandle<()> {
         let profile = Self::profile_enabled();
         let autonomous = Self::assist_autonomous_enabled();
         std::thread::spawn(move || {
-            if let Err(e) = Self::configure_rt_thread("oss-assist", RT_PRIORITY_ASSIST) {
-                error!("OSS assist realtime priority not enabled: {}", e);
+            if let Err(e) = Self::configure_rt_thread("alsa-assist", RT_PRIORITY_ASSIST) {
+                error!("ALSA assist realtime priority not enabled: {}", e);
             }
             let mut profiler = if profile {
                 let (cycle_samples, sample_rate) = {
-                    let o = oss.lock();
+                    let o = alsa.lock();
                     (o.cycle_samples(), o.sample_rate())
                 };
                 error!(
-                    "OSS profile enabled: cycle_samples={} sample_rate={} expected_cps={:.1}",
+                    "ALSA profile enabled: cycle_samples={} sample_rate={} expected_cps={:.1}",
                     cycle_samples,
                     sample_rate,
                     if cycle_samples > 0 {
@@ -319,7 +319,6 @@ impl HwWorker {
             };
             let (lock, cvar) = &*assist_state;
             loop {
-                // Prefer requested full cycles, otherwise run autonomous assist maintenance.
                 let (shutdown, has_request, target) = {
                     let st = lock.lock().expect("assist mutex poisoned");
                     (st.shutdown, st.request_seq > st.done_seq, st.request_seq)
@@ -330,8 +329,8 @@ impl HwWorker {
                 if has_request {
                     let started = Instant::now();
                     let run_error = {
-                        let oss = oss.lock();
-                        oss.channel().run_cycle().err().map(|e| e.to_string())
+                        let alsa = alsa.lock();
+                        alsa.channel().run_cycle().err().map(|e| e.to_string())
                     };
                     if let Some(p) = profiler.as_mut() {
                         p.cycle_count += 1;
@@ -340,7 +339,7 @@ impl HwWorker {
                         }
                         p.cycle_time_ns += started.elapsed().as_nanos();
                         let (cycle_samples, sample_rate) = {
-                            let o = oss.lock();
+                            let o = alsa.lock();
                             (o.cycle_samples(), o.sample_rate())
                         };
                         p.maybe_report(cycle_samples, sample_rate);
@@ -368,8 +367,8 @@ impl HwWorker {
 
                 let started = Instant::now();
                 let did_work = {
-                    let oss = oss.lock();
-                    match oss.channel().run_assist_step() {
+                    let alsa = alsa.lock();
+                    match alsa.channel().run_assist_step() {
                         Ok(v) => v,
                         Err(e) => {
                             if let Some(p) = profiler.as_mut() {
@@ -389,7 +388,7 @@ impl HwWorker {
                     }
                     p.step_time_ns += started.elapsed().as_nanos();
                     let (cycle_samples, sample_rate) = {
-                        let o = oss.lock();
+                        let o = alsa.lock();
                         (o.cycle_samples(), o.sample_rate())
                     };
                     p.maybe_report(cycle_samples, sample_rate);

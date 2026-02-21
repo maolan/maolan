@@ -2,6 +2,9 @@ use iced::{Point, Rectangle, Size, mouse, widget::Id};
 use maolan_engine::{kind::Kind, message::Action};
 use std::path::PathBuf;
 
+#[cfg(target_os = "linux")]
+use crate::state::AudioDeviceOption;
+
 #[derive(Debug, Clone, Copy)]
 pub enum Show {
     AddTrack,
@@ -120,6 +123,9 @@ pub enum Message {
     SelectLv2Plugin(String),
     LoadSelectedLv2Plugins,
 
+    #[cfg(target_os = "linux")]
+    HWSelected(AudioDeviceOption),
+    #[cfg(not(target_os = "linux"))]
     HWSelected(String),
     HWExclusiveToggled(bool),
     HWPeriodFramesChanged(usize),

@@ -28,14 +28,24 @@ impl HW {
                 state.oss_sync_mode,
             )
         };
+        #[cfg(target_os = "linux")]
+        let selected_is_jack = selected_hw
+            .as_ref()
+            .map(|s| s.id.eq_ignore_ascii_case("jack"))
+            .unwrap_or(false);
+        #[cfg(not(target_os = "linux"))]
         let selected_is_jack = selected_hw
             .as_deref()
             .map(|s| s.eq_ignore_ascii_case("jack"))
             .unwrap_or(false);
         let mut submit = button("Open Audio");
         if let Some(ref hw) = selected_hw {
+            #[cfg(target_os = "linux")]
+            let device = hw.id.to_string();
+            #[cfg(not(target_os = "linux"))]
+            let device = hw.to_string();
             submit = submit.on_press(Message::Request(Action::OpenAudioDevice {
-                device: hw.to_string(),
+                device,
                 exclusive,
                 period_frames,
                 nperiods,

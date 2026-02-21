@@ -1071,7 +1071,7 @@ impl Audio {
         rate: i32,
         bits: i32,
         input: bool,
-        options: OSSOptions,
+        options: HwOptions,
     ) -> Result<Audio, std::io::Error> {
         let mut binding = File::options();
 
@@ -2219,7 +2219,7 @@ pub fn start_sync_group(fd: i32, group: i32) -> std::io::Result<()> {
 }
 
 #[derive(Debug)]
-pub struct OSSDriver {
+pub struct HwDriver {
     capture: Audio,
     playback: Audio,
     nperiods: usize,
@@ -2229,7 +2229,7 @@ pub struct OSSDriver {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct OSSOptions {
+pub struct HwOptions {
     pub exclusive: bool,
     pub period_frames: usize,
     pub nperiods: usize,
@@ -2239,7 +2239,7 @@ pub struct OSSOptions {
     pub output_latency_frames: usize,
 }
 
-impl Default for OSSOptions {
+impl Default for HwOptions {
     fn default() -> Self {
         Self {
             exclusive: false,
@@ -2253,16 +2253,16 @@ impl Default for OSSOptions {
     }
 }
 
-impl OSSDriver {
+impl HwDriver {
     pub fn new(path: &str, rate: i32, bits: i32) -> std::io::Result<Self> {
-        Self::new_with_options(path, rate, bits, OSSOptions::default())
+        Self::new_with_options(path, rate, bits, HwOptions::default())
     }
 
     pub fn new_with_options(
         path: &str,
         rate: i32,
         bits: i32,
-        options: OSSOptions,
+        options: HwOptions,
     ) -> std::io::Result<Self> {
         let capture = Audio::new(path, rate, bits, true, options)?;
         let playback = Audio::new(path, rate, bits, false, options)?;

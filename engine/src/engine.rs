@@ -20,18 +20,27 @@ use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
     hw::jack::JackRuntime,
-    hw::oss::{self, MidiHub},
     kind::Kind,
     message::{Action, Message},
     midi::clip::MIDIClip,
     midi::io::MidiEvent,
     mutex::UnsafeMutex,
-    oss_worker::OssWorker,
     routing,
     state::State,
     track::Track,
     worker::Worker,
 };
+#[cfg(target_os = "freebsd")]
+use crate::oss_worker::HwWorker as HwWorker;
+#[cfg(target_os = "linux")]
+use crate::alsa_worker::HwWorker as HwWorker;
+#[cfg(target_os = "freebsd")]
+use crate::hw::oss as hw;
+#[cfg(target_os = "freebsd")]
+use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
+#[cfg(target_os = "linux")]
+use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
+
 
 #[derive(Debug)]
 struct WorkerData {
@@ -66,10 +75,10 @@ pub struct Engine {
     state: Arc<UnsafeMutex<State>>,
     tx: Sender<Message>,
     workers: Vec<WorkerData>,
-    oss_driver: Option<Arc<UnsafeMutex<oss::OSSDriver>>>,
+    hw_driver: Option<Arc<UnsafeMutex<HwDriver>>>,
     jack_runtime: Option<Arc<UnsafeMutex<JackRuntime>>>,
     midi_hub: Arc<UnsafeMutex<MidiHub>>,
-    oss_worker: Option<WorkerData>,
+    hw_worker: Option<WorkerData>,
     pending_hw_midi_events: Vec<MidiEvent>,
     pending_hw_midi_out_events: Vec<MidiEvent>,
     ready_workers: Vec<usize>,
@@ -111,6 +120,7 @@ impl Engine {
         }
     }
 
+    #[cfg(target_os = "freebsd")]
     fn discover_midi_hw_devices() -> Vec<String> {
         let mut devices: Vec<String> = read_dir("/dev")
             .map(|rd| {
@@ -132,6 +142,28 @@ impl Engine {
         devices
     }
 
+    #[cfg(target_os = "linux")]
+    fn discover_midi_hw_devices() -> Vec<String> {
+        let mut devices: Vec<String> = read_dir("/dev/snd")
+            .map(|rd| {
+                rd.filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter_map(|path| {
+                        let name = path.file_name()?.to_str()?;
+                        if name.starts_with("midiC") {
+                            Some(path.to_string_lossy().into_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        devices.sort();
+        devices.dedup();
+        devices
+    }
+
     pub fn new(rx: Receiver<Message>, tx: Sender<Message>) -> Self {
         Self {
             rx,
@@ -139,10 +171,10 @@ impl Engine {
             clients: vec![],
             state: Arc::new(UnsafeMutex::new(State::default())),
             workers: vec![],
-            oss_driver: None,
+            hw_driver: None,
             jack_runtime: None,
             midi_hub: Arc::new(UnsafeMutex::new(MidiHub::default())),
-            oss_worker: None,
+            hw_worker: None,
             pending_hw_midi_events: vec![],
             pending_hw_midi_out_events: vec![],
             ready_workers: vec![],
@@ -163,7 +195,7 @@ impl Engine {
     }
 
     fn current_cycle_samples(&self) -> usize {
-        self.oss_driver
+        self.hw_driver
             .as_ref()
             .map(|o| o.lock().cycle_samples())
             .or_else(|| self.jack_runtime.as_ref().map(|j| j.lock().buffer_size))
@@ -171,7 +203,7 @@ impl Engine {
     }
 
     fn hw_input_audio_port(&self, from_port: usize) -> Option<Arc<AudioIO>> {
-        self.oss_driver
+        self.hw_driver
             .as_ref()
             .and_then(|h| h.lock().input_port(from_port))
             .or_else(|| {
@@ -182,7 +214,7 @@ impl Engine {
     }
 
     fn hw_output_audio_port(&self, to_port: usize) -> Option<Arc<AudioIO>> {
-        self.oss_driver
+        self.hw_driver
             .as_ref()
             .and_then(|h| h.lock().output_port(to_port))
             .or_else(|| {
@@ -319,7 +351,7 @@ impl Engine {
             return;
         }
         let rate = self
-            .oss_driver
+            .hw_driver
             .as_ref()
             .map(|o| o.lock().sample_rate())
             .unwrap_or(48_000);
@@ -379,7 +411,7 @@ impl Engine {
             {
                 let _ = std::fs::create_dir_all(&midi_dir);
                 let rate = self
-                    .oss_driver
+                    .hw_driver
                     .as_ref()
                     .map(|o| o.lock().sample_rate() as u32)
                     .unwrap_or(48_000);
@@ -395,7 +427,7 @@ impl Engine {
             return;
         }
         let rate = self
-            .oss_driver
+            .hw_driver
             .as_ref()
             .map(|o| o.lock().sample_rate())
             .unwrap_or(48_000);
@@ -519,7 +551,7 @@ impl Engine {
             return;
         }
         self.apply_hw_out_gain_and_meter().await;
-        if let Some(worker) = &self.oss_worker {
+        if let Some(worker) = &self.hw_worker {
             if !self.pending_hw_midi_out_events.is_empty() {
                 let out_events = std::mem::take(&mut self.pending_hw_midi_out_events);
                 if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(out_events)).await {
@@ -566,7 +598,7 @@ impl Engine {
             10.0_f32.powf(self.hw_out_level_db / 20.0)
         };
         if !self.should_publish_hw_out_meters() {
-            if let Some(oss) = self.oss_driver.clone() {
+            if let Some(oss) = self.hw_driver.clone() {
                 let hw = oss.lock();
                 hw.set_output_gain_balance(gain, self.hw_out_balance);
             } else if let Some(jack) = self.jack_runtime.clone() {
@@ -575,7 +607,7 @@ impl Engine {
             }
             return;
         }
-        let meter_db = if let Some(oss) = self.oss_driver.clone() {
+        let meter_db = if let Some(oss) = self.hw_driver.clone() {
             {
                 let hw = oss.lock();
                 hw.set_output_gain_balance(gain, self.hw_out_balance);
@@ -769,7 +801,7 @@ impl Engine {
             }
             Action::Quit => {
                 self.flush_recordings().await;
-                if let Some(worker) = self.oss_worker.take() {
+                if let Some(worker) = self.hw_worker.take() {
                     worker
                         .tx
                         .send(Message::Request(a.clone()))
@@ -809,7 +841,7 @@ impl Engine {
                         .await;
                     return;
                 }
-                let maybe_hw = if let Some(oss) = &self.oss_driver {
+                let maybe_hw = if let Some(oss) = &self.hw_driver {
                     let hw = oss.lock();
                     Some((hw.cycle_samples(), hw.sample_rate() as f64))
                 } else if let Some(jack) = &self.jack_runtime {
@@ -1379,8 +1411,8 @@ impl Engine {
                             let midi_inputs = runtime.midi_input_devices();
                             let midi_outputs = runtime.midi_output_devices();
                             let rate = runtime.sample_rate;
-                            self.oss_driver = None;
-                            if let Some(worker) = self.oss_worker.take() {
+                            self.hw_driver = None;
+                            if let Some(worker) = self.hw_worker.take() {
                                 let _ = worker.tx.send(Message::Request(Action::Quit)).await;
                                 let _ = worker.handle.await;
                             }
@@ -1421,42 +1453,44 @@ impl Engine {
                     }
                     return;
                 }
-                let oss_opts = oss::OSSOptions {
+                let hw_opts = HwOptions {
                     exclusive,
                     period_frames: period_frames.max(1).next_power_of_two(),
                     nperiods: nperiods.max(1),
                     sync_mode,
                     ..Default::default()
                 };
-                let oss_profile_enabled = std::env::var("MAOLAN_OSS_PROFILE")
+                let hw_profile_enabled = std::env::var("MAOLAN_HW_PROFILE")
                     .ok()
                     .map(|v| {
                         let s = v.trim().to_ascii_lowercase();
                         s == "1" || s == "true" || s == "yes" || s == "on"
                     })
                     .unwrap_or(false);
-                match oss::OSSDriver::new_with_options(device, 48000, 32, oss_opts) {
+                match HwDriver::new_with_options(device, 48000, 32, hw_opts) {
                     Ok(d) => {
                         let in_channels = d.input_channels();
                         let out_channels = d.output_channels();
                         let rate = d.sample_rate() as usize;
                         let (in_lat, out_lat) = d.latency_ranges();
-                        if oss_profile_enabled {
+                        if hw_profile_enabled {
+                            let label = if cfg!(target_os = "linux") { "ALSA" } else { "OSS" };
                             error!(
-                                "OSS config: exclusive={}, period={}, nperiods={}, ignore_hwbuf={}, sync_mode={}, in_latency_extra={}, out_latency_extra={}, input_range={:?}, output_range={:?}",
-                                oss_opts.exclusive,
-                                oss_opts.period_frames,
-                                oss_opts.nperiods,
-                                oss_opts.ignore_hwbuf,
-                                oss_opts.sync_mode,
-                                oss_opts.input_latency_frames,
-                                oss_opts.output_latency_frames,
+                                "{} config: exclusive={}, period={}, nperiods={}, ignore_hwbuf={}, sync_mode={}, in_latency_extra={}, out_latency_extra={}, input_range={:?}, output_range={:?}",
+                                label,
+                                hw_opts.exclusive,
+                                hw_opts.period_frames,
+                                hw_opts.nperiods,
+                                hw_opts.ignore_hwbuf,
+                                hw_opts.sync_mode,
+                                hw_opts.input_latency_frames,
+                                hw_opts.output_latency_frames,
                                 in_lat,
                                 out_lat
                             );
                         }
                         self.jack_runtime = None;
-                        self.oss_driver = Some(Arc::new(UnsafeMutex::new(d)));
+                        self.hw_driver = Some(Arc::new(UnsafeMutex::new(d)));
                         self.notify_clients(Ok(Action::HWInfo {
                             channels: in_channels,
                             rate,
@@ -1472,42 +1506,46 @@ impl Engine {
                     }
                     Err(e) => {
                         self.notify_clients(Err(e.to_string())).await;
+                        return;
                     }
                 }
 
-                if let Some(oss) = &self.oss_driver {
-                    let in_fd = oss.lock().input_fd();
-                    let out_fd = oss.lock().output_fd();
-                    let mut group = 0;
-                    let in_group = oss::add_to_sync_group(in_fd, group, true);
-                    if in_group > 0 {
-                        group = in_group;
-                    }
-                    let out_group = oss::add_to_sync_group(out_fd, group, false);
-                    if out_group > 0 {
-                        group = out_group;
-                    }
-                    let sync_started = if group > 0 {
-                        oss::start_sync_group(in_fd, group).is_ok()
-                    } else {
-                        false
-                    };
-                    if !sync_started {
-                        let _ = oss.lock().start_input_trigger();
-                        let _ = oss.lock().start_output_trigger();
+                #[cfg(target_os = "freebsd")]
+                {
+                    if let Some(oss) = &self.hw_driver {
+                        let in_fd = oss.lock().input_fd();
+                        let out_fd = oss.lock().output_fd();
+                        let mut group = 0;
+                        let in_group = hw::add_to_sync_group(in_fd, group, true);
+                        if in_group > 0 {
+                            group = in_group;
+                        }
+                        let out_group = hw::add_to_sync_group(out_fd, group, false);
+                        if out_group > 0 {
+                            group = out_group;
+                        }
+                        let sync_started = if group > 0 {
+                            hw::start_sync_group(in_fd, group).is_ok()
+                        } else {
+                            false
+                        };
+                        if !sync_started {
+                            let _ = oss.lock().start_input_trigger();
+                            let _ = oss.lock().start_output_trigger();
+                        }
                     }
                 }
 
-                if self.oss_worker.is_none() && self.oss_driver.is_some() {
+                if self.hw_worker.is_none() && self.hw_driver.is_some() {
                     let (tx, rx) = channel::<Message>(32);
-                    let oss = self.oss_driver.clone().unwrap();
+                    let hw = self.hw_driver.clone().unwrap();
                     let midi_hub = self.midi_hub.clone();
                     let tx_engine = self.tx.clone();
                     let handler = tokio::spawn(async move {
-                        let worker = OssWorker::new(oss, midi_hub, rx, tx_engine);
+                        let worker = HwWorker::new(hw, midi_hub, rx, tx_engine);
                         worker.work().await;
                     });
-                    self.oss_worker = Some(WorkerData::new(tx, handler));
+                    self.hw_worker = Some(WorkerData::new(tx, handler));
                     self.request_hw_cycle().await;
                 }
 
@@ -1619,7 +1657,7 @@ impl Engine {
                             .transport_sample
                             .saturating_add(self.current_cycle_samples());
                     }
-                    if self.send_tracks().await && self.oss_worker.is_some() {
+                    if self.send_tracks().await && self.hw_worker.is_some() {
                         self.request_hw_cycle().await;
                     }
                     if self.jack_runtime.is_some() {

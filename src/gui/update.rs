@@ -534,6 +534,12 @@ impl Maolan {
                         self.playback_rate_hz = *rate as f64;
                     }
                     let mut state = self.state.blocking_write();
+                    if !state.hw_loaded {
+                        state.hw_loaded = true;
+                    }
+                    let direction = if *input { "input" } else { "output" };
+                    state.message =
+                        format!("HW {direction} channels: {channels} @ {rate} Hz");
                     if *input {
                         state.hw_in = Some(HW {
                             channels: *channels,
@@ -1256,9 +1262,12 @@ impl Maolan {
                 );
             }
             Message::ImportFilesSelected(Some(ref paths)) => {
-                for _path in paths {
-                    // TODO
-                }
+                let count = paths.len();
+                self.state.blocking_write().message = if count == 1 {
+                    "Import is not implemented yet (1 file selected)".to_string()
+                } else {
+                    format!("Import is not implemented yet ({count} files selected)")
+                };
             }
             Message::Workspace => {
                 self.state.blocking_write().view = View::Workspace;
@@ -1279,7 +1288,14 @@ impl Maolan {
                 return self.send(Action::TrackGetLv2Graph { track_name });
             }
             Message::HWSelected(ref hw) => {
-                self.state.blocking_write().selected_hw = Some(hw.to_string());
+                #[cfg(target_os = "linux")]
+                {
+                    self.state.blocking_write().selected_hw = Some(hw.clone());
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    self.state.blocking_write().selected_hw = Some(hw.to_string());
+                }
             }
             Message::HWExclusiveToggled(exclusive) => {
                 self.state.blocking_write().oss_exclusive = exclusive;

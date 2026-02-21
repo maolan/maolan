@@ -7,7 +7,10 @@ pub mod lv2;
 pub mod message;
 mod midi;
 pub mod mutex;
+#[cfg(target_os = "freebsd")]
 mod oss_worker;
+#[cfg(target_os = "linux")]
+mod alsa_worker;
 mod routing;
 pub mod state;
 mod track;
