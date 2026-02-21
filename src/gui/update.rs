@@ -568,8 +568,19 @@ impl Maolan {
                     output_db,
                 } => {
                     if track_name == "hw:out" {
-                        self.state.blocking_write().hw_out_meter_db = output_db.clone();
+                        let mut state = self.state.blocking_write();
+                        if state.hw_out_meter_db != *output_db {
+                            state.hw_out_meter_db = output_db.clone();
+                        }
+                        return Task::none();
                     }
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        && track.meter_out_db != *output_db
+                    {
+                        track.meter_out_db = output_db.clone();
+                    }
+                    return Task::none();
                 }
                 Action::SetSessionPath(_) => {
                     if self.pending_record_after_save {

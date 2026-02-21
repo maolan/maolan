@@ -9,24 +9,49 @@ use crate::{
 use iced::futures::{Stream, StreamExt, stream};
 use iced::keyboard::Event as KeyEvent;
 use iced::{Subscription, event, keyboard, mouse, window};
-use maolan_engine::message::Message as EngineMessage;
+use maolan_engine::message::{Action as EngineAction, Message as EngineMessage};
+use std::collections::HashMap;
+
+const METER_DIRTY_EPSILON_DB: f32 = 0.2;
 
 impl Maolan {
     pub fn subscription(&self) -> Subscription<Message> {
+        fn meter_changed(prev: &[f32], next: &[f32]) -> bool {
+            if prev.len() != next.len() {
+                return true;
+            }
+            prev.iter()
+                .zip(next.iter())
+                .any(|(a, b)| (a - b).abs() >= METER_DIRTY_EPSILON_DB)
+        }
+
         fn listener() -> impl Stream<Item = Message> {
             stream::once(CLIENT.subscribe()).flat_map(|receiver| {
                 stream::once(async { Message::RefreshLv2Plugins }).chain(stream::unfold(
-                    receiver,
-                    |mut rx| async move {
-                        match rx.recv().await {
-                            Some(m) => match m {
-                                EngineMessage::Response(r) => {
-                                    let result = Message::Response(r);
-                                    Some((result, rx))
+                    (receiver, HashMap::<String, Vec<f32>>::new()),
+                    |(mut rx, mut last_meters)| async move {
+                        loop {
+                            match rx.recv().await {
+                                Some(EngineMessage::Response(r)) => {
+                                    if let Ok(EngineAction::TrackMeters {
+                                        track_name,
+                                        output_db,
+                                    }) = &r
+                                    {
+                                        let should_forward = match last_meters.get(track_name) {
+                                            Some(prev) => meter_changed(prev, output_db),
+                                            None => true,
+                                        };
+                                        if !should_forward {
+                                            continue;
+                                        }
+                                        last_meters.insert(track_name.clone(), output_db.clone());
+                                    }
+                                    return Some((Message::Response(r), (rx, last_meters)));
                                 }
-                                _ => Some((Message::None, rx)),
-                            },
-                            None => None,
+                                Some(_) => {}
+                                None => return None,
+                            }
                         }
                     },
                 ))
