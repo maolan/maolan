@@ -4,6 +4,7 @@ use crate::{
     style,
     widget::{horizontal_slider::HorizontalSlider, slider::Slider},
 };
+use std::sync::LazyLock;
 
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Point,
@@ -15,6 +16,38 @@ use maolan_engine::message::Action;
 pub struct Mixer {
     state: State,
 }
+
+const TICK_VALUES: [f32; 13] = [
+    20.0, 12.0, 6.0, 0.0, -6.0, -12.0, -18.0, -24.0, -36.0, -48.0, -60.0, -72.0, -90.0,
+];
+const TICK_LABELS: [&str; 13] = [
+    "+20", "+12", "+6", "0", "-6", "-12", "-18", "-24", "-36", "-48", "-60", "-72", "-90",
+];
+
+static LEVEL_LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    let mut labels = Vec::with_capacity(1101);
+    for i in 0..=1100 {
+        let level = -90.0 + (i as f32) * 0.1;
+        let s: &'static str = Box::leak(format!("{:+.1} dB", level).into_boxed_str());
+        labels.push(s);
+    }
+    labels
+});
+
+static BALANCE_LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    let mut labels = Vec::with_capacity(201);
+    for i in -100..=100 {
+        let s: &'static str = if i == 0 {
+            "C"
+        } else if i < 0 {
+            Box::leak(format!("L{}", -i).into_boxed_str())
+        } else {
+            Box::leak(format!("R{}", i).into_boxed_str())
+        };
+        labels.push(s);
+    }
+    labels
+});
 
 impl Mixer {
     const FADER_MIN_DB: f32 = -90.0;
@@ -43,26 +76,27 @@ impl Mixer {
         fader_height * (1.0 - normalized)
     }
 
+    fn tick_layout(fader_height: f32) -> Vec<(f32, &'static str)> {
+        let mut out = Vec::with_capacity(TICK_VALUES.len());
+        for (idx, db) in TICK_VALUES.iter().copied().enumerate() {
+            let y = Self::db_to_y(db, fader_height).clamp(0.0, fader_height - 1.0);
+            let label_y = (y - 5.0).clamp(0.0, (fader_height - 11.0).max(0.0));
+            out.push((label_y, TICK_LABELS[idx]));
+        }
+        out
+    }
+
     fn slider_with_ticks<F>(
         value: f32,
         fader_height: f32,
+        tick_layout: &[(f32, &'static str)],
         on_change: F,
     ) -> Element<'static, Message>
     where
         F: Fn(f32) -> Message + 'static,
     {
-        let tick_values = [
-            20.0, 12.0, 6.0, 0.0, -6.0, -12.0, -18.0, -24.0, -36.0, -48.0, -60.0, -72.0, -90.0,
-        ];
-        let mut marks: Vec<Element<'static, Message>> = vec![];
-        for db in tick_values {
-            let y = Self::db_to_y(db, fader_height).clamp(0.0, fader_height - 1.0);
-            let label_y = (y - 5.0).clamp(0.0, (fader_height - 11.0).max(0.0));
-            let label = if db > 0.0 {
-                format!("+{}", db as i32)
-            } else {
-                format!("{}", db as i32)
-            };
+        let mut marks: Vec<Element<'static, Message>> = Vec::with_capacity(tick_layout.len());
+        for (label_y, label) in tick_layout.iter().copied() {
             marks.push(
                 pin(row![
                     container("")
@@ -109,26 +143,23 @@ impl Mixer {
             .into()
     }
 
-    fn format_level_db(level: f32) -> String {
+    fn format_level_db(level: f32) -> &'static str {
         if level <= Self::FADER_MIN_DB {
-            "-inf dB".to_string()
+            "-inf dB"
         } else {
-            format!("{:+.1} dB", level)
+            let clamped = level.clamp(Self::FADER_MIN_DB, Self::FADER_MAX_DB);
+            let idx = ((clamped - Self::FADER_MIN_DB) * 10.0).round() as usize;
+            LEVEL_LABELS[idx.min(LEVEL_LABELS.len() - 1)]
         }
     }
 
-    fn format_balance(balance: f32) -> String {
+    fn format_balance(balance: f32) -> &'static str {
         let b = balance.clamp(-1.0, 1.0);
-        if b.abs() < 0.005 {
-            "C".to_string()
-        } else if b < 0.0 {
-            format!("L{}", (-b * 100.0).round() as i32)
-        } else {
-            format!("R{}", (b * 100.0).round() as i32)
-        }
+        let idx = ((b * 100.0).round() as i32 + 100).clamp(0, 200) as usize;
+        BALANCE_LABELS[idx]
     }
 
-    fn centered_readout(content: String) -> Element<'static, Message> {
+    fn centered_readout(content: &'static str) -> Element<'static, Message> {
         container(text(content).size(11))
             .width(Length::Fixed(Self::FADER_WITH_TICKS_WIDTH))
             .align_x(Alignment::Center)
@@ -212,6 +243,7 @@ impl Mixer {
             )
         };
         let fader_height = Self::fader_height_from_panel(height);
+        let tick_layout = Self::tick_layout(fader_height);
 
         for track in tracks {
             let selected = selected.contains(&track.name);
@@ -242,9 +274,9 @@ impl Mixer {
                                     Self::centered_readout(if track.audio.outs == 2 {
                                         Self::format_balance(track.balance)
                                     } else {
-                                        String::new()
+                                        ""
                                     }),
-                                    Self::slider_with_ticks(track.level, fader_height, {
+                                    Self::slider_with_ticks(track.level, fader_height, &tick_layout, {
                                         let name = track.name.clone();
                                         move |new_val| {
                                             Message::Request(Action::TrackLevel(
@@ -347,9 +379,9 @@ impl Mixer {
                             Self::centered_readout(if hw_out_channels == 2 {
                                 Self::format_balance(hw_out_balance)
                             } else {
-                                String::new()
+                                ""
                             }),
-                            Self::slider_with_ticks(hw_out_level, fader_height, {
+                            Self::slider_with_ticks(hw_out_level, fader_height, &tick_layout, {
                                 move |new_val| {
                                     Message::Request(Action::TrackLevel(
                                         "hw:out".to_string(),
