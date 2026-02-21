@@ -2,7 +2,8 @@ use iced::{Point, Rectangle, Size, mouse, widget::Id};
 use maolan_engine::{kind::Kind, message::Action};
 use std::path::PathBuf;
 
-#[cfg(target_os = "linux")]
+use crate::state::AudioBackendOption;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use crate::state::AudioDeviceOption;
 
 #[derive(Debug, Clone, Copy)]
@@ -123,10 +124,11 @@ pub enum Message {
     SelectLv2Plugin(String),
     LoadSelectedLv2Plugins,
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     HWSelected(AudioDeviceOption),
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     HWSelected(String),
+    HWBackendSelected(AudioBackendOption),
     HWExclusiveToggled(bool),
     HWPeriodFramesChanged(usize),
     HWNPeriodsChanged(usize),

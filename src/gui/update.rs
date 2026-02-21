@@ -538,8 +538,7 @@ impl Maolan {
                         state.hw_loaded = true;
                     }
                     let direction = if *input { "input" } else { "output" };
-                    state.message =
-                        format!("HW {direction} channels: {channels} @ {rate} Hz");
+                    state.message = format!("HW {direction} channels: {channels} @ {rate} Hz");
                     if *input {
                         state.hw_in = Some(HW {
                             channels: *channels,
@@ -1288,14 +1287,19 @@ impl Maolan {
                 return self.send(Action::TrackGetLv2Graph { track_name });
             }
             Message::HWSelected(ref hw) => {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 {
                     self.state.blocking_write().selected_hw = Some(hw.clone());
                 }
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
                 {
                     self.state.blocking_write().selected_hw = Some(hw.to_string());
                 }
+            }
+            Message::HWBackendSelected(ref backend) => {
+                let mut state = self.state.blocking_write();
+                state.selected_backend = backend.clone();
+                state.selected_hw = None;
             }
             Message::HWExclusiveToggled(exclusive) => {
                 self.state.blocking_write().oss_exclusive = exclusive;

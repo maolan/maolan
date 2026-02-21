@@ -276,15 +276,20 @@ impl Mixer {
                                     } else {
                                         ""
                                     }),
-                                    Self::slider_with_ticks(track.level, fader_height, &tick_layout, {
-                                        let name = track.name.clone();
-                                        move |new_val| {
-                                            Message::Request(Action::TrackLevel(
-                                                name.clone(),
-                                                new_val,
-                                            ))
+                                    Self::slider_with_ticks(
+                                        track.level,
+                                        fader_height,
+                                        &tick_layout,
+                                        {
+                                            let name = track.name.clone();
+                                            move |new_val| {
+                                                Message::Request(Action::TrackLevel(
+                                                    name.clone(),
+                                                    new_val,
+                                                ))
+                                            }
                                         }
-                                    }),
+                                    ),
                                     Self::centered_readout(Self::format_level_db(track.level)),
                                 ]
                                 .spacing(4),

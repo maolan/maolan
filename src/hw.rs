@@ -17,9 +17,20 @@ impl HW {
     pub fn audio_view(&self) -> iced::Element<'_, Message> {
         let period_options = vec![64, 128, 256, 512, 1024, 2048, 4096, 8192];
         let nperiod_options: Vec<usize> = (1..=16).collect();
-        let (available_hw, selected_hw, exclusive, period_frames, nperiods, sync_mode) = {
+        let (
+            available_backends,
+            selected_backend,
+            available_hw,
+            mut selected_hw,
+            exclusive,
+            period_frames,
+            nperiods,
+            sync_mode,
+        ) = {
             let state = self.state.blocking_read();
             (
+                state.available_backends.clone(),
+                state.selected_backend.clone(),
                 state.available_hw.clone(),
                 state.selected_hw.clone(),
                 state.oss_exclusive,
@@ -28,22 +39,39 @@ impl HW {
                 state.oss_sync_mode,
             )
         };
-        #[cfg(target_os = "linux")]
-        let selected_is_jack = selected_hw
-            .as_ref()
-            .map(|s| s.id.eq_ignore_ascii_case("jack"))
-            .unwrap_or(false);
-        #[cfg(not(target_os = "linux"))]
-        let selected_is_jack = selected_hw
-            .as_deref()
-            .map(|s| s.eq_ignore_ascii_case("jack"))
-            .unwrap_or(false);
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let available_hw: Vec<crate::state::AudioDeviceOption> = available_hw
+            .into_iter()
+            .filter(|hw| match selected_backend {
+                crate::state::AudioBackendOption::Jack => false,
+                #[cfg(target_os = "freebsd")]
+                crate::state::AudioBackendOption::Oss => hw.id.starts_with("/dev/dsp"),
+                #[cfg(target_os = "linux")]
+                crate::state::AudioBackendOption::Alsa => hw.id.starts_with("hw:"),
+            })
+            .collect();
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            selected_hw = selected_hw.filter(|s| available_hw.iter().any(|hw| hw.id == s.id));
+        }
+        let selected_is_jack = matches!(selected_backend, crate::state::AudioBackendOption::Jack);
         let mut submit = button("Open Audio");
-        if let Some(ref hw) = selected_hw {
-            #[cfg(target_os = "linux")]
-            let device = hw.id.to_string();
-            #[cfg(not(target_os = "linux"))]
-            let device = hw.to_string();
+        if selected_is_jack || selected_hw.is_some() {
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            let device = if selected_is_jack {
+                "jack".to_string()
+            } else {
+                selected_hw
+                    .as_ref()
+                    .map(|hw| hw.id.to_string())
+                    .unwrap_or_default()
+            };
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+            let device = if selected_is_jack {
+                "jack".to_string()
+            } else {
+                selected_hw.clone().unwrap_or_default()
+            };
             submit = submit.on_press(Message::Request(Action::OpenAudioDevice {
                 device,
                 exclusive,
@@ -53,10 +81,24 @@ impl HW {
             }));
         }
         let mut content = column![
-            pick_list(available_hw, selected_hw, Message::HWSelected)
-                .placeholder("Choose audio device")
+            row![
+                text("Backend:"),
+                pick_list(
+                    available_backends,
+                    Some(selected_backend),
+                    Message::HWBackendSelected
+                )
+                .placeholder("Choose backend")
+            ]
+            .spacing(10)
         ]
         .spacing(10);
+        if !selected_is_jack {
+            content = content.push(
+                pick_list(available_hw, selected_hw, Message::HWSelected)
+                    .placeholder("Choose audio device"),
+            );
+        }
 
         if !selected_is_jack {
             content = content

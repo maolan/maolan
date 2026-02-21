@@ -8,13 +8,15 @@ use iced::{Length, Point};
 use maolan_engine::kind::Kind;
 use maolan_engine::lv2::Lv2PluginInfo;
 use maolan_engine::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin};
+#[cfg(target_os = "freebsd")]
+use nvtree::{Nvtvalue, nvtree_find, nvtree_unpack};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
     time::Instant,
 };
 #[cfg(target_os = "freebsd")]
-use std::fs::read_dir;
+use std::{ffi::c_void, fs::File, os::fd::AsRawFd};
 use tokio::sync::RwLock;
 pub use track::Track;
 
@@ -23,14 +25,36 @@ pub const HW_OUT_ID: &str = "hw:out";
 pub const MIDI_HW_IN_ID: &str = "midi:hw:in";
 pub const MIDI_HW_OUT_ID: &str = "midi:hw:out";
 
-#[cfg(target_os = "linux")]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum AudioBackendOption {
+    Jack,
+    #[cfg(target_os = "freebsd")]
+    Oss,
+    #[cfg(target_os = "linux")]
+    Alsa,
+}
+
+impl std::fmt::Display for AudioBackendOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
+            Self::Jack => "JACK",
+            #[cfg(target_os = "freebsd")]
+            Self::Oss => "OSS",
+            #[cfg(target_os = "linux")]
+            Self::Alsa => "ALSA",
+        };
+        f.write_str(label)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[derive(Clone, Debug)]
 pub struct AudioDeviceOption {
     pub id: String,
     pub label: String,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl AudioDeviceOption {
     pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
@@ -40,24 +64,24 @@ impl AudioDeviceOption {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl std::fmt::Display for AudioDeviceOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.label)
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl PartialEq for AudioDeviceOption {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl Eq for AudioDeviceOption {}
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl std::hash::Hash for AudioDeviceOption {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
@@ -162,13 +186,15 @@ pub struct StateData {
     pub pending_track_heights: HashMap<String, f32>,
     pub hovered_track_resize_handle: Option<String>,
     pub hw_loaded: bool,
-    #[cfg(target_os = "linux")]
+    pub available_backends: Vec<AudioBackendOption>,
+    pub selected_backend: AudioBackendOption,
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub available_hw: Vec<AudioDeviceOption>,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub selected_hw: Option<AudioDeviceOption>,
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     pub available_hw: Vec<String>,
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     pub selected_hw: Option<String>,
     pub oss_exclusive: bool,
     pub oss_period_frames: usize,
@@ -201,36 +227,12 @@ pub struct StateData {
 
 impl Default for StateData {
     fn default() -> Self {
+        let available_backends = supported_audio_backends();
+        let selected_backend = default_audio_backend();
         #[cfg(target_os = "freebsd")]
-        let hw: Vec<String> = {
-            let mut devices: Vec<String> = read_dir("/dev")
-                .map(|rd| {
-                    rd.filter_map(Result::ok)
-                        .map(|e| e.path())
-                        .filter_map(|path| {
-                            let name = path.file_name()?.to_str()?;
-                            if name.starts_with("dsp") {
-                                Some(path.to_string_lossy().into_owned())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
-                })
-                .unwrap_or_else(|_| vec![]);
-            devices.push("jack".to_string());
-            devices.sort_by_key(|a| a.to_lowercase());
-            devices.dedup();
-            devices
-        };
+        let hw: Vec<AudioDeviceOption> = discover_freebsd_audio_devices();
         #[cfg(target_os = "linux")]
-        let hw: Vec<AudioDeviceOption> = {
-            let mut devices = discover_alsa_devices();
-            devices.push(AudioDeviceOption::new("jack", "JACK"));
-            devices.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
-            devices.dedup_by(|a, b| a.id == b.id);
-            devices
-        };
+        let hw: Vec<AudioDeviceOption> = { discover_alsa_devices() };
         Self {
             shift: false,
             ctrl: false,
@@ -252,9 +254,11 @@ impl Default for StateData {
             pending_track_heights: HashMap::new(),
             hovered_track_resize_handle: None,
             hw_loaded: false,
+            available_backends,
+            selected_backend,
             available_hw: hw,
             selected_hw: None,
-            oss_exclusive: false,
+            oss_exclusive: true,
             oss_period_frames: 1024,
             oss_nperiods: 1,
             oss_sync_mode: false,
@@ -286,6 +290,146 @@ impl Default for StateData {
 }
 
 pub type State = Arc<RwLock<StateData>>;
+
+fn supported_audio_backends() -> Vec<AudioBackendOption> {
+    let mut out = Vec::new();
+    out.push(AudioBackendOption::Jack);
+    #[cfg(target_os = "freebsd")]
+    out.push(AudioBackendOption::Oss);
+    #[cfg(target_os = "linux")]
+    out.push(AudioBackendOption::Alsa);
+    out
+}
+
+fn default_audio_backend() -> AudioBackendOption {
+    #[cfg(target_os = "freebsd")]
+    {
+        AudioBackendOption::Oss
+    }
+    #[cfg(target_os = "linux")]
+    {
+        AudioBackendOption::Alsa
+    }
+    #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+    {
+        AudioBackendOption::Jack
+    }
+}
+
+#[cfg(target_os = "freebsd")]
+fn discover_freebsd_audio_devices() -> Vec<AudioDeviceOption> {
+    let mut devices = discover_sndstat_dsp_devices().unwrap_or_default();
+    devices.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    devices.dedup_by(|a, b| a.id == b.id);
+    devices
+}
+
+#[cfg(target_os = "freebsd")]
+fn discover_sndstat_dsp_devices() -> Option<Vec<AudioDeviceOption>> {
+    let file = File::open("/dev/sndstat").ok()?;
+    let fd = file.as_raw_fd();
+
+    unsafe {
+        if sndst_refresh_devs(fd).is_err() {
+            return None;
+        }
+    }
+
+    let mut arg = SndstIoctlNvArg {
+        nbytes: 0,
+        buf: std::ptr::null_mut(),
+    };
+    unsafe {
+        if sndst_get_devs(fd, &mut arg).is_err() {
+            return None;
+        }
+    }
+    if arg.nbytes == 0 {
+        return None;
+    }
+
+    let mut buf = vec![0_u8; arg.nbytes];
+    arg.buf = buf.as_mut_ptr().cast::<c_void>();
+    unsafe {
+        if sndst_get_devs(fd, &mut arg).is_err() {
+            return None;
+        }
+    }
+    if arg.nbytes == 0 || arg.nbytes > buf.len() {
+        return None;
+    }
+
+    parse_sndstat_nvlist(&buf[..arg.nbytes])
+}
+
+#[cfg(target_os = "freebsd")]
+fn parse_sndstat_nvlist(buf: &[u8]) -> Option<Vec<AudioDeviceOption>> {
+    let root = match nvtree_unpack(buf) {
+        Ok(root) => root,
+        Err(_) => {
+            return None;
+        }
+    };
+    let Some(dsps_pair) = nvtree_find(&root, "dsps") else {
+        return None;
+    };
+    let Nvtvalue::NestedArray(dsps) = &dsps_pair.value else {
+        return None;
+    };
+    if dsps.is_empty() {
+        return None;
+    }
+
+    let out = dsps
+        .iter()
+        .filter_map(|dsp| {
+            let devnode_pair = nvtree_find(dsp, "devnode")?;
+            let Nvtvalue::String(devnode) = &devnode_pair.value else {
+                return None;
+            };
+
+            let devpath = if devnode.starts_with('/') {
+                devnode.to_string()
+            } else {
+                format!("/dev/{devnode}")
+            };
+
+            if !devpath.starts_with("/dev/dsp") {
+                return None;
+            }
+
+            let label_prefix = nvtree_find(dsp, "desc")
+                .and_then(|pair| match &pair.value {
+                    Nvtvalue::String(s) if !s.is_empty() => Some(s.clone()),
+                    _ => None,
+                })
+                .or_else(|| {
+                    nvtree_find(dsp, "nameunit").and_then(|pair| match &pair.value {
+                        Nvtvalue::String(s) if !s.is_empty() => Some(s.clone()),
+                        _ => None,
+                    })
+                });
+            let label = label_prefix
+                .map(|prefix| format!("{prefix} ({devpath})"))
+                .unwrap_or_else(|| devpath.clone());
+            Some(AudioDeviceOption::new(devpath, label))
+        })
+        .collect::<Vec<_>>();
+
+    (!out.is_empty()).then_some(out)
+}
+
+#[cfg(target_os = "freebsd")]
+#[repr(C)]
+struct SndstIoctlNvArg {
+    nbytes: usize,
+    buf: *mut c_void,
+}
+
+#[cfg(target_os = "freebsd")]
+nix::ioctl_none!(sndst_refresh_devs, b'D', 100);
+#[cfg(target_os = "freebsd")]
+nix::ioctl_readwrite!(sndst_get_devs, b'D', 101, SndstIoctlNvArg);
 
 #[cfg(target_os = "linux")]
 fn read_alsa_card_labels() -> std::collections::HashMap<u32, String> {

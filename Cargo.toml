@@ -9,6 +9,8 @@ iced_aw = "0.13.0"
 iced_drop = { version = "0.2.10", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
 maolan-engine = { path = "./engine" }
+nix = { version = "0.31.1", features = ["ioctl"] }
+nvtree = "0.0.1"
 rfd = "0.17.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"

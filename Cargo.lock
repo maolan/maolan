@@ -2158,6 +2158,8 @@ dependencies = [
  "iced_drop",
  "iced_fonts",
  "maolan-engine",
+ "nix",
+ "nvtree",
  "rfd",
  "serde",
  "serde_json",
@@ -2494,6 +2496,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "nvtree"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c34fc10e2f820bebba12bee9924ca751b71c36b49f7e53dda7dba4b3303738de"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
