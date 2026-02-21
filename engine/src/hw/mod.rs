@@ -1,4 +1,14 @@
+pub mod common;
+pub mod config;
+pub mod convert_policy;
+pub mod error_fmt;
 pub mod jack;
+pub mod latency;
+pub mod midi_hub;
+pub mod options;
+pub mod ports;
+pub mod prefill;
+pub mod traits;
 #[cfg(target_os = "freebsd")]
 pub mod oss;
 #[cfg(target_os = "linux")]

@@ -1,205 +1,17 @@
 #![allow(dead_code)]
 
-use crate::{audio::io::AudioIO, midi::io::MidiEvent};
+use super::common;
+use super::convert_policy;
+use super::error_fmt;
+use super::latency;
+use super::ports;
+use crate::audio::io::AudioIO;
 use alsa::pcm::{Access, Format, HwParams, PCM, State};
 use alsa::{Direction, ValueOr};
-use nix::libc;
-use std::{
-    fs::File,
-    io::{ErrorKind, Read, Write},
-    os::unix::fs::OpenOptionsExt,
-    sync::Arc,
-};
-use tracing::error;
+use std::sync::Arc;
 
-#[derive(Debug, Default)]
-pub struct MidiHub {
-    inputs: Vec<MidiInputDevice>,
-    outputs: Vec<MidiOutputDevice>,
-}
-
-impl MidiHub {
-    pub fn open_input(&mut self, path: &str) -> Result<(), String> {
-        if self.inputs.iter().any(|input| input.path == path) {
-            return Ok(());
-        }
-        let file = File::options()
-            .read(true)
-            .write(false)
-            .custom_flags(libc::O_RDONLY | libc::O_NONBLOCK)
-            .open(path)
-            .map_err(|e| format!("Failed to open MIDI device '{path}': {e}"))?;
-        self.inputs
-            .push(MidiInputDevice::new(path.to_string(), file));
-        Ok(())
-    }
-
-    pub fn open_output(&mut self, path: &str) -> Result<(), String> {
-        if self.outputs.iter().any(|output| output.path == path) {
-            return Ok(());
-        }
-        let file = File::options()
-            .read(false)
-            .write(true)
-            .custom_flags(libc::O_WRONLY | libc::O_NONBLOCK)
-            .open(path)
-            .map_err(|e| format!("Failed to open MIDI output '{path}': {e}"))?;
-        self.outputs
-            .push(MidiOutputDevice::new(path.to_string(), file));
-        Ok(())
-    }
-
-    pub fn read_events(&mut self) -> Vec<MidiEvent> {
-        let mut events = Vec::with_capacity(32);
-        self.read_events_into(&mut events);
-        events
-    }
-
-    pub fn read_events_into(&mut self, out: &mut Vec<MidiEvent>) {
-        out.clear();
-        for input in &mut self.inputs {
-            input.read_events_into(out);
-        }
-    }
-
-    pub fn write_events(&mut self, events: &[MidiEvent]) {
-        if events.is_empty() {
-            return;
-        }
-        for output in &mut self.outputs {
-            output.write_events(events);
-        }
-    }
-}
-
-#[derive(Debug)]
-struct MidiInputDevice {
-    path: String,
-    file: File,
-    parser: MidiParser,
-}
-
-#[derive(Debug)]
-struct MidiOutputDevice {
-    path: String,
-    file: File,
-}
-
-impl MidiOutputDevice {
-    fn new(path: String, file: File) -> Self {
-        Self { path, file }
-    }
-
-    fn write_events(&mut self, events: &[MidiEvent]) {
-        for event in events {
-            if event.data.is_empty() {
-                continue;
-            }
-            if let Err(err) = self.file.write_all(&event.data) {
-                if err.kind() != ErrorKind::WouldBlock {
-                    error!("MIDI write error on {}: {}", self.path, err);
-                }
-                break;
-            }
-        }
-    }
-}
-
-impl MidiInputDevice {
-    fn new(path: String, file: File) -> Self {
-        Self {
-            path,
-            file,
-            parser: MidiParser::default(),
-        }
-    }
-
-    fn read_events_into(&mut self, out: &mut Vec<MidiEvent>) {
-        let mut buf = [0_u8; 256];
-        loop {
-            match self.file.read(&mut buf) {
-                Ok(0) => break,
-                Ok(read) => {
-                    for byte in &buf[..read] {
-                        if let Some(data) = self.parser.feed(*byte) {
-                            out.push(MidiEvent::new(0, data));
-                        }
-                    }
-                }
-                Err(err) if err.kind() == ErrorKind::WouldBlock => break,
-                Err(err) => {
-                    error!("MIDI read error on {}: {}", self.path, err);
-                    break;
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-struct MidiParser {
-    status: Option<u8>,
-    needed: usize,
-    data: [u8; 2],
-    len: usize,
-}
-
-impl MidiParser {
-    fn feed(&mut self, byte: u8) -> Option<Vec<u8>> {
-        if byte & 0x80 != 0 {
-            if byte >= 0xF8 {
-                return Some(vec![byte]);
-            }
-            self.status = Some(byte);
-            self.len = 0;
-            self.needed = status_data_len(byte);
-            if self.needed == 0 {
-                return Some(vec![byte]);
-            }
-            return None;
-        }
-
-        let status = self.status?;
-        if self.len < self.data.len() {
-            self.data[self.len] = byte;
-        }
-        self.len += 1;
-        if self.len < self.needed {
-            return None;
-        }
-
-        let mut message = Vec::with_capacity(1 + self.needed);
-        message.push(status);
-        message.extend_from_slice(&self.data[..self.needed]);
-        self.len = 0;
-        if status >= 0xF0 {
-            self.status = None;
-            self.needed = 0;
-        }
-        Some(message)
-    }
-}
-
-fn status_data_len(status: u8) -> usize {
-    match status {
-        0x80..=0x8F | 0x90..=0x9F | 0xA0..=0xAF | 0xB0..=0xBF | 0xE0..=0xEF => 2,
-        0xC0..=0xCF | 0xD0..=0xDF => 1,
-        0xF1 | 0xF3 => 1,
-        0xF2 => 2,
-        _ => 0,
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct HwOptions {
-    pub exclusive: bool,
-    pub period_frames: usize,
-    pub nperiods: usize,
-    pub ignore_hwbuf: bool,
-    pub sync_mode: bool,
-    pub input_latency_frames: usize,
-    pub output_latency_frames: usize,
-}
+pub use super::midi_hub::MidiHub;
+pub use super::options::HwOptions;
 
 impl Default for HwOptions {
     fn default() -> Self {
@@ -265,9 +77,9 @@ impl HwDriver {
         options: HwOptions,
     ) -> Result<Self, String> {
         let capture = PCM::new(device, Direction::Capture, false)
-            .map_err(|e| format!("Failed to open ALSA capture '{device}': {e}"))?;
+            .map_err(|e| error_fmt::backend_open_error("ALSA", "capture", device, e))?;
         let playback = PCM::new(device, Direction::Playback, false)
-            .map_err(|e| format!("Failed to open ALSA playback '{device}': {e}"))?;
+            .map_err(|e| error_fmt::backend_open_error("ALSA", "playback", device, e))?;
 
         let period = options.period_frames.max(1);
         let nperiods = options.nperiods.max(1);
@@ -359,40 +171,7 @@ impl HwDriver {
     }
 
     pub fn output_meter_db(&self, gain: f32, balance: f32) -> Vec<f32> {
-        let ch_count = self.audio_outs.len();
-        let b = if ch_count == 2 {
-            balance.clamp(-1.0, 1.0)
-        } else {
-            0.0
-        };
-        let mut out = Vec::with_capacity(ch_count);
-        for (channel_idx, channel) in self.audio_outs.iter().enumerate() {
-            let balance_gain = if ch_count == 2 {
-                if channel_idx == 0 {
-                    (1.0 - b).clamp(0.0, 1.0)
-                } else {
-                    (1.0 + b).clamp(0.0, 1.0)
-                }
-            } else {
-                1.0
-            };
-            let buf = channel.buffer.lock();
-            let mut peak = 0.0_f32;
-            for &sample in buf.iter() {
-                let v = if sample >= 0.0 { sample } else { -sample };
-                if v > peak {
-                    peak = v;
-                }
-            }
-            let peak = peak * gain * balance_gain;
-            let meter = if peak <= 1.0e-6 {
-                -90.0
-            } else {
-                (20.0 * peak.log10()).clamp(-90.0, 20.0)
-            };
-            out.push(meter);
-        }
-        out
+        common::output_meter_db(&self.audio_outs, gain, balance)
     }
 
     pub fn run_cycle(&mut self) -> Result<(), String> {
@@ -402,124 +181,99 @@ impl HwDriver {
                 let in_io = self
                     .capture
                     .io_i16()
-                    .map_err(|e| format!("ALSA capture io error: {e}"))?;
+                    .map_err(|e| error_fmt::backend_io_error("ALSA", "capture", e))?;
                 if let Err(e) = in_io.readi(&mut self.capture_buffer_i16) {
                     if self.capture.state() == State::XRun {
                         let _ = self.capture.prepare();
                     }
-                    return Err(format!("ALSA capture read failed: {e}"));
+                    return Err(error_fmt::backend_rw_error("ALSA", "capture", "read", e));
                 }
             }
             SampleFormat::S32 => {
                 let in_io = self
                     .capture
                     .io_i32()
-                    .map_err(|e| format!("ALSA capture io error: {e}"))?;
+                    .map_err(|e| error_fmt::backend_io_error("ALSA", "capture", e))?;
                 if let Err(e) = in_io.readi(&mut self.capture_buffer_i32) {
                     if self.capture.state() == State::XRun {
                         let _ = self.capture.prepare();
                     }
-                    return Err(format!("ALSA capture read failed: {e}"));
+                    return Err(error_fmt::backend_rw_error("ALSA", "capture", "read", e));
                 }
             }
         }
 
         match self.capture_format {
             SampleFormat::S16 => {
-                for (ch, io) in self.audio_ins.iter().enumerate() {
-                    let dst = io.buffer.lock();
-                    for frame in 0..frames {
-                        let idx = frame * self.channels_in + ch;
-                        let sample = self.capture_buffer_i16.get(idx).copied().unwrap_or(0);
-                        dst[frame] = (sample as f32) / 32768.0;
-                    }
-                    *io.finished.lock() = true;
-                }
+                ports::fill_ports_from_interleaved(&self.audio_ins, frames, false, |ch, frame| {
+                    let idx = frame * self.channels_in + ch;
+                    let sample = self.capture_buffer_i16.get(idx).copied().unwrap_or(0);
+                    (sample as f32) * convert_policy::F32_FROM_I16
+                });
             }
             SampleFormat::S32 => {
-                for (ch, io) in self.audio_ins.iter().enumerate() {
-                    let dst = io.buffer.lock();
-                    for frame in 0..frames {
-                        let idx = frame * self.channels_in + ch;
-                        let sample = self.capture_buffer_i32.get(idx).copied().unwrap_or(0);
-                        dst[frame] = (sample as f32) / 2147483648.0;
-                    }
-                    *io.finished.lock() = true;
-                }
+                ports::fill_ports_from_interleaved(&self.audio_ins, frames, false, |ch, frame| {
+                    let idx = frame * self.channels_in + ch;
+                    let sample = self.capture_buffer_i32.get(idx).copied().unwrap_or(0);
+                    (sample as f32) * convert_policy::F32_FROM_I32
+                });
             }
         }
 
         let gain = self.output_gain_linear;
         let balance = self.output_balance;
-        let stereo = self.audio_outs.len() == 2;
-        let left_gain = if stereo {
-            (1.0 - balance).clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
-        let right_gain = if stereo {
-            (1.0 + balance).clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
 
         match self.playback_format {
             SampleFormat::S16 => {
-                for (ch, io) in self.audio_outs.iter().enumerate() {
-                    io.process();
-                    let src = io.buffer.lock();
-                    let balance_gain = if stereo {
-                        if ch == 0 { left_gain } else { right_gain }
-                    } else {
-                        1.0
-                    };
-                    for frame in 0..frames {
+                ports::write_interleaved_from_ports(
+                    &self.audio_outs,
+                    frames,
+                    gain,
+                    balance,
+                    false,
+                    |ch, frame, sample| {
                         let idx = frame * self.channels_out + ch;
-                        let sample = src.get(frame).copied().unwrap_or(0.0) * gain * balance_gain;
-                        let v = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+                        let v = (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I16) as i16;
                         if let Some(dst) = self.playback_buffer_i16.get_mut(idx) {
                             *dst = v;
                         }
-                    }
-                }
+                    },
+                );
                 let out_io = self
                     .playback
                     .io_i16()
-                    .map_err(|e| format!("ALSA playback io error: {e}"))?;
+                    .map_err(|e| error_fmt::backend_io_error("ALSA", "playback", e))?;
                 if let Err(e) = out_io.writei(&self.playback_buffer_i16) {
                     if self.playback.state() == State::XRun {
                         let _ = self.playback.prepare();
                     }
-                    return Err(format!("ALSA playback write failed: {e}"));
+                    return Err(error_fmt::backend_rw_error("ALSA", "playback", "write", e));
                 }
             }
             SampleFormat::S32 => {
-                for (ch, io) in self.audio_outs.iter().enumerate() {
-                    io.process();
-                    let src = io.buffer.lock();
-                    let balance_gain = if stereo {
-                        if ch == 0 { left_gain } else { right_gain }
-                    } else {
-                        1.0
-                    };
-                    for frame in 0..frames {
+                ports::write_interleaved_from_ports(
+                    &self.audio_outs,
+                    frames,
+                    gain,
+                    balance,
+                    false,
+                    |ch, frame, sample| {
                         let idx = frame * self.channels_out + ch;
-                        let sample = src.get(frame).copied().unwrap_or(0.0) * gain * balance_gain;
-                        let v = (sample.clamp(-1.0, 1.0) * 2147483647.0) as i32;
+                        let v = (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I32) as i32;
                         if let Some(dst) = self.playback_buffer_i32.get_mut(idx) {
                             *dst = v;
                         }
-                    }
-                }
+                    },
+                );
                 let out_io = self
                     .playback
                     .io_i32()
-                    .map_err(|e| format!("ALSA playback io error: {e}"))?;
+                    .map_err(|e| error_fmt::backend_io_error("ALSA", "playback", e))?;
                 if let Err(e) = out_io.writei(&self.playback_buffer_i32) {
                     if self.playback.state() == State::XRun {
                         let _ = self.playback.prepare();
                     }
-                    return Err(format!("ALSA playback write failed: {e}"));
+                    return Err(error_fmt::backend_rw_error("ALSA", "playback", "write", e));
                 }
             }
         }
@@ -528,20 +282,23 @@ impl HwDriver {
     }
 
     pub fn latency_ranges(&self) -> ((usize, usize), (usize, usize)) {
-        let period = self.cycle_samples();
-        let input = (period / 2) + self.input_latency_frames;
-        let mut output = (period / 2) + self.output_latency_frames;
-        output += self.nperiods * period;
-        if !self.sync_mode {
-            output += period;
-        }
-        ((input, input), (output, output))
+        latency::latency_ranges(
+            self.cycle_samples(),
+            self.nperiods,
+            self.sync_mode,
+            self.input_latency_frames,
+            self.output_latency_frames,
+        )
     }
 
     pub fn channel(&mut self) -> OSSChannel<'_> {
         OSSChannel { driver: self }
     }
 }
+
+crate::impl_hw_worker_traits_for_driver!(HwDriver);
+crate::impl_hw_device_for_driver!(HwDriver);
+crate::impl_hw_midi_hub_traits!(MidiHub);
 
 pub struct OSSChannel<'a> {
     driver: &'a mut HwDriver,

@@ -7,6 +7,8 @@ pub mod lv2;
 pub mod message;
 mod midi;
 pub mod mutex;
+#[cfg(any(target_os = "freebsd", target_os = "linux"))]
+mod hw_worker;
 #[cfg(target_os = "freebsd")]
 mod oss_worker;
 #[cfg(target_os = "linux")]

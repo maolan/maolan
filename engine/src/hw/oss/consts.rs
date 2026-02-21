@@ -1,0 +1,42 @@
+pub const AFMT_QUERY: u32 = 0x00000000;
+pub const AFMT_MU_LAW: u32 = 0x00000001;
+pub const AFMT_A_LAW: u32 = 0x00000002;
+pub const AFMT_IMA_ADPCM: u32 = 0x00000004;
+pub const AFMT_U8: u32 = 0x00000008;
+pub const AFMT_S16_LE: u32 = 0x00000010;
+pub const AFMT_S16_BE: u32 = 0x00000020;
+pub const AFMT_S8: u32 = 0x00000040;
+pub const AFMT_U16_LE: u32 = 0x00000080;
+pub const AFMT_U16_BE: u32 = 0x00000100;
+pub const AFMT_MPEG: u32 = 0x00000200;
+pub const AFMT_AC3: u32 = 0x00000400;
+pub const AFMT_S32_LE: u32 = 0x00001000;
+pub const AFMT_S32_BE: u32 = 0x00002000;
+pub const AFMT_U32_LE: u32 = 0x00004000;
+pub const AFMT_U32_BE: u32 = 0x00008000;
+pub const AFMT_S24_LE: u32 = 0x00010000;
+pub const AFMT_S24_BE: u32 = 0x00020000;
+pub const AFMT_U24_LE: u32 = 0x00040000;
+pub const AFMT_U24_BE: u32 = 0x00080000;
+pub const AFMT_STEREO: u32 = 0x10000000;
+pub const AFMT_WEIRD: u32 = 0x20000000;
+pub const AFMT_FULLDUPLEX: u32 = 0x80000000;
+
+#[cfg(target_endian = "little")]
+pub const AFMT_S16_NE: u32 = AFMT_S16_LE;
+#[cfg(target_endian = "big")]
+pub const AFMT_S16_NE: u32 = AFMT_S16_BE;
+#[cfg(target_endian = "little")]
+pub const AFMT_S24_NE: u32 = AFMT_S24_LE;
+#[cfg(target_endian = "big")]
+pub const AFMT_S24_NE: u32 = AFMT_S24_BE;
+#[cfg(target_endian = "little")]
+pub const AFMT_S32_NE: u32 = AFMT_S32_LE;
+#[cfg(target_endian = "big")]
+pub const AFMT_S32_NE: u32 = AFMT_S32_BE;
+
+pub const PCM_ENABLE_INPUT: i32 = 0x00000001;
+pub const PCM_ENABLE_OUTPUT: i32 = 0x00000002;
+
+pub(super) const PCM_CAP_TRIGGER: i32 = 0x00001000;
+pub(super) const PCM_CAP_MMAP: i32 = 0x00002000;

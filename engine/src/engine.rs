@@ -19,6 +19,7 @@ use wavers::write as write_wav;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
+    hw::{config, traits::HwDevice},
     hw::jack::JackRuntime,
     kind::Kind,
     message::{Action, Message},
@@ -200,6 +201,47 @@ impl Engine {
             .map(|o| o.lock().cycle_samples())
             .or_else(|| self.jack_runtime.as_ref().map(|j| j.lock().buffer_size))
             .unwrap_or(0)
+    }
+
+    fn hw_device_info<D: HwDevice>(
+        d: &D,
+    ) -> (usize, usize, usize, ((usize, usize), (usize, usize))) {
+        (
+            d.input_channels(),
+            d.output_channels(),
+            d.sample_rate() as usize,
+            d.latency_ranges(),
+        )
+    }
+
+    async fn publish_hw_infos(&self, input_channels: usize, output_channels: usize, rate: usize) {
+        self.notify_clients(Ok(Action::HWInfo {
+            channels: input_channels,
+            rate,
+            input: true,
+        }))
+        .await;
+        self.notify_clients(Ok(Action::HWInfo {
+            channels: output_channels,
+            rate,
+            input: false,
+        }))
+        .await;
+    }
+
+    async fn ensure_hw_worker_running(&mut self) {
+        if self.hw_worker.is_some() || self.hw_driver.is_none() {
+            return;
+        }
+        let (tx, rx) = channel::<Message>(32);
+        let hw = self.hw_driver.clone().unwrap();
+        let midi_hub = self.midi_hub.clone();
+        let tx_engine = self.tx.clone();
+        let handler = tokio::spawn(async move {
+            let worker = HwWorker::new(hw, midi_hub, rx, tx_engine);
+            worker.work().await;
+        });
+        self.hw_worker = Some(WorkerData::new(tx, handler));
     }
 
     fn hw_input_audio_port(&self, from_port: usize) -> Option<Arc<AudioIO>> {
@@ -1417,18 +1459,8 @@ impl Engine {
                                 let _ = worker.handle.await;
                             }
                             self.jack_runtime = Some(Arc::new(UnsafeMutex::new(runtime)));
-                            self.notify_clients(Ok(Action::HWInfo {
-                                channels: input_channels,
-                                rate,
-                                input: true,
-                            }))
-                            .await;
-                            self.notify_clients(Ok(Action::HWInfo {
-                                channels: output_channels,
-                                rate,
-                                input: false,
-                            }))
-                            .await;
+                            self.publish_hw_infos(input_channels, output_channels, rate)
+                                .await;
                             for device in midi_inputs {
                                 self.notify_clients(Ok(Action::OpenMidiInputDevice(device)))
                                     .await;
@@ -1460,19 +1492,11 @@ impl Engine {
                     sync_mode,
                     ..Default::default()
                 };
-                let hw_profile_enabled = std::env::var("MAOLAN_HW_PROFILE")
-                    .ok()
-                    .map(|v| {
-                        let s = v.trim().to_ascii_lowercase();
-                        s == "1" || s == "true" || s == "yes" || s == "on"
-                    })
-                    .unwrap_or(false);
+                let hw_profile_enabled = config::env_flag(config::HW_PROFILE_ENV);
                 match HwDriver::new_with_options(device, 48000, 32, hw_opts) {
                     Ok(d) => {
-                        let in_channels = d.input_channels();
-                        let out_channels = d.output_channels();
-                        let rate = d.sample_rate() as usize;
-                        let (in_lat, out_lat) = d.latency_ranges();
+                        let (in_channels, out_channels, rate, (in_lat, out_lat)) =
+                            Self::hw_device_info(&d);
                         if hw_profile_enabled {
                             let label = if cfg!(target_os = "linux") { "ALSA" } else { "OSS" };
                             error!(
@@ -1491,18 +1515,7 @@ impl Engine {
                         }
                         self.jack_runtime = None;
                         self.hw_driver = Some(Arc::new(UnsafeMutex::new(d)));
-                        self.notify_clients(Ok(Action::HWInfo {
-                            channels: in_channels,
-                            rate,
-                            input: true,
-                        }))
-                        .await;
-                        self.notify_clients(Ok(Action::HWInfo {
-                            channels: out_channels,
-                            rate,
-                            input: false,
-                        }))
-                        .await;
+                        self.publish_hw_infos(in_channels, out_channels, rate).await;
                     }
                     Err(e) => {
                         self.notify_clients(Err(e.to_string())).await;
@@ -1537,15 +1550,7 @@ impl Engine {
                 }
 
                 if self.hw_worker.is_none() && self.hw_driver.is_some() {
-                    let (tx, rx) = channel::<Message>(32);
-                    let hw = self.hw_driver.clone().unwrap();
-                    let midi_hub = self.midi_hub.clone();
-                    let tx_engine = self.tx.clone();
-                    let handler = tokio::spawn(async move {
-                        let worker = HwWorker::new(hw, midi_hub, rx, tx_engine);
-                        worker.work().await;
-                    });
-                    self.hw_worker = Some(WorkerData::new(tx, handler));
+                    self.ensure_hw_worker_running().await;
                     self.request_hw_cycle().await;
                 }
 

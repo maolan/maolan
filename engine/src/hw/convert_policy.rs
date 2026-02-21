@@ -1,0 +1,12 @@
+#[cfg(target_os = "linux")]
+pub const F32_FROM_I16: f32 = 1.0 / 32768.0;
+#[cfg(target_os = "linux")]
+pub const F32_FROM_I32: f32 = 1.0 / 2147483648.0;
+#[cfg(target_os = "linux")]
+pub const F32_TO_I16: f32 = 32767.0;
+#[cfg(target_os = "linux")]
+pub const F32_TO_I32: f32 = 2147483647.0;
+#[cfg(target_os = "freebsd")]
+pub const F32_FROM_I32_MAX: f32 = 1.0 / i32::MAX as f32;
+#[cfg(target_os = "freebsd")]
+pub const F32_TO_I32_MAX: f32 = i32::MAX as f32;
