@@ -3,7 +3,10 @@ mod mixer;
 mod ruler;
 mod tracks;
 
-use crate::{message::Message, state::State};
+use crate::{
+    message::{DraggedClip, Message},
+    state::State,
+};
 use iced::{
     Background, Color, Element, Length, Point,
     widget::{Stack, column, container, mouse_area, pin, row, slider},
@@ -55,6 +58,7 @@ impl Workspace {
         zoom_visible_bars: f32,
         tracks_resize_hovered: bool,
         mixer_resize_hovered: bool,
+        active_clip_drag: Option<&DraggedClip>,
         recording_preview_bounds: Option<(usize, usize)>,
         recording_preview_peaks: Option<HashMap<String, Vec<Vec<f32>>>>,
     ) -> Element<'_, Message> {
@@ -66,6 +70,7 @@ impl Workspace {
             Stack::from_vec(vec![
                 self.editor.view(
                     pixels_per_sample,
+                    active_clip_drag,
                     recording_preview_bounds,
                     recording_preview_peaks.clone(),
                 ),
@@ -79,6 +84,7 @@ impl Workspace {
         } else {
             self.editor.view(
                 pixels_per_sample,
+                active_clip_drag,
                 recording_preview_bounds,
                 recording_preview_peaks.clone(),
             )
