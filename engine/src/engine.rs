@@ -107,6 +107,8 @@ pub struct Engine {
     loop_range_samples: Option<(usize, usize)>,
     audio_recordings: std::collections::HashMap<String, RecordingSession>,
     midi_recordings: std::collections::HashMap<String, MidiRecordingSession>,
+    completed_audio_recordings: Vec<(String, RecordingSession)>,
+    completed_midi_recordings: Vec<(String, MidiRecordingSession)>,
     playing: bool,
     record_enabled: bool,
     session_dir: Option<PathBuf>,
@@ -209,6 +211,8 @@ impl Engine {
             loop_range_samples: None,
             audio_recordings: std::collections::HashMap::new(),
             midi_recordings: std::collections::HashMap::new(),
+            completed_audio_recordings: Vec::new(),
+            completed_midi_recordings: Vec::new(),
             playing: false,
             record_enabled: false,
             session_dir: None,
@@ -238,6 +242,53 @@ impl Engine {
             return loop_start + (sample - loop_start) % loop_len;
         }
         sample
+    }
+
+    fn cycle_segments(&self, frames: usize) -> Vec<(usize, usize, usize)> {
+        if frames == 0 {
+            return vec![];
+        }
+        if !self.loop_enabled {
+            return vec![(
+                self.transport_sample,
+                self.transport_sample.saturating_add(frames),
+                0,
+            )];
+        }
+        let Some((loop_start, loop_end)) = self.loop_range_samples else {
+            return vec![(
+                self.transport_sample,
+                self.transport_sample.saturating_add(frames),
+                0,
+            )];
+        };
+        if loop_end <= loop_start {
+            return vec![(
+                self.transport_sample,
+                self.transport_sample.saturating_add(frames),
+                0,
+            )];
+        }
+        let mut segments = Vec::new();
+        let mut remaining = frames;
+        let mut out_offset = 0usize;
+        let mut current = self.transport_sample;
+        while remaining > 0 {
+            let take = loop_end.saturating_sub(current).min(remaining);
+            if take == 0 {
+                current = loop_start;
+                continue;
+            }
+            segments.push((current, current.saturating_add(take), out_offset));
+            out_offset = out_offset.saturating_add(take);
+            remaining -= take;
+            current = if remaining > 0 {
+                loop_start
+            } else {
+                current.saturating_add(take)
+            };
+        }
+        segments
     }
 
     fn hw_device_info<D: HwDevice>(
@@ -374,47 +425,119 @@ impl Engine {
             if frames == 0 {
                 continue;
             }
-            let entry = self
-                .audio_recordings
-                .entry(name.clone())
-                .or_insert_with(|| RecordingSession {
-                    start_sample: self.transport_sample,
-                    samples: Vec::with_capacity(frames * channels * 4),
-                    channels,
-                    file_name: Self::next_recording_file_name(name),
-                });
-            if entry.channels != channels {
-                continue;
-            }
-            for frame in 0..frames {
-                for ch in 0..channels {
-                    entry.samples.push(track.record_tap_outs[ch][frame]);
+            let segments = self.cycle_segments(frames);
+            for (segment_start, segment_end, frame_offset) in segments {
+                let segment_len = segment_end.saturating_sub(segment_start);
+                if segment_len == 0 {
+                    continue;
                 }
-            }
 
-            let midi_entry =
-                self.midi_recordings
+                let audio_entry = self
+                    .audio_recordings
+                    .entry(name.clone())
+                    .or_insert_with(|| RecordingSession {
+                        start_sample: segment_start,
+                        samples: Vec::with_capacity(segment_len * channels * 2),
+                        channels,
+                        file_name: Self::next_recording_file_name(name),
+                    });
+                if audio_entry.channels != channels {
+                    continue;
+                }
+                if let Some(entry) = self.audio_recordings.get_mut(name.as_str()) {
+                    let from = frame_offset;
+                    let to = frame_offset.saturating_add(segment_len);
+                    for frame in from..to {
+                        for ch in 0..channels {
+                            entry.samples.push(track.record_tap_outs[ch][frame]);
+                        }
+                    }
+                }
+
+                let entry = self
+                    .midi_recordings
                     .entry(name.clone())
                     .or_insert_with(|| MidiRecordingSession {
-                        start_sample: self.transport_sample,
+                        start_sample: segment_start,
                         events: Vec::new(),
                         file_name: Self::next_midi_recording_file_name(name),
                     });
-            for event in &track.record_tap_midi_in {
-                let abs_sample = self.transport_sample as u64 + event.frame as u64;
-                midi_entry.events.push((abs_sample, event.data.clone()));
+                let from = frame_offset;
+                let to = frame_offset.saturating_add(segment_len);
+                for event in &track.record_tap_midi_in {
+                    let frame = event.frame as usize;
+                    if frame < from || frame >= to {
+                        continue;
+                    }
+                    let abs_sample = segment_start as u64 + (frame - from) as u64;
+                    entry.events.push((abs_sample, event.data.clone()));
+                }
+
+                if self.loop_enabled
+                    && let Some((_, loop_end)) = self.loop_range_samples
+                    && segment_end == loop_end
+                {
+                    if let Some(done) = self.audio_recordings.remove(name.as_str()) {
+                        self.completed_audio_recordings.push((name.clone(), done));
+                    }
+                    if let Some(done) = self.midi_recordings.remove(name.as_str()) {
+                        self.completed_midi_recordings.push((name.clone(), done));
+                    }
+                }
             }
+        }
+    }
+
+    async fn flush_completed_recordings(&mut self) {
+        if self.completed_audio_recordings.is_empty() && self.completed_midi_recordings.is_empty() {
+            return;
+        }
+        let Some(audio_dir) = self.session_audio_dir() else {
+            self.completed_audio_recordings.clear();
+            self.completed_midi_recordings.clear();
+            return;
+        };
+        let Some(midi_dir) = self.session_midi_dir() else {
+            self.completed_audio_recordings.clear();
+            self.completed_midi_recordings.clear();
+            return;
+        };
+        if std::fs::create_dir_all(&audio_dir).is_err() || std::fs::create_dir_all(&midi_dir).is_err() {
+            self.completed_audio_recordings.clear();
+            self.completed_midi_recordings.clear();
+            return;
+        }
+        let rate = self
+            .hw_driver
+            .as_ref()
+            .map(|o| o.lock().sample_rate())
+            .unwrap_or(48_000);
+        let completed_audio = std::mem::take(&mut self.completed_audio_recordings);
+        for (track_name, rec) in completed_audio {
+            self.flush_recording_entry(&audio_dir, rate, track_name, rec)
+                .await;
+        }
+        let completed_midi = std::mem::take(&mut self.completed_midi_recordings);
+        for (track_name, rec) in completed_midi {
+            self.flush_midi_recording_entry(&midi_dir, rate as u32, track_name, rec)
+                .await;
         }
     }
 
     async fn flush_recordings(&mut self) {
         let Some(audio_dir) = self.session_audio_dir() else {
-            if !self.audio_recordings.is_empty() || !self.midi_recordings.is_empty() {
+            if !self.audio_recordings.is_empty()
+                || !self.midi_recordings.is_empty()
+                || !self.completed_audio_recordings.is_empty()
+                || !self.completed_midi_recordings.is_empty()
+            {
                 self.notify_clients(Err("Recording stopped: session path is not set".to_string()))
                     .await;
             }
             self.audio_recordings.clear();
             self.midi_recordings.clear();
+            self.completed_audio_recordings.clear();
+            self.completed_midi_recordings.clear();
             return;
         };
         if std::fs::create_dir_all(&audio_dir).is_err() {
@@ -425,16 +548,22 @@ impl Engine {
             .await;
             self.audio_recordings.clear();
             self.midi_recordings.clear();
+            self.completed_audio_recordings.clear();
+            self.completed_midi_recordings.clear();
             return;
         }
         let Some(midi_dir) = self.session_midi_dir() else {
             self.audio_recordings.clear();
             self.midi_recordings.clear();
+            self.completed_audio_recordings.clear();
+            self.completed_midi_recordings.clear();
             return;
         };
         if std::fs::create_dir_all(&midi_dir).is_err() {
             self.audio_recordings.clear();
             self.midi_recordings.clear();
+            self.completed_audio_recordings.clear();
+            self.completed_midi_recordings.clear();
             return;
         }
         let rate = self
@@ -442,6 +571,16 @@ impl Engine {
             .as_ref()
             .map(|o| o.lock().sample_rate())
             .unwrap_or(48_000);
+        let completed_audio = std::mem::take(&mut self.completed_audio_recordings);
+        for (track_name, rec) in completed_audio {
+            self.flush_recording_entry(&audio_dir, rate, track_name, rec)
+                .await;
+        }
+        let completed_midi = std::mem::take(&mut self.completed_midi_recordings);
+        for (track_name, rec) in completed_midi {
+            self.flush_midi_recording_entry(&midi_dir, rate as u32, track_name, rec)
+                .await;
+        }
         let recordings = std::mem::take(&mut self.audio_recordings);
         for (track_name, rec) in recordings {
             self.flush_recording_entry(&audio_dir, rate, track_name, rec)
@@ -492,25 +631,25 @@ impl Engine {
     }
 
     async fn flush_track_recording(&mut self, track_name: &str) {
-        let Some(rec) = self.audio_recordings.remove(track_name) else {
-            if let Some(mrec) = self.midi_recordings.remove(track_name)
-                && let Some(midi_dir) = self.session_midi_dir()
-            {
-                let _ = std::fs::create_dir_all(&midi_dir);
-                let rate = self
-                    .hw_driver
-                    .as_ref()
-                    .map(|o| o.lock().sample_rate() as u32)
-                    .unwrap_or(48_000);
-                self.flush_midi_recording_entry(&midi_dir, rate, track_name.to_string(), mrec)
-                    .await;
-            }
-            return;
-        };
         let Some(audio_dir) = self.session_audio_dir() else {
+            self.audio_recordings.remove(track_name);
+            self.midi_recordings.remove(track_name);
+            self.completed_audio_recordings
+                .retain(|(name, _)| name != track_name);
+            self.completed_midi_recordings
+                .retain(|(name, _)| name != track_name);
             return;
         };
-        if std::fs::create_dir_all(&audio_dir).is_err() {
+        let Some(midi_dir) = self.session_midi_dir() else {
+            self.audio_recordings.remove(track_name);
+            self.midi_recordings.remove(track_name);
+            self.completed_audio_recordings
+                .retain(|(name, _)| name != track_name);
+            self.completed_midi_recordings
+                .retain(|(name, _)| name != track_name);
+            return;
+        };
+        if std::fs::create_dir_all(&audio_dir).is_err() || std::fs::create_dir_all(&midi_dir).is_err() {
             return;
         }
         let rate = self
@@ -518,12 +657,41 @@ impl Engine {
             .as_ref()
             .map(|o| o.lock().sample_rate())
             .unwrap_or(48_000);
+        let mut i = 0;
+        while i < self.completed_audio_recordings.len() {
+            if self.completed_audio_recordings[i].0 == track_name {
+                let (name, rec) = self.completed_audio_recordings.remove(i);
+                self.flush_recording_entry(&audio_dir, rate, name, rec).await;
+            } else {
+                i += 1;
+            }
+        }
+        let mut j = 0;
+        while j < self.completed_midi_recordings.len() {
+            if self.completed_midi_recordings[j].0 == track_name {
+                let (name, rec) = self.completed_midi_recordings.remove(j);
+                self.flush_midi_recording_entry(&midi_dir, rate as u32, name, rec)
+                    .await;
+            } else {
+                j += 1;
+            }
+        }
+
+        let Some(rec) = self.audio_recordings.remove(track_name) else {
+            if let Some(mrec) = self.midi_recordings.remove(track_name) {
+                self.flush_midi_recording_entry(
+                    &midi_dir,
+                    rate as u32,
+                    track_name.to_string(),
+                    mrec,
+                )
+                .await;
+            }
+            return;
+        };
         self.flush_recording_entry(&audio_dir, rate, track_name.to_string(), rec)
             .await;
-        if let Some(mrec) = self.midi_recordings.remove(track_name)
-            && let Some(midi_dir) = self.session_midi_dir()
-        {
-            let _ = std::fs::create_dir_all(&midi_dir);
+        if let Some(mrec) = self.midi_recordings.remove(track_name) {
             self.flush_midi_recording_entry(&midi_dir, rate as u32, track_name.to_string(), mrec)
                 .await;
         }
@@ -758,6 +926,7 @@ impl Engine {
                 }
                 let worker_index = self.ready_workers.remove(0);
                 t.set_transport_sample(self.transport_sample);
+                t.set_loop_config(self.loop_enabled, self.loop_range_samples);
                 t.audio.processing = true;
                 let worker = &self.workers[worker_index];
                 if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
@@ -1881,6 +2050,7 @@ impl Engine {
                     }
                     self.apply_mute_solo_policy();
                     self.append_recorded_cycle();
+                    self.flush_completed_recordings().await;
                     let hw_in_routes = self.midi_hw_in_routes.clone();
                     let pending_hw_in_by_device = self.pending_hw_midi_events_by_device.clone();
                     for (track_name, track) in self.state.lock().tracks.iter() {

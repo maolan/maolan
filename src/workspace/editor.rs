@@ -730,7 +730,48 @@ impl Editor {
                 recording_preview_peaks.as_ref(),
             ));
         }
-        mouse_area(result.width(Length::Fill).height(Length::Fill))
+        let mut layers: Vec<Element<'_, Message>> = vec![result.width(Length::Fill).height(Length::Fill).into()];
+        if let (Some(start), Some(end)) = (state.clip_marquee_start, state.clip_marquee_end) {
+            let x = start.x.min(end.x);
+            let y = start.y.min(end.y);
+            let w = (start.x - end.x).abs();
+            let h = (start.y - end.y).abs();
+            if w > 1.0 && h > 1.0 {
+                layers.push(
+                    pin(
+                        container("")
+                            .width(Length::Fixed(w))
+                            .height(Length::Fixed(h))
+                            .style(|_theme| container::Style {
+                                background: Some(Background::Color(Color {
+                                    r: 0.45,
+                                    g: 0.75,
+                                    b: 1.0,
+                                    a: 0.12,
+                                })),
+                                border: Border {
+                                    color: Color {
+                                        r: 0.65,
+                                        g: 0.85,
+                                        b: 1.0,
+                                        a: 0.95,
+                                    },
+                                    width: 1.0,
+                                    radius: 0.0.into(),
+                                },
+                                ..container::Style::default()
+                            }),
+                    )
+                    .position(Point::new(x, y))
+                    .into(),
+                );
+            }
+        }
+        mouse_area(
+            Stack::from_vec(layers)
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
             .on_press(Message::DeselectClips)
             .into()
     }

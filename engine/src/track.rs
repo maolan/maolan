@@ -7,6 +7,7 @@ use crate::{
     midi::io::MidiEvent,
     routing,
 };
+use midly::{MetaMessage, Smf, Timing, TrackEventKind, live::LiveEvent};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -44,11 +45,14 @@ pub struct Track {
     pub sample_rate: f64,
     pub output_enabled: bool,
     pub transport_sample: usize,
+    pub loop_enabled: bool,
+    pub loop_range_samples: Option<(usize, usize)>,
     pub record_tap_outs: Vec<Vec<f32>>,
     pub record_tap_midi_in: Vec<MidiEvent>,
     pub lv2_state_base_dir: Option<PathBuf>,
     pub session_base_dir: Option<PathBuf>,
     audio_clip_cache: HashMap<String, AudioClipBuffer>,
+    midi_clip_cache: HashMap<String, Vec<(usize, Vec<u8>)>>,
 }
 
 impl Track {
@@ -79,11 +83,14 @@ impl Track {
             sample_rate,
             output_enabled: true,
             transport_sample: 0,
+            loop_enabled: false,
+            loop_range_samples: None,
             record_tap_outs: vec![vec![0.0; buffer_size]; audio_outs],
             record_tap_midi_in: vec![],
             lv2_state_base_dir: None,
             session_base_dir: None,
             audio_clip_cache: HashMap::new(),
+            midi_clip_cache: HashMap::new(),
         }
         .with_default_passthrough()
     }
@@ -99,8 +106,6 @@ impl Track {
         for audio_in in &self.audio.ins {
             audio_in.process();
         }
-        let track_input_midi_events = self.collect_track_input_midi_events();
-
         let frames = self
             .audio
             .ins
@@ -113,6 +118,10 @@ impl Track {
                     .map(|audio_out| audio_out.buffer.lock().len())
             })
             .unwrap_or(0);
+        let mut track_input_midi_events = self.collect_track_input_midi_events();
+        if self.disk_monitor {
+            self.mix_clip_midi_into_inputs(&mut track_input_midi_events, frames);
+        }
 
         if !self.lv2_processors.is_empty() {
             let mut processed = vec![false; self.lv2_processors.len()];
@@ -306,6 +315,10 @@ impl Track {
     pub fn set_transport_sample(&mut self, sample: usize) {
         self.transport_sample = sample;
     }
+    pub fn set_loop_config(&mut self, enabled: bool, range: Option<(usize, usize)>) {
+        self.loop_enabled = enabled;
+        self.loop_range_samples = range;
+    }
     pub fn mute(&mut self) {
         self.muted = !self.muted;
     }
@@ -357,6 +370,136 @@ impl Track {
         Some(loaded)
     }
 
+    fn load_midi_clip_events(path: &Path, sample_rate: f64) -> Option<Vec<(usize, Vec<u8>)>> {
+        let bytes = std::fs::read(path).ok()?;
+        let smf = Smf::parse(&bytes).ok()?;
+        let Timing::Metrical(ppq) = smf.header.timing else {
+            return None;
+        };
+        let ppq = u64::from(ppq.as_int().max(1));
+
+        let mut tempo_changes: Vec<(u64, u32)> = vec![(0, 500_000)];
+        for track in &smf.tracks {
+            let mut tick = 0_u64;
+            for event in track {
+                tick = tick.saturating_add(event.delta.as_int() as u64);
+                if let TrackEventKind::Meta(MetaMessage::Tempo(us_per_q)) = event.kind {
+                    tempo_changes.push((tick, us_per_q.as_int()));
+                }
+            }
+        }
+        tempo_changes.sort_by_key(|(tick, _)| *tick);
+        let mut normalized_tempos: Vec<(u64, u32)> = Vec::with_capacity(tempo_changes.len());
+        for (tick, tempo) in tempo_changes {
+            if let Some(last) = normalized_tempos.last_mut()
+                && last.0 == tick
+            {
+                last.1 = tempo;
+            } else {
+                normalized_tempos.push((tick, tempo));
+            }
+        }
+        let tempo_changes = normalized_tempos;
+
+        let ticks_to_samples = |tick: u64| -> usize {
+            let mut total_us: u128 = 0;
+            let mut prev_tick = 0_u64;
+            let mut current_tempo_us = 500_000_u32;
+            for (change_tick, tempo_us) in &tempo_changes {
+                if *change_tick > tick {
+                    break;
+                }
+                let seg_ticks = change_tick.saturating_sub(prev_tick);
+                total_us = total_us.saturating_add(
+                    (seg_ticks as u128).saturating_mul(current_tempo_us as u128) / (ppq as u128),
+                );
+                prev_tick = *change_tick;
+                current_tempo_us = *tempo_us;
+            }
+            let tail_ticks = tick.saturating_sub(prev_tick);
+            total_us = total_us.saturating_add(
+                (tail_ticks as u128).saturating_mul(current_tempo_us as u128) / (ppq as u128),
+            );
+            ((total_us as f64) * (sample_rate / 1_000_000.0)).round() as usize
+        };
+
+        let mut out = Vec::<(usize, Vec<u8>)>::new();
+        for track in &smf.tracks {
+            let mut tick = 0_u64;
+            for event in track {
+                tick = tick.saturating_add(event.delta.as_int() as u64);
+                if let TrackEventKind::Midi { channel, message } = event.kind {
+                    let mut data = Vec::with_capacity(3);
+                    if (LiveEvent::Midi { channel, message }).write(&mut data).is_ok()
+                    {
+                        out.push((ticks_to_samples(tick), data));
+                    }
+                }
+            }
+        }
+        out.sort_by_key(|(sample, _)| *sample);
+        Some(out)
+    }
+
+    fn midi_clip_events(&mut self, clip_name: &str) -> Option<Vec<(usize, Vec<u8>)>> {
+        if let Some(cached) = self.midi_clip_cache.get(clip_name) {
+            return Some(cached.clone());
+        }
+        let path = self.resolve_clip_path(clip_name);
+        let loaded = Self::load_midi_clip_events(&path, self.sample_rate)?;
+        self.midi_clip_cache
+            .insert(clip_name.to_string(), loaded.clone());
+        Some(loaded)
+    }
+
+    fn cycle_segments(&self, frames: usize) -> Vec<(usize, usize, usize)> {
+        if frames == 0 {
+            return vec![];
+        }
+        if !self.loop_enabled {
+            return vec![(
+                self.transport_sample,
+                self.transport_sample.saturating_add(frames),
+                0,
+            )];
+        }
+        let Some((loop_start, loop_end)) = self.loop_range_samples else {
+            return vec![(
+                self.transport_sample,
+                self.transport_sample.saturating_add(frames),
+                0,
+            )];
+        };
+        if loop_end <= loop_start {
+            return vec![(
+                self.transport_sample,
+                self.transport_sample.saturating_add(frames),
+                0,
+            )];
+        }
+        let mut segments = Vec::new();
+        let mut remaining = frames;
+        let mut out_offset = 0usize;
+        let mut current = self.transport_sample;
+        while remaining > 0 {
+            let segment_end_limit = loop_end;
+            let take = segment_end_limit.saturating_sub(current).min(remaining);
+            if take == 0 {
+                current = loop_start;
+                continue;
+            }
+            segments.push((current, current.saturating_add(take), out_offset));
+            out_offset = out_offset.saturating_add(take);
+            remaining -= take;
+            current = if remaining > 0 {
+                loop_start
+            } else {
+                current.saturating_add(take)
+            };
+        }
+        segments
+    }
+
     fn mix_clip_audio_into_output(
         &mut self,
         out_channel: usize,
@@ -368,8 +511,7 @@ impl Track {
         if frames == 0 {
             return;
         }
-        let cycle_start = self.transport_sample;
-        let cycle_end = cycle_start.saturating_add(frames);
+        let segments = self.cycle_segments(frames);
         let clips = self.audio.clips.clone();
         for clip in clips {
             let clip_start = clip.start;
@@ -378,9 +520,6 @@ impl Track {
                 continue;
             }
             let clip_end = clip_start.saturating_add(clip_len);
-            if clip_end <= cycle_start || clip_start >= cycle_end {
-                continue;
-            }
             let Some(buffer) = self.clip_buffer(&clip.name) else {
                 continue;
             };
@@ -389,25 +528,74 @@ impl Track {
             if total_frames == 0 {
                 continue;
             }
-            let from = cycle_start.max(clip_start);
-            let to = cycle_end.min(clip_end);
             let source_channel = if channels == 1 {
                 0
             } else {
                 out_channel.min(channels - 1)
             };
-            for absolute_sample in from..to {
-                let track_idx = absolute_sample - cycle_start;
-                let clip_idx = absolute_sample - clip_start + clip.offset;
-                if clip_idx >= total_frames {
-                    break;
+            for (segment_start, segment_end, out_offset) in &segments {
+                if clip_end <= *segment_start || clip_start >= *segment_end {
+                    continue;
                 }
-                let sample = buffer.samples[clip_idx * channels + source_channel];
-                if self.output_enabled {
-                    out_samples[track_idx] += sample * linear_gain * balance_gain;
+                let from = (*segment_start).max(clip_start);
+                let to = (*segment_end).min(clip_end);
+                for absolute_sample in from..to {
+                    let track_idx = out_offset + (absolute_sample - *segment_start);
+                    let clip_idx = absolute_sample - clip_start + clip.offset;
+                    if clip_idx >= total_frames || track_idx >= out_samples.len() {
+                        break;
+                    }
+                    let sample = buffer.samples[clip_idx * channels + source_channel];
+                    if self.output_enabled {
+                        out_samples[track_idx] += sample * linear_gain * balance_gain;
+                    }
                 }
             }
         }
+    }
+
+    fn mix_clip_midi_into_inputs(&mut self, input_events: &mut [Vec<MidiEvent>], frames: usize) {
+        if frames == 0 || input_events.is_empty() {
+            return;
+        }
+        let segments = self.cycle_segments(frames);
+        let clips = self.midi.clips.clone();
+        for clip in clips {
+            let clip_start = clip.start;
+            let clip_len = clip.end;
+            if clip_len == 0 {
+                continue;
+            }
+            let clip_end = clip_start.saturating_add(clip_len);
+            let Some(events) = self.midi_clip_events(&clip.name) else {
+                continue;
+            };
+            for (segment_start, segment_end, out_offset) in &segments {
+                if clip_end <= *segment_start || clip_start >= *segment_end {
+                    continue;
+                }
+                let from = (*segment_start).max(clip_start);
+                let to = (*segment_end).min(clip_end);
+                let source_from = from.saturating_sub(clip_start).saturating_add(clip.offset);
+                let source_to = to.saturating_sub(clip_start).saturating_add(clip.offset);
+                for (source_sample, data) in &events {
+                    if *source_sample < source_from {
+                        continue;
+                    }
+                    if *source_sample >= source_to {
+                        break;
+                    }
+                    let absolute_sample = clip_start
+                        .saturating_add(source_sample.saturating_sub(clip.offset));
+                    let frame_idx = out_offset.saturating_add(absolute_sample - *segment_start);
+                    if frame_idx >= frames {
+                        continue;
+                    }
+                    input_events[0].push(MidiEvent::new(frame_idx as u32, data.clone()));
+                }
+            }
+        }
+        input_events[0].sort_by_key(|event| event.frame);
     }
 
     pub fn load_lv2_plugin(&mut self, uri: &str) -> Result<(), String> {

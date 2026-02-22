@@ -927,6 +927,8 @@ impl Maolan {
                 }
                 state.mouse_left_down = true;
                 state.clip_click_consumed = true;
+                state.clip_marquee_start = None;
+                state.clip_marquee_end = None;
                 let mut dragged =
                     crate::message::DraggedClip::new(kind, clip_idx, track_idx.clone());
                 dragged.start = state.cursor;
@@ -947,6 +949,8 @@ impl Maolan {
                     return Task::none();
                 }
                 self.clip = None;
+                state.clip_marquee_start = None;
+                state.clip_marquee_end = None;
                 state.selected_clips.clear();
             }
             Message::MousePressed(button) => {
@@ -956,6 +960,8 @@ impl Maolan {
                 {
                     let mut state = self.state.blocking_write();
                     state.mouse_left_down = true;
+                    state.clip_marquee_start = None;
+                    state.clip_marquee_end = None;
                 }
             }
             Message::ConnectionViewSelectConnection(idx) => {
@@ -1261,15 +1267,26 @@ impl Maolan {
                 let mouse_left_down = self.state.blocking_read().mouse_left_down;
                 if mouse_left_down
                     && !matches!(resizing, Some(Resizing::Clip { .. }))
-                    && let Some(active) = self.clip.as_mut()
                 {
-                    active.end = position;
-                    return iced_drop::zones_on_point(
-                        Message::HandleClipPreviewZones,
-                        position,
-                        None,
-                        None,
-                    );
+                    if let Some(active) = self.clip.as_mut() {
+                        active.end = position;
+                        return iced_drop::zones_on_point(
+                            Message::HandleClipPreviewZones,
+                            position,
+                            None,
+                            None,
+                        );
+                    }
+                    let mut state = self.state.blocking_write();
+                    if !state.clip_click_consumed
+                        && matches!(state.view, View::Workspace)
+                        && self.modal.is_none()
+                    {
+                        if state.clip_marquee_start.is_none() {
+                            state.clip_marquee_start = Some(state.cursor);
+                        }
+                        state.clip_marquee_end = Some(position);
+                    }
                 }
             }
             Message::MouseReleased => {
@@ -1277,20 +1294,77 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     state.mouse_left_down = false;
                     state.clip_click_consumed = false;
+                    state.clip_marquee_start = None;
+                    state.clip_marquee_end = None;
                     self.clip = None;
                     return Task::none();
                 }
-                let resizing = {
+                let (resizing, marquee_start, marquee_end) = {
                     let mut state = self.state.blocking_write();
                     state.mouse_left_down = false;
                     state.clip_click_consumed = false;
                     let resizing = state.resizing.clone();
+                    let marquee_start = state.clip_marquee_start.take();
+                    let marquee_end = state.clip_marquee_end.take();
                     state.resizing = None;
                     state.ctrl = false;
-                    resizing
+                    (resizing, marquee_start, marquee_end)
                 };
                 if matches!(resizing, Some(Resizing::Clip { .. })) {
                     return Task::none();
+                }
+                if let (Some(start), Some(end)) = (marquee_start, marquee_end) {
+                    let x = start.x.min(end.x);
+                    let y = start.y.min(end.y);
+                    let w = (start.x - end.x).abs();
+                    let h = (start.y - end.y).abs();
+                    if w > 2.0 && h > 2.0 {
+                        let pps = self.pixels_per_sample().max(1.0e-6);
+                        let mut y_offset = 0.0f32;
+                        let mut selected = std::collections::HashSet::new();
+                        let state = self.state.blocking_read();
+                        for track in &state.tracks {
+                            let inner_top = y_offset + 5.0;
+                            for (clip_idx, clip) in track.audio.clips.iter().enumerate() {
+                                let cx = clip.start as f32 * pps;
+                                let cw = (clip.length as f32 * pps).max(12.0);
+                                let cy = inner_top;
+                                let ch = track.height.max(1.0);
+                                let intersects = cx < x + w
+                                    && cx + cw > x
+                                    && cy < y + h
+                                    && cy + ch > y;
+                                if intersects {
+                                    selected.insert(crate::state::ClipId {
+                                        track_idx: track.name.clone(),
+                                        clip_idx,
+                                        kind: Kind::Audio,
+                                    });
+                                }
+                            }
+                            for (clip_idx, clip) in track.midi.clips.iter().enumerate() {
+                                let cx = clip.start as f32 * pps;
+                                let cw = (clip.length as f32 * pps).max(12.0);
+                                let cy = inner_top;
+                                let ch = track.height.max(1.0);
+                                let intersects = cx < x + w
+                                    && cx + cw > x
+                                    && cy < y + h
+                                    && cy + ch > y;
+                                if intersects {
+                                    selected.insert(crate::state::ClipId {
+                                        track_idx: track.name.clone(),
+                                        clip_idx,
+                                        kind: Kind::MIDI,
+                                    });
+                                }
+                            }
+                            y_offset += track.height + 10.0;
+                        }
+                        drop(state);
+                        self.state.blocking_write().selected_clips = selected;
+                        return Task::none();
+                    }
                 }
                 if let Some(clip) = &mut self.clip {
                     let moved = (clip.end.x - clip.start.x).abs() > 2.0
