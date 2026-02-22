@@ -75,6 +75,8 @@ pub enum Action {
     Play,
     Stop,
     TransportPosition(usize),
+    SetLoopEnabled(bool),
+    SetLoopRange(Option<(usize, usize)>),
     SetRecordEnabled(bool),
     SetSessionPath(String),
     AddTrack {

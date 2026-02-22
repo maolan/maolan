@@ -55,6 +55,7 @@ impl Workspace {
         playhead_samples: Option<f64>,
         pixels_per_sample: f32,
         beat_pixels: f32,
+        loop_range_samples: Option<(usize, usize)>,
         zoom_visible_bars: f32,
         tracks_resize_hovered: bool,
         mixer_resize_hovered: bool,
@@ -141,7 +142,12 @@ impl Workspace {
                             ..container::Style::default()
                         }
                     }),
-                self.ruler.view(playhead_x, beat_pixels, pixels_per_sample),
+                self.ruler.view(
+                    playhead_x,
+                    beat_pixels,
+                    pixels_per_sample,
+                    loop_range_samples,
+                ),
             ]
             .height(Length::Fixed(self.ruler.height())),
             row![

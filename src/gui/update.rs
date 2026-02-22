@@ -48,6 +48,14 @@ impl Maolan {
                 }
                 return self.send(Action::Play);
             }
+            Message::ToggleLoop => {
+                if self.loop_range_samples.is_none() {
+                    return Task::none();
+                }
+                let enabled = !self.loop_enabled;
+                self.loop_enabled = enabled;
+                return self.send(Action::SetLoopEnabled(enabled));
+            }
             Message::WindowResized(size) => {
                 self.size = size;
             }
@@ -122,6 +130,8 @@ impl Maolan {
                 }
                 self.playing = false;
                 self.transport_samples = 0.0;
+                self.loop_enabled = false;
+                self.loop_range_samples = None;
                 self.last_playback_tick = None;
                 self.record_armed = false;
                 self.pending_record_after_save = false;
@@ -141,6 +151,7 @@ impl Maolan {
                 let mut tasks = vec![
                     self.send(Action::Stop),
                     self.send(Action::SetRecordEnabled(false)),
+                    self.send(Action::SetLoopRange(None)),
                 ];
                 for name in existing_tracks {
                     tasks.push(self.send(Action::RemoveTrack(name)));
@@ -186,6 +197,18 @@ impl Maolan {
                     self.last_playback_tick = Some(now);
                     self.transport_samples += delta_s * self.playback_rate_hz;
                 }
+            }
+            Message::SetLoopRange(range) => {
+                let normalized = range.and_then(|(start, end)| {
+                    if end > start {
+                        Some((start, end))
+                    } else {
+                        None
+                    }
+                });
+                self.loop_enabled = normalized.is_some();
+                self.loop_range_samples = normalized;
+                return self.send(Action::SetLoopRange(normalized));
             }
             Message::RecordingPreviewTick => {
                 if self.playing
@@ -668,6 +691,13 @@ impl Maolan {
                     if self.playing {
                         self.last_playback_tick = Some(Instant::now());
                     }
+                }
+                Action::SetLoopEnabled(enabled) => {
+                    self.loop_enabled = *enabled && self.loop_range_samples.is_some();
+                }
+                Action::SetLoopRange(range) => {
+                    self.loop_range_samples = *range;
+                    self.loop_enabled = range.is_some();
                 }
                 Action::Lv2Plugins(plugins) => {
                     let mut state = self.state.blocking_write();

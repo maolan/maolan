@@ -103,6 +103,8 @@ pub struct Engine {
     pending_requests: VecDeque<Action>,
     awaiting_hwfinished: bool,
     transport_sample: usize,
+    loop_enabled: bool,
+    loop_range_samples: Option<(usize, usize)>,
     audio_recordings: std::collections::HashMap<String, RecordingSession>,
     midi_recordings: std::collections::HashMap<String, MidiRecordingSession>,
     playing: bool,
@@ -203,6 +205,8 @@ impl Engine {
             pending_requests: VecDeque::new(),
             awaiting_hwfinished: false,
             transport_sample: 0,
+            loop_enabled: false,
+            loop_range_samples: None,
             audio_recordings: std::collections::HashMap::new(),
             midi_recordings: std::collections::HashMap::new(),
             playing: false,
@@ -222,6 +226,18 @@ impl Engine {
             .map(|o| o.lock().cycle_samples())
             .or_else(|| self.jack_runtime.as_ref().map(|j| j.lock().buffer_size))
             .unwrap_or(0)
+    }
+
+    fn normalize_transport_sample(&self, sample: usize) -> usize {
+        if self.loop_enabled
+            && let Some((loop_start, loop_end)) = self.loop_range_samples
+            && loop_end > loop_start
+            && sample >= loop_end
+        {
+            let loop_len = loop_end - loop_start;
+            return loop_start + (sample - loop_start) % loop_len;
+        }
+        sample
     }
 
     fn hw_device_info<D: HwDevice>(
@@ -851,7 +867,29 @@ impl Engine {
                 self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
                     .await;
             }
-            Action::TransportPosition(_) => {}
+            Action::TransportPosition(sample) => {
+                self.transport_sample = self.normalize_transport_sample(sample);
+            }
+            Action::SetLoopEnabled(enabled) => {
+                self.loop_enabled = enabled && self.loop_range_samples.is_some();
+            }
+            Action::SetLoopRange(range) => {
+                self.loop_range_samples =
+                    range.and_then(|(start, end)| if end > start { Some((start, end)) } else { None });
+                if self.loop_range_samples.is_none() {
+                    self.loop_enabled = false;
+                } else {
+                    self.loop_enabled = true;
+                }
+                if self.loop_enabled
+                    && let Some((loop_start, loop_end)) = self.loop_range_samples
+                    && self.transport_sample >= loop_end
+                {
+                    self.transport_sample = loop_start;
+                    self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
+                        .await;
+                }
+            }
             Action::SetRecordEnabled(enabled) => {
                 self.record_enabled = enabled;
                 if !enabled {
@@ -1811,6 +1849,8 @@ impl Engine {
                     | Action::ListLv2Plugins
                     | Action::Play
                     | Action::Stop
+                    | Action::SetLoopEnabled(_)
+                    | Action::SetLoopRange(_)
                     | Action::SetRecordEnabled(_)
                     | Action::SetSessionPath(_) => {
                         self.handle_request(a).await;
@@ -1862,9 +1902,16 @@ impl Engine {
                     self.pending_hw_midi_events.clear();
                     self.pending_hw_midi_events_by_device.clear();
                     if self.playing {
-                        self.transport_sample = self
+                        let next = self
                             .transport_sample
                             .saturating_add(self.current_cycle_samples());
+                        let normalized = self.normalize_transport_sample(next);
+                        let wrapped = normalized != next;
+                        self.transport_sample = normalized;
+                        if wrapped {
+                            self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
+                                .await;
+                        }
                     }
                     if self.send_tracks().await && self.hw_worker.is_some() {
                         self.request_hw_cycle().await;

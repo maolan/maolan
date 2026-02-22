@@ -21,6 +21,7 @@ impl Maolan {
                             Some(self.transport_samples),
                             self.pixels_per_sample(),
                             self.beat_pixels(),
+                            self.loop_range_samples,
                             self.zoom_visible_bars,
                             self.tracks_resize_hovered,
                             self.mixer_resize_hovered,
@@ -35,7 +36,12 @@ impl Maolan {
 
                     let mut content = column![
                         self.menu.view(),
-                        self.toolbar.view(self.playing, self.record_armed)
+                        self.toolbar.view(
+                            self.playing,
+                            self.record_armed,
+                            self.loop_range_samples.is_some(),
+                            self.loop_enabled,
+                        )
                     ];
                     if matches!(state.view, View::TrackPlugins) {
                         content = content.push(
