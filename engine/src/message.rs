@@ -191,6 +191,7 @@ pub enum Action {
     },
     OpenAudioDevice {
         device: String,
+        bits: i32,
         exclusive: bool,
         period_frames: usize,
         nperiods: usize,

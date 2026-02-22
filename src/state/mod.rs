@@ -9,7 +9,7 @@ use maolan_engine::kind::Kind;
 use maolan_engine::lv2::Lv2PluginInfo;
 use maolan_engine::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin};
 #[cfg(target_os = "freebsd")]
-use nvtree::{Nvtvalue, nvtree_find, nvtree_unpack};
+use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -52,22 +52,53 @@ impl std::fmt::Display for AudioBackendOption {
 pub struct AudioDeviceOption {
     pub id: String,
     pub label: String,
+    pub supported_bits: Vec<usize>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl AudioDeviceOption {
+    #[cfg(target_os = "linux")]
     pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
+            supported_bits: Vec::new(),
         }
+    }
+
+    #[cfg(target_os = "freebsd")]
+    pub fn with_supported_bits(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        mut supported_bits: Vec<usize>,
+    ) -> Self {
+        supported_bits.sort_by(|a, b| b.cmp(a));
+        supported_bits.dedup();
+        Self {
+            id: id.into(),
+            label: label.into(),
+            supported_bits,
+        }
+    }
+
+    pub fn preferred_bits(&self) -> Option<usize> {
+        self.supported_bits.first().copied()
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl std::fmt::Display for AudioDeviceOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.label)
+        if self.supported_bits.is_empty() {
+            return f.write_str(&self.label);
+        }
+        let formats = self
+            .supported_bits
+            .iter()
+            .map(|b| format!("{b}"))
+            .collect::<Vec<_>>()
+            .join("/");
+        write!(f, "{} [{}-bit]", self.label, formats)
     }
 }
 
@@ -209,6 +240,7 @@ pub struct StateData {
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     pub selected_hw: Option<String>,
     pub oss_exclusive: bool,
+    pub oss_bits: usize,
     pub oss_period_frames: usize,
     pub oss_nperiods: usize,
     pub oss_sync_mode: bool,
@@ -275,6 +307,7 @@ impl Default for StateData {
             available_hw: hw,
             selected_hw: None,
             oss_exclusive: true,
+            oss_bits: 32,
             oss_period_frames: 1024,
             oss_nperiods: 1,
             oss_sync_mode: false,
@@ -333,7 +366,7 @@ fn default_audio_backend() -> AudioBackendOption {
 }
 
 #[cfg(target_os = "freebsd")]
-fn discover_freebsd_audio_devices() -> Vec<AudioDeviceOption> {
+pub(crate) fn discover_freebsd_audio_devices() -> Vec<AudioDeviceOption> {
     let mut devices = discover_sndstat_dsp_devices().unwrap_or_default();
     devices.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
     devices.dedup_by(|a, b| a.id == b.id);
@@ -428,11 +461,125 @@ fn parse_sndstat_nvlist(buf: &[u8]) -> Option<Vec<AudioDeviceOption>> {
             let label = label_prefix
                 .map(|prefix| format!("{prefix} ({devpath})"))
                 .unwrap_or_else(|| devpath.clone());
-            Some(AudioDeviceOption::new(devpath, label))
+            let mut supported_bits = decode_supported_bits_from_dsp(dsp);
+            if supported_bits.is_empty() {
+                supported_bits = probe_oss_supported_bits(&devpath);
+            }
+            Some(AudioDeviceOption::with_supported_bits(
+                devpath,
+                label,
+                supported_bits,
+            ))
         })
         .collect::<Vec<_>>();
 
     (!out.is_empty()).then_some(out)
+}
+
+#[cfg(target_os = "freebsd")]
+const AFMT_S16_LE: u64 = 0x00000010;
+#[cfg(target_os = "freebsd")]
+const AFMT_S16_BE: u64 = 0x00000020;
+#[cfg(target_os = "freebsd")]
+const AFMT_S8: u64 = 0x00000040;
+#[cfg(target_os = "freebsd")]
+const AFMT_S32_LE: u64 = 0x00001000;
+#[cfg(target_os = "freebsd")]
+const AFMT_S32_BE: u64 = 0x00002000;
+#[cfg(target_os = "freebsd")]
+const AFMT_S24_LE: u64 = 0x00010000;
+#[cfg(target_os = "freebsd")]
+const AFMT_S24_BE: u64 = 0x00020000;
+
+#[cfg(target_os = "freebsd")]
+fn decode_supported_bits_from_dsp(dsp: &Nvtree) -> Vec<usize> {
+    fn parse_number_text(s: &str) -> Option<u64> {
+        let trimmed = s.trim();
+        if let Some(hex) = trimmed
+            .strip_prefix("0x")
+            .or_else(|| trimmed.strip_prefix("0X"))
+        {
+            return u64::from_str_radix(hex, 16).ok();
+        }
+        trimmed.parse::<u64>().ok()
+    }
+
+    fn format_mask_from_value(value: &Nvtvalue) -> Option<u64> {
+        match value {
+            Nvtvalue::Number(n) => Some(*n),
+            Nvtvalue::String(s) => parse_number_text(s),
+            Nvtvalue::NumberArray(arr) => Some(arr.iter().copied().fold(0_u64, |acc, n| acc | n)),
+            Nvtvalue::StringArray(arr) => Some(
+                arr.iter()
+                    .filter_map(|s| parse_number_text(s))
+                    .fold(0_u64, |acc, n| acc | n),
+            ),
+            _ => None,
+        }
+    }
+
+    fn format_mask_from_tree(tree: &Nvtree) -> Option<u64> {
+        const DIRECT_KEYS: [&str; 7] = [
+            "formats",
+            "iformats",
+            "oformats",
+            "pformats",
+            "rformats",
+            "playformats",
+            "recformats",
+        ];
+        for key in DIRECT_KEYS {
+            if let Some(pair) = nvtree_find(tree, key)
+                && let Some(mask) = format_mask_from_value(&pair.value)
+            {
+                return Some(mask);
+            }
+        }
+        None
+    }
+
+    let mut mask = format_mask_from_tree(dsp).unwrap_or(0);
+    for nested_name in ["play", "playback", "record", "capture"] {
+        if let Some(pair) = nvtree_find(dsp, nested_name)
+            && let Nvtvalue::Nested(nested) = &pair.value
+        {
+            mask |= format_mask_from_tree(nested).unwrap_or(0);
+        }
+    }
+
+    bits_from_format_mask(mask)
+}
+
+#[cfg(target_os = "freebsd")]
+fn bits_from_format_mask(mask: u64) -> Vec<usize> {
+    let mut bits = Vec::with_capacity(4);
+    if (mask & (AFMT_S32_LE | AFMT_S32_BE)) != 0 {
+        bits.push(32);
+    }
+    if (mask & (AFMT_S24_LE | AFMT_S24_BE)) != 0 {
+        bits.push(24);
+    }
+    if (mask & (AFMT_S16_LE | AFMT_S16_BE)) != 0 {
+        bits.push(16);
+    }
+    if (mask & AFMT_S8) != 0 {
+        bits.push(8);
+    }
+    bits
+}
+
+#[cfg(target_os = "freebsd")]
+fn probe_oss_supported_bits(devpath: &str) -> Vec<usize> {
+    let Ok(file) = std::fs::OpenOptions::new().read(true).open(devpath) else {
+        return Vec::new();
+    };
+    let fd = file.as_raw_fd();
+    let mut formats = 0_i32;
+    let ok = unsafe { oss_get_formats(fd, &mut formats).is_ok() };
+    if !ok {
+        return Vec::new();
+    }
+    bits_from_format_mask(formats as u64)
 }
 
 #[cfg(target_os = "freebsd")]
@@ -446,6 +593,8 @@ struct SndstIoctlNvArg {
 nix::ioctl_none!(sndst_refresh_devs, b'D', 100);
 #[cfg(target_os = "freebsd")]
 nix::ioctl_readwrite!(sndst_get_devs, b'D', 101, SndstIoctlNvArg);
+#[cfg(target_os = "freebsd")]
+nix::ioctl_read!(oss_get_formats, b'P', 11, i32);
 
 #[cfg(target_os = "linux")]
 fn read_alsa_card_labels() -> std::collections::HashMap<u32, String> {

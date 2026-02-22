@@ -17,6 +17,8 @@ impl HW {
     pub fn audio_view(&self) -> iced::Element<'_, Message> {
         let period_options = vec![64, 128, 256, 512, 1024, 2048, 4096, 8192];
         let nperiod_options: Vec<usize> = (1..=16).collect();
+        #[cfg(target_os = "freebsd")]
+        let fallback_bits = vec![32, 24, 16, 8];
         let (
             available_backends,
             selected_backend,
@@ -39,6 +41,8 @@ impl HW {
                 state.oss_sync_mode,
             )
         };
+        #[cfg(target_os = "freebsd")]
+        let selected_bits = self.state.blocking_read().oss_bits;
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let available_hw: Vec<crate::state::AudioDeviceOption> = available_hw
             .into_iter()
@@ -55,6 +59,27 @@ impl HW {
             selected_hw = selected_hw.filter(|s| available_hw.iter().any(|hw| hw.id == s.id));
         }
         let selected_is_jack = matches!(selected_backend, crate::state::AudioBackendOption::Jack);
+        #[cfg(target_os = "freebsd")]
+        let bit_options = if selected_is_jack {
+            fallback_bits.clone()
+        } else {
+            selected_hw
+                .as_ref()
+                .map(|hw| {
+                    if hw.supported_bits.is_empty() {
+                        fallback_bits.clone()
+                    } else {
+                        hw.supported_bits.clone()
+                    }
+                })
+                .unwrap_or_else(|| fallback_bits.clone())
+        };
+        #[cfg(target_os = "freebsd")]
+        let chosen_bits = if bit_options.contains(&selected_bits) {
+            selected_bits
+        } else {
+            bit_options.first().copied().unwrap_or(32)
+        };
         let mut submit = button("Open Audio");
         if selected_is_jack || selected_hw.is_some() {
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -72,8 +97,17 @@ impl HW {
             } else {
                 selected_hw.clone().unwrap_or_default()
             };
+            #[cfg(target_os = "freebsd")]
+            let bits = if selected_is_jack {
+                32
+            } else {
+                chosen_bits as i32
+            };
+            #[cfg(not(target_os = "freebsd"))]
+            let bits = 32;
             submit = submit.on_press(Message::Request(Action::OpenAudioDevice {
                 device,
+                bits,
                 exclusive,
                 period_frames,
                 nperiods,
@@ -101,6 +135,17 @@ impl HW {
         }
 
         if !selected_is_jack {
+            #[cfg(target_os = "freebsd")]
+            {
+                content = content.push(
+                    row![
+                        text("Bit depth:"),
+                        pick_list(bit_options.clone(), Some(chosen_bits), Message::HWBitsChanged)
+                            .placeholder("Bit depth")
+                    ]
+                    .spacing(10),
+                );
+            }
             content = content
                 .push(
                     row![

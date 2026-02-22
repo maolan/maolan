@@ -1828,6 +1828,7 @@ impl Engine {
 
             Action::OpenAudioDevice {
                 ref device,
+                bits,
                 exclusive,
                 period_frames,
                 nperiods,
@@ -1863,6 +1864,7 @@ impl Engine {
                             }
                             self.notify_clients(Ok(Action::OpenAudioDevice {
                                 device: device.clone(),
+                                bits,
                                 exclusive,
                                 period_frames,
                                 nperiods,
@@ -1885,7 +1887,7 @@ impl Engine {
                     ..Default::default()
                 };
                 let hw_profile_enabled = config::env_flag(config::HW_PROFILE_ENV);
-                match HwDriver::new_with_options(device, 48000, 32, hw_opts) {
+                match HwDriver::new_with_options(device, 48000, bits, hw_opts) {
                     Ok(d) => {
                         let (in_channels, out_channels, rate, (in_lat, out_lat)) =
                             Self::hw_device_info(&d);

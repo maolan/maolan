@@ -585,14 +585,15 @@ impl Maolan {
 
                 Action::OpenAudioDevice {
                     device,
+                    bits,
                     exclusive,
                     period_frames,
                     nperiods,
                     sync_mode,
                 } => {
                     self.state.blocking_write().message = format!(
-                        "Opened device {} (exclusive={}, period={}, nperiods={}, sync_mode={})",
-                        device, exclusive, period_frames, nperiods, sync_mode
+                        "Opened device {} (bits={}, exclusive={}, period={}, nperiods={}, sync_mode={})",
+                        device, bits, exclusive, period_frames, nperiods, sync_mode
                     );
                     self.state.blocking_write().hw_loaded = true;
                 }
@@ -1736,7 +1737,28 @@ impl Maolan {
             Message::HWSelected(ref hw) => {
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 {
-                    self.state.blocking_write().selected_hw = Some(hw.clone());
+                    let mut state = self.state.blocking_write();
+                    #[cfg(target_os = "freebsd")]
+                    {
+                        // Refresh from sndstat on each selection so bit-depth reflects current per-device data.
+                        let refreshed = crate::state::discover_freebsd_audio_devices();
+                        let selected = refreshed
+                            .iter()
+                            .find(|candidate| candidate.id == hw.id)
+                            .cloned()
+                            .unwrap_or_else(|| hw.clone());
+                        if !refreshed.is_empty() {
+                            state.available_hw = refreshed;
+                        }
+                        if let Some(bits) = selected.preferred_bits() {
+                            state.oss_bits = bits;
+                        }
+                        state.selected_hw = Some(selected);
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        state.selected_hw = Some(hw.clone());
+                    }
                 }
                 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
                 {
@@ -1747,9 +1769,22 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.selected_backend = backend.clone();
                 state.selected_hw = None;
+                #[cfg(target_os = "freebsd")]
+                {
+                    state.oss_bits = 32;
+                }
             }
             Message::HWExclusiveToggled(exclusive) => {
                 self.state.blocking_write().oss_exclusive = exclusive;
+            }
+            Message::HWBitsChanged(bits) => {
+                #[cfg(target_os = "freebsd")]
+                {
+                    let mut state = self.state.blocking_write();
+                    state.oss_bits = bits;
+                }
+                #[cfg(not(target_os = "freebsd"))]
+                let _ = bits;
             }
             Message::HWPeriodFramesChanged(period_frames) => {
                 self.state.blocking_write().oss_period_frames =

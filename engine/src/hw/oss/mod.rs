@@ -33,6 +33,19 @@ use self::io_util::*;
 use self::ioctl::*;
 use self::sync::{Correction, DuplexSync, FrameClock, get_or_create_duplex_sync};
 
+#[cfg(target_endian = "little")]
+const AFMT_S16_FOREIGN: u32 = AFMT_S16_BE;
+#[cfg(target_endian = "big")]
+const AFMT_S16_FOREIGN: u32 = AFMT_S16_LE;
+#[cfg(target_endian = "little")]
+const AFMT_S24_FOREIGN: u32 = AFMT_S24_BE;
+#[cfg(target_endian = "big")]
+const AFMT_S24_FOREIGN: u32 = AFMT_S24_LE;
+#[cfg(target_endian = "little")]
+const AFMT_S32_FOREIGN: u32 = AFMT_S32_BE;
+#[cfg(target_endian = "big")]
+const AFMT_S32_FOREIGN: u32 = AFMT_S32_LE;
+
 #[derive(Debug)]
 pub struct Audio {
     dsp: File,
@@ -63,6 +76,65 @@ pub struct Audio {
 }
 
 impl Audio {
+    fn sample_format_candidates(bits: i32) -> Vec<u32> {
+        fn add_pair(candidates: &mut Vec<u32>, native: u32, foreign: u32) {
+            candidates.push(native);
+            candidates.push(foreign);
+        }
+
+        let mut candidates = Vec::with_capacity(7);
+        match bits {
+            32 => {
+                add_pair(&mut candidates, AFMT_S32_NE, AFMT_S32_FOREIGN);
+                add_pair(&mut candidates, AFMT_S24_NE, AFMT_S24_FOREIGN);
+                add_pair(&mut candidates, AFMT_S16_NE, AFMT_S16_FOREIGN);
+                candidates.push(AFMT_S8);
+            }
+            24 => {
+                add_pair(&mut candidates, AFMT_S24_NE, AFMT_S24_FOREIGN);
+                add_pair(&mut candidates, AFMT_S16_NE, AFMT_S16_FOREIGN);
+                candidates.push(AFMT_S8);
+            }
+            16 => {
+                add_pair(&mut candidates, AFMT_S16_NE, AFMT_S16_FOREIGN);
+                candidates.push(AFMT_S8);
+            }
+            8 => candidates.push(AFMT_S8),
+            _ => {
+                add_pair(&mut candidates, AFMT_S16_NE, AFMT_S16_FOREIGN);
+                candidates.push(AFMT_S8);
+            }
+        }
+        candidates
+    }
+
+    fn negotiate_sample_format(fd: i32, bits: i32) -> Result<u32, std::io::Error> {
+        let candidates = Self::sample_format_candidates(bits);
+        let mut last_errno = None;
+        let mut last_unsupported = None;
+        for candidate in candidates {
+            let mut negotiated = candidate;
+            let setfmt = unsafe { oss_set_format(fd, &mut negotiated) };
+            match setfmt {
+                Ok(_) => {
+                    if supported_sample_format(negotiated) {
+                        return Ok(negotiated);
+                    }
+                    last_unsupported = Some(negotiated);
+                }
+                Err(_) => {
+                    last_errno = Some(std::io::Error::last_os_error());
+                }
+            }
+        }
+        if let Some(format) = last_unsupported {
+            return Err(std::io::Error::other(format!(
+                "Unsupported OSS sample format after setfmt fallback chain: {format:#x}"
+            )));
+        }
+        Err(last_errno.unwrap_or_else(|| std::io::Error::other("OSS setfmt failed for all fallback formats")))
+    }
+
     pub fn fd(&self) -> i32 {
         self.dsp.as_raw_fd()
     }
@@ -106,13 +178,6 @@ impl Audio {
         }
 
         let dsp = binding.open(path)?;
-        let mut format = match bits {
-            32 => AFMT_S32_NE,
-            24 => AFMT_S24_NE,
-            16 => AFMT_S16_NE,
-            8 => AFMT_S8,
-            _ => AFMT_S16_NE,
-        };
 
         let mut audio_info = AudioInfo::new();
         unsafe {
@@ -126,17 +191,11 @@ impl Audio {
         };
         let mut effective_rate = rate;
         let cooked = 0_i32;
+        let format = Self::negotiate_sample_format(dsp.as_raw_fd(), bits)?;
         unsafe {
             if options.exclusive {
                 oss_set_cooked(dsp.as_raw_fd(), &cooked)
                     .map_err(|_| std::io::Error::last_os_error())?;
-            }
-            oss_set_format(dsp.as_raw_fd(), &mut format)
-                .map_err(|_| std::io::Error::last_os_error())?;
-            if !supported_sample_format(format) {
-                return Err(std::io::Error::other(format!(
-                    "Unsupported OSS sample format after setfmt: {format:#x}"
-                )));
             }
             oss_set_channels(dsp.as_raw_fd(), &mut channels)
                 .map_err(|_| std::io::Error::last_os_error())?;
