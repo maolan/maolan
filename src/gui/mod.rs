@@ -17,14 +17,19 @@ use maolan_engine::{
     kind::Kind,
     message::{Action, Message as EngineMessage},
 };
+use midly::{MetaMessage, Smf, Timing, TrackEventKind};
 use serde_json::{Value, json};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::{
-    fs::File,
+    fs::{self, File},
     io::{self, BufReader},
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
     time::Instant,
+};
+use symphonia::core::{
+    audio::SampleBuffer, codecs::DecoderOptions, errors::Error as SymphoniaError,
+    formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
 };
 use tokio::sync::RwLock;
 use wavers::Wav;
@@ -302,6 +307,269 @@ impl Maolan {
             .read()
             .map_err(|e| io::Error::other(format!("WAV read error '{}': {e}", path.display())))?;
         Ok(samples.len() / channels.max(1))
+    }
+
+    fn file_extension_lower(path: &Path) -> Option<String> {
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.trim_matches('.').to_ascii_lowercase())
+    }
+
+    fn is_import_audio_path(path: &Path) -> bool {
+        matches!(
+            Self::file_extension_lower(path).as_deref(),
+            Some("wav" | "ogg" | "mp3" | "flac")
+        )
+    }
+
+    fn is_import_midi_path(path: &Path) -> bool {
+        matches!(
+            Self::file_extension_lower(path).as_deref(),
+            Some("mid" | "midi")
+        )
+    }
+
+    fn import_track_base_name(path: &Path) -> String {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Track")
+            .trim();
+        let candidate = Self::sanitize_peak_file_component(stem);
+        if candidate.is_empty() {
+            "Track".to_string()
+        } else {
+            candidate
+        }
+    }
+
+    fn unique_track_name(base: &str, used_names: &mut HashSet<String>) -> String {
+        if !used_names.contains(base) {
+            let candidate = base.to_string();
+            used_names.insert(candidate.clone());
+            return candidate;
+        }
+        for n in 2..=9_999 {
+            let candidate = format!("{base}_{n}");
+            if !used_names.contains(&candidate) {
+                used_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
+        let fallback = format!("{base}_import");
+        used_names.insert(fallback.clone());
+        fallback
+    }
+
+    fn unique_import_rel_path(
+        session_root: &Path,
+        subdir: &str,
+        stem: &str,
+        ext: &str,
+    ) -> std::io::Result<String> {
+        fs::create_dir_all(session_root.join(subdir))?;
+        let clean_stem = Self::sanitize_peak_file_component(stem);
+        let clean_ext = ext.trim_matches('.').to_ascii_lowercase();
+        let mut index = 0usize;
+        loop {
+            let file_name = if index == 0 {
+                format!("{clean_stem}.{clean_ext}")
+            } else {
+                format!("{clean_stem}_{index:03}.{clean_ext}")
+            };
+            let rel = format!("{subdir}/{file_name}");
+            if !session_root.join(&rel).exists() {
+                return Ok(rel);
+            }
+            index = index.saturating_add(1);
+        }
+    }
+
+    fn decode_audio_to_f32_interleaved(path: &Path) -> std::io::Result<(Vec<f32>, usize, u32)> {
+        let file = File::open(path)?;
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+        let probed = symphonia::default::get_probe()
+            .format(
+                &hint,
+                mss,
+                &FormatOptions::default(),
+                &MetadataOptions::default(),
+            )
+            .map_err(|e| {
+                io::Error::other(format!(
+                    "Unsupported or unreadable audio '{}': {e}",
+                    path.display()
+                ))
+            })?;
+        let mut format = probed.format;
+        let track = format.default_track().ok_or_else(|| {
+            io::Error::other(format!("No decodable audio track in '{}'", path.display()))
+        })?;
+        let mut decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .map_err(|e| io::Error::other(format!("Failed to decode '{}': {e}", path.display())))?;
+        let mut channels = track
+            .codec_params
+            .channels
+            .map(|c| c.count())
+            .unwrap_or(1usize)
+            .max(1);
+        let mut sample_rate = track.codec_params.sample_rate.unwrap_or(48_000u32);
+        let mut samples = Vec::<f32>::new();
+
+        loop {
+            let packet = match format.next_packet() {
+                Ok(packet) => packet,
+                Err(SymphoniaError::IoError(e))
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    break;
+                }
+                Err(SymphoniaError::ResetRequired) => {
+                    return Err(io::Error::other(format!(
+                        "Decoder reset required for '{}'",
+                        path.display()
+                    )));
+                }
+                Err(e) => {
+                    return Err(io::Error::other(format!(
+                        "Failed reading audio packets '{}': {e}",
+                        path.display()
+                    )));
+                }
+            };
+            let decoded = match decoder.decode(&packet) {
+                Ok(decoded) => decoded,
+                Err(SymphoniaError::DecodeError(_)) => continue,
+                Err(SymphoniaError::ResetRequired) => {
+                    return Err(io::Error::other(format!(
+                        "Decoder reset required for '{}'",
+                        path.display()
+                    )));
+                }
+                Err(e) => {
+                    return Err(io::Error::other(format!(
+                        "Audio decode failed '{}': {e}",
+                        path.display()
+                    )));
+                }
+            };
+            let spec = *decoded.spec();
+            channels = spec.channels.count().max(1);
+            sample_rate = spec.rate;
+            let mut sample_buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+            sample_buffer.copy_interleaved_ref(decoded);
+            samples.extend_from_slice(sample_buffer.samples());
+        }
+
+        if samples.is_empty() {
+            return Err(io::Error::other(format!(
+                "Audio file '{}' contains no samples",
+                path.display()
+            )));
+        }
+        Ok((samples, channels, sample_rate))
+    }
+
+    fn import_audio_to_session_wav(
+        src_path: &Path,
+        session_root: &Path,
+    ) -> std::io::Result<(String, usize, usize)> {
+        let stem = src_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("audio");
+        let rel = Self::unique_import_rel_path(session_root, "audio", stem, "wav")?;
+        let dst = session_root.join(&rel);
+        let (samples, channels, sample_rate) = Self::decode_audio_to_f32_interleaved(src_path)?;
+        wavers::write::<f32, _>(&dst, &samples, sample_rate as i32, channels as u16)
+            .map_err(|e| io::Error::other(format!("Failed to write '{}': {e}", dst.display())))?;
+        let frames = samples.len() / channels.max(1);
+        Ok((rel, channels.max(1), frames.max(1)))
+    }
+
+    fn midi_length_in_samples(path: &Path, sample_rate: f64) -> std::io::Result<usize> {
+        let bytes = fs::read(path)?;
+        let smf = Smf::parse(&bytes).map_err(|e| {
+            io::Error::other(format!("Failed to parse MIDI '{}': {e}", path.display()))
+        })?;
+        let Timing::Metrical(ppq) = smf.header.timing else {
+            return Ok(sample_rate.max(1.0) as usize);
+        };
+        let ppq = u64::from(ppq.as_int().max(1));
+        let mut tempo_changes: Vec<(u64, u32)> = vec![(0, 500_000)];
+        let mut max_tick = 0_u64;
+        for track in &smf.tracks {
+            let mut tick = 0_u64;
+            for event in track {
+                tick = tick.saturating_add(event.delta.as_int() as u64);
+                max_tick = max_tick.max(tick);
+                if let TrackEventKind::Meta(MetaMessage::Tempo(us_per_q)) = event.kind {
+                    tempo_changes.push((tick, us_per_q.as_int()));
+                }
+            }
+        }
+        tempo_changes.sort_by_key(|(tick, _)| *tick);
+        let mut normalized_tempos: Vec<(u64, u32)> = Vec::with_capacity(tempo_changes.len());
+        for (tick, tempo) in tempo_changes {
+            if let Some(last) = normalized_tempos.last_mut()
+                && last.0 == tick
+            {
+                last.1 = tempo;
+            } else {
+                normalized_tempos.push((tick, tempo));
+            }
+        }
+        let ticks_to_samples = |tick: u64| -> usize {
+            let mut total_us: u128 = 0;
+            let mut prev_tick = 0_u64;
+            let mut current_tempo_us = 500_000_u32;
+            for (change_tick, tempo_us) in &normalized_tempos {
+                if *change_tick > tick {
+                    break;
+                }
+                let span = change_tick.saturating_sub(prev_tick);
+                total_us = total_us.saturating_add(
+                    u128::from(span).saturating_mul(u128::from(current_tempo_us)) / u128::from(ppq),
+                );
+                prev_tick = *change_tick;
+                current_tempo_us = *tempo_us;
+            }
+            let rem = tick.saturating_sub(prev_tick);
+            total_us = total_us.saturating_add(
+                u128::from(rem).saturating_mul(u128::from(current_tempo_us)) / u128::from(ppq),
+            );
+            ((total_us as f64 / 1_000_000.0) * sample_rate).round() as usize
+        };
+        Ok(ticks_to_samples(max_tick).max(1))
+    }
+
+    fn import_midi_to_session(
+        src_path: &Path,
+        session_root: &Path,
+        sample_rate: f64,
+    ) -> std::io::Result<(String, usize)> {
+        let stem = src_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("midi");
+        let ext = Self::file_extension_lower(src_path).unwrap_or_else(|| "mid".to_string());
+        let rel = Self::unique_import_rel_path(session_root, "midi", stem, &ext)?;
+        let dst = session_root.join(&rel);
+        fs::create_dir_all(session_root.join("midi"))?;
+        fs::copy(src_path, &dst).map_err(|e| {
+            io::Error::other(format!(
+                "Failed to copy MIDI '{}' to '{}': {e}",
+                src_path.display(),
+                dst.display()
+            ))
+        })?;
+        let length = Self::midi_length_in_samples(&dst, sample_rate)?;
+        Ok((rel, length.max(1)))
     }
 
     fn lv2_node_to_json(

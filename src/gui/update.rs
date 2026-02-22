@@ -11,7 +11,7 @@ use maolan_engine::{
     message::{Action, ClipMoveFrom, ClipMoveTo},
 };
 use rfd::AsyncFileDialog;
-use std::{process::exit, time::Instant};
+use std::{collections::HashSet, process::exit, time::Instant};
 use tracing::error;
 
 impl Maolan {
@@ -1277,9 +1277,7 @@ impl Maolan {
                     _ => {}
                 }
                 let mouse_left_down = self.state.blocking_read().mouse_left_down;
-                if mouse_left_down
-                    && !matches!(resizing, Some(Resizing::Clip { .. }))
-                {
+                if mouse_left_down && !matches!(resizing, Some(Resizing::Clip { .. })) {
                     if let Some(active) = self.clip.as_mut() {
                         active.end = position;
                         return iced_drop::zones_on_point(
@@ -1365,10 +1363,8 @@ impl Maolan {
                                 let cw = (clip.length as f32 * pps).max(12.0);
                                 let cy = inner_top;
                                 let ch = track.height.max(1.0);
-                                let intersects = cx < x + w
-                                    && cx + cw > x
-                                    && cy < y + h
-                                    && cy + ch > y;
+                                let intersects =
+                                    cx < x + w && cx + cw > x && cy < y + h && cy + ch > y;
                                 if intersects {
                                     selected.insert(crate::state::ClipId {
                                         track_idx: track.name.clone(),
@@ -1382,10 +1378,8 @@ impl Maolan {
                                 let cw = (clip.length as f32 * pps).max(12.0);
                                 let cy = inner_top;
                                 let ch = track.height.max(1.0);
-                                let intersects = cx < x + w
-                                    && cx + cw > x
-                                    && cy < y + h
-                                    && cy + ch > y;
+                                let intersects =
+                                    cx < x + w && cx + cw > x && cy < y + h && cy + ch > y;
                                 if intersects {
                                     selected.insert(crate::state::ClipId {
                                         track_idx: track.name.clone(),
@@ -1486,9 +1480,7 @@ impl Maolan {
                         let mut selected_group: Vec<usize> = state
                             .selected_clips
                             .iter()
-                            .filter(|id| {
-                                id.kind == clip.kind && id.track_idx == from_track.name
-                            })
+                            .filter(|id| id.kind == clip.kind && id.track_idx == from_track.name)
                             .map(|id| id.clip_idx)
                             .collect();
                         selected_group.sort_unstable();
@@ -1695,7 +1687,9 @@ impl Maolan {
                     async {
                         let files = AsyncFileDialog::new()
                             .set_title("Import files")
-                            .add_filter("wav", &["wav"])
+                            .add_filter("Audio/MIDI", &["wav", "ogg", "mp3", "flac", "mid", "midi"])
+                            .add_filter("Audio", &["wav", "ogg", "mp3", "flac"])
+                            .add_filter("MIDI", &["mid", "midi"])
                             .pick_files()
                             .await;
                         files.map(|handles| {
@@ -1709,12 +1703,104 @@ impl Maolan {
                 );
             }
             Message::ImportFilesSelected(Some(ref paths)) => {
-                let count = paths.len();
-                self.state.blocking_write().message = if count == 1 {
-                    "Import is not implemented yet (1 file selected)".to_string()
-                } else {
-                    format!("Import is not implemented yet ({count} files selected)")
+                if paths.is_empty() {
+                    self.state.blocking_write().message = "No files selected".to_string();
+                    return Task::none();
+                }
+                let Some(session_root) = self.session_dir.clone() else {
+                    self.state.blocking_write().message =
+                        "Import requires an opened/saved session folder".to_string();
+                    return Task::none();
                 };
+
+                let mut used_track_names: HashSet<String> = self
+                    .state
+                    .blocking_read()
+                    .tracks
+                    .iter()
+                    .map(|track| track.name.clone())
+                    .collect();
+                let mut actions = Vec::new();
+                let mut imported = 0usize;
+                let mut failures: Vec<String> = Vec::new();
+
+                for path in paths {
+                    if Self::is_import_audio_path(path) {
+                        match Self::import_audio_to_session_wav(path, &session_root) {
+                            Ok((clip_rel, channels, length)) => {
+                                let base = Self::import_track_base_name(path);
+                                let track_name =
+                                    Self::unique_track_name(&base, &mut used_track_names);
+                                actions.push(Action::AddTrack {
+                                    name: track_name.clone(),
+                                    audio_ins: channels,
+                                    midi_ins: 0,
+                                    audio_outs: channels,
+                                    midi_outs: 0,
+                                });
+                                actions.push(Action::AddClip {
+                                    name: clip_rel,
+                                    track_name,
+                                    start: 0,
+                                    length,
+                                    offset: 0,
+                                    kind: Kind::Audio,
+                                });
+                                imported = imported.saturating_add(1);
+                            }
+                            Err(e) => failures.push(format!("{} ({e})", path.display())),
+                        }
+                        continue;
+                    }
+                    if Self::is_import_midi_path(path) {
+                        match Self::import_midi_to_session(
+                            path,
+                            &session_root,
+                            self.playback_rate_hz,
+                        ) {
+                            Ok((clip_rel, length)) => {
+                                let base = Self::import_track_base_name(path);
+                                let track_name =
+                                    Self::unique_track_name(&base, &mut used_track_names);
+                                actions.push(Action::AddTrack {
+                                    name: track_name.clone(),
+                                    audio_ins: 0,
+                                    midi_ins: 1,
+                                    audio_outs: 0,
+                                    midi_outs: 1,
+                                });
+                                actions.push(Action::AddClip {
+                                    name: clip_rel,
+                                    track_name,
+                                    start: 0,
+                                    length,
+                                    offset: 0,
+                                    kind: Kind::MIDI,
+                                });
+                                imported = imported.saturating_add(1);
+                            }
+                            Err(e) => failures.push(format!("{} ({e})", path.display())),
+                        }
+                        continue;
+                    }
+                    failures.push(format!("{} (unsupported extension)", path.display()));
+                }
+
+                self.state.blocking_write().message = if failures.is_empty() {
+                    format!("Imported {imported} file(s)")
+                } else {
+                    format!(
+                        "Imported {imported} file(s), failed {} (see logs)",
+                        failures.len()
+                    )
+                };
+                for err in &failures {
+                    error!("Import failed: {err}");
+                }
+                if actions.is_empty() {
+                    return Task::none();
+                }
+                return Self::restore_actions_task(actions);
             }
             Message::Workspace => {
                 self.state.blocking_write().view = View::Workspace;
