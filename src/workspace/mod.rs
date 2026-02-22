@@ -59,6 +59,7 @@ impl Workspace {
         tracks_resize_hovered: bool,
         mixer_resize_hovered: bool,
         active_clip_drag: Option<&DraggedClip>,
+        active_clip_target_track: Option<&str>,
         recording_preview_bounds: Option<(usize, usize)>,
         recording_preview_peaks: Option<HashMap<String, Vec<Vec<f32>>>>,
     ) -> Element<'_, Message> {
@@ -71,6 +72,7 @@ impl Workspace {
                 self.editor.view(
                     pixels_per_sample,
                     active_clip_drag,
+                    active_clip_target_track,
                     recording_preview_bounds,
                     recording_preview_peaks.clone(),
                 ),
@@ -85,6 +87,7 @@ impl Workspace {
             self.editor.view(
                 pixels_per_sample,
                 active_clip_drag,
+                active_clip_target_track,
                 recording_preview_bounds,
                 recording_preview_peaks.clone(),
             )

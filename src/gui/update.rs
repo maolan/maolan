@@ -58,6 +58,11 @@ impl Maolan {
                 {
                     return Task::none();
                 }
+                {
+                    let mut state = self.state.blocking_write();
+                    state.ctrl = false;
+                    state.shift = false;
+                }
                 match show {
                     Show::Save => {
                         if let Some(path) = &self.session_dir {
@@ -743,12 +748,22 @@ impl Maolan {
                 error!("Engine error: {e}");
             }
             Message::SaveFolderSelected(ref path_opt) => {
+                {
+                    let mut state = self.state.blocking_write();
+                    state.ctrl = false;
+                    state.shift = false;
+                }
                 if let Some(path) = path_opt {
                     self.session_dir = Some(path.clone());
                     return self.refresh_graphs_then_save(path.to_string_lossy().to_string());
                 }
             }
             Message::RecordFolderSelected(ref path_opt) => {
+                {
+                    let mut state = self.state.blocking_write();
+                    state.ctrl = false;
+                    state.shift = false;
+                }
                 if let Some(path) = path_opt {
                     self.session_dir = Some(path.clone());
                     self.record_armed = true;
@@ -762,6 +777,11 @@ impl Maolan {
                 }
             }
             Message::OpenFolderSelected(Some(path)) => {
+                {
+                    let mut state = self.state.blocking_write();
+                    state.ctrl = false;
+                    state.shift = false;
+                }
                 self.session_dir = Some(path.clone());
                 self.stop_recording_preview();
                 match self.load(path.to_string_lossy().to_string()) {
@@ -1225,6 +1245,12 @@ impl Maolan {
                     && let Some(active) = self.clip.as_mut()
                 {
                     active.end = position;
+                    return iced_drop::zones_on_point(
+                        Message::HandleClipPreviewZones,
+                        position,
+                        None,
+                        None,
+                    );
                 }
             }
             Message::MouseReleased => {
@@ -1261,6 +1287,7 @@ impl Maolan {
                         None,
                     );
                 }
+                self.clip_preview_target_track = None;
             }
             Message::ClipDrag(ref clip) => {
                 if !self.state.blocking_read().mouse_left_down {
@@ -1352,6 +1379,7 @@ impl Maolan {
                                     copy: clip.copy,
                                 });
                                 self.clip = None;
+                                self.clip_preview_target_track = None;
                                 return task;
                             }
                             Kind::MIDI => {
@@ -1379,13 +1407,49 @@ impl Maolan {
                                     copy: clip.copy,
                                 });
                                 self.clip = None;
+                                self.clip_preview_target_track = None;
                                 return task;
                             }
                         }
                     }
                 }
                 self.clip = None;
+                self.clip_preview_target_track = None;
                 return Task::none();
+            }
+            Message::HandleClipPreviewZones(ref zones) => {
+                if let Some(clip) = &self.clip {
+                    let state = self.state.blocking_read();
+                    let to_track_id = zones.iter().map(|(id, _)| id).find(|id| {
+                        state
+                            .tracks
+                            .iter()
+                            .any(|t| Id::from(t.name.clone()) == **id)
+                    });
+                    let Some(to_track_id) = to_track_id else {
+                        self.clip_preview_target_track = None;
+                        return Task::none();
+                    };
+                    let to_track = state
+                        .tracks
+                        .iter()
+                        .find(|t| Id::from(t.name.clone()) == *to_track_id);
+                    if let Some(to_track) = to_track {
+                        let kind_matches = match clip.kind {
+                            Kind::Audio => to_track.audio.ins > 0 || to_track.audio.outs > 0,
+                            Kind::MIDI => to_track.midi.ins > 0 || to_track.midi.outs > 0,
+                        };
+                        if kind_matches {
+                            self.clip_preview_target_track = Some(to_track.name.clone());
+                        } else {
+                            self.clip_preview_target_track = None;
+                        }
+                    } else {
+                        self.clip_preview_target_track = None;
+                    }
+                } else {
+                    self.clip_preview_target_track = None;
+                }
             }
             Message::TrackDrag(index) => {
                 if self.track.is_none() {

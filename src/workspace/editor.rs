@@ -65,6 +65,7 @@ fn view_track_elements(
     track: Track,
     pixels_per_sample: f32,
     active_clip_drag: Option<&DraggedClip>,
+    active_target_track: Option<&str>,
     recording_preview_bounds: Option<(usize, usize)>,
     recording_preview_peaks: Option<&HashMap<String, Vec<Vec<f32>>>>,
 ) -> Element<'static, Message> {
@@ -81,6 +82,15 @@ fn view_track_elements(
         let clip_peaks = clip.peaks.clone();
         let active_drag = active_clip_drag.filter(|d| {
             d.kind == Kind::Audio && d.track_index == track_name_cloned && d.index == index
+        });
+        let dragged_to_other_track = active_drag.is_some_and(|d| {
+            !d.copy
+                && active_target_track
+                    .is_some_and(|target| target != track_name_cloned.as_str())
+        });
+        let show_preview_in_this_track = active_drag.is_some_and(|d| {
+            active_target_track.is_some_and(|target| target == track_name_cloned.as_str())
+                && (d.copy || d.track_index != track_name_cloned)
         });
         let dragged_start = active_drag
             .filter(|d| !d.copy)
@@ -205,32 +215,34 @@ fn view_track_elements(
                 ..container::Style::default()
             });
 
-        clips.push(
-            pin(
-                mouse_area(clip_widget)
-                    .on_press(Message::SelectClip {
-                        track_idx: track_name_cloned.clone(),
-                        clip_idx: index,
-                        kind: Kind::Audio,
-                    })
-                    .on_move({
-                        let track_name_for_drag_closure = track_name_cloned.clone();
-                        move |point| {
-                            let mut clip_data = DraggedClip::new(
-                                Kind::Audio,
-                                index,
-                                track_name_for_drag_closure.clone(),
-                            );
-                            clip_data.start = point;
-                            Message::ClipDrag(clip_data)
-                        }
-                    }),
-            )
-            .position(Point::new(dragged_start * pixels_per_sample, 0.0))
-            .into(),
-        );
+        if !dragged_to_other_track {
+            clips.push(
+                pin(
+                    mouse_area(clip_widget)
+                        .on_press(Message::SelectClip {
+                            track_idx: track_name_cloned.clone(),
+                            clip_idx: index,
+                            kind: Kind::Audio,
+                        })
+                        .on_move({
+                            let track_name_for_drag_closure = track_name_cloned.clone();
+                            move |point| {
+                                let mut clip_data = DraggedClip::new(
+                                    Kind::Audio,
+                                    index,
+                                    track_name_for_drag_closure.clone(),
+                                );
+                                clip_data.start = point;
+                                Message::ClipDrag(clip_data)
+                            }
+                        }),
+                )
+                .position(Point::new(dragged_start * pixels_per_sample, 0.0))
+                .into(),
+            );
+        }
 
-        if let Some(drag) = active_drag.filter(|d| d.copy) {
+        if let Some(drag) = active_drag.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = (clip.start as f32 + delta_samples).max(0.0);
             let preview_content = container(Stack::with_children(vec![
@@ -288,6 +300,15 @@ fn view_track_elements(
         let clip_name = clip.name.clone();
         let active_drag = active_clip_drag.filter(|d| {
             d.kind == Kind::MIDI && d.track_index == track_name_cloned && d.index == index
+        });
+        let dragged_to_other_track = active_drag.is_some_and(|d| {
+            !d.copy
+                && active_target_track
+                    .is_some_and(|target| target != track_name_cloned.as_str())
+        });
+        let show_preview_in_this_track = active_drag.is_some_and(|d| {
+            active_target_track.is_some_and(|target| target == track_name_cloned.as_str())
+                && (d.copy || d.track_index != track_name_cloned)
         });
         let dragged_start = active_drag
             .filter(|d| !d.copy)
@@ -404,32 +425,34 @@ fn view_track_elements(
                 ..container::Style::default()
             });
 
-        clips.push(
-            pin(
-                mouse_area(clip_widget)
-                    .on_press(Message::SelectClip {
-                        track_idx: track_name_cloned.clone(),
-                        clip_idx: index,
-                        kind: Kind::MIDI,
-                    })
-                    .on_move({
-                        let track_name_for_drag_closure = track_name_cloned.clone();
-                        move |point| {
-                            let mut clip_data = DraggedClip::new(
-                                Kind::MIDI,
-                                index,
-                                track_name_for_drag_closure.clone(),
-                            );
-                            clip_data.start = point;
-                            Message::ClipDrag(clip_data)
-                        }
-                    }),
-            )
-            .position(Point::new(dragged_start * pixels_per_sample, 0.0))
-            .into(),
-        );
+        if !dragged_to_other_track {
+            clips.push(
+                pin(
+                    mouse_area(clip_widget)
+                        .on_press(Message::SelectClip {
+                            track_idx: track_name_cloned.clone(),
+                            clip_idx: index,
+                            kind: Kind::MIDI,
+                        })
+                        .on_move({
+                            let track_name_for_drag_closure = track_name_cloned.clone();
+                            move |point| {
+                                let mut clip_data = DraggedClip::new(
+                                    Kind::MIDI,
+                                    index,
+                                    track_name_for_drag_closure.clone(),
+                                );
+                                clip_data.start = point;
+                                Message::ClipDrag(clip_data)
+                            }
+                        }),
+                )
+                .position(Point::new(dragged_start * pixels_per_sample, 0.0))
+                .into(),
+            );
+        }
 
-        if let Some(drag) = active_drag.filter(|d| d.copy) {
+        if let Some(drag) = active_drag.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = (clip.start as f32 + delta_samples).max(0.0);
             let preview_content = container(container(text(clip_name.clone()).size(12)).padding(5))
@@ -476,6 +499,125 @@ fn view_track_elements(
             );
         }
     }
+
+    // Cross-track preview: render dragged source clip in target lane.
+    if let Some(drag) = active_clip_drag
+        && let Some(target) = active_target_track
+        && target == track_name_cloned.as_str()
+        && drag.track_index != track_name_cloned
+    {
+        let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
+        if let Some(source_track) = state.tracks.iter().find(|t| t.name == drag.track_index) {
+            match drag.kind {
+                Kind::Audio => {
+                    if let Some(source_clip) = source_track.audio.clips.get(drag.index) {
+                        let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
+                        let clip_height = (height - 10.0).max(12.0);
+                        let preview_start = (source_clip.start as f32 + delta_samples).max(0.0);
+                        let preview_content = container(Stack::with_children(vec![
+                            audio_waveform_overlay(&source_clip.peaks, clip_width, clip_height),
+                            container(text(source_clip.name.clone()).size(12))
+                                .width(Length::Fill)
+                                .height(Length::Fill)
+                                .padding(5)
+                                .into(),
+                        ]))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .padding(0)
+                        .style(|_theme| {
+                            use container::Style;
+                            Style {
+                                background: Some(Background::Color(Color {
+                                    r: 0.72,
+                                    g: 0.86,
+                                    b: 1.0,
+                                    a: 0.7,
+                                })),
+                                ..Style::default()
+                            }
+                        });
+                        let preview = container(row![
+                            container("").width(Length::Fixed(5.0)).height(Length::Fill),
+                            preview_content,
+                            container("").width(Length::Fixed(5.0)).height(Length::Fill)
+                        ])
+                        .width(Length::Fixed(clip_width))
+                        .height(Length::Fill)
+                        .style(|_theme| container::Style {
+                            background: None,
+                            border: Border {
+                                color: Color {
+                                    r: 0.98,
+                                    g: 0.98,
+                                    b: 0.98,
+                                    a: 0.9,
+                                },
+                                width: 2.0,
+                                radius: 3.0.into(),
+                            },
+                            ..container::Style::default()
+                        });
+                        clips.push(
+                            pin(preview)
+                                .position(Point::new(preview_start * pixels_per_sample, 0.0))
+                                .into(),
+                        );
+                    }
+                }
+                Kind::MIDI => {
+                    if let Some(source_clip) = source_track.midi.clips.get(drag.index) {
+                        let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
+                        let preview_start = (source_clip.start as f32 + delta_samples).max(0.0);
+                        let preview_content =
+                            container(container(text(source_clip.name.clone()).size(12)).padding(5))
+                                .width(Length::Fill)
+                                .height(Length::Fill)
+                                .padding(0)
+                                .style(|_theme| {
+                                    use container::Style;
+                                    Style {
+                                        background: Some(Background::Color(Color {
+                                            r: 0.82,
+                                            g: 1.0,
+                                            b: 0.84,
+                                            a: 0.7,
+                                        })),
+                                        ..Style::default()
+                                    }
+                                });
+                        let preview = container(row![
+                            container("").width(Length::Fixed(5.0)).height(Length::Fill),
+                            preview_content,
+                            container("").width(Length::Fixed(5.0)).height(Length::Fill)
+                        ])
+                        .width(Length::Fixed(clip_width))
+                        .height(Length::Fill)
+                        .style(|_theme| container::Style {
+                            background: None,
+                            border: Border {
+                                color: Color {
+                                    r: 0.98,
+                                    g: 0.98,
+                                    b: 0.98,
+                                    a: 0.9,
+                                },
+                                width: 2.0,
+                                radius: 3.0.into(),
+                            },
+                            ..container::Style::default()
+                        });
+                        clips.push(
+                            pin(preview)
+                                .position(Point::new(preview_start * pixels_per_sample, 0.0))
+                                .into(),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     if track.armed
         && let Some((preview_start, preview_current)) = recording_preview_bounds
         && preview_current > preview_start
@@ -576,6 +718,7 @@ impl Editor {
         &self,
         pixels_per_sample: f32,
         active_clip_drag: Option<&DraggedClip>,
+        active_target_track: Option<&str>,
         recording_preview_bounds: Option<(usize, usize)>,
         recording_preview_peaks: Option<HashMap<String, Vec<Vec<f32>>>>,
     ) -> Element<'_, Message> {
@@ -587,6 +730,7 @@ impl Editor {
                 track.clone(),
                 pixels_per_sample,
                 active_clip_drag,
+                active_target_track,
                 recording_preview_bounds,
                 recording_preview_peaks.as_ref(),
             ));

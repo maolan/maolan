@@ -85,6 +85,7 @@ pub enum Message {
 
     ClipDrag(DraggedClip),
     HandleClipZones(Vec<(Id, Rectangle)>),
+    HandleClipPreviewZones(Vec<(Id, Rectangle)>),
 
     TrackDrag(usize),
     TrackDropped(Point, Rectangle),

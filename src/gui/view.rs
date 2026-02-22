@@ -25,6 +25,7 @@ impl Maolan {
                             self.tracks_resize_hovered,
                             self.mixer_resize_hovered,
                             self.clip.as_ref(),
+                            self.clip_preview_target_track.as_deref(),
                             self.recording_preview_bounds(),
                             Some(self.recording_preview_peaks.clone()),
                         ),
