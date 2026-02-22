@@ -1,5 +1,5 @@
-use crate::midi::io::MidiEvent;
 use crate::audio::io::AudioIO;
+use crate::message::HwMidiEvent;
 use std::sync::Arc;
 
 pub trait HwWorkerDriver {
@@ -10,8 +10,8 @@ pub trait HwWorkerDriver {
 }
 
 pub trait HwMidiHub {
-    fn read_events_into(&mut self, out: &mut Vec<MidiEvent>);
-    fn write_events(&mut self, events: &[MidiEvent]);
+    fn read_events_into(&mut self, out: &mut Vec<HwMidiEvent>);
+    fn write_events(&mut self, events: &[HwMidiEvent]);
 }
 
 #[allow(dead_code)]
@@ -103,11 +103,11 @@ macro_rules! impl_hw_device_for_driver {
 macro_rules! impl_hw_midi_hub_traits {
     ($hub:ty) => {
         impl crate::hw::traits::HwMidiHub for $hub {
-            fn read_events_into(&mut self, out: &mut Vec<crate::midi::io::MidiEvent>) {
+            fn read_events_into(&mut self, out: &mut Vec<crate::message::HwMidiEvent>) {
                 <$hub>::read_events_into(self, out);
             }
 
-            fn write_events(&mut self, events: &[crate::midi::io::MidiEvent]) {
+            fn write_events(&mut self, events: &[crate::message::HwMidiEvent]) {
                 <$hub>::write_events(self, events);
             }
         }

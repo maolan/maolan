@@ -772,6 +772,16 @@ impl Track {
         input.lock().buffer.extend_from_slice(events);
     }
 
+    pub fn push_hw_midi_events_to_port(&mut self, port: usize, events: &[MidiEvent]) {
+        let Some(input) = self.midi.ins.get(port) else {
+            return;
+        };
+        if events.is_empty() {
+            return;
+        }
+        input.lock().buffer.extend_from_slice(events);
+    }
+
     fn collect_track_input_midi_events(&mut self) -> Vec<Vec<MidiEvent>> {
         let events: Vec<Vec<MidiEvent>> = self
             .midi

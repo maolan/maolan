@@ -41,7 +41,9 @@ impl Graph {
             } => {
                 if track_idx == HW_IN_ID || track_idx == HW_OUT_ID {
                     Some(Kind::Audio)
-                } else if track_idx == MIDI_HW_IN_ID || track_idx == MIDI_HW_OUT_ID {
+                } else if track_idx.starts_with(MIDI_HW_IN_ID)
+                    || track_idx.starts_with(MIDI_HW_OUT_ID)
+                {
                     Some(Kind::MIDI)
                 } else {
                     data.tracks.iter().find(|t| t.name == *track_idx).map(|t| {
@@ -117,6 +119,42 @@ impl Graph {
             iced::Size::new(box_w, box_h),
         )
     }
+
+    fn midi_hw_in_port_pos(
+        data: &StateData,
+        device: &str,
+        index: usize,
+        box_h: f32,
+        gap: f32,
+    ) -> Point {
+        let label = Self::midi_device_label(data, device);
+        let default_rect = Self::default_midi_in_rect(index, &label, box_h, gap);
+        let pos = data
+            .midi_hw_in_positions
+            .get(device)
+            .copied()
+            .unwrap_or(Point::new(default_rect.x, default_rect.y));
+        Point::new(pos.x + default_rect.width, pos.y + default_rect.height / 2.0)
+    }
+
+    fn midi_hw_out_port_pos(
+        data: &StateData,
+        device: &str,
+        index: usize,
+        bounds: Rectangle,
+        hw_width: f32,
+        box_h: f32,
+        gap: f32,
+    ) -> Point {
+        let label = Self::midi_device_label(data, device);
+        let default_rect = Self::default_midi_out_rect(index, &label, bounds, hw_width, box_h, gap);
+        let pos = data
+            .midi_hw_out_positions
+            .get(device)
+            .copied()
+            .unwrap_or(Point::new(default_rect.x, default_rect.y));
+        Point::new(pos.x, pos.y + default_rect.height / 2.0)
+    }
 }
 
 impl canvas::Program<Message> for Graph {
@@ -185,6 +223,23 @@ impl canvas::Program<Message> for Graph {
                         let label = Self::midi_device_label(&data, device);
                         let default_rect =
                             Self::default_midi_in_rect(idx, &label, midi_hw_box_h, midi_hw_box_gap);
+                        let port_pos = Self::midi_hw_in_port_pos(
+                            &data,
+                            device,
+                            idx,
+                            midi_hw_box_h,
+                            midi_hw_box_gap,
+                        );
+                        if cursor_position.distance(port_pos) < 10.0 {
+                            data.connecting = Some(Connecting {
+                                from_track: format!("{MIDI_HW_IN_ID}:{device}"),
+                                from_port: 0,
+                                kind: Kind::MIDI,
+                                point: cursor_position,
+                                is_input: false,
+                            });
+                            return Some(Action::capture());
+                        }
                         let pos = data
                             .midi_hw_in_positions
                             .get(device)
@@ -214,6 +269,25 @@ impl canvas::Program<Message> for Graph {
                             midi_hw_box_h,
                             midi_hw_box_gap,
                         );
+                        let port_pos = Self::midi_hw_out_port_pos(
+                            &data,
+                            device,
+                            idx,
+                            bounds,
+                            hw_width,
+                            midi_hw_box_h,
+                            midi_hw_box_gap,
+                        );
+                        if cursor_position.distance(port_pos) < 10.0 {
+                            data.connecting = Some(Connecting {
+                                from_track: format!("{MIDI_HW_OUT_ID}:{device}"),
+                                from_port: 0,
+                                kind: Kind::MIDI,
+                                point: cursor_position,
+                                is_input: true,
+                            });
+                            return Some(Action::capture());
+                        }
                         let pos = data
                             .midi_hw_out_positions
                             .get(device)
@@ -329,6 +403,21 @@ impl canvas::Program<Message> for Graph {
                                         * (conn.from_port + 1) as f32;
                                 Point::new(hw_width, py)
                             })
+                        } else if let Some(device) =
+                            conn.from_track.strip_prefix(&format!("{MIDI_HW_IN_ID}:"))
+                        {
+                            data.opened_midi_in_hw
+                                .iter()
+                                .position(|d| d == device)
+                                .map(|idx| {
+                                    Self::midi_hw_in_port_pos(
+                                        &data,
+                                        device,
+                                        idx,
+                                        midi_hw_box_h,
+                                        midi_hw_box_gap,
+                                    )
+                                })
                         } else {
                             start_track_option.map(|t| {
                                 let total_outs = t.audio.outs + t.midi.outs;
@@ -352,6 +441,23 @@ impl canvas::Program<Message> for Graph {
                                         * (conn.to_port + 1) as f32;
                                 Point::new(bounds.width - hw_width, py)
                             })
+                        } else if let Some(device) =
+                            conn.to_track.strip_prefix(&format!("{MIDI_HW_OUT_ID}:"))
+                        {
+                            data.opened_midi_out_hw
+                                .iter()
+                                .position(|d| d == device)
+                                .map(|idx| {
+                                    Self::midi_hw_out_port_pos(
+                                        &data,
+                                        device,
+                                        idx,
+                                        bounds,
+                                        hw_width,
+                                        midi_hw_box_h,
+                                        midi_hw_box_gap,
+                                    )
+                                })
                         } else {
                             end_track_option.map(|t| {
                                 let total_ins = t.audio.ins + t.midi.ins;
@@ -424,6 +530,22 @@ impl canvas::Program<Message> for Graph {
                                     }
                                 }
                             }
+
+                            if kind == Kind::MIDI && target_port.is_none() {
+                                for (idx, device) in data.opened_midi_in_hw.iter().enumerate() {
+                                    let port_pos = Self::midi_hw_in_port_pos(
+                                        &data,
+                                        device,
+                                        idx,
+                                        midi_hw_box_h,
+                                        midi_hw_box_gap,
+                                    );
+                                    if cursor_position.distance(port_pos) < 10.0 {
+                                        target_port = Some((format!("{MIDI_HW_IN_ID}:{device}"), 0));
+                                        break;
+                                    }
+                                }
+                            }
                         } else {
                             for track in data.tracks.iter() {
                                 let total_ins = track.audio.ins + track.midi.ins;
@@ -458,14 +580,36 @@ impl canvas::Program<Message> for Graph {
                                     }
                                 }
                             }
+
+                            if kind == Kind::MIDI && target_port.is_none() {
+                                for (idx, device) in data.opened_midi_out_hw.iter().enumerate() {
+                                    let port_pos = Self::midi_hw_out_port_pos(
+                                        &data,
+                                        device,
+                                        idx,
+                                        bounds,
+                                        hw_width,
+                                        midi_hw_box_h,
+                                        midi_hw_box_gap,
+                                    );
+                                    if cursor_position.distance(port_pos) < 10.0 {
+                                        target_port = Some((format!("{MIDI_HW_OUT_ID}:{device}"), 0));
+                                        break;
+                                    }
+                                }
+                            }
                         }
 
                         if let Some((to_t_name, to_p)) = target_port {
                             let target_track_option =
                                 data.tracks.iter().find(|t| t.name == to_t_name);
 
+                            let is_target_midi_hw = to_t_name.starts_with(MIDI_HW_IN_ID)
+                                || to_t_name.starts_with(MIDI_HW_OUT_ID);
                             let target_kind = if to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID {
                                 Kind::Audio
+                            } else if is_target_midi_hw {
+                                Kind::MIDI
                             } else {
                                 target_track_option
                                     .map(|t| {
@@ -485,7 +629,10 @@ impl canvas::Program<Message> for Graph {
                             };
 
                             if can_connect_kinds(kind, target_kind) {
-                                let f_p_idx = if from_t == HW_IN_ID || from_t == HW_OUT_ID {
+                                let is_source_hw_audio = from_t == HW_IN_ID || from_t == HW_OUT_ID;
+                                let is_source_midi_hw = from_t.starts_with(MIDI_HW_IN_ID)
+                                    || from_t.starts_with(MIDI_HW_OUT_ID);
+                                let f_p_idx = if is_source_hw_audio || is_source_midi_hw {
                                     from_p
                                 } else {
                                     let t = data.tracks.iter().find(|t| t.name == from_t).unwrap();
@@ -496,7 +643,8 @@ impl canvas::Program<Message> for Graph {
                                     }
                                 };
 
-                                let t_p_idx = if to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID {
+                                let t_p_idx =
+                                    if to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID || is_target_midi_hw {
                                     to_p
                                 } else {
                                     let t = target_track_option.unwrap();
@@ -563,6 +711,48 @@ impl canvas::Program<Message> for Graph {
                                 new_h = Some(Hovering::Port {
                                     track_idx: HW_OUT_ID.to_string(),
                                     port_idx: j,
+                                    is_input: true,
+                                });
+                                break;
+                            }
+                        }
+                    }
+
+                    if new_h.is_none() {
+                        for (idx, device) in data.opened_midi_in_hw.iter().enumerate() {
+                            let port_pos = Self::midi_hw_in_port_pos(
+                                &data,
+                                device,
+                                idx,
+                                midi_hw_box_h,
+                                midi_hw_box_gap,
+                            );
+                            if cursor_position.distance(port_pos) < 10.0 {
+                                new_h = Some(Hovering::Port {
+                                    track_idx: format!("{MIDI_HW_IN_ID}:{device}"),
+                                    port_idx: 0,
+                                    is_input: false,
+                                });
+                                break;
+                            }
+                        }
+                    }
+
+                    if new_h.is_none() {
+                        for (idx, device) in data.opened_midi_out_hw.iter().enumerate() {
+                            let port_pos = Self::midi_hw_out_port_pos(
+                                &data,
+                                device,
+                                idx,
+                                bounds,
+                                hw_width,
+                                midi_hw_box_h,
+                                midi_hw_box_gap,
+                            );
+                            if cursor_position.distance(port_pos) < 10.0 {
+                                new_h = Some(Hovering::Port {
+                                    track_idx: format!("{MIDI_HW_OUT_ID}:{device}"),
+                                    port_idx: 0,
                                     is_input: true,
                                 });
                                 break;
@@ -697,6 +887,20 @@ impl canvas::Program<Message> for Graph {
                                 * (conn.from_port + 1) as f32;
                         Point::new(hw_width, py)
                     })
+                } else if let Some(device) = conn.from_track.strip_prefix(&format!("{MIDI_HW_IN_ID}:"))
+                {
+                    data.opened_midi_in_hw
+                        .iter()
+                        .position(|d| d == device)
+                        .map(|idx| {
+                            Self::midi_hw_in_port_pos(
+                                &data,
+                                device,
+                                idx,
+                                midi_hw_box_h,
+                                midi_hw_box_gap,
+                            )
+                        })
                 } else {
                     start_track_option.map(|t| {
                         let port_idx =
@@ -715,6 +919,22 @@ impl canvas::Program<Message> for Graph {
                                 * (conn.to_port + 1) as f32;
                         Point::new(bounds.width - hw_width, py)
                     })
+                } else if let Some(device) = conn.to_track.strip_prefix(&format!("{MIDI_HW_OUT_ID}:"))
+                {
+                    data.opened_midi_out_hw
+                        .iter()
+                        .position(|d| d == device)
+                        .map(|idx| {
+                            Self::midi_hw_out_port_pos(
+                                &data,
+                                device,
+                                idx,
+                                bounds,
+                                hw_width,
+                                midi_hw_box_h,
+                                midi_hw_box_gap,
+                            )
+                        })
                 } else {
                     end_track_option.map(|t| {
                         let port_idx =
@@ -781,6 +1001,38 @@ impl canvas::Program<Message> for Graph {
                                 * (conn.from_port + 1) as f32;
                         Point::new(bounds.width - hw_width, py)
                     })
+                } else if let Some(device) =
+                    conn.from_track.strip_prefix(&format!("{MIDI_HW_IN_ID}:"))
+                {
+                    data.opened_midi_in_hw
+                        .iter()
+                        .position(|d| d == device)
+                        .map(|idx| {
+                            Self::midi_hw_in_port_pos(
+                                &data,
+                                device,
+                                idx,
+                                midi_hw_box_h,
+                                midi_hw_box_gap,
+                            )
+                        })
+                } else if let Some(device) =
+                    conn.from_track.strip_prefix(&format!("{MIDI_HW_OUT_ID}:"))
+                {
+                    data.opened_midi_out_hw
+                        .iter()
+                        .position(|d| d == device)
+                        .map(|idx| {
+                            Self::midi_hw_out_port_pos(
+                                &data,
+                                device,
+                                idx,
+                                bounds,
+                                hw_width,
+                                midi_hw_box_h,
+                                midi_hw_box_gap,
+                            )
+                        })
                 } else {
                     start_track_option.map(|t| {
                         if conn.is_input {
@@ -982,7 +1234,19 @@ impl canvas::Program<Message> for Graph {
                             pos.x + default_rect.width,
                             pos.y + default_rect.height / 2.0,
                         ),
-                        5.0,
+                        hover_radius(
+                            5.0,
+                            should_highlight_port(
+                                data.hovering
+                                    == Some(Hovering::Port {
+                                        track_idx: selected_id.clone(),
+                                        port_idx: 0,
+                                        is_input: false,
+                                    }),
+                                data.connecting.as_ref().map(|c| c.kind),
+                                Kind::MIDI,
+                            ),
+                        ),
                     ),
                     midi_port_color(),
                 );
@@ -1042,7 +1306,22 @@ impl canvas::Program<Message> for Graph {
                     ..Default::default()
                 });
                 frame.fill(
-                    &Path::circle(Point::new(pos.x, pos.y + default_rect.height / 2.0), 5.0),
+                    &Path::circle(
+                        Point::new(pos.x, pos.y + default_rect.height / 2.0),
+                        hover_radius(
+                            5.0,
+                            should_highlight_port(
+                                data.hovering
+                                    == Some(Hovering::Port {
+                                        track_idx: selected_id.clone(),
+                                        port_idx: 0,
+                                        is_input: true,
+                                    }),
+                                data.connecting.as_ref().map(|c| c.kind),
+                                Kind::MIDI,
+                            ),
+                        ),
+                    ),
                     midi_port_color(),
                 );
             }

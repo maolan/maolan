@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::midi::io::MidiEvent;
+use crate::message::HwMidiEvent;
 use nix::libc;
 use std::{
     fs::File,
@@ -46,20 +47,20 @@ impl MidiHub {
         Ok(())
     }
 
-    pub fn read_events(&mut self) -> Vec<MidiEvent> {
+    pub fn read_events(&mut self) -> Vec<HwMidiEvent> {
         let mut events = Vec::with_capacity(32);
         self.read_events_into(&mut events);
         events
     }
 
-    pub fn read_events_into(&mut self, out: &mut Vec<MidiEvent>) {
+    pub fn read_events_into(&mut self, out: &mut Vec<HwMidiEvent>) {
         out.clear();
         for input in &mut self.inputs {
             input.read_events_into(out);
         }
     }
 
-    pub fn write_events(&mut self, events: &[MidiEvent]) {
+    pub fn write_events(&mut self, events: &[HwMidiEvent]) {
         if events.is_empty() {
             return;
         }
@@ -87,12 +88,16 @@ impl MidiOutputDevice {
         Self { path, file }
     }
 
-    fn write_events(&mut self, events: &[MidiEvent]) {
+    fn write_events(&mut self, events: &[HwMidiEvent]) {
         for event in events {
-            if event.data.is_empty() {
+            if event.device != self.path {
                 continue;
             }
-            if let Err(err) = self.file.write_all(&event.data) {
+            let midi_event = &event.event;
+            if midi_event.data.is_empty() {
+                continue;
+            }
+            if let Err(err) = self.file.write_all(&midi_event.data) {
                 if err.kind() != ErrorKind::WouldBlock {
                     error!("MIDI write error on {}: {}", self.path, err);
                 }
@@ -111,7 +116,7 @@ impl MidiInputDevice {
         }
     }
 
-    fn read_events_into(&mut self, out: &mut Vec<MidiEvent>) {
+    fn read_events_into(&mut self, out: &mut Vec<HwMidiEvent>) {
         let mut buf = [0_u8; 256];
         loop {
             match self.file.read(&mut buf) {
@@ -119,7 +124,10 @@ impl MidiInputDevice {
                 Ok(read) => {
                     for byte in &buf[..read] {
                         if let Some(data) = self.parser.feed(*byte) {
-                            out.push(MidiEvent::new(0, data));
+                            out.push(HwMidiEvent {
+                                device: self.path.clone(),
+                                event: MidiEvent::new(0, data),
+                            });
                         }
                     }
                 }

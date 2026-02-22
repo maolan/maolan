@@ -4,7 +4,7 @@ use midly::{
     num::{u15, u24, u28},
 };
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     fs::File,
     fs::read_dir,
     path::{Path, PathBuf},
@@ -22,7 +22,7 @@ use crate::{
     hw::{config, traits::HwDevice},
     hw::jack::JackRuntime,
     kind::Kind,
-    message::{Action, Message},
+    message::{Action, HwMidiEvent, Message},
     midi::clip::MIDIClip,
     midi::io::MidiEvent,
     mutex::UnsafeMutex,
@@ -70,6 +70,20 @@ struct MidiRecordingSession {
     file_name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct MidiHwInRoute {
+    device: String,
+    to_track: String,
+    to_port: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct MidiHwOutRoute {
+    from_track: String,
+    from_port: usize,
+    device: String,
+}
+
 pub struct Engine {
     clients: Vec<Sender<Message>>,
     rx: Receiver<Message>,
@@ -81,7 +95,11 @@ pub struct Engine {
     midi_hub: Arc<UnsafeMutex<MidiHub>>,
     hw_worker: Option<WorkerData>,
     pending_hw_midi_events: Vec<MidiEvent>,
+    pending_hw_midi_events_by_device: HashMap<String, Vec<MidiEvent>>,
     pending_hw_midi_out_events: Vec<MidiEvent>,
+    pending_hw_midi_out_events_by_device: Vec<HwMidiEvent>,
+    midi_hw_in_routes: Vec<MidiHwInRoute>,
+    midi_hw_out_routes: Vec<MidiHwOutRoute>,
     ready_workers: Vec<usize>,
     pending_requests: VecDeque<Action>,
     awaiting_hwfinished: bool,
@@ -177,7 +195,11 @@ impl Engine {
             midi_hub: Arc::new(UnsafeMutex::new(MidiHub::default())),
             hw_worker: None,
             pending_hw_midi_events: vec![],
+            pending_hw_midi_events_by_device: HashMap::new(),
             pending_hw_midi_out_events: vec![],
+            pending_hw_midi_out_events_by_device: vec![],
+            midi_hw_in_routes: vec![],
+            midi_hw_out_routes: vec![],
             ready_workers: vec![],
             pending_requests: VecDeque::new(),
             awaiting_hwfinished: false,
@@ -264,6 +286,14 @@ impl Engine {
                     .as_ref()
                     .and_then(|j| j.lock().audio_outs.get(to_port).cloned())
             })
+    }
+
+    fn midi_hw_in_device(track: &str) -> Option<&str> {
+        track.strip_prefix("midi:hw:in:")
+    }
+
+    fn midi_hw_out_device(track: &str) -> Option<&str> {
+        track.strip_prefix("midi:hw:out:")
     }
 
     fn apply_mute_solo_policy(&self) {
@@ -594,8 +624,8 @@ impl Engine {
         }
         self.apply_hw_out_gain_and_meter().await;
         if let Some(worker) = &self.hw_worker {
-            if !self.pending_hw_midi_out_events.is_empty() {
-                let out_events = std::mem::take(&mut self.pending_hw_midi_out_events);
+            if !self.pending_hw_midi_out_events_by_device.is_empty() {
+                let out_events = std::mem::take(&mut self.pending_hw_midi_out_events_by_device);
                 if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(out_events)).await {
                     error!("Error sending HWMidiOutEvents {e}");
                 }
@@ -923,6 +953,8 @@ impl Engine {
                 self.state.lock().tracks.remove(name);
                 self.audio_recordings.remove(name);
                 self.midi_recordings.remove(name);
+                self.midi_hw_in_routes.retain(|r| r.to_track != *name);
+                self.midi_hw_out_routes.retain(|r| r.from_track != *name);
             }
             Action::TrackLevel(ref name, level) => {
                 if name == "hw:out" {
@@ -1332,14 +1364,23 @@ impl Engine {
                         }
                     }
                     Kind::MIDI => {
-                        if from_track == "hw:in" || to_track == "hw:out" {
+                        let from_hw_in_device = Self::midi_hw_in_device(from_track);
+                        let to_hw_out_device = Self::midi_hw_out_device(to_track);
+                        let from_is_invalid_hw = Self::midi_hw_out_device(from_track).is_some();
+                        let to_is_invalid_hw = Self::midi_hw_in_device(to_track).is_some();
+
+                        if from_is_invalid_hw || to_is_invalid_hw {
                             self.notify_clients(Err(
-                                "Hardware MIDI connections are not supported!".into(),
+                                "Invalid MIDI hardware connection direction".to_string(),
                             ))
                             .await;
                             return;
                         }
-                        if self.check_if_leads_to_kind(Kind::MIDI, to_track, from_track) {
+
+                        if from_hw_in_device.is_none()
+                            && to_hw_out_device.is_none()
+                            && self.check_if_leads_to_kind(Kind::MIDI, to_track, from_track)
+                        {
                             self.notify_clients(Err("Circular routing is not allowed!".into()))
                                 .await;
                             return;
@@ -1349,27 +1390,85 @@ impl Engine {
                         let from_track_handle = state.tracks.get(from_track);
                         let to_track_handle = state.tracks.get(to_track);
 
-                        match (from_track_handle, to_track_handle) {
-                            (Some(f_t), Some(t_t)) => {
-                                let to_in_res = t_t.lock().midi.ins.get(to_port).cloned();
-                                if let Some(to_in) = to_in_res {
-                                    if let Err(e) = f_t.lock().midi.connect_out(from_port, to_in) {
-                                        self.notify_clients(Err(e)).await;
-                                    }
-                                } else {
+                        if let Some(device) = from_hw_in_device {
+                            if let Some(t_t) = to_track_handle {
+                                if t_t.lock().midi.ins.get(to_port).is_none() {
                                     self.notify_clients(Err(format!(
-                                        "MIDI input port {} not found on track '{}',",
+                                        "MIDI input port {} not found on track '{}'",
                                         to_port, to_track
                                     )))
                                     .await;
+                                    return;
                                 }
-                            }
-                            _ => {
+                                let route = MidiHwInRoute {
+                                    device: device.to_string(),
+                                    to_track: to_track.to_string(),
+                                    to_port,
+                                };
+                                if !self.midi_hw_in_routes.iter().any(|r| r == &route) {
+                                    self.midi_hw_in_routes.push(route);
+                                }
+                            } else {
                                 self.notify_clients(Err(format!(
-                                    "MIDI tracks not found: {} or {}",
-                                    from_track, to_track
+                                    "MIDI destination track not found: {}",
+                                    to_track
                                 )))
                                 .await;
+                                return;
+                            }
+                        } else if let Some(device) = to_hw_out_device {
+                            if let Some(f_t) = from_track_handle {
+                                if f_t.lock().midi.outs.get(from_port).is_none() {
+                                    self.notify_clients(Err(format!(
+                                        "MIDI output port {} not found on track '{}'",
+                                        from_port, from_track
+                                    )))
+                                    .await;
+                                    return;
+                                }
+                                let route = MidiHwOutRoute {
+                                    from_track: from_track.to_string(),
+                                    from_port,
+                                    device: device.to_string(),
+                                };
+                                if !self.midi_hw_out_routes.iter().any(|r| r == &route) {
+                                    self.midi_hw_out_routes.push(route);
+                                }
+                            } else {
+                                self.notify_clients(Err(format!(
+                                    "MIDI source track not found: {}",
+                                    from_track
+                                )))
+                                .await;
+                                return;
+                            }
+                        } else {
+                            match (from_track_handle, to_track_handle) {
+                                (Some(f_t), Some(t_t)) => {
+                                    let to_in_res = t_t.lock().midi.ins.get(to_port).cloned();
+                                    if let Some(to_in) = to_in_res {
+                                        if let Err(e) = f_t.lock().midi.connect_out(from_port, to_in)
+                                        {
+                                            self.notify_clients(Err(e)).await;
+                                            return;
+                                        }
+                                    } else {
+                                        self.notify_clients(Err(format!(
+                                            "MIDI input port {} not found on track '{}'",
+                                            to_port, to_track
+                                        )))
+                                        .await;
+                                        return;
+                                    }
+                                }
+                                _ => {
+                                    self.notify_clients(Err(format!(
+                                        "MIDI tracks not found: {} or {}",
+                                        from_track, to_track
+                                    )))
+                                    .await;
+                                    return;
+                                }
                             }
                         }
                     }
@@ -1419,7 +1518,48 @@ impl Engine {
                             .await;
                         }
                     }
-                } else if kind == Kind::MIDI && from_track != "hw:in" && to_track != "hw:out" {
+                } else if kind == Kind::MIDI {
+                    let from_hw_in_device = Self::midi_hw_in_device(from_track);
+                    let to_hw_out_device = Self::midi_hw_out_device(to_track);
+
+                    if let Some(device) = from_hw_in_device {
+                        let before = self.midi_hw_in_routes.len();
+                        self.midi_hw_in_routes.retain(|r| {
+                            !(r.device == device
+                                && r.to_track == *to_track
+                                && r.to_port == to_port)
+                        });
+                        if self.midi_hw_in_routes.len() < before {
+                            self.notify_clients(Ok(a.clone())).await;
+                        } else {
+                            self.notify_clients(Err(format!(
+                                "Disconnect failed: MIDI route not found ({} -> {})",
+                                from_track, to_track
+                            )))
+                            .await;
+                        }
+                        return;
+                    }
+
+                    if let Some(device) = to_hw_out_device {
+                        let before = self.midi_hw_out_routes.len();
+                        self.midi_hw_out_routes.retain(|r| {
+                            !(r.from_track == *from_track
+                                && r.from_port == from_port
+                                && r.device == device)
+                        });
+                        if self.midi_hw_out_routes.len() < before {
+                            self.notify_clients(Ok(a.clone())).await;
+                        } else {
+                            self.notify_clients(Err(format!(
+                                "Disconnect failed: MIDI route not found ({} -> {})",
+                                from_track, to_track
+                            )))
+                            .await;
+                        }
+                        return;
+                    }
+
                     let state = self.state.lock();
                     if let (Some(f_t), Some(t_t)) =
                         (state.tracks.get(from_track), state.tracks.get(to_track))
@@ -1430,6 +1570,12 @@ impl Engine {
                         } else {
                             self.notify_clients(Ok(a.clone())).await;
                         }
+                    } else {
+                        self.notify_clients(Err(format!(
+                            "Disconnect failed: MIDI ports not found ({} -> {})",
+                            from_track, to_track
+                        )))
+                        .await;
                     }
                 }
             }
@@ -1601,7 +1747,12 @@ impl Engine {
                     self.ready_workers.push(workid);
                     let all_finished = self.send_tracks().await;
                     if all_finished {
-                        self.pending_hw_midi_out_events = self.collect_hw_midi_output_events();
+                        if self.hw_worker.is_some() {
+                            self.pending_hw_midi_out_events_by_device =
+                                self.collect_hw_midi_output_events_by_device();
+                        } else {
+                            self.pending_hw_midi_out_events = self.collect_hw_midi_output_events();
+                        }
                         self.request_hw_cycle().await;
                     }
                 }
@@ -1647,16 +1798,26 @@ impl Engine {
                     }
                     self.apply_mute_solo_policy();
                     self.append_recorded_cycle();
-                    for track in self.state.lock().tracks.values() {
-                        if !self.pending_hw_midi_events.is_empty() {
-                            track
-                                .lock()
-                                .push_hw_midi_events(&self.pending_hw_midi_events);
+                    let hw_in_routes = self.midi_hw_in_routes.clone();
+                    let pending_hw_in_by_device = self.pending_hw_midi_events_by_device.clone();
+                    for (track_name, track) in self.state.lock().tracks.iter() {
+                        let track_lock = track.lock();
+                        if self.jack_runtime.is_some() {
+                            if !self.pending_hw_midi_events.is_empty() {
+                                track_lock.push_hw_midi_events(&self.pending_hw_midi_events);
+                            }
+                        } else {
+                            for route in hw_in_routes.iter().filter(|r| &r.to_track == track_name) {
+                                if let Some(events) = pending_hw_in_by_device.get(&route.device) {
+                                    track_lock.push_hw_midi_events_to_port(route.to_port, events);
+                                }
+                            }
                         }
-                        track.lock().setup();
+                        track_lock.setup();
                     }
                     self.publish_track_meters().await;
                     self.pending_hw_midi_events.clear();
+                    self.pending_hw_midi_events_by_device.clear();
                     if self.playing {
                         self.transport_sample = self
                             .transport_sample
@@ -1670,7 +1831,12 @@ impl Engine {
                     }
                 }
                 Message::HWMidiEvents(events) => {
-                    self.pending_hw_midi_events.extend(events);
+                    for hw_event in events {
+                        self.pending_hw_midi_events_by_device
+                            .entry(hw_event.device)
+                            .or_default()
+                            .push(hw_event.event);
+                    }
                 }
                 _ => {}
             }
@@ -1683,6 +1849,35 @@ impl Engine {
             events.extend(track.lock().take_hw_midi_out_events());
         }
         events.sort_by(|a, b| a.frame.cmp(&b.frame));
+        events
+    }
+
+    fn collect_hw_midi_output_events_by_device(&self) -> Vec<HwMidiEvent> {
+        let mut events = Vec::<HwMidiEvent>::new();
+        let routes = self.midi_hw_out_routes.clone();
+        let state = self.state.lock();
+        for route in routes {
+            let Some(track) = state.tracks.get(&route.from_track) else {
+                continue;
+            };
+            let track_lock = track.lock();
+            let Some(out_port) = track_lock.midi.outs.get(route.from_port) else {
+                continue;
+            };
+            let port_events = out_port.lock().buffer.clone();
+            for event in port_events {
+                events.push(HwMidiEvent {
+                    device: route.device.clone(),
+                    event,
+                });
+            }
+        }
+        events.sort_by(|a, b| {
+            a.event
+                .frame
+                .cmp(&b.event.frame)
+                .then_with(|| a.device.cmp(&b.device))
+        });
         events
     }
 }

@@ -1,8 +1,7 @@
 use crate::{
     hw::config,
     hw::traits::{HwMidiHub, HwWorkerDriver},
-    message::Message,
-    midi::io::MidiEvent,
+    message::{HwMidiEvent, Message},
     mutex::UnsafeMutex,
 };
 use nix::libc;
@@ -31,8 +30,8 @@ pub struct HwWorker<B: Backend> {
     rx: Receiver<Message>,
     tx: Sender<Message>,
     cycle_frames: u32,
-    pending_midi_out_events: Vec<MidiEvent>,
-    midi_in_events: Vec<MidiEvent>,
+    pending_midi_out_events: Vec<HwMidiEvent>,
+    midi_in_events: Vec<HwMidiEvent>,
     pending_midi_out_sorted: bool,
     _backend: PhantomData<B>,
 }
@@ -255,7 +254,7 @@ impl<B: Backend> HwWorker<B> {
                             let midi_hub = self.midi_hub.lock();
                             midi_hub.read_events_into(&mut self.midi_in_events);
                         }
-                        spread_event_frames(&mut self.midi_in_events, self.cycle_frames);
+                        spread_hw_event_frames(&mut self.midi_in_events, self.cycle_frames);
                         if !self.midi_in_events.is_empty() {
                             let cap = self.midi_in_events.capacity();
                             let out =
@@ -272,7 +271,12 @@ impl<B: Backend> HwWorker<B> {
                             if !self.pending_midi_out_events.is_empty() {
                                 if !self.pending_midi_out_sorted {
                                     self.pending_midi_out_events
-                                        .sort_by(|a, b| a.frame.cmp(&b.frame));
+                                        .sort_by(|a, b| {
+                                            a.event
+                                                .frame
+                                                .cmp(&b.event.frame)
+                                                .then_with(|| a.device.cmp(&b.device))
+                                        });
                                     self.pending_midi_out_sorted = true;
                                 }
                                 let midi_hub = self.midi_hub.lock();
@@ -455,13 +459,13 @@ impl<B: Backend> HwWorker<B> {
     }
 }
 
-fn spread_event_frames(events: &mut [MidiEvent], frames: u32) {
+fn spread_hw_event_frames(events: &mut [HwMidiEvent], frames: u32) {
     if events.len() <= 1 || frames <= 1 {
         return;
     }
     let n = events.len() as u32;
     for (idx, event) in events.iter_mut().enumerate() {
         let pos = idx as u32;
-        event.frame = ((pos as u64 * (frames - 1) as u64) / n as u64) as u32;
+        event.event.frame = ((pos as u64 * (frames - 1) as u64) / n as u64) as u32;
     }
 }

@@ -4,6 +4,12 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 
 #[derive(Clone, Debug)]
+pub struct HwMidiEvent {
+    pub device: String,
+    pub event: MidiEvent,
+}
+
+#[derive(Clone, Debug)]
 pub struct ClipMoveFrom {
     pub track_name: String,
     pub clip_index: usize,
@@ -201,7 +207,7 @@ pub enum Message {
 
     Request(Action),
     Response(Result<Action, String>),
-    HWMidiEvents(Vec<MidiEvent>),
-    HWMidiOutEvents(Vec<MidiEvent>),
+    HWMidiEvents(Vec<HwMidiEvent>),
+    HWMidiOutEvents(Vec<HwMidiEvent>),
     HWFinished,
 }
