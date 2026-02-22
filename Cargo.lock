@@ -2153,6 +2153,7 @@ dependencies = [
 name = "maolan"
 version = "0.0.1"
 dependencies = [
+ "alsa",
  "iced",
  "iced_aw",
  "iced_drop",

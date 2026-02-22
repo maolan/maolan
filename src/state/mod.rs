@@ -8,6 +8,10 @@ use iced::{Length, Point};
 use maolan_engine::kind::Kind;
 use maolan_engine::lv2::Lv2PluginInfo;
 use maolan_engine::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin};
+#[cfg(target_os = "linux")]
+use alsa::pcm::{Access, Format, HwParams, PCM};
+#[cfg(target_os = "linux")]
+use alsa::Direction;
 #[cfg(target_os = "freebsd")]
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
 use std::{
@@ -58,11 +62,17 @@ pub struct AudioDeviceOption {
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl AudioDeviceOption {
     #[cfg(target_os = "linux")]
-    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
+    pub fn with_supported_bits(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        mut supported_bits: Vec<usize>,
+    ) -> Self {
+        supported_bits.sort_by(|a, b| b.cmp(a));
+        supported_bits.dedup();
         Self {
             id: id.into(),
             label: label.into(),
-            supported_bits: Vec::new(),
+            supported_bits,
         }
     }
 
@@ -622,6 +632,112 @@ fn read_alsa_card_labels() -> std::collections::HashMap<u32, String> {
 }
 
 #[cfg(target_os = "linux")]
+fn probe_alsa_supported_bits(device: &str) -> Vec<usize> {
+    let Ok(capture) = PCM::new(device, Direction::Capture, false) else {
+        return Vec::new();
+    };
+    let Ok(playback) = PCM::new(device, Direction::Playback, false) else {
+        return Vec::new();
+    };
+    let Ok(cap_hwp) = HwParams::any(&capture) else {
+        return Vec::new();
+    };
+    let Ok(pb_hwp) = HwParams::any(&playback) else {
+        return Vec::new();
+    };
+    if cap_hwp.set_access(Access::RWInterleaved).is_err() {
+        return Vec::new();
+    }
+    if pb_hwp.set_access(Access::RWInterleaved).is_err() {
+        return Vec::new();
+    }
+
+    fn supports(hwp: &HwParams<'_>, fmt: Format) -> bool {
+        hwp.test_format(fmt).is_ok()
+    }
+
+    let candidates: Vec<(usize, Vec<Format>)> = vec![
+        (32, vec![native_s32(), foreign_s32()]),
+        (24, vec![native_s24(), foreign_s24()]),
+        (16, vec![native_s16(), foreign_s16()]),
+        (8, vec![Format::S8]),
+    ];
+
+    let mut supported = Vec::new();
+    for (bits, formats) in candidates {
+        let capture_ok = formats.iter().any(|f| supports(&cap_hwp, *f));
+        let playback_ok = formats.iter().any(|f| supports(&pb_hwp, *f));
+        if capture_ok && playback_ok {
+            supported.push(bits);
+        }
+    }
+    supported
+}
+
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "little")]
+fn native_s16() -> Format {
+    Format::S16LE
+}
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "big")]
+fn native_s16() -> Format {
+    Format::S16BE
+}
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "little")]
+fn foreign_s16() -> Format {
+    Format::S16BE
+}
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "big")]
+fn foreign_s16() -> Format {
+    Format::S16LE
+}
+
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "little")]
+fn native_s24() -> Format {
+    Format::S24LE
+}
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "big")]
+fn native_s24() -> Format {
+    Format::S24BE
+}
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "little")]
+fn foreign_s24() -> Format {
+    Format::S24BE
+}
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "big")]
+fn foreign_s24() -> Format {
+    Format::S24LE
+}
+
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "little")]
+fn native_s32() -> Format {
+    Format::S32LE
+}
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "big")]
+fn native_s32() -> Format {
+    Format::S32BE
+}
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "little")]
+fn foreign_s32() -> Format {
+    Format::S32BE
+}
+#[cfg(target_os = "linux")]
+#[cfg(target_endian = "big")]
+fn foreign_s32() -> Format {
+    Format::S32LE
+}
+
+#[cfg(target_os = "linux")]
 fn discover_alsa_devices() -> Vec<AudioDeviceOption> {
     let mut devices = Vec::new();
     let card_labels = read_alsa_card_labels();
@@ -653,10 +769,10 @@ fn discover_alsa_devices() -> Vec<AudioDeviceOption> {
             } else {
                 format!("{card_label} - {device_name}")
             };
-            devices.push(AudioDeviceOption::new(
-                format!("hw:{card},{dev}"),
-                format!("{base_label} (hw:{card},{dev})"),
-            ));
+            let id = format!("hw:{card},{dev}");
+            let label = format!("{base_label} (hw:{card},{dev})");
+            let supported_bits = probe_alsa_supported_bits(&id);
+            devices.push(AudioDeviceOption::with_supported_bits(id, label, supported_bits));
         }
     }
     devices.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));

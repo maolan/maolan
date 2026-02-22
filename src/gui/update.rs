@@ -1757,6 +1757,9 @@ impl Maolan {
                     }
                     #[cfg(target_os = "linux")]
                     {
+                        if let Some(bits) = hw.preferred_bits() {
+                            state.oss_bits = bits;
+                        }
                         state.selected_hw = Some(hw.clone());
                     }
                 }
@@ -1769,7 +1772,7 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.selected_backend = backend.clone();
                 state.selected_hw = None;
-                #[cfg(target_os = "freebsd")]
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 {
                     state.oss_bits = 32;
                 }
@@ -1778,12 +1781,12 @@ impl Maolan {
                 self.state.blocking_write().oss_exclusive = exclusive;
             }
             Message::HWBitsChanged(bits) => {
-                #[cfg(target_os = "freebsd")]
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 {
                     let mut state = self.state.blocking_write();
                     state.oss_bits = bits;
                 }
-                #[cfg(not(target_os = "freebsd"))]
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
                 let _ = bits;
             }
             Message::HWPeriodFramesChanged(period_frames) => {

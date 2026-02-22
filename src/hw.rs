@@ -17,7 +17,7 @@ impl HW {
     pub fn audio_view(&self) -> iced::Element<'_, Message> {
         let period_options = vec![64, 128, 256, 512, 1024, 2048, 4096, 8192];
         let nperiod_options: Vec<usize> = (1..=16).collect();
-        #[cfg(target_os = "freebsd")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let fallback_bits = vec![32, 24, 16, 8];
         let (
             available_backends,
@@ -41,7 +41,7 @@ impl HW {
                 state.oss_sync_mode,
             )
         };
-        #[cfg(target_os = "freebsd")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let selected_bits = self.state.blocking_read().oss_bits;
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let available_hw: Vec<crate::state::AudioDeviceOption> = available_hw
@@ -59,7 +59,7 @@ impl HW {
             selected_hw = selected_hw.filter(|s| available_hw.iter().any(|hw| hw.id == s.id));
         }
         let selected_is_jack = matches!(selected_backend, crate::state::AudioBackendOption::Jack);
-        #[cfg(target_os = "freebsd")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let bit_options = if selected_is_jack {
             fallback_bits.clone()
         } else {
@@ -74,7 +74,7 @@ impl HW {
                 })
                 .unwrap_or_else(|| fallback_bits.clone())
         };
-        #[cfg(target_os = "freebsd")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let chosen_bits = if bit_options.contains(&selected_bits) {
             selected_bits
         } else {
@@ -97,13 +97,13 @@ impl HW {
             } else {
                 selected_hw.clone().unwrap_or_default()
             };
-            #[cfg(target_os = "freebsd")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             let bits = if selected_is_jack {
                 32
             } else {
                 chosen_bits as i32
             };
-            #[cfg(not(target_os = "freebsd"))]
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
             let bits = 32;
             submit = submit.on_press(Message::Request(Action::OpenAudioDevice {
                 device,
@@ -135,7 +135,7 @@ impl HW {
         }
 
         if !selected_is_jack {
-            #[cfg(target_os = "freebsd")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             {
                 content = content.push(
                     row![
