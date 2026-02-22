@@ -324,7 +324,10 @@ fn desired_channels(pcm: &PCM, rate: usize, period_frames: usize, buffer_frames:
     if hwp.set_access(Access::RWInterleaved).is_err() {
         return 2;
     }
-    hwp.get_channels_max().map(|v| v as usize).unwrap_or(2).max(1)
+    hwp.get_channels_max()
+        .map(|v| v as usize)
+        .unwrap_or(2)
+        .max(1)
 }
 
 fn configure_pcm(
@@ -342,8 +345,7 @@ fn configure_pcm(
     let _chosen_channels = match hwp.set_channels_near(target) {
         Ok(v) if v > 0 => v,
         _ => {
-            hwp.set_channels(2)
-                .map_err(|e| e.to_string())?;
+            hwp.set_channels(2).map_err(|e| e.to_string())?;
             2
         }
     };
@@ -387,15 +389,13 @@ enum SampleFormat {
 fn choose_best_format(hwp: &HwParams<'_>) -> Result<SampleFormat, String> {
     match hwp.set_format(Format::s32()) {
         Ok(()) => return Ok(SampleFormat::S32),
-        Err(e32) => {
-            match hwp.set_format(Format::s16()) {
-                Ok(()) => return Ok(SampleFormat::S16),
-                Err(e16) => {
-                    return Err(format!(
-                        "No supported integer PCM format (s32/s16). set s32 error: {e32}; set s16 error: {e16}.",
-                    ));
-                }
+        Err(e32) => match hwp.set_format(Format::s16()) {
+            Ok(()) => return Ok(SampleFormat::S16),
+            Err(e16) => {
+                return Err(format!(
+                    "No supported integer PCM format (s32/s16). set s32 error: {e32}; set s16 error: {e16}.",
+                ));
             }
-        }
+        },
     }
 }

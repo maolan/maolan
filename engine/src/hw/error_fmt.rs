@@ -1,5 +1,10 @@
 #[cfg(target_os = "linux")]
-pub fn backend_open_error(backend: &str, direction: &str, device: &str, err: impl std::fmt::Display) -> String {
+pub fn backend_open_error(
+    backend: &str,
+    direction: &str,
+    device: &str,
+    err: impl std::fmt::Display,
+) -> String {
     format!("Failed to open {backend} {direction} '{device}': {err}")
 }
 
@@ -9,6 +14,11 @@ pub fn backend_io_error(backend: &str, direction: &str, err: impl std::fmt::Disp
 }
 
 #[cfg(target_os = "linux")]
-pub fn backend_rw_error(backend: &str, direction: &str, op: &str, err: impl std::fmt::Display) -> String {
+pub fn backend_rw_error(
+    backend: &str,
+    direction: &str,
+    op: &str,
+    err: impl std::fmt::Display,
+) -> String {
     format!("{backend} {direction} {op} failed: {err}")
 }

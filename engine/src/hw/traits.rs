@@ -70,17 +70,11 @@ macro_rules! impl_hw_device_for_driver {
                 self.cycle_samples()
             }
 
-            fn input_port(
-                &self,
-                idx: usize,
-            ) -> Option<std::sync::Arc<crate::audio::io::AudioIO>> {
+            fn input_port(&self, idx: usize) -> Option<std::sync::Arc<crate::audio::io::AudioIO>> {
                 self.input_port(idx)
             }
 
-            fn output_port(
-                &self,
-                idx: usize,
-            ) -> Option<std::sync::Arc<crate::audio::io::AudioIO>> {
+            fn output_port(&self, idx: usize) -> Option<std::sync::Arc<crate::audio::io::AudioIO>> {
                 self.output_port(idx)
             }
 

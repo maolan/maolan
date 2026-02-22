@@ -20,7 +20,6 @@ pub trait Backend: Send + Sync + 'static {
     const WORKER_THREAD_NAME: &'static str;
     const ASSIST_THREAD_NAME: &'static str;
     const ASSIST_AUTONOMOUS_ENV: &'static str;
-
 }
 
 #[derive(Debug)]
@@ -167,8 +166,9 @@ impl<B: Backend> HwWorker<B> {
 
             let mut actual_policy = 0_i32;
             let mut actual_param = libc::sched_param { sched_priority: 0 };
-            let rc =
-                unsafe { libc::pthread_getschedparam(thread, &mut actual_policy, &mut actual_param) };
+            let rc = unsafe {
+                libc::pthread_getschedparam(thread, &mut actual_policy, &mut actual_param)
+            };
             if rc != 0 {
                 return Err(format!(
                     "pthread_getschedparam({}) failed with errno {}",
@@ -257,8 +257,10 @@ impl<B: Backend> HwWorker<B> {
                         spread_hw_event_frames(&mut self.midi_in_events, self.cycle_frames);
                         if !self.midi_in_events.is_empty() {
                             let cap = self.midi_in_events.capacity();
-                            let out =
-                                std::mem::replace(&mut self.midi_in_events, Vec::with_capacity(cap.max(64)));
+                            let out = std::mem::replace(
+                                &mut self.midi_in_events,
+                                Vec::with_capacity(cap.max(64)),
+                            );
                             if let Err(e) = self.tx.send(Message::HWMidiEvents(out)).await {
                                 error!(
                                     "{} worker failed to send HWMidiEvents to engine: {}",
@@ -270,13 +272,12 @@ impl<B: Backend> HwWorker<B> {
                         {
                             if !self.pending_midi_out_events.is_empty() {
                                 if !self.pending_midi_out_sorted {
-                                    self.pending_midi_out_events
-                                        .sort_by(|a, b| {
-                                            a.event
-                                                .frame
-                                                .cmp(&b.event.frame)
-                                                .then_with(|| a.device.cmp(&b.device))
-                                        });
+                                    self.pending_midi_out_events.sort_by(|a, b| {
+                                        a.event
+                                            .frame
+                                            .cmp(&b.event.frame)
+                                            .then_with(|| a.device.cmp(&b.device))
+                                    });
                                     self.pending_midi_out_sorted = true;
                                 }
                                 let midi_hub = self.midi_hub.lock();
@@ -288,7 +289,11 @@ impl<B: Backend> HwWorker<B> {
                             error!("{} assist cycle error: {}", B::LABEL, e);
                         }
                         if let Err(e) = self.tx.send(Message::HWFinished).await {
-                            error!("{} worker failed to send HWFinished to engine: {}", B::LABEL, e);
+                            error!(
+                                "{} worker failed to send HWFinished to engine: {}",
+                                B::LABEL,
+                                e
+                            );
                         }
                     }
                     Message::HWMidiOutEvents(mut events) => {

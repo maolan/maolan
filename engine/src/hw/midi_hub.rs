@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use crate::midi::io::MidiEvent;
 use crate::message::HwMidiEvent;
+use crate::midi::io::MidiEvent;
 use nix::libc;
 use std::{
     fs::File,

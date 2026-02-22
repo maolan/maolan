@@ -1,5 +1,5 @@
 use super::{
-    convert_in_to_i32_connected, convert_out_from_i32_interleaved, Audio, DoubleBufferedChannel,
+    Audio, DoubleBufferedChannel, convert_in_to_i32_connected, convert_out_from_i32_interleaved,
 };
 
 pub struct OSSChannel<'a> {

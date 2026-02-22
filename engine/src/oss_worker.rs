@@ -1,5 +1,5 @@
-use crate::hw::oss;
 use crate::hw::config;
+use crate::hw::oss;
 use crate::hw_worker::{Backend, HwWorker as GenericHwWorker};
 
 #[derive(Debug)]

@@ -24,14 +24,14 @@ mod sync;
 pub use self::channel::OSSChannel;
 pub use self::consts::*;
 pub use self::driver::HwDriver;
-pub use self::ioctl::{add_to_sync_group, start_sync_group, AudioInfo, BufferInfo};
+pub use self::ioctl::{AudioInfo, BufferInfo, add_to_sync_group, start_sync_group};
 pub use crate::hw::options::HwOptions;
 
+use self::audio_core::DoubleBufferedChannel;
 use self::convert::*;
 use self::io_util::*;
 use self::ioctl::*;
 use self::sync::{Correction, DuplexSync, FrameClock, get_or_create_duplex_sync};
-use self::audio_core::DoubleBufferedChannel;
 
 #[derive(Debug)]
 pub struct Audio {
@@ -565,7 +565,10 @@ impl Audio {
 
     pub fn process(&mut self) {
         let num_channels = self.channels.len();
-        let all_connected = self.channels.iter().all(crate::hw::ports::has_audio_connections);
+        let all_connected = self
+            .channels
+            .iter()
+            .all(crate::hw::ports::has_audio_connections);
 
         if self.input {
             let norm_factor = convert_policy::F32_FROM_I32_MAX;

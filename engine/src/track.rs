@@ -251,12 +251,7 @@ impl Track {
                 }
             }
             if self.disk_monitor {
-                self.mix_clip_audio_into_output(
-                    out_idx,
-                    out_samples,
-                    linear_gain,
-                    balance_gain,
-                );
+                self.mix_clip_audio_into_output(out_idx, out_samples, linear_gain, balance_gain);
             }
             self.record_tap_outs[out_idx] = tap;
             *audio_out.finished.lock() = true;

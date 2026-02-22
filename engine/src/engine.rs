@@ -16,11 +16,21 @@ use tokio::task::JoinHandle;
 use tracing::error;
 use wavers::write as write_wav;
 
+#[cfg(target_os = "linux")]
+use crate::alsa_worker::HwWorker;
+#[cfg(target_os = "linux")]
+use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
+#[cfg(target_os = "freebsd")]
+use crate::hw::oss as hw;
+#[cfg(target_os = "freebsd")]
+use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
+#[cfg(target_os = "freebsd")]
+use crate::oss_worker::HwWorker;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
-    hw::{config, traits::HwDevice},
     hw::jack::JackRuntime,
+    hw::{config, traits::HwDevice},
     kind::Kind,
     message::{Action, HwMidiEvent, Message},
     midi::clip::MIDIClip,
@@ -31,17 +41,6 @@ use crate::{
     track::Track,
     worker::Worker,
 };
-#[cfg(target_os = "freebsd")]
-use crate::oss_worker::HwWorker as HwWorker;
-#[cfg(target_os = "linux")]
-use crate::alsa_worker::HwWorker as HwWorker;
-#[cfg(target_os = "freebsd")]
-use crate::hw::oss as hw;
-#[cfg(target_os = "freebsd")]
-use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
-#[cfg(target_os = "linux")]
-use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
-
 
 #[derive(Debug)]
 struct WorkerData {
@@ -1412,7 +1411,7 @@ impl Engine {
 
                         if from_is_invalid_hw || to_is_invalid_hw {
                             self.notify_clients(Err(
-                                "Invalid MIDI hardware connection direction".to_string(),
+                                "Invalid MIDI hardware connection direction".to_string()
                             ))
                             .await;
                             return;
@@ -1488,7 +1487,8 @@ impl Engine {
                                 (Some(f_t), Some(t_t)) => {
                                     let to_in_res = t_t.lock().midi.ins.get(to_port).cloned();
                                     if let Some(to_in) = to_in_res {
-                                        if let Err(e) = f_t.lock().midi.connect_out(from_port, to_in)
+                                        if let Err(e) =
+                                            f_t.lock().midi.connect_out(from_port, to_in)
                                         {
                                             self.notify_clients(Err(e)).await;
                                             return;
@@ -1566,9 +1566,7 @@ impl Engine {
                     if let Some(device) = from_hw_in_device {
                         let before = self.midi_hw_in_routes.len();
                         self.midi_hw_in_routes.retain(|r| {
-                            !(r.device == device
-                                && r.to_track == *to_track
-                                && r.to_port == to_port)
+                            !(r.device == device && r.to_track == *to_track && r.to_port == to_port)
                         });
                         if self.midi_hw_in_routes.len() < before {
                             self.notify_clients(Ok(a.clone())).await;
@@ -1685,7 +1683,11 @@ impl Engine {
                         let (in_channels, out_channels, rate, (in_lat, out_lat)) =
                             Self::hw_device_info(&d);
                         if hw_profile_enabled {
-                            let label = if cfg!(target_os = "linux") { "ALSA" } else { "OSS" };
+                            let label = if cfg!(target_os = "linux") {
+                                "ALSA"
+                            } else {
+                                "OSS"
+                            };
                             error!(
                                 "{} config: exclusive={}, period={}, nperiods={}, ignore_hwbuf={}, sync_mode={}, in_latency_extra={}, out_latency_extra={}, input_range={:?}, output_range={:?}",
                                 label,

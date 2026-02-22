@@ -1,6 +1,8 @@
 use crate::message::Message;
 use iced::{
-    Color, Element, Length, Point, Rectangle, Renderer, Theme, event::Event, mouse,
+    Color, Element, Length, Point, Rectangle, Renderer, Theme,
+    event::Event,
+    mouse,
     widget::canvas,
     widget::canvas::{Action as CanvasAction, Frame, Geometry, Path, Stroke, Text},
 };
@@ -86,7 +88,9 @@ impl canvas::Program<Message> for RulerCanvas {
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if state.scrubbing && let Some(pos) = cursor_position {
+                if state.scrubbing
+                    && let Some(pos) = cursor_position
+                {
                     state.last_x = pos.x.clamp(0.0, bounds.width.max(0.0));
                     return Some(CanvasAction::capture());
                 }

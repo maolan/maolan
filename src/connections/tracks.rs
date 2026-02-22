@@ -134,7 +134,10 @@ impl Graph {
             .get(device)
             .copied()
             .unwrap_or(Point::new(default_rect.x, default_rect.y));
-        Point::new(pos.x + default_rect.width, pos.y + default_rect.height / 2.0)
+        Point::new(
+            pos.x + default_rect.width,
+            pos.y + default_rect.height / 2.0,
+        )
     }
 
     fn midi_hw_out_port_pos(
@@ -541,7 +544,8 @@ impl canvas::Program<Message> for Graph {
                                         midi_hw_box_gap,
                                     );
                                     if cursor_position.distance(port_pos) < 10.0 {
-                                        target_port = Some((format!("{MIDI_HW_IN_ID}:{device}"), 0));
+                                        target_port =
+                                            Some((format!("{MIDI_HW_IN_ID}:{device}"), 0));
                                         break;
                                     }
                                 }
@@ -593,7 +597,8 @@ impl canvas::Program<Message> for Graph {
                                         midi_hw_box_gap,
                                     );
                                     if cursor_position.distance(port_pos) < 10.0 {
-                                        target_port = Some((format!("{MIDI_HW_OUT_ID}:{device}"), 0));
+                                        target_port =
+                                            Some((format!("{MIDI_HW_OUT_ID}:{device}"), 0));
                                         break;
                                     }
                                 }
@@ -643,8 +648,10 @@ impl canvas::Program<Message> for Graph {
                                     }
                                 };
 
-                                let t_p_idx =
-                                    if to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID || is_target_midi_hw {
+                                let t_p_idx = if to_t_name == HW_IN_ID
+                                    || to_t_name == HW_OUT_ID
+                                    || is_target_midi_hw
+                                {
                                     to_p
                                 } else {
                                     let t = target_track_option.unwrap();
@@ -887,7 +894,8 @@ impl canvas::Program<Message> for Graph {
                                 * (conn.from_port + 1) as f32;
                         Point::new(hw_width, py)
                     })
-                } else if let Some(device) = conn.from_track.strip_prefix(&format!("{MIDI_HW_IN_ID}:"))
+                } else if let Some(device) =
+                    conn.from_track.strip_prefix(&format!("{MIDI_HW_IN_ID}:"))
                 {
                     data.opened_midi_in_hw
                         .iter()
@@ -919,7 +927,8 @@ impl canvas::Program<Message> for Graph {
                                 * (conn.to_port + 1) as f32;
                         Point::new(bounds.width - hw_width, py)
                     })
-                } else if let Some(device) = conn.to_track.strip_prefix(&format!("{MIDI_HW_OUT_ID}:"))
+                } else if let Some(device) =
+                    conn.to_track.strip_prefix(&format!("{MIDI_HW_OUT_ID}:"))
                 {
                     data.opened_midi_out_hw
                         .iter()

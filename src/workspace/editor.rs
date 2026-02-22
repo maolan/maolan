@@ -85,8 +85,7 @@ fn view_track_elements(
         });
         let dragged_to_other_track = active_drag.is_some_and(|d| {
             !d.copy
-                && active_target_track
-                    .is_some_and(|target| target != track_name_cloned.as_str())
+                && active_target_track.is_some_and(|target| target != track_name_cloned.as_str())
         });
         let show_preview_in_this_track = active_drag.is_some_and(|d| {
             active_target_track.is_some_and(|target| target == track_name_cloned.as_str())
@@ -217,26 +216,24 @@ fn view_track_elements(
 
         if !dragged_to_other_track {
             clips.push(
-                pin(
-                    mouse_area(clip_widget)
-                        .on_press(Message::SelectClip {
-                            track_idx: track_name_cloned.clone(),
-                            clip_idx: index,
-                            kind: Kind::Audio,
-                        })
-                        .on_move({
-                            let track_name_for_drag_closure = track_name_cloned.clone();
-                            move |point| {
-                                let mut clip_data = DraggedClip::new(
-                                    Kind::Audio,
-                                    index,
-                                    track_name_for_drag_closure.clone(),
-                                );
-                                clip_data.start = point;
-                                Message::ClipDrag(clip_data)
-                            }
-                        }),
-                )
+                pin(mouse_area(clip_widget)
+                    .on_press(Message::SelectClip {
+                        track_idx: track_name_cloned.clone(),
+                        clip_idx: index,
+                        kind: Kind::Audio,
+                    })
+                    .on_move({
+                        let track_name_for_drag_closure = track_name_cloned.clone();
+                        move |point| {
+                            let mut clip_data = DraggedClip::new(
+                                Kind::Audio,
+                                index,
+                                track_name_for_drag_closure.clone(),
+                            );
+                            clip_data.start = point;
+                            Message::ClipDrag(clip_data)
+                        }
+                    }))
                 .position(Point::new(dragged_start * pixels_per_sample, 0.0))
                 .into(),
             );
@@ -303,8 +300,7 @@ fn view_track_elements(
         });
         let dragged_to_other_track = active_drag.is_some_and(|d| {
             !d.copy
-                && active_target_track
-                    .is_some_and(|target| target != track_name_cloned.as_str())
+                && active_target_track.is_some_and(|target| target != track_name_cloned.as_str())
         });
         let show_preview_in_this_track = active_drag.is_some_and(|d| {
             active_target_track.is_some_and(|target| target == track_name_cloned.as_str())
@@ -427,26 +423,24 @@ fn view_track_elements(
 
         if !dragged_to_other_track {
             clips.push(
-                pin(
-                    mouse_area(clip_widget)
-                        .on_press(Message::SelectClip {
-                            track_idx: track_name_cloned.clone(),
-                            clip_idx: index,
-                            kind: Kind::MIDI,
-                        })
-                        .on_move({
-                            let track_name_for_drag_closure = track_name_cloned.clone();
-                            move |point| {
-                                let mut clip_data = DraggedClip::new(
-                                    Kind::MIDI,
-                                    index,
-                                    track_name_for_drag_closure.clone(),
-                                );
-                                clip_data.start = point;
-                                Message::ClipDrag(clip_data)
-                            }
-                        }),
-                )
+                pin(mouse_area(clip_widget)
+                    .on_press(Message::SelectClip {
+                        track_idx: track_name_cloned.clone(),
+                        clip_idx: index,
+                        kind: Kind::MIDI,
+                    })
+                    .on_move({
+                        let track_name_for_drag_closure = track_name_cloned.clone();
+                        move |point| {
+                            let mut clip_data = DraggedClip::new(
+                                Kind::MIDI,
+                                index,
+                                track_name_for_drag_closure.clone(),
+                            );
+                            clip_data.start = point;
+                            Message::ClipDrag(clip_data)
+                        }
+                    }))
                 .position(Point::new(dragged_start * pixels_per_sample, 0.0))
                 .into(),
             );
@@ -569,23 +563,24 @@ fn view_track_elements(
                     if let Some(source_clip) = source_track.midi.clips.get(drag.index) {
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let preview_start = (source_clip.start as f32 + delta_samples).max(0.0);
-                        let preview_content =
-                            container(container(text(source_clip.name.clone()).size(12)).padding(5))
-                                .width(Length::Fill)
-                                .height(Length::Fill)
-                                .padding(0)
-                                .style(|_theme| {
-                                    use container::Style;
-                                    Style {
-                                        background: Some(Background::Color(Color {
-                                            r: 0.82,
-                                            g: 1.0,
-                                            b: 0.84,
-                                            a: 0.7,
-                                        })),
-                                        ..Style::default()
-                                    }
-                                });
+                        let preview_content = container(
+                            container(text(source_clip.name.clone()).size(12)).padding(5),
+                        )
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .padding(0)
+                        .style(|_theme| {
+                            use container::Style;
+                            Style {
+                                background: Some(Background::Color(Color {
+                                    r: 0.82,
+                                    g: 1.0,
+                                    b: 0.84,
+                                    a: 0.7,
+                                })),
+                                ..Style::default()
+                            }
+                        });
                         let preview = container(row![
                             container("").width(Length::Fixed(5.0)).height(Length::Fill),
                             preview_content,

@@ -170,13 +170,6 @@ impl Maolan {
                 }
                 return self.send(Action::Play);
             }
-            Message::TransportPause => {
-                self.toolbar.update(message.clone());
-                self.playing = false;
-                self.last_playback_tick = None;
-                self.stop_recording_preview();
-                return self.send(Action::Stop);
-            }
             Message::TransportStop => {
                 self.toolbar.update(message.clone());
                 self.playing = false;
@@ -443,7 +436,9 @@ impl Maolan {
                             let wav_path = if std::path::Path::new(name).is_absolute() {
                                 Some(std::path::PathBuf::from(name))
                             } else {
-                                self.session_dir.as_ref().map(|session_root| session_root.join(name))
+                                self.session_dir
+                                    .as_ref()
+                                    .map(|session_root| session_root.join(name))
                             };
                             if let Some(wav_path) = wav_path {
                                 if audio_peaks.is_empty()
@@ -1156,8 +1151,7 @@ impl Maolan {
                     Some(Resizing::Track(ref track_name, initial_height, initial_mouse_y)) => {
                         let mut state = self.state.blocking_write();
                         let delta = position.y - initial_mouse_y;
-                        if let Some(track) =
-                            state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
                         {
                             track.height = (initial_height + delta).clamp(60.0, 400.0);
                         }
@@ -1175,8 +1169,7 @@ impl Maolan {
                         let min_length_samples =
                             (MIN_CLIP_WIDTH_PX / pixels_per_sample).ceil().max(1.0);
                         let mut state = self.state.blocking_write();
-                        if let Some(track) =
-                            state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
                         {
                             let delta_samples = (position.x - initial_mouse_x) / pixels_per_sample;
                             match kind {
@@ -1190,10 +1183,8 @@ impl Maolan {
                                         clip.length = updated_length as usize;
                                     } else {
                                         let right_edge = initial_value + initial_length;
-                                        let max_start =
-                                            (right_edge - min_length_samples).max(0.0);
-                                        let min_start =
-                                            (right_edge - max_length_samples).max(0.0);
+                                        let max_start = (right_edge - min_length_samples).max(0.0);
+                                        let min_start = (right_edge - max_length_samples).max(0.0);
                                         let new_start = (initial_value + delta_samples)
                                             .clamp(min_start, max_start);
                                         let updated_length = (right_edge - new_start)
@@ -1212,10 +1203,8 @@ impl Maolan {
                                         clip.length = updated_length as usize;
                                     } else {
                                         let right_edge = initial_value + initial_length;
-                                        let max_start =
-                                            (right_edge - min_length_samples).max(0.0);
-                                        let min_start =
-                                            (right_edge - max_length_samples).max(0.0);
+                                        let max_start = (right_edge - min_length_samples).max(0.0);
+                                        let min_start = (right_edge - max_length_samples).max(0.0);
                                         let new_start = (initial_value + delta_samples)
                                             .clamp(min_start, max_start);
                                         let updated_length = (right_edge - new_start)

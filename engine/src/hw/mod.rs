@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+pub mod alsa;
 pub mod common;
 pub mod config;
 pub mod convert_policy;
@@ -6,10 +8,9 @@ pub mod jack;
 pub mod latency;
 pub mod midi_hub;
 pub mod options;
-pub mod ports;
-pub mod prefill;
-pub mod traits;
 #[cfg(target_os = "freebsd")]
 pub mod oss;
-#[cfg(target_os = "linux")]
-pub mod alsa;
+pub mod ports;
+#[cfg(target_os = "freebsd")]
+pub mod prefill;
+pub mod traits;

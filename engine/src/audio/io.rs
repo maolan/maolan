@@ -1,6 +1,6 @@
 use crate::mutex::UnsafeMutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use wavers::Samples;
 
 #[derive(Debug, Clone)]

@@ -1,18 +1,18 @@
+#[cfg(target_os = "linux")]
+mod alsa_worker;
 mod audio;
 pub mod client;
 mod engine;
 mod hw;
+#[cfg(any(target_os = "freebsd", target_os = "linux"))]
+mod hw_worker;
 pub mod kind;
 pub mod lv2;
 pub mod message;
 mod midi;
 pub mod mutex;
-#[cfg(any(target_os = "freebsd", target_os = "linux"))]
-mod hw_worker;
 #[cfg(target_os = "freebsd")]
 mod oss_worker;
-#[cfg(target_os = "linux")]
-mod alsa_worker;
 mod routing;
 pub mod state;
 mod track;

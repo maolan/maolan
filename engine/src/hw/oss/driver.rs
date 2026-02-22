@@ -122,11 +122,8 @@ impl HwDriver {
     }
 
     fn apply_playback_prefill(&mut self) {
-        let prefill = prefill::playback_prefill_frames(
-            self.cycle_samples(),
-            self.nperiods,
-            self.sync_mode,
-        );
+        let prefill =
+            prefill::playback_prefill_frames(self.cycle_samples(), self.nperiods, self.sync_mode);
         let mut sync = self
             .capture
             .duplex_sync

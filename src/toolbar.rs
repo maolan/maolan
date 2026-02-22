@@ -3,13 +3,12 @@ use iced::{
     Background, Color, Length, Theme,
     widget::{button, row},
 };
-use iced_fonts::lucide::{audio_lines, cable, circle, pause, play, square};
+use iced_fonts::lucide::{audio_lines, cable, circle, play, square};
 use maolan_engine::message::Action;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TransportLatch {
     Play,
-    Pause,
     Stop,
 }
 
@@ -27,7 +26,6 @@ impl Toolbar {
     pub fn update(&mut self, message: Message) {
         match message {
             Message::TransportPlay => self.latch = TransportLatch::Play,
-            Message::TransportPause => self.latch = TransportLatch::Pause,
             Message::TransportStop => self.latch = TransportLatch::Stop,
             Message::ToggleTransport => {
                 self.latch = if self.latch == TransportLatch::Play {
@@ -63,7 +61,6 @@ impl Toolbar {
 
     pub fn view(&self, _playing: bool, recording: bool) -> iced::Element<'_, Message> {
         let play_active = self.latch == TransportLatch::Play;
-        let pause_active = self.latch == TransportLatch::Pause;
         let stop_active = self.latch == TransportLatch::Stop;
         let rec_active = recording;
         row![
@@ -74,12 +71,6 @@ impl Toolbar {
                         Color::from_rgba(0.2, 0.7, 0.35, 0.35)
                     ))
                     .on_press(Message::TransportPlay),
-                button(pause())
-                    .style(Self::button_style(
-                        pause_active,
-                        Color::from_rgba(0.75, 0.55, 0.2, 0.35)
-                    ))
-                    .on_press(Message::TransportPause),
                 button(square())
                     .style(Self::button_style(
                         stop_active,

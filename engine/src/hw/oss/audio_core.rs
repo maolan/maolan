@@ -1,5 +1,5 @@
 use super::sync::ChannelState;
-use super::{oss_get_iptr, oss_get_optr, Audio, CountInfo};
+use super::{Audio, CountInfo, oss_get_iptr, oss_get_optr};
 use std::os::fd::AsRawFd;
 
 #[derive(Debug, Clone, Default)]

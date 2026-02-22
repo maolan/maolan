@@ -78,10 +78,7 @@ pub(super) fn convert_in_to_i32_connected(
     dst: &mut [i32],
     channels: &[Arc<AudioIO>],
 ) {
-    if channels
-        .iter()
-        .all(crate::hw::ports::has_audio_connections)
-    {
+    if channels.iter().all(crate::hw::ports::has_audio_connections) {
         convert_in_to_i32_interleaved(format, channels.len(), frames, src, dst);
         return;
     }

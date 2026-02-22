@@ -1,5 +1,8 @@
 use nix::libc;
-use std::{collections::HashMap, sync::{Arc, Mutex, OnceLock, Weak}};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex, OnceLock, Weak},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Correction {
