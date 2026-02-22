@@ -94,6 +94,7 @@ pub enum Message {
     StartMovingTrackAndSelect(crate::state::MovingTrack, String),
 
     MouseMoved(mouse::Event),
+    EditorMouseMoved(Point),
     MousePressed(mouse::Button),
     MouseReleased,
 

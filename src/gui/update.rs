@@ -917,13 +917,16 @@ impl Maolan {
 
                 if ctrl {
                     if state.selected_clips.contains(&clip_id) {
-                        state.selected_clips.remove(&clip_id);
+                        // Keep existing selection intact so Ctrl-drag can copy groups.
                     } else {
                         state.selected_clips.insert(clip_id);
                     }
                 } else {
-                    state.selected_clips.clear();
-                    state.selected_clips.insert(clip_id);
+                    let already_selected = state.selected_clips.contains(&clip_id);
+                    if !already_selected {
+                        state.selected_clips.clear();
+                        state.selected_clips.insert(clip_id);
+                    }
                 }
                 state.mouse_left_down = true;
                 state.clip_click_consumed = true;
@@ -949,6 +952,9 @@ impl Maolan {
                     return Task::none();
                 }
                 self.clip = None;
+                if self.modal.is_none() && matches!(state.view, View::Workspace) {
+                    state.mouse_left_down = true;
+                }
                 state.clip_marquee_start = None;
                 state.clip_marquee_end = None;
                 state.selected_clips.clear();
@@ -1182,7 +1188,12 @@ impl Maolan {
             }
             Message::MouseMoved(mouse::Event::CursorMoved { position }) => {
                 let resizing = self.state.blocking_read().resizing.clone();
-                self.state.blocking_write().cursor = position;
+                let previous_cursor = {
+                    let mut state = self.state.blocking_write();
+                    let prev = state.cursor;
+                    state.cursor = position;
+                    prev
+                };
                 match resizing {
                     Some(Resizing::Track(ref track_name, initial_height, initial_mouse_y)) => {
                         let mut state = self.state.blocking_write();
@@ -1278,13 +1289,32 @@ impl Maolan {
                         );
                     }
                     let mut state = self.state.blocking_write();
-                    if !state.clip_click_consumed
+                    if state.clip_marquee_start.is_some()
+                        && self.clip.is_none()
+                        && !state.clip_click_consumed
                         && matches!(state.view, View::Workspace)
                         && self.modal.is_none()
                     {
-                        if state.clip_marquee_start.is_none() {
-                            state.clip_marquee_start = Some(state.cursor);
-                        }
+                        let end = state.clip_marquee_end.unwrap_or(Point::new(0.0, 0.0));
+                        let dx = position.x - previous_cursor.x;
+                        let dy = position.y - previous_cursor.y;
+                        state.clip_marquee_end =
+                            Some(Point::new((end.x + dx).max(0.0), (end.y + dy).max(0.0)));
+                    }
+                }
+            }
+            Message::EditorMouseMoved(position) => {
+                let resizing = self.state.blocking_read().resizing.clone();
+                let mut state = self.state.blocking_write();
+                if state.mouse_left_down
+                    && !matches!(resizing, Some(Resizing::Clip { .. }))
+                    && self.clip.is_none()
+                    && !state.clip_click_consumed
+                    && matches!(state.view, View::Workspace)
+                    && self.modal.is_none()
+                {
+                    if state.clip_marquee_start.is_none() {
+                        state.clip_marquee_start = Some(position);
                         state.clip_marquee_end = Some(position);
                     }
                 }
@@ -1314,11 +1344,15 @@ impl Maolan {
                     return Task::none();
                 }
                 if let (Some(start), Some(end)) = (marquee_start, marquee_end) {
-                    let x = start.x.min(end.x);
-                    let y = start.y.min(end.y);
-                    let w = (start.x - end.x).abs();
-                    let h = (start.y - end.y).abs();
-                    if w > 2.0 && h > 2.0 {
+                    let mut x = start.x.min(end.x);
+                    let mut y = start.y.min(end.y);
+                    let mut w = (start.x - end.x).abs();
+                    let mut h = (start.y - end.y).abs();
+                    if w > 2.0 || h > 2.0 {
+                        w = w.max(2.0);
+                        h = h.max(2.0);
+                        x = x.max(0.0);
+                        y = y.max(0.0);
                         let pps = self.pixels_per_sample().max(1.0e-6);
                         let mut y_offset = 0.0f32;
                         let mut selected = std::collections::HashSet::new();
@@ -1359,7 +1393,7 @@ impl Maolan {
                                     });
                                 }
                             }
-                            y_offset += track.height + 10.0;
+                            y_offset += track.height;
                         }
                         drop(state);
                         self.state.blocking_write().selected_clips = selected;
@@ -1384,6 +1418,9 @@ impl Maolan {
             }
             Message::ClipDrag(ref clip) => {
                 if !self.state.blocking_read().mouse_left_down {
+                    return Task::none();
+                }
+                if self.state.blocking_read().clip_marquee_start.is_some() {
                     return Task::none();
                 }
                 if matches!(
@@ -1445,9 +1482,54 @@ impl Maolan {
                             self.clip = None;
                             return Task::none();
                         }
+                        let mut selected_group: Vec<usize> = state
+                            .selected_clips
+                            .iter()
+                            .filter(|id| {
+                                id.kind == clip.kind && id.track_idx == from_track.name
+                            })
+                            .map(|id| id.clip_idx)
+                            .collect();
+                        selected_group.sort_unstable();
+                        selected_group.dedup();
+                        let group_drag_active =
+                            selected_group.len() > 1 && selected_group.contains(&clip.index);
+
                         let clip_index = clip.index;
                         match clip.kind {
                             Kind::Audio => {
+                                let offset = (clip.end.x - clip.start.x)
+                                    / self.pixels_per_sample().max(1.0e-6);
+                                if group_drag_active {
+                                    let mut indices = selected_group.clone();
+                                    if !clip.copy {
+                                        indices.sort_unstable_by(|a, b| b.cmp(a));
+                                    }
+                                    let mut tasks = Vec::new();
+                                    for idx in indices {
+                                        if idx >= from_track.audio.clips.len() {
+                                            continue;
+                                        }
+                                        let source = &from_track.audio.clips[idx];
+                                        let sample_offset =
+                                            (source.start as f32 + offset).max(0.0) as usize;
+                                        tasks.push(self.send(Action::ClipMove {
+                                            kind: clip.kind,
+                                            from: ClipMoveFrom {
+                                                track_name: from_track.name.clone(),
+                                                clip_index: idx,
+                                            },
+                                            to: ClipMoveTo {
+                                                track_name: to_track.name.clone(),
+                                                sample_offset,
+                                            },
+                                            copy: clip.copy,
+                                        }));
+                                    }
+                                    self.clip = None;
+                                    self.clip_preview_target_track = None;
+                                    return Task::batch(tasks);
+                                }
                                 if clip_index >= from_track.audio.clips.len() {
                                     self.clip = None;
                                     return Task::none();
@@ -1455,8 +1537,6 @@ impl Maolan {
                                 let clip_index_in_from_track = clip_index;
                                 let mut clip_copy =
                                     from_track.audio.clips[clip_index_in_from_track].clone();
-                                let offset = (clip.end.x - clip.start.x)
-                                    / self.pixels_per_sample().max(1.0e-6);
                                 clip_copy.start =
                                     (clip_copy.start as f32 + offset).max(0.0) as usize;
                                 let task = self.send(Action::ClipMove {
@@ -1476,6 +1556,38 @@ impl Maolan {
                                 return task;
                             }
                             Kind::MIDI => {
+                                let offset = (clip.end.x - clip.start.x)
+                                    / self.pixels_per_sample().max(1.0e-6);
+                                if group_drag_active {
+                                    let mut indices = selected_group.clone();
+                                    if !clip.copy {
+                                        indices.sort_unstable_by(|a, b| b.cmp(a));
+                                    }
+                                    let mut tasks = Vec::new();
+                                    for idx in indices {
+                                        if idx >= from_track.midi.clips.len() {
+                                            continue;
+                                        }
+                                        let source = &from_track.midi.clips[idx];
+                                        let sample_offset =
+                                            (source.start as f32 + offset).max(0.0) as usize;
+                                        tasks.push(self.send(Action::ClipMove {
+                                            kind: clip.kind,
+                                            from: ClipMoveFrom {
+                                                track_name: from_track.name.clone(),
+                                                clip_index: idx,
+                                            },
+                                            to: ClipMoveTo {
+                                                track_name: to_track.name.clone(),
+                                                sample_offset,
+                                            },
+                                            copy: clip.copy,
+                                        }));
+                                    }
+                                    self.clip = None;
+                                    self.clip_preview_target_track = None;
+                                    return Task::batch(tasks);
+                                }
                                 if clip_index >= from_track.midi.clips.len() {
                                     self.clip = None;
                                     return Task::none();
@@ -1483,8 +1595,6 @@ impl Maolan {
                                 let clip_index_in_from_track = clip_index;
                                 let mut clip_copy =
                                     from_track.midi.clips[clip_index_in_from_track].clone();
-                                let offset = (clip.end.x - clip.start.x)
-                                    / self.pixels_per_sample().max(1.0e-6);
                                 clip_copy.start =
                                     (clip_copy.start as f32 + offset).max(0.0) as usize;
                                 let task = self.send(Action::ClipMove {

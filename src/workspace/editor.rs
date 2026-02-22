@@ -80,18 +80,41 @@ fn view_track_elements(
     for (index, clip) in track.audio.clips.iter().enumerate() {
         let clip_name = clip.name.clone();
         let clip_peaks = clip.peaks.clone();
+        let clip_id = crate::state::ClipId {
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            kind: Kind::Audio,
+        };
+        let is_selected = state.selected_clips.contains(&clip_id);
         let active_drag = active_clip_drag.filter(|d| {
             d.kind == Kind::Audio && d.track_index == track_name_cloned && d.index == index
         });
-        let dragged_to_other_track = active_drag.is_some_and(|d| {
+        let group_drag = active_clip_drag.filter(|d| {
+            d.kind == Kind::Audio
+                && d.track_index == track_name_cloned
+                && state.selected_clips.contains(&crate::state::ClipId {
+                    track_idx: track_name_cloned.clone(),
+                    clip_idx: d.index,
+                    kind: Kind::Audio,
+                })
+                && state
+                    .selected_clips
+                    .iter()
+                    .filter(|id| id.kind == Kind::Audio && id.track_idx == track_name_cloned)
+                    .count()
+                    > 1
+                && is_selected
+        });
+        let drag_for_clip = group_drag.or(active_drag);
+        let dragged_to_other_track = drag_for_clip.is_some_and(|d| {
             !d.copy
                 && active_target_track.is_some_and(|target| target != track_name_cloned.as_str())
         });
-        let show_preview_in_this_track = active_drag.is_some_and(|d| {
+        let show_preview_in_this_track = drag_for_clip.is_some_and(|d| {
             active_target_track.is_some_and(|target| target == track_name_cloned.as_str())
                 && (d.copy || d.track_index != track_name_cloned)
         });
-        let dragged_start = active_drag
+        let dragged_start = drag_for_clip
             .filter(|d| !d.copy)
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
@@ -100,11 +123,6 @@ fn view_track_elements(
             .unwrap_or(clip.start as f32);
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
         let clip_height = (height - 10.0).max(12.0);
-        let is_selected = state.selected_clips.contains(&crate::state::ClipId {
-            track_idx: track_name_cloned.clone(),
-            clip_idx: index,
-            kind: Kind::Audio,
-        });
 
         let left_handle = mouse_area(
             container("")
@@ -239,7 +257,7 @@ fn view_track_elements(
             );
         }
 
-        if let Some(drag) = active_drag.filter(|_| show_preview_in_this_track) {
+        if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = (clip.start as f32 + delta_samples).max(0.0);
             let preview_content = container(Stack::with_children(vec![
@@ -295,18 +313,41 @@ fn view_track_elements(
     }
     for (index, clip) in track.midi.clips.iter().enumerate() {
         let clip_name = clip.name.clone();
+        let clip_id = crate::state::ClipId {
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            kind: Kind::MIDI,
+        };
+        let is_selected = state.selected_clips.contains(&clip_id);
         let active_drag = active_clip_drag.filter(|d| {
             d.kind == Kind::MIDI && d.track_index == track_name_cloned && d.index == index
         });
-        let dragged_to_other_track = active_drag.is_some_and(|d| {
+        let group_drag = active_clip_drag.filter(|d| {
+            d.kind == Kind::MIDI
+                && d.track_index == track_name_cloned
+                && state.selected_clips.contains(&crate::state::ClipId {
+                    track_idx: track_name_cloned.clone(),
+                    clip_idx: d.index,
+                    kind: Kind::MIDI,
+                })
+                && state
+                    .selected_clips
+                    .iter()
+                    .filter(|id| id.kind == Kind::MIDI && id.track_idx == track_name_cloned)
+                    .count()
+                    > 1
+                && is_selected
+        });
+        let drag_for_clip = group_drag.or(active_drag);
+        let dragged_to_other_track = drag_for_clip.is_some_and(|d| {
             !d.copy
                 && active_target_track.is_some_and(|target| target != track_name_cloned.as_str())
         });
-        let show_preview_in_this_track = active_drag.is_some_and(|d| {
+        let show_preview_in_this_track = drag_for_clip.is_some_and(|d| {
             active_target_track.is_some_and(|target| target == track_name_cloned.as_str())
                 && (d.copy || d.track_index != track_name_cloned)
         });
-        let dragged_start = active_drag
+        let dragged_start = drag_for_clip
             .filter(|d| !d.copy)
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
@@ -314,11 +355,6 @@ fn view_track_elements(
             })
             .unwrap_or(clip.start as f32);
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
-        let is_selected = state.selected_clips.contains(&crate::state::ClipId {
-            track_idx: track_name_cloned.clone(),
-            clip_idx: index,
-            kind: Kind::MIDI,
-        });
 
         let left_handle = mouse_area(
             container("")
@@ -446,7 +482,7 @@ fn view_track_elements(
             );
         }
 
-        if let Some(drag) = active_drag.filter(|_| show_preview_in_this_track) {
+        if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = (clip.start as f32 + delta_samples).max(0.0);
             let preview_content = container(container(text(clip_name.clone()).size(12)).padding(5))
@@ -504,7 +540,25 @@ fn view_track_elements(
         if let Some(source_track) = state.tracks.iter().find(|t| t.name == drag.track_index) {
             match drag.kind {
                 Kind::Audio => {
-                    if let Some(source_clip) = source_track.audio.clips.get(drag.index) {
+                    let mut preview_indices: Vec<usize> = state
+                        .selected_clips
+                        .iter()
+                        .filter(|id| {
+                            id.kind == Kind::Audio
+                                && id.track_idx == drag.track_index
+                                && id.clip_idx < source_track.audio.clips.len()
+                        })
+                        .map(|id| id.clip_idx)
+                        .collect();
+                    preview_indices.sort_unstable();
+                    preview_indices.dedup();
+                    if preview_indices.len() <= 1 || !preview_indices.contains(&drag.index) {
+                        preview_indices = vec![drag.index];
+                    }
+                    for clip_index in preview_indices {
+                        let Some(source_clip) = source_track.audio.clips.get(clip_index) else {
+                            continue;
+                        };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let clip_height = (height - 10.0).max(12.0);
                         let preview_start = (source_clip.start as f32 + delta_samples).max(0.0);
@@ -560,7 +614,25 @@ fn view_track_elements(
                     }
                 }
                 Kind::MIDI => {
-                    if let Some(source_clip) = source_track.midi.clips.get(drag.index) {
+                    let mut preview_indices: Vec<usize> = state
+                        .selected_clips
+                        .iter()
+                        .filter(|id| {
+                            id.kind == Kind::MIDI
+                                && id.track_idx == drag.track_index
+                                && id.clip_idx < source_track.midi.clips.len()
+                        })
+                        .map(|id| id.clip_idx)
+                        .collect();
+                    preview_indices.sort_unstable();
+                    preview_indices.dedup();
+                    if preview_indices.len() <= 1 || !preview_indices.contains(&drag.index) {
+                        preview_indices = vec![drag.index];
+                    }
+                    for clip_index in preview_indices {
+                        let Some(source_clip) = source_track.midi.clips.get(clip_index) else {
+                            continue;
+                        };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let preview_start = (source_clip.start as f32 + delta_samples).max(0.0);
                         let preview_content = container(
@@ -732,11 +804,15 @@ impl Editor {
         }
         let mut layers: Vec<Element<'_, Message>> = vec![result.width(Length::Fill).height(Length::Fill).into()];
         if let (Some(start), Some(end)) = (state.clip_marquee_start, state.clip_marquee_end) {
-            let x = start.x.min(end.x);
-            let y = start.y.min(end.y);
-            let w = (start.x - end.x).abs();
-            let h = (start.y - end.y).abs();
-            if w > 1.0 && h > 1.0 {
+            let mut x = start.x.min(end.x);
+            let mut y = start.y.min(end.y);
+            let mut w = (start.x - end.x).abs();
+            let mut h = (start.y - end.y).abs();
+            if w > 1.0 || h > 1.0 {
+                w = w.max(2.0);
+                h = h.max(2.0);
+                x = x.max(0.0);
+                y = y.max(0.0);
                 layers.push(
                     pin(
                         container("")
@@ -772,6 +848,7 @@ impl Editor {
                 .width(Length::Fill)
                 .height(Length::Fill),
         )
+            .on_move(Message::EditorMouseMoved)
             .on_press(Message::DeselectClips)
             .into()
     }
