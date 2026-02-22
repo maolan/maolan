@@ -287,6 +287,17 @@ impl Maolan {
         Ok(peaks)
     }
 
+    fn audio_clip_source_length(path: &Path) -> std::io::Result<usize> {
+        let mut wav = Wav::<f32>::from_path(path).map_err(|e| {
+            io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
+        })?;
+        let channels = wav.n_channels().max(1) as usize;
+        let samples: wavers::Samples<f32> = wav
+            .read()
+            .map_err(|e| io::Error::other(format!("WAV read error '{}': {e}", path.display())))?;
+        Ok(samples.len() / channels.max(1))
+    }
+
     fn lv2_node_to_json(
         node: &maolan_engine::message::Lv2GraphNode,
         id_to_index: &std::collections::HashMap<usize, usize>,

@@ -56,6 +56,8 @@ pub struct Track {
     pub armed: bool,
     pub muted: bool,
     pub soloed: bool,
+    pub input_monitor: bool,
+    pub disk_monitor: bool,
     pub height: f32,
     pub audio: AudioData,
     pub midi: MIDIData,
@@ -81,6 +83,8 @@ impl Track {
             armed: false,
             muted: false,
             soloed: false,
+            input_monitor: false,
+            disk_monitor: true,
             audio: AudioData::new(audio_ins, audio_outs),
             midi: MIDIData::new(midi_ins, midi_outs),
             height: 60.0,
@@ -122,6 +126,16 @@ impl Track {
                 Action::TrackToggleSolo(name) => {
                     if name == self.name {
                         self.soloed = !self.soloed;
+                    }
+                }
+                Action::TrackToggleInputMonitor(name) => {
+                    if name == self.name {
+                        self.input_monitor = !self.input_monitor;
+                    }
+                }
+                Action::TrackToggleDiskMonitor(name) => {
+                    if name == self.name {
+                        self.disk_monitor = !self.disk_monitor;
                     }
                 }
                 _ => {}

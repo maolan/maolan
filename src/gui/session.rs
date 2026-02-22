@@ -334,6 +334,26 @@ impl Maolan {
                         "'soloed' is not boolean",
                     ));
                 }
+                if let Some(value) = track["input_monitor"].as_bool() {
+                    if value {
+                        tasks.push(self.send(Action::TrackToggleInputMonitor(name.clone())));
+                    }
+                } else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "'input_monitor' is not boolean",
+                    ));
+                }
+                if let Some(value) = track["disk_monitor"].as_bool() {
+                    if !value {
+                        tasks.push(self.send(Action::TrackToggleDiskMonitor(name.clone())));
+                    }
+                } else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "'disk_monitor' is not boolean",
+                    ));
+                }
 
                 if let Some(audio_clips) = track["audio"]["clips"].as_array() {
                     for clip in audio_clips {

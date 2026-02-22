@@ -72,6 +72,9 @@ impl Maolan {
                         return Message::Show(Show::Open);
                     }
                     if s == "s" {
+                        if modifiers.shift() {
+                            return Message::Show(Show::SaveAs);
+                        }
                         return Message::Show(Show::Save);
                     }
                 }
@@ -79,7 +82,8 @@ impl Maolan {
                     keyboard::Key::Named(keyboard::key::Named::Space) => Message::ToggleTransport,
                     keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
                     keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
-                    keyboard::Key::Named(keyboard::key::Named::Delete) => Message::Remove,
+                    keyboard::Key::Named(keyboard::key::Named::Delete)
+                    | keyboard::Key::Named(keyboard::key::Named::Backspace) => Message::Remove,
                     _ => Message::None,
                 }
             }
@@ -93,6 +97,7 @@ impl Maolan {
 
         let event_sub = event::listen().map(|event| match event {
             event::Event::Mouse(mouse_event) => match mouse_event {
+                mouse::Event::ButtonPressed(button) => Message::MousePressed(button),
                 mouse::Event::CursorMoved { .. } => Message::MouseMoved(mouse_event),
                 mouse::Event::ButtonReleased(_) => Message::MouseReleased,
                 _ => Message::None,

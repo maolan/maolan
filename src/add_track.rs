@@ -61,16 +61,9 @@ impl AddTrackView {
                 ]
                 .spacing(10),
                 row![
-                    text("Number of audio inputs:"),
-                    number_input(&self.audio_ins, 1..=32, |ins: usize| {
+                    text("Audio inputs:"),
+                    number_input(&self.audio_ins, 0..=32, |ins: usize| {
                         Message::AddTrack(AddTrack::AudioIns(ins))
-                    })
-                ]
-                .spacing(10),
-                row![
-                    text("Number of midi inputs:"),
-                    number_input(&self.midi_ins, 1..=32, |ins: usize| {
-                        Message::AddTrack(AddTrack::MIDIIns(ins))
                     })
                 ]
                 .spacing(10),
@@ -79,6 +72,13 @@ impl AddTrackView {
                     number_input(&self.audio_outs, 0..=32, |outs: usize| {
                         Message::AddTrack(AddTrack::AudioOuts(outs))
                     }),
+                ]
+                .spacing(10),
+                row![
+                    text("Midi inputs:"),
+                    number_input(&self.midi_ins, 0..=32, |ins: usize| {
+                        Message::AddTrack(AddTrack::MIDIIns(ins))
+                    })
                 ]
                 .spacing(10),
                 row![

@@ -92,6 +92,11 @@ pub enum Action {
         offset: usize,
         kind: Kind,
     },
+    RemoveClip {
+        track_name: String,
+        kind: Kind,
+        clip_indices: Vec<usize>,
+    },
     RemoveTrack(String),
     TrackLevel(String, f32),
     TrackBalance(String, f32),
@@ -102,6 +107,8 @@ pub enum Action {
     TrackToggleArm(String),
     TrackToggleMute(String),
     TrackToggleSolo(String),
+    TrackToggleInputMonitor(String),
+    TrackToggleDiskMonitor(String),
     TrackLoadLv2Plugin {
         track_name: String,
         plugin_uri: String,

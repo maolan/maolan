@@ -6,6 +6,8 @@ pub struct AudioClip {
     pub start: usize,
     pub length: usize,
     pub offset: usize,
+    #[serde(skip)]
+    pub max_length_samples: usize,
     pub peaks_file: Option<String>,
     #[serde(skip, default)]
     pub peaks: Vec<Vec<f32>>,
@@ -17,4 +19,6 @@ pub struct MIDIClip {
     pub start: usize,
     pub length: usize,
     pub offset: usize,
+    #[serde(skip)]
+    pub max_length_samples: usize,
 }

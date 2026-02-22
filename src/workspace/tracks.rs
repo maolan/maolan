@@ -50,6 +50,22 @@ impl Tracks {
                         .on_press(Message::Request(Action::TrackToggleSolo(
                             track.name.clone()
                         ))),
+                    button("In")
+                        .padding(3)
+                        .style(move |theme, _state| {
+                            style::input::style(theme, track.input_monitor)
+                        })
+                        .on_press(Message::Request(Action::TrackToggleInputMonitor(
+                            track.name.clone()
+                        ))),
+                    button("Disk")
+                        .padding(3)
+                        .style(move |theme, _state| {
+                            style::disk::style(theme, track.disk_monitor)
+                        })
+                        .on_press(Message::Request(Action::TrackToggleDiskMonitor(
+                            track.name.clone()
+                        ))),
                 ],
                 Space::new().height(Length::Fill),
                 mouse_area(

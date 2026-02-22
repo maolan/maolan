@@ -6,7 +6,6 @@ use iced::{
     Background, Border, Color, Element, Length, Point,
     widget::{Stack, column, container, mouse_area, pin, row, text},
 };
-use iced_drop::droppable;
 use maolan_engine::kind::Kind;
 use std::collections::HashMap;
 
@@ -68,7 +67,11 @@ fn view_track_elements(
     recording_preview_bounds: Option<(usize, usize)>,
     recording_preview_peaks: Option<&HashMap<String, Vec<Vec<f32>>>>,
 ) -> Element<'static, Message> {
-    let mut clips: Vec<Element<'static, Message>> = vec![];
+    let mut clips: Vec<Element<'static, Message>> = vec![
+        mouse_area(container("").width(Length::Fill).height(Length::Fill))
+            .on_press(Message::DeselectClips)
+            .into(),
+    ];
     let height = track.height;
     let track_name_cloned = track.name.clone();
 
@@ -147,16 +150,16 @@ fn view_track_elements(
             Style {
                 background: Some(Background::Color(if is_selected {
                     Color {
-                        r: 0.4,
-                        g: 0.6,
-                        b: 0.8,
+                        r: 0.72,
+                        g: 0.86,
+                        b: 1.0,
                         a: 1.0,
                     }
                 } else {
                     Color {
-                        r: 0.3,
-                        g: 0.5,
-                        b: 0.7,
+                        r: 0.27,
+                        g: 0.45,
+                        b: 0.62,
                         a: 0.8,
                     }
                 })),
@@ -167,46 +170,187 @@ fn view_track_elements(
         let clip_widget = container(row![left_handle, clip_content, right_handle])
             .width(Length::Fixed(clip_width))
             .height(Length::Fill)
-            .style(|_theme| container::Style {
+            .style(move |_theme| container::Style {
                 background: None,
                 border: Border {
-                    color: Color {
-                        r: 0.2,
-                        g: 0.4,
-                        b: 0.6,
-                        a: 1.0,
+                    color: if is_selected {
+                        Color {
+                            r: 0.98,
+                            g: 0.98,
+                            b: 0.98,
+                            a: 1.0,
+                        }
+                    } else {
+                        Color {
+                            r: 0.2,
+                            g: 0.4,
+                            b: 0.6,
+                            a: 1.0,
+                        }
                     },
-                    width: 1.0,
+                    width: if is_selected { 2.0 } else { 1.0 },
                     radius: 3.0.into(),
                 },
                 ..container::Style::default()
             });
 
         clips.push(
-            mouse_area(
-                droppable(
-                    pin(clip_widget)
-                        .position(Point::new(clip.start as f32 * pixels_per_sample, 0.0)),
-                )
-                .on_drag({
-                    let track_name_for_drag_closure = track_name_cloned.clone();
-                    move |point, _| {
-                        let mut clip_data = DraggedClip::new(
-                            Kind::Audio,
-                            index,
-                            track_name_for_drag_closure.clone(),
-                        );
-                        clip_data.start = point;
-                        Message::ClipDrag(clip_data)
-                    }
-                })
-                .on_drop(Message::ClipDropped),
+            pin(
+                mouse_area(clip_widget)
+                    .on_press(Message::SelectClip {
+                        track_idx: track_name_cloned.clone(),
+                        clip_idx: index,
+                        kind: Kind::Audio,
+                    })
+                    .on_move({
+                        let track_name_for_drag_closure = track_name_cloned.clone();
+                        move |point| {
+                            let mut clip_data = DraggedClip::new(
+                                Kind::Audio,
+                                index,
+                                track_name_for_drag_closure.clone(),
+                            );
+                            clip_data.start = point;
+                            Message::ClipDrag(clip_data)
+                        }
+                    }),
             )
-            .on_press(Message::SelectClip {
-                track_idx: track_name_cloned.clone(),
-                clip_idx: index,
-                kind: Kind::Audio,
-            })
+            .position(Point::new(clip.start as f32 * pixels_per_sample, 0.0))
+            .into(),
+        );
+    }
+    for (index, clip) in track.midi.clips.iter().enumerate() {
+        let clip_name = clip.name.clone();
+        let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
+        let is_selected = state.selected_clips.contains(&crate::state::ClipId {
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            kind: Kind::MIDI,
+        });
+
+        let left_handle = mouse_area(
+            container("")
+                .width(Length::Fixed(5.0))
+                .height(Length::Fill)
+                .style(|_theme| {
+                    use container::Style;
+                    Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.25,
+                            g: 0.55,
+                            b: 0.25,
+                            a: 0.9,
+                        })),
+                        ..Style::default()
+                    }
+                }),
+        )
+        .on_press(Message::ClipResizeStart(
+            Kind::MIDI,
+            track_name_cloned.clone(),
+            index,
+            false,
+        ));
+
+        let right_handle = mouse_area(
+            container("")
+                .width(Length::Fixed(5.0))
+                .height(Length::Fill)
+                .style(|_theme| {
+                    use container::Style;
+                    Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.25,
+                            g: 0.55,
+                            b: 0.25,
+                            a: 0.9,
+                        })),
+                        ..Style::default()
+                    }
+                }),
+        )
+        .on_press(Message::ClipResizeStart(
+            Kind::MIDI,
+            track_name_cloned.clone(),
+            index,
+            true,
+        ));
+
+        let clip_content = container(container(text(clip_name).size(12)).padding(5))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(0)
+            .style(move |_theme| {
+                use container::Style;
+                Style {
+                    background: Some(Background::Color(if is_selected {
+                        Color {
+                            r: 0.82,
+                            g: 1.0,
+                            b: 0.84,
+                            a: 1.0,
+                        }
+                    } else {
+                        Color {
+                            r: 0.24,
+                            g: 0.5,
+                            b: 0.26,
+                            a: 0.82,
+                        }
+                    })),
+                    ..Style::default()
+                }
+            });
+
+        let clip_widget = container(row![left_handle, clip_content, right_handle])
+            .width(Length::Fixed(clip_width))
+            .height(Length::Fill)
+            .style(move |_theme| container::Style {
+                background: None,
+                border: Border {
+                    color: if is_selected {
+                        Color {
+                            r: 0.98,
+                            g: 0.98,
+                            b: 0.98,
+                            a: 1.0,
+                        }
+                    } else {
+                        Color {
+                            r: 0.2,
+                            g: 0.45,
+                            b: 0.2,
+                            a: 1.0,
+                        }
+                    },
+                    width: if is_selected { 2.0 } else { 1.0 },
+                    radius: 3.0.into(),
+                },
+                ..container::Style::default()
+            });
+
+        clips.push(
+            pin(
+                mouse_area(clip_widget)
+                    .on_press(Message::SelectClip {
+                        track_idx: track_name_cloned.clone(),
+                        clip_idx: index,
+                        kind: Kind::MIDI,
+                    })
+                    .on_move({
+                        let track_name_for_drag_closure = track_name_cloned.clone();
+                        move |point| {
+                            let mut clip_data = DraggedClip::new(
+                                Kind::MIDI,
+                                index,
+                                track_name_for_drag_closure.clone(),
+                            );
+                            clip_data.start = point;
+                            Message::ClipDrag(clip_data)
+                        }
+                    }),
+            )
+            .position(Point::new(clip.start as f32 * pixels_per_sample, 0.0))
             .into(),
         );
     }
@@ -324,7 +468,7 @@ impl Editor {
             ));
         }
         mouse_area(result.width(Length::Fill).height(Length::Fill))
-            .on_press(Message::DeselectAll)
+            .on_press(Message::DeselectClips)
             .into()
     }
 }

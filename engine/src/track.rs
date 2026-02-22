@@ -9,7 +9,7 @@ use crate::{
 };
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
 };
 
@@ -17,6 +17,12 @@ use std::{
 pub struct Lv2Instance {
     pub id: usize,
     pub processor: Lv2Processor,
+}
+
+#[derive(Debug, Clone)]
+struct AudioClipBuffer {
+    channels: usize,
+    samples: Vec<f32>,
 }
 
 #[derive(Debug)]
@@ -27,6 +33,8 @@ pub struct Track {
     pub armed: bool,
     pub muted: bool,
     pub soloed: bool,
+    pub input_monitor: bool,
+    pub disk_monitor: bool,
     pub audio: AudioTrack,
     pub midi: MIDITrack,
     pub lv2_processors: Vec<Lv2Instance>,
@@ -35,9 +43,12 @@ pub struct Track {
     pub next_lv2_instance_id: usize,
     pub sample_rate: f64,
     pub output_enabled: bool,
+    pub transport_sample: usize,
     pub record_tap_outs: Vec<Vec<f32>>,
     pub record_tap_midi_in: Vec<MidiEvent>,
     pub lv2_state_base_dir: Option<PathBuf>,
+    pub session_base_dir: Option<PathBuf>,
+    audio_clip_cache: HashMap<String, AudioClipBuffer>,
 }
 
 impl Track {
@@ -57,6 +68,8 @@ impl Track {
             armed: false,
             muted: false,
             soloed: false,
+            input_monitor: false,
+            disk_monitor: true,
             audio: AudioTrack::new(audio_ins, audio_outs, buffer_size),
             midi: MIDITrack::new(midi_ins, midi_outs),
             lv2_processors: Vec::new(),
@@ -65,9 +78,12 @@ impl Track {
             next_lv2_instance_id: 0,
             sample_rate,
             output_enabled: true,
+            transport_sample: 0,
             record_tap_outs: vec![vec![0.0; buffer_size]; audio_outs],
             record_tap_midi_in: vec![],
             lv2_state_base_dir: None,
+            session_base_dir: None,
+            audio_clip_cache: HashMap::new(),
         }
         .with_default_passthrough()
     }
@@ -192,13 +208,13 @@ impl Track {
         let internal_source_ptrs: HashSet<*const AudioIO> =
             internal_sources.iter().map(Arc::as_ptr).collect();
         for out_idx in 0..self.audio.outs.len() {
-            let audio_out = &self.audio.outs[out_idx];
+            let audio_out = self.audio.outs[out_idx].clone();
             let out_samples = audio_out.buffer.lock();
             out_samples.fill(0.0);
             if self.record_tap_outs.len() <= out_idx {
                 self.record_tap_outs.push(vec![0.0; out_samples.len()]);
             }
-            let tap = &mut self.record_tap_outs[out_idx];
+            let mut tap = std::mem::take(&mut self.record_tap_outs[out_idx]);
             if tap.len() != out_samples.len() {
                 tap.resize(out_samples.len(), 0.0);
             }
@@ -218,7 +234,8 @@ impl Track {
                     continue;
                 }
                 let source_buf = source.buffer.lock();
-                if self.output_enabled {
+                // Record tap should always capture live track input, regardless of monitor state.
+                if self.input_monitor && self.output_enabled {
                     for ((tap_sample, out_sample), in_sample) in tap
                         .iter_mut()
                         .zip(out_samples.iter_mut())
@@ -233,6 +250,15 @@ impl Track {
                     }
                 }
             }
+            if self.disk_monitor {
+                self.mix_clip_audio_into_output(
+                    out_idx,
+                    out_samples,
+                    linear_gain,
+                    balance_gain,
+                );
+            }
+            self.record_tap_outs[out_idx] = tap;
             *audio_out.finished.lock() = true;
         }
 
@@ -282,11 +308,111 @@ impl Track {
     pub fn set_output_enabled(&mut self, enabled: bool) {
         self.output_enabled = enabled;
     }
+    pub fn set_transport_sample(&mut self, sample: usize) {
+        self.transport_sample = sample;
+    }
     pub fn mute(&mut self) {
         self.muted = !self.muted;
     }
     pub fn solo(&mut self) {
         self.soloed = !self.soloed;
+    }
+    pub fn toggle_input_monitor(&mut self) {
+        self.input_monitor = !self.input_monitor;
+    }
+    pub fn toggle_disk_monitor(&mut self) {
+        self.disk_monitor = !self.disk_monitor;
+    }
+    pub fn set_session_base_dir(&mut self, base_dir: Option<PathBuf>) {
+        self.session_base_dir = base_dir;
+    }
+
+    fn resolve_clip_path(&self, clip_name: &str) -> PathBuf {
+        let clip_path = Path::new(clip_name);
+        if clip_path.is_absolute() {
+            clip_path.to_path_buf()
+        } else if let Some(base) = &self.session_base_dir {
+            base.join(clip_path)
+        } else {
+            clip_path.to_path_buf()
+        }
+    }
+
+    fn load_audio_clip_buffer(path: &Path) -> Option<AudioClipBuffer> {
+        let mut wav = wavers::Wav::<f32>::from_path(path).ok()?;
+        let channels = wav.n_channels().max(1) as usize;
+        let samples: wavers::Samples<f32> = wav.read().ok()?;
+        if samples.is_empty() {
+            return None;
+        }
+        Some(AudioClipBuffer {
+            channels,
+            samples: samples.to_vec(),
+        })
+    }
+
+    fn clip_buffer(&mut self, clip_name: &str) -> Option<AudioClipBuffer> {
+        if let Some(cached) = self.audio_clip_cache.get(clip_name) {
+            return Some(cached.clone());
+        }
+        let path = self.resolve_clip_path(clip_name);
+        let loaded = Self::load_audio_clip_buffer(&path)?;
+        self.audio_clip_cache
+            .insert(clip_name.to_string(), loaded.clone());
+        Some(loaded)
+    }
+
+    fn mix_clip_audio_into_output(
+        &mut self,
+        out_channel: usize,
+        out_samples: &mut [f32],
+        linear_gain: f32,
+        balance_gain: f32,
+    ) {
+        let frames = out_samples.len();
+        if frames == 0 {
+            return;
+        }
+        let cycle_start = self.transport_sample;
+        let cycle_end = cycle_start.saturating_add(frames);
+        let clips = self.audio.clips.clone();
+        for clip in clips {
+            let clip_start = clip.start;
+            let clip_len = clip.end;
+            if clip_len == 0 {
+                continue;
+            }
+            let clip_end = clip_start.saturating_add(clip_len);
+            if clip_end <= cycle_start || clip_start >= cycle_end {
+                continue;
+            }
+            let Some(buffer) = self.clip_buffer(&clip.name) else {
+                continue;
+            };
+            let channels = buffer.channels.max(1);
+            let total_frames = buffer.samples.len() / channels;
+            if total_frames == 0 {
+                continue;
+            }
+            let from = cycle_start.max(clip_start);
+            let to = cycle_end.min(clip_end);
+            let source_channel = if channels == 1 {
+                0
+            } else {
+                out_channel.min(channels - 1)
+            };
+            for absolute_sample in from..to {
+                let track_idx = absolute_sample - cycle_start;
+                let clip_idx = absolute_sample - clip_start + clip.offset;
+                if clip_idx >= total_frames {
+                    break;
+                }
+                let sample = buffer.samples[clip_idx * channels + source_channel];
+                if self.output_enabled {
+                    out_samples[track_idx] += sample * linear_gain * balance_gain;
+                }
+            }
+        }
     }
 
     pub fn load_lv2_plugin(&mut self, uri: &str) -> Result<(), String> {

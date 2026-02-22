@@ -742,6 +742,7 @@ impl Engine {
                     return false;
                 }
                 let worker_index = self.ready_workers.remove(0);
+                t.set_transport_sample(self.transport_sample);
                 t.audio.processing = true;
                 let worker = &self.workers[worker_index];
                 if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
@@ -869,6 +870,7 @@ impl Engine {
                 let lv2_dir = self.session_plugins_dir();
                 for track in self.state.lock().tracks.values() {
                     track.lock().set_lv2_state_base_dir(lv2_dir.clone());
+                    track.lock().set_session_base_dir(self.session_dir.clone());
                 }
             }
             Action::Quit => {
@@ -941,6 +943,7 @@ impl Engine {
                         track.lock().ensure_default_midi_passthrough();
                         let lv2_dir = self.session_plugins_dir();
                         track.lock().set_lv2_state_base_dir(lv2_dir);
+                        track.lock().set_session_base_dir(self.session_dir.clone());
                     }
                 } else {
                     self.notify_clients(Err(
@@ -992,6 +995,16 @@ impl Engine {
                 }
                 if let Some(track) = self.state.lock().tracks.get(name) {
                     track.lock().solo();
+                }
+            }
+            Action::TrackToggleInputMonitor(ref name) => {
+                if let Some(track) = self.state.lock().tracks.get(name) {
+                    track.lock().toggle_input_monitor();
+                }
+            }
+            Action::TrackToggleDiskMonitor(ref name) => {
+                if let Some(track) = self.state.lock().tracks.get(name) {
+                    track.lock().toggle_disk_monitor();
                 }
             }
             Action::TrackLoadLv2Plugin {
@@ -1296,6 +1309,34 @@ impl Engine {
                             let mut clip = MIDIClip::new(name.clone(), start, length);
                             clip.offset = offset;
                             track.lock().midi.clips.push(clip);
+                        }
+                    }
+                }
+            }
+            Action::RemoveClip {
+                ref track_name,
+                kind,
+                ref clip_indices,
+            } => {
+                if let Some(track) = self.state.lock().tracks.get(track_name) {
+                    let track = track.lock();
+                    let mut indices = clip_indices.clone();
+                    indices.sort_unstable();
+                    indices.dedup();
+                    match kind {
+                        Kind::Audio => {
+                            for idx in indices.into_iter().rev() {
+                                if idx < track.audio.clips.len() {
+                                    track.audio.clips.remove(idx);
+                                }
+                            }
+                        }
+                        Kind::MIDI => {
+                            for idx in indices.into_iter().rev() {
+                                if idx < track.midi.clips.len() {
+                                    track.midi.clips.remove(idx);
+                                }
+                            }
                         }
                     }
                 }

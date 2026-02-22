@@ -11,6 +11,7 @@ pub enum Show {
     AddTrack,
     TrackPluginList,
     Save,
+    SaveAs,
     Open,
 }
 
@@ -30,6 +31,7 @@ pub struct DraggedClip {
     pub track_index: String,
     pub start: Point,
     pub end: Point,
+    pub copy: bool,
 }
 
 impl DraggedClip {
@@ -40,6 +42,7 @@ impl DraggedClip {
             track_index: track_index.clone(),
             start: Point::new(0.0, 0.0),
             end: Point::new(0.0, 0.0),
+            copy: false,
         }
     }
 }
@@ -65,6 +68,7 @@ pub enum Message {
     RemoveSelectedTracks,
     RemoveSelected,
     Remove,
+    DeselectClips,
     DeselectAll,
 
     ConnectionViewSelectTrack(String),
@@ -80,7 +84,6 @@ pub enum Message {
     ClipResizeStart(Kind, String, usize, bool),
 
     ClipDrag(DraggedClip),
-    ClipDropped(Point, Rectangle),
     HandleClipZones(Vec<(Id, Rectangle)>),
 
     TrackDrag(usize),
@@ -90,6 +93,7 @@ pub enum Message {
     StartMovingTrackAndSelect(crate::state::MovingTrack, String),
 
     MouseMoved(mouse::Event),
+    MousePressed(mouse::Button),
     MouseReleased,
 
     ShiftPressed,

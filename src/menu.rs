@@ -97,6 +97,7 @@ impl Menu {
                     (menu_item("New", Message::NewSession)),
                     (menu_item("Open", Message::Show(Show::Open))),
                     (menu_item("Save", Message::Show(Show::Save))),
+                    (menu_item("Save as", Message::Show(Show::SaveAs))),
                     (menu_item("Import", Message::OpenFileImporter)),
                     (submenu("Open Recent", Message::None), menu_tpl(menu_items!(
                         (menu_item("First", Message::None)),

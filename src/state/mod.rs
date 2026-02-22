@@ -97,7 +97,15 @@ pub struct ClipId {
 
 #[derive(Debug, Clone)]
 pub enum Resizing {
-    Clip(Kind, String, usize, bool, f32, f32, f32),
+    Clip {
+        kind: Kind,
+        track_name: String,
+        index: usize,
+        is_right_side: bool,
+        initial_value: f32,
+        initial_mouse_x: f32,
+        initial_length: f32,
+    },
     Mixer(f32, f32),
     Track(String, f32, f32),
     Tracks(f32, f32),
@@ -172,6 +180,7 @@ pub struct StateData {
     pub connections: Vec<Connection>,
     pub selected: HashSet<String>,
     pub selected_clips: HashSet<ClipId>,
+    pub clip_click_consumed: bool,
     pub message: String,
     pub resizing: Option<Resizing>,
     pub connecting: Option<Connecting>,
@@ -179,6 +188,7 @@ pub struct StateData {
     pub hovering: Option<Hovering>,
     pub connection_view_selection: ConnectionViewSelection,
     pub cursor: Point,
+    pub mouse_left_down: bool,
     pub mixer_height: Length,
     pub tracks_width: Length,
     pub view: View,
@@ -240,6 +250,7 @@ impl Default for StateData {
             connections: vec![],
             selected: HashSet::new(),
             selected_clips: HashSet::new(),
+            clip_click_consumed: false,
             message: "Thank you for using Maolan!".to_string(),
             resizing: None,
             connecting: None,
@@ -247,6 +258,7 @@ impl Default for StateData {
             hovering: None,
             connection_view_selection: ConnectionViewSelection::None,
             cursor: Point::new(0.0, 0.0),
+            mouse_left_down: false,
             mixer_height: Length::Fixed(300.0),
             tracks_width: Length::Fixed(200.0),
             view: View::Workspace,

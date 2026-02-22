@@ -132,7 +132,7 @@ impl Workspace {
                             ..container::Style::default()
                         }
                     }),
-                self.ruler.view(playhead_x, beat_pixels),
+                self.ruler.view(playhead_x, beat_pixels, pixels_per_sample),
             ]
             .height(Length::Fixed(self.ruler.height())),
             row![
