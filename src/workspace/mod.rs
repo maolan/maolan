@@ -1,6 +1,7 @@
 mod editor;
 mod mixer;
 mod ruler;
+mod tempo;
 mod tracks;
 
 use crate::{
@@ -18,6 +19,7 @@ pub struct Workspace {
     editor: editor::Editor,
     mixer: mixer::Mixer,
     ruler: ruler::Ruler,
+    tempo: tempo::Tempo,
     tracks: tracks::Tracks,
 }
 
@@ -28,6 +30,7 @@ impl Workspace {
             editor: editor::Editor::new(state.clone()),
             mixer: mixer::Mixer::new(state.clone()),
             ruler: ruler::Ruler::new(),
+            tempo: tempo::Tempo::new(),
             tracks: tracks::Tracks::new(state.clone()),
         }
     }
@@ -115,6 +118,37 @@ impl Workspace {
         .height(Length::Fill);
 
         column![
+            // Tempo Ruler
+            row![
+                container("")
+                    .width(tracks_width)
+                    .height(Length::Fill)
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.1,
+                            a: 1.0,
+                        })),
+                        ..container::Style::default()
+                    }),
+                container("")
+                    .width(Length::Fixed(3.0))
+                    .height(Length::Fill)
+                    .style(|_theme| {
+                        container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.5,
+                                g: 0.5,
+                                b: 0.5,
+                                a: 0.5,
+                            })),
+                            ..container::Style::default()
+                        }
+                    }),
+                self.tempo.view(120.0, (4, 4), pixels_per_sample, playhead_x), // TODO: Get BPM and Time Signature from State
+            ]
+            .height(Length::Fixed(self.tempo.height())),
             row![
                 container("")
                     .width(tracks_width)
