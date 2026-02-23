@@ -143,6 +143,7 @@ impl<B: Backend> HwWorker<B> {
         #[cfg(unix)]
         {
             let thread = unsafe { libc::pthread_self() };
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             let c_name = std::ffi::CString::new(name).map_err(|e| e.to_string())?;
             #[cfg(target_os = "linux")]
             unsafe {

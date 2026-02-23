@@ -34,6 +34,8 @@ pub enum AudioBackendOption {
     Jack,
     #[cfg(target_os = "freebsd")]
     Oss,
+    #[cfg(target_os = "openbsd")]
+    Sndio,
     #[cfg(target_os = "linux")]
     Alsa,
 }
@@ -44,6 +46,8 @@ impl std::fmt::Display for AudioBackendOption {
             Self::Jack => "JACK",
             #[cfg(target_os = "freebsd")]
             Self::Oss => "OSS",
+            #[cfg(target_os = "openbsd")]
+            Self::Sndio => "sndio",
             #[cfg(target_os = "linux")]
             Self::Alsa => "ALSA",
         };
@@ -51,7 +55,7 @@ impl std::fmt::Display for AudioBackendOption {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 #[derive(Clone, Debug)]
 pub struct AudioDeviceOption {
     pub id: String,
@@ -59,7 +63,7 @@ pub struct AudioDeviceOption {
     pub supported_bits: Vec<usize>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 impl AudioDeviceOption {
     #[cfg(target_os = "linux")]
     pub fn with_supported_bits(
@@ -91,12 +95,27 @@ impl AudioDeviceOption {
         }
     }
 
+    #[cfg(target_os = "openbsd")]
+    pub fn with_supported_bits(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        mut supported_bits: Vec<usize>,
+    ) -> Self {
+        supported_bits.sort_by(|a, b| b.cmp(a));
+        supported_bits.dedup();
+        Self {
+            id: id.into(),
+            label: label.into(),
+            supported_bits,
+        }
+    }
+
     pub fn preferred_bits(&self) -> Option<usize> {
         self.supported_bits.first().copied()
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 impl std::fmt::Display for AudioDeviceOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.supported_bits.is_empty() {
@@ -112,17 +131,17 @@ impl std::fmt::Display for AudioDeviceOption {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 impl PartialEq for AudioDeviceOption {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 impl Eq for AudioDeviceOption {}
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 impl std::hash::Hash for AudioDeviceOption {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
@@ -241,13 +260,13 @@ pub struct StateData {
     pub hw_loaded: bool,
     pub available_backends: Vec<AudioBackendOption>,
     pub selected_backend: AudioBackendOption,
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     pub available_hw: Vec<AudioDeviceOption>,
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     pub selected_hw: Option<AudioDeviceOption>,
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
     pub available_hw: Vec<String>,
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
     pub selected_hw: Option<String>,
     pub oss_exclusive: bool,
     pub oss_bits: usize,
@@ -285,6 +304,8 @@ impl Default for StateData {
         let selected_backend = default_audio_backend();
         #[cfg(target_os = "freebsd")]
         let hw: Vec<AudioDeviceOption> = discover_freebsd_audio_devices();
+        #[cfg(target_os = "openbsd")]
+        let hw: Vec<AudioDeviceOption> = discover_openbsd_audio_devices();
         #[cfg(target_os = "linux")]
         let hw: Vec<AudioDeviceOption> = { discover_alsa_devices() };
         Self {
@@ -355,6 +376,8 @@ fn supported_audio_backends() -> Vec<AudioBackendOption> {
     out.push(AudioBackendOption::Jack);
     #[cfg(target_os = "freebsd")]
     out.push(AudioBackendOption::Oss);
+    #[cfg(target_os = "openbsd")]
+    out.push(AudioBackendOption::Sndio);
     #[cfg(target_os = "linux")]
     out.push(AudioBackendOption::Alsa);
     out
@@ -365,14 +388,27 @@ fn default_audio_backend() -> AudioBackendOption {
     {
         AudioBackendOption::Oss
     }
+    #[cfg(target_os = "openbsd")]
+    {
+        AudioBackendOption::Sndio
+    }
     #[cfg(target_os = "linux")]
     {
         AudioBackendOption::Alsa
     }
-    #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+    #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
     {
         AudioBackendOption::Jack
     }
+}
+
+#[cfg(target_os = "openbsd")]
+pub(crate) fn discover_openbsd_audio_devices() -> Vec<AudioDeviceOption> {
+    vec![AudioDeviceOption::with_supported_bits(
+        "default",
+        "Default (sndio)",
+        vec![32, 24, 16, 8],
+    )]
 }
 
 #[cfg(target_os = "freebsd")]

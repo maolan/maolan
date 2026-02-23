@@ -4,7 +4,6 @@ mod audio;
 pub mod client;
 mod engine;
 mod hw;
-#[cfg(any(target_os = "freebsd", target_os = "linux"))]
 mod hw_worker;
 pub mod kind;
 pub mod lv2;
@@ -13,6 +12,8 @@ mod midi;
 pub mod mutex;
 #[cfg(target_os = "freebsd")]
 mod oss_worker;
+#[cfg(target_os = "openbsd")]
+mod sndio_worker;
 mod routing;
 pub mod state;
 mod track;

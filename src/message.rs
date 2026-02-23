@@ -3,7 +3,7 @@ use maolan_engine::{kind::Kind, message::Action};
 use std::path::PathBuf;
 
 use crate::state::AudioBackendOption;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 use crate::state::AudioDeviceOption;
 
 #[derive(Debug, Clone, Copy)]
@@ -131,9 +131,9 @@ pub enum Message {
     SelectLv2Plugin(String),
     LoadSelectedLv2Plugins,
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     HWSelected(AudioDeviceOption),
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
     HWSelected(String),
     HWBackendSelected(AudioBackendOption),
     HWExclusiveToggled(bool),

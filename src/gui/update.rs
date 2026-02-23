@@ -1821,7 +1821,7 @@ impl Maolan {
                 return self.send(Action::TrackGetLv2Graph { track_name });
             }
             Message::HWSelected(ref hw) => {
-                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
                 {
                     let mut state = self.state.blocking_write();
                     #[cfg(target_os = "freebsd")]
@@ -1848,8 +1848,24 @@ impl Maolan {
                         }
                         state.selected_hw = Some(hw.clone());
                     }
+                    #[cfg(target_os = "openbsd")]
+                    {
+                        let refreshed = crate::state::discover_openbsd_audio_devices();
+                        let selected = refreshed
+                            .iter()
+                            .find(|candidate| candidate.id == hw.id)
+                            .cloned()
+                            .unwrap_or_else(|| hw.clone());
+                        if !refreshed.is_empty() {
+                            state.available_hw = refreshed;
+                        }
+                        if let Some(bits) = selected.preferred_bits() {
+                            state.oss_bits = bits;
+                        }
+                        state.selected_hw = Some(selected);
+                    }
                 }
-                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
                 {
                     self.state.blocking_write().selected_hw = Some(hw.to_string());
                 }
@@ -1858,7 +1874,7 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.selected_backend = backend.clone();
                 state.selected_hw = None;
-                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
                 {
                     state.oss_bits = 32;
                 }
@@ -1867,12 +1883,12 @@ impl Maolan {
                 self.state.blocking_write().oss_exclusive = exclusive;
             }
             Message::HWBitsChanged(bits) => {
-                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
                 {
                     let mut state = self.state.blocking_write();
                     state.oss_bits = bits;
                 }
-                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
                 let _ = bits;
             }
             Message::HWPeriodFramesChanged(period_frames) => {

@@ -26,6 +26,10 @@ use crate::hw::oss as hw;
 use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "freebsd")]
 use crate::oss_worker::HwWorker;
+#[cfg(target_os = "openbsd")]
+use crate::hw::sndio::{HwDriver, HwOptions, MidiHub};
+#[cfg(target_os = "openbsd")]
+use crate::sndio_worker::HwWorker;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
@@ -173,6 +177,28 @@ impl Engine {
                     .filter_map(|path| {
                         let name = path.file_name()?.to_str()?;
                         if name.starts_with("midiC") {
+                            Some(path.to_string_lossy().into_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        devices.sort();
+        devices.dedup();
+        devices
+    }
+
+    #[cfg(target_os = "openbsd")]
+    fn discover_midi_hw_devices() -> Vec<String> {
+        let mut devices: Vec<String> = read_dir("/dev")
+            .map(|rd| {
+                rd.filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter_map(|path| {
+                        let name = path.file_name()?.to_str()?;
+                        if name.starts_with("rmidi") || name.starts_with("midi") {
                             Some(path.to_string_lossy().into_owned())
                         } else {
                             None
@@ -1086,11 +1112,11 @@ impl Engine {
                         .tx
                         .send(Message::Request(a.clone()))
                         .await
-                        .expect("Failed sending quit message to OSS worker");
+                        .expect("Failed sending quit message to HW worker");
                     worker
                         .handle
                         .await
-                        .expect("Failed waiting for OSS worker to quit");
+                        .expect("Failed waiting for HW worker to quit");
                 }
                 self.jack_runtime = None;
 
@@ -1894,8 +1920,10 @@ impl Engine {
                         if hw_profile_enabled {
                             let label = if cfg!(target_os = "linux") {
                                 "ALSA"
-                            } else {
+                            } else if cfg!(target_os = "freebsd") {
                                 "OSS"
+                            } else {
+                                "sndio"
                             };
                             error!(
                                 "{} config: exclusive={}, period={}, nperiods={}, ignore_hwbuf={}, sync_mode={}, in_latency_extra={}, out_latency_extra={}, input_range={:?}, output_range={:?}",
