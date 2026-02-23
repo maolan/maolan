@@ -404,11 +404,42 @@ fn default_audio_backend() -> AudioBackendOption {
 
 #[cfg(target_os = "openbsd")]
 pub(crate) fn discover_openbsd_audio_devices() -> Vec<AudioDeviceOption> {
-    vec![AudioDeviceOption::with_supported_bits(
+    let mut out = vec![AudioDeviceOption::with_supported_bits(
         "default",
         "Default (sndio)",
         vec![32, 24, 16, 8],
-    )]
+    )];
+
+    let mut paths: Vec<String> = std::fs::read_dir("/dev")
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter_map(|path| {
+                    let name = path.file_name()?.to_str()?;
+                    if !name.starts_with("audio") || name.starts_with("audioctl") {
+                        return None;
+                    }
+                    if name[5..].chars().all(|c| c.is_ascii_digit()) {
+                        Some(path.to_string_lossy().into_owned())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    paths.sort();
+    paths.dedup();
+
+    for dev in paths {
+        out.push(AudioDeviceOption::with_supported_bits(
+            dev.clone(),
+            format!("{dev} (sndio sun)"),
+            vec![32, 24, 16, 8],
+        ));
+    }
+
+    out
 }
 
 #[cfg(target_os = "freebsd")]

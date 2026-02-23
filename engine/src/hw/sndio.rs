@@ -51,6 +51,8 @@ unsafe extern "C" {
     fn sio_read(hdl: *mut SioHdl, addr: *mut std::os::raw::c_void, nbytes: usize) -> usize;
     fn sio_write(hdl: *mut SioHdl, addr: *const std::os::raw::c_void, nbytes: usize) -> usize;
     fn sio_eof(hdl: *mut SioHdl) -> i32;
+    fn sio_sun_getfd(name: *const std::os::raw::c_char, mode: u32, nbio: i32) -> i32;
+    fn sio_sun_fdopen(fd: i32, mode: u32, nbio: i32) -> *mut SioHdl;
 }
 
 pub struct HwDriver {
@@ -140,7 +142,17 @@ impl HwDriver {
         let name = CString::new(requested_device)
             .map_err(|e| error_fmt::backend_open_error("sndio", "duplex", requested_device, e))?;
 
-        let hdl = unsafe { sio_open(name.as_ptr(), SIO_PLAY | SIO_REC, 0) };
+        let mode = SIO_PLAY | SIO_REC;
+        let hdl = if requested_device.starts_with("/dev/audio") {
+            let fd = unsafe { sio_sun_getfd(name.as_ptr(), mode, 0) };
+            if fd < 0 {
+                std::ptr::null_mut()
+            } else {
+                unsafe { sio_sun_fdopen(fd, mode, 0) }
+            }
+        } else {
+            unsafe { sio_open(name.as_ptr(), mode, 0) }
+        };
         if hdl.is_null() {
             return Err(error_fmt::backend_open_error(
                 "sndio",
