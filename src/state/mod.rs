@@ -6,6 +6,8 @@ mod track;
 use alsa::Direction;
 #[cfg(target_os = "linux")]
 use alsa::pcm::{Access, Format, HwParams, PCM};
+#[cfg(target_os = "windows")]
+use cpal::traits::{DeviceTrait, HostTrait};
 pub use clip::{AudioClip, MIDIClip};
 pub use connection::Connection;
 use iced::{Length, Point};
@@ -31,6 +33,7 @@ pub const MIDI_HW_OUT_ID: &str = "midi:hw:out";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AudioBackendOption {
+    #[cfg(unix)]
     Jack,
     #[cfg(target_os = "freebsd")]
     Oss,
@@ -38,11 +41,14 @@ pub enum AudioBackendOption {
     Sndio,
     #[cfg(target_os = "linux")]
     Alsa,
+    #[cfg(target_os = "windows")]
+    Wasapi,
 }
 
 impl std::fmt::Display for AudioBackendOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let label = match self {
+            #[cfg(unix)]
             Self::Jack => "JACK",
             #[cfg(target_os = "freebsd")]
             Self::Oss => "OSS",
@@ -50,6 +56,8 @@ impl std::fmt::Display for AudioBackendOption {
             Self::Sndio => "sndio",
             #[cfg(target_os = "linux")]
             Self::Alsa => "ALSA",
+            #[cfg(target_os = "windows")]
+            Self::Wasapi => "WASAPI",
         };
         f.write_str(label)
     }
@@ -308,6 +316,15 @@ impl Default for StateData {
         let hw: Vec<AudioDeviceOption> = discover_openbsd_audio_devices();
         #[cfg(target_os = "linux")]
         let hw: Vec<AudioDeviceOption> = { discover_alsa_devices() };
+        #[cfg(target_os = "windows")]
+        let hw: Vec<String> = discover_windows_audio_devices();
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "windows"
+        )))]
+        let hw: Vec<String> = vec![];
         Self {
             shift: false,
             ctrl: false,
@@ -373,6 +390,7 @@ pub type State = Arc<RwLock<StateData>>;
 
 fn supported_audio_backends() -> Vec<AudioBackendOption> {
     let mut out = Vec::new();
+    #[cfg(unix)]
     out.push(AudioBackendOption::Jack);
     #[cfg(target_os = "freebsd")]
     out.push(AudioBackendOption::Oss);
@@ -380,6 +398,8 @@ fn supported_audio_backends() -> Vec<AudioBackendOption> {
     out.push(AudioBackendOption::Sndio);
     #[cfg(target_os = "linux")]
     out.push(AudioBackendOption::Alsa);
+    #[cfg(target_os = "windows")]
+    out.push(AudioBackendOption::Wasapi);
     out
 }
 
@@ -396,10 +416,41 @@ fn default_audio_backend() -> AudioBackendOption {
     {
         AudioBackendOption::Alsa
     }
-    #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
+    #[cfg(target_os = "windows")]
+    {
+        AudioBackendOption::Wasapi
+    }
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "openbsd"
+        ))
+    ))]
     {
         AudioBackendOption::Jack
     }
+    #[cfg(not(any(unix, target_os = "windows")))]
+    {
+        unreachable!("no default audio backend for this target")
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn discover_windows_audio_devices() -> Vec<String> {
+    let host = cpal::default_host();
+    let mut out = vec!["default".to_string()];
+    if let Ok(devices) = host.output_devices() {
+        for dev in devices {
+            if let Ok(name) = dev.name() {
+                out.push(format!("wasapi:{name}"));
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 #[cfg(target_os = "openbsd")]

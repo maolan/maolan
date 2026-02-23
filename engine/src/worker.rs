@@ -1,4 +1,5 @@
 use crate::message::{Action, Message};
+#[cfg(unix)]
 use nix::libc;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::error;

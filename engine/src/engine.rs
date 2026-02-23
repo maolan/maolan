@@ -26,14 +26,19 @@ use crate::hw::oss as hw;
 use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "openbsd")]
 use crate::hw::sndio::{HwDriver, HwOptions, MidiHub};
+#[cfg(target_os = "windows")]
+use crate::hw::wasapi::{self, HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "freebsd")]
 use crate::oss_worker::HwWorker;
 #[cfg(target_os = "openbsd")]
 use crate::sndio_worker::HwWorker;
+#[cfg(target_os = "windows")]
+use crate::wasapi_worker::HwWorker;
+#[cfg(unix)]
+use crate::hw::jack::JackRuntime;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
-    hw::jack::JackRuntime,
     hw::{config, traits::HwDevice},
     kind::Kind,
     message::{Action, HwMidiEvent, Message},
@@ -94,6 +99,7 @@ pub struct Engine {
     tx: Sender<Message>,
     workers: Vec<WorkerData>,
     hw_driver: Option<Arc<UnsafeMutex<HwDriver>>>,
+    #[cfg(unix)]
     jack_runtime: Option<Arc<UnsafeMutex<JackRuntime>>>,
     midi_hub: Arc<UnsafeMutex<MidiHub>>,
     hw_worker: Option<WorkerData>,
@@ -212,6 +218,15 @@ impl Engine {
         devices
     }
 
+    #[cfg(target_os = "windows")]
+    fn discover_midi_hw_devices() -> Vec<String> {
+        let mut devices = wasapi::list_midi_input_devices();
+        devices.extend(wasapi::list_midi_output_devices());
+        devices.sort();
+        devices.dedup();
+        devices
+    }
+
     pub fn new(rx: Receiver<Message>, tx: Sender<Message>) -> Self {
         Self {
             rx,
@@ -220,6 +235,7 @@ impl Engine {
             state: Arc::new(UnsafeMutex::new(State::default())),
             workers: vec![],
             hw_driver: None,
+            #[cfg(unix)]
             jack_runtime: None,
             midi_hub: Arc::new(UnsafeMutex::new(MidiHub::default())),
             hw_worker: None,
@@ -250,11 +266,20 @@ impl Engine {
         }
     }
 
+    #[cfg(unix)]
     fn current_cycle_samples(&self) -> usize {
         self.hw_driver
             .as_ref()
             .map(|o| o.lock().cycle_samples())
             .or_else(|| self.jack_runtime.as_ref().map(|j| j.lock().buffer_size))
+            .unwrap_or(0)
+    }
+
+    #[cfg(not(unix))]
+    fn current_cycle_samples(&self) -> usize {
+        self.hw_driver
+            .as_ref()
+            .map(|o| o.lock().cycle_samples())
             .unwrap_or(0)
     }
 
@@ -358,6 +383,7 @@ impl Engine {
         self.hw_worker = Some(WorkerData::new(tx, handler));
     }
 
+    #[cfg(unix)]
     fn hw_input_audio_port(&self, from_port: usize) -> Option<Arc<AudioIO>> {
         self.hw_driver
             .as_ref()
@@ -369,6 +395,14 @@ impl Engine {
             })
     }
 
+    #[cfg(not(unix))]
+    fn hw_input_audio_port(&self, from_port: usize) -> Option<Arc<AudioIO>> {
+        self.hw_driver
+            .as_ref()
+            .and_then(|h| h.lock().input_port(from_port))
+    }
+
+    #[cfg(unix)]
     fn hw_output_audio_port(&self, to_port: usize) -> Option<Arc<AudioIO>> {
         self.hw_driver
             .as_ref()
@@ -378,6 +412,13 @@ impl Engine {
                     .as_ref()
                     .and_then(|j| j.lock().audio_outs.get(to_port).cloned())
             })
+    }
+
+    #[cfg(not(unix))]
+    fn hw_output_audio_port(&self, to_port: usize) -> Option<Arc<AudioIO>> {
+        self.hw_driver
+            .as_ref()
+            .and_then(|h| h.lock().output_port(to_port))
     }
 
     fn midi_hw_in_device(track: &str) -> Option<&str> {
@@ -886,9 +927,13 @@ impl Engine {
             if let Some(oss) = self.hw_driver.clone() {
                 let hw = oss.lock();
                 hw.set_output_gain_balance(gain, self.hw_out_balance);
-            } else if let Some(jack) = self.jack_runtime.clone() {
-                jack.lock().set_output_gain_linear(gain);
-                jack.lock().set_output_balance(self.hw_out_balance);
+            }
+            #[cfg(unix)]
+            {
+                if let Some(jack) = self.jack_runtime.clone() {
+                    jack.lock().set_output_gain_linear(gain);
+                    jack.lock().set_output_balance(self.hw_out_balance);
+                }
             }
             return;
         }
@@ -898,45 +943,54 @@ impl Engine {
                 hw.set_output_gain_balance(gain, self.hw_out_balance);
             }
             oss.lock().output_meter_db(gain, self.hw_out_balance)
-        } else if let Some(jack) = self.jack_runtime.clone() {
-            jack.lock().set_output_gain_linear(gain);
-            jack.lock().set_output_balance(self.hw_out_balance);
-            let outs = jack.lock().audio_outs.clone();
-            let out_count = outs.len();
-            let b = if out_count == 2 {
-                self.hw_out_balance.clamp(-1.0, 1.0)
-            } else {
-                0.0
-            };
-            let mut meters = Vec::with_capacity(out_count);
-            for (channel_idx, channel) in outs.iter().enumerate() {
-                let balance_gain = if out_count == 2 {
-                    if channel_idx == 0 {
-                        (1.0 - b).clamp(0.0, 1.0)
-                    } else {
-                        (1.0 + b).clamp(0.0, 1.0)
-                    }
-                } else {
-                    1.0
-                };
-                let buf = channel.buffer.lock();
-                let mut peak = 0.0_f32;
-                for &sample in buf.iter() {
-                    let v = if sample >= 0.0 { sample } else { -sample };
-                    if v > peak {
-                        peak = v;
-                    }
-                }
-                let peak = peak * gain * balance_gain;
-                meters.push(if peak <= 1.0e-6 {
-                    -90.0
-                } else {
-                    (20.0 * peak.log10()).clamp(-90.0, 20.0)
-                });
-            }
-            meters
         } else {
-            return;
+            #[cfg(unix)]
+            {
+                if let Some(jack) = self.jack_runtime.clone() {
+                    jack.lock().set_output_gain_linear(gain);
+                    jack.lock().set_output_balance(self.hw_out_balance);
+                    let outs = jack.lock().audio_outs.clone();
+                    let out_count = outs.len();
+                    let b = if out_count == 2 {
+                        self.hw_out_balance.clamp(-1.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let mut meters = Vec::with_capacity(out_count);
+                    for (channel_idx, channel) in outs.iter().enumerate() {
+                        let balance_gain = if out_count == 2 {
+                            if channel_idx == 0 {
+                                (1.0 - b).clamp(0.0, 1.0)
+                            } else {
+                                (1.0 + b).clamp(0.0, 1.0)
+                            }
+                        } else {
+                            1.0
+                        };
+                        let buf = channel.buffer.lock();
+                        let mut peak = 0.0_f32;
+                        for &sample in buf.iter() {
+                            let v = if sample >= 0.0 { sample } else { -sample };
+                            if v > peak {
+                                peak = v;
+                            }
+                        }
+                        let peak = peak * gain * balance_gain;
+                        meters.push(if peak <= 1.0e-6 {
+                            -90.0
+                        } else {
+                            (20.0 * peak.log10()).clamp(-90.0, 20.0)
+                        });
+                    }
+                    meters
+                } else {
+                    return;
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                return;
+            }
         };
         self.notify_clients(Ok(Action::TrackMeters {
             track_name: "hw:out".to_string(),
@@ -1127,7 +1181,10 @@ impl Engine {
                         .await
                         .expect("Failed waiting for HW worker to quit");
                 }
-                self.jack_runtime = None;
+                #[cfg(unix)]
+                {
+                    self.jack_runtime = None;
+                }
 
                 // Then shut down regular workers
                 while !self.workers.is_empty() {
@@ -1159,11 +1216,20 @@ impl Engine {
                 let maybe_hw = if let Some(oss) = &self.hw_driver {
                     let hw = oss.lock();
                     Some((hw.cycle_samples(), hw.sample_rate() as f64))
-                } else if let Some(jack) = &self.jack_runtime {
-                    let j = jack.lock();
-                    Some((j.buffer_size, j.sample_rate as f64))
                 } else {
-                    None
+                    #[cfg(unix)]
+                    {
+                        if let Some(jack) = &self.jack_runtime {
+                            let j = jack.lock();
+                            Some((j.buffer_size, j.sample_rate as f64))
+                        } else {
+                            None
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        None
+                    }
                 };
 
                 if let Some((chsamples, sample_rate)) = maybe_hw {
@@ -1869,50 +1935,63 @@ impl Engine {
                 nperiods,
                 sync_mode,
             } => {
-                if device.eq_ignore_ascii_case("jack") {
-                    match JackRuntime::new(
-                        "maolan",
-                        crate::hw::jack::Config::default(),
-                        self.tx.clone(),
-                    ) {
-                        Ok(runtime) => {
-                            let input_channels = runtime.audio_ins.len();
-                            let output_channels = runtime.audio_outs.len();
-                            let midi_inputs = runtime.midi_input_devices();
-                            let midi_outputs = runtime.midi_output_devices();
-                            let rate = runtime.sample_rate;
-                            self.hw_driver = None;
-                            if let Some(worker) = self.hw_worker.take() {
-                                let _ = worker.tx.send(Message::Request(Action::Quit)).await;
-                                let _ = worker.handle.await;
-                            }
-                            self.jack_runtime = Some(Arc::new(UnsafeMutex::new(runtime)));
-                            self.publish_hw_infos(input_channels, output_channels, rate)
+                #[cfg(unix)]
+                {
+                    if device.eq_ignore_ascii_case("jack") {
+                        match JackRuntime::new(
+                            "maolan",
+                            crate::hw::jack::Config::default(),
+                            self.tx.clone(),
+                        ) {
+                            Ok(runtime) => {
+                                let input_channels = runtime.audio_ins.len();
+                                let output_channels = runtime.audio_outs.len();
+                                let midi_inputs = runtime.midi_input_devices();
+                                let midi_outputs = runtime.midi_output_devices();
+                                let rate = runtime.sample_rate;
+                                self.hw_driver = None;
+                                if let Some(worker) = self.hw_worker.take() {
+                                    let _ = worker.tx.send(Message::Request(Action::Quit)).await;
+                                    let _ = worker.handle.await;
+                                }
+                                self.jack_runtime = Some(Arc::new(UnsafeMutex::new(runtime)));
+                                self.publish_hw_infos(input_channels, output_channels, rate)
+                                    .await;
+                                for device in midi_inputs {
+                                    self.notify_clients(Ok(Action::OpenMidiInputDevice(device)))
+                                        .await;
+                                }
+                                for device in midi_outputs {
+                                    self.notify_clients(Ok(Action::OpenMidiOutputDevice(device)))
+                                        .await;
+                                }
+                                self.notify_clients(Ok(Action::OpenAudioDevice {
+                                    device: device.clone(),
+                                    bits,
+                                    exclusive,
+                                    period_frames,
+                                    nperiods,
+                                    sync_mode,
+                                }))
                                 .await;
-                            for device in midi_inputs {
-                                self.notify_clients(Ok(Action::OpenMidiInputDevice(device)))
-                                    .await;
+                                self.awaiting_hwfinished = true;
                             }
-                            for device in midi_outputs {
-                                self.notify_clients(Ok(Action::OpenMidiOutputDevice(device)))
-                                    .await;
+                            Err(e) => {
+                                self.notify_clients(Err(e)).await;
                             }
-                            self.notify_clients(Ok(Action::OpenAudioDevice {
-                                device: device.clone(),
-                                bits,
-                                exclusive,
-                                period_frames,
-                                nperiods,
-                                sync_mode,
-                            }))
-                            .await;
-                            self.awaiting_hwfinished = true;
                         }
-                        Err(e) => {
-                            self.notify_clients(Err(e)).await;
-                        }
+                        return;
                     }
-                    return;
+                }
+                #[cfg(not(unix))]
+                {
+                    if device.eq_ignore_ascii_case("jack") {
+                        self.notify_clients(Err(
+                            "JACK backend is not available on this platform build".to_string(),
+                        ))
+                        .await;
+                        return;
+                    }
                 }
                 let hw_opts = HwOptions {
                     exclusive,
@@ -1931,6 +2010,8 @@ impl Engine {
                                 "ALSA"
                             } else if cfg!(target_os = "freebsd") {
                                 "OSS"
+                            } else if cfg!(target_os = "windows") {
+                                "WASAPI"
                             } else {
                                 "sndio"
                             };
@@ -1948,7 +2029,10 @@ impl Engine {
                                 out_lat
                             );
                         }
-                        self.jack_runtime = None;
+                        #[cfg(unix)]
+                        {
+                            self.jack_runtime = None;
+                        }
                         self.hw_driver = Some(Arc::new(UnsafeMutex::new(d)));
                         self.publish_hw_infos(in_channels, out_channels, rate).await;
                     }
@@ -2073,15 +2157,19 @@ impl Engine {
                         continue;
                     }
                     self.awaiting_hwfinished = false;
-                    if let Some(jack) = &self.jack_runtime {
-                        if !self.pending_hw_midi_out_events.is_empty() {
-                            let out_events = std::mem::take(&mut self.pending_hw_midi_out_events);
-                            jack.lock().write_events(&out_events);
-                        }
-                        let mut in_events = vec![];
-                        jack.lock().read_events_into(&mut in_events);
-                        if !in_events.is_empty() {
-                            self.pending_hw_midi_events.extend(in_events);
+                    #[cfg(unix)]
+                    {
+                        if let Some(jack) = &self.jack_runtime {
+                            if !self.pending_hw_midi_out_events.is_empty() {
+                                let out_events =
+                                    std::mem::take(&mut self.pending_hw_midi_out_events);
+                                jack.lock().write_events(&out_events);
+                            }
+                            let mut in_events = vec![];
+                            jack.lock().read_events_into(&mut in_events);
+                            if !in_events.is_empty() {
+                                self.pending_hw_midi_events.extend(in_events);
+                            }
                         }
                     }
                     while let Some(a) = self.pending_requests.pop_front() {
@@ -2094,11 +2182,22 @@ impl Engine {
                     let pending_hw_in_by_device = self.pending_hw_midi_events_by_device.clone();
                     for (track_name, track) in self.state.lock().tracks.iter() {
                         let track_lock = track.lock();
-                        if self.jack_runtime.is_some() {
-                            if !self.pending_hw_midi_events.is_empty() {
-                                track_lock.push_hw_midi_events(&self.pending_hw_midi_events);
+                        #[cfg(unix)]
+                        {
+                            if self.jack_runtime.is_some() {
+                                if !self.pending_hw_midi_events.is_empty() {
+                                    track_lock.push_hw_midi_events(&self.pending_hw_midi_events);
+                                }
+                            } else {
+                                for route in hw_in_routes.iter().filter(|r| &r.to_track == track_name) {
+                                    if let Some(events) = pending_hw_in_by_device.get(&route.device) {
+                                        track_lock.push_hw_midi_events_to_port(route.to_port, events);
+                                    }
+                                }
                             }
-                        } else {
+                        }
+                        #[cfg(not(unix))]
+                        {
                             for route in hw_in_routes.iter().filter(|r| &r.to_track == track_name) {
                                 if let Some(events) = pending_hw_in_by_device.get(&route.device) {
                                     track_lock.push_hw_midi_events_to_port(route.to_port, events);
@@ -2127,8 +2226,11 @@ impl Engine {
                     if self.send_tracks().await && self.hw_worker.is_some() {
                         self.request_hw_cycle().await;
                     }
-                    if self.jack_runtime.is_some() {
-                        self.awaiting_hwfinished = true;
+                    #[cfg(unix)]
+                    {
+                        if self.jack_runtime.is_some() {
+                            self.awaiting_hwfinished = true;
+                        }
                     }
                 }
                 Message::HWMidiEvents(events) => {

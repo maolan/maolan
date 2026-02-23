@@ -4,6 +4,7 @@ use crate::{
     message::{HwMidiEvent, Message},
     mutex::UnsafeMutex,
 };
+#[cfg(unix)]
 use nix::libc;
 use std::marker::PhantomData;
 use std::sync::{Arc, Condvar, Mutex};
@@ -43,6 +44,7 @@ struct AssistState {
     last_error: Option<String>,
 }
 
+#[cfg(unix)]
 const RT_POLICY: i32 = libc::SCHED_FIFO;
 const RT_PRIORITY_WORKER: i32 = 18;
 const RT_PRIORITY_ASSIST: i32 = 12;

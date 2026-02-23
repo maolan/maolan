@@ -47,6 +47,7 @@ impl HW {
         let available_hw: Vec<crate::state::AudioDeviceOption> = available_hw
             .into_iter()
             .filter(|hw| match selected_backend {
+                #[cfg(unix)]
                 crate::state::AudioBackendOption::Jack => false,
                 #[cfg(target_os = "freebsd")]
                 crate::state::AudioBackendOption::Oss => hw.id.starts_with("/dev/dsp"),
@@ -60,7 +61,10 @@ impl HW {
         {
             selected_hw = selected_hw.filter(|s| available_hw.iter().any(|hw| hw.id == s.id));
         }
+        #[cfg(unix)]
         let selected_is_jack = matches!(selected_backend, crate::state::AudioBackendOption::Jack);
+        #[cfg(not(unix))]
+        let selected_is_jack = false;
         #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
         let bit_options = if selected_is_jack {
             fallback_bits.clone()

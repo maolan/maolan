@@ -1,6 +1,17 @@
 use std::{fs, path::Path, process::Command};
 
 pub(super) fn kernel_midi_label(path: &str) -> String {
+    if let Some(rest) = path
+        .strip_prefix("winmidi:in:")
+        .or_else(|| path.strip_prefix("winmidi:out:"))
+    {
+        if let Some((_, name)) = rest.split_once(':')
+            && !name.trim().is_empty()
+        {
+            return name.trim().to_string();
+        }
+    }
+
     let basename = Path::new(path)
         .file_name()
         .and_then(|s| s.to_str())
