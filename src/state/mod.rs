@@ -2,16 +2,16 @@ mod clip;
 mod connection;
 mod track;
 
+#[cfg(target_os = "linux")]
+use alsa::Direction;
+#[cfg(target_os = "linux")]
+use alsa::pcm::{Access, Format, HwParams, PCM};
 pub use clip::{AudioClip, MIDIClip};
 pub use connection::Connection;
 use iced::{Length, Point};
 use maolan_engine::kind::Kind;
 use maolan_engine::lv2::Lv2PluginInfo;
 use maolan_engine::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin};
-#[cfg(target_os = "linux")]
-use alsa::pcm::{Access, Format, HwParams, PCM};
-#[cfg(target_os = "linux")]
-use alsa::Direction;
 #[cfg(target_os = "freebsd")]
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
 use std::{
@@ -839,7 +839,11 @@ fn discover_alsa_devices() -> Vec<AudioDeviceOption> {
             let id = format!("hw:{card},{dev}");
             let label = format!("{base_label} (hw:{card},{dev})");
             let supported_bits = probe_alsa_supported_bits(&id);
-            devices.push(AudioDeviceOption::with_supported_bits(id, label, supported_bits));
+            devices.push(AudioDeviceOption::with_supported_bits(
+                id,
+                label,
+                supported_bits,
+            ));
         }
     }
     devices.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));

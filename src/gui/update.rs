@@ -1865,7 +1865,11 @@ impl Maolan {
                         state.selected_hw = Some(selected);
                     }
                 }
-                #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+                #[cfg(not(any(
+                    target_os = "linux",
+                    target_os = "freebsd",
+                    target_os = "openbsd"
+                )))]
                 {
                     self.state.blocking_write().selected_hw = Some(hw.to_string());
                 }
@@ -1888,7 +1892,11 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     state.oss_bits = bits;
                 }
-                #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+                #[cfg(not(any(
+                    target_os = "linux",
+                    target_os = "freebsd",
+                    target_os = "openbsd"
+                )))]
                 let _ = bits;
             }
             Message::HWPeriodFramesChanged(period_frames) => {

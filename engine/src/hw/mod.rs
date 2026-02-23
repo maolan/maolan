@@ -10,9 +10,9 @@ pub mod midi_hub;
 pub mod options;
 #[cfg(target_os = "freebsd")]
 pub mod oss;
-#[cfg(target_os = "openbsd")]
-pub mod sndio;
 pub mod ports;
 #[cfg(target_os = "freebsd")]
 pub mod prefill;
+#[cfg(target_os = "openbsd")]
+pub mod sndio;
 pub mod traits;

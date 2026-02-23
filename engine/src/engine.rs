@@ -24,10 +24,10 @@ use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
 use crate::hw::oss as hw;
 #[cfg(target_os = "freebsd")]
 use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
-#[cfg(target_os = "freebsd")]
-use crate::oss_worker::HwWorker;
 #[cfg(target_os = "openbsd")]
 use crate::hw::sndio::{HwDriver, HwOptions, MidiHub};
+#[cfg(target_os = "freebsd")]
+use crate::oss_worker::HwWorker;
 #[cfg(target_os = "openbsd")]
 use crate::sndio_worker::HwWorker;
 use crate::{
@@ -480,14 +480,13 @@ impl Engine {
                     }
                 }
 
-                let entry = self
-                    .midi_recordings
-                    .entry(name.clone())
-                    .or_insert_with(|| MidiRecordingSession {
+                let entry = self.midi_recordings.entry(name.clone()).or_insert_with(|| {
+                    MidiRecordingSession {
                         start_sample: segment_start,
                         events: Vec::new(),
                         file_name: Self::next_midi_recording_file_name(name),
-                    });
+                    }
+                });
                 let from = frame_offset;
                 let to = frame_offset.saturating_add(segment_len);
                 for event in &track.record_tap_midi_in {
@@ -528,7 +527,9 @@ impl Engine {
             self.completed_midi_recordings.clear();
             return;
         };
-        if std::fs::create_dir_all(&audio_dir).is_err() || std::fs::create_dir_all(&midi_dir).is_err() {
+        if std::fs::create_dir_all(&audio_dir).is_err()
+            || std::fs::create_dir_all(&midi_dir).is_err()
+        {
             self.completed_audio_recordings.clear();
             self.completed_midi_recordings.clear();
             return;
@@ -675,7 +676,9 @@ impl Engine {
                 .retain(|(name, _)| name != track_name);
             return;
         };
-        if std::fs::create_dir_all(&audio_dir).is_err() || std::fs::create_dir_all(&midi_dir).is_err() {
+        if std::fs::create_dir_all(&audio_dir).is_err()
+            || std::fs::create_dir_all(&midi_dir).is_err()
+        {
             return;
         }
         let rate = self
@@ -687,7 +690,8 @@ impl Engine {
         while i < self.completed_audio_recordings.len() {
             if self.completed_audio_recordings[i].0 == track_name {
                 let (name, rec) = self.completed_audio_recordings.remove(i);
-                self.flush_recording_entry(&audio_dir, rate, name, rec).await;
+                self.flush_recording_entry(&audio_dir, rate, name, rec)
+                    .await;
             } else {
                 i += 1;
             }
@@ -1069,8 +1073,13 @@ impl Engine {
                 self.loop_enabled = enabled && self.loop_range_samples.is_some();
             }
             Action::SetLoopRange(range) => {
-                self.loop_range_samples =
-                    range.and_then(|(start, end)| if end > start { Some((start, end)) } else { None });
+                self.loop_range_samples = range.and_then(|(start, end)| {
+                    if end > start {
+                        Some((start, end))
+                    } else {
+                        None
+                    }
+                });
                 if self.loop_range_samples.is_none() {
                     self.loop_enabled = false;
                 } else {
@@ -2109,8 +2118,10 @@ impl Engine {
                         let wrapped = normalized != next;
                         self.transport_sample = normalized;
                         if wrapped {
-                            self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
-                                .await;
+                            self.notify_clients(Ok(Action::TransportPosition(
+                                self.transport_sample,
+                            )))
+                            .await;
                         }
                     }
                     if self.send_tracks().await && self.hw_worker.is_some() {

@@ -12,9 +12,9 @@ mod midi;
 pub mod mutex;
 #[cfg(target_os = "freebsd")]
 mod oss_worker;
+mod routing;
 #[cfg(target_os = "openbsd")]
 mod sndio_worker;
-mod routing;
 pub mod state;
 mod track;
 pub mod worker;

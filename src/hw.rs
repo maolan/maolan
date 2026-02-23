@@ -142,8 +142,12 @@ impl HW {
                 content = content.push(
                     row![
                         text("Bit depth:"),
-                        pick_list(bit_options.clone(), Some(chosen_bits), Message::HWBitsChanged)
-                            .placeholder("Bit depth")
+                        pick_list(
+                            bit_options.clone(),
+                            Some(chosen_bits),
+                            Message::HWBitsChanged
+                        )
+                        .placeholder("Bit depth")
                     ]
                     .spacing(10),
                 );

@@ -309,8 +309,7 @@ impl HwDriver {
                     false,
                     |ch, frame, sample| {
                         let idx = frame * self.channels_out + ch;
-                        let mut v =
-                            (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I16) as i16;
+                        let mut v = (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I16) as i16;
                         if needs_swap {
                             v = v.swap_bytes();
                         }
@@ -341,13 +340,8 @@ impl HwDriver {
                     false,
                     |ch, frame, sample| {
                         let idx = frame * self.channels_out + ch;
-                        let v24 =
-                            (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I24) as i32;
-                        let mut v = if is_be {
-                            v24 << 8
-                        } else {
-                            v24 & 0x00FF_FFFF
-                        };
+                        let v24 = (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I24) as i32;
+                        let mut v = if is_be { v24 << 8 } else { v24 & 0x00FF_FFFF };
                         if needs_swap {
                             v = v.swap_bytes();
                         }
@@ -377,8 +371,7 @@ impl HwDriver {
                     false,
                     |ch, frame, sample| {
                         let idx = frame * self.channels_out + ch;
-                        let mut v =
-                            (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I32) as i32;
+                        let mut v = (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I32) as i32;
                         if needs_swap {
                             v = v.swap_bytes();
                         }
@@ -530,8 +523,12 @@ impl SampleFormat {
     fn needs_swap(self) -> bool {
         match self {
             SampleFormat::S8 => false,
-            SampleFormat::S16LE | SampleFormat::S24LE | SampleFormat::S32LE => cfg!(target_endian = "big"),
-            SampleFormat::S16BE | SampleFormat::S24BE | SampleFormat::S32BE => cfg!(target_endian = "little"),
+            SampleFormat::S16LE | SampleFormat::S24LE | SampleFormat::S32LE => {
+                cfg!(target_endian = "big")
+            }
+            SampleFormat::S16BE | SampleFormat::S24BE | SampleFormat::S32BE => {
+                cfg!(target_endian = "little")
+            }
         }
     }
 }
@@ -547,7 +544,9 @@ fn choose_best_format(hwp: &HwParams<'_>, bits: i32) -> Result<SampleFormat, Str
     }
     Err(format!(
         "No supported integer PCM format after fallback chain; last set_format error: {}.",
-        last_err.map(|e| e.to_string()).unwrap_or_else(|| "unknown".to_string())
+        last_err
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
     ))
 }
 

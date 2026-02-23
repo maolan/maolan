@@ -802,7 +802,8 @@ impl Editor {
                 recording_preview_peaks.as_ref(),
             ));
         }
-        let mut layers: Vec<Element<'_, Message>> = vec![result.width(Length::Fill).height(Length::Fill).into()];
+        let mut layers: Vec<Element<'_, Message>> =
+            vec![result.width(Length::Fill).height(Length::Fill).into()];
         if let (Some(start), Some(end)) = (state.clip_marquee_start, state.clip_marquee_end) {
             let mut x = start.x.min(end.x);
             let mut y = start.y.min(end.y);
@@ -814,30 +815,28 @@ impl Editor {
                 x = x.max(0.0);
                 y = y.max(0.0);
                 layers.push(
-                    pin(
-                        container("")
-                            .width(Length::Fixed(w))
-                            .height(Length::Fixed(h))
-                            .style(|_theme| container::Style {
-                                background: Some(Background::Color(Color {
-                                    r: 0.45,
-                                    g: 0.75,
+                    pin(container("")
+                        .width(Length::Fixed(w))
+                        .height(Length::Fixed(h))
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.45,
+                                g: 0.75,
+                                b: 1.0,
+                                a: 0.12,
+                            })),
+                            border: Border {
+                                color: Color {
+                                    r: 0.65,
+                                    g: 0.85,
                                     b: 1.0,
-                                    a: 0.12,
-                                })),
-                                border: Border {
-                                    color: Color {
-                                        r: 0.65,
-                                        g: 0.85,
-                                        b: 1.0,
-                                        a: 0.95,
-                                    },
-                                    width: 1.0,
-                                    radius: 0.0.into(),
+                                    a: 0.95,
                                 },
-                                ..container::Style::default()
-                            }),
-                    )
+                                width: 1.0,
+                                radius: 0.0.into(),
+                            },
+                            ..container::Style::default()
+                        }))
                     .position(Point::new(x, y))
                     .into(),
                 );
@@ -848,8 +847,8 @@ impl Editor {
                 .width(Length::Fill)
                 .height(Length::Fill),
         )
-            .on_move(Message::EditorMouseMoved)
-            .on_press(Message::DeselectClips)
-            .into()
+        .on_move(Message::EditorMouseMoved)
+        .on_press(Message::DeselectClips)
+        .into()
     }
 }

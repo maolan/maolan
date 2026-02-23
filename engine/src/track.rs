@@ -430,7 +430,9 @@ impl Track {
                 tick = tick.saturating_add(event.delta.as_int() as u64);
                 if let TrackEventKind::Midi { channel, message } = event.kind {
                     let mut data = Vec::with_capacity(3);
-                    if (LiveEvent::Midi { channel, message }).write(&mut data).is_ok()
+                    if (LiveEvent::Midi { channel, message })
+                        .write(&mut data)
+                        .is_ok()
                     {
                         out.push((ticks_to_samples(tick), data));
                     }
@@ -585,8 +587,8 @@ impl Track {
                     if *source_sample >= source_to {
                         break;
                     }
-                    let absolute_sample = clip_start
-                        .saturating_add(source_sample.saturating_sub(clip.offset));
+                    let absolute_sample =
+                        clip_start.saturating_add(source_sample.saturating_sub(clip.offset));
                     let frame_idx = out_offset.saturating_add(absolute_sample - *segment_start);
                     if frame_idx >= frames {
                         continue;

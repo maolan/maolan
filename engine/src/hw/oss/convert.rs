@@ -16,13 +16,7 @@ pub(super) fn bytes_per_sample(format: u32) -> Option<usize> {
 pub(super) fn supported_sample_format(format: u32) -> bool {
     matches!(
         format,
-        AFMT_S16_LE
-            | AFMT_S16_BE
-            | AFMT_S24_LE
-            | AFMT_S24_BE
-            | AFMT_S32_LE
-            | AFMT_S32_BE
-            | AFMT_S8
+        AFMT_S16_LE | AFMT_S16_BE | AFMT_S24_LE | AFMT_S24_BE | AFMT_S32_LE | AFMT_S32_BE | AFMT_S8
     )
 }
 

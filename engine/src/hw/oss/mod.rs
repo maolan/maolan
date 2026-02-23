@@ -132,7 +132,8 @@ impl Audio {
                 "Unsupported OSS sample format after setfmt fallback chain: {format:#x}"
             )));
         }
-        Err(last_errno.unwrap_or_else(|| std::io::Error::other("OSS setfmt failed for all fallback formats")))
+        Err(last_errno
+            .unwrap_or_else(|| std::io::Error::other("OSS setfmt failed for all fallback formats")))
     }
 
     pub fn fd(&self) -> i32 {
