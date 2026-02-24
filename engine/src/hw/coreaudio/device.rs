@@ -127,7 +127,7 @@ fn get_device_name(device_id: AudioDeviceID) -> Option<String> {
             cf_name,
             buf.as_mut_ptr(),
             buf.len() as _,
-            0x0600_0100, // kCFStringEncodingUTF8
+            0x0800_0100, // kCFStringEncodingUTF8
         )
     };
     unsafe { CFRelease(cf_name as *const c_void) };

@@ -45,6 +45,8 @@ pub enum AudioBackendOption {
     Alsa,
     #[cfg(target_os = "windows")]
     Wasapi,
+    #[cfg(target_os = "macos")]
+    CoreAudio,
 }
 
 impl std::fmt::Display for AudioBackendOption {
@@ -60,6 +62,8 @@ impl std::fmt::Display for AudioBackendOption {
             Self::Alsa => "ALSA",
             #[cfg(target_os = "windows")]
             Self::Wasapi => "WASAPI",
+            #[cfg(target_os = "macos")]
+            Self::CoreAudio => "CoreAudio",
         };
         f.write_str(label)
     }
@@ -328,11 +332,14 @@ impl Default for StateData {
         let hw: Vec<AudioDeviceOption> = { discover_alsa_devices() };
         #[cfg(target_os = "windows")]
         let hw: Vec<String> = discover_windows_audio_devices();
+        #[cfg(target_os = "macos")]
+        let hw: Vec<String> = maolan_engine::discover_coreaudio_devices();
         #[cfg(not(any(
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         )))]
         let hw: Vec<String> = vec![];
         Self {
@@ -416,6 +423,8 @@ fn supported_audio_backends() -> Vec<AudioBackendOption> {
     out.push(AudioBackendOption::Alsa);
     #[cfg(target_os = "windows")]
     out.push(AudioBackendOption::Wasapi);
+    #[cfg(target_os = "macos")]
+    out.push(AudioBackendOption::CoreAudio);
     out
 }
 
@@ -436,9 +445,13 @@ fn default_audio_backend() -> AudioBackendOption {
     {
         AudioBackendOption::Wasapi
     }
+    #[cfg(target_os = "macos")]
+    {
+        AudioBackendOption::CoreAudio
+    }
     #[cfg(all(
         unix,
-        not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))
+        not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd", target_os = "macos"))
     ))]
     {
         AudioBackendOption::Jack
