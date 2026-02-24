@@ -5,7 +5,7 @@ use midly::{
 };
 use std::{
     collections::{HashMap, VecDeque},
-    fs::File,
+    fs::{read_dir, File},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
