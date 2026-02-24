@@ -10,13 +10,15 @@ use crate::hw::common;
 use crate::hw::latency;
 use crate::hw::options::HwOptions;
 
+use super::latency::query_device_latency;
+
 use coreaudio_sys::{
     kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyNominalSampleRate,
     kAudioDevicePropertyStreamConfiguration, kAudioHardwareNoError,
     kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal,
     kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput, AudioBufferList,
     AudioDeviceID, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize,
-    AudioObjectSetPropertyData, AudioObjectPropertyAddress, OSStatus, UInt32,
+    AudioObjectPropertyAddress, AudioObjectSetPropertyData, OSStatus, UInt32,
 };
 
 use std::mem;
@@ -59,8 +61,7 @@ impl HwDriver {
         let actual_rate = negotiate_sample_rate(device_id, rate as f64)?;
 
         // Negotiate buffer size.
-        let actual_frames =
-            negotiate_buffer_size(device_id, options.period_frames as u32)?;
+        let actual_frames = negotiate_buffer_size(device_id, options.period_frames as u32)?;
 
         // Build per-channel AudioIO buffers.
         let in_count = channel_count(device_id, true);
@@ -73,14 +74,19 @@ impl HwDriver {
             .map(|_| Arc::new(AudioIO::new(actual_frames as usize)))
             .collect();
 
+        // Query real hardware latency from the CoreAudio HAL.
+        let input_latency_frames = query_device_latency(device_id, kAudioObjectPropertyScopeInput);
+        let output_latency_frames =
+            query_device_latency(device_id, kAudioObjectPropertyScopeOutput);
+
         Ok(Self {
             device_id,
             sample_rate: actual_rate as i32,
             cycle_samples: actual_frames as usize,
             nperiods: options.nperiods.max(1),
             sync_mode: options.sync_mode,
-            input_latency_frames: options.input_latency_frames,
-            output_latency_frames: options.output_latency_frames,
+            input_latency_frames,
+            output_latency_frames,
             input_channels,
             output_channels,
             output_gain_linear: 1.0,
@@ -261,9 +267,8 @@ fn channel_count(device_id: AudioDeviceID, input: bool) -> usize {
     };
 
     let mut size: UInt32 = 0;
-    let status: OSStatus = unsafe {
-        AudioObjectGetPropertyDataSize(device_id, &address, 0, ptr::null(), &mut size)
-    };
+    let status: OSStatus =
+        unsafe { AudioObjectGetPropertyDataSize(device_id, &address, 0, ptr::null(), &mut size) };
     if status != kAudioHardwareNoError as OSStatus || size == 0 {
         return 0;
     }
