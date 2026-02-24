@@ -126,10 +126,12 @@ impl HwDriver {
     }
 
     pub fn latency_ranges(&self) -> ((usize, usize), (usize, usize)) {
+        // CoreAudio uses a single IOProc for duplex, so nperiods=1 and
+        // sync_mode=true regardless of stored options.
         latency::latency_ranges(
             self.cycle_samples,
-            self.nperiods,
-            self.sync_mode,
+            1,
+            true,
             self.input_latency_frames,
             self.output_latency_frames,
         )
