@@ -1,12 +1,14 @@
 use super::{audio::track::AudioTrack, midi::track::MIDITrack};
 use crate::{
     audio::io::AudioIO,
-    kind::Kind,
-    lv2::Lv2Processor,
-    message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin, Lv2PluginState},
     midi::io::MidiEvent,
-    routing,
 };
+#[cfg(not(target_os = "macos"))]
+use crate::{kind::Kind, routing};
+#[cfg(not(target_os = "macos"))]
+use crate::lv2::Lv2Processor;
+#[cfg(not(target_os = "macos"))]
+use crate::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin, Lv2PluginState};
 use midly::{MetaMessage, Smf, Timing, TrackEventKind, live::LiveEvent};
 use std::{
     collections::{HashMap, HashSet},
@@ -14,6 +16,7 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Debug)]
 pub struct Lv2Instance {
     pub id: usize,
@@ -38,9 +41,12 @@ pub struct Track {
     pub disk_monitor: bool,
     pub audio: AudioTrack,
     pub midi: MIDITrack,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_processors: Vec<Lv2Instance>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_midi_connections: Vec<Lv2GraphConnection>,
     pub pending_hw_midi_out_events: Vec<MidiEvent>,
+    #[cfg(not(target_os = "macos"))]
     pub next_lv2_instance_id: usize,
     pub sample_rate: f64,
     pub output_enabled: bool,
@@ -49,6 +55,7 @@ pub struct Track {
     pub loop_range_samples: Option<(usize, usize)>,
     pub record_tap_outs: Vec<Vec<f32>>,
     pub record_tap_midi_in: Vec<MidiEvent>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_state_base_dir: Option<PathBuf>,
     pub session_base_dir: Option<PathBuf>,
     audio_clip_cache: HashMap<String, AudioClipBuffer>,
@@ -76,9 +83,12 @@ impl Track {
             disk_monitor: true,
             audio: AudioTrack::new(audio_ins, audio_outs, buffer_size),
             midi: MIDITrack::new(midi_ins, midi_outs),
+            #[cfg(not(target_os = "macos"))]
             lv2_processors: Vec::new(),
+            #[cfg(not(target_os = "macos"))]
             lv2_midi_connections: Vec::new(),
             pending_hw_midi_out_events: vec![],
+            #[cfg(not(target_os = "macos"))]
             next_lv2_instance_id: 0,
             sample_rate,
             output_enabled: true,
@@ -87,6 +97,7 @@ impl Track {
             loop_range_samples: None,
             record_tap_outs: vec![vec![0.0; buffer_size]; audio_outs],
             record_tap_midi_in: vec![],
+            #[cfg(not(target_os = "macos"))]
             lv2_state_base_dir: None,
             session_base_dir: None,
             audio_clip_cache: HashMap::new(),
@@ -97,6 +108,7 @@ impl Track {
 
     pub fn setup(&mut self) {
         self.audio.setup();
+        #[cfg(not(target_os = "macos"))]
         for instance in &self.lv2_processors {
             instance.processor.setup_audio_ports();
         }
@@ -123,6 +135,7 @@ impl Track {
             self.mix_clip_midi_into_inputs(&mut track_input_midi_events, frames);
         }
 
+        #[cfg(not(target_os = "macos"))]
         if !self.lv2_processors.is_empty() {
             let mut processed = vec![false; self.lv2_processors.len()];
             let mut remaining = self.lv2_processors.len();
@@ -600,6 +613,7 @@ impl Track {
         input_events[0].sort_by_key(|event| event.frame);
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn load_lv2_plugin(&mut self, uri: &str) -> Result<(), String> {
         let buffer_size = self
             .audio
@@ -619,6 +633,7 @@ impl Track {
         Ok(())
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn unload_lv2_plugin(&mut self, uri: &str) -> Result<(), String> {
         let Some(index) = self
             .lv2_processors
@@ -635,6 +650,7 @@ impl Track {
         Ok(())
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn unload_lv2_plugin_instance(&mut self, instance_id: usize) -> Result<(), String> {
         let Some(index) = self
             .lv2_processors
@@ -651,6 +667,7 @@ impl Track {
         Ok(())
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn remove_lv2_instance(&mut self, index: usize) {
         let removed = self.lv2_processors.remove(index);
         for port in removed.processor.audio_inputs() {
@@ -665,6 +682,7 @@ impl Track {
         });
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn loaded_lv2_plugins(&self) -> Vec<String> {
         self.lv2_processors
             .iter()
@@ -672,6 +690,7 @@ impl Track {
             .collect()
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn loaded_lv2_instances(&self) -> Vec<(usize, String)> {
         self.lv2_processors
             .iter()
@@ -679,6 +698,7 @@ impl Track {
             .collect()
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn lv2_graph_plugins(&self) -> Vec<Lv2GraphPlugin> {
         self.lv2_processors
             .iter()
@@ -695,6 +715,7 @@ impl Track {
             .collect()
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn set_lv2_plugin_state(
         &mut self,
         instance_id: usize,
@@ -713,6 +734,7 @@ impl Track {
         instance.processor.restore_state(&state)
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn set_lv2_state_base_dir(&mut self, base_dir: Option<PathBuf>) {
         self.lv2_state_base_dir = base_dir.clone();
         if let Some(path) = base_dir {
@@ -732,6 +754,7 @@ impl Track {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn lv2_graph_connections(&self) -> Vec<Lv2GraphConnection> {
         let mut source_ports: Vec<(Lv2GraphNode, usize, Arc<AudioIO>)> = self
             .audio
@@ -809,6 +832,7 @@ impl Track {
         connections
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn connect_lv2_audio(
         &self,
         from_node: Lv2GraphNode,
@@ -836,6 +860,7 @@ impl Track {
         Ok(())
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn disconnect_lv2_audio(
         &self,
         from_node: Lv2GraphNode,
@@ -848,6 +873,7 @@ impl Track {
         AudioIO::disconnect(&source, &target)
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn connect_lv2_midi(
         &mut self,
         from_node: Lv2GraphNode,
@@ -879,6 +905,7 @@ impl Track {
         Ok(())
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn disconnect_lv2_midi(
         &mut self,
         from_node: Lv2GraphNode,
@@ -901,6 +928,7 @@ impl Track {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn show_lv2_plugin_ui(&mut self, uri: &str) -> Result<(), String> {
         let Some(instance) = self
             .lv2_processors
@@ -915,6 +943,7 @@ impl Track {
         instance.processor.show_ui()
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn show_lv2_plugin_ui_instance(&mut self, instance_id: usize) -> Result<(), String> {
         let Some(instance) = self
             .lv2_processors
@@ -970,6 +999,7 @@ impl Track {
 
     fn internal_audio_sources(&self) -> Vec<Arc<AudioIO>> {
         let mut sources = self.audio.ins.clone();
+        #[cfg(not(target_os = "macos"))]
         for instance in &self.lv2_processors {
             sources.extend(instance.processor.audio_outputs().iter().cloned());
         }
@@ -983,6 +1013,7 @@ impl Track {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn lv2_source_io(&self, node: &Lv2GraphNode, port: usize) -> Result<Arc<AudioIO>, String> {
         match node {
             Lv2GraphNode::TrackInput => self
@@ -1001,6 +1032,7 @@ impl Track {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn lv2_target_io(&self, node: &Lv2GraphNode, port: usize) -> Result<Arc<AudioIO>, String> {
         match node {
             Lv2GraphNode::TrackInput => Err("Track input node cannot be target".to_string()),
@@ -1019,6 +1051,7 @@ impl Track {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn validate_lv2_midi_source(&self, node: &Lv2GraphNode, port: usize) -> Result<(), String> {
         match node {
             Lv2GraphNode::TrackInput => self
@@ -1039,6 +1072,7 @@ impl Track {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn validate_lv2_midi_target(&self, node: &Lv2GraphNode, port: usize) -> Result<(), String> {
         match node {
             Lv2GraphNode::TrackInput => Err("Track input node cannot be MIDI target".to_string()),
@@ -1059,6 +1093,7 @@ impl Track {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn lv2_connected_neighbors(
         &self,
         kind: Kind,
@@ -1135,6 +1170,7 @@ impl Track {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn lv2_plugin_midi_ready(&self, instance_id: usize, processed: &HashSet<usize>) -> bool {
         self.lv2_midi_connections
             .iter()
@@ -1149,6 +1185,7 @@ impl Track {
             })
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn lv2_plugin_input_events(
         &self,
         instance_id: usize,
@@ -1173,6 +1210,7 @@ impl Track {
         per_port
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn route_lv2_midi_to_track_outputs(
         &self,
         node_events: &HashMap<(Lv2GraphNode, usize), Vec<MidiEvent>>,

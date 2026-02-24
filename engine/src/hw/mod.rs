@@ -20,3 +20,5 @@ pub mod sndio;
 pub mod traits;
 #[cfg(target_os = "windows")]
 pub mod wasapi;
+#[cfg(target_os = "macos")]
+pub mod coreaudio;

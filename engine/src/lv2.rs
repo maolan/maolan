@@ -1,3 +1,5 @@
+#![cfg(not(target_os = "macos"))]
+
 use std::{
     collections::{HashMap, HashSet},
     ffi::{CStr, CString, c_char, c_uint, c_ulong, c_void},

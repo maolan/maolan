@@ -18,3 +18,7 @@ pub const F32_TO_I8: f32 = 127.0;
 pub const F32_FROM_I32_MAX: f32 = 1.0 / i32::MAX as f32;
 #[cfg(target_os = "freebsd")]
 pub const F32_TO_I32_MAX: f32 = i32::MAX as f32;
+#[cfg(target_os = "macos")]
+pub const F32_FROM_F32: f32 = 1.0;
+#[cfg(target_os = "macos")]
+pub const F32_TO_F32: f32 = 1.0;

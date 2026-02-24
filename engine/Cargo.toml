@@ -18,9 +18,15 @@ alsa = { version = "0.9.1" }
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31.1", features = ["ioctl"] }
 jack = "0.13.0"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 lilv = "0.2.4"
 lv2_raw = "0.2.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cpal = "0.15.3"
 midir = "0.10.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+coreaudio-sys = "0.2.16"
+coremidi = "0.7.0"

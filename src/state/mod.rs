@@ -12,7 +12,9 @@ pub use connection::Connection;
 use cpal::traits::{DeviceTrait, HostTrait};
 use iced::{Length, Point};
 use maolan_engine::kind::Kind;
+#[cfg(not(target_os = "macos"))]
 use maolan_engine::lv2::Lv2PluginInfo;
+#[cfg(not(target_os = "macos"))]
 use maolan_engine::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin};
 #[cfg(target_os = "freebsd")]
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
@@ -43,6 +45,8 @@ pub enum AudioBackendOption {
     Alsa,
     #[cfg(target_os = "windows")]
     Wasapi,
+    #[cfg(target_os = "macos")]
+    CoreAudio,
 }
 
 impl std::fmt::Display for AudioBackendOption {
@@ -58,6 +62,8 @@ impl std::fmt::Display for AudioBackendOption {
             Self::Alsa => "ALSA",
             #[cfg(target_os = "windows")]
             Self::Wasapi => "WASAPI",
+            #[cfg(target_os = "macos")]
+            Self::CoreAudio => "CoreAudio",
         };
         f.write_str(label)
     }
@@ -224,6 +230,7 @@ pub struct HW {
     pub channels: usize,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Debug, Clone)]
 pub struct Lv2Connecting {
     pub from_node: Lv2GraphNode,
@@ -233,6 +240,7 @@ pub struct Lv2Connecting {
     pub is_input: bool,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Debug, Clone)]
 pub struct MovingPlugin {
     pub instance_id: usize,
@@ -292,15 +300,21 @@ pub struct StateData {
     pub hw_out_balance: f32,
     pub hw_out_muted: bool,
     pub hw_out_meter_db: Vec<f32>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_plugins: Vec<Lv2PluginInfo>,
     pub lv2_graph_track: Option<String>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_graph_plugins: Vec<Lv2GraphPlugin>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_graph_connections: Vec<Lv2GraphConnection>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_graphs_by_track: HashMap<String, (Vec<Lv2GraphPlugin>, Vec<Lv2GraphConnection>)>,
     pub lv2_graph_selected_connections: std::collections::HashSet<usize>,
     pub lv2_graph_selected_plugin: Option<usize>,
     pub lv2_graph_plugin_positions: HashMap<usize, Point>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_graph_connecting: Option<Lv2Connecting>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_graph_moving_plugin: Option<MovingPlugin>,
     pub lv2_graph_last_plugin_click: Option<(usize, Instant)>,
     pub connections_last_track_click: Option<(String, Instant)>,
@@ -318,11 +332,14 @@ impl Default for StateData {
         let hw: Vec<AudioDeviceOption> = { discover_alsa_devices() };
         #[cfg(target_os = "windows")]
         let hw: Vec<String> = discover_windows_audio_devices();
+        #[cfg(target_os = "macos")]
+        let hw: Vec<String> = maolan_engine::discover_coreaudio_devices();
         #[cfg(not(any(
             target_os = "linux",
             target_os = "freebsd",
             target_os = "openbsd",
-            target_os = "windows"
+            target_os = "windows",
+            target_os = "macos"
         )))]
         let hw: Vec<String> = vec![];
         Self {
@@ -370,15 +387,21 @@ impl Default for StateData {
             hw_out_balance: 0.0,
             hw_out_muted: false,
             hw_out_meter_db: vec![],
+            #[cfg(not(target_os = "macos"))]
             lv2_plugins: vec![],
             lv2_graph_track: None,
+            #[cfg(not(target_os = "macos"))]
             lv2_graph_plugins: vec![],
+            #[cfg(not(target_os = "macos"))]
             lv2_graph_connections: vec![],
+            #[cfg(not(target_os = "macos"))]
             lv2_graphs_by_track: HashMap::new(),
             lv2_graph_selected_connections: HashSet::new(),
             lv2_graph_selected_plugin: None,
             lv2_graph_plugin_positions: HashMap::new(),
+            #[cfg(not(target_os = "macos"))]
             lv2_graph_connecting: None,
+            #[cfg(not(target_os = "macos"))]
             lv2_graph_moving_plugin: None,
             lv2_graph_last_plugin_click: None,
             connections_last_track_click: None,
@@ -400,6 +423,8 @@ fn supported_audio_backends() -> Vec<AudioBackendOption> {
     out.push(AudioBackendOption::Alsa);
     #[cfg(target_os = "windows")]
     out.push(AudioBackendOption::Wasapi);
+    #[cfg(target_os = "macos")]
+    out.push(AudioBackendOption::CoreAudio);
     out
 }
 
@@ -420,9 +445,13 @@ fn default_audio_backend() -> AudioBackendOption {
     {
         AudioBackendOption::Wasapi
     }
+    #[cfg(target_os = "macos")]
+    {
+        AudioBackendOption::CoreAudio
+    }
     #[cfg(all(
         unix,
-        not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))
+        not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd", target_os = "macos"))
     ))]
     {
         AudioBackendOption::Jack

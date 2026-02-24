@@ -10,6 +10,7 @@ use crate::{
     state::{State, StateData},
     toolbar, workspace,
 };
+#[cfg(not(target_os = "macos"))]
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Length, Size, Task};
 use maolan_engine::{
@@ -19,7 +20,9 @@ use maolan_engine::{
 };
 use midly::{MetaMessage, Smf, Timing, TrackEventKind};
 use serde_json::{Value, json};
-use std::collections::{BTreeSet, HashMap, HashSet};
+#[cfg(not(target_os = "macos"))]
+use std::collections::BTreeSet;
+use std::collections::{HashMap, HashSet};
 use std::{
     fs::{self, File},
     io::{self, BufReader},
@@ -56,11 +59,14 @@ pub struct Maolan {
     track: Option<String>,
     workspace: workspace::Workspace,
     connections: connections::canvas_host::CanvasHost<connections::tracks::Graph>,
+    #[cfg(not(target_os = "macos"))]
     track_plugins: connections::canvas_host::CanvasHost<connections::plugins::Graph>,
     hw: hw::HW,
     modal: Option<Show>,
     add_track: add_track::AddTrackView,
+    #[cfg(not(target_os = "macos"))]
     plugin_filter: String,
+    #[cfg(not(target_os = "macos"))]
     selected_lv2_plugins: BTreeSet<String>,
     session_dir: Option<PathBuf>,
     pending_save_path: Option<String>,
@@ -105,13 +111,16 @@ impl Default for Maolan {
             connections: connections::canvas_host::CanvasHost::new(
                 connections::tracks::Graph::new(state.clone()),
             ),
+            #[cfg(not(target_os = "macos"))]
             track_plugins: connections::canvas_host::CanvasHost::new(
                 connections::plugins::Graph::new(state.clone()),
             ),
             hw: hw::HW::new(state.clone()),
             modal: None,
             add_track: add_track::AddTrackView::default(),
+            #[cfg(not(target_os = "macos"))]
             plugin_filter: String::new(),
+            #[cfg(not(target_os = "macos"))]
             selected_lv2_plugins: BTreeSet::new(),
             session_dir: None,
             pending_save_path: None,
@@ -905,6 +914,7 @@ impl Maolan {
         Ok((rel, length.max(1)))
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn lv2_node_to_json(
         node: &maolan_engine::message::Lv2GraphNode,
         id_to_index: &std::collections::HashMap<usize, usize>,
@@ -920,6 +930,7 @@ impl Maolan {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn lv2_node_from_json(v: &Value) -> Option<maolan_engine::message::Lv2GraphNode> {
         use maolan_engine::message::Lv2GraphNode;
         let t = v["type"].as_str()?;
@@ -948,6 +959,7 @@ impl Maolan {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn lv2_state_to_json(state: &maolan_engine::message::Lv2PluginState) -> Value {
         let port_values = state
             .port_values
@@ -972,6 +984,7 @@ impl Maolan {
         })
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn lv2_state_from_json(v: &Value) -> Option<maolan_engine::message::Lv2PluginState> {
         let port_values = v["port_values"]
             .as_array()
@@ -1011,6 +1024,7 @@ impl Maolan {
         })
     }
 
+    #[cfg(not(target_os = "macos"))]
     fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = state
@@ -1100,6 +1114,7 @@ impl Maolan {
         self.toolbar.update(message.clone());
         self.workspace.update(message.clone());
         self.connections.update(message.clone());
+        #[cfg(not(target_os = "macos"))]
         self.track_plugins.update(message.clone());
         self.add_track.update(message.clone());
         for track in &mut self.state.blocking_write().tracks {

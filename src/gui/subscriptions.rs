@@ -27,7 +27,11 @@ impl Maolan {
 
         fn listener() -> impl Stream<Item = Message> {
             stream::once(CLIENT.subscribe()).flat_map(|receiver| {
-                stream::once(async { Message::RefreshLv2Plugins }).chain(stream::unfold(
+                #[cfg(not(target_os = "macos"))]
+                let initial = stream::once(async { Message::RefreshLv2Plugins });
+                #[cfg(target_os = "macos")]
+                let initial = stream::empty();
+                initial.chain(stream::unfold(
                     (receiver, HashMap::<String, Vec<f32>>::new()),
                     |(mut rx, mut last_meters)| async move {
                         loop {

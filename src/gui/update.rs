@@ -128,6 +128,7 @@ impl Maolan {
                     }
                     Show::TrackPluginList => {
                         self.modal = Some(Show::TrackPluginList);
+                        #[cfg(not(target_os = "macos"))]
                         self.selected_lv2_plugins.clear();
                     }
                 }
@@ -174,9 +175,12 @@ impl Maolan {
                     state.selected_clips.clear();
                     state.connection_view_selection = ConnectionViewSelection::None;
                     state.lv2_graph_track = None;
-                    state.lv2_graph_plugins.clear();
-                    state.lv2_graph_connections.clear();
-                    state.lv2_graphs_by_track.clear();
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        state.lv2_graph_plugins.clear();
+                        state.lv2_graph_connections.clear();
+                        state.lv2_graphs_by_track.clear();
+                    }
                     state.message = "New session".to_string();
                 }
                 return Task::batch(tasks);
@@ -326,10 +330,13 @@ impl Maolan {
                 }
                 return self.send(Action::SetRecordEnabled(true));
             }
+            #[cfg(not(target_os = "macos"))]
             Message::RefreshLv2Plugins => return self.send(Action::ListLv2Plugins),
+            #[cfg(not(target_os = "macos"))]
             Message::FilterLv2Plugins(ref query) => {
                 self.plugin_filter = query.clone();
             }
+            #[cfg(not(target_os = "macos"))]
             Message::SelectLv2Plugin(ref plugin_uri) => {
                 if self.selected_lv2_plugins.contains(plugin_uri) {
                     self.selected_lv2_plugins.remove(plugin_uri);
@@ -337,6 +344,7 @@ impl Maolan {
                     self.selected_lv2_plugins.insert(plugin_uri.clone());
                 }
             }
+            #[cfg(not(target_os = "macos"))]
             Message::LoadSelectedLv2Plugins => {
                 let track_name = {
                     let state = self.state.blocking_read();
@@ -747,13 +755,24 @@ impl Maolan {
                     self.punch_range_samples = *range;
                     self.punch_enabled = range.is_some();
                 }
+                #[cfg(not(target_os = "macos"))]
                 Action::Lv2Plugins(plugins) => {
                     let mut state = self.state.blocking_write();
                     state.lv2_plugins = plugins.clone();
                     state.message = format!("Loaded {} LV2 plugins", state.lv2_plugins.len());
                 }
+                Action::TrackClearDefaultPassthrough { track_name } => {
+                    let lv2_track = self.state.blocking_read().lv2_graph_track.clone();
+                    #[cfg(not(target_os = "macos"))]
+                    if lv2_track.as_deref() == Some(track_name.as_str()) {
+                        return self.send(Action::TrackGetLv2Graph {
+                            track_name: track_name.clone(),
+                        });
+                    }
+                    let _ = (track_name, lv2_track);
+                }
+                #[cfg(not(target_os = "macos"))]
                 Action::TrackLoadLv2Plugin { track_name, .. }
-                | Action::TrackClearDefaultPassthrough { track_name, .. }
                 | Action::TrackSetLv2PluginState { track_name, .. }
                 | Action::TrackUnloadLv2PluginInstance { track_name, .. }
                 | Action::TrackConnectLv2Audio { track_name, .. }
@@ -767,6 +786,7 @@ impl Maolan {
                         });
                     }
                 }
+                #[cfg(not(target_os = "macos"))]
                 Action::TrackLv2Graph {
                     track_name,
                     plugins,
@@ -1108,6 +1128,8 @@ impl Maolan {
                         return self.update(Message::RemoveSelectedTracks);
                     }
                     crate::state::View::TrackPlugins => {
+                        #[cfg(not(target_os = "macos"))]
+                        {
                         let (track_name, selected_plugin, selected_indices, connections) = {
                             let state = self.state.blocking_read();
                             (
@@ -1144,6 +1166,7 @@ impl Maolan {
                                 .clear();
                             self.state.blocking_write().lv2_graph_selected_plugin = None;
                             return Task::batch(tasks);
+                        }
                         }
                     }
                 }
@@ -1984,17 +2007,21 @@ impl Maolan {
             Message::Connections => {
                 self.state.blocking_write().view = View::Connections;
             }
-            Message::OpenTrackPlugins(track_name) => {
+            Message::OpenTrackPlugins(ref track_name) => {
                 {
                     let mut state = self.state.blocking_write();
                     state.view = View::TrackPlugins;
                     state.lv2_graph_track = Some(track_name.clone());
-                    state.lv2_graph_connecting = None;
-                    state.lv2_graph_moving_plugin = None;
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        state.lv2_graph_connecting = None;
+                        state.lv2_graph_moving_plugin = None;
+                    }
                     state.lv2_graph_last_plugin_click = None;
                     state.lv2_graph_selected_plugin = None;
                 }
-                return self.send(Action::TrackGetLv2Graph { track_name });
+                #[cfg(not(target_os = "macos"))]
+                return self.send(Action::TrackGetLv2Graph { track_name: track_name.clone() });
             }
             Message::HWSelected(ref hw) => {
                 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
