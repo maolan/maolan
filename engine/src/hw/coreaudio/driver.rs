@@ -138,6 +138,22 @@ impl HwDriver {
     }
 }
 
+impl Drop for HwDriver {
+    fn drop(&mut self) {
+        // HwDriver does not own an IoProcHandle — IOProc start/stop and
+        // destruction are handled by `IoProcHandle::drop` in ioproc.rs.
+        //
+        // If property listeners are added in the future (e.g.
+        // AudioObjectAddPropertyListener for sample-rate or device-alive
+        // notifications), they must be removed here with
+        // AudioObjectRemovePropertyListener using the same
+        // AudioObjectPropertyAddress and callback that was registered.
+        //
+        // Currently no listeners are registered, so nothing to clean up
+        // beyond the implicit field drops (Arc<AudioIO> buffers).
+    }
+}
+
 // ---------------------------------------------------------------------------
 // HAL property negotiation helpers
 // ---------------------------------------------------------------------------
