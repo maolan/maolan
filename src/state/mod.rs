@@ -6,10 +6,10 @@ mod track;
 use alsa::Direction;
 #[cfg(target_os = "linux")]
 use alsa::pcm::{Access, Format, HwParams, PCM};
-#[cfg(target_os = "windows")]
-use cpal::traits::{DeviceTrait, HostTrait};
 pub use clip::{AudioClip, MIDIClip};
 pub use connection::Connection;
+#[cfg(target_os = "windows")]
+use cpal::traits::{DeviceTrait, HostTrait};
 use iced::{Length, Point};
 use maolan_engine::kind::Kind;
 use maolan_engine::lv2::Lv2PluginInfo;
@@ -422,11 +422,7 @@ fn default_audio_backend() -> AudioBackendOption {
     }
     #[cfg(all(
         unix,
-        not(any(
-            target_os = "freebsd",
-            target_os = "linux",
-            target_os = "openbsd"
-        ))
+        not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))
     ))]
     {
         AudioBackendOption::Jack

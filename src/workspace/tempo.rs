@@ -1,3 +1,4 @@
+use crate::message::Message;
 use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
     event::Event,
@@ -5,7 +6,6 @@ use iced::{
     widget::canvas,
     widget::canvas::{Action as CanvasAction, Frame, Geometry, Path, Stroke, Text},
 };
-use crate::message::Message;
 use maolan_engine::message::Action as EngineAction;
 
 const TEMPO_HEIGHT: f32 = 28.0;

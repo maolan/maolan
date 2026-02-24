@@ -20,6 +20,8 @@ use wavers::write as write_wav;
 use crate::alsa_worker::HwWorker;
 #[cfg(target_os = "linux")]
 use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
+#[cfg(unix)]
+use crate::hw::jack::JackRuntime;
 #[cfg(target_os = "freebsd")]
 use crate::hw::oss as hw;
 #[cfg(target_os = "freebsd")]
@@ -34,8 +36,6 @@ use crate::oss_worker::HwWorker;
 use crate::sndio_worker::HwWorker;
 #[cfg(target_os = "windows")]
 use crate::wasapi_worker::HwWorker;
-#[cfg(unix)]
-use crate::hw::jack::JackRuntime;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
@@ -2242,9 +2242,13 @@ impl Engine {
                                     track_lock.push_hw_midi_events(&self.pending_hw_midi_events);
                                 }
                             } else {
-                                for route in hw_in_routes.iter().filter(|r| &r.to_track == track_name) {
-                                    if let Some(events) = pending_hw_in_by_device.get(&route.device) {
-                                        track_lock.push_hw_midi_events_to_port(route.to_port, events);
+                                for route in
+                                    hw_in_routes.iter().filter(|r| &r.to_track == track_name)
+                                {
+                                    if let Some(events) = pending_hw_in_by_device.get(&route.device)
+                                    {
+                                        track_lock
+                                            .push_hw_midi_events_to_port(route.to_port, events);
                                     }
                                 }
                             }

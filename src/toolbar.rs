@@ -1,9 +1,9 @@
 use crate::message::Message;
 use iced::{
     Background, Color, Length, Theme,
-    widget::{button, row, text},
+    widget::{button, row},
 };
-use iced_fonts::lucide::{audio_lines, cable, circle, play, square};
+use iced_fonts::lucide::{audio_lines, brackets, cable, circle, play, repeat, square};
 use maolan_engine::message::Action;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,7 +84,7 @@ impl Toolbar {
         let loop_active = has_loop_range && loop_enabled;
         let punch_active = has_punch_range && punch_enabled;
         let loop_button = if has_loop_range {
-            button(text("Loop"))
+            button(repeat())
                 .style(Self::button_style(
                     has_loop_range,
                     loop_active,
@@ -92,14 +92,14 @@ impl Toolbar {
                 ))
                 .on_press(Message::ToggleLoop)
         } else {
-            button(text("Loop")).style(Self::button_style(
+            button(repeat()).style(Self::button_style(
                 has_loop_range,
                 loop_active,
                 Color::from_rgba(0.2, 0.55, 0.9, 0.35),
             ))
         };
         let punch_button = if has_punch_range {
-            button(text("Punch"))
+            button(brackets())
                 .style(Self::button_style(
                     has_punch_range,
                     punch_active,
@@ -107,7 +107,7 @@ impl Toolbar {
                 ))
                 .on_press(Message::TogglePunch)
         } else {
-            button(text("Punch")).style(Self::button_style(
+            button(brackets()).style(Self::button_style(
                 has_punch_range,
                 punch_active,
                 Color::from_rgba(0.85, 0.25, 0.25, 0.4),

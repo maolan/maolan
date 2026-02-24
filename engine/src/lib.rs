@@ -15,10 +15,10 @@ mod oss_worker;
 mod routing;
 #[cfg(target_os = "openbsd")]
 mod sndio_worker;
-#[cfg(target_os = "windows")]
-mod wasapi_worker;
 pub mod state;
 mod track;
+#[cfg(target_os = "windows")]
+mod wasapi_worker;
 pub mod worker;
 
 use tokio::sync::mpsc::{Sender, channel};

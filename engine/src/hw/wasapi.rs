@@ -120,35 +120,34 @@ impl HwDriver {
             .play()
             .map_err(|e| format!("Failed to start WASAPI output stream: {e}"))?;
 
-        let (input_stream, input_rx) = if let (Some(input_device), Some(input_cfg)) =
-            (maybe_input_device, maybe_input_cfg)
-        {
-            let (input_tx, input_rx) = mpsc::sync_channel::<Vec<f32>>(8);
-            let chunk_len = period_frames.saturating_mul(input_channels.max(1));
-            let input_stream = {
-                let mut stash: Vec<f32> = Vec::with_capacity(chunk_len.saturating_mul(2));
-                input_device
-                    .build_input_stream(
-                        &input_cfg,
-                        move |data: &[f32], _| {
-                            stash.extend_from_slice(data);
-                            while stash.len() >= chunk_len {
-                                let chunk: Vec<f32> = stash.drain(..chunk_len).collect();
-                                let _ = input_tx.try_send(chunk);
-                            }
-                        },
-                        |e| error!("WASAPI input stream error: {e}"),
-                        None,
-                    )
-                    .map_err(|e| format!("Failed to build WASAPI input stream: {e}"))?
+        let (input_stream, input_rx) =
+            if let (Some(input_device), Some(input_cfg)) = (maybe_input_device, maybe_input_cfg) {
+                let (input_tx, input_rx) = mpsc::sync_channel::<Vec<f32>>(8);
+                let chunk_len = period_frames.saturating_mul(input_channels.max(1));
+                let input_stream = {
+                    let mut stash: Vec<f32> = Vec::with_capacity(chunk_len.saturating_mul(2));
+                    input_device
+                        .build_input_stream(
+                            &input_cfg,
+                            move |data: &[f32], _| {
+                                stash.extend_from_slice(data);
+                                while stash.len() >= chunk_len {
+                                    let chunk: Vec<f32> = stash.drain(..chunk_len).collect();
+                                    let _ = input_tx.try_send(chunk);
+                                }
+                            },
+                            |e| error!("WASAPI input stream error: {e}"),
+                            None,
+                        )
+                        .map_err(|e| format!("Failed to build WASAPI input stream: {e}"))?
+                };
+                input_stream
+                    .play()
+                    .map_err(|e| format!("Failed to start WASAPI input stream: {e}"))?;
+                (Some(input_stream), Some(input_rx))
+            } else {
+                (None, None)
             };
-            input_stream
-                .play()
-                .map_err(|e| format!("Failed to start WASAPI input stream: {e}"))?;
-            (Some(input_stream), Some(input_rx))
-        } else {
-            (None, None)
-        };
 
         Ok(Self {
             _input_stream: input_stream,
@@ -282,7 +281,10 @@ fn select_input_device(host: &cpal::Host, requested: &str) -> Option<cpal::Devic
     None
 }
 
-fn select_f32_output_config(device: &cpal::Device, requested_rate: i32) -> Result<StreamConfig, String> {
+fn select_f32_output_config(
+    device: &cpal::Device,
+    requested_rate: i32,
+) -> Result<StreamConfig, String> {
     let mut selected = None;
     let ranges = device
         .supported_output_configs()
@@ -305,7 +307,10 @@ fn select_f32_output_config(device: &cpal::Device, requested_rate: i32) -> Resul
     selected.ok_or_else(|| "No F32 WASAPI output stream configuration was found".to_string())
 }
 
-fn select_f32_input_config(device: &cpal::Device, requested_rate: i32) -> Result<StreamConfig, String> {
+fn select_f32_input_config(
+    device: &cpal::Device,
+    requested_rate: i32,
+) -> Result<StreamConfig, String> {
     let mut selected = None;
     let ranges = device
         .supported_input_configs()
