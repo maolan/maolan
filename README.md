@@ -239,6 +239,19 @@ cargo run --release -- --debug
 - "File" > "Load Session" - opens an existing session
 - All files are referenced relative to the session directory
 
+## Keyboard Shortcuts
+
+| Shortcut          | Action                     |
+| ----------------- | -------------------------- |
+| `Ctrl + n`        | Create a new session       |
+| `Ctrl + o`        | Open an existing session   |
+| `Ctrl + s`        | Save the current session   |
+| `Ctrl + Shift + s`| Save the current session as |
+| `Ctrl + i`        | Import audio or MIDI files |
+| `Space`           | Toggle playback (play/stop)|
+| `Delete`          | Delete selected item(s)    |
+| `Backspace`       | Delete selected item(s)    |
+
 ## Audio Configuration
 
 Audio backend settings can be configured through the settings interface:
