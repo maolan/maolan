@@ -24,3 +24,7 @@ lv2_raw = "0.2.0"
 [target.'cfg(target_os = "windows")'.dependencies]
 cpal = "0.15.3"
 midir = "0.10.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+coreaudio-sys = "0.2.16"
+coremidi = "0.7.0"
