@@ -135,9 +135,13 @@ pub enum Message {
     Workspace,
     Connections,
     OpenTrackPlugins(String),
+    #[cfg(not(target_os = "macos"))]
     RefreshLv2Plugins,
+    #[cfg(not(target_os = "macos"))]
     FilterLv2Plugins(String),
+    #[cfg(not(target_os = "macos"))]
     SelectLv2Plugin(String),
+    #[cfg(not(target_os = "macos"))]
     LoadSelectedLv2Plugins,
 
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]

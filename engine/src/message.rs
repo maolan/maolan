@@ -1,5 +1,7 @@
 use crate::midi::io::MidiEvent;
-use crate::{kind::Kind, lv2::Lv2PluginInfo, mutex::UnsafeMutex, track::Track};
+use crate::{kind::Kind, mutex::UnsafeMutex, track::Track};
+#[cfg(not(target_os = "macos"))]
+use crate::lv2::Lv2PluginInfo;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 
@@ -21,6 +23,7 @@ pub struct ClipMoveTo {
     pub sample_offset: usize,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Lv2GraphNode {
     TrackInput,
@@ -28,6 +31,7 @@ pub enum Lv2GraphNode {
     PluginInstance(usize),
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lv2GraphPlugin {
     pub instance_id: usize,
@@ -40,12 +44,14 @@ pub struct Lv2GraphPlugin {
     pub state: Lv2PluginState,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lv2StatePortValue {
     pub index: u32,
     pub value: f32,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lv2StateProperty {
     pub key_uri: String,
@@ -54,12 +60,14 @@ pub struct Lv2StateProperty {
     pub value: Vec<u8>,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lv2PluginState {
     pub port_values: Vec<Lv2StatePortValue>,
     pub properties: Vec<Lv2StateProperty>,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lv2GraphConnection {
     pub from_node: Lv2GraphNode,
@@ -113,6 +121,7 @@ pub enum Action {
     TrackToggleSolo(String),
     TrackToggleInputMonitor(String),
     TrackToggleDiskMonitor(String),
+    #[cfg(not(target_os = "macos"))]
     TrackLoadLv2Plugin {
         track_name: String,
         plugin_uri: String,
@@ -120,27 +129,33 @@ pub enum Action {
     TrackClearDefaultPassthrough {
         track_name: String,
     },
+    #[cfg(not(target_os = "macos"))]
     TrackSetLv2PluginState {
         track_name: String,
         instance_id: usize,
         state: Lv2PluginState,
     },
+    #[cfg(not(target_os = "macos"))]
     TrackUnloadLv2PluginInstance {
         track_name: String,
         instance_id: usize,
     },
+    #[cfg(not(target_os = "macos"))]
     TrackShowLv2PluginUiInstance {
         track_name: String,
         instance_id: usize,
     },
+    #[cfg(not(target_os = "macos"))]
     TrackGetLv2Graph {
         track_name: String,
     },
+    #[cfg(not(target_os = "macos"))]
     TrackLv2Graph {
         track_name: String,
         plugins: Vec<Lv2GraphPlugin>,
         connections: Vec<Lv2GraphConnection>,
     },
+    #[cfg(not(target_os = "macos"))]
     TrackConnectLv2Audio {
         track_name: String,
         from_node: Lv2GraphNode,
@@ -148,6 +163,7 @@ pub enum Action {
         to_node: Lv2GraphNode,
         to_port: usize,
     },
+    #[cfg(not(target_os = "macos"))]
     TrackConnectLv2Midi {
         track_name: String,
         from_node: Lv2GraphNode,
@@ -155,6 +171,7 @@ pub enum Action {
         to_node: Lv2GraphNode,
         to_port: usize,
     },
+    #[cfg(not(target_os = "macos"))]
     TrackDisconnectLv2Audio {
         track_name: String,
         from_node: Lv2GraphNode,
@@ -162,6 +179,7 @@ pub enum Action {
         to_node: Lv2GraphNode,
         to_port: usize,
     },
+    #[cfg(not(target_os = "macos"))]
     TrackDisconnectLv2Midi {
         track_name: String,
         from_node: Lv2GraphNode,
@@ -169,7 +187,9 @@ pub enum Action {
         to_node: Lv2GraphNode,
         to_port: usize,
     },
+    #[cfg(not(target_os = "macos"))]
     ListLv2Plugins,
+    #[cfg(not(target_os = "macos"))]
     Lv2Plugins(Vec<Lv2PluginInfo>),
     ClipMove {
         kind: Kind,

@@ -191,7 +191,7 @@ impl FrameClock {
 }
 
 // mach_wait_until is not exposed by coreaudio-sys; link directly from libSystem.
-extern "C" {
+unsafe extern "C" {
     fn mach_wait_until(deadline: u64) -> i32;
 }
 

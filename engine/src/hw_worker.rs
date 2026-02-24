@@ -156,8 +156,10 @@ impl<B: Backend> HwWorker<B> {
                 let _ = libc::pthread_set_name_np(thread, c_name.as_ptr());
             }
 
-            let param = libc::sched_param {
-                sched_priority: priority,
+            let param = unsafe {
+                let mut p = std::mem::zeroed::<libc::sched_param>();
+                p.sched_priority = priority;
+                p
             };
             let rc = unsafe { libc::pthread_setschedparam(thread, RT_POLICY, &param) };
             if rc != 0 {
@@ -168,7 +170,7 @@ impl<B: Backend> HwWorker<B> {
             }
 
             let mut actual_policy = 0_i32;
-            let mut actual_param = libc::sched_param { sched_priority: 0 };
+            let mut actual_param = unsafe { std::mem::zeroed::<libc::sched_param>() };
             let rc = unsafe {
                 libc::pthread_getschedparam(thread, &mut actual_policy, &mut actual_param)
             };

@@ -18,6 +18,8 @@ alsa = { version = "0.9.1" }
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31.1", features = ["ioctl"] }
 jack = "0.13.0"
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 lilv = "0.2.4"
 lv2_raw = "0.2.0"
 

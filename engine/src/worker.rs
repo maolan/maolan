@@ -18,7 +18,11 @@ impl Worker {
         // Requires appropriate system privileges (e.g. rtprio/limits).
         let thread = unsafe { libc::pthread_self() };
         let policy = libc::SCHED_FIFO;
-        let param = libc::sched_param { sched_priority: 10 };
+        let param = unsafe {
+            let mut p = std::mem::zeroed::<libc::sched_param>();
+            p.sched_priority = 10;
+            p
+        };
         let rc = unsafe { libc::pthread_setschedparam(thread, policy, &param) };
         if rc == 0 {
             Ok(())

@@ -175,7 +175,7 @@ impl SharedIOState {
         );
         if gap > 0 {
             data.xrun_count += 1;
-            log::warn!(
+            tracing::warn!(
                 "CoreAudio xrun detected (#{}, gap {} frames)",
                 data.xrun_count,
                 gap
@@ -386,7 +386,7 @@ impl IoProcHandle {
     /// audio processing is needed. Dropping it will stop the device and
     /// unregister the callback.
     pub fn new(device_id: AudioDeviceID, state: Arc<SharedIOState>) -> Result<Self, String> {
-        let mut proc_id: AudioDeviceIOProcID = std::ptr::null_mut();
+        let mut proc_id: AudioDeviceIOProcID = None;
 
         // Leak an Arc reference for the callback's client_data pointer.
         // We increment the strong count so the Arc in `_state` keeps it alive,
@@ -431,7 +431,7 @@ impl IoProcHandle {
             )
         };
         if overload_status != kAudioHardwareNoError as OSStatus {
-            log::warn!(
+            tracing::warn!(
                 "Failed to register overload listener (status {}); xrun detection may be limited",
                 overload_status
             );

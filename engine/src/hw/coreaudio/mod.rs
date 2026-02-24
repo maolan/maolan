@@ -19,7 +19,6 @@ pub mod latency;
 pub mod midi_hub;
 pub mod sync;
 
-pub use self::device::list_devices;
 pub use self::driver::HwDriver;
 pub use self::midi_hub::MidiHub;
 pub use crate::hw::options::HwOptions;

@@ -72,13 +72,10 @@ impl MidiHub {
     ///
     /// Names are returned in the format `coreaudio:<display_name>`.
     pub fn list_sources() -> Vec<String> {
-        let sources = Sources;
-        let mut result = Vec::with_capacity(sources.len());
-        for i in 0..sources.len() {
-            if let Some(src) = sources.get(i) {
-                let display = src.display_name().unwrap_or_default();
-                result.push(format!("coreaudio:{display}"));
-            }
+        let mut result = Vec::new();
+        for src in Sources {
+            let display = src.display_name().unwrap_or_default();
+            result.push(format!("coreaudio:{display}"));
         }
         result
     }
@@ -87,13 +84,10 @@ impl MidiHub {
     ///
     /// Names are returned in the format `coreaudio:<display_name>`.
     pub fn list_destinations() -> Vec<String> {
-        let destinations = Destinations;
-        let mut result = Vec::with_capacity(destinations.len());
-        for i in 0..destinations.len() {
-            if let Some(dest) = destinations.get(i) {
-                let display = dest.display_name().unwrap_or_default();
-                result.push(format!("coreaudio:{display}"));
-            }
+        let mut result = Vec::new();
+        for dest in Destinations {
+            let display = dest.display_name().unwrap_or_default();
+            result.push(format!("coreaudio:{display}"));
         }
         result
     }
@@ -211,9 +205,7 @@ impl MidiHub {
 
 /// Find a CoreMIDI source endpoint by its display name.
 fn find_source_by_name(name: &str) -> Option<Source> {
-    let sources = Sources;
-    for i in 0..sources.len() {
-        let source = sources.get(i)?;
+    for source in Sources {
         if let Some(display_name) = source.display_name() {
             if display_name == name {
                 return Some(source);
@@ -225,9 +217,7 @@ fn find_source_by_name(name: &str) -> Option<Source> {
 
 /// Find a CoreMIDI destination endpoint by its display name.
 fn find_destination_by_name(name: &str) -> Option<Destination> {
-    let destinations = Destinations;
-    for i in 0..destinations.len() {
-        let dest = destinations.get(i)?;
+    for dest in Destinations {
         if let Some(display_name) = dest.display_name() {
             if display_name == name {
                 return Some(dest);

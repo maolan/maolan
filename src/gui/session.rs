@@ -129,43 +129,49 @@ impl Maolan {
                 }
             }
         }
-        let mut graphs = serde_json::Map::new();
-        for (track_name, (plugins, connections)) in &state.lv2_graphs_by_track {
-            let id_to_index: std::collections::HashMap<usize, usize> = plugins
-                .iter()
-                .enumerate()
-                .map(|(idx, p)| (p.instance_id, idx))
-                .collect();
-            let plugins_json: Vec<Value> = plugins
-                .iter()
-                .map(|p| json!({"uri":p.uri, "state": Self::lv2_state_to_json(&p.state)}))
-                .collect();
-            let conns_json: Vec<Value> = connections
-                .iter()
-                .filter_map(|c| {
-                    let from_node = Self::lv2_node_to_json(&c.from_node, &id_to_index)?;
-                    let to_node = Self::lv2_node_to_json(&c.to_node, &id_to_index)?;
-                    Some(json!({
-                        "from_node": from_node,
-                        "from_port": c.from_port,
-                        "to_node": to_node,
-                        "to_port": c.to_port,
-                        "kind": Self::kind_to_json(c.kind),
-                    }))
-                })
-                .collect();
-            graphs.insert(
-                track_name.clone(),
-                json!({
-                    "plugins": plugins_json,
-                    "connections": conns_json,
-                }),
-            );
-        }
+        #[cfg(not(target_os = "macos"))]
+        let graphs = {
+            let mut graphs = serde_json::Map::new();
+            for (track_name, (plugins, connections)) in &state.lv2_graphs_by_track {
+                let id_to_index: std::collections::HashMap<usize, usize> = plugins
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, p)| (p.instance_id, idx))
+                    .collect();
+                let plugins_json: Vec<Value> = plugins
+                    .iter()
+                    .map(|p| json!({"uri":p.uri, "state": Self::lv2_state_to_json(&p.state)}))
+                    .collect();
+                let conns_json: Vec<Value> = connections
+                    .iter()
+                    .filter_map(|c| {
+                        let from_node = Self::lv2_node_to_json(&c.from_node, &id_to_index)?;
+                        let to_node = Self::lv2_node_to_json(&c.to_node, &id_to_index)?;
+                        Some(json!({
+                            "from_node": from_node,
+                            "from_port": c.from_port,
+                            "to_node": to_node,
+                            "to_port": c.to_port,
+                            "kind": Self::kind_to_json(c.kind),
+                        }))
+                    })
+                    .collect();
+                graphs.insert(
+                    track_name.clone(),
+                    json!({
+                        "plugins": plugins_json,
+                        "connections": conns_json,
+                    }),
+                );
+            }
+            Value::Object(graphs)
+        };
+        #[cfg(target_os = "macos")]
+        let graphs = Value::Object(serde_json::Map::new());
         let result = json!({
             "tracks": tracks_json,
             "connections": &state.connections,
-            "graphs": Value::Object(graphs),
+            "graphs": graphs,
             "transport": {
                 "loop_range_samples": self.loop_range_samples.map(|(start, end)| vec![start, end]),
                 "loop_enabled": self.loop_enabled,
@@ -203,6 +209,7 @@ impl Maolan {
             state.selected.clear();
             state.selected_clips.clear();
             state.connection_view_selection = ConnectionViewSelection::None;
+            #[cfg(not(target_os = "macos"))]
             state.lv2_graphs_by_track.clear();
         }
         let filename = "session.json";
@@ -551,6 +558,7 @@ impl Maolan {
                 "'tracks' is not an array",
             ));
         }
+        #[cfg(not(target_os = "macos"))]
         if let Some(graphs) = session["graphs"].as_object() {
             for (track_name, graph_v) in graphs {
                 restore_actions.push(Action::TrackClearDefaultPassthrough {
@@ -642,29 +650,40 @@ impl Maolan {
     }
 
     pub(super) fn refresh_graphs_then_save(&mut self, path: String) -> Task<Message> {
-        let track_names: Vec<String> = self
-            .state
-            .blocking_read()
-            .tracks
-            .iter()
-            .map(|t| t.name.clone())
-            .collect();
-        self.pending_save_path = Some(path);
-        self.pending_save_tracks = track_names.iter().cloned().collect();
-        if self.pending_save_tracks.is_empty() {
-            let Some(path) = self.pending_save_path.take() else {
-                return Task::none();
-            };
+        #[cfg(not(target_os = "macos"))]
+        {
+            let track_names: Vec<String> = self
+                .state
+                .blocking_read()
+                .tracks
+                .iter()
+                .map(|t| t.name.clone())
+                .collect();
+            self.pending_save_path = Some(path);
+            self.pending_save_tracks = track_names.iter().cloned().collect();
+            if self.pending_save_tracks.is_empty() {
+                let Some(path) = self.pending_save_path.take() else {
+                    return Task::none();
+                };
+                if let Err(e) = self.save(path.clone()) {
+                    error!("{}", e);
+                    return Task::none();
+                }
+                return self.send(Action::SetSessionPath(path));
+            }
+            let tasks = track_names
+                .into_iter()
+                .map(|track_name| self.send(Action::TrackGetLv2Graph { track_name }))
+                .collect::<Vec<_>>();
+            return Task::batch(tasks);
+        }
+        #[cfg(target_os = "macos")]
+        {
             if let Err(e) = self.save(path.clone()) {
                 error!("{}", e);
                 return Task::none();
             }
-            return self.send(Action::SetSessionPath(path));
+            self.send(Action::SetSessionPath(path))
         }
-        let tasks = track_names
-            .into_iter()
-            .map(|track_name| self.send(Action::TrackGetLv2Graph { track_name }))
-            .collect::<Vec<_>>();
-        Task::batch(tasks)
     }
 }

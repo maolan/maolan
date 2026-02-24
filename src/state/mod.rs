@@ -12,7 +12,9 @@ pub use connection::Connection;
 use cpal::traits::{DeviceTrait, HostTrait};
 use iced::{Length, Point};
 use maolan_engine::kind::Kind;
+#[cfg(not(target_os = "macos"))]
 use maolan_engine::lv2::Lv2PluginInfo;
+#[cfg(not(target_os = "macos"))]
 use maolan_engine::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin};
 #[cfg(target_os = "freebsd")]
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
@@ -224,6 +226,7 @@ pub struct HW {
     pub channels: usize,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Debug, Clone)]
 pub struct Lv2Connecting {
     pub from_node: Lv2GraphNode,
@@ -233,6 +236,7 @@ pub struct Lv2Connecting {
     pub is_input: bool,
 }
 
+#[cfg(not(target_os = "macos"))]
 #[derive(Debug, Clone)]
 pub struct MovingPlugin {
     pub instance_id: usize,
@@ -292,15 +296,21 @@ pub struct StateData {
     pub hw_out_balance: f32,
     pub hw_out_muted: bool,
     pub hw_out_meter_db: Vec<f32>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_plugins: Vec<Lv2PluginInfo>,
     pub lv2_graph_track: Option<String>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_graph_plugins: Vec<Lv2GraphPlugin>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_graph_connections: Vec<Lv2GraphConnection>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_graphs_by_track: HashMap<String, (Vec<Lv2GraphPlugin>, Vec<Lv2GraphConnection>)>,
     pub lv2_graph_selected_connections: std::collections::HashSet<usize>,
     pub lv2_graph_selected_plugin: Option<usize>,
     pub lv2_graph_plugin_positions: HashMap<usize, Point>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_graph_connecting: Option<Lv2Connecting>,
+    #[cfg(not(target_os = "macos"))]
     pub lv2_graph_moving_plugin: Option<MovingPlugin>,
     pub lv2_graph_last_plugin_click: Option<(usize, Instant)>,
     pub connections_last_track_click: Option<(String, Instant)>,
@@ -370,15 +380,21 @@ impl Default for StateData {
             hw_out_balance: 0.0,
             hw_out_muted: false,
             hw_out_meter_db: vec![],
+            #[cfg(not(target_os = "macos"))]
             lv2_plugins: vec![],
             lv2_graph_track: None,
+            #[cfg(not(target_os = "macos"))]
             lv2_graph_plugins: vec![],
+            #[cfg(not(target_os = "macos"))]
             lv2_graph_connections: vec![],
+            #[cfg(not(target_os = "macos"))]
             lv2_graphs_by_track: HashMap::new(),
             lv2_graph_selected_connections: HashSet::new(),
             lv2_graph_selected_plugin: None,
             lv2_graph_plugin_positions: HashMap::new(),
+            #[cfg(not(target_os = "macos"))]
             lv2_graph_connecting: None,
+            #[cfg(not(target_os = "macos"))]
             lv2_graph_moving_plugin: None,
             lv2_graph_last_plugin_click: None,
             connections_last_track_click: None,

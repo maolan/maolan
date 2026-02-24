@@ -3,8 +3,8 @@
 //! Buffer-size and sample-rate negotiation for a CoreAudio device,
 //! plus the `HwDriver` struct that the rest of the engine interacts with.
 
-use super::device::DeviceInfo;
 use super::error_fmt::ca_error;
+use super::ioproc::{IoProcHandle, SharedIOState};
 use crate::audio::io::AudioIO;
 use crate::hw::common;
 use crate::hw::latency;
@@ -26,9 +26,8 @@ use std::os::raw::c_void;
 use std::ptr;
 use std::sync::Arc;
 
-/// CoreAudio `HwDriver` — owns the negotiated device settings and
-/// per-channel `AudioIO` buffers.
-#[derive(Debug)]
+/// CoreAudio `HwDriver` — owns the negotiated device settings,
+/// per-channel `AudioIO` buffers, and the live IOProc registration.
 pub struct HwDriver {
     device_id: AudioDeviceID,
     sample_rate: i32,
@@ -41,20 +40,28 @@ pub struct HwDriver {
     output_channels: Vec<Arc<AudioIO>>,
     output_gain_linear: f32,
     output_balance: f32,
+    io_state: Arc<SharedIOState>,
+    _io_proc_handle: IoProcHandle,
 }
 
 impl HwDriver {
-    /// Open a CoreAudio device, negotiate sample rate and buffer size,
+    /// Open a CoreAudio device by name, negotiate sample rate and buffer size,
     /// and allocate per-channel `AudioIO` buffers.
-    pub fn new(device: &DeviceInfo, rate: i32) -> Result<Self, String> {
-        Self::new_with_options(device, rate, HwOptions::default())
+    pub fn new(name: &str, rate: i32) -> Result<Self, String> {
+        Self::new_with_options(name, rate, 0, HwOptions::default())
     }
 
     pub fn new_with_options(
-        device: &DeviceInfo,
+        name: &str,
         rate: i32,
+        _bits: i32,
         options: HwOptions,
     ) -> Result<Self, String> {
+        let devices = super::device::list_devices();
+        let device = devices
+            .iter()
+            .find(|d| d.name == name)
+            .ok_or_else(|| format!("CoreAudio device not found: {name}"))?;
         let device_id = device.id;
 
         // Negotiate sample rate.
@@ -79,6 +86,15 @@ impl HwDriver {
         let output_latency_frames =
             query_device_latency(device_id, kAudioObjectPropertyScopeOutput);
 
+        // Create the shared IOProc state and start the device.
+        let io_state = Arc::new(SharedIOState::new(
+            in_count,
+            out_count,
+            actual_frames as usize,
+            actual_rate as u32,
+        ));
+        let io_proc_handle = IoProcHandle::new(device_id, Arc::clone(&io_state))?;
+
         Ok(Self {
             device_id,
             sample_rate: actual_rate as i32,
@@ -91,6 +107,8 @@ impl HwDriver {
             output_channels,
             output_gain_linear: 1.0,
             output_balance: 0.0,
+            io_state,
+            _io_proc_handle: io_proc_handle,
         })
     }
 
@@ -144,21 +162,32 @@ impl HwDriver {
     }
 }
 
-impl Drop for HwDriver {
-    fn drop(&mut self) {
-        // HwDriver does not own an IoProcHandle — IOProc start/stop and
-        // destruction are handled by `IoProcHandle::drop` in ioproc.rs.
-        //
-        // If property listeners are added in the future (e.g.
-        // AudioObjectAddPropertyListener for sample-rate or device-alive
-        // notifications), they must be removed here with
-        // AudioObjectRemovePropertyListener using the same
-        // AudioObjectPropertyAddress and callback that was registered.
-        //
-        // Currently no listeners are registered, so nothing to clean up
-        // beyond the implicit field drops (Arc<AudioIO> buffers).
+impl crate::hw::traits::HwWorkerDriver for HwDriver {
+    fn cycle_samples(&self) -> usize {
+        self.cycle_samples
+    }
+
+    fn sample_rate(&self) -> i32 {
+        self.sample_rate
+    }
+
+    fn run_cycle_for_worker(&mut self) -> Result<(), String> {
+        self.io_state.run_cycle(
+            &self.input_channels,
+            &self.output_channels,
+            self.output_gain_linear,
+            self.output_balance,
+        )
+    }
+
+    fn run_assist_step_for_worker(&mut self) -> Result<bool, String> {
+        // CoreAudio is callback-driven; no assist-thread work is needed.
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        Ok(true)
     }
 }
+
+crate::impl_hw_device_for_driver!(HwDriver);
 
 // ---------------------------------------------------------------------------
 // HAL property negotiation helpers
