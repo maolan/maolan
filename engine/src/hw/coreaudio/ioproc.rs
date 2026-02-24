@@ -6,12 +6,15 @@
 //! on its own thread) with the engine's worker thread via a condvar.
 //! `IoProcHandle` owns the registration and ensures cleanup on drop.
 
+use crate::audio::io::AudioIO;
+use crate::hw::ports;
 use coreaudio_sys::{
     kAudioHardwareNoError, AudioBufferList, AudioDeviceCreateIOProcID,
     AudioDeviceDestroyIOProcID, AudioDeviceID, AudioDeviceIOProcID, AudioDeviceStart,
     AudioDeviceStop, AudioTimeStamp, OSStatus,
 };
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 /// Data shared between the IOProc callback and the engine worker thread.
 pub struct SharedData {
@@ -50,6 +53,72 @@ impl SharedIOState {
             condvar: Condvar::new(),
             mutex: Mutex::new(data),
         }
+    }
+
+    /// Wait for the next IOProc cycle, then copy input data to AudioIO input
+    /// ports and read AudioIO output ports back into the shared output buffer.
+    ///
+    /// Called from the engine worker thread. Mirrors OSS
+    /// `DuplexChannelApi::run_cycle()` in terms of AudioIO port filling.
+    pub fn run_cycle(
+        &self,
+        input_ports: &[Arc<AudioIO>],
+        output_ports: &[Arc<AudioIO>],
+        output_gain: f32,
+        output_balance: f32,
+    ) -> Result<(), String> {
+        // 1. Lock and wait for cycle_seq to increment.
+        let mut data = self
+            .mutex
+            .lock()
+            .map_err(|e| format!("SharedIOState mutex poisoned: {}", e))?;
+        let seq_before = data.cycle_seq;
+        let timeout = Duration::from_secs(1);
+        while data.cycle_seq == seq_before {
+            let (guard, wait_result) = self
+                .condvar
+                .wait_timeout(data, timeout)
+                .map_err(|e| format!("condvar wait failed: {}", e))?;
+            data = guard;
+            if wait_result.timed_out() && data.cycle_seq == seq_before {
+                return Err("CoreAudio IOProc cycle timeout (1s)".to_string());
+            }
+        }
+
+        let frames = data.period_frames;
+
+        // 2. Copy shared input_frames[ch] -> AudioIO input ports.
+        ports::fill_ports_from_interleaved(input_ports, frames, false, |ch, frame| {
+            data.input_frames
+                .get(ch)
+                .and_then(|buf| buf.get(frame).copied())
+                .unwrap_or(0.0)
+        });
+
+        // 3. Read AudioIO output ports -> shared output_frames[ch].
+        //    Zero the output buffer first so unconnected channels are silent.
+        for ch_buf in data.output_frames.iter_mut() {
+            for sample in ch_buf[..frames].iter_mut() {
+                *sample = 0.0;
+            }
+        }
+        ports::write_interleaved_from_ports(
+            output_ports,
+            frames,
+            output_gain,
+            output_balance,
+            false,
+            |ch, frame, sample| {
+                if let Some(buf) = data.output_frames.get_mut(ch) {
+                    if let Some(dst) = buf.get_mut(frame) {
+                        *dst = sample;
+                    }
+                }
+            },
+        );
+
+        // 4. Lock is released when `data` is dropped.
+        Ok(())
     }
 }
 
