@@ -82,6 +82,11 @@ pub struct Maolan {
     recording_preview_start_sample: Option<usize>,
     recording_preview_sample: Option<usize>,
     recording_preview_peaks: HashMap<String, Vec<Vec<f32>>>,
+    import_in_progress: bool,
+    import_current_file: usize,
+    import_total_files: usize,
+    import_file_progress: f32,
+    import_current_filename: String,
 }
 
 impl Default for Maolan {
@@ -127,6 +132,11 @@ impl Default for Maolan {
             recording_preview_start_sample: None,
             recording_preview_sample: None,
             recording_preview_peaks: HashMap::new(),
+            import_in_progress: false,
+            import_current_file: 0,
+            import_total_files: 0,
+            import_file_progress: 0.0,
+            import_current_filename: String::new(),
         }
     }
 }
@@ -496,6 +506,119 @@ impl Maolan {
         Ok((samples, channels, sample_rate))
     }
 
+    async fn decode_audio_to_f32_interleaved_with_progress<F>(
+        path: &Path,
+        mut progress_callback: F,
+    ) -> std::io::Result<(Vec<f32>, usize, u32)>
+    where
+        F: FnMut(f32),
+    {
+        let file = File::open(path)?;
+        let file_size = file.metadata()?.len();
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+        let probed = symphonia::default::get_probe()
+            .format(
+                &hint,
+                mss,
+                &FormatOptions::default(),
+                &MetadataOptions::default(),
+            )
+            .map_err(|e| {
+                io::Error::other(format!(
+                    "Unsupported or unreadable audio '{}': {e}",
+                    path.display()
+                ))
+            })?;
+        let mut format = probed.format;
+        let track = format.default_track().ok_or_else(|| {
+            io::Error::other(format!("No decodable audio track in '{}'", path.display()))
+        })?;
+        let mut decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .map_err(|e| io::Error::other(format!("Failed to decode '{}': {e}", path.display())))?;
+        let mut channels = track
+            .codec_params
+            .channels
+            .map(|c| c.count())
+            .unwrap_or(1usize)
+            .max(1);
+        let mut sample_rate = track.codec_params.sample_rate.unwrap_or(48_000u32);
+        let mut samples = Vec::<f32>::new();
+
+        let mut packets_decoded = 0usize;
+        let report_interval = 100;
+
+        loop {
+            let packet = match format.next_packet() {
+                Ok(packet) => packet,
+                Err(SymphoniaError::IoError(e))
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    break;
+                }
+                Err(SymphoniaError::ResetRequired) => {
+                    return Err(io::Error::other(format!(
+                        "Decoder reset required for '{}'",
+                        path.display()
+                    )));
+                }
+                Err(e) => {
+                    return Err(io::Error::other(format!(
+                        "Failed reading audio packets '{}': {e}",
+                        path.display()
+                    )));
+                }
+            };
+            let decoded = match decoder.decode(&packet) {
+                Ok(decoded) => decoded,
+                Err(SymphoniaError::DecodeError(_)) => continue,
+                Err(SymphoniaError::ResetRequired) => {
+                    return Err(io::Error::other(format!(
+                        "Decoder reset required for '{}'",
+                        path.display()
+                    )));
+                }
+                Err(e) => {
+                    return Err(io::Error::other(format!(
+                        "Audio decode failed '{}': {e}",
+                        path.display()
+                    )));
+                }
+            };
+            let spec = *decoded.spec();
+            channels = spec.channels.count().max(1);
+            sample_rate = spec.rate;
+            let mut sample_buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+            sample_buffer.copy_interleaved_ref(decoded);
+            samples.extend_from_slice(sample_buffer.samples());
+
+            packets_decoded += 1;
+            if packets_decoded % report_interval == 0 {
+                let bytes_read = samples.len() * std::mem::size_of::<f32>();
+                let progress = if file_size > 0 {
+                    (bytes_read as f64 / file_size as f64).clamp(0.0, 1.0) as f32
+                } else {
+                    0.0
+                };
+                progress_callback(progress);
+                tokio::task::yield_now().await;
+            }
+        }
+
+        if samples.is_empty() {
+            return Err(io::Error::other(format!(
+                "Audio file '{}' contains no samples",
+                path.display()
+            )));
+        }
+        progress_callback(1.0);
+        Ok((samples, channels, sample_rate))
+    }
+
     fn import_audio_to_session_wav(
         src_path: &Path,
         session_root: &Path,
@@ -509,6 +632,40 @@ impl Maolan {
         let (samples, channels, sample_rate) = Self::decode_audio_to_f32_interleaved(src_path)?;
         wavers::write::<f32, _>(&dst, &samples, sample_rate as i32, channels as u16)
             .map_err(|e| io::Error::other(format!("Failed to write '{}': {e}", dst.display())))?;
+        let frames = samples.len() / channels.max(1);
+        Ok((rel, channels.max(1), frames.max(1)))
+    }
+
+    async fn import_audio_to_session_wav_with_progress<F>(
+        src_path: &Path,
+        session_root: &Path,
+        mut progress_callback: F,
+    ) -> std::io::Result<(String, usize, usize)>
+    where
+        F: FnMut(f32),
+    {
+        let stem = src_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("audio");
+        let rel = Self::unique_import_rel_path(session_root, "audio", stem, "wav")?;
+        let dst = session_root.join(&rel);
+
+        // Decoding takes ~80% of import time
+        let (samples, channels, sample_rate) =
+            Self::decode_audio_to_f32_interleaved_with_progress(src_path, |decode_progress| {
+                progress_callback(decode_progress * 0.8);
+            })
+            .await?;
+
+        progress_callback(0.8);
+        tokio::task::yield_now().await;
+
+        // Writing WAV takes ~20% of import time
+        wavers::write::<f32, _>(&dst, &samples, sample_rate as i32, channels as u16)
+            .map_err(|e| io::Error::other(format!("Failed to write '{}': {e}", dst.display())))?;
+
+        progress_callback(1.0);
         let frames = samples.len() / channels.max(1);
         Ok((rel, channels.max(1), frames.max(1)))
     }

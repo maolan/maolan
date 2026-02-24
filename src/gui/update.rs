@@ -1,4 +1,4 @@
-use super::{MIN_CLIP_WIDTH_PX, Maolan, platform};
+use super::{CLIENT, MIN_CLIP_WIDTH_PX, Maolan, platform};
 use crate::{
     connections,
     message::Message,
@@ -8,7 +8,7 @@ use iced::widget::Id;
 use iced::{Length, Point, Task, mouse};
 use maolan_engine::{
     kind::Kind,
-    message::{Action, ClipMoveFrom, ClipMoveTo},
+    message::{Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage},
 };
 use rfd::AsyncFileDialog;
 use std::{collections::HashSet, process::exit, time::Instant};
@@ -1760,94 +1760,212 @@ impl Maolan {
                     return Task::none();
                 };
 
-                let mut used_track_names: HashSet<String> = self
+                let used_track_names: HashSet<String> = self
                     .state
                     .blocking_read()
                     .tracks
                     .iter()
                     .map(|track| track.name.clone())
                     .collect();
-                let mut actions = Vec::new();
-                let mut imported = 0usize;
-                let mut failures: Vec<String> = Vec::new();
 
-                for path in paths {
-                    if Self::is_import_audio_path(path) {
-                        match Self::import_audio_to_session_wav(path, &session_root) {
-                            Ok((clip_rel, channels, length)) => {
-                                let base = Self::import_track_base_name(path);
-                                let track_name =
-                                    Self::unique_track_name(&base, &mut used_track_names);
-                                actions.push(Action::AddTrack {
-                                    name: track_name.clone(),
-                                    audio_ins: channels,
-                                    midi_ins: 0,
-                                    audio_outs: channels,
-                                    midi_outs: 0,
-                                });
-                                actions.push(Action::AddClip {
-                                    name: clip_rel,
-                                    track_name,
-                                    start: 0,
-                                    length,
-                                    offset: 0,
-                                    kind: Kind::Audio,
-                                });
-                                imported = imported.saturating_add(1);
-                            }
-                            Err(e) => failures.push(format!("{} ({e})", path.display())),
-                        }
-                        continue;
-                    }
-                    if Self::is_import_midi_path(path) {
-                        match Self::import_midi_to_session(
-                            path,
-                            &session_root,
-                            self.playback_rate_hz,
-                        ) {
-                            Ok((clip_rel, length)) => {
-                                let base = Self::import_track_base_name(path);
-                                let track_name =
-                                    Self::unique_track_name(&base, &mut used_track_names);
-                                actions.push(Action::AddTrack {
-                                    name: track_name.clone(),
-                                    audio_ins: 0,
-                                    midi_ins: 1,
-                                    audio_outs: 0,
-                                    midi_outs: 1,
-                                });
-                                actions.push(Action::AddClip {
-                                    name: clip_rel,
-                                    track_name,
-                                    start: 0,
-                                    length,
-                                    offset: 0,
-                                    kind: Kind::MIDI,
-                                });
-                                imported = imported.saturating_add(1);
-                            }
-                            Err(e) => failures.push(format!("{} ({e})", path.display())),
-                        }
-                        continue;
-                    }
-                    failures.push(format!("{} (unsupported extension)", path.display()));
-                }
+                let total_files = paths.len();
+                self.import_in_progress = true;
+                self.import_current_file = 0;
+                self.import_total_files = total_files;
+                self.import_file_progress = 0.0;
+                self.import_current_filename = String::new();
 
-                self.state.blocking_write().message = if failures.is_empty() {
-                    format!("Imported {imported} file(s)")
+                let paths = paths.clone();
+                let playback_rate = self.playback_rate_hz;
+
+                return Task::run(
+                    {
+                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+                        tokio::spawn(async move {
+                            let mut used_names = used_track_names;
+                            let mut failures = Vec::new();
+
+                            for (idx, path) in paths.iter().enumerate() {
+                                let file_index = idx + 1;
+                                let filename = path
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("unknown")
+                                    .to_string();
+
+                                let tx_clone = tx.clone();
+                                let filename_for_progress = filename.clone();
+                                let progress_fn = move |progress: f32| {
+                                    let _ = tx_clone.send(Message::ImportProgress {
+                                        file_index,
+                                        total_files,
+                                        file_progress: progress,
+                                        filename: filename_for_progress.clone(),
+                                    });
+                                };
+
+                                if Self::is_import_audio_path(&path) {
+                                    match Self::import_audio_to_session_wav_with_progress(
+                                        &path,
+                                        &session_root,
+                                        progress_fn,
+                                    )
+                                    .await
+                                    {
+                                        Ok((clip_rel, channels, length)) => {
+                                            let base = Self::import_track_base_name(&path);
+                                            let track_name =
+                                                Self::unique_track_name(&base, &mut used_names);
+
+                                            if let Err(e) =
+                                                CLIENT
+                                                    .send(EngineMessage::Request(Action::AddTrack {
+                                                        name: track_name.clone(),
+                                                        audio_ins: channels,
+                                                        midi_ins: 0,
+                                                        audio_outs: channels,
+                                                        midi_outs: 0,
+                                                    }))
+                                                    .await
+                                            {
+                                                failures
+                                                    .push(format!("{} ({e})", path.display()));
+                                                continue;
+                                            }
+                                            if let Err(e) = CLIENT
+                                                .send(EngineMessage::Request(Action::AddClip {
+                                                    name: clip_rel,
+                                                    track_name,
+                                                    start: 0,
+                                                    length,
+                                                    offset: 0,
+                                                    kind: Kind::Audio,
+                                                }))
+                                                .await
+                                            {
+                                                failures
+                                                    .push(format!("{} ({e})", path.display()));
+                                                continue;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            failures.push(format!("{} ({e})", path.display()));
+                                        }
+                                    }
+                                } else if Self::is_import_midi_path(&path) {
+                                    // Start progress for MIDI
+                                    let _ = tx.send(Message::ImportProgress {
+                                        file_index,
+                                        total_files,
+                                        file_progress: 0.5,
+                                        filename: filename.clone(),
+                                    });
+
+                                    match Self::import_midi_to_session(
+                                        &path,
+                                        &session_root,
+                                        playback_rate,
+                                    ) {
+                                        Ok((clip_rel, length)) => {
+                                            let base = Self::import_track_base_name(&path);
+                                            let track_name =
+                                                Self::unique_track_name(&base, &mut used_names);
+
+                                            if let Err(e) =
+                                                CLIENT
+                                                    .send(EngineMessage::Request(Action::AddTrack {
+                                                        name: track_name.clone(),
+                                                        audio_ins: 0,
+                                                        midi_ins: 1,
+                                                        audio_outs: 0,
+                                                        midi_outs: 1,
+                                                    }))
+                                                    .await
+                                            {
+                                                failures
+                                                    .push(format!("{} ({e})", path.display()));
+                                                continue;
+                                            }
+                                            if let Err(e) = CLIENT
+                                                .send(EngineMessage::Request(Action::AddClip {
+                                                    name: clip_rel,
+                                                    track_name,
+                                                    start: 0,
+                                                    length,
+                                                    offset: 0,
+                                                    kind: Kind::MIDI,
+                                                }))
+                                                .await
+                                            {
+                                                failures
+                                                    .push(format!("{} ({e})", path.display()));
+                                                continue;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            failures.push(format!("{} ({e})", path.display()));
+                                        }
+                                    }
+
+                                    // Complete progress for MIDI
+                                    let _ = tx.send(Message::ImportProgress {
+                                        file_index,
+                                        total_files,
+                                        file_progress: 1.0,
+                                        filename: filename.clone(),
+                                    });
+                                } else {
+                                    failures.push(format!(
+                                        "{} (unsupported extension)",
+                                        path.display()
+                                    ));
+                                }
+                            }
+
+                            for err in &failures {
+                                error!("Import failed: {err}");
+                            }
+
+                            // Send final completion message
+                            let _ = tx.send(Message::ImportProgress {
+                                file_index: total_files,
+                                total_files,
+                                file_progress: 1.0,
+                                filename: "Done".to_string(),
+                            });
+                        });
+
+                        iced::futures::stream::unfold(rx, |mut rx| async move {
+                            rx.recv().await.map(|msg| (msg, rx))
+                        })
+                    },
+                    |msg| msg,
+                );
+            }
+            Message::ImportFilesSelected(None) => {}
+            Message::ImportProgress {
+                file_index,
+                total_files,
+                file_progress,
+                ref filename,
+            } => {
+                self.import_current_file = file_index;
+                self.import_total_files = total_files;
+                self.import_file_progress = file_progress;
+                self.import_current_filename = filename.clone();
+
+                if file_index >= total_files && file_progress >= 1.0 {
+                    self.import_in_progress = false;
+                    self.state.blocking_write().message =
+                        format!("Imported {total_files} file(s)");
                 } else {
-                    format!(
-                        "Imported {imported} file(s), failed {} (see logs)",
-                        failures.len()
-                    )
-                };
-                for err in &failures {
-                    error!("Import failed: {err}");
+                    let percent = (file_progress * 100.0) as usize;
+                    self.state.blocking_write().message = format!(
+                        "Importing {}/{} ({percent}%): {}",
+                        file_index, total_files, filename
+                    );
                 }
-                if actions.is_empty() {
-                    return Task::none();
-                }
-                return Self::restore_actions_task(actions);
             }
             Message::Workspace => {
                 self.state.blocking_write().view = View::Workspace;

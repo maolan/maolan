@@ -114,6 +114,12 @@ pub enum Message {
 
     OpenFileImporter,
     ImportFilesSelected(Option<Vec<std::path::PathBuf>>),
+    ImportProgress {
+        file_index: usize,
+        total_files: usize,
+        file_progress: f32,
+        filename: String,
+    },
     TransportPlay,
     TransportStop,
     TransportRecordToggle,

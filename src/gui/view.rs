@@ -5,7 +5,7 @@ use crate::{
 };
 use iced::{
     Length,
-    widget::{button, column, container, row, text},
+    widget::{button, column, container, progress_bar, row, text},
 };
 
 impl Maolan {
@@ -60,6 +60,45 @@ impl Maolan {
                         );
                     }
                     content = content.push(view);
+                    if self.import_in_progress {
+                        let overall_progress = if self.import_total_files > 0 {
+                            (self.import_current_file as f32 - 1.0 + self.import_file_progress)
+                                / self.import_total_files as f32
+                        } else {
+                            0.0
+                        }
+                        .clamp(0.0, 1.0);
+
+                        content = content.push(
+                            container(
+                                column![
+                                    text(format!(
+                                        "Importing file {}/{}: {}",
+                                        self.import_current_file,
+                                        self.import_total_files,
+                                        self.import_current_filename
+                                    )),
+                                    row![
+                                        text("File:"),
+                                        progress_bar(0.0..=1.0, self.import_file_progress),
+                                        text(format!("{:.0}%", self.import_file_progress * 100.0))
+                                    ]
+                                    .spacing(8)
+                                    .align_y(iced::Alignment::Center),
+                                    row![
+                                        text("Total:"),
+                                        progress_bar(0.0..=1.0, overall_progress),
+                                        text(format!("{:.0}%", overall_progress * 100.0))
+                                    ]
+                                    .spacing(8)
+                                    .align_y(iced::Alignment::Center),
+                                ]
+                                .spacing(8),
+                            )
+                            .width(Length::Fill)
+                            .padding(8),
+                        );
+                    }
                     content = content.push(text(format!("Last message: {}", state.message)));
                     container(content)
                         .width(Length::Fill)
