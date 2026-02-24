@@ -7,6 +7,8 @@ pub const ALSA_ASSIST_AUTONOMOUS_ENV: &str = "MAOLAN_ALSA_ASSIST_AUTONOMOUS";
 pub const SNDIO_ASSIST_AUTONOMOUS_ENV: &str = "MAOLAN_SNDIO_ASSIST_AUTONOMOUS";
 #[cfg(target_os = "windows")]
 pub const WASAPI_ASSIST_AUTONOMOUS_ENV: &str = "MAOLAN_WASAPI_ASSIST_AUTONOMOUS";
+#[cfg(target_os = "macos")]
+pub const COREAUDIO_ASSIST_AUTONOMOUS_ENV: &str = "MAOLAN_COREAUDIO_ASSIST_AUTONOMOUS";
 
 pub fn env_flag(key: &str) -> bool {
     std::env::var(key)

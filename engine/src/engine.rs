@@ -30,12 +30,16 @@ use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
 use crate::hw::sndio::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "windows")]
 use crate::hw::wasapi::{self, HwDriver, HwOptions, MidiHub};
+#[cfg(target_os = "macos")]
+use crate::hw::coreaudio::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "freebsd")]
 use crate::oss_worker::HwWorker;
 #[cfg(target_os = "openbsd")]
 use crate::sndio_worker::HwWorker;
 #[cfg(target_os = "windows")]
 use crate::wasapi_worker::HwWorker;
+#[cfg(target_os = "macos")]
+use crate::coreaudio_worker::HwWorker;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
@@ -2063,6 +2067,8 @@ impl Engine {
                                 "OSS"
                             } else if cfg!(target_os = "windows") {
                                 "WASAPI"
+                            } else if cfg!(target_os = "macos") {
+                                "CoreAudio"
                             } else {
                                 "sndio"
                             };
