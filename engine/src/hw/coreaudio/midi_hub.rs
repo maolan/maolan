@@ -68,21 +68,54 @@ impl Default for MidiHub {
 }
 
 impl MidiHub {
+    /// List all available CoreMIDI source endpoints.
+    ///
+    /// Names are returned in the format `coreaudio:<display_name>`.
+    pub fn list_sources() -> Vec<String> {
+        let sources = Sources;
+        let mut result = Vec::with_capacity(sources.len());
+        for i in 0..sources.len() {
+            if let Some(src) = sources.get(i) {
+                let display = src.display_name().unwrap_or_default();
+                result.push(format!("coreaudio:{display}"));
+            }
+        }
+        result
+    }
+
+    /// List all available CoreMIDI destination endpoints.
+    ///
+    /// Names are returned in the format `coreaudio:<display_name>`.
+    pub fn list_destinations() -> Vec<String> {
+        let destinations = Destinations;
+        let mut result = Vec::with_capacity(destinations.len());
+        for i in 0..destinations.len() {
+            if let Some(dest) = destinations.get(i) {
+                let display = dest.display_name().unwrap_or_default();
+                result.push(format!("coreaudio:{display}"));
+            }
+        }
+        result
+    }
+
     /// Open a CoreMIDI source by display name for reading.
+    ///
+    /// Accepts names with or without the `coreaudio:` prefix.
     pub fn open_input(&mut self, name: &str) -> Result<(), String> {
-        if self.input_sources.iter().any(|(n, _)| n == name) {
+        let raw_name = name.strip_prefix("coreaudio:").unwrap_or(name);
+        if self.input_sources.iter().any(|(n, _)| n == raw_name) {
             return Ok(());
         }
 
-        let source = find_source_by_name(name)
-            .ok_or_else(|| format!("CoreMIDI source not found: {name}"))?;
+        let source = find_source_by_name(raw_name)
+            .ok_or_else(|| format!("CoreMIDI source not found: {raw_name}"))?;
 
         // Create a dedicated input port for this source so events carry the
         // correct device name.
         if let Some(ref client) = self.client {
             let pending_cb = Arc::clone(&self.pending);
-            let device_name = name.to_string();
-            match client.input_port(&format!("maolan-in-{name}"), move |packet_list| {
+            let device_name = raw_name.to_string();
+            match client.input_port(&format!("maolan-in-{raw_name}"), move |packet_list| {
                 let mut queue = match pending_cb.lock() {
                     Ok(q) => q,
                     Err(_) => return,
@@ -100,13 +133,13 @@ impl MidiHub {
                 Ok(port) => {
                     if let Err(e) = port.connect_source(&source) {
                         return Err(format!(
-                            "Failed to connect CoreMIDI source '{name}': {e:?}"
+                            "Failed to connect CoreMIDI source '{raw_name}': {e:?}"
                         ));
                     }
                     // We keep the port alive by storing it alongside the source.
                     // The default input_port is unused when per-source ports exist,
                     // but we keep it for the no-source fallback path.
-                    info!("CoreMIDI input connected: {name}");
+                    info!("CoreMIDI input connected: {raw_name}");
                 }
                 Err(e) => {
                     return Err(format!("Failed to create CoreMIDI input port: {e:?}"));
@@ -116,21 +149,24 @@ impl MidiHub {
             return Err("CoreMIDI client not available".to_string());
         }
 
-        self.input_sources.push((name.to_string(), source));
+        self.input_sources.push((raw_name.to_string(), source));
         Ok(())
     }
 
     /// Open a CoreMIDI destination by display name for writing.
+    ///
+    /// Accepts names with or without the `coreaudio:` prefix.
     pub fn open_output(&mut self, name: &str) -> Result<(), String> {
-        if self.output_destinations.iter().any(|(n, _)| n == name) {
+        let raw_name = name.strip_prefix("coreaudio:").unwrap_or(name);
+        if self.output_destinations.iter().any(|(n, _)| n == raw_name) {
             return Ok(());
         }
 
-        let dest = find_destination_by_name(name)
-            .ok_or_else(|| format!("CoreMIDI destination not found: {name}"))?;
+        let dest = find_destination_by_name(raw_name)
+            .ok_or_else(|| format!("CoreMIDI destination not found: {raw_name}"))?;
 
-        info!("CoreMIDI output connected: {name}");
-        self.output_destinations.push((name.to_string(), dest));
+        info!("CoreMIDI output connected: {raw_name}");
+        self.output_destinations.push((raw_name.to_string(), dest));
         Ok(())
     }
 
