@@ -4,12 +4,10 @@ pub(super) fn kernel_midi_label(path: &str) -> String {
     if let Some(rest) = path
         .strip_prefix("winmidi:in:")
         .or_else(|| path.strip_prefix("winmidi:out:"))
+        && let Some((_, name)) = rest.split_once(':')
+        && !name.trim().is_empty()
     {
-        if let Some((_, name)) = rest.split_once(':')
-            && !name.trim().is_empty()
-        {
-            return name.trim().to_string();
-        }
+        return name.trim().to_string();
     }
 
     let basename = Path::new(path)

@@ -226,7 +226,8 @@ impl canvas::Program<Message> for RulerCanvas {
         for beat_idx in (0..=total_beats).step_by(tick_step_beats) {
             let x = beat_idx as f32 * self.beat_pixels;
             let is_bar = beat_idx % BEATS_PER_BAR == 0;
-            let is_numbered_bar = is_bar && ((beat_idx / BEATS_PER_BAR) % label_step_bars == 0);
+            let is_numbered_bar =
+                is_bar && ((beat_idx / BEATS_PER_BAR).is_multiple_of(label_step_bars));
             let tick_h = if is_numbered_bar { 8.0 } else { 3.0 };
             frame.stroke(
                 &Path::line(

@@ -389,7 +389,7 @@ impl Default for StateData {
 pub type State = Arc<RwLock<StateData>>;
 
 fn supported_audio_backends() -> Vec<AudioBackendOption> {
-    let mut out = Vec::new();
+    let mut out = vec![];
     #[cfg(unix)]
     out.push(AudioBackendOption::Jack);
     #[cfg(target_os = "freebsd")]
@@ -543,9 +543,7 @@ fn parse_sndstat_nvlist(buf: &[u8]) -> Option<Vec<AudioDeviceOption>> {
             return None;
         }
     };
-    let Some(dsps_pair) = nvtree_find(&root, "dsps") else {
-        return None;
-    };
+    let dsps_pair = nvtree_find(&root, "dsps")?;
     let Nvtvalue::NestedArray(dsps) = &dsps_pair.value else {
         return None;
     };

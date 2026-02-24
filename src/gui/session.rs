@@ -258,15 +258,12 @@ impl Maolan {
             Ok(Some((start, end)))
         };
         let parse_enabled = |key: &str| -> std::io::Result<bool> {
-            transport
-                .get(key)
-                .and_then(Value::as_bool)
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        format!("No boolean 'transport.{key}' in session"),
-                    )
-                })
+            transport.get(key).and_then(Value::as_bool).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("No boolean 'transport.{key}' in session"),
+                )
+            })
         };
 
         let loaded_loop_range = parse_range("loop_range_samples")?;
