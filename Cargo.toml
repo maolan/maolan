@@ -18,6 +18,7 @@ tracing-subscriber = "0.3.22"
 wavers = "1.5.1"
 midly = "0.5.3"
 symphonia = { version = "0.5.5", default-features = false, features = ["all-formats", "all-codecs"] }
+rubato = "0.16.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa = "0.9.1"

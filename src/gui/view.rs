@@ -69,14 +69,25 @@ impl Maolan {
                         }
                         .clamp(0.0, 1.0);
 
+                        let operation_text = if let Some(ref op) = self.import_current_operation {
+                            format!(" [{}]", op)
+                        } else {
+                            String::new()
+                        };
+
                         content = content.push(
                             container(
                                 column![
                                     text(format!(
-                                        "Importing file {}/{}: {}",
+                                        "Importing file {}/{}{}{}",
                                         self.import_current_file,
                                         self.import_total_files,
-                                        self.import_current_filename
+                                        operation_text,
+                                        if self.import_current_filename.is_empty() {
+                                            String::new()
+                                        } else {
+                                            format!(": {}", self.import_current_filename)
+                                        }
                                     )),
                                     row![
                                         text("File:"),

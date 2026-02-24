@@ -119,6 +119,7 @@ pub enum Message {
         total_files: usize,
         file_progress: f32,
         filename: String,
+        operation: Option<String>,
     },
     TransportPlay,
     TransportStop,

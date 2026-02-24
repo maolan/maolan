@@ -1796,12 +1796,13 @@ impl Maolan {
 
                                 let tx_clone = tx.clone();
                                 let filename_for_progress = filename.clone();
-                                let progress_fn = move |progress: f32| {
+                                let progress_fn = move |progress: f32, operation: Option<String>| {
                                     let _ = tx_clone.send(Message::ImportProgress {
                                         file_index,
                                         total_files,
                                         file_progress: progress,
                                         filename: filename_for_progress.clone(),
+                                        operation,
                                     });
                                 };
 
@@ -1809,6 +1810,7 @@ impl Maolan {
                                     match Self::import_audio_to_session_wav_with_progress(
                                         &path,
                                         &session_root,
+                                        playback_rate as u32,
                                         progress_fn,
                                     )
                                     .await
@@ -1860,6 +1862,7 @@ impl Maolan {
                                         total_files,
                                         file_progress: 0.5,
                                         filename: filename.clone(),
+                                        operation: Some("Copying".to_string()),
                                     });
 
                                     match Self::import_midi_to_session(
@@ -1914,6 +1917,7 @@ impl Maolan {
                                         total_files,
                                         file_progress: 1.0,
                                         filename: filename.clone(),
+                                        operation: None,
                                     });
                                 } else {
                                     failures.push(format!(
@@ -1933,6 +1937,7 @@ impl Maolan {
                                 total_files,
                                 file_progress: 1.0,
                                 filename: "Done".to_string(),
+                                operation: None,
                             });
                         });
 
@@ -1949,11 +1954,13 @@ impl Maolan {
                 total_files,
                 file_progress,
                 ref filename,
+                ref operation,
             } => {
                 self.import_current_file = file_index;
                 self.import_total_files = total_files;
                 self.import_file_progress = file_progress;
                 self.import_current_filename = filename.clone();
+                self.import_current_operation = operation.clone();
 
                 if file_index >= total_files && file_progress >= 1.0 {
                     self.import_in_progress = false;
@@ -1961,9 +1968,13 @@ impl Maolan {
                         format!("Imported {total_files} file(s)");
                 } else {
                     let percent = (file_progress * 100.0) as usize;
+                    let op_text = operation
+                        .as_ref()
+                        .map(|s| format!(" [{}]", s))
+                        .unwrap_or_default();
                     self.state.blocking_write().message = format!(
-                        "Importing {}/{} ({percent}%): {}",
-                        file_index, total_files, filename
+                        "Importing {}/{} ({percent}%){}: {}",
+                        file_index, total_files, op_text, filename
                     );
                 }
             }

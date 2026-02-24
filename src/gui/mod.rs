@@ -87,6 +87,7 @@ pub struct Maolan {
     import_total_files: usize,
     import_file_progress: f32,
     import_current_filename: String,
+    import_current_operation: Option<String>,
 }
 
 impl Default for Maolan {
@@ -137,6 +138,7 @@ impl Default for Maolan {
             import_total_files: 0,
             import_file_progress: 0.0,
             import_current_filename: String::new(),
+            import_current_operation: None,
         }
     }
 }
@@ -636,13 +638,143 @@ impl Maolan {
         Ok((rel, channels.max(1), frames.max(1)))
     }
 
+    fn resample_audio_interleaved(
+        samples: &[f32],
+        channels: usize,
+        from_rate: u32,
+        to_rate: u32,
+    ) -> std::io::Result<Vec<f32>> {
+        if from_rate == to_rate {
+            return Ok(samples.to_vec());
+        }
+
+        use rubato::{
+            Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
+            WindowFunction,
+        };
+
+        let params = SincInterpolationParameters {
+            sinc_len: 256,
+            f_cutoff: 0.95,
+            interpolation: SincInterpolationType::Linear,
+            oversampling_factor: 256,
+            window: WindowFunction::BlackmanHarris2,
+        };
+
+        let mut resampler = SincFixedIn::<f32>::new(
+            to_rate as f64 / from_rate as f64,
+            2.0,
+            params,
+            samples.len() / channels.max(1),
+            channels.max(1),
+        )
+        .map_err(|e| io::Error::other(format!("Failed to create resampler: {e}")))?;
+
+        // De-interleave samples into per-channel buffers
+        let frames = samples.len() / channels.max(1);
+        let mut channel_buffers: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); channels];
+        for (i, &sample) in samples.iter().enumerate() {
+            channel_buffers[i % channels].push(sample);
+        }
+
+        // Resample each channel
+        let resampled = resampler
+            .process(&channel_buffers, None)
+            .map_err(|e| io::Error::other(format!("Resampling failed: {e}")))?;
+
+        // Re-interleave the resampled audio
+        let out_frames = resampled[0].len();
+        let mut output = Vec::with_capacity(out_frames * channels);
+        for frame_idx in 0..out_frames {
+            for ch_idx in 0..channels {
+                output.push(resampled[ch_idx][frame_idx]);
+            }
+        }
+
+        Ok(output)
+    }
+
+    async fn resample_audio_interleaved_with_progress<F>(
+        samples: &[f32],
+        channels: usize,
+        from_rate: u32,
+        to_rate: u32,
+        mut progress_callback: F,
+    ) -> std::io::Result<Vec<f32>>
+    where
+        F: FnMut(f32),
+    {
+        if from_rate == to_rate {
+            progress_callback(1.0);
+            return Ok(samples.to_vec());
+        }
+
+        use rubato::{
+            Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
+            WindowFunction,
+        };
+
+        let params = SincInterpolationParameters {
+            sinc_len: 256,
+            f_cutoff: 0.95,
+            interpolation: SincInterpolationType::Linear,
+            oversampling_factor: 256,
+            window: WindowFunction::BlackmanHarris2,
+        };
+
+        progress_callback(0.1);
+
+        let mut resampler = SincFixedIn::<f32>::new(
+            to_rate as f64 / from_rate as f64,
+            2.0,
+            params,
+            samples.len() / channels.max(1),
+            channels.max(1),
+        )
+        .map_err(|e| io::Error::other(format!("Failed to create resampler: {e}")))?;
+
+        progress_callback(0.2);
+        tokio::task::yield_now().await;
+
+        // De-interleave samples into per-channel buffers
+        let frames = samples.len() / channels.max(1);
+        let mut channel_buffers: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); channels];
+        for (i, &sample) in samples.iter().enumerate() {
+            channel_buffers[i % channels].push(sample);
+        }
+
+        progress_callback(0.5);
+        tokio::task::yield_now().await;
+
+        // Resample each channel
+        let resampled = resampler
+            .process(&channel_buffers, None)
+            .map_err(|e| io::Error::other(format!("Resampling failed: {e}")))?;
+
+        progress_callback(0.8);
+        tokio::task::yield_now().await;
+
+        // Re-interleave the resampled audio
+        let out_frames = resampled[0].len();
+        let mut output = Vec::with_capacity(out_frames * channels);
+        for frame_idx in 0..out_frames {
+            for ch_idx in 0..channels {
+                output.push(resampled[ch_idx][frame_idx]);
+            }
+        }
+
+        progress_callback(1.0);
+        Ok(output)
+    }
+
     async fn import_audio_to_session_wav_with_progress<F>(
         src_path: &Path,
         session_root: &Path,
+        target_sample_rate: u32,
         mut progress_callback: F,
     ) -> std::io::Result<(String, usize, usize)>
     where
-        F: FnMut(f32),
+        F: FnMut(f32, Option<String>),
     {
         let stem = src_path
             .file_stem()
@@ -651,22 +783,45 @@ impl Maolan {
         let rel = Self::unique_import_rel_path(session_root, "audio", stem, "wav")?;
         let dst = session_root.join(&rel);
 
-        // Decoding takes ~80% of import time
+        // Decoding takes ~60% of import time
         let (samples, channels, sample_rate) =
             Self::decode_audio_to_f32_interleaved_with_progress(src_path, |decode_progress| {
-                progress_callback(decode_progress * 0.8);
+                progress_callback(decode_progress * 0.6, Some("Decoding".to_string()));
             })
             .await?;
 
-        progress_callback(0.8);
+        progress_callback(0.6, None);
         tokio::task::yield_now().await;
 
-        // Writing WAV takes ~20% of import time
-        wavers::write::<f32, _>(&dst, &samples, sample_rate as i32, channels as u16)
+        // Resampling takes ~25% of import time (if needed)
+        let final_samples = if sample_rate != target_sample_rate {
+            let resample_msg = format!("Resampling {} Hz → {} Hz", sample_rate, target_sample_rate);
+            Self::resample_audio_interleaved_with_progress(
+                &samples,
+                channels,
+                sample_rate,
+                target_sample_rate,
+                |resample_progress| {
+                    progress_callback(
+                        0.6 + resample_progress * 0.25,
+                        Some(resample_msg.clone()),
+                    );
+                },
+            )
+            .await?
+        } else {
+            samples
+        };
+
+        progress_callback(0.85, Some("Writing".to_string()));
+        tokio::task::yield_now().await;
+
+        // Writing WAV takes ~15% of import time
+        wavers::write::<f32, _>(&dst, &final_samples, target_sample_rate as i32, channels as u16)
             .map_err(|e| io::Error::other(format!("Failed to write '{}': {e}", dst.display())))?;
 
-        progress_callback(1.0);
-        let frames = samples.len() / channels.max(1);
+        progress_callback(1.0, None);
+        let frames = final_samples.len() / channels.max(1);
         Ok((rel, channels.max(1), frames.max(1)))
     }
 
