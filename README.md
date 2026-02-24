@@ -259,6 +259,31 @@ Audio backend settings can be configured through the settings interface:
 - **Plugin Hosting**: LV2 support via lilv library
 - **File I/O**: Symphonia (audio codecs), midly (MIDI)
 
+## Codebase Structure
+
+The `maolan` GUI codebase is organized into several modules within the `src` directory. This structure separates concerns and makes the project easier to navigate and maintain.
+
+-   `main.rs`: The entry point of the application. It initializes the application, sets up the GUI, and handles the main event loop.
+-   `add_track.rs`: Contains the logic for the "Add Track" dialog and the process of adding new audio or MIDI tracks to the session.
+-   `hw.rs`: Provides an abstraction layer for hardware communication, delegating to the appropriate backend in `maolan-engine`.
+-   `menu.rs`: Defines the structure and content of the main application menu (e.g., File, Edit, Track).
+-   `message.rs`: Defines the message enums used for communication between different parts of the application, following the Elm architecture pattern used by Iced.
+-   `toolbar.rs`: Defines the main toolbar, including its buttons and layout.
+-   `ui_timing.rs`: Utilities for managing UI-related timing and animations.
+
+**Modules**
+
+-   `connections/`: Implements the visual routing matrix where users can connect audio and MIDI ports between tracks and plugins.
+-   `gui/`: Core GUI logic, including the main application state, message updates, and view rendering.
+    -   `update.rs`: Handles all incoming messages and updates the application state accordingly.
+    -   `view.rs`: Renders the main application window and all its components.
+    -   `subscriptions.rs`: Manages subscriptions to external events, like MIDI input or engine messages.
+    -   `session.rs`: Logic for session management (new, load, save).
+-   `state/`: Defines the data structures that represent the application's state, such as tracks, clips, and connections.
+-   `style/`: Contains styling rules for Iced widgets, ensuring a consistent look and feel. This includes custom styles for buttons, sliders, and other UI elements.
+-   `widget/`: Custom Iced widgets developed specifically for Maolan, such as the piano roll, faders, and custom sliders.
+-   `workspace/`: Implements the different "pages" or "views" of the application, such as the timeline editor, mixer, and connections view.
+
 ## Current Status
 
 Maolan is under active development. Core DAW features are functional including:
