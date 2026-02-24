@@ -4,6 +4,7 @@ use iced::{
     widget::{Column, Space, button, column, container, mouse_area, row, text},
 };
 use iced_drop::droppable;
+use iced_fonts::lucide::{audio_waveform, disc};
 use maolan_engine::message::Action;
 
 #[derive(Debug, Default)]
@@ -50,7 +51,7 @@ impl Tracks {
                         .on_press(Message::Request(Action::TrackToggleSolo(
                             track.name.clone()
                         ))),
-                    button("In")
+                    button(audio_waveform())
                         .padding(3)
                         .style(move |theme, _state| {
                             style::input::style(theme, track.input_monitor)
@@ -58,7 +59,7 @@ impl Tracks {
                         .on_press(Message::Request(Action::TrackToggleInputMonitor(
                             track.name.clone()
                         ))),
-                    button("Disk")
+                    button(disc())
                         .padding(3)
                         .style(move |theme, _state| {
                             style::disk::style(theme, track.disk_monitor)
