@@ -56,6 +56,14 @@ impl Maolan {
                 self.loop_enabled = enabled;
                 return self.send(Action::SetLoopEnabled(enabled));
             }
+            Message::TogglePunch => {
+                if self.punch_range_samples.is_none() {
+                    return Task::none();
+                }
+                let enabled = !self.punch_enabled;
+                self.punch_enabled = enabled;
+                return self.send(Action::SetPunchEnabled(enabled));
+            }
             Message::WindowResized(size) => {
                 self.size = size;
             }
@@ -132,6 +140,8 @@ impl Maolan {
                 self.transport_samples = 0.0;
                 self.loop_enabled = false;
                 self.loop_range_samples = None;
+                self.punch_enabled = false;
+                self.punch_range_samples = None;
                 self.last_playback_tick = None;
                 self.record_armed = false;
                 self.pending_record_after_save = false;
@@ -152,6 +162,7 @@ impl Maolan {
                     self.send(Action::Stop),
                     self.send(Action::SetRecordEnabled(false)),
                     self.send(Action::SetLoopRange(None)),
+                    self.send(Action::SetPunchRange(None)),
                 ];
                 for name in existing_tracks {
                     tasks.push(self.send(Action::RemoveTrack(name)));
@@ -210,12 +221,33 @@ impl Maolan {
                 self.loop_range_samples = normalized;
                 return self.send(Action::SetLoopRange(normalized));
             }
+            Message::SetPunchRange(range) => {
+                let normalized = range.and_then(|(start, end)| {
+                    if end > start {
+                        Some((start, end))
+                    } else {
+                        None
+                    }
+                });
+                self.punch_enabled = normalized.is_some();
+                self.punch_range_samples = normalized;
+                return self.send(Action::SetPunchRange(normalized));
+            }
             Message::RecordingPreviewTick => {
                 if self.playing
                     && self.record_armed
                     && self.recording_preview_start_sample.is_some()
                 {
-                    self.recording_preview_sample = Some(self.transport_samples.max(0.0) as usize);
+                    let sample = self.transport_samples.max(0.0) as usize;
+                    if self.punch_enabled
+                        && let Some((punch_start, punch_end)) = self.punch_range_samples
+                        && punch_end > punch_start
+                        && (sample < punch_start || sample > punch_end)
+                    {
+                        self.recording_preview_sample = None;
+                    } else {
+                        self.recording_preview_sample = Some(sample);
+                    }
                 }
             }
             Message::RecordingPreviewPeaksTick => {
@@ -223,6 +255,14 @@ impl Maolan {
                     && self.record_armed
                     && self.recording_preview_start_sample.is_some()
                 {
+                    let sample = self.transport_samples.max(0.0) as usize;
+                    if self.punch_enabled
+                        && let Some((punch_start, punch_end)) = self.punch_range_samples
+                        && punch_end > punch_start
+                        && (sample < punch_start || sample >= punch_end)
+                    {
+                        return Task::none();
+                    }
                     let tracks = self.state.blocking_read().tracks.clone();
                     for track in tracks.iter().filter(|t| t.armed) {
                         let channels = track.audio.outs.max(1);
@@ -699,6 +739,13 @@ impl Maolan {
                 Action::SetLoopRange(range) => {
                     self.loop_range_samples = *range;
                     self.loop_enabled = range.is_some();
+                }
+                Action::SetPunchEnabled(enabled) => {
+                    self.punch_enabled = *enabled && self.punch_range_samples.is_some();
+                }
+                Action::SetPunchRange(range) => {
+                    self.punch_range_samples = *range;
+                    self.punch_enabled = range.is_some();
                 }
                 Action::Lv2Plugins(plugins) => {
                     let mut state = self.state.blocking_write();

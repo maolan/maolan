@@ -26,6 +26,7 @@ struct TempoCanvas {
     time_signature: (u8, u8),
     pixels_per_sample: f32,
     playhead_x: Option<f32>,
+    punch_range_samples: Option<(usize, usize)>,
 }
 
 impl Tempo {
@@ -43,12 +44,14 @@ impl Tempo {
         time_signature: (u8, u8),
         pixels_per_sample: f32,
         playhead_x: Option<f32>,
+        punch_range_samples: Option<(usize, usize)>,
     ) -> Element<'_, Message> {
         canvas(TempoCanvas {
             bpm,
             time_signature,
             pixels_per_sample,
             playhead_x,
+            punch_range_samples,
         })
         .width(Length::Fill)
         .height(Length::Fill)
@@ -78,7 +81,7 @@ impl canvas::Program<Message> for TempoCanvas {
                     let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
                     state.drag_start_x = x;
                     state.last_x = x;
-                    return Some(CanvasAction::capture());
+                    return Some(CanvasAction::publish(Message::SetPunchRange(None)).and_capture());
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -86,18 +89,38 @@ impl canvas::Program<Message> for TempoCanvas {
                     && let Some(x) = cursor_x
                 {
                     state.last_x = x;
-                    return Some(CanvasAction::request_redraw());
+                    return Some(CanvasAction::request_redraw().and_capture());
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if state.dragging {
                     state.dragging = false;
-                    if self.pixels_per_sample > 1.0e-9 {
+                    if self.pixels_per_sample <= 1.0e-9 {
+                        return Some(CanvasAction::publish(Message::SetPunchRange(None)));
+                    }
+                    let drag_delta = (state.last_x - state.drag_start_x).abs();
+                    if drag_delta < 3.0 {
                         let sample = (state.last_x / self.pixels_per_sample).max(0.0) as usize;
                         return Some(CanvasAction::publish(Message::Request(
                             EngineAction::TransportPosition(sample),
                         )));
                     }
+                    let start_x = state.drag_start_x.min(state.last_x).max(0.0);
+                    let end_x = state.drag_start_x.max(state.last_x).max(0.0);
+                    let start_sample = (start_x / self.pixels_per_sample).max(0.0) as usize;
+                    let mut end_sample = (end_x / self.pixels_per_sample).max(0.0) as usize;
+                    if end_sample <= start_sample {
+                        end_sample = start_sample.saturating_add(1);
+                    }
+                    return Some(CanvasAction::publish(Message::SetPunchRange(Some((
+                        start_sample,
+                        end_sample,
+                    )))));
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                if cursor_position.is_some() {
+                    return Some(CanvasAction::publish(Message::SetPunchRange(None)).and_capture());
                 }
             }
             _ => {}
@@ -108,7 +131,7 @@ impl canvas::Program<Message> for TempoCanvas {
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
@@ -120,6 +143,64 @@ impl canvas::Program<Message> for TempoCanvas {
             &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
             Color::from_rgba(0.12, 0.12, 0.12, 1.0),
         );
+
+        if !state.dragging
+            && let Some((punch_start, punch_end)) = self.punch_range_samples
+            && self.pixels_per_sample > 1.0e-9
+            && punch_end > punch_start
+        {
+            let start_x = punch_start as f32 * self.pixels_per_sample;
+            let end_x = punch_end as f32 * self.pixels_per_sample;
+            frame.fill(
+                &Path::rectangle(
+                    Point::new(start_x.max(0.0), 0.0),
+                    iced::Size::new((end_x - start_x).max(1.0), bounds.height),
+                ),
+                Color::from_rgba(0.55, 0.18, 0.18, 0.30),
+            );
+            frame.stroke(
+                &Path::line(
+                    Point::new(start_x.max(0.0), 0.0),
+                    Point::new(start_x.max(0.0), bounds.height),
+                ),
+                Stroke::default()
+                    .with_width(1.5)
+                    .with_color(Color::from_rgba(0.92, 0.45, 0.45, 0.9)),
+            );
+            frame.stroke(
+                &Path::line(
+                    Point::new(end_x.max(0.0), 0.0),
+                    Point::new(end_x.max(0.0), bounds.height),
+                ),
+                Stroke::default()
+                    .with_width(1.5)
+                    .with_color(Color::from_rgba(0.92, 0.45, 0.45, 0.9)),
+            );
+        }
+
+        if state.dragging {
+            let start_x = state.drag_start_x.min(state.last_x).max(0.0);
+            let end_x = state.drag_start_x.max(state.last_x).max(0.0);
+            frame.fill(
+                &Path::rectangle(
+                    Point::new(start_x, 0.0),
+                    iced::Size::new((end_x - start_x).max(1.0), bounds.height),
+                ),
+                Color::from_rgba(0.92, 0.36, 0.36, 0.22),
+            );
+            frame.stroke(
+                &Path::line(Point::new(start_x, 0.0), Point::new(start_x, bounds.height)),
+                Stroke::default()
+                    .with_width(1.5)
+                    .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
+            );
+            frame.stroke(
+                &Path::line(Point::new(end_x, 0.0), Point::new(end_x, bounds.height)),
+                Stroke::default()
+                    .with_width(1.5)
+                    .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
+            );
+        }
 
         // Display BPM
         frame.fill_text(Text {

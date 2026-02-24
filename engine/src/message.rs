@@ -77,6 +77,8 @@ pub enum Action {
     TransportPosition(usize),
     SetLoopEnabled(bool),
     SetLoopRange(Option<(usize, usize)>),
+    SetPunchEnabled(bool),
+    SetPunchRange(Option<(usize, usize)>),
     SetRecordEnabled(bool),
     SetSessionPath(String),
     AddTrack {

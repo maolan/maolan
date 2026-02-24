@@ -22,6 +22,7 @@ impl Maolan {
                             self.pixels_per_sample(),
                             self.beat_pixels(),
                             self.loop_range_samples,
+                            self.punch_range_samples,
                             self.zoom_visible_bars,
                             self.tracks_resize_hovered,
                             self.mixer_resize_hovered,
@@ -41,6 +42,8 @@ impl Maolan {
                             self.record_armed,
                             self.loop_range_samples.is_some(),
                             self.loop_enabled,
+                            self.punch_range_samples.is_some(),
+                            self.punch_enabled,
                         )
                     ];
                     if matches!(state.view, View::TrackPlugins) {

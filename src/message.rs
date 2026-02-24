@@ -119,6 +119,8 @@ pub enum Message {
     TransportRecordToggle,
     ToggleLoop,
     SetLoopRange(Option<(usize, usize)>),
+    TogglePunch,
+    SetPunchRange(Option<(usize, usize)>),
     RecordFolderSelected(Option<PathBuf>),
 
     SendMessageFinished(Result<(), String>),

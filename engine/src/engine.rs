@@ -115,6 +115,8 @@ pub struct Engine {
     transport_sample: usize,
     loop_enabled: bool,
     loop_range_samples: Option<(usize, usize)>,
+    punch_enabled: bool,
+    punch_range_samples: Option<(usize, usize)>,
     audio_recordings: std::collections::HashMap<String, RecordingSession>,
     midi_recordings: std::collections::HashMap<String, MidiRecordingSession>,
     completed_audio_recordings: Vec<(String, RecordingSession)>,
@@ -251,6 +253,8 @@ impl Engine {
             transport_sample: 0,
             loop_enabled: false,
             loop_range_samples: None,
+            punch_enabled: false,
+            punch_range_samples: None,
             audio_recordings: std::collections::HashMap::new(),
             midi_recordings: std::collections::HashMap::new(),
             completed_audio_recordings: Vec::new(),
@@ -340,6 +344,30 @@ impl Engine {
             };
         }
         segments
+    }
+
+    fn recording_segments_for_cycle(&self, frames: usize) -> Vec<(usize, usize, usize)> {
+        let segments = self.cycle_segments(frames);
+        if !self.punch_enabled {
+            return segments;
+        }
+        let Some((punch_start, punch_end)) = self.punch_range_samples else {
+            return vec![];
+        };
+        if punch_end <= punch_start {
+            return vec![];
+        }
+        let mut clipped = Vec::new();
+        for (segment_start, segment_end, frame_offset) in segments {
+            let start = segment_start.max(punch_start);
+            let end = segment_end.min(punch_end);
+            if end <= start {
+                continue;
+            }
+            let clipped_offset = frame_offset.saturating_add(start.saturating_sub(segment_start));
+            clipped.push((start, end, clipped_offset));
+        }
+        clipped
     }
 
     fn hw_device_info<D: HwDevice>(
@@ -492,7 +520,7 @@ impl Engine {
             if frames == 0 {
                 continue;
             }
-            let segments = self.cycle_segments(frames);
+            let segments = self.recording_segments_for_cycle(frames);
             for (segment_start, segment_end, frame_offset) in segments {
                 let segment_len = segment_end.saturating_sub(segment_start);
                 if segment_len == 0 {
@@ -539,7 +567,17 @@ impl Engine {
                     entry.events.push((abs_sample, event.data.clone()));
                 }
 
-                if self.loop_enabled
+                if self.punch_enabled
+                    && let Some((_, punch_end)) = self.punch_range_samples
+                    && segment_end == punch_end
+                {
+                    if let Some(done) = self.audio_recordings.remove(name.as_str()) {
+                        self.completed_audio_recordings.push((name.clone(), done));
+                    }
+                    if let Some(done) = self.midi_recordings.remove(name.as_str()) {
+                        self.completed_midi_recordings.push((name.clone(), done));
+                    }
+                } else if self.loop_enabled
                     && let Some((_, loop_end)) = self.loop_range_samples
                     && segment_end == loop_end
                 {
@@ -1147,6 +1185,19 @@ impl Engine {
                     self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
                         .await;
                 }
+            }
+            Action::SetPunchEnabled(enabled) => {
+                self.punch_enabled = enabled && self.punch_range_samples.is_some();
+            }
+            Action::SetPunchRange(range) => {
+                self.punch_range_samples = range.and_then(|(start, end)| {
+                    if end > start {
+                        Some((start, end))
+                    } else {
+                        None
+                    }
+                });
+                self.punch_enabled = self.punch_range_samples.is_some();
             }
             Action::SetRecordEnabled(enabled) => {
                 self.record_enabled = enabled;
@@ -2143,6 +2194,8 @@ impl Engine {
                     | Action::Stop
                     | Action::SetLoopEnabled(_)
                     | Action::SetLoopRange(_)
+                    | Action::SetPunchEnabled(_)
+                    | Action::SetPunchRange(_)
                     | Action::SetRecordEnabled(_)
                     | Action::SetSessionPath(_) => {
                         self.handle_request(a).await;

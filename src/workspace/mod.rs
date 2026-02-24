@@ -59,6 +59,7 @@ impl Workspace {
         pixels_per_sample: f32,
         beat_pixels: f32,
         loop_range_samples: Option<(usize, usize)>,
+        punch_range_samples: Option<(usize, usize)>,
         zoom_visible_bars: f32,
         tracks_resize_hovered: bool,
         mixer_resize_hovered: bool,
@@ -146,7 +147,13 @@ impl Workspace {
                             ..container::Style::default()
                         }
                     }),
-                self.tempo.view(120.0, (4, 4), pixels_per_sample, playhead_x), // TODO: Get BPM and Time Signature from State
+                self.tempo.view(
+                    120.0,
+                    (4, 4),
+                    pixels_per_sample,
+                    playhead_x,
+                    punch_range_samples,
+                ), // TODO: Get BPM and Time Signature from State
             ]
             .height(Length::Fixed(self.tempo.height())),
             row![

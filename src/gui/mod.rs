@@ -72,6 +72,8 @@ pub struct Maolan {
     playback_rate_hz: f64,
     loop_enabled: bool,
     loop_range_samples: Option<(usize, usize)>,
+    punch_enabled: bool,
+    punch_range_samples: Option<(usize, usize)>,
     zoom_visible_bars: f32,
     tracks_resize_hovered: bool,
     mixer_resize_hovered: bool,
@@ -115,6 +117,8 @@ impl Default for Maolan {
             playback_rate_hz: 48_000.0,
             loop_enabled: false,
             loop_range_samples: None,
+            punch_enabled: false,
+            punch_range_samples: None,
             zoom_visible_bars: 127.0,
             tracks_resize_hovered: false,
             mixer_resize_hovered: false,
@@ -175,8 +179,20 @@ impl Maolan {
     fn recording_preview_bounds(&self) -> Option<(usize, usize)> {
         let start = self.recording_preview_start_sample?;
         let current = self.recording_preview_sample?;
-        if current > start {
-            Some((start, current))
+        let (mut preview_start, mut preview_end) = if current > start {
+            (start, current)
+        } else {
+            return None;
+        };
+        if self.punch_enabled
+            && let Some((punch_start, punch_end)) = self.punch_range_samples
+            && punch_end > punch_start
+        {
+            preview_start = preview_start.max(punch_start);
+            preview_end = preview_end.min(punch_end);
+        }
+        if preview_end > preview_start {
+            Some((preview_start, preview_end))
         } else {
             None
         }
