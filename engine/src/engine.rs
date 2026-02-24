@@ -233,6 +233,30 @@ impl Engine {
         devices
     }
 
+    #[cfg(target_os = "macos")]
+    fn discover_midi_hw_devices() -> Vec<String> {
+        let mut devices = Vec::new();
+        let sources = coremidi::Sources;
+        for i in 0..sources.len() {
+            if let Some(source) = sources.get(i) {
+                if let Some(name) = source.display_name() {
+                    devices.push(name);
+                }
+            }
+        }
+        let destinations = coremidi::Destinations;
+        for i in 0..destinations.len() {
+            if let Some(dest) = destinations.get(i) {
+                if let Some(name) = dest.display_name() {
+                    devices.push(name);
+                }
+            }
+        }
+        devices.sort();
+        devices.dedup();
+        devices
+    }
+
     pub fn new(rx: Receiver<Message>, tx: Sender<Message>) -> Self {
         Self {
             rx,
