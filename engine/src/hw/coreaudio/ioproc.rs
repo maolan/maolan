@@ -24,6 +24,9 @@ pub struct SharedData {
     pub input_frames: Vec<Vec<f32>>,
     /// Non-interleaved output frames: `[channel][frame]`.
     pub output_frames: Vec<Vec<f32>>,
+    /// Set to true by the engine worker when output data has been written
+    /// and is ready for the IOProc to copy to hardware buffers.
+    pub output_ready: bool,
     /// Number of frames per period (set by the IOProc from the buffer size).
     pub period_frames: usize,
     /// Set to true if the IOProc detects an overload condition.
@@ -60,6 +63,7 @@ impl SharedIOState {
             cycle_seq: 0,
             input_frames: vec![vec![0.0f32; period_frames]; input_channels],
             output_frames: vec![vec![0.0f32; period_frames]; output_channels],
+            output_ready: false,
             period_frames,
             overload: false,
             discontinuity: false,
@@ -190,6 +194,9 @@ impl SharedIOState {
             },
         );
 
+        // Mark output as ready for the IOProc to consume.
+        data.output_ready = true;
+
         // 5. Lock is released when `data` is dropped.
         Ok(())
     }
@@ -318,6 +325,9 @@ unsafe extern "C" fn io_proc(
             }
         }
     }
+
+    // Reset output_ready flag after consuming the output data.
+    data.output_ready = false;
 
     data.cycle_seq += 1;
     // Release lock before signalling so waiters can acquire immediately.
