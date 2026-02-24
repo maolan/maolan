@@ -30,6 +30,13 @@ pub struct SharedData {
     pub overload: bool,
     /// Set to true if a discontinuity is detected (e.g. timestamp gap).
     pub discontinuity: bool,
+    /// Host time (nanoseconds) of the last completed IOProc cycle, used for
+    /// xrun gap detection.
+    pub last_host_time_nanos: u64,
+    /// Sample rate in Hz, needed to convert time gaps to frame counts.
+    pub sample_rate: u32,
+    /// Running count of detected xruns.
+    pub xrun_count: u64,
 }
 
 /// Condvar-based bridge between the real-time IOProc and the worker thread.
@@ -40,7 +47,12 @@ pub struct SharedIOState {
 
 impl SharedIOState {
     /// Create a new shared state with the given channel counts and initial period size.
-    pub fn new(input_channels: usize, output_channels: usize, period_frames: usize) -> Self {
+    pub fn new(
+        input_channels: usize,
+        output_channels: usize,
+        period_frames: usize,
+        sample_rate: u32,
+    ) -> Self {
         let data = SharedData {
             cycle_seq: 0,
             input_frames: vec![vec![0.0f32; period_frames]; input_channels],
@@ -48,10 +60,37 @@ impl SharedIOState {
             period_frames,
             overload: false,
             discontinuity: false,
+            last_host_time_nanos: 0,
+            sample_rate,
+            xrun_count: 0,
         };
         SharedIOState {
             condvar: Condvar::new(),
             mutex: Mutex::new(data),
+        }
+    }
+
+    /// Compute the frame gap from the host time delta between two consecutive
+    /// IOProc cycles. Returns the number of frames beyond one period that were
+    /// missed, or 0 if no xrun occurred.
+    ///
+    /// Mirrors `DuplexChannelApi::xrun_gap()` from `hw/oss/channel.rs`.
+    fn xrun_gap(
+        last_host_time_nanos: u64,
+        current_host_time_nanos: u64,
+        sample_rate: u32,
+        period_frames: usize,
+    ) -> u64 {
+        if last_host_time_nanos == 0 || current_host_time_nanos <= last_host_time_nanos {
+            return 0;
+        }
+        let delta_nanos = current_host_time_nanos - last_host_time_nanos;
+        let elapsed_frames =
+            (delta_nanos as u128 * sample_rate as u128 / 1_000_000_000_u128) as u64;
+        if elapsed_frames > period_frames as u64 * 2 {
+            elapsed_frames - period_frames as u64
+        } else {
+            0
         }
     }
 
@@ -87,7 +126,37 @@ impl SharedIOState {
 
         let frames = data.period_frames;
 
-        // 2. Copy shared input_frames[ch] -> AudioIO input ports.
+        // 2. Xrun detection: check elapsed time since last cycle.
+        let current_nanos =
+            unsafe { coreaudio_sys::AudioConvertHostTimeToNanos(coreaudio_sys::AudioGetCurrentHostTime()) };
+        let gap = Self::xrun_gap(
+            data.last_host_time_nanos,
+            current_nanos,
+            data.sample_rate,
+            frames,
+        );
+        if gap > 0 {
+            data.xrun_count += 1;
+            log::warn!(
+                "CoreAudio xrun detected (#{}, gap {} frames)",
+                data.xrun_count,
+                gap
+            );
+
+            // Fill input ports with silence.
+            ports::fill_ports_from_interleaved(input_ports, frames, false, |_, _| 0.0);
+
+            // Clear overload and discontinuity flags.
+            data.overload = false;
+            data.discontinuity = false;
+
+            // Update timestamp and return early — this cycle is a recovery gap.
+            data.last_host_time_nanos = current_nanos;
+            return Ok(());
+        }
+        data.last_host_time_nanos = current_nanos;
+
+        // 3. Copy shared input_frames[ch] -> AudioIO input ports.
         ports::fill_ports_from_interleaved(input_ports, frames, false, |ch, frame| {
             data.input_frames
                 .get(ch)
@@ -95,7 +164,7 @@ impl SharedIOState {
                 .unwrap_or(0.0)
         });
 
-        // 3. Read AudioIO output ports -> shared output_frames[ch].
+        // 4. Read AudioIO output ports -> shared output_frames[ch].
         //    Zero the output buffer first so unconnected channels are silent.
         for ch_buf in data.output_frames.iter_mut() {
             for sample in ch_buf[..frames].iter_mut() {
@@ -117,7 +186,7 @@ impl SharedIOState {
             },
         );
 
-        // 4. Lock is released when `data` is dropped.
+        // 5. Lock is released when `data` is dropped.
         Ok(())
     }
 }
