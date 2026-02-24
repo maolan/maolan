@@ -166,6 +166,12 @@ impl Maolan {
             "tracks": tracks_json,
             "connections": &state.connections,
             "graphs": Value::Object(graphs),
+            "transport": {
+                "loop_range_samples": self.loop_range_samples.map(|(start, end)| vec![start, end]),
+                "loop_enabled": self.loop_enabled,
+                "punch_range_samples": self.punch_range_samples.map(|(start, end)| vec![start, end]),
+                "punch_enabled": self.punch_enabled,
+            },
             "ui": {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
@@ -205,6 +211,78 @@ impl Maolan {
         let file = File::open(&p)?;
         let reader = BufReader::new(file);
         let session: Value = serde_json::from_reader(reader)?;
+
+        let transport = session.get("transport").ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "No 'transport' in session")
+        })?;
+        let parse_range = |key: &str| -> std::io::Result<Option<(usize, usize)>> {
+            let value = transport.get(key).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("No 'transport.{key}' in session"),
+                )
+            })?;
+            if value.is_null() {
+                return Ok(None);
+            }
+            let arr = value.as_array().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("'transport.{key}' is not an array or null"),
+                )
+            })?;
+            if arr.len() != 2 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("'transport.{key}' must have exactly 2 items"),
+                ));
+            }
+            let start = arr[0].as_u64().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("'transport.{key}[0]' is not an unsigned integer"),
+                )
+            })? as usize;
+            let end = arr[1].as_u64().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("'transport.{key}[1]' is not an unsigned integer"),
+                )
+            })? as usize;
+            if end <= start {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("'transport.{key}' must satisfy end > start"),
+                ));
+            }
+            Ok(Some((start, end)))
+        };
+        let parse_enabled = |key: &str| -> std::io::Result<bool> {
+            transport
+                .get(key)
+                .and_then(Value::as_bool)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("No boolean 'transport.{key}' in session"),
+                    )
+                })
+        };
+
+        let loaded_loop_range = parse_range("loop_range_samples")?;
+        let loaded_loop_enabled = parse_enabled("loop_enabled")?;
+        let loaded_punch_range = parse_range("punch_range_samples")?;
+        let loaded_punch_enabled = parse_enabled("punch_enabled")?;
+
+        self.loop_range_samples = loaded_loop_range;
+        self.loop_enabled = loaded_loop_enabled;
+        self.punch_range_samples = loaded_punch_range;
+        self.punch_enabled = loaded_punch_enabled;
+
+        restore_actions.push(Action::SetLoopRange(loaded_loop_range));
+        restore_actions.push(Action::SetLoopEnabled(loaded_loop_enabled));
+        restore_actions.push(Action::SetPunchRange(loaded_punch_range));
+        restore_actions.push(Action::SetPunchEnabled(loaded_punch_enabled));
 
         {
             let mut state = self.state.blocking_write();

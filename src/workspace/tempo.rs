@@ -24,6 +24,7 @@ struct TempoState {
 struct TempoCanvas {
     bpm: f32,
     time_signature: (u8, u8),
+    beat_pixels: f32,
     pixels_per_sample: f32,
     playhead_x: Option<f32>,
     punch_range_samples: Option<(usize, usize)>,
@@ -42,6 +43,7 @@ impl Tempo {
         &self,
         bpm: f32,
         time_signature: (u8, u8),
+        beat_pixels: f32,
         pixels_per_sample: f32,
         playhead_x: Option<f32>,
         punch_range_samples: Option<(usize, usize)>,
@@ -49,6 +51,7 @@ impl Tempo {
         canvas(TempoCanvas {
             bpm,
             time_signature,
+            beat_pixels,
             pixels_per_sample,
             playhead_x,
             punch_range_samples,
@@ -98,6 +101,8 @@ impl canvas::Program<Message> for TempoCanvas {
                     if self.pixels_per_sample <= 1.0e-9 {
                         return Some(CanvasAction::publish(Message::SetPunchRange(None)));
                     }
+                    let bar_samples =
+                        ((self.beat_pixels * 4.0) / self.pixels_per_sample.max(1.0e-9)).max(1.0);
                     let drag_delta = (state.last_x - state.drag_start_x).abs();
                     if drag_delta < 3.0 {
                         let sample = (state.last_x / self.pixels_per_sample).max(0.0) as usize;
@@ -107,14 +112,16 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                     let start_x = state.drag_start_x.min(state.last_x).max(0.0);
                     let end_x = state.drag_start_x.max(state.last_x).max(0.0);
-                    let start_sample = (start_x / self.pixels_per_sample).max(0.0) as usize;
-                    let mut end_sample = (end_x / self.pixels_per_sample).max(0.0) as usize;
+                    let start_sample =
+                        ((start_x / self.pixels_per_sample) / bar_samples).floor() * bar_samples;
+                    let mut end_sample =
+                        ((end_x / self.pixels_per_sample) / bar_samples).ceil() * bar_samples;
                     if end_sample <= start_sample {
-                        end_sample = start_sample.saturating_add(1);
+                        end_sample = start_sample + bar_samples;
                     }
                     return Some(CanvasAction::publish(Message::SetPunchRange(Some((
-                        start_sample,
-                        end_sample,
+                        start_sample.max(0.0) as usize,
+                        end_sample.max(0.0) as usize,
                     )))));
                 }
             }

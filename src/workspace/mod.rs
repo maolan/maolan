@@ -58,6 +58,7 @@ impl Workspace {
         playhead_samples: Option<f64>,
         pixels_per_sample: f32,
         beat_pixels: f32,
+        samples_per_bar: f32,
         loop_range_samples: Option<(usize, usize)>,
         punch_range_samples: Option<(usize, usize)>,
         zoom_visible_bars: f32,
@@ -76,6 +77,7 @@ impl Workspace {
             Stack::from_vec(vec![
                 self.editor.view(
                     pixels_per_sample,
+                    samples_per_bar,
                     active_clip_drag,
                     active_clip_target_track,
                     recording_preview_bounds,
@@ -91,6 +93,7 @@ impl Workspace {
         } else {
             self.editor.view(
                 pixels_per_sample,
+                samples_per_bar,
                 active_clip_drag,
                 active_clip_target_track,
                 recording_preview_bounds,
@@ -150,6 +153,7 @@ impl Workspace {
                 self.tempo.view(
                     120.0,
                     (4, 4),
+                    beat_pixels,
                     pixels_per_sample,
                     playhead_x,
                     punch_range_samples,

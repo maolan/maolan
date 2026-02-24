@@ -64,11 +64,16 @@ fn view_track_elements(
     state: &StateData,
     track: Track,
     pixels_per_sample: f32,
+    samples_per_bar: f32,
     active_clip_drag: Option<&DraggedClip>,
     active_target_track: Option<&str>,
     recording_preview_bounds: Option<(usize, usize)>,
     recording_preview_peaks: Option<&HashMap<String, Vec<Vec<f32>>>>,
 ) -> Element<'static, Message> {
+    let snap_sample_to_bar = |sample: f32| -> f32 {
+        let bar = samples_per_bar.max(1.0);
+        (sample.max(0.0) / bar).round() * bar
+    };
     let mut clips: Vec<Element<'static, Message>> = vec![
         mouse_area(container("").width(Length::Fill).height(Length::Fill))
             .on_press(Message::DeselectClips)
@@ -118,7 +123,7 @@ fn view_track_elements(
             .filter(|d| !d.copy)
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
-                (clip.start as f32 + delta_samples).max(0.0)
+                snap_sample_to_bar(clip.start as f32 + delta_samples)
             })
             .unwrap_or(clip.start as f32);
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
@@ -259,7 +264,7 @@ fn view_track_elements(
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
-            let preview_start = (clip.start as f32 + delta_samples).max(0.0);
+            let preview_start = snap_sample_to_bar(clip.start as f32 + delta_samples);
             let preview_content = container(Stack::with_children(vec![
                 audio_waveform_overlay(&clip_peaks, clip_width, clip_height),
                 container(text(clip_name.clone()).size(12))
@@ -351,7 +356,7 @@ fn view_track_elements(
             .filter(|d| !d.copy)
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
-                (clip.start as f32 + delta_samples).max(0.0)
+                snap_sample_to_bar(clip.start as f32 + delta_samples)
             })
             .unwrap_or(clip.start as f32);
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
@@ -484,7 +489,7 @@ fn view_track_elements(
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
-            let preview_start = (clip.start as f32 + delta_samples).max(0.0);
+            let preview_start = snap_sample_to_bar(clip.start as f32 + delta_samples);
             let preview_content = container(container(text(clip_name.clone()).size(12)).padding(5))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -561,7 +566,8 @@ fn view_track_elements(
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let clip_height = (height - 10.0).max(12.0);
-                        let preview_start = (source_clip.start as f32 + delta_samples).max(0.0);
+                        let preview_start =
+                            snap_sample_to_bar(source_clip.start as f32 + delta_samples);
                         let preview_content = container(Stack::with_children(vec![
                             audio_waveform_overlay(&source_clip.peaks, clip_width, clip_height),
                             container(text(source_clip.name.clone()).size(12))
@@ -634,7 +640,8 @@ fn view_track_elements(
                             continue;
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
-                        let preview_start = (source_clip.start as f32 + delta_samples).max(0.0);
+                        let preview_start =
+                            snap_sample_to_bar(source_clip.start as f32 + delta_samples);
                         let preview_content = container(
                             container(text(source_clip.name.clone()).size(12)).padding(5),
                         )
@@ -784,6 +791,7 @@ impl Editor {
     pub fn view(
         &self,
         pixels_per_sample: f32,
+        samples_per_bar: f32,
         active_clip_drag: Option<&DraggedClip>,
         active_target_track: Option<&str>,
         recording_preview_bounds: Option<(usize, usize)>,
@@ -796,6 +804,7 @@ impl Editor {
                 &state,
                 track.clone(),
                 pixels_per_sample,
+                samples_per_bar,
                 active_clip_drag,
                 active_target_track,
                 recording_preview_bounds,

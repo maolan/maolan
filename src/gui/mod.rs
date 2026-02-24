@@ -140,6 +140,11 @@ impl Maolan {
         self.samples_per_beat() * 4.0
     }
 
+    fn snap_sample_to_bar(&self, sample: f32) -> usize {
+        let bar = self.samples_per_bar().max(1.0);
+        ((sample.max(0.0) as f64 / bar).round() * bar) as usize
+    }
+
     fn tracks_width_px(&self) -> f32 {
         match self.state.blocking_read().tracks_width {
             Length::Fixed(v) => v,

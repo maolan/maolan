@@ -1552,7 +1552,7 @@ impl Maolan {
                                         }
                                         let source = &from_track.audio.clips[idx];
                                         let sample_offset =
-                                            (source.start as f32 + offset).max(0.0) as usize;
+                                            self.snap_sample_to_bar(source.start as f32 + offset);
                                         tasks.push(self.send(Action::ClipMove {
                                             kind: clip.kind,
                                             from: ClipMoveFrom {
@@ -1578,7 +1578,7 @@ impl Maolan {
                                 let mut clip_copy =
                                     from_track.audio.clips[clip_index_in_from_track].clone();
                                 clip_copy.start =
-                                    (clip_copy.start as f32 + offset).max(0.0) as usize;
+                                    self.snap_sample_to_bar(clip_copy.start as f32 + offset);
                                 let task = self.send(Action::ClipMove {
                                     kind: clip.kind,
                                     from: ClipMoveFrom {
@@ -1610,7 +1610,7 @@ impl Maolan {
                                         }
                                         let source = &from_track.midi.clips[idx];
                                         let sample_offset =
-                                            (source.start as f32 + offset).max(0.0) as usize;
+                                            self.snap_sample_to_bar(source.start as f32 + offset);
                                         tasks.push(self.send(Action::ClipMove {
                                             kind: clip.kind,
                                             from: ClipMoveFrom {
@@ -1636,7 +1636,7 @@ impl Maolan {
                                 let mut clip_copy =
                                     from_track.midi.clips[clip_index_in_from_track].clone();
                                 clip_copy.start =
-                                    (clip_copy.start as f32 + offset).max(0.0) as usize;
+                                    self.snap_sample_to_bar(clip_copy.start as f32 + offset);
                                 let task = self.send(Action::ClipMove {
                                     kind: clip.kind,
                                     from: ClipMoveFrom {

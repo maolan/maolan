@@ -21,6 +21,7 @@ impl Maolan {
                             Some(self.transport_samples),
                             self.pixels_per_sample(),
                             self.beat_pixels(),
+                            self.samples_per_bar() as f32,
                             self.loop_range_samples,
                             self.punch_range_samples,
                             self.zoom_visible_bars,
