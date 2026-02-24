@@ -37,6 +37,9 @@ pub struct SharedData {
     pub sample_rate: u32,
     /// Running count of detected xruns.
     pub xrun_count: u64,
+    /// Last mSampleTime seen by the IOProc, for discontinuity detection.
+    /// Negative means no previous sample has been recorded yet.
+    pub last_sample_time: f64,
 }
 
 /// Condvar-based bridge between the real-time IOProc and the worker thread.
@@ -63,6 +66,7 @@ impl SharedIOState {
             last_host_time_nanos: 0,
             sample_rate,
             xrun_count: 0,
+            last_sample_time: -1.0,
         };
         SharedIOState {
             condvar: Condvar::new(),
@@ -201,7 +205,7 @@ unsafe extern "C" fn io_proc(
     _device: AudioDeviceID,
     _now: *const AudioTimeStamp,
     input_data: *const AudioBufferList,
-    _input_time: *const AudioTimeStamp,
+    input_time: *const AudioTimeStamp,
     output_data: *mut AudioBufferList,
     _output_time: *const AudioTimeStamp,
     client_data: *mut std::ffi::c_void,
@@ -212,6 +216,18 @@ unsafe extern "C" fn io_proc(
         Ok(guard) => guard,
         Err(_) => return 0, // poisoned — nothing we can do on the RT thread
     };
+
+    // Detect AudioTimeStamp discontinuities via mSampleTime.
+    if !input_time.is_null() {
+        let sample_time = (*input_time).mSampleTime;
+        if data.last_sample_time >= 0.0 && data.period_frames > 0 {
+            let gap = (sample_time - data.last_sample_time).abs();
+            if gap > 1.5 * data.period_frames as f64 {
+                data.discontinuity = true;
+            }
+        }
+        data.last_sample_time = sample_time;
+    }
 
     // Copy input AudioBufferList channels into SharedData::input_frames
     if !input_data.is_null() {
