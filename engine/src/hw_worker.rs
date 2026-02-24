@@ -243,6 +243,13 @@ impl<B: Backend> HwWorker<B> {
         if let Err(e) = Self::configure_rt_thread(B::WORKER_THREAD_NAME, RT_PRIORITY_WORKER) {
             error!("{} worker realtime priority not enabled: {}", B::LABEL, e);
         }
+        #[cfg(target_os = "macos")]
+        unsafe {
+            libc::pthread_set_qos_class_self_np(
+                libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE,
+                0,
+            );
+        }
         let assist_state = Arc::new((Mutex::new(AssistState::default()), Condvar::new()));
         let assist_handle = Self::start_assist_thread(self.driver.clone(), assist_state.clone());
         loop {
@@ -322,6 +329,13 @@ impl<B: Backend> HwWorker<B> {
         std::thread::spawn(move || {
             if let Err(e) = Self::configure_rt_thread(B::ASSIST_THREAD_NAME, RT_PRIORITY_ASSIST) {
                 error!("{} assist realtime priority not enabled: {}", B::LABEL, e);
+            }
+            #[cfg(target_os = "macos")]
+            unsafe {
+                libc::pthread_set_qos_class_self_np(
+                    libc::qos_class_t::QOS_CLASS_USER_INITIATED,
+                    0,
+                );
             }
             let mut profiler = if profile {
                 let (cycle_samples, sample_rate) = {
