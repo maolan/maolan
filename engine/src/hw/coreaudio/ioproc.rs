@@ -9,12 +9,42 @@
 use crate::audio::io::AudioIO;
 use crate::hw::ports;
 use coreaudio_sys::{
-    kAudioHardwareNoError, AudioBufferList, AudioDeviceCreateIOProcID,
+    kAudioDeviceProcessorOverload, kAudioHardwareNoError, kAudioObjectPropertyElementMain,
+    kAudioObjectPropertyScopeGlobal, AudioBufferList, AudioDeviceCreateIOProcID,
     AudioDeviceDestroyIOProcID, AudioDeviceID, AudioDeviceIOProcID, AudioDeviceStart,
-    AudioDeviceStop, AudioTimeStamp, OSStatus,
+    AudioDeviceStop, AudioObjectAddPropertyListener, AudioObjectPropertyAddress,
+    AudioObjectRemovePropertyListener, AudioTimeStamp, OSStatus, UInt32,
 };
+use std::os::raw::c_void;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
+
+/// Property address for kAudioDeviceProcessorOverload notifications.
+const OVERLOAD_ADDRESS: AudioObjectPropertyAddress = AudioObjectPropertyAddress {
+    mSelector: kAudioDeviceProcessorOverload,
+    mScope: kAudioObjectPropertyScopeGlobal,
+    mElement: kAudioObjectPropertyElementMain,
+};
+
+/// HAL property listener callback for processor overload events.
+///
+/// # Safety
+///
+/// Called by the CoreAudio HAL. `client_data` must be a valid pointer to a
+/// `SharedIOState` that remains alive for the duration of the listener
+/// registration (guaranteed by the `Arc` reference held in `IoProcHandle`).
+unsafe extern "C" fn overload_listener(
+    _id: coreaudio_sys::AudioObjectID,
+    _count: UInt32,
+    _addresses: *const AudioObjectPropertyAddress,
+    client_data: *mut c_void,
+) -> OSStatus {
+    let state = &*(client_data as *const SharedIOState);
+    if let Ok(mut data) = state.mutex.lock() {
+        data.overload = true;
+    }
+    0 // noErr
+}
 
 /// Data shared between the IOProc callback and the engine worker thread.
 pub struct SharedData {
@@ -343,6 +373,8 @@ unsafe extern "C" fn io_proc(
 pub struct IoProcHandle {
     device_id: AudioDeviceID,
     proc_id: AudioDeviceIOProcID,
+    /// Whether the overload property listener was successfully registered.
+    has_overload_listener: bool,
     /// Prevent the Arc from being dropped while CoreAudio holds the pointer.
     _state: Arc<SharedIOState>,
 }
@@ -387,9 +419,28 @@ impl IoProcHandle {
             return Err(format!("AudioDeviceStart failed with status {}", status));
         }
 
+        // Register a property listener for processor overload notifications.
+        // We use the same client_ptr that was leaked for the IOProc callback;
+        // the Arc refcount already accounts for it.
+        let overload_status: OSStatus = unsafe {
+            AudioObjectAddPropertyListener(
+                device_id,
+                &OVERLOAD_ADDRESS,
+                Some(overload_listener),
+                client_ptr,
+            )
+        };
+        if overload_status != kAudioHardwareNoError as OSStatus {
+            log::warn!(
+                "Failed to register overload listener (status {}); xrun detection may be limited",
+                overload_status
+            );
+        }
+
         Ok(IoProcHandle {
             device_id,
             proc_id,
+            has_overload_listener: overload_status == kAudioHardwareNoError as OSStatus,
             _state: state,
         })
     }
@@ -400,6 +451,16 @@ impl Drop for IoProcHandle {
         unsafe {
             AudioDeviceStop(self.device_id, Some(io_proc));
             AudioDeviceDestroyIOProcID(self.device_id, self.proc_id);
+            // Remove the overload property listener before releasing the Arc.
+            if self.has_overload_listener {
+                let client_ptr = Arc::as_ptr(&self._state) as *mut c_void;
+                AudioObjectRemovePropertyListener(
+                    self.device_id,
+                    &OVERLOAD_ADDRESS,
+                    Some(overload_listener),
+                    client_ptr,
+                );
+            }
             // Reclaim the extra Arc reference we leaked in new().
             let client_ptr = Arc::as_ptr(&self._state) as *const SharedIOState;
             Arc::from_raw(client_ptr);
