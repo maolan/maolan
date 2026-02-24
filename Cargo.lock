@@ -813,6 +813,18 @@ dependencies = [
 
 [[package]]
 name = "coremidi"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e871f9d188bba3d90cecf78222327ab5d73c4503bf5a5f82c3b520bacb865ff7"
+dependencies = [
+ "block",
+ "core-foundation 0.9.4",
+ "core-foundation-sys",
+ "coremidi-sys",
+]
+
+[[package]]
+name = "coremidi"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "964eb3e10ea8b0d29c797086aab3ca730f75e06dced0cb980642fd274a5cca30"
@@ -2336,6 +2348,8 @@ version = "0.0.1"
 dependencies = [
  "alsa",
  "byteorder",
+ "coreaudio-sys",
+ "coremidi 0.7.0",
  "cpal",
  "jack",
  "lilv",
@@ -2407,7 +2421,7 @@ checksum = "b73f8737248ad37b88291a2108d9df5f991dc8555103597d586b5a29d4d703c0"
 dependencies = [
  "alsa",
  "bitflags 1.3.2",
- "coremidi",
+ "coremidi 0.8.0",
  "js-sys",
  "libc",
  "parking_lot 0.12.5",
