@@ -73,6 +73,11 @@ pub struct Audio {
     duplex_sync: Arc<Mutex<DuplexSync>>,
     correction: Correction,
     channel: DoubleBufferedChannel,
+    // Enhanced xrun detection fields
+    last_cycle_time_nanos: i64,
+    last_underrun_count: i32,
+    last_overrun_count: i32,
+    xrun_count: u64,
 }
 
 impl Audio {
@@ -333,7 +338,10 @@ impl Audio {
         let correction = Correction::default();
 
         let buffer_frames_cached = (buffer_info.bytes as usize / frame_size) as i64;
-        let audio = Audio {
+
+        // Initialize enhanced xrun detection counters to current hardware values
+        // to avoid false positives on first cycle
+        let mut initial_audio = Audio {
             dsp,
             channels: io_channels,
             input,
@@ -359,9 +367,18 @@ impl Audio {
             duplex_sync,
             correction,
             channel,
+            // Initialize enhanced xrun detection fields
+            last_cycle_time_nanos: 0,
+            last_underrun_count: 0,
+            last_overrun_count: 0,
+            xrun_count: 0,
         };
 
-        Ok(audio)
+        // Initialize hardware counter baselines to avoid false positives on first cycle
+        initial_audio.last_underrun_count = initial_audio.get_play_underruns();
+        initial_audio.last_overrun_count = initial_audio.get_rec_overruns();
+
+        Ok(initial_audio)
     }
 
     fn frame_size(&self) -> usize {
@@ -529,13 +546,71 @@ impl Audio {
         true
     }
 
-    fn xrun_gap(&self) -> i64 {
+    fn xrun_gap(&mut self) -> i64 {
+        // Check enhanced xrun detection (hardware counters + time-based)
+        // Only checks INCREMENTAL changes, so won't trigger on initialization
+        let enhanced_gap = self.detect_xrun_enhanced();
+
+        // Check traditional buffer-position-based detection
         let max_end = self.channel.total_end();
-        if max_end < self.frame_stamp {
+        let buffer_gap = if max_end < self.frame_stamp {
             self.frame_stamp - max_end
         } else {
             0
+        };
+
+        // Return the maximum gap detected by either method
+        let gap = enhanced_gap.max(buffer_gap);
+
+        // Log if buffer-position caught something enhanced detection missed
+        if gap > 0 && enhanced_gap == 0 && buffer_gap > 0 {
+            tracing::debug!(
+                "OSS buffer-position xrun detected (gap {} frames)",
+                buffer_gap
+            );
         }
+
+        gap
+    }
+
+    /// Enhanced xrun detection - Starting with just hardware counter detection
+    /// Phase 1: Hardware counters only (most reliable - directly from hardware)
+    ///
+    /// Returns the gap in frames if an xrun is detected, or 0 otherwise.
+    pub(super) fn detect_xrun_enhanced(&mut self) -> i64 {
+        // Hardware counter detection: Check if underrun/overrun counts increased
+        let current_underruns = if self.input { 0 } else { self.get_play_underruns() };
+        let current_overruns = if self.input { self.get_rec_overruns() } else { 0 };
+
+        // Only check if we've been initialized (not first cycle)
+        if self.last_underrun_count >= 0 || self.last_overrun_count >= 0 {
+            if current_underruns > self.last_underrun_count || current_overruns > self.last_overrun_count {
+                self.xrun_count += 1;
+                let delta_underruns = current_underruns - self.last_underrun_count;
+                let delta_overruns = current_overruns - self.last_overrun_count;
+                self.last_underrun_count = current_underruns;
+                self.last_overrun_count = current_overruns;
+
+                tracing::warn!(
+                    "OSS hardware xrun detected (#{}, underruns +{}, overruns +{})",
+                    self.xrun_count,
+                    delta_underruns,
+                    delta_overruns
+                );
+
+                // Estimate gap based on buffer size (conservative estimate)
+                return self.chsamples as i64;
+            }
+        }
+
+        self.last_underrun_count = current_underruns;
+        self.last_overrun_count = current_overruns;
+
+        // Time-based detection: DISABLED for testing
+        // Will be added in Phase 2 after hardware counter detection is verified
+
+        // No xrun detected
+        0
     }
 
     pub fn read(&mut self) -> std::io::Result<()> {

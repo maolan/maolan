@@ -152,17 +152,36 @@ impl<'a> DuplexChannelApi<'a> {
         Ok(())
     }
 
-    fn xrun_gap(&self) -> i64 {
+    fn xrun_gap(&mut self) -> i64 {
+        // Check enhanced xrun detection on both capture and playback
+        let capture_enhanced_gap = self.capture.detect_xrun_enhanced();
+        let playback_enhanced_gap = self.playback.detect_xrun_enhanced();
+        let enhanced_gap = capture_enhanced_gap.max(playback_enhanced_gap);
+
+        // Check traditional buffer-position-based detection
         let max_end = self
             .capture
             .channel
             .total_end()
             .max(self.playback.channel.total_end());
-        if max_end < self.now {
+        let buffer_gap = if max_end < self.now {
             self.now - max_end
         } else {
             0
+        };
+
+        // Return the maximum gap detected by either method
+        let gap = enhanced_gap.max(buffer_gap);
+
+        // Log if buffer-position caught something enhanced detection missed
+        if gap > 0 && enhanced_gap == 0 && buffer_gap > 0 {
+            tracing::debug!(
+                "OSS duplex buffer-position xrun detected (gap {} frames)",
+                buffer_gap
+            );
         }
+
+        gap
     }
 
     fn all_finished(&self) -> bool {
