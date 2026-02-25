@@ -8,11 +8,6 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use tracing::{error, info};
 
-/// CoreMIDI-based MIDI hub for macOS.
-///
-/// Input events are collected via a callback on `InputPort` connections and
-/// buffered into a shared `VecDeque`. Output events are sent as MIDI packets
-/// to connected `Destination` endpoints.
 pub struct MidiHub {
     client: Option<Client>,
     input_port: Option<coremidi::InputPort>,
@@ -32,9 +27,6 @@ impl Default for MidiHub {
         let input_port = client.as_ref().and_then(|c| {
             let pending_cb = Arc::clone(&pending);
             c.input_port("maolan-in", move |packet_list| {
-                // The callback receives packets without a source name attached.
-                // We tag them with an empty device string; open_input will
-                // replace the callback with one that knows the source name.
                 let mut queue = match pending_cb.lock() {
                     Ok(q) => q,
                     Err(_) => return,
@@ -68,9 +60,6 @@ impl Default for MidiHub {
 }
 
 impl MidiHub {
-    /// List all available CoreMIDI source endpoints.
-    ///
-    /// Names are returned in the format `coreaudio:<display_name>`.
     pub fn list_sources() -> Vec<String> {
         let mut result = Vec::new();
         for src in Sources {
@@ -80,9 +69,6 @@ impl MidiHub {
         result
     }
 
-    /// List all available CoreMIDI destination endpoints.
-    ///
-    /// Names are returned in the format `coreaudio:<display_name>`.
     pub fn list_destinations() -> Vec<String> {
         let mut result = Vec::new();
         for dest in Destinations {
@@ -92,9 +78,6 @@ impl MidiHub {
         result
     }
 
-    /// Open a CoreMIDI source by display name for reading.
-    ///
-    /// Accepts names with or without the `coreaudio:` prefix.
     pub fn open_input(&mut self, name: &str) -> Result<(), String> {
         let raw_name = name.strip_prefix("coreaudio:").unwrap_or(name);
         if self.input_sources.iter().any(|(n, _)| n == raw_name) {
@@ -104,8 +87,6 @@ impl MidiHub {
         let source = find_source_by_name(raw_name)
             .ok_or_else(|| format!("CoreMIDI source not found: {raw_name}"))?;
 
-        // Create a dedicated input port for this source so events carry the
-        // correct device name.
         if let Some(ref client) = self.client {
             let pending_cb = Arc::clone(&self.pending);
             let device_name = raw_name.to_string();
@@ -130,9 +111,7 @@ impl MidiHub {
                             "Failed to connect CoreMIDI source '{raw_name}': {e:?}"
                         ));
                     }
-                    // We keep the port alive by storing it alongside the source.
-                    // The default input_port is unused when per-source ports exist,
-                    // but we keep it for the no-source fallback path.
+
                     info!("CoreMIDI input connected: {raw_name}");
                 }
                 Err(e) => {
@@ -147,9 +126,6 @@ impl MidiHub {
         Ok(())
     }
 
-    /// Open a CoreMIDI destination by display name for writing.
-    ///
-    /// Accepts names with or without the `coreaudio:` prefix.
     pub fn open_output(&mut self, name: &str) -> Result<(), String> {
         let raw_name = name.strip_prefix("coreaudio:").unwrap_or(name);
         if self.output_destinations.iter().any(|(n, _)| n == raw_name) {
@@ -164,7 +140,6 @@ impl MidiHub {
         Ok(())
     }
 
-    /// Drain all pending input events into the provided vector.
     pub fn read_events_into(&mut self, out: &mut Vec<HwMidiEvent>) {
         out.clear();
         let mut queue = match self.pending.lock() {
@@ -174,7 +149,6 @@ impl MidiHub {
         out.extend(queue.drain(..));
     }
 
-    /// Send MIDI events to the appropriate output destinations.
     pub fn write_events(&mut self, events: &[HwMidiEvent]) {
         if events.is_empty() {
             return;
@@ -203,7 +177,6 @@ impl MidiHub {
     }
 }
 
-/// Find a CoreMIDI source endpoint by its display name.
 fn find_source_by_name(name: &str) -> Option<Source> {
     for source in Sources {
         if let Some(display_name) = source.display_name() {
@@ -215,7 +188,6 @@ fn find_source_by_name(name: &str) -> Option<Source> {
     None
 }
 
-/// Find a CoreMIDI destination endpoint by its display name.
 fn find_destination_by_name(name: &str) -> Option<Destination> {
     for dest in Destinations {
         if let Some(display_name) = dest.display_name() {

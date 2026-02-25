@@ -36,8 +36,7 @@ mod tests {
 
         // 3. Open the driver at 44100 Hz with default options.
         let sample_rate = 44100;
-        let driver =
-            HwDriver::new(&dev, sample_rate).expect("failed to open CoreAudio HwDriver");
+        let driver = HwDriver::new(&dev, sample_rate).expect("failed to open CoreAudio HwDriver");
 
         let cycle_samples = driver.cycle_samples();
         let out_ch = driver.output_channels();

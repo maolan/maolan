@@ -1,14 +1,11 @@
 use super::{audio::track::AudioTrack, midi::track::MIDITrack};
-use crate::{
-    audio::io::AudioIO,
-    midi::io::MidiEvent,
-};
-#[cfg(not(target_os = "macos"))]
-use crate::{kind::Kind, routing};
 #[cfg(not(target_os = "macos"))]
 use crate::lv2::Lv2Processor;
 #[cfg(not(target_os = "macos"))]
 use crate::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin, Lv2PluginState};
+use crate::{audio::io::AudioIO, midi::io::MidiEvent};
+#[cfg(not(target_os = "macos"))]
+use crate::{kind::Kind, routing};
 use midly::{MetaMessage, Smf, Timing, TrackEventKind, live::LiveEvent};
 use std::{
     collections::{HashMap, HashSet},
@@ -256,7 +253,7 @@ impl Track {
                     continue;
                 }
                 let source_buf = source.buffer.lock();
-                // Record tap should always capture live track input, regardless of monitor state.
+
                 if self.input_monitor && self.output_enabled {
                     for ((tap_sample, out_sample), in_sample) in tap
                         .iter_mut()
@@ -848,9 +845,7 @@ impl Track {
             return Err("Circular routing is not allowed!".to_string());
         }
         AudioIO::connect(&source, &target);
-        // Keep TrackInput -> PluginInput routing directional.
-        // A reverse edge back into TrackInput can make the track wait on its
-        // own downstream graph and result in silence.
+
         if matches!(from_node, Lv2GraphNode::TrackInput) {
             source
                 .connections
@@ -966,8 +961,6 @@ impl Track {
 
     pub(crate) fn ensure_default_audio_passthrough(&self) {
         for (audio_in, audio_out) in self.audio.ins.iter().zip(self.audio.outs.iter()) {
-            // Keep passthrough directional (in -> out). A reverse edge (out -> in)
-            // can deadlock input readiness for processing.
             audio_in
                 .connections
                 .lock()

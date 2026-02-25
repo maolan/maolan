@@ -122,7 +122,6 @@ impl Workspace {
         .height(Length::Fill);
 
         column![
-            // Tempo Ruler
             row![
                 container("")
                     .width(tracks_width)
@@ -157,7 +156,7 @@ impl Workspace {
                     pixels_per_sample,
                     playhead_x,
                     punch_range_samples,
-                ), // TODO: Get BPM and Time Signature from State
+                ),
             ]
             .height(Length::Fixed(self.tempo.height())),
             row![

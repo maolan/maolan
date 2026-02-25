@@ -209,7 +209,6 @@ impl canvas::Program<Message> for TempoCanvas {
             );
         }
 
-        // Display BPM
         frame.fill_text(Text {
             content: format!("{:.0} BPM", self.bpm),
             position: Point::new(10.0, 2.0),
@@ -218,7 +217,6 @@ impl canvas::Program<Message> for TempoCanvas {
             ..Default::default()
         });
 
-        // Display Time Signature
         frame.fill_text(Text {
             content: format!("{}/{}", self.time_signature.0, self.time_signature.1),
             position: Point::new(10.0, 15.0),

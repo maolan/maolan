@@ -451,7 +451,12 @@ fn default_audio_backend() -> AudioBackendOption {
     }
     #[cfg(all(
         unix,
-        not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd", target_os = "macos"))
+        not(any(
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "openbsd",
+            target_os = "macos"
+        ))
     ))]
     {
         AudioBackendOption::Jack

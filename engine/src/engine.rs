@@ -5,7 +5,7 @@ use midly::{
 };
 use std::{
     collections::{HashMap, VecDeque},
-    fs::{read_dir, File},
+    fs::{File, read_dir},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -17,8 +17,12 @@ use wavers::write as write_wav;
 
 #[cfg(target_os = "linux")]
 use crate::alsa_worker::HwWorker;
+#[cfg(target_os = "macos")]
+use crate::coreaudio_worker::HwWorker;
 #[cfg(target_os = "linux")]
 use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
+#[cfg(target_os = "macos")]
+use crate::hw::coreaudio::{HwDriver, HwOptions, MidiHub};
 #[cfg(unix)]
 use crate::hw::jack::JackRuntime;
 #[cfg(target_os = "freebsd")]
@@ -29,16 +33,12 @@ use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
 use crate::hw::sndio::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "windows")]
 use crate::hw::wasapi::{self, HwDriver, HwOptions, MidiHub};
-#[cfg(target_os = "macos")]
-use crate::hw::coreaudio::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "freebsd")]
 use crate::oss_worker::HwWorker;
 #[cfg(target_os = "openbsd")]
 use crate::sndio_worker::HwWorker;
 #[cfg(target_os = "windows")]
 use crate::wasapi_worker::HwWorker;
-#[cfg(target_os = "macos")]
-use crate::coreaudio_worker::HwWorker;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
@@ -877,7 +877,7 @@ impl Engine {
         events: &[(u64, Vec<u8>)],
     ) -> Result<(), String> {
         let ppq: u16 = 480;
-        let ticks_per_second: u64 = 960; // 120 BPM at 480 PPQ
+        let ticks_per_second: u64 = 960;
         let arena = Arena::new();
         let mut track_events: Vec<TrackEvent<'_>> = vec![TrackEvent {
             delta: u28::new(0),
@@ -1261,7 +1261,6 @@ impl Engine {
                     self.jack_runtime = None;
                 }
 
-                // Then shut down regular workers
                 while !self.workers.is_empty() {
                     let worker = self.workers.remove(0);
                     worker

@@ -535,7 +535,6 @@ fn view_track_elements(
         }
     }
 
-    // Cross-track preview: render dragged source clip in target lane.
     if let Some(drag) = active_clip_drag
         && let Some(target) = active_target_track
         && target == track_name_cloned.as_str()

@@ -1,21 +1,12 @@
 #![cfg(target_os = "macos")]
 
-//! DuplexSync, Correction, FrameClock and ChannelState for the CoreAudio backend.
-//!
-//! Ported from the OSS backend (`hw/oss/sync.rs`), replacing POSIX
-//! `clock_gettime(CLOCK_MONOTONIC)` / `clock_nanosleep` with CoreAudio's
-//! `AudioGetCurrentHostTime()` + `AudioConvertHostTimeToNanos()` and Mach's
-//! `mach_wait_until()` for precise timing on macOS.
-
-use coreaudio_sys::{AudioConvertHostTimeToNanos, AudioConvertNanosToHostTime, AudioGetCurrentHostTime};
+use coreaudio_sys::{
+    AudioConvertHostTimeToNanos, AudioConvertNanosToHostTime, AudioGetCurrentHostTime,
+};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex, OnceLock, Weak},
 };
-
-// ---------------------------------------------------------------------------
-// Correction
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Correction {
@@ -72,10 +63,6 @@ impl Correction {
     }
 }
 
-// ---------------------------------------------------------------------------
-// DuplexSync
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Copy)]
 pub(super) struct DuplexSync {
     pub(super) correction: Correction,
@@ -83,7 +70,7 @@ pub(super) struct DuplexSync {
     pub(super) playback_balance: Option<i64>,
     pub(super) cycle_end: i64,
     pub(super) playback_prefill_frames: i64,
-    /// Host-time (Mach absolute time units) recorded at clock-zero.
+
     pub(super) clock_zero: Option<u64>,
 }
 
@@ -125,18 +112,12 @@ pub(super) fn get_or_create_duplex_sync(
     created
 }
 
-// ---------------------------------------------------------------------------
-// FrameClock  (CoreAudio host-time based)
-// ---------------------------------------------------------------------------
-
-/// Returns the current host time in nanoseconds relative to an arbitrary epoch.
 fn host_time_nanos() -> u64 {
     unsafe { AudioConvertHostTimeToNanos(AudioGetCurrentHostTime()) }
 }
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct FrameClock {
-    /// Nanosecond timestamp captured at clock-zero.
     pub(super) zero_nanos: u64,
     pub(super) sample_rate: u32,
 }
@@ -175,8 +156,7 @@ impl FrameClock {
 
     pub(super) fn sleep_until_frame(&self, frame: i64) -> bool {
         let target_ns = self.zero_nanos as i128 + self.frames_to_nanos(frame);
-        // Convert the absolute nanosecond target to Mach absolute-time units
-        // for use with mach_wait_until.
+
         let target_host = unsafe { AudioConvertNanosToHostTime(target_ns as u64) };
         unsafe { mach_wait_until(target_host) == 0 }
     }
@@ -190,14 +170,9 @@ impl FrameClock {
     }
 }
 
-// mach_wait_until is not exposed by coreaudio-sys; link directly from libSystem.
 unsafe extern "C" {
     fn mach_wait_until(deadline: u64) -> i32;
 }
-
-// ---------------------------------------------------------------------------
-// ChannelState
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ChannelState {
@@ -302,7 +277,6 @@ impl ChannelState {
     ) -> i64 {
         let mut wakeup = self.last_processing + stepping;
         if self.freewheel() || self.full_resync() {
-            // keep small steps
         } else if self.resync() || wakeup + self.max_progress > sync_target {
             if self.next_min_progress() > wakeup {
                 wakeup = self.next_min_progress() - stepping;

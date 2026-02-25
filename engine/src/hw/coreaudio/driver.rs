@@ -1,8 +1,5 @@
 #![cfg(target_os = "macos")]
 
-//! Buffer-size and sample-rate negotiation for a CoreAudio device,
-//! plus the `HwDriver` struct that the rest of the engine interacts with.
-
 use super::error_fmt::ca_error;
 use super::ioproc::{IoProcHandle, SharedIOState};
 use crate::audio::io::AudioIO;
@@ -13,12 +10,12 @@ use crate::hw::options::HwOptions;
 use super::latency::query_device_latency;
 
 use coreaudio_sys::{
+    AudioBufferList, AudioDeviceID, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize,
+    AudioObjectPropertyAddress, AudioObjectSetPropertyData, OSStatus, UInt32,
     kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyNominalSampleRate,
     kAudioDevicePropertyStreamConfiguration, kAudioHardwareNoError,
     kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal,
-    kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput, AudioBufferList,
-    AudioDeviceID, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize,
-    AudioObjectPropertyAddress, AudioObjectSetPropertyData, OSStatus, UInt32,
+    kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput,
 };
 
 use std::mem;
@@ -26,8 +23,6 @@ use std::os::raw::c_void;
 use std::ptr;
 use std::sync::Arc;
 
-/// CoreAudio `HwDriver` — owns the negotiated device settings,
-/// per-channel `AudioIO` buffers, and the live IOProc registration.
 pub struct HwDriver {
     device_id: AudioDeviceID,
     sample_rate: i32,
@@ -45,8 +40,6 @@ pub struct HwDriver {
 }
 
 impl HwDriver {
-    /// Open a CoreAudio device by name, negotiate sample rate and buffer size,
-    /// and allocate per-channel `AudioIO` buffers.
     pub fn new(name: &str, rate: i32) -> Result<Self, String> {
         Self::new_with_options(name, rate, 0, HwOptions::default())
     }
@@ -64,13 +57,10 @@ impl HwDriver {
             .ok_or_else(|| format!("CoreAudio device not found: {name}"))?;
         let device_id = device.id;
 
-        // Negotiate sample rate.
         let actual_rate = negotiate_sample_rate(device_id, rate as f64)?;
 
-        // Negotiate buffer size.
         let actual_frames = negotiate_buffer_size(device_id, options.period_frames as u32)?;
 
-        // Build per-channel AudioIO buffers.
         let in_count = channel_count(device_id, true);
         let out_count = channel_count(device_id, false);
 
@@ -81,12 +71,10 @@ impl HwDriver {
             .map(|_| Arc::new(AudioIO::new(actual_frames as usize)))
             .collect();
 
-        // Query real hardware latency from the CoreAudio HAL.
         let input_latency_frames = query_device_latency(device_id, kAudioObjectPropertyScopeInput);
         let output_latency_frames =
             query_device_latency(device_id, kAudioObjectPropertyScopeOutput);
 
-        // Create the shared IOProc state and start the device.
         let io_state = Arc::new(SharedIOState::new(
             in_count,
             out_count,
@@ -150,8 +138,6 @@ impl HwDriver {
     }
 
     pub fn latency_ranges(&self) -> ((usize, usize), (usize, usize)) {
-        // CoreAudio uses a single IOProc for duplex, so nperiods=1 and
-        // sync_mode=true regardless of stored options.
         latency::latency_ranges(
             self.cycle_samples,
             1,
@@ -181,7 +167,6 @@ impl crate::hw::traits::HwWorkerDriver for HwDriver {
     }
 
     fn run_assist_step_for_worker(&mut self) -> Result<bool, String> {
-        // CoreAudio is callback-driven; no assist-thread work is needed.
         std::thread::sleep(std::time::Duration::from_millis(1));
         Ok(true)
     }
@@ -189,12 +174,6 @@ impl crate::hw::traits::HwWorkerDriver for HwDriver {
 
 crate::impl_hw_device_for_driver!(HwDriver);
 
-// ---------------------------------------------------------------------------
-// HAL property negotiation helpers
-// ---------------------------------------------------------------------------
-
-/// Set `kAudioDevicePropertyNominalSampleRate` to `desired`, then read it
-/// back.  Returns the rate the hardware actually accepted.
 fn negotiate_sample_rate(device_id: AudioDeviceID, desired: f64) -> Result<f64, String> {
     let address = AudioObjectPropertyAddress {
         mSelector: kAudioDevicePropertyNominalSampleRate,
@@ -202,7 +181,6 @@ fn negotiate_sample_rate(device_id: AudioDeviceID, desired: f64) -> Result<f64, 
         mElement: kAudioObjectPropertyElementMain,
     };
 
-    // Set requested rate.
     let mut rate: f64 = desired;
     let status: OSStatus = unsafe {
         AudioObjectSetPropertyData(
@@ -218,7 +196,6 @@ fn negotiate_sample_rate(device_id: AudioDeviceID, desired: f64) -> Result<f64, 
         return Err(ca_error("set sample rate", status));
     }
 
-    // Read back what the device accepted.
     let mut size: UInt32 = mem::size_of::<f64>() as UInt32;
     rate = 0.0;
     let status: OSStatus = unsafe {
@@ -237,8 +214,6 @@ fn negotiate_sample_rate(device_id: AudioDeviceID, desired: f64) -> Result<f64, 
     Ok(rate)
 }
 
-/// Set `kAudioDevicePropertyBufferFrameSize` to `desired`, then read it
-/// back.  Returns the frame count the hardware actually accepted.
 fn negotiate_buffer_size(device_id: AudioDeviceID, desired: u32) -> Result<u32, String> {
     let address = AudioObjectPropertyAddress {
         mSelector: kAudioDevicePropertyBufferFrameSize,
@@ -246,7 +221,6 @@ fn negotiate_buffer_size(device_id: AudioDeviceID, desired: u32) -> Result<u32, 
         mElement: kAudioObjectPropertyElementMain,
     };
 
-    // Set requested buffer size.
     let mut frames: UInt32 = desired;
     let status: OSStatus = unsafe {
         AudioObjectSetPropertyData(
@@ -262,7 +236,6 @@ fn negotiate_buffer_size(device_id: AudioDeviceID, desired: u32) -> Result<u32, 
         return Err(ca_error("set buffer frame size", status));
     }
 
-    // Read back what the device accepted.
     let mut size: UInt32 = mem::size_of::<UInt32>() as UInt32;
     frames = 0;
     let status: OSStatus = unsafe {
@@ -281,7 +254,6 @@ fn negotiate_buffer_size(device_id: AudioDeviceID, desired: u32) -> Result<u32, 
     Ok(frames)
 }
 
-/// Count the number of channels on one scope of a device.
 fn channel_count(device_id: AudioDeviceID, input: bool) -> usize {
     let scope = if input {
         kAudioObjectPropertyScopeInput

@@ -267,7 +267,6 @@ impl Maolan {
         let json: Value = serde_json::from_reader(BufReader::new(file))?;
         let peaks_val = &json["peaks"];
 
-        // Backward-compatible with legacy single-channel format: "peaks": [..]
         if peaks_val
             .as_array()
             .is_some_and(|arr| arr.first().is_some_and(|first| first.is_number()))
@@ -679,19 +678,16 @@ impl Maolan {
         )
         .map_err(|e| io::Error::other(format!("Failed to create resampler: {e}")))?;
 
-        // De-interleave samples into per-channel buffers
         let frames = samples.len() / channels.max(1);
         let mut channel_buffers: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); channels];
         for (i, &sample) in samples.iter().enumerate() {
             channel_buffers[i % channels].push(sample);
         }
 
-        // Resample each channel
         let resampled = resampler
             .process(&channel_buffers, None)
             .map_err(|e| io::Error::other(format!("Resampling failed: {e}")))?;
 
-        // Re-interleave the resampled audio
         let out_frames = resampled[0].len();
         let mut output = Vec::with_capacity(out_frames * channels);
         for frame_idx in 0..out_frames {
@@ -745,7 +741,6 @@ impl Maolan {
         progress_callback(0.2);
         tokio::task::yield_now().await;
 
-        // De-interleave samples into per-channel buffers
         let frames = samples.len() / channels.max(1);
         let mut channel_buffers: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); channels];
         for (i, &sample) in samples.iter().enumerate() {
@@ -755,7 +750,6 @@ impl Maolan {
         progress_callback(0.5);
         tokio::task::yield_now().await;
 
-        // Resample each channel
         let resampled = resampler
             .process(&channel_buffers, None)
             .map_err(|e| io::Error::other(format!("Resampling failed: {e}")))?;
@@ -763,7 +757,6 @@ impl Maolan {
         progress_callback(0.8);
         tokio::task::yield_now().await;
 
-        // Re-interleave the resampled audio
         let out_frames = resampled[0].len();
         let mut output = Vec::with_capacity(out_frames * channels);
         for frame_idx in 0..out_frames {
@@ -792,7 +785,6 @@ impl Maolan {
         let rel = Self::unique_import_rel_path(session_root, "audio", stem, "wav")?;
         let dst = session_root.join(&rel);
 
-        // Decoding takes ~60% of import time
         let (samples, channels, sample_rate) =
             Self::decode_audio_to_f32_interleaved_with_progress(src_path, |decode_progress| {
                 progress_callback(decode_progress * 0.6, Some("Decoding".to_string()));
@@ -802,7 +794,6 @@ impl Maolan {
         progress_callback(0.6, None);
         tokio::task::yield_now().await;
 
-        // Resampling takes ~25% of import time (if needed)
         let final_samples = if sample_rate != target_sample_rate {
             let resample_msg = format!("Resampling {} Hz → {} Hz", sample_rate, target_sample_rate);
             Self::resample_audio_interleaved_with_progress(
@@ -811,10 +802,7 @@ impl Maolan {
                 sample_rate,
                 target_sample_rate,
                 |resample_progress| {
-                    progress_callback(
-                        0.6 + resample_progress * 0.25,
-                        Some(resample_msg.clone()),
-                    );
+                    progress_callback(0.6 + resample_progress * 0.25, Some(resample_msg.clone()));
                 },
             )
             .await?
@@ -825,9 +813,13 @@ impl Maolan {
         progress_callback(0.85, Some("Writing".to_string()));
         tokio::task::yield_now().await;
 
-        // Writing WAV takes ~15% of import time
-        wavers::write::<f32, _>(&dst, &final_samples, target_sample_rate as i32, channels as u16)
-            .map_err(|e| io::Error::other(format!("Failed to write '{}': {e}", dst.display())))?;
+        wavers::write::<f32, _>(
+            &dst,
+            &final_samples,
+            target_sample_rate as i32,
+            channels as u16,
+        )
+        .map_err(|e| io::Error::other(format!("Failed to write '{}': {e}", dst.display())))?;
 
         progress_callback(1.0, None);
         let frames = final_samples.len() / channels.max(1);

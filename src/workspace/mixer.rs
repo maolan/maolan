@@ -298,7 +298,6 @@ impl Mixer {
                             .height(Length::Fill)
                             .spacing(6)
                             .align_y(Alignment::Center),
-                            // .shift_step(0.1),
                             row![
                                 button("R")
                                     .padding(3)
@@ -402,7 +401,6 @@ impl Mixer {
                     .height(Length::Fill)
                     .spacing(6)
                     .align_y(Alignment::Center),
-                    // .shift_step(0.1),
                     row![
                         button("M")
                             .padding(3)

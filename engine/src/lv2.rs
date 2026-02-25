@@ -323,7 +323,7 @@ const LV2_STATE_INTERFACE_URI: &str = "http://lv2plug.in/ns/ext/state#interface"
 const LV2_STATE_MAP_PATH_URI: &str = "http://lv2plug.in/ns/ext/state#mapPath";
 const LV2_STATE_MAKE_PATH_URI: &str = "http://lv2plug.in/ns/ext/state#makePath";
 const LV2_STATE_FREE_PATH_URI: &str = "http://lv2plug.in/ns/ext/state#freePath";
-// RTLD_NOW | RTLD_GLOBAL on FreeBSD (dlfcn.h: RTLD_NOW=2, RTLD_GLOBAL=0x100)
+
 const RTLD_NOW_GLOBAL: i32 = 0x102;
 const GTK_WINDOW_TOPLEVEL: i32 = 0;
 const LV2_ATOM_BUFFER_BYTES: usize = 8192;
@@ -907,7 +907,7 @@ impl Lv2Processor {
         }
 
         let ui_spec = resolve_preferred_ui(&self.uri);
-        // Fall back to external UI only when no suil-supported UI is found.
+
         let ext_spec = if ui_spec.is_err() {
             resolve_external_ui(&self.uri)
         } else {
@@ -917,7 +917,7 @@ impl Lv2Processor {
         let symbol_map = Arc::clone(&self.port_symbol_to_index);
         let control_ports = self.control_ports.clone();
         let plugin_title = self.plugin_name.clone();
-        // Transmit as usize so the raw pointer can cross the thread boundary.
+
         let lv2_handle: Option<usize> = self
             .instance
             .as_ref()
@@ -1494,11 +1494,6 @@ fn resolve_preferred_ui(plugin_uri: &str) -> Result<UiSpec, String> {
     let external_uri = world.new_uri(LV2_UI_EXTERNAL);
     let extui_widget_uri = world.new_uri(LV2_EXT_UI_WIDGET);
 
-    // Only GTK2 and X11 are supported as host containers.  GTK3 is intentionally
-    // omitted: the host creates GTK2 windows, so a GTK3-wrapped suil widget
-    // (returned by libsuil_qt5_in_gtk3 or libsuil_x11_in_gtk3) would be added
-    // to a GTK2 container – a toolkit conflict that crashes at runtime.
-    // Qt plugins will therefore be wrapped by libsuil_qt5_in_gtk2 instead.
     let host_containers = [LV2_UI_GTK, LV2_UI_X11];
     let ui_classes = [
         (&gtk3_uri, LV2_UI_GTK3),
@@ -1542,9 +1537,7 @@ fn resolve_preferred_ui(plugin_uri: &str) -> Result<UiSpec, String> {
                 if quality == 0 {
                     continue;
                 }
-                // Prefer GTK host container for all UI classes (including X11UI),
-                // matching jalv.gtk's embedding model and avoiding direct X11-only
-                // parenting paths that can produce blank shells for some plugins.
+
                 let container_rank = usize::from(container_uri != LV2_UI_GTK);
                 let spec = UiSpec {
                     plugin_uri: plugin_uri.to_string(),
@@ -1663,9 +1656,6 @@ fn run_gtk_suil_ui(
         );
     }
 
-    // Use a GtkSocket/XID parent whenever suil's effective container is X11.
-    // This is required not only for X11-native UIs, but also for wrapped UIs
-    // (e.g. Qt) when suil chooses an X11 container.
     let effective_container = ui_spec.container_type_uri.clone();
     let use_x11_parent = effective_container == LV2_UI_X11;
     let parent_data: *mut c_void = if use_x11_parent {
@@ -1817,10 +1807,6 @@ fn run_gtk_suil_ui(
         let _ = show(ui_handle);
     }
     unsafe {
-        // For X11-container UIs the window was already shown before suil
-        // instantiation so the socket could be realized and its XID obtained.
-        // The plugin embeds directly into that XID, so there is no GTK widget
-        // to pack here. For GTK-container UIs, add suil's widget normally.
         if !use_x11_parent {
             gtk_container_add(window, widget);
             gtk_widget_show_all(window);
@@ -1973,8 +1959,6 @@ fn run_generic_parameter_ui(
     Ok(())
 }
 
-/// Returns an `ExternalUiSpec` if the plugin has an external UI
-/// (`LV2_UI_EXTERNAL` or `LV2_EXT_UI_WIDGET`) that we can load directly.
 fn resolve_external_ui(plugin_uri: &str) -> Option<ExternalUiSpec> {
     let world = World::new();
     world.load_all();
@@ -2000,7 +1984,6 @@ fn resolve_external_ui(plugin_uri: &str) -> Option<ExternalUiSpec> {
     None
 }
 
-/// Write-function callback forwarded from external UI → audio thread.
 extern "C" fn external_write_port(
     controller: *mut c_void,
     port_index: u32,
@@ -2020,7 +2003,6 @@ extern "C" fn external_write_port(
     }
 }
 
-/// Called by the external UI when the user closes its window.
 unsafe extern "C" fn external_ui_closed(controller: *mut c_void) {
     if !controller.is_null() {
         let ctrl = unsafe { &*(controller as *const ExternalUiController) };
@@ -2028,9 +2010,6 @@ unsafe extern "C" fn external_ui_closed(controller: *mut c_void) {
     }
 }
 
-/// Run an external UI plugin (LV2_UI_EXTERNAL / LV2_EXT_UI_WIDGET) without GTK.
-/// The binary is loaded with dlopen, instantiated directly, then shown and driven
-/// via the widget's own run/show/hide vtable in a tight ~30 fps loop.
 fn run_external_ui(
     spec: ExternalUiSpec,
     scalar_values: Arc<Mutex<Vec<f32>>>,
@@ -2049,7 +2028,6 @@ fn run_external_ui(
     }
     let descriptor_fn: LV2UiDescriptorFn = unsafe { std::mem::transmute(sym) };
 
-    // Walk the descriptor table to find the one matching our UI URI.
     let descriptor: *const LV2UiDescriptor = unsafe {
         let mut idx = 0u32;
         loop {

@@ -14,8 +14,6 @@ pub struct Worker {
 impl Worker {
     #[cfg(unix)]
     fn try_enable_realtime() -> Result<(), String> {
-        // Best-effort RT priority for the OS thread running this worker task.
-        // Requires appropriate system privileges (e.g. rtprio/limits).
         let thread = unsafe { libc::pthread_self() };
         let policy = libc::SCHED_FIFO;
         let param = unsafe {

@@ -1,7 +1,7 @@
-use crate::midi::io::MidiEvent;
-use crate::{kind::Kind, mutex::UnsafeMutex, track::Track};
 #[cfg(not(target_os = "macos"))]
 use crate::lv2::Lv2PluginInfo;
+use crate::midi::io::MidiEvent;
+use crate::{kind::Kind, mutex::UnsafeMutex, track::Track};
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 

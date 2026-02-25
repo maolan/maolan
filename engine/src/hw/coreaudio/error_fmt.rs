@@ -1,7 +1,3 @@
-/// Format a CoreAudio `OSStatus` code into a human-readable string.
-///
-/// Known error codes are returned with their symbolic name; unknown codes
-/// are formatted as hex.
 pub fn os_status(code: i32) -> String {
     match code {
         0 => "kAudioHardwareNoError (0)".to_string(),
@@ -17,7 +13,6 @@ pub fn os_status(code: i32) -> String {
     }
 }
 
-/// Build a CoreAudio error string from an operation description and `OSStatus`.
 pub fn ca_error(operation: &str, code: i32) -> String {
     format!("CoreAudio {operation} failed: {}", os_status(code))
 }

@@ -283,7 +283,6 @@ impl ChannelState {
     ) -> i64 {
         let mut wakeup = self.last_processing + stepping;
         if self.freewheel() || self.full_resync() {
-            // keep small steps
         } else if self.resync() || wakeup + self.max_progress > sync_target {
             if self.next_min_progress() > wakeup {
                 wakeup = self.next_min_progress() - stepping;

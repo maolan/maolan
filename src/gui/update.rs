@@ -436,14 +436,12 @@ impl Maolan {
                 } => {
                     let mut state = self.state.blocking_write();
 
-                    // Find the track by name
                     let from_track_idx_option: Option<usize> = state
                         .tracks
                         .iter()
                         .position(|track| track.name == from.track_name);
 
                     if let Some(f_idx) = from_track_idx_option {
-                        // Get mutable borrow of from_track outside the main loop
                         let from_track = &mut state.tracks[f_idx];
 
                         let mut clip_to_move: Option<crate::state::AudioClip> = None;
@@ -474,7 +472,6 @@ impl Maolan {
                             }
                         }
 
-                        // Now find the to_track and add the clip
                         if let Some(to_track) = state
                             .tracks
                             .iter_mut()
@@ -832,9 +829,7 @@ impl Maolan {
                         }
                     }
                 }
-                _ => {
-                    // Intentionally ignore responses that do not need explicit GUI handling.
-                }
+                _ => {}
             },
             Message::Response(Err(ref e)) => {
                 self.state.blocking_write().message = e.clone();
@@ -985,7 +980,6 @@ impl Maolan {
 
                 if ctrl {
                     if state.selected_clips.contains(&clip_id) {
-                        // Keep existing selection intact so Ctrl-drag can copy groups.
                     } else {
                         state.selected_clips.insert(clip_id);
                     }
@@ -1130,43 +1124,43 @@ impl Maolan {
                     crate::state::View::TrackPlugins => {
                         #[cfg(not(target_os = "macos"))]
                         {
-                        let (track_name, selected_plugin, selected_indices, connections) = {
-                            let state = self.state.blocking_read();
-                            (
-                                state.lv2_graph_track.clone(),
-                                state.lv2_graph_selected_plugin,
-                                state.lv2_graph_selected_connections.clone(),
-                                state.lv2_graph_connections.clone(),
-                            )
-                        };
-                        if let Some(track_name) = track_name {
-                            if let Some(instance_id) = selected_plugin {
-                                self.state.blocking_write().lv2_graph_selected_plugin = None;
+                            let (track_name, selected_plugin, selected_indices, connections) = {
+                                let state = self.state.blocking_read();
+                                (
+                                    state.lv2_graph_track.clone(),
+                                    state.lv2_graph_selected_plugin,
+                                    state.lv2_graph_selected_connections.clone(),
+                                    state.lv2_graph_connections.clone(),
+                                )
+                            };
+                            if let Some(track_name) = track_name {
+                                if let Some(instance_id) = selected_plugin {
+                                    self.state.blocking_write().lv2_graph_selected_plugin = None;
+                                    self.state
+                                        .blocking_write()
+                                        .lv2_graph_selected_connections
+                                        .clear();
+                                    return self.send(Action::TrackUnloadLv2PluginInstance {
+                                        track_name,
+                                        instance_id,
+                                    });
+                                }
+                                let actions = connections::selection::plugin_disconnect_actions(
+                                    &track_name,
+                                    &connections,
+                                    &selected_indices,
+                                );
+                                let tasks = actions
+                                    .into_iter()
+                                    .map(|a| self.send(a))
+                                    .collect::<Vec<_>>();
                                 self.state
                                     .blocking_write()
                                     .lv2_graph_selected_connections
                                     .clear();
-                                return self.send(Action::TrackUnloadLv2PluginInstance {
-                                    track_name,
-                                    instance_id,
-                                });
+                                self.state.blocking_write().lv2_graph_selected_plugin = None;
+                                return Task::batch(tasks);
                             }
-                            let actions = connections::selection::plugin_disconnect_actions(
-                                &track_name,
-                                &connections,
-                                &selected_indices,
-                            );
-                            let tasks = actions
-                                .into_iter()
-                                .map(|a| self.send(a))
-                                .collect::<Vec<_>>();
-                            self.state
-                                .blocking_write()
-                                .lv2_graph_selected_connections
-                                .clear();
-                            self.state.blocking_write().lv2_graph_selected_plugin = None;
-                            return Task::batch(tasks);
-                        }
                         }
                     }
                 }
@@ -1502,9 +1496,7 @@ impl Maolan {
                     {
                         active.end = self.state.blocking_read().cursor;
                     }
-                    Some(_) => {
-                        // Keep the original drag source locked until drop.
-                    }
+                    Some(_) => {}
                     None => {
                         let mut dragged = clip.clone();
                         let cursor = self.state.blocking_read().cursor;
@@ -1740,13 +1732,11 @@ impl Maolan {
                         let to_index = state
                             .tracks
                             .iter()
-                            .position(|t| Id::from(t.name.clone()) == *track_id); // Compare Id with Id
+                            .position(|t| Id::from(t.name.clone()) == *track_id);
 
                         if let Some(t_idx) = to_index {
                             state.tracks.insert(t_idx, moved_track);
                         } else {
-                            // If target track not found, insert back to original position (or end)
-                            // For simplicity, let's insert it at the end if target not found
                             state.tracks.push(moved_track);
                         }
                     }
@@ -1819,15 +1809,16 @@ impl Maolan {
 
                                 let tx_clone = tx.clone();
                                 let filename_for_progress = filename.clone();
-                                let progress_fn = move |progress: f32, operation: Option<String>| {
-                                    let _ = tx_clone.send(Message::ImportProgress {
-                                        file_index,
-                                        total_files,
-                                        file_progress: progress,
-                                        filename: filename_for_progress.clone(),
-                                        operation,
-                                    });
-                                };
+                                let progress_fn =
+                                    move |progress: f32, operation: Option<String>| {
+                                        let _ = tx_clone.send(Message::ImportProgress {
+                                            file_index,
+                                            total_files,
+                                            file_progress: progress,
+                                            filename: filename_for_progress.clone(),
+                                            operation,
+                                        });
+                                    };
 
                                 if Self::is_import_audio_path(&path) {
                                     match Self::import_audio_to_session_wav_with_progress(
@@ -1843,19 +1834,17 @@ impl Maolan {
                                             let track_name =
                                                 Self::unique_track_name(&base, &mut used_names);
 
-                                            if let Err(e) =
-                                                CLIENT
-                                                    .send(EngineMessage::Request(Action::AddTrack {
-                                                        name: track_name.clone(),
-                                                        audio_ins: channels,
-                                                        midi_ins: 0,
-                                                        audio_outs: channels,
-                                                        midi_outs: 0,
-                                                    }))
-                                                    .await
+                                            if let Err(e) = CLIENT
+                                                .send(EngineMessage::Request(Action::AddTrack {
+                                                    name: track_name.clone(),
+                                                    audio_ins: channels,
+                                                    midi_ins: 0,
+                                                    audio_outs: channels,
+                                                    midi_outs: 0,
+                                                }))
+                                                .await
                                             {
-                                                failures
-                                                    .push(format!("{} ({e})", path.display()));
+                                                failures.push(format!("{} ({e})", path.display()));
                                                 continue;
                                             }
                                             if let Err(e) = CLIENT
@@ -1869,8 +1858,7 @@ impl Maolan {
                                                 }))
                                                 .await
                                             {
-                                                failures
-                                                    .push(format!("{} ({e})", path.display()));
+                                                failures.push(format!("{} ({e})", path.display()));
                                                 continue;
                                             }
                                         }
@@ -1879,7 +1867,6 @@ impl Maolan {
                                         }
                                     }
                                 } else if Self::is_import_midi_path(&path) {
-                                    // Start progress for MIDI
                                     let _ = tx.send(Message::ImportProgress {
                                         file_index,
                                         total_files,
@@ -1898,19 +1885,17 @@ impl Maolan {
                                             let track_name =
                                                 Self::unique_track_name(&base, &mut used_names);
 
-                                            if let Err(e) =
-                                                CLIENT
-                                                    .send(EngineMessage::Request(Action::AddTrack {
-                                                        name: track_name.clone(),
-                                                        audio_ins: 0,
-                                                        midi_ins: 1,
-                                                        audio_outs: 0,
-                                                        midi_outs: 1,
-                                                    }))
-                                                    .await
+                                            if let Err(e) = CLIENT
+                                                .send(EngineMessage::Request(Action::AddTrack {
+                                                    name: track_name.clone(),
+                                                    audio_ins: 0,
+                                                    midi_ins: 1,
+                                                    audio_outs: 0,
+                                                    midi_outs: 1,
+                                                }))
+                                                .await
                                             {
-                                                failures
-                                                    .push(format!("{} ({e})", path.display()));
+                                                failures.push(format!("{} ({e})", path.display()));
                                                 continue;
                                             }
                                             if let Err(e) = CLIENT
@@ -1924,8 +1909,7 @@ impl Maolan {
                                                 }))
                                                 .await
                                             {
-                                                failures
-                                                    .push(format!("{} ({e})", path.display()));
+                                                failures.push(format!("{} ({e})", path.display()));
                                                 continue;
                                             }
                                         }
@@ -1934,7 +1918,6 @@ impl Maolan {
                                         }
                                     }
 
-                                    // Complete progress for MIDI
                                     let _ = tx.send(Message::ImportProgress {
                                         file_index,
                                         total_files,
@@ -1954,7 +1937,6 @@ impl Maolan {
                                 error!("Import failed: {err}");
                             }
 
-                            // Send final completion message
                             let _ = tx.send(Message::ImportProgress {
                                 file_index: total_files,
                                 total_files,
@@ -1987,8 +1969,7 @@ impl Maolan {
 
                 if file_index >= total_files && file_progress >= 1.0 {
                     self.import_in_progress = false;
-                    self.state.blocking_write().message =
-                        format!("Imported {total_files} file(s)");
+                    self.state.blocking_write().message = format!("Imported {total_files} file(s)");
                 } else {
                     let percent = (file_progress * 100.0) as usize;
                     let op_text = operation
@@ -2021,7 +2002,9 @@ impl Maolan {
                     state.lv2_graph_selected_plugin = None;
                 }
                 #[cfg(not(target_os = "macos"))]
-                return self.send(Action::TrackGetLv2Graph { track_name: track_name.clone() });
+                return self.send(Action::TrackGetLv2Graph {
+                    track_name: track_name.clone(),
+                });
             }
             Message::HWSelected(ref hw) => {
                 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
@@ -2029,7 +2012,6 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     #[cfg(target_os = "freebsd")]
                     {
-                        // Refresh from sndstat on each selection so bit-depth reflects current per-device data.
                         let refreshed = crate::state::discover_freebsd_audio_devices();
                         let selected = refreshed
                             .iter()

@@ -29,7 +29,6 @@ pub(super) fn kernel_midi_label(path: &str) -> String {
         (!value.is_empty()).then_some(value)
     }
 
-    // FreeBSD maps umidi nodes through uaudio units on many systems.
     let dev_id: String = basename
         .chars()
         .skip_while(|c| !c.is_ascii_digit())

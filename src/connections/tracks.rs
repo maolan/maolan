@@ -1187,9 +1187,6 @@ impl canvas::Program<Message> for Graph {
                 }
             }
 
-            // Draw MIDI hardware as track-like nodes:
-            // - MIDI IN: source-like ports on the right edge
-            // - MIDI OUT: sink-like ports on the left edge
             for (j, device) in data.opened_midi_in_hw.iter().enumerate() {
                 let label = Self::midi_device_label(&data, device);
                 let default_rect =

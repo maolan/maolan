@@ -247,10 +247,7 @@ impl<B: Backend> HwWorker<B> {
         }
         #[cfg(target_os = "macos")]
         unsafe {
-            libc::pthread_set_qos_class_self_np(
-                libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE,
-                0,
-            );
+            libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0);
         }
         let assist_state = Arc::new((Mutex::new(AssistState::default()), Condvar::new()));
         let assist_handle = Self::start_assist_thread(self.driver.clone(), assist_state.clone());
@@ -334,10 +331,7 @@ impl<B: Backend> HwWorker<B> {
             }
             #[cfg(target_os = "macos")]
             unsafe {
-                libc::pthread_set_qos_class_self_np(
-                    libc::qos_class_t::QOS_CLASS_USER_INITIATED,
-                    0,
-                );
+                libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INITIATED, 0);
             }
             let mut profiler = if profile {
                 let (cycle_samples, sample_rate) = {

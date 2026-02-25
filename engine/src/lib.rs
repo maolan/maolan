@@ -2,6 +2,8 @@
 mod alsa_worker;
 mod audio;
 pub mod client;
+#[cfg(target_os = "macos")]
+mod coreaudio_worker;
 mod engine;
 mod hw;
 mod hw_worker;
@@ -19,8 +21,6 @@ pub mod state;
 mod track;
 #[cfg(target_os = "windows")]
 mod wasapi_worker;
-#[cfg(target_os = "macos")]
-mod coreaudio_worker;
 pub mod worker;
 
 use tokio::sync::mpsc::{Sender, channel};
