@@ -1171,11 +1171,17 @@ impl Engine {
         match a {
             Action::Play => {
                 self.playing = true;
+                if let Some(driver) = self.hw_driver.as_mut() {
+                    driver.lock().set_playing(true);
+                }
                 self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
                     .await;
             }
             Action::Stop => {
                 self.playing = false;
+                if let Some(driver) = self.hw_driver.as_mut() {
+                    driver.lock().set_playing(false);
+                }
                 self.flush_recordings().await;
                 self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
                     .await;

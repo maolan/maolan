@@ -4,7 +4,7 @@ use crate::hw::common;
 use crate::hw::latency;
 use crate::hw::options::HwOptions;
 use crate::hw::prefill;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicBool};
 
 #[derive(Debug)]
 pub struct HwDriver {
@@ -14,6 +14,7 @@ pub struct HwDriver {
     sync_mode: bool,
     input_latency_frames: usize,
     output_latency_frames: usize,
+    playing: Arc<AtomicBool>,
 }
 
 impl Default for HwOptions {
@@ -41,8 +42,9 @@ impl HwDriver {
         bits: i32,
         options: HwOptions,
     ) -> std::io::Result<Self> {
-        let capture = Audio::new(path, rate, bits, true, options)?;
-        let playback = Audio::new(path, rate, bits, false, options)?;
+        let playing = Arc::new(AtomicBool::new(false));
+        let capture = Audio::new(path, rate, bits, true, options, playing.clone())?;
+        let playback = Audio::new(path, rate, bits, false, options, playing.clone())?;
         let mut driver = Self {
             capture,
             playback,
@@ -50,6 +52,7 @@ impl HwDriver {
             sync_mode: options.sync_mode,
             input_latency_frames: options.input_latency_frames,
             output_latency_frames: options.output_latency_frames,
+            playing,
         };
         driver.apply_playback_prefill();
         Ok(driver)
@@ -119,6 +122,10 @@ impl HwDriver {
             self.input_latency_frames,
             self.output_latency_frames,
         )
+    }
+
+    pub fn set_playing(&mut self, playing: bool) {
+        self.playing.store(playing, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn apply_playback_prefill(&mut self) {

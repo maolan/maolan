@@ -78,6 +78,7 @@ pub struct Audio {
     last_underrun_count: i32,
     last_overrun_count: i32,
     xrun_count: u64,
+    playing: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Audio {
@@ -165,6 +166,7 @@ impl Audio {
         bits: i32,
         input: bool,
         options: HwOptions,
+        playing: Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<Audio, std::io::Error> {
         let mut binding = File::options();
 
@@ -369,6 +371,7 @@ impl Audio {
             last_underrun_count: 0,
             last_overrun_count: 0,
             xrun_count: 0,
+            playing,
         };
 
         initial_audio.last_underrun_count = initial_audio.get_play_underruns();
@@ -708,23 +711,28 @@ impl Audio {
                 },
             );
         } else {
-            let scale_factor = convert_policy::F32_TO_I32_MAX;
-            let output_gain = self.output_gain_linear;
+            let playing = self.playing.load(std::sync::atomic::Ordering::Relaxed);
             let data_i32 = self.buffer.as_mut();
-            if !all_connected {
+            if !playing {
                 data_i32.fill(0);
+            } else {
+                let scale_factor = convert_policy::F32_TO_I32_MAX;
+                let output_gain = self.output_gain_linear;
+                if !all_connected {
+                    data_i32.fill(0);
+                }
+                crate::hw::ports::write_interleaved_from_ports(
+                    &self.channels,
+                    self.chsamples,
+                    output_gain,
+                    self.output_balance,
+                    !all_connected,
+                    |ch_idx, frame, sample| {
+                        let target_idx = frame * num_channels + ch_idx;
+                        data_i32[target_idx] = (sample.clamp(-1.0, 1.0) * scale_factor) as i32;
+                    },
+                );
             }
-            crate::hw::ports::write_interleaved_from_ports(
-                &self.channels,
-                self.chsamples,
-                output_gain,
-                self.output_balance,
-                !all_connected,
-                |ch_idx, frame, sample| {
-                    let target_idx = frame * num_channels + ch_idx;
-                    data_i32[target_idx] = (sample.clamp(-1.0, 1.0) * scale_factor) as i32;
-                },
-            );
         }
     }
 }
