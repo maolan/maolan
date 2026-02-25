@@ -9,6 +9,7 @@ use crate::audio::io::AudioIO;
 use alsa::pcm::{Access, Format, HwParams, PCM, State};
 use alsa::{Direction, ValueOr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use super::midi_hub::MidiHub;
 pub use super::options::HwOptions;
@@ -50,6 +51,8 @@ pub struct HwDriver {
     playback_buffer_i8: Vec<i8>,
     playback_buffer_i16: Vec<i16>,
     playback_buffer_i32: Vec<i32>,
+    playing: Arc<AtomicBool>,
+    xrun_count: u64,
 }
 
 impl std::fmt::Debug for HwDriver {
@@ -121,7 +124,7 @@ impl HwDriver {
             .map(|_| Arc::new(AudioIO::new(period)))
             .collect();
 
-        Ok(Self {
+        let mut driver = Self {
             capture,
             playback,
             audio_ins,
@@ -144,7 +147,46 @@ impl HwDriver {
             playback_buffer_i8: vec![0; period * channels_out],
             playback_buffer_i16: vec![0; period * channels_out],
             playback_buffer_i32: vec![0; period * channels_out],
-        })
+            playing: Arc::new(AtomicBool::new(false)),
+            xrun_count: 0,
+        };
+        driver.prefill_playback();
+        Ok(driver)
+    }
+
+    pub fn new(device: &str, rate: i32, bits: i32) -> Result<Self, String> {
+        Self::new_with_options(device, rate, bits, HwOptions::default())
+    }
+
+    pub fn set_playing(&mut self, playing: bool) {
+        self.playing.store(playing, Ordering::Relaxed);
+    }
+
+    fn prefill_playback(&mut self) {
+        let total_frames = self.period_frames * self.nperiods.max(1);
+        match self.playback_format {
+            SampleFormat::S8 => {
+                let silence = vec![0i8; total_frames * self.channels_out];
+                if let Ok(out_io) = self.playback.io_i8() {
+                    let _ = out_io.writei(&silence);
+                }
+            }
+            SampleFormat::S16LE | SampleFormat::S16BE => {
+                let silence = vec![0i16; total_frames * self.channels_out];
+                if let Ok(out_io) = self.playback.io_i16() {
+                    let _ = out_io.writei(&silence);
+                }
+            }
+            SampleFormat::S24LE
+            | SampleFormat::S24BE
+            | SampleFormat::S32LE
+            | SampleFormat::S32BE => {
+                let silence = vec![0i32; total_frames * self.channels_out];
+                if let Ok(out_io) = self.playback.io_i32() {
+                    let _ = out_io.writei(&silence);
+                }
+            }
+        }
     }
 
     pub fn input_channels(&self) -> usize {
@@ -182,6 +224,8 @@ impl HwDriver {
 
     pub fn run_cycle(&mut self) -> Result<(), String> {
         let frames = self.period_frames;
+
+        // --- Capture read ---
         match self.capture_format {
             SampleFormat::S8 => {
                 let in_io = self
@@ -190,9 +234,13 @@ impl HwDriver {
                     .map_err(|e| error_fmt::backend_io_error("ALSA", "capture", e))?;
                 if let Err(e) = in_io.readi(&mut self.capture_buffer_i8) {
                     if self.capture.state() == State::XRun {
+                        self.xrun_count += 1;
+                        tracing::warn!("ALSA capture xrun #{}", self.xrun_count);
                         let _ = self.capture.prepare();
+                        self.capture_buffer_i8.fill(0);
+                    } else {
+                        return Err(error_fmt::backend_rw_error("ALSA", "capture", "read", e));
                     }
-                    return Err(error_fmt::backend_rw_error("ALSA", "capture", "read", e));
                 }
             }
             SampleFormat::S16LE | SampleFormat::S16BE => {
@@ -202,9 +250,13 @@ impl HwDriver {
                     .map_err(|e| error_fmt::backend_io_error("ALSA", "capture", e))?;
                 if let Err(e) = in_io.readi(&mut self.capture_buffer_i16) {
                     if self.capture.state() == State::XRun {
+                        self.xrun_count += 1;
+                        tracing::warn!("ALSA capture xrun #{}", self.xrun_count);
                         let _ = self.capture.prepare();
+                        self.capture_buffer_i16.fill(0);
+                    } else {
+                        return Err(error_fmt::backend_rw_error("ALSA", "capture", "read", e));
                     }
-                    return Err(error_fmt::backend_rw_error("ALSA", "capture", "read", e));
                 }
             }
             SampleFormat::S24LE
@@ -217,178 +269,261 @@ impl HwDriver {
                     .map_err(|e| error_fmt::backend_io_error("ALSA", "capture", e))?;
                 if let Err(e) = in_io.readi(&mut self.capture_buffer_i32) {
                     if self.capture.state() == State::XRun {
+                        self.xrun_count += 1;
+                        tracing::warn!("ALSA capture xrun #{}", self.xrun_count);
                         let _ = self.capture.prepare();
+                        self.capture_buffer_i32.fill(0);
+                    } else {
+                        return Err(error_fmt::backend_rw_error("ALSA", "capture", "read", e));
                     }
-                    return Err(error_fmt::backend_rw_error("ALSA", "capture", "read", e));
                 }
             }
         }
 
+        // --- Capture deinterleave (connected-only optimization) ---
+        let all_in_connected = self.audio_ins.iter().all(ports::has_audio_connections);
         match self.capture_format {
             SampleFormat::S8 => {
-                ports::fill_ports_from_interleaved(&self.audio_ins, frames, false, |ch, frame| {
-                    let idx = frame * self.channels_in + ch;
-                    let sample = self.capture_buffer_i8.get(idx).copied().unwrap_or(0);
-                    (sample as f32) * convert_policy::F32_FROM_I8
-                });
+                ports::fill_ports_from_interleaved(
+                    &self.audio_ins,
+                    frames,
+                    !all_in_connected,
+                    |ch, frame| {
+                        let idx = frame * self.channels_in + ch;
+                        let sample = self.capture_buffer_i8.get(idx).copied().unwrap_or(0);
+                        (sample as f32) * convert_policy::F32_FROM_I8
+                    },
+                );
             }
             SampleFormat::S16LE | SampleFormat::S16BE => {
                 let needs_swap = self.capture_format.needs_swap();
-                ports::fill_ports_from_interleaved(&self.audio_ins, frames, false, |ch, frame| {
-                    let idx = frame * self.channels_in + ch;
-                    let mut sample = self.capture_buffer_i16.get(idx).copied().unwrap_or(0);
-                    if needs_swap {
-                        sample = sample.swap_bytes();
-                    }
-                    (sample as f32) * convert_policy::F32_FROM_I16
-                });
+                ports::fill_ports_from_interleaved(
+                    &self.audio_ins,
+                    frames,
+                    !all_in_connected,
+                    |ch, frame| {
+                        let idx = frame * self.channels_in + ch;
+                        let mut sample =
+                            self.capture_buffer_i16.get(idx).copied().unwrap_or(0);
+                        if needs_swap {
+                            sample = sample.swap_bytes();
+                        }
+                        (sample as f32) * convert_policy::F32_FROM_I16
+                    },
+                );
             }
             SampleFormat::S24LE | SampleFormat::S24BE => {
                 let needs_swap = self.capture_format.needs_swap();
                 let is_be = matches!(self.capture_format, SampleFormat::S24BE);
-                ports::fill_ports_from_interleaved(&self.audio_ins, frames, false, |ch, frame| {
-                    let idx = frame * self.channels_in + ch;
-                    let mut raw = self.capture_buffer_i32.get(idx).copied().unwrap_or(0);
-                    if needs_swap {
-                        raw = raw.swap_bytes();
-                    }
-                    let sample = if is_be { raw >> 8 } else { sign_extend_24(raw) };
-                    (sample as f32) * convert_policy::F32_FROM_I24
-                });
+                ports::fill_ports_from_interleaved(
+                    &self.audio_ins,
+                    frames,
+                    !all_in_connected,
+                    |ch, frame| {
+                        let idx = frame * self.channels_in + ch;
+                        let mut raw =
+                            self.capture_buffer_i32.get(idx).copied().unwrap_or(0);
+                        if needs_swap {
+                            raw = raw.swap_bytes();
+                        }
+                        let sample = if is_be { raw >> 8 } else { sign_extend_24(raw) };
+                        (sample as f32) * convert_policy::F32_FROM_I24
+                    },
+                );
             }
             SampleFormat::S32LE | SampleFormat::S32BE => {
                 let needs_swap = self.capture_format.needs_swap();
-                ports::fill_ports_from_interleaved(&self.audio_ins, frames, false, |ch, frame| {
-                    let idx = frame * self.channels_in + ch;
-                    let mut sample = self.capture_buffer_i32.get(idx).copied().unwrap_or(0);
-                    if needs_swap {
-                        sample = sample.swap_bytes();
-                    }
-                    (sample as f32) * convert_policy::F32_FROM_I32
-                });
+                ports::fill_ports_from_interleaved(
+                    &self.audio_ins,
+                    frames,
+                    !all_in_connected,
+                    |ch, frame| {
+                        let idx = frame * self.channels_in + ch;
+                        let mut sample =
+                            self.capture_buffer_i32.get(idx).copied().unwrap_or(0);
+                        if needs_swap {
+                            sample = sample.swap_bytes();
+                        }
+                        (sample as f32) * convert_policy::F32_FROM_I32
+                    },
+                );
             }
         }
 
+        // --- Playback ---
+        let is_playing = self.playing.load(Ordering::Relaxed);
         let gain = self.output_gain_linear;
         let balance = self.output_balance;
+        let all_out_connected = self.audio_outs.iter().all(ports::has_audio_connections);
 
         match self.playback_format {
             SampleFormat::S8 => {
-                ports::write_interleaved_from_ports(
-                    &self.audio_outs,
-                    frames,
-                    gain,
-                    balance,
-                    false,
-                    |ch, frame, sample| {
-                        let idx = frame * self.channels_out + ch;
-                        let v = (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I8) as i8;
-                        if let Some(dst) = self.playback_buffer_i8.get_mut(idx) {
-                            *dst = v;
-                        }
-                    },
-                );
+                if is_playing {
+                    if !all_out_connected {
+                        self.playback_buffer_i8.fill(0);
+                    }
+                    ports::write_interleaved_from_ports(
+                        &self.audio_outs,
+                        frames,
+                        gain,
+                        balance,
+                        !all_out_connected,
+                        |ch, frame, sample| {
+                            let idx = frame * self.channels_out + ch;
+                            let v = (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I8) as i8;
+                            if let Some(dst) = self.playback_buffer_i8.get_mut(idx) {
+                                *dst = v;
+                            }
+                        },
+                    );
+                } else {
+                    self.playback_buffer_i8.fill(0);
+                }
                 let out_io = self
                     .playback
                     .io_i8()
                     .map_err(|e| error_fmt::backend_io_error("ALSA", "playback", e))?;
                 if let Err(e) = out_io.writei(&self.playback_buffer_i8) {
                     if self.playback.state() == State::XRun {
+                        self.xrun_count += 1;
+                        tracing::warn!("ALSA playback xrun #{}", self.xrun_count);
                         let _ = self.playback.prepare();
+                    } else {
+                        return Err(error_fmt::backend_rw_error(
+                            "ALSA", "playback", "write", e,
+                        ));
                     }
-                    return Err(error_fmt::backend_rw_error("ALSA", "playback", "write", e));
                 }
             }
             SampleFormat::S16LE | SampleFormat::S16BE => {
                 let needs_swap = self.playback_format.needs_swap();
-                ports::write_interleaved_from_ports(
-                    &self.audio_outs,
-                    frames,
-                    gain,
-                    balance,
-                    false,
-                    |ch, frame, sample| {
-                        let idx = frame * self.channels_out + ch;
-                        let mut v = (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I16) as i16;
-                        if needs_swap {
-                            v = v.swap_bytes();
-                        }
-                        if let Some(dst) = self.playback_buffer_i16.get_mut(idx) {
-                            *dst = v;
-                        }
-                    },
-                );
+                if is_playing {
+                    if !all_out_connected {
+                        self.playback_buffer_i16.fill(0);
+                    }
+                    ports::write_interleaved_from_ports(
+                        &self.audio_outs,
+                        frames,
+                        gain,
+                        balance,
+                        !all_out_connected,
+                        |ch, frame, sample| {
+                            let idx = frame * self.channels_out + ch;
+                            let mut v =
+                                (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I16) as i16;
+                            if needs_swap {
+                                v = v.swap_bytes();
+                            }
+                            if let Some(dst) = self.playback_buffer_i16.get_mut(idx) {
+                                *dst = v;
+                            }
+                        },
+                    );
+                } else {
+                    self.playback_buffer_i16.fill(0);
+                }
                 let out_io = self
                     .playback
                     .io_i16()
                     .map_err(|e| error_fmt::backend_io_error("ALSA", "playback", e))?;
                 if let Err(e) = out_io.writei(&self.playback_buffer_i16) {
                     if self.playback.state() == State::XRun {
+                        self.xrun_count += 1;
+                        tracing::warn!("ALSA playback xrun #{}", self.xrun_count);
                         let _ = self.playback.prepare();
+                    } else {
+                        return Err(error_fmt::backend_rw_error(
+                            "ALSA", "playback", "write", e,
+                        ));
                     }
-                    return Err(error_fmt::backend_rw_error("ALSA", "playback", "write", e));
                 }
             }
             SampleFormat::S24LE | SampleFormat::S24BE => {
                 let needs_swap = self.playback_format.needs_swap();
                 let is_be = matches!(self.playback_format, SampleFormat::S24BE);
-                ports::write_interleaved_from_ports(
-                    &self.audio_outs,
-                    frames,
-                    gain,
-                    balance,
-                    false,
-                    |ch, frame, sample| {
-                        let idx = frame * self.channels_out + ch;
-                        let v24 = (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I24) as i32;
-                        let mut v = if is_be { v24 << 8 } else { v24 & 0x00FF_FFFF };
-                        if needs_swap {
-                            v = v.swap_bytes();
-                        }
-                        if let Some(dst) = self.playback_buffer_i32.get_mut(idx) {
-                            *dst = v;
-                        }
-                    },
-                );
+                if is_playing {
+                    if !all_out_connected {
+                        self.playback_buffer_i32.fill(0);
+                    }
+                    ports::write_interleaved_from_ports(
+                        &self.audio_outs,
+                        frames,
+                        gain,
+                        balance,
+                        !all_out_connected,
+                        |ch, frame, sample| {
+                            let idx = frame * self.channels_out + ch;
+                            let v24 =
+                                (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I24) as i32;
+                            let mut v = if is_be { v24 << 8 } else { v24 & 0x00FF_FFFF };
+                            if needs_swap {
+                                v = v.swap_bytes();
+                            }
+                            if let Some(dst) = self.playback_buffer_i32.get_mut(idx) {
+                                *dst = v;
+                            }
+                        },
+                    );
+                } else {
+                    self.playback_buffer_i32.fill(0);
+                }
                 let out_io = self
                     .playback
                     .io_i32()
                     .map_err(|e| error_fmt::backend_io_error("ALSA", "playback", e))?;
                 if let Err(e) = out_io.writei(&self.playback_buffer_i32) {
                     if self.playback.state() == State::XRun {
+                        self.xrun_count += 1;
+                        tracing::warn!("ALSA playback xrun #{}", self.xrun_count);
                         let _ = self.playback.prepare();
+                    } else {
+                        return Err(error_fmt::backend_rw_error(
+                            "ALSA", "playback", "write", e,
+                        ));
                     }
-                    return Err(error_fmt::backend_rw_error("ALSA", "playback", "write", e));
                 }
             }
             SampleFormat::S32LE | SampleFormat::S32BE => {
                 let needs_swap = self.playback_format.needs_swap();
-                ports::write_interleaved_from_ports(
-                    &self.audio_outs,
-                    frames,
-                    gain,
-                    balance,
-                    false,
-                    |ch, frame, sample| {
-                        let idx = frame * self.channels_out + ch;
-                        let mut v = (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I32) as i32;
-                        if needs_swap {
-                            v = v.swap_bytes();
-                        }
-                        if let Some(dst) = self.playback_buffer_i32.get_mut(idx) {
-                            *dst = v;
-                        }
-                    },
-                );
+                if is_playing {
+                    if !all_out_connected {
+                        self.playback_buffer_i32.fill(0);
+                    }
+                    ports::write_interleaved_from_ports(
+                        &self.audio_outs,
+                        frames,
+                        gain,
+                        balance,
+                        !all_out_connected,
+                        |ch, frame, sample| {
+                            let idx = frame * self.channels_out + ch;
+                            let mut v =
+                                (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I32) as i32;
+                            if needs_swap {
+                                v = v.swap_bytes();
+                            }
+                            if let Some(dst) = self.playback_buffer_i32.get_mut(idx) {
+                                *dst = v;
+                            }
+                        },
+                    );
+                } else {
+                    self.playback_buffer_i32.fill(0);
+                }
                 let out_io = self
                     .playback
                     .io_i32()
                     .map_err(|e| error_fmt::backend_io_error("ALSA", "playback", e))?;
                 if let Err(e) = out_io.writei(&self.playback_buffer_i32) {
                     if self.playback.state() == State::XRun {
+                        self.xrun_count += 1;
+                        tracing::warn!("ALSA playback xrun #{}", self.xrun_count);
                         let _ = self.playback.prepare();
+                    } else {
+                        return Err(error_fmt::backend_rw_error(
+                            "ALSA", "playback", "write", e,
+                        ));
                     }
-                    return Err(error_fmt::backend_rw_error("ALSA", "playback", "write", e));
                 }
             }
         }
