@@ -19,9 +19,10 @@ use crate::message::{Lv2PluginState, Lv2StatePortValue, Lv2StateProperty};
 use crate::midi::io::MidiEvent;
 use lilv::{World, instance::ActiveInstance, node::Node, plugin::Plugin};
 use lv2_raw::{
-    LV2_ATOM__FRAMETIME, LV2_ATOM__SEQUENCE, LV2_URID__MAP, LV2AtomSequence, LV2AtomSequenceBody,
-    LV2Feature, LV2Urid, LV2UridMap, LV2UridMapHandle, lv2_atom_sequence_append_event,
-    lv2_atom_sequence_begin, lv2_atom_sequence_is_end, lv2_atom_sequence_next,
+    LV2_ATOM__FRAMETIME, LV2_ATOM__INT, LV2_ATOM__SEQUENCE, LV2_URID__MAP, LV2_URID__UNMAP,
+    LV2AtomSequence, LV2AtomSequenceBody, LV2Feature, LV2Urid, LV2UridMap, LV2UridMapHandle,
+    lv2_atom_sequence_append_event, lv2_atom_sequence_begin, lv2_atom_sequence_is_end,
+    lv2_atom_sequence_next,
 };
 use tracing::error;
 
@@ -88,16 +89,45 @@ struct LoadedPlugin {
 struct UridMapState {
     next_urid: LV2Urid,
     by_uri: HashMap<String, LV2Urid>,
+    by_urid: HashMap<LV2Urid, CString>,
 }
 
 struct UridMapFeature {
-    _uri: CString,
-    feature: LV2Feature,
+    _map_uri: CString,
+    _unmap_uri: CString,
+    map_feature: LV2Feature,
+    unmap_feature: LV2Feature,
     _map: Box<LV2UridMap>,
+    _unmap: Box<LV2UridUnmap>,
     _state: Box<Mutex<UridMapState>>,
 }
 
 unsafe impl Send for UridMapFeature {}
+
+#[repr(C)]
+struct LV2UridUnmap {
+    handle: LV2UridMapHandle,
+    unmap: extern "C" fn(handle: LV2UridMapHandle, urid: LV2Urid) -> *const c_char,
+}
+
+struct InstantiateFeatureSet {
+    _feature_uris: Vec<CString>,
+    features: Vec<LV2Feature>,
+    _option_values: Vec<u32>,
+    _options: Vec<LV2OptionsOption>,
+    _flag_feature_data: Box<u8>,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct LV2OptionsOption {
+    context: u32,
+    subject: u32,
+    key: u32,
+    size: u32,
+    type_: u32,
+    value: *const c_void,
+}
 
 struct UiController {
     scalar_values: Arc<Mutex<Vec<f32>>>,
@@ -323,6 +353,14 @@ const LV2_STATE_INTERFACE_URI: &str = "http://lv2plug.in/ns/ext/state#interface"
 const LV2_STATE_MAP_PATH_URI: &str = "http://lv2plug.in/ns/ext/state#mapPath";
 const LV2_STATE_MAKE_PATH_URI: &str = "http://lv2plug.in/ns/ext/state#makePath";
 const LV2_STATE_FREE_PATH_URI: &str = "http://lv2plug.in/ns/ext/state#freePath";
+const LV2_OPTIONS__OPTIONS: &str = "http://lv2plug.in/ns/ext/options#options";
+const LV2_BUF_SIZE__BOUNDED_BLOCK_LENGTH: &str =
+    "http://lv2plug.in/ns/ext/buf-size#boundedBlockLength";
+const LV2_BUF_SIZE__MIN_BLOCK_LENGTH: &str = "http://lv2plug.in/ns/ext/buf-size#minBlockLength";
+const LV2_BUF_SIZE__MAX_BLOCK_LENGTH: &str = "http://lv2plug.in/ns/ext/buf-size#maxBlockLength";
+const LV2_BUF_SIZE__NOMINAL_BLOCK_LENGTH: &str =
+    "http://lv2plug.in/ns/ext/buf-size#nominalBlockLength";
+const LV2_URID__MAP_URI_TYPO_COMPAT: &str = "http://lv2plug.in/ns//ext/urid#map";
 
 const RTLD_NOW_GLOBAL: i32 = 0x102;
 const GTK_WINDOW_TOPLEVEL: i32 = 0;
@@ -1058,10 +1096,11 @@ impl Lv2Processor {
             .unwrap_or(std::ptr::null_mut())
     }
 
-    fn state_feature_ptrs(&self) -> [*const LV2Feature; 5] {
+    fn state_feature_ptrs(&self) -> [*const LV2Feature; 6] {
         let sp = self._state_path_feature.feature_ptrs();
         [
-            self._urid_feature.feature() as *const LV2Feature,
+            self._urid_feature.map_feature() as *const LV2Feature,
+            self._urid_feature.unmap_feature() as *const LV2Feature,
             sp[0],
             sp[1],
             sp[2],
@@ -1709,8 +1748,8 @@ fn run_gtk_suil_ui(
         ui_resize: Some(host_ui_resize),
     };
     let urid_raw = LV2FeatureRaw {
-        uri: urid_feature.feature().uri,
-        data: urid_feature.feature().data,
+        uri: urid_feature.map_feature().uri,
+        data: urid_feature.map_feature().data,
     };
     let parent_raw = LV2FeatureRaw {
         uri: parent_uri.as_ptr(),
@@ -2051,8 +2090,8 @@ fn run_external_ui(
         e
     })?;
     let urid_raw = LV2FeatureRaw {
-        uri: urid_feature.feature().uri,
-        data: urid_feature.feature().data,
+        uri: urid_feature.map_feature().uri,
+        data: urid_feature.map_feature().data,
     };
     let instance_access_uri = CString::new(LV2_INSTANCE_ACCESS).map_err(|e| e.to_string())?;
     let instance_access_raw = lv2_handle.map(|h| LV2FeatureRaw {
@@ -2154,11 +2193,16 @@ fn instantiate_plugin(
     sample_rate: f64,
     uri: &str,
     urid_feature: &mut UridMapFeature,
-    _state_path_feature: &mut StatePathFeature,
+    state_path_feature: &mut StatePathFeature,
 ) -> Result<lilv::instance::Instance, String> {
     let required_features = plugin_feature_uris(plugin);
-    let features = [urid_feature.feature()];
-    unsafe { plugin.instantiate(sample_rate, features) }.ok_or_else(|| {
+    let feature_set = build_instantiate_features(
+        &required_features,
+        urid_feature,
+        state_path_feature,
+    )?;
+    let feature_refs: Vec<&LV2Feature> = feature_set.features.iter().collect();
+    unsafe { plugin.instantiate(sample_rate, feature_refs) }.ok_or_else(|| {
         if required_features.is_empty() {
             format!(
                 "Failed to instantiate '{uri}'. It likely requires LV2 host features that are not wired yet."
@@ -2172,35 +2216,162 @@ fn instantiate_plugin(
     })
 }
 
+fn build_instantiate_features(
+    required_features: &[String],
+    urid_feature: &UridMapFeature,
+    state_path_feature: &StatePathFeature,
+) -> Result<InstantiateFeatureSet, String> {
+    let mut seen = HashSet::<String>::new();
+    let mut feature_uris = Vec::<CString>::new();
+    let mut features = Vec::<LV2Feature>::new();
+
+    let mut push_feature =
+        |uri: &str, data: *mut c_void, allow_duplicate: bool| -> Result<(), String> {
+            if !allow_duplicate && !seen.insert(uri.to_string()) {
+                return Ok(());
+            }
+            let c_uri = CString::new(uri)
+                .map_err(|e| format!("Invalid LV2 feature URI '{uri}' for instantiate: {e}"))?;
+            let feature = LV2Feature {
+                uri: c_uri.as_ptr(),
+                data,
+            };
+            feature_uris.push(c_uri);
+            features.push(feature);
+            Ok(())
+        };
+
+    push_feature(LV2_URID__MAP, urid_feature.map_feature().data, false)?;
+    push_feature(LV2_URID__UNMAP, urid_feature.unmap_feature().data, false)?;
+
+    let state_features = state_path_feature.feature_ptrs();
+    for feature_ptr in state_features {
+        if feature_ptr.is_null() {
+            continue;
+        }
+        let feature = unsafe { &*feature_ptr };
+        let uri = unsafe { CStr::from_ptr(feature.uri) }
+            .to_str()
+            .map_err(|e| format!("Invalid LV2 feature URI from state path feature: {e}"))?;
+        push_feature(uri, feature.data, false)?;
+    }
+
+    let option_values = vec![1_u32, 8192_u32, 1024_u32];
+    let int_type = urid_feature.map_uri(LV2_ATOM__INT);
+    let min_key = urid_feature.map_uri(LV2_BUF_SIZE__MIN_BLOCK_LENGTH.as_bytes());
+    let max_key = urid_feature.map_uri(LV2_BUF_SIZE__MAX_BLOCK_LENGTH.as_bytes());
+    let nominal_key = urid_feature.map_uri(LV2_BUF_SIZE__NOMINAL_BLOCK_LENGTH.as_bytes());
+    let mut options = vec![
+        LV2OptionsOption {
+            context: 0,
+            subject: 0,
+            key: min_key,
+            size: std::mem::size_of::<u32>() as u32,
+            type_: int_type,
+            value: (&option_values[0] as *const u32).cast::<c_void>(),
+        },
+        LV2OptionsOption {
+            context: 0,
+            subject: 0,
+            key: max_key,
+            size: std::mem::size_of::<u32>() as u32,
+            type_: int_type,
+            value: (&option_values[1] as *const u32).cast::<c_void>(),
+        },
+        LV2OptionsOption {
+            context: 0,
+            subject: 0,
+            key: nominal_key,
+            size: std::mem::size_of::<u32>() as u32,
+            type_: int_type,
+            value: (&option_values[2] as *const u32).cast::<c_void>(),
+        },
+        LV2OptionsOption {
+            context: 0,
+            subject: 0,
+            key: 0,
+            size: 0,
+            type_: 0,
+            value: std::ptr::null(),
+        },
+    ];
+    push_feature(
+        LV2_OPTIONS__OPTIONS,
+        options.as_mut_ptr().cast::<c_void>(),
+        false,
+    )?;
+
+    let flag_feature_data = Box::new(0_u8);
+
+    for required in required_features {
+        let data = match required.as_str() {
+            LV2_OPTIONS__OPTIONS => options.as_mut_ptr().cast::<c_void>(),
+            LV2_BUF_SIZE__BOUNDED_BLOCK_LENGTH => (&*flag_feature_data as *const u8)
+                .cast_mut()
+                .cast::<c_void>(),
+            LV2_URID__MAP_URI_TYPO_COMPAT => urid_feature.map_feature().data,
+            _ => (&*flag_feature_data as *const u8).cast_mut().cast::<c_void>(),
+        };
+        push_feature(required, data, false)?;
+    }
+
+    Ok(InstantiateFeatureSet {
+        _feature_uris: feature_uris,
+        features,
+        _option_values: option_values,
+        _options: options,
+        _flag_feature_data: flag_feature_data,
+    })
+}
+
 impl UridMapFeature {
     fn new() -> Result<Self, String> {
         let mut map = Box::new(LV2UridMap {
             handle: std::ptr::null_mut(),
             map: urid_map_callback,
         });
+        let mut unmap = Box::new(LV2UridUnmap {
+            handle: std::ptr::null_mut(),
+            unmap: urid_unmap_callback,
+        });
         let state = Box::new(Mutex::new(UridMapState {
             next_urid: 1,
             by_uri: HashMap::new(),
+            by_urid: HashMap::new(),
         }));
         map.handle = (&*state as *const Mutex<UridMapState>) as *mut c_void;
+        unmap.handle = (&*state as *const Mutex<UridMapState>) as *mut c_void;
 
-        let uri =
+        let map_uri =
             CString::new(LV2_URID__MAP).map_err(|e| format!("Invalid URID feature URI: {e}"))?;
-        let feature = LV2Feature {
-            uri: uri.as_ptr(),
+        let map_feature = LV2Feature {
+            uri: map_uri.as_ptr(),
             data: (&mut *map as *mut LV2UridMap).cast::<c_void>(),
+        };
+        let unmap_uri =
+            CString::new(LV2_URID__UNMAP).map_err(|e| format!("Invalid URID feature URI: {e}"))?;
+        let unmap_feature = LV2Feature {
+            uri: unmap_uri.as_ptr(),
+            data: (&mut *unmap as *mut LV2UridUnmap).cast::<c_void>(),
         };
 
         Ok(Self {
-            _uri: uri,
-            feature,
+            _map_uri: map_uri,
+            _unmap_uri: unmap_uri,
+            map_feature,
+            unmap_feature,
             _map: map,
+            _unmap: unmap,
             _state: state,
         })
     }
 
-    fn feature(&self) -> &LV2Feature {
-        &self.feature
+    fn map_feature(&self) -> &LV2Feature {
+        &self.map_feature
+    }
+
+    fn unmap_feature(&self) -> &LV2Feature {
+        &self.unmap_feature
     }
 
     fn map_uri(&self, uri: &[u8]) -> LV2Urid {
@@ -2217,6 +2388,9 @@ impl UridMapFeature {
         let mapped = state.next_urid;
         state.next_urid = state.next_urid.saturating_add(1);
         state.by_uri.insert(uri_str.to_string(), mapped);
+        if let Ok(uri_c) = CString::new(uri_str) {
+            state.by_urid.insert(mapped, uri_c);
+        }
         mapped
     }
 
@@ -2225,9 +2399,9 @@ impl UridMapFeature {
             return None;
         };
         state
-            .by_uri
-            .iter()
-            .find_map(|(uri, mapped)| (*mapped == urid).then(|| uri.clone()))
+            .by_urid
+            .get(&urid)
+            .and_then(|uri| uri.to_str().ok().map(str::to_string))
     }
 }
 
@@ -2553,7 +2727,28 @@ extern "C" fn urid_map_callback(handle: LV2UridMapHandle, uri: *const c_char) ->
     let mapped = state.next_urid;
     state.next_urid = state.next_urid.saturating_add(1);
     state.by_uri.insert(uri_str.to_string(), mapped);
+    if let Ok(uri_c) = CString::new(uri_str) {
+        state.by_urid.insert(mapped, uri_c);
+    }
     mapped
+}
+
+extern "C" fn urid_unmap_callback(
+    handle: LV2UridMapHandle,
+    urid: LV2Urid,
+) -> *const c_char {
+    if handle.is_null() || urid == 0 {
+        return std::ptr::null();
+    }
+    let state_mutex = unsafe { &*(handle as *const Mutex<UridMapState>) };
+    let Ok(state) = state_mutex.lock() else {
+        return std::ptr::null();
+    };
+    state
+        .by_urid
+        .get(&urid)
+        .map(|uri| uri.as_ptr())
+        .unwrap_or(std::ptr::null())
 }
 
 fn plugin_port_counts(
