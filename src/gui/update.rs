@@ -2,7 +2,7 @@ use super::{CLIENT, MIN_CLIP_WIDTH_PX, Maolan, platform};
 use crate::{
     connections,
     message::Message,
-    state::{ConnectionViewSelection, HW, Resizing, Track, View},
+    state::{ConnectionViewSelection, HW, PianoRollData, Resizing, Track, View},
 };
 use iced::widget::Id;
 use iced::{Length, Point, Task, mouse};
@@ -184,6 +184,7 @@ impl Maolan {
                         state.lv2_graphs_by_track.clear();
                     }
                     state.message = "New session".to_string();
+                    state.piano_roll = None;
                 }
                 return Task::batch(tasks);
             }
@@ -1180,27 +1181,35 @@ impl Maolan {
                     }
                 };
 
-                // Build new file name
+                // Build new file name.
+                // MIDI clip files are intentionally NOT renamed on disk here; they are persisted on save.
+                let midi_ext = std::path::Path::new(&old_name)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|s| s.to_ascii_lowercase())
+                    .filter(|ext| ext == "mid" || ext == "midi")
+                    .unwrap_or_else(|| "mid".to_string());
                 let new_file_name = match dialog.kind {
                     Kind::Audio => format!("audio/{}.wav", new_name),
-                    Kind::MIDI => format!("midi/{}", new_name),
+                    Kind::MIDI => format!("midi/{}.{}", new_name, midi_ext),
                 };
 
-                // Check if target already exists
-                let new_path = session_dir.join(&new_file_name);
-                if new_path.exists() {
-                    state.message = format!("File '{}' already exists", new_file_name);
-                    state.clip_rename_dialog = None;
-                    return Task::none();
-                }
-
-                // Rename the physical file
-                let old_path = session_dir.join(&old_name);
-                if old_path.exists() {
-                    if let Err(e) = std::fs::rename(&old_path, &new_path) {
-                        state.message = format!("Failed to rename file: {}", e);
+                if dialog.kind == Kind::Audio {
+                    // Audio clip files are renamed immediately.
+                    let new_path = session_dir.join(&new_file_name);
+                    if new_path.exists() {
+                        state.message = format!("File '{}' already exists", new_file_name);
                         state.clip_rename_dialog = None;
                         return Task::none();
+                    }
+
+                    let old_path = session_dir.join(&old_name);
+                    if old_path.exists() {
+                        if let Err(e) = std::fs::rename(&old_path, &new_path) {
+                            state.message = format!("Failed to rename file: {}", e);
+                            state.clip_rename_dialog = None;
+                            return Task::none();
+                        }
                     }
                 }
 
@@ -1432,6 +1441,9 @@ impl Maolan {
                                 return Task::batch(tasks);
                             }
                         }
+                    }
+                    crate::state::View::PianoRoll => {
+                        return self.update(Message::RemoveSelected);
                     }
                 }
             }
@@ -2265,10 +2277,60 @@ impl Maolan {
                 }
             }
             Message::Workspace => {
-                self.state.blocking_write().view = View::Workspace;
+                let mut state = self.state.blocking_write();
+                state.view = View::Workspace;
             }
             Message::Connections => {
-                self.state.blocking_write().view = View::Connections;
+                let mut state = self.state.blocking_write();
+                state.view = View::Connections;
+            }
+            Message::OpenMidiPianoRoll {
+                ref track_idx,
+                clip_idx,
+            } => {
+                let (clip_name, clip_length) = {
+                    let state = self.state.blocking_read();
+                    let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) else {
+                        return Task::none();
+                    };
+                    let Some(clip) = track.midi.clips.get(clip_idx) else {
+                        return Task::none();
+                    };
+                    (clip.name.clone(), clip.length.max(1))
+                };
+                let path = {
+                    let clip_path = std::path::PathBuf::from(&clip_name);
+                    if clip_path.is_absolute() {
+                        clip_path
+                    } else if let Some(session) = &self.session_dir {
+                        session.join(&clip_name)
+                    } else {
+                        clip_path
+                    }
+                };
+                match Self::parse_midi_clip_for_piano_roll(&path, self.playback_rate_hz) {
+                    Ok((notes, controllers, parsed_len)) => {
+                        let mut state = self.state.blocking_write();
+                        state.piano_roll = Some(PianoRollData {
+                            track_idx: track_idx.clone(),
+                            clip_idx,
+                            clip_name: clip_name.clone(),
+                            clip_length_samples: parsed_len.max(clip_length),
+                            notes,
+                            controllers,
+                        });
+                        state.view = View::PianoRoll;
+                        state.message = format!("Opened piano roll for '{}'", clip_name);
+                    }
+                    Err(e) => {
+                        self.state.blocking_write().message =
+                            format!("Failed to open MIDI clip '{}': {}", clip_name, e);
+                    }
+                }
+            }
+            Message::ClosePianoRoll => {
+                let mut state = self.state.blocking_write();
+                state.view = View::Workspace;
             }
             Message::OpenTrackPlugins(ref track_name) => {
                 {

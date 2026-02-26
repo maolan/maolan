@@ -568,6 +568,10 @@ fn view_track_elements(
                     clip_idx: index,
                     kind: Kind::MIDI,
                 })
+                .on_double_click(Message::OpenMidiPianoRoll {
+                    track_idx: track_name_cloned.clone(),
+                    clip_idx: index,
+                })
                 .on_move({
                     let track_name_for_drag_closure = track_name_cloned.clone();
                     move |point| {

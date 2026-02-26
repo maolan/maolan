@@ -536,11 +536,9 @@ impl Engine {
             if !track.armed {
                 continue;
             }
-            if track.record_tap_outs.is_empty() {
-                continue;
-            }
-            let channels = track.record_tap_outs.len();
-            let frames = track.record_tap_outs[0].len();
+            let audio_channels = track.record_tap_outs.len();
+            let audio_frames = track.record_tap_outs.first().map(|ch| ch.len()).unwrap_or(0);
+            let frames = audio_frames.max(self.current_cycle_samples());
             if frames == 0 {
                 continue;
             }
@@ -551,24 +549,26 @@ impl Engine {
                     continue;
                 }
 
-                let audio_entry = self
-                    .audio_recordings
-                    .entry(name.clone())
-                    .or_insert_with(|| RecordingSession {
-                        start_sample: segment_start,
-                        samples: Vec::with_capacity(segment_len * channels * 2),
-                        channels,
-                        file_name: Self::next_recording_file_name(name),
-                    });
-                if audio_entry.channels != channels {
-                    continue;
-                }
-                if let Some(entry) = self.audio_recordings.get_mut(name.as_str()) {
-                    let from = frame_offset;
-                    let to = frame_offset.saturating_add(segment_len);
-                    for frame in from..to {
-                        for ch in 0..channels {
-                            entry.samples.push(track.record_tap_outs[ch][frame]);
+                if audio_channels > 0 && audio_frames > 0 {
+                    let audio_entry = self
+                        .audio_recordings
+                        .entry(name.clone())
+                        .or_insert_with(|| RecordingSession {
+                            start_sample: segment_start,
+                            samples: Vec::with_capacity(segment_len * audio_channels * 2),
+                            channels: audio_channels,
+                            file_name: Self::next_recording_file_name(name),
+                        });
+                    if audio_entry.channels != audio_channels {
+                        continue;
+                    }
+                    if let Some(entry) = self.audio_recordings.get_mut(name.as_str()) {
+                        let from = frame_offset.min(audio_frames);
+                        let to = frame_offset.saturating_add(segment_len).min(audio_frames);
+                        for frame in from..to {
+                            for ch in 0..audio_channels {
+                                entry.samples.push(track.record_tap_outs[ch][frame]);
+                            }
                         }
                     }
                 }
@@ -2050,7 +2050,15 @@ impl Engine {
                 // Build the new file name
                 let new_file_name = match kind {
                     Kind::Audio => format!("audio/{}.wav", new_name),
-                    Kind::MIDI => format!("midi/{}", new_name),
+                    Kind::MIDI => {
+                        let ext = std::path::Path::new(&old_name)
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .map(|s| s.to_ascii_lowercase())
+                            .filter(|e| e == "mid" || e == "midi")
+                            .unwrap_or_else(|| "mid".to_string());
+                        format!("midi/{}.{}", new_name, ext)
+                    }
                 };
 
                 let _ = track;

@@ -7,7 +7,7 @@ mod view;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
     message::{DraggedClip, Message, Show},
-    state::{State, StateData},
+    state::{PianoRollControllerPoint, PianoRollNote, State, StateData},
     toolbar, track_rename, workspace,
 };
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -736,6 +736,173 @@ impl Maolan {
             ((total_us as f64 / 1_000_000.0) * sample_rate).round() as usize
         };
         Ok(ticks_to_samples(max_tick).max(1))
+    }
+
+    fn midi_ticks_to_samples(
+        smf: &Smf<'_>,
+        sample_rate: f64,
+    ) -> Option<(Box<dyn Fn(u64) -> usize + Send + Sync>, u64, u64)> {
+        let Timing::Metrical(ppq) = smf.header.timing else {
+            return None;
+        };
+        let ppq = u64::from(ppq.as_int().max(1));
+        let mut tempo_changes: Vec<(u64, u32)> = vec![(0, 500_000)];
+        let mut max_tick = 0_u64;
+        for track in &smf.tracks {
+            let mut tick = 0_u64;
+            for event in track {
+                tick = tick.saturating_add(event.delta.as_int() as u64);
+                max_tick = max_tick.max(tick);
+                if let TrackEventKind::Meta(MetaMessage::Tempo(us_per_q)) = event.kind {
+                    tempo_changes.push((tick, us_per_q.as_int()));
+                }
+            }
+        }
+        tempo_changes.sort_by_key(|(tick, _)| *tick);
+        let mut normalized_tempos: Vec<(u64, u32)> = Vec::with_capacity(tempo_changes.len());
+        for (tick, tempo) in tempo_changes {
+            if let Some(last) = normalized_tempos.last_mut()
+                && last.0 == tick
+            {
+                last.1 = tempo;
+            } else {
+                normalized_tempos.push((tick, tempo));
+            }
+        }
+        let normalized_tempos = Arc::new(normalized_tempos);
+        let mapper = {
+            let normalized_tempos = normalized_tempos.clone();
+            move |tick: u64| -> usize {
+                let mut total_us: u128 = 0;
+                let mut prev_tick = 0_u64;
+                let mut current_tempo_us = 500_000_u32;
+                for (change_tick, tempo_us) in normalized_tempos.iter() {
+                    if *change_tick > tick {
+                        break;
+                    }
+                    let span = change_tick.saturating_sub(prev_tick);
+                    total_us = total_us.saturating_add(
+                        u128::from(span).saturating_mul(u128::from(current_tempo_us))
+                            / u128::from(ppq),
+                    );
+                    prev_tick = *change_tick;
+                    current_tempo_us = *tempo_us;
+                }
+                let rem = tick.saturating_sub(prev_tick);
+                total_us = total_us.saturating_add(
+                    u128::from(rem).saturating_mul(u128::from(current_tempo_us)) / u128::from(ppq),
+                );
+                ((total_us as f64 / 1_000_000.0) * sample_rate).round() as usize
+            }
+        };
+        Some((Box::new(mapper), ppq, max_tick))
+    }
+
+    fn parse_midi_clip_for_piano_roll(
+        path: &Path,
+        sample_rate: f64,
+    ) -> std::io::Result<(Vec<PianoRollNote>, Vec<PianoRollControllerPoint>, usize)> {
+        let bytes = fs::read(path)?;
+        let smf = Smf::parse(&bytes).map_err(|e| {
+            io::Error::other(format!("Failed to parse MIDI '{}': {e}", path.display()))
+        })?;
+        let Some((ticks_to_samples, ppq, max_tick)) = Self::midi_ticks_to_samples(&smf, sample_rate)
+        else {
+            return Ok((vec![], vec![], sample_rate.max(1.0) as usize));
+        };
+
+        let mut notes = Vec::<PianoRollNote>::new();
+        let mut controllers = Vec::<PianoRollControllerPoint>::new();
+        let mut active_notes: HashMap<(u8, u8), Vec<(u64, u8)>> = HashMap::new();
+
+        for track in &smf.tracks {
+            let mut tick = 0_u64;
+            for event in track {
+                tick = tick.saturating_add(event.delta.as_int() as u64);
+                if let TrackEventKind::Midi { channel, message } = event.kind {
+                    let channel = channel.as_int();
+                    match message {
+                        midly::MidiMessage::NoteOn { key, vel } => {
+                            let pitch = key.as_int();
+                            let velocity = vel.as_int();
+                            if velocity == 0 {
+                                if let Some(starts) = active_notes.get_mut(&(channel, pitch))
+                                    && let Some((start_tick, start_vel)) = starts.pop()
+                                {
+                                    let start_sample = ticks_to_samples(start_tick);
+                                    let end_sample = ticks_to_samples(tick);
+                                    let length_samples = end_sample.saturating_sub(start_sample).max(1);
+                                    notes.push(PianoRollNote {
+                                        start_sample,
+                                        length_samples,
+                                        pitch,
+                                        velocity: start_vel,
+                                        channel,
+                                    });
+                                }
+                            } else {
+                                active_notes
+                                    .entry((channel, pitch))
+                                    .or_default()
+                                    .push((tick, velocity));
+                            }
+                        }
+                        midly::MidiMessage::NoteOff { key, .. } => {
+                            let pitch = key.as_int();
+                            if let Some(starts) = active_notes.get_mut(&(channel, pitch))
+                                && let Some((start_tick, start_vel)) = starts.pop()
+                            {
+                                let start_sample = ticks_to_samples(start_tick);
+                                let end_sample = ticks_to_samples(tick);
+                                let length_samples = end_sample.saturating_sub(start_sample).max(1);
+                                notes.push(PianoRollNote {
+                                    start_sample,
+                                    length_samples,
+                                    pitch,
+                                    velocity: start_vel,
+                                    channel,
+                                });
+                            }
+                        }
+                        midly::MidiMessage::Controller { controller, value } => {
+                            controllers.push(PianoRollControllerPoint {
+                                sample: ticks_to_samples(tick),
+                                controller: controller.as_int(),
+                                value: value.as_int(),
+                                channel,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        for ((channel, pitch), starts) in active_notes {
+            for (start_tick, velocity) in starts {
+                let start_sample = ticks_to_samples(start_tick);
+                let end_sample = ticks_to_samples(start_tick.saturating_add(ppq / 8));
+                let length_samples = end_sample.saturating_sub(start_sample).max(1);
+                notes.push(PianoRollNote {
+                    start_sample,
+                    length_samples,
+                    pitch,
+                    velocity,
+                    channel,
+                });
+            }
+        }
+
+        notes.sort_by_key(|n| (n.start_sample, n.pitch));
+        controllers.sort_by_key(|c| (c.sample, c.controller));
+        let clip_len = notes
+            .iter()
+            .map(|n| n.start_sample.saturating_add(n.length_samples))
+            .chain(controllers.iter().map(|c| c.sample))
+            .max()
+            .unwrap_or_else(|| ticks_to_samples(max_tick))
+            .max(1);
+        Ok((notes, controllers, clip_len))
     }
 
     fn import_midi_to_session(

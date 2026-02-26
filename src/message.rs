@@ -135,6 +135,11 @@ pub enum Message {
     Workspace,
     Connections,
     OpenTrackPlugins(String),
+    OpenMidiPianoRoll {
+        track_idx: String,
+        clip_idx: usize,
+    },
+    ClosePianoRoll,
     #[cfg(all(unix, not(target_os = "macos")))]
     RefreshLv2Plugins,
     #[cfg(all(unix, not(target_os = "macos")))]
