@@ -154,4 +154,13 @@ pub enum Message {
     HWPeriodFramesChanged(usize),
     HWNPeriodsChanged(usize),
     HWSyncModeToggled(bool),
+
+    ClipRenameShow {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+    },
+    ClipRenameInput(String),
+    ClipRenameConfirm,
+    ClipRenameCancel,
 }

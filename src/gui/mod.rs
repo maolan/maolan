@@ -5,7 +5,7 @@ mod update;
 mod view;
 
 use crate::{
-    add_track, connections, hw, menu,
+    add_track, clip_rename, connections, hw, menu,
     message::{DraggedClip, Message, Show},
     state::{State, StateData},
     toolbar, workspace,
@@ -64,6 +64,7 @@ pub struct Maolan {
     hw: hw::HW,
     modal: Option<Show>,
     add_track: add_track::AddTrackView,
+    clip_rename: clip_rename::ClipRenameView,
     #[cfg(not(target_os = "macos"))]
     plugin_filter: String,
     #[cfg(not(target_os = "macos"))]
@@ -118,6 +119,7 @@ impl Default for Maolan {
             hw: hw::HW::new(state.clone()),
             modal: None,
             add_track: add_track::AddTrackView::default(),
+            clip_rename: clip_rename::ClipRenameView::new(state.clone()),
             #[cfg(not(target_os = "macos"))]
             plugin_filter: String::new(),
             #[cfg(not(target_os = "macos"))]
@@ -949,6 +951,7 @@ impl Maolan {
         #[cfg(not(target_os = "macos"))]
         self.track_plugins.update(message.clone());
         self.add_track.update(message.clone());
+        self.clip_rename.update(message.clone());
         for track in &mut self.state.blocking_write().tracks {
             track.update(message.clone());
         }

@@ -12,6 +12,9 @@ impl Maolan {
     pub fn view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         if state.hw_loaded {
+            if state.clip_rename_dialog.is_some() {
+                return self.clip_rename.view();
+            }
             match self.modal {
                 Some(Show::AddTrack) => self.add_track.view(),
                 #[cfg(not(target_os = "macos"))]

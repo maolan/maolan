@@ -1743,6 +1743,62 @@ impl Engine {
                     }
                 }
             }
+            Action::RenameClip {
+                ref track_name,
+                kind,
+                clip_index,
+                ref new_name,
+            } => {
+                // The GUI already renamed the file, we just need to update the engine's internal state
+                let Some(track) = self.state.lock().tracks.get(track_name) else {
+                    return;
+                };
+
+                let mut track = track.lock();
+                let old_name = match kind {
+                    Kind::Audio => {
+                        if clip_index >= track.audio.clips.len() {
+                            return;
+                        }
+                        track.audio.clips[clip_index].name.clone()
+                    }
+                    Kind::MIDI => {
+                        if clip_index >= track.midi.clips.len() {
+                            return;
+                        }
+                        track.midi.clips[clip_index].name.clone()
+                    }
+                };
+
+                // Build the new file name
+                let new_file_name = match kind {
+                    Kind::Audio => format!("audio/{}.wav", new_name),
+                    Kind::MIDI => format!("midi/{}", new_name),
+                };
+
+                drop(track);
+
+                // Update all instances of this clip in engine's state
+                for (_, other_track) in self.state.lock().tracks.iter() {
+                    let mut other_track = other_track.lock();
+                    match kind {
+                        Kind::Audio => {
+                            for clip in &mut other_track.audio.clips {
+                                if clip.name == old_name {
+                                    clip.name = new_file_name.clone();
+                                }
+                            }
+                        }
+                        Kind::MIDI => {
+                            for clip in &mut other_track.midi.clips {
+                                if clip.name == old_name {
+                                    clip.name = new_file_name.clone();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             Action::Connect {
                 ref from_track,
                 from_port,

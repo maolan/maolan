@@ -109,6 +109,12 @@ pub enum Action {
         kind: Kind,
         clip_indices: Vec<usize>,
     },
+    RenameClip {
+        track_name: String,
+        kind: Kind,
+        clip_index: usize,
+        new_name: String,
+    },
     RemoveTrack(String),
     TrackLevel(String, f32),
     TrackBalance(String, f32),

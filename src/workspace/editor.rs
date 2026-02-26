@@ -4,10 +4,22 @@ use crate::{
 };
 use iced::{
     Background, Border, Color, Element, Length, Point,
-    widget::{Stack, column, container, mouse_area, pin, row, text},
+    widget::{Stack, column, container, mouse_area, pin, row, text, button},
 };
+use iced_aw::ContextMenu;
 use maolan_engine::kind::Kind;
 use std::collections::HashMap;
+
+fn clean_clip_name(name: &str) -> String {
+    let mut cleaned = name.to_string();
+    if let Some(stripped) = cleaned.strip_prefix("audio/") {
+        cleaned = stripped.to_string();
+    }
+    if let Some(stripped) = cleaned.strip_suffix(".wav") {
+        cleaned = stripped.to_string();
+    }
+    cleaned
+}
 
 fn audio_waveform_overlay(
     peaks: &[Vec<f32>],
@@ -179,7 +191,7 @@ fn view_track_elements(
 
         let clip_content = container(Stack::with_children(vec![
             audio_waveform_overlay(&clip_peaks, clip_width, clip_height),
-            container(text(clip_name.clone()).size(12))
+            container(text(clean_clip_name(&clip_name)).size(12))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .padding(5)
@@ -238,27 +250,44 @@ fn view_track_elements(
             });
 
         if !dragged_to_other_track {
+            let clip_with_mouse = mouse_area(clip_widget)
+                .on_press(Message::SelectClip {
+                    track_idx: track_name_cloned.clone(),
+                    clip_idx: index,
+                    kind: Kind::Audio,
+                })
+                .on_move({
+                    let track_name_for_drag_closure = track_name_cloned.clone();
+                    move |point| {
+                        let mut clip_data = DraggedClip::new(
+                            Kind::Audio,
+                            index,
+                            track_name_for_drag_closure.clone(),
+                        );
+                        clip_data.start = point;
+                        Message::ClipDrag(clip_data)
+                    }
+                });
+
+            let track_idx_for_menu = track_name_cloned.clone();
+            let index_for_menu = index;
+            let clip_with_context = ContextMenu::new(
+                clip_with_mouse,
+                move || {
+                    button("Rename")
+                        .on_press(Message::ClipRenameShow {
+                            track_idx: track_idx_for_menu.clone(),
+                            clip_idx: index_for_menu,
+                            kind: Kind::Audio,
+                        })
+                        .into()
+                },
+            );
+
             clips.push(
-                pin(mouse_area(clip_widget)
-                    .on_press(Message::SelectClip {
-                        track_idx: track_name_cloned.clone(),
-                        clip_idx: index,
-                        kind: Kind::Audio,
-                    })
-                    .on_move({
-                        let track_name_for_drag_closure = track_name_cloned.clone();
-                        move |point| {
-                            let mut clip_data = DraggedClip::new(
-                                Kind::Audio,
-                                index,
-                                track_name_for_drag_closure.clone(),
-                            );
-                            clip_data.start = point;
-                            Message::ClipDrag(clip_data)
-                        }
-                    }))
-                .position(Point::new(dragged_start * pixels_per_sample, 0.0))
-                .into(),
+                pin(clip_with_context)
+                    .position(Point::new(dragged_start * pixels_per_sample, 0.0))
+                    .into(),
             );
         }
 
@@ -267,7 +296,7 @@ fn view_track_elements(
             let preview_start = snap_sample_to_bar(clip.start as f32 + delta_samples);
             let preview_content = container(Stack::with_children(vec![
                 audio_waveform_overlay(&clip_peaks, clip_width, clip_height),
-                container(text(clip_name.clone()).size(12))
+                container(text(clean_clip_name(&clip_name)).size(12))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .padding(5)
@@ -409,7 +438,7 @@ fn view_track_elements(
             true,
         ));
 
-        let clip_content = container(container(text(clip_name.clone()).size(12)).padding(5))
+        let clip_content = container(container(text(clean_clip_name(&clip_name)).size(12)).padding(5))
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(0)
@@ -463,34 +492,51 @@ fn view_track_elements(
             });
 
         if !dragged_to_other_track {
+            let clip_with_mouse = mouse_area(clip_widget)
+                .on_press(Message::SelectClip {
+                    track_idx: track_name_cloned.clone(),
+                    clip_idx: index,
+                    kind: Kind::MIDI,
+                })
+                .on_move({
+                    let track_name_for_drag_closure = track_name_cloned.clone();
+                    move |point| {
+                        let mut clip_data = DraggedClip::new(
+                            Kind::MIDI,
+                            index,
+                            track_name_for_drag_closure.clone(),
+                        );
+                        clip_data.start = point;
+                        Message::ClipDrag(clip_data)
+                    }
+                });
+
+            let track_idx_for_menu = track_name_cloned.clone();
+            let index_for_menu = index;
+            let clip_with_context = ContextMenu::new(
+                clip_with_mouse,
+                move || {
+                    button("Rename")
+                        .on_press(Message::ClipRenameShow {
+                            track_idx: track_idx_for_menu.clone(),
+                            clip_idx: index_for_menu,
+                            kind: Kind::MIDI,
+                        })
+                        .into()
+                },
+            );
+
             clips.push(
-                pin(mouse_area(clip_widget)
-                    .on_press(Message::SelectClip {
-                        track_idx: track_name_cloned.clone(),
-                        clip_idx: index,
-                        kind: Kind::MIDI,
-                    })
-                    .on_move({
-                        let track_name_for_drag_closure = track_name_cloned.clone();
-                        move |point| {
-                            let mut clip_data = DraggedClip::new(
-                                Kind::MIDI,
-                                index,
-                                track_name_for_drag_closure.clone(),
-                            );
-                            clip_data.start = point;
-                            Message::ClipDrag(clip_data)
-                        }
-                    }))
-                .position(Point::new(dragged_start * pixels_per_sample, 0.0))
-                .into(),
+                pin(clip_with_context)
+                    .position(Point::new(dragged_start * pixels_per_sample, 0.0))
+                    .into(),
             );
         }
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = snap_sample_to_bar(clip.start as f32 + delta_samples);
-            let preview_content = container(container(text(clip_name.clone()).size(12)).padding(5))
+            let preview_content = container(container(text(clean_clip_name(&clip_name)).size(12)).padding(5))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .padding(0)
@@ -569,7 +615,7 @@ fn view_track_elements(
                             snap_sample_to_bar(source_clip.start as f32 + delta_samples);
                         let preview_content = container(Stack::with_children(vec![
                             audio_waveform_overlay(&source_clip.peaks, clip_width, clip_height),
-                            container(text(source_clip.name.clone()).size(12))
+                            container(text(clean_clip_name(&source_clip.name)).size(12))
                                 .width(Length::Fill)
                                 .height(Length::Fill)
                                 .padding(5)
@@ -642,7 +688,7 @@ fn view_track_elements(
                         let preview_start =
                             snap_sample_to_bar(source_clip.start as f32 + delta_samples);
                         let preview_content = container(
-                            container(text(source_clip.name.clone()).size(12)).padding(5),
+                            container(text(clean_clip_name(&source_clip.name)).size(12)).padding(5),
                         )
                         .width(Length::Fill)
                         .height(Length::Fill)

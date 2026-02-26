@@ -248,6 +248,14 @@ pub struct MovingPlugin {
     pub offset_y: f32,
 }
 
+#[derive(Debug, Clone)]
+pub struct ClipRenameDialog {
+    pub track_idx: String,
+    pub clip_idx: usize,
+    pub kind: Kind,
+    pub new_name: String,
+}
+
 #[derive(Debug)]
 pub struct StateData {
     pub shift: bool,
@@ -318,6 +326,7 @@ pub struct StateData {
     pub lv2_graph_moving_plugin: Option<MovingPlugin>,
     pub lv2_graph_last_plugin_click: Option<(usize, Instant)>,
     pub connections_last_track_click: Option<(String, Instant)>,
+    pub clip_rename_dialog: Option<ClipRenameDialog>,
 }
 
 impl Default for StateData {
@@ -405,6 +414,7 @@ impl Default for StateData {
             lv2_graph_moving_plugin: None,
             lv2_graph_last_plugin_click: None,
             connections_last_track_click: None,
+            clip_rename_dialog: None,
         }
     }
 }

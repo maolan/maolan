@@ -1001,6 +1001,176 @@ impl Maolan {
                 dragged.copy = state.ctrl;
                 self.clip = Some(dragged);
             }
+            Message::ClipRenameShow {
+                ref track_idx,
+                clip_idx,
+                kind,
+            } => {
+                let mut state = self.state.blocking_write();
+                // Get current clip name
+                let current_name = state
+                    .tracks
+                    .iter()
+                    .find(|t| t.name == *track_idx)
+                    .and_then(|t| match kind {
+                        Kind::Audio => t.audio.clips.get(clip_idx).map(|c| c.name.clone()),
+                        Kind::MIDI => t.midi.clips.get(clip_idx).map(|c| c.name.clone()),
+                    })
+                    .unwrap_or_default();
+
+                // Clean the name for editing (remove audio/ prefix and .wav suffix)
+                let clean_name = {
+                    let mut cleaned = current_name.clone();
+                    if let Some(stripped) = cleaned.strip_prefix("audio/") {
+                        cleaned = stripped.to_string();
+                    }
+                    if let Some(stripped) = cleaned.strip_suffix(".wav") {
+                        cleaned = stripped.to_string();
+                    }
+                    cleaned
+                };
+
+                state.clip_rename_dialog = Some(crate::state::ClipRenameDialog {
+                    track_idx: track_idx.clone(),
+                    clip_idx,
+                    kind,
+                    new_name: clean_name,
+                });
+            }
+            Message::ClipRenameInput(_) => {
+                // Handled by ClipRenameView
+            }
+            Message::ClipRenameConfirm => {
+                let dialog = self.state.blocking_read().clip_rename_dialog.clone();
+                let Some(dialog) = dialog else {
+                    tracing::info!("ClipRenameConfirm: No dialog found");
+                    return Task::none();
+                };
+
+                let new_name = dialog.new_name.trim().to_string();
+                tracing::info!("ClipRenameConfirm: new_name={}", new_name);
+                if new_name.is_empty() {
+                    tracing::info!("ClipRenameConfirm: Empty name, aborting");
+                    return Task::none();
+                }
+
+                // Get session directory and old clip name
+                let Some(session_dir) = &self.session_dir else {
+                    tracing::info!("ClipRenameConfirm: No session loaded");
+                    self.state.blocking_write().message = "No session loaded".to_string();
+                    self.state.blocking_write().clip_rename_dialog = None;
+                    return Task::none();
+                };
+
+                tracing::info!("ClipRenameConfirm: session_dir={:?}", session_dir);
+
+                let mut state = self.state.blocking_write();
+                let Some(track) = state.tracks.iter().find(|t| t.name == dialog.track_idx) else {
+                    tracing::info!("ClipRenameConfirm: Track {} not found", dialog.track_idx);
+                    state.message = format!("Track {} not found", dialog.track_idx);
+                    state.clip_rename_dialog = None;
+                    return Task::none();
+                };
+
+                let old_name = match dialog.kind {
+                    Kind::Audio => {
+                        if dialog.clip_idx >= track.audio.clips.len() {
+                            tracing::info!("ClipRenameConfirm: Clip index out of bounds");
+                            state.message = "Clip not found".to_string();
+                            state.clip_rename_dialog = None;
+                            return Task::none();
+                        }
+                        track.audio.clips[dialog.clip_idx].name.clone()
+                    }
+                    Kind::MIDI => {
+                        if dialog.clip_idx >= track.midi.clips.len() {
+                            tracing::info!("ClipRenameConfirm: Clip index out of bounds");
+                            state.message = "Clip not found".to_string();
+                            state.clip_rename_dialog = None;
+                            return Task::none();
+                        }
+                        track.midi.clips[dialog.clip_idx].name.clone()
+                    }
+                };
+
+                tracing::info!("ClipRenameConfirm: old_name={}", old_name);
+
+                // Build new file name
+                let new_file_name = match dialog.kind {
+                    Kind::Audio => format!("audio/{}.wav", new_name),
+                    Kind::MIDI => format!("midi/{}", new_name),
+                };
+
+                tracing::info!("ClipRenameConfirm: new_file_name={}", new_file_name);
+
+                // Check if target already exists
+                let new_path = session_dir.join(&new_file_name);
+                if new_path.exists() {
+                    tracing::info!("ClipRenameConfirm: Target file already exists");
+                    state.message = format!("File '{}' already exists", new_file_name);
+                    state.clip_rename_dialog = None;
+                    return Task::none();
+                }
+
+                // Rename the physical file
+                let old_path = session_dir.join(&old_name);
+                tracing::info!("ClipRenameConfirm: old_path={:?}, new_path={:?}", old_path, new_path);
+                if old_path.exists() {
+                    tracing::info!("ClipRenameConfirm: File exists, renaming...");
+                    if let Err(e) = std::fs::rename(&old_path, &new_path) {
+                        tracing::info!("ClipRenameConfirm: Rename failed: {}", e);
+                        state.message = format!("Failed to rename file: {}", e);
+                        state.clip_rename_dialog = None;
+                        return Task::none();
+                    }
+                    tracing::info!("ClipRenameConfirm: File renamed successfully");
+                } else {
+                    tracing::info!("ClipRenameConfirm: Old file does not exist at {:?}", old_path);
+                }
+
+                // Update all clip instances in the GUI state
+                tracing::info!("ClipRenameConfirm: Updating GUI state...");
+                let mut update_count = 0;
+                for track in &mut state.tracks {
+                    match dialog.kind {
+                        Kind::Audio => {
+                            for clip in &mut track.audio.clips {
+                                if clip.name == old_name {
+                                    tracing::info!("ClipRenameConfirm: Updating clip in track {}", track.name);
+                                    clip.name = new_file_name.clone();
+                                    update_count += 1;
+                                }
+                            }
+                        }
+                        Kind::MIDI => {
+                            for clip in &mut track.midi.clips {
+                                if clip.name == old_name {
+                                    tracing::info!("ClipRenameConfirm: Updating clip in track {}", track.name);
+                                    clip.name = new_file_name.clone();
+                                    update_count += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                tracing::info!("ClipRenameConfirm: Updated {} clip instances", update_count);
+                state.message = format!("Renamed to '{}'", new_name);
+                state.clip_rename_dialog = None;
+                drop(state);
+
+                tracing::info!("ClipRenameConfirm: Sending RenameClip action to engine");
+                // Now update the engine by sending a RenameClip action
+                return self.send(Action::RenameClip {
+                    track_name: dialog.track_idx,
+                    kind: dialog.kind,
+                    clip_index: dialog.clip_idx,
+                    new_name,
+                });
+            }
+            Message::ClipRenameCancel => {
+                self.state.blocking_write().clip_rename_dialog = None;
+            }
             Message::DeselectAll => {
                 let mut state = self.state.blocking_write();
                 state.selected.clear();
