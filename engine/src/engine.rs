@@ -25,14 +25,14 @@ use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
 use crate::hw::coreaudio::{HwDriver, HwOptions, MidiHub};
 #[cfg(unix)]
 use crate::hw::jack::JackRuntime;
+#[cfg(target_os = "windows")]
+use crate::hw::options::HwOptions;
 #[cfg(target_os = "freebsd")]
 use crate::hw::oss as hw;
 #[cfg(target_os = "freebsd")]
 use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "openbsd")]
 use crate::hw::sndio::{HwDriver, HwOptions, MidiHub};
-#[cfg(target_os = "windows")]
-use crate::hw::options::HwOptions;
 #[cfg(target_os = "windows")]
 use crate::hw::wasapi::{self, HwDriver, MidiHub};
 #[cfg(target_os = "freebsd")]
@@ -1847,7 +1847,7 @@ impl Engine {
                     return;
                 };
 
-                let mut track = track.lock();
+                let track = track.lock();
                 let old_name = match kind {
                     Kind::Audio => {
                         if clip_index >= track.audio.clips.len() {
@@ -1873,7 +1873,7 @@ impl Engine {
 
                 // Update all instances of this clip in engine's state
                 for (_, other_track) in self.state.lock().tracks.iter() {
-                    let mut other_track = other_track.lock();
+                    let other_track = other_track.lock();
                     match kind {
                         Kind::Audio => {
                             for clip in &mut other_track.audio.clips {

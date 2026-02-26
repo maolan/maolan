@@ -18,7 +18,12 @@ pub struct Vst3Processor {
 }
 
 impl Vst3Processor {
-    pub fn new(sample_frames: usize, path: &str, audio_inputs: usize, audio_outputs: usize) -> Self {
+    pub fn new(
+        sample_frames: usize,
+        path: &str,
+        audio_inputs: usize,
+        audio_outputs: usize,
+    ) -> Self {
         let in_count = audio_inputs.max(1);
         let out_count = audio_outputs.max(1);
         let name = Path::new(path)
@@ -31,8 +36,12 @@ impl Vst3Processor {
         Self {
             path: path.to_string(),
             name,
-            audio_inputs: (0..in_count).map(|_| Arc::new(AudioIO::new(sample_frames))).collect(),
-            audio_outputs: (0..out_count).map(|_| Arc::new(AudioIO::new(sample_frames))).collect(),
+            audio_inputs: (0..in_count)
+                .map(|_| Arc::new(AudioIO::new(sample_frames)))
+                .collect(),
+            audio_outputs: (0..out_count)
+                .map(|_| Arc::new(AudioIO::new(sample_frames)))
+                .collect(),
         }
     }
 
@@ -120,7 +129,10 @@ fn collect_vst3_plugins(root: &Path, out: &mut Vec<Vst3PluginInfo>) {
             continue;
         }
 
-        if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("vst3")) {
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("vst3"))
+        {
             let name = path
                 .file_stem()
                 .or_else(|| path.file_name())
@@ -157,7 +169,7 @@ fn default_vst3_search_roots() -> Vec<PathBuf> {
         )));
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         roots.push(PathBuf::from("/usr/lib/vst3"));
         roots.push(PathBuf::from("/usr/local/lib/vst3"));
@@ -173,4 +185,3 @@ fn home_dir() -> String {
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_default()
 }
-
