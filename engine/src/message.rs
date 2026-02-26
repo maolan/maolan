@@ -22,6 +22,7 @@ pub struct ClipMoveFrom {
 pub struct ClipMoveTo {
     pub track_name: String,
     pub sample_offset: usize,
+    pub input_channel: usize,
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -130,6 +131,7 @@ pub enum Action {
         start: usize,
         length: usize,
         offset: usize,
+        input_channel: usize,
         kind: Kind,
     },
     RemoveClip {

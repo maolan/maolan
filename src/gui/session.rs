@@ -443,6 +443,7 @@ impl Maolan {
                         let start = clip["start"].as_u64().unwrap_or(0) as usize;
                         let length = clip["length"].as_u64().unwrap_or(0) as usize;
                         let offset = clip["offset"].as_u64().unwrap_or(0) as usize;
+                        let input_channel = clip["input_channel"].as_u64().unwrap_or(0) as usize;
                         let peaks_file = clip["peaks_file"].as_str().map(|s| s.to_string());
 
                         if clip_name.trim().is_empty() {
@@ -500,6 +501,7 @@ impl Maolan {
                             start,
                             length,
                             offset,
+                            input_channel,
                             kind: Kind::Audio,
                         }));
                     }
@@ -511,6 +513,7 @@ impl Maolan {
                         let start = clip["start"].as_u64().unwrap_or(0) as usize;
                         let length = clip["length"].as_u64().unwrap_or(0) as usize;
                         let offset = clip["offset"].as_u64().unwrap_or(0) as usize;
+                        let input_channel = clip["input_channel"].as_u64().unwrap_or(0) as usize;
 
                         if clip_name.trim().is_empty() {
                             warnings
@@ -547,6 +550,7 @@ impl Maolan {
                             start,
                             length,
                             offset,
+                            input_channel,
                             kind: Kind::MIDI,
                         }));
                     }

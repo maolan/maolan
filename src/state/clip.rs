@@ -6,6 +6,8 @@ pub struct AudioClip {
     pub start: usize,
     pub length: usize,
     pub offset: usize,
+    #[serde(default)]
+    pub input_channel: usize,
     #[serde(skip)]
     pub max_length_samples: usize,
     pub peaks_file: Option<String>,
@@ -19,6 +21,8 @@ pub struct MIDIClip {
     pub start: usize,
     pub length: usize,
     pub offset: usize,
+    #[serde(default)]
+    pub input_channel: usize,
     #[serde(skip)]
     pub max_length_samples: usize,
 }

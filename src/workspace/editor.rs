@@ -92,7 +92,73 @@ fn view_track_elements(
             .into(),
     ];
     let height = track.height;
+    let layout = track.lane_layout();
+    let lane_height = layout.lane_height.max(12.0);
+    let lane_clip_height = (lane_height - 6.0).max(12.0);
     let track_name_cloned = track.name.clone();
+
+    clips.push(
+        pin(
+            container(text(track.name.clone()).size(11))
+                .width(Length::Fill)
+                .height(Length::Fixed(layout.header_height))
+                .padding(4)
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.08,
+                        g: 0.08,
+                        b: 0.1,
+                        a: 0.5,
+                    })),
+                    ..container::Style::default()
+                }),
+        )
+        .position(Point::new(0.0, 0.0))
+        .into(),
+    );
+
+    for lane in 0..track.audio.ins {
+        let y = track.lane_top(Kind::Audio, lane);
+        clips.push(
+            pin(
+                container("")
+                    .width(Length::Fill)
+                    .height(Length::Fixed(lane_height))
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.15,
+                            g: 0.2,
+                            b: 0.28,
+                            a: 0.22,
+                        })),
+                        ..container::Style::default()
+                    }),
+            )
+            .position(Point::new(0.0, y))
+            .into(),
+        );
+    }
+    for lane in 0..track.midi.ins {
+        let y = track.lane_top(Kind::MIDI, lane);
+        clips.push(
+            pin(
+                container("")
+                    .width(Length::Fill)
+                    .height(Length::Fixed(lane_height))
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.12,
+                            g: 0.26,
+                            b: 0.14,
+                            a: 0.25,
+                        })),
+                        ..container::Style::default()
+                    }),
+            )
+            .position(Point::new(0.0, y))
+            .into(),
+        );
+    }
 
     for (index, clip) in track.audio.clips.iter().enumerate() {
         let clip_name = clip.name.clone();
@@ -138,8 +204,10 @@ fn view_track_elements(
                 snap_sample_to_bar(clip.start as f32 + delta_samples)
             })
             .unwrap_or(clip.start as f32);
+        let lane = clip.input_channel.min(track.audio.ins.saturating_sub(1));
+        let lane_top = track.lane_top(Kind::Audio, lane) + 3.0;
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
-        let clip_height = (height - 10.0).max(12.0);
+        let clip_height = lane_clip_height;
 
         let left_handle = mouse_area(
             container("")
@@ -286,7 +354,7 @@ fn view_track_elements(
 
             clips.push(
                 pin(clip_with_context)
-                    .position(Point::new(dragged_start * pixels_per_sample, 0.0))
+                    .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                     .into(),
             );
         }
@@ -340,7 +408,7 @@ fn view_track_elements(
             });
             clips.push(
                 pin(preview)
-                    .position(Point::new(preview_start * pixels_per_sample, 0.0))
+                    .position(Point::new(preview_start * pixels_per_sample, lane_top))
                     .into(),
             );
         }
@@ -388,6 +456,8 @@ fn view_track_elements(
                 snap_sample_to_bar(clip.start as f32 + delta_samples)
             })
             .unwrap_or(clip.start as f32);
+        let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
+        let lane_top = track.lane_top(Kind::MIDI, lane) + 3.0;
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
 
         let left_handle = mouse_area(
@@ -528,7 +598,7 @@ fn view_track_elements(
 
             clips.push(
                 pin(clip_with_context)
-                    .position(Point::new(dragged_start * pixels_per_sample, 0.0))
+                    .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                     .into(),
             );
         }
@@ -575,7 +645,7 @@ fn view_track_elements(
             });
             clips.push(
                 pin(preview)
-                    .position(Point::new(preview_start * pixels_per_sample, 0.0))
+                    .position(Point::new(preview_start * pixels_per_sample, lane_top))
                     .into(),
             );
         }
@@ -610,7 +680,9 @@ fn view_track_elements(
                             continue;
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
-                        let clip_height = (height - 10.0).max(12.0);
+                        let clip_height = lane_clip_height;
+                        let lane = source_clip.input_channel.min(track.audio.ins.saturating_sub(1));
+                        let lane_top = track.lane_top(Kind::Audio, lane) + 3.0;
                         let preview_start =
                             snap_sample_to_bar(source_clip.start as f32 + delta_samples);
                         let preview_content = container(Stack::with_children(vec![
@@ -659,7 +731,7 @@ fn view_track_elements(
                         });
                         clips.push(
                             pin(preview)
-                                .position(Point::new(preview_start * pixels_per_sample, 0.0))
+                                .position(Point::new(preview_start * pixels_per_sample, lane_top))
                                 .into(),
                         );
                     }
@@ -685,6 +757,8 @@ fn view_track_elements(
                             continue;
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
+                        let lane = source_clip.input_channel.min(track.midi.ins.saturating_sub(1));
+                        let lane_top = track.lane_top(Kind::MIDI, lane) + 3.0;
                         let preview_start =
                             snap_sample_to_bar(source_clip.start as f32 + delta_samples);
                         let preview_content = container(
@@ -728,7 +802,7 @@ fn view_track_elements(
                         });
                         clips.push(
                             pin(preview)
-                                .position(Point::new(preview_start * pixels_per_sample, 0.0))
+                                .position(Point::new(preview_start * pixels_per_sample, lane_top))
                                 .into(),
                         );
                     }
@@ -743,7 +817,8 @@ fn view_track_elements(
     {
         let preview_width =
             ((preview_current - preview_start) as f32 * pixels_per_sample).max(12.0);
-        let preview_height = (height - 10.0).max(12.0);
+        let preview_height = lane_clip_height;
+        let preview_top = track.lane_top(Kind::Audio, 0) + 3.0;
         let preview_peaks = recording_preview_peaks
             .and_then(|map| map.get(&track.name))
             .cloned()
@@ -788,7 +863,7 @@ fn view_track_elements(
         });
         clips.push(
             pin(preview_clip)
-                .position(Point::new(preview_start as f32 * pixels_per_sample, 0.0))
+                .position(Point::new(preview_start as f32 * pixels_per_sample, preview_top))
                 .into(),
         );
     }

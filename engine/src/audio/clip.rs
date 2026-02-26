@@ -4,6 +4,7 @@ pub struct AudioClip {
     pub start: usize,
     pub end: usize,
     pub offset: usize,
+    pub input_channel: usize,
 }
 
 impl AudioClip {
@@ -13,6 +14,7 @@ impl AudioClip {
             start,
             end,
             offset: 0,
+            input_channel: 0,
         }
     }
 }

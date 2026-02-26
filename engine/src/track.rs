@@ -558,6 +558,12 @@ impl Track {
             if clip_len == 0 {
                 continue;
             }
+            let destination_lane = clip
+                .input_channel
+                .min(self.audio.outs.len().saturating_sub(1));
+            if self.audio.outs.len() > 1 && out_channel != destination_lane {
+                continue;
+            }
             let clip_end = clip_start.saturating_add(clip_len);
             let Some(buffer) = self.clip_buffer(&clip.name) else {
                 continue;
@@ -570,7 +576,7 @@ impl Track {
             let source_channel = if channels == 1 {
                 0
             } else {
-                out_channel.min(channels - 1)
+                clip.input_channel.min(channels - 1)
             };
             for (segment_start, segment_end, out_offset) in &segments {
                 if clip_end <= *segment_start || clip_start >= *segment_end {
@@ -605,6 +611,9 @@ impl Track {
             if clip_len == 0 {
                 continue;
             }
+            let input_lane = clip
+                .input_channel
+                .min(input_events.len().saturating_sub(1));
             let clip_end = clip_start.saturating_add(clip_len);
             let Some(events) = self.midi_clip_events(&clip.name) else {
                 continue;
@@ -630,11 +639,13 @@ impl Track {
                     if frame_idx >= frames {
                         continue;
                     }
-                    input_events[0].push(MidiEvent::new(frame_idx as u32, data.clone()));
+                    input_events[input_lane].push(MidiEvent::new(frame_idx as u32, data.clone()));
                 }
             }
         }
-        input_events[0].sort_by_key(|event| event.frame);
+        for events in input_events.iter_mut() {
+            events.sort_by_key(|event| event.frame);
+        }
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

@@ -33,9 +33,48 @@ impl Tracks {
             let selected = selected.contains(&track.name);
             let height = track.height;
             let is_resize_hovered = hovered_resize_track.as_deref() == Some(track.name.as_str());
+            let layout = track.lane_layout();
+            let lane_h = layout.lane_height.max(12.0);
+            let mut lane_rows: Column<'_, Message> = column![];
+            for lane in 0..track.audio.ins {
+                lane_rows = lane_rows.push(
+                    container(text(format!("Audio {:02}", lane + 1)).size(11))
+                        .width(Length::Fill)
+                        .height(Length::Fixed(lane_h))
+                        .padding(4)
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.16,
+                                g: 0.23,
+                                b: 0.3,
+                                a: 0.5,
+                            })),
+                            ..container::Style::default()
+                        }),
+                );
+            }
+            for lane in 0..track.midi.ins {
+                lane_rows = lane_rows.push(
+                    container(text(format!("MIDI {:02}", lane + 1)).size(11))
+                        .width(Length::Fill)
+                        .height(Length::Fixed(lane_h))
+                        .padding(4)
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.14,
+                                g: 0.28,
+                                b: 0.17,
+                                a: 0.55,
+                            })),
+                            ..container::Style::default()
+                        }),
+                );
+            }
+
             let track_ui: Column<'_, Message> = column![
-                text(track.name.clone()),
                 row![
+                    text(format!("▾ {}", track.name.clone())),
+                    Space::new().width(Length::Fill),
                     button("R")
                         .padding(3)
                         .style(move |theme, _state| { style::arm::style(theme, track.armed) })
@@ -68,8 +107,9 @@ impl Tracks {
                         .on_press(Message::Request(Action::TrackToggleDiskMonitor(
                             track.name.clone()
                         ))),
-                ],
-                Space::new().height(Length::Fill),
+                ]
+                .height(Length::Fixed(layout.header_height)),
+                lane_rows.height(Length::Fill),
                 mouse_area(
                     container("")
                         .width(Length::Fill)
@@ -90,7 +130,8 @@ impl Tracks {
                 .on_enter(Message::TrackResizeHover(track.name.clone(), true))
                 .on_exit(Message::TrackResizeHover(track.name.clone(), false))
                 .on_press(Message::TrackResizeStart(track.name.clone())),
-            ];
+            ]
+            .spacing(2.0);
 
             {
                 let track_name_for_menu = track.name.clone();

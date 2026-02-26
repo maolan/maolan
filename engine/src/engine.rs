@@ -755,6 +755,7 @@ impl Engine {
             start: rec.start_sample,
             length,
             offset: 0,
+            input_channel: 0,
             kind: Kind::Audio,
         }))
         .await;
@@ -868,6 +869,7 @@ impl Engine {
             start: rec.start_sample,
             length: clip_len_samples,
             offset: 0,
+            input_channel: 0,
             kind: Kind::MIDI,
         }))
         .await;
@@ -1931,6 +1933,10 @@ impl Engine {
                             if !copy {
                                 from_track.audio.clips.remove(from.clip_index);
                             }
+                            let mut clip_copy = clip_copy;
+                            clip_copy.start = to.sample_offset;
+                            let max_lane = to_track.audio.ins.len().saturating_sub(1);
+                            clip_copy.input_channel = to.input_channel.min(max_lane);
                             to_track.audio.clips.push(clip_copy);
                         }
                         Kind::MIDI => {
@@ -1948,6 +1954,10 @@ impl Engine {
                             if !copy {
                                 from_track.midi.clips.remove(from.clip_index);
                             }
+                            let mut clip_copy = clip_copy;
+                            clip_copy.start = to.sample_offset;
+                            let max_lane = to_track.midi.ins.len().saturating_sub(1);
+                            clip_copy.input_channel = to.input_channel.min(max_lane);
                             to_track.midi.clips.push(clip_copy);
                         }
                     }
@@ -1959,19 +1969,25 @@ impl Engine {
                 start,
                 length,
                 offset,
+                input_channel,
                 kind,
             } => {
                 if let Some(track) = self.state.lock().tracks.get(track_name) {
+                    let track = track.lock();
                     match kind {
                         Kind::Audio => {
                             let mut clip = AudioClip::new(name.clone(), start, length);
                             clip.offset = offset;
-                            track.lock().audio.clips.push(clip);
+                            let max_lane = track.audio.ins.len().saturating_sub(1);
+                            clip.input_channel = input_channel.min(max_lane);
+                            track.audio.clips.push(clip);
                         }
                         Kind::MIDI => {
                             let mut clip = MIDIClip::new(name.clone(), start, length);
                             clip.offset = offset;
-                            track.lock().midi.clips.push(clip);
+                            let max_lane = track.midi.ins.len().saturating_sub(1);
+                            clip.input_channel = input_channel.min(max_lane);
+                            track.midi.clips.push(clip);
                         }
                     }
                 }

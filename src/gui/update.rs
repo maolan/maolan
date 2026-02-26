@@ -523,9 +523,11 @@ impl Maolan {
                         {
                             if let Some(mut clip_data) = clip_to_move {
                                 clip_data.start = to.sample_offset;
+                                clip_data.input_channel = to.input_channel;
                                 to_track.audio.clips.push(clip_data);
                             } else if let Some(mut midi_clip_data) = midi_clip_to_move {
                                 midi_clip_data.start = to.sample_offset;
+                                midi_clip_data.input_channel = to.input_channel;
                                 to_track.midi.clips.push(midi_clip_data);
                             }
                         }
@@ -537,6 +539,7 @@ impl Maolan {
                     start,
                     length,
                     offset,
+                    input_channel,
                     kind,
                 } => {
                     let mut audio_peaks = vec![];
@@ -579,6 +582,7 @@ impl Maolan {
                                     start: *start,
                                     length: *length,
                                     offset: *offset,
+                                    input_channel: *input_channel,
                                     max_length_samples,
                                     peaks_file: None,
                                     peaks: audio_peaks,
@@ -590,6 +594,7 @@ impl Maolan {
                                     start: *start,
                                     length: *length,
                                     offset: *offset,
+                                    input_channel: *input_channel,
                                     max_length_samples,
                                 });
                             }
@@ -1530,7 +1535,8 @@ impl Maolan {
                         let delta = position.y - initial_mouse_y;
                         if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
                         {
-                            track.height = (initial_height + delta).clamp(60.0, 400.0);
+                            let min_h = track.min_height_for_layout();
+                            track.height = (initial_height + delta).clamp(min_h, 600.0);
                         }
                     }
                     Some(Resizing::Clip {
@@ -1686,12 +1692,14 @@ impl Maolan {
                         let mut selected = std::collections::HashSet::new();
                         let state = self.state.blocking_read();
                         for track in &state.tracks {
-                            let inner_top = y_offset + 5.0;
+                            let layout = track.lane_layout();
+                            let lane_clip_h = (layout.lane_height - 6.0).max(12.0);
                             for (clip_idx, clip) in track.audio.clips.iter().enumerate() {
                                 let cx = clip.start as f32 * pps;
                                 let cw = (clip.length as f32 * pps).max(12.0);
-                                let cy = inner_top;
-                                let ch = track.height.max(1.0);
+                                let lane = clip.input_channel.min(track.audio.ins.saturating_sub(1));
+                                let cy = y_offset + track.lane_top(Kind::Audio, lane) + 3.0;
+                                let ch = lane_clip_h.max(1.0);
                                 let intersects =
                                     cx < x + w && cx + cw > x && cy < y + h && cy + ch > y;
                                 if intersects {
@@ -1705,8 +1713,9 @@ impl Maolan {
                             for (clip_idx, clip) in track.midi.clips.iter().enumerate() {
                                 let cx = clip.start as f32 * pps;
                                 let cw = (clip.length as f32 * pps).max(12.0);
-                                let cy = inner_top;
-                                let ch = track.height.max(1.0);
+                                let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
+                                let cy = y_offset + track.lane_top(Kind::MIDI, lane) + 3.0;
+                                let ch = lane_clip_h.max(1.0);
                                 let intersects =
                                     cx < x + w && cx + cw > x && cy < y + h && cy + ch > y;
                                 if intersects {
@@ -1776,13 +1785,13 @@ impl Maolan {
                 if let Some(clip) = &self.clip {
                     let state = self.state.blocking_read();
                     let from_track_name = &clip.track_index;
-                    let to_track_id = zones.iter().map(|(id, _)| id).find(|id| {
+                    let to_track_zone = zones.iter().find(|(id, _)| {
                         state
                             .tracks
                             .iter()
-                            .any(|t| Id::from(t.name.clone()) == **id)
+                            .any(|t| Id::from(t.name.clone()) == *id)
                     });
-                    let Some(to_track_id) = to_track_id else {
+                    let Some((to_track_id, to_track_rect)) = to_track_zone else {
                         self.clip = None;
                         return Task::none();
                     };
@@ -1797,13 +1806,15 @@ impl Maolan {
                     if let (Some(from_track), Some(to_track)) = (from_track_option, to_track_option)
                     {
                         let kind_matches = match clip.kind {
-                            Kind::Audio => to_track.audio.ins > 0 || to_track.audio.outs > 0,
-                            Kind::MIDI => to_track.midi.ins > 0 || to_track.midi.outs > 0,
+                            Kind::Audio => to_track.audio.ins > 0,
+                            Kind::MIDI => to_track.midi.ins > 0,
                         };
                         if !kind_matches {
                             self.clip = None;
                             return Task::none();
                         }
+                        let local_y = (clip.end.y - to_track_rect.y).max(0.0);
+                        let target_input_channel = to_track.lane_index_at_y(clip.kind, local_y);
                         let mut selected_group: Vec<usize> = state
                             .selected_clips
                             .iter()
@@ -1842,6 +1853,7 @@ impl Maolan {
                                             to: ClipMoveTo {
                                                 track_name: to_track.name.clone(),
                                                 sample_offset,
+                                                input_channel: target_input_channel,
                                             },
                                             copy: clip.copy,
                                         }));
@@ -1868,6 +1880,7 @@ impl Maolan {
                                     to: ClipMoveTo {
                                         track_name: to_track.name.clone(),
                                         sample_offset: clip_copy.start,
+                                        input_channel: target_input_channel,
                                     },
                                     copy: clip.copy,
                                 });
@@ -1900,6 +1913,7 @@ impl Maolan {
                                             to: ClipMoveTo {
                                                 track_name: to_track.name.clone(),
                                                 sample_offset,
+                                                input_channel: target_input_channel,
                                             },
                                             copy: clip.copy,
                                         }));
@@ -1926,6 +1940,7 @@ impl Maolan {
                                     to: ClipMoveTo {
                                         track_name: to_track.name.clone(),
                                         sample_offset: clip_copy.start,
+                                        input_channel: target_input_channel,
                                     },
                                     copy: clip.copy,
                                 });
@@ -1959,8 +1974,8 @@ impl Maolan {
                         .find(|t| Id::from(t.name.clone()) == *to_track_id);
                     if let Some(to_track) = to_track {
                         let kind_matches = match clip.kind {
-                            Kind::Audio => to_track.audio.ins > 0 || to_track.audio.outs > 0,
-                            Kind::MIDI => to_track.midi.ins > 0 || to_track.midi.outs > 0,
+                            Kind::Audio => to_track.audio.ins > 0,
+                            Kind::MIDI => to_track.midi.ins > 0,
                         };
                         if kind_matches {
                             self.clip_preview_target_track = Some(to_track.name.clone());
@@ -2119,6 +2134,7 @@ impl Maolan {
                                                     start: 0,
                                                     length,
                                                     offset: 0,
+                                                    input_channel: 0,
                                                     kind: Kind::Audio,
                                                 }))
                                                 .await
@@ -2170,6 +2186,7 @@ impl Maolan {
                                                     start: 0,
                                                     length,
                                                     offset: 0,
+                                                    input_channel: 0,
                                                     kind: Kind::MIDI,
                                                 }))
                                                 .await
