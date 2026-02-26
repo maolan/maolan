@@ -2037,7 +2037,7 @@ impl Engine {
                     Kind::MIDI => format!("midi/{}", new_name),
                 };
 
-                drop(track);
+                let _ = track;
 
                 // Update all instances of this clip in engine's state
                 for (_, other_track) in self.state.lock().tracks.iter() {

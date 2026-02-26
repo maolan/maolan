@@ -44,19 +44,19 @@ impl MemoryStream {
 
     // Helper methods for safe access (used in unsafe blocks)
     unsafe fn data_mut(&self) -> &mut Vec<u8> {
-        &mut *self.data.get()
+        unsafe { &mut *self.data.get() }
     }
 
     unsafe fn position_mut(&self) -> &mut usize {
-        &mut *self.position.get()
+        unsafe { &mut *self.position.get() }
     }
 
     unsafe fn data_ref(&self) -> &Vec<u8> {
-        &*self.data.get()
+        unsafe { &*self.data.get() }
     }
 
     unsafe fn position_ref(&self) -> &usize {
-        &*self.position.get()
+        unsafe { &*self.position.get() }
     }
 }
 
@@ -67,27 +67,27 @@ impl IBStreamTrait for MemoryStream {
         }
 
         let bytes_to_read = num_bytes as usize;
-        let data = self.data_ref();
-        let position = *self.position_ref();
+        let data = unsafe { self.data_ref() };
+        let position = unsafe { *self.position_ref() };
         let available = data.len().saturating_sub(position);
         let actual_read = bytes_to_read.min(available);
 
         if actual_read == 0 {
             if !num_bytes_read.is_null() {
-                *num_bytes_read = 0;
+                unsafe { *num_bytes_read = 0; }
             }
             return kResultFalse;
         }
 
         // Copy data from internal buffer to provided buffer
         let src_slice = &data[position..position + actual_read];
-        let dst_slice = std::slice::from_raw_parts_mut(buffer as *mut u8, actual_read);
+        let dst_slice = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, actual_read) };
         dst_slice.copy_from_slice(src_slice);
 
-        *self.position_mut() += actual_read;
+        unsafe { *self.position_mut() += actual_read; }
 
         if !num_bytes_read.is_null() {
-            *num_bytes_read = actual_read as i32;
+            unsafe { *num_bytes_read = actual_read as i32; }
         }
 
         kResultOk
@@ -99,10 +99,10 @@ impl IBStreamTrait for MemoryStream {
         }
 
         let bytes_to_write = num_bytes as usize;
-        let src_slice = std::slice::from_raw_parts(buffer as *mut u8, bytes_to_write);
+        let src_slice = unsafe { std::slice::from_raw_parts(buffer as *mut u8, bytes_to_write) };
 
-        let data = self.data_mut();
-        let position = *self.position_ref();
+        let data = unsafe { self.data_mut() };
+        let position = unsafe { *self.position_ref() };
 
         // Ensure capacity
         let required_len = position + bytes_to_write;
@@ -112,18 +112,18 @@ impl IBStreamTrait for MemoryStream {
 
         // Write data
         data[position..position + bytes_to_write].copy_from_slice(src_slice);
-        *self.position_mut() += bytes_to_write;
+        unsafe { *self.position_mut() += bytes_to_write; }
 
         if !num_bytes_written.is_null() {
-            *num_bytes_written = bytes_to_write as i32;
+            unsafe { *num_bytes_written = bytes_to_write as i32; }
         }
 
         kResultOk
     }
 
     unsafe fn seek(&self, pos: i64, mode: i32, result: *mut i64) -> TResult {
-        let current_pos = *self.position_ref();
-        let data_len = self.data_ref().len();
+        let current_pos = unsafe { *self.position_ref() };
+        let data_len = unsafe { self.data_ref().len() };
 
         let new_position = match mode {
             0 => {
@@ -151,10 +151,10 @@ impl IBStreamTrait for MemoryStream {
             _ => return kResultFalse,
         };
 
-        *self.position_mut() = new_position;
+        unsafe { *self.position_mut() = new_position; }
 
         if !result.is_null() {
-            *result = new_position as i64;
+            unsafe { *result = new_position as i64; }
         }
 
         kResultOk
@@ -165,7 +165,7 @@ impl IBStreamTrait for MemoryStream {
             return kResultFalse;
         }
 
-        *pos = *self.position_ref() as i64;
+        unsafe { *pos = *self.position_ref() as i64; }
         kResultOk
     }
 }

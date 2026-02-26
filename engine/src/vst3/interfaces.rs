@@ -203,8 +203,6 @@ impl PluginInstance {
 
     /// Set the component active/inactive
     pub fn set_active(&mut self, active: bool) -> Result<(), String> {
-        use vst3::Steinberg::IPluginBaseTrait;
-
         let result = unsafe { self.component.setActive(if active { 1 } else { 0 }) };
 
         if result != kResultOk {

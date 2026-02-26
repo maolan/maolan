@@ -31,9 +31,9 @@ pub struct Vst3Processor {
     previous_values: Arc<Mutex<Vec<f32>>>,
 
     // Processing state
-    sample_rate: f64,
-    max_block_size: usize,
-    is_active: bool,
+    _sample_rate: f64,
+    _max_block_size: usize,
+    _is_active: bool,
 }
 
 impl Vst3Processor {
@@ -138,9 +138,9 @@ impl Vst3Processor {
             parameters,
             scalar_values,
             previous_values,
-            sample_rate,
-            max_block_size: buffer_size,
-            is_active: true,
+            _sample_rate: sample_rate,
+            _max_block_size: buffer_size,
+            _is_active: true,
         })
     }
 
@@ -176,9 +176,9 @@ impl Vst3Processor {
             parameters: vec![],
             scalar_values: Arc::new(Mutex::new(vec![])),
             previous_values: Arc::new(Mutex::new(vec![])),
-            sample_rate: 44100.0,
-            max_block_size: sample_frames,
-            is_active: false,
+            _sample_rate: 44100.0,
+            _max_block_size: sample_frames,
+            _is_active: false,
         }
     }
 
