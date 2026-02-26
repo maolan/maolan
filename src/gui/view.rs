@@ -15,6 +15,9 @@ impl Maolan {
             if state.clip_rename_dialog.is_some() {
                 return self.clip_rename.view();
             }
+            if state.track_rename_dialog.is_some() {
+                return self.track_rename.view();
+            }
             match self.modal {
                 Some(Show::AddTrack) => self.add_track.view(),
                 #[cfg(not(target_os = "macos"))]

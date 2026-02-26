@@ -829,6 +829,48 @@ impl Maolan {
                         }
                     }
                 }
+                Action::RenameTrack {
+                    old_name,
+                    new_name,
+                } => {
+                    let mut state = self.state.blocking_write();
+                    // Update track name in GUI state
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *old_name) {
+                        track.name = new_name.clone();
+                    }
+                    // Update selected tracks
+                    if state.selected.remove(old_name) {
+                        state.selected.insert(new_name.clone());
+                    }
+                    // Update connection view selection
+                    match &mut state.connection_view_selection {
+                        crate::state::ConnectionViewSelection::Tracks(tracks) => {
+                            if tracks.remove(old_name) {
+                                tracks.insert(new_name.clone());
+                            }
+                        }
+                        _ => {}
+                    }
+                    // Update connections
+                    for conn in &mut state.connections {
+                        if conn.from_track == *old_name {
+                            conn.from_track = new_name.clone();
+                        }
+                        if conn.to_track == *old_name {
+                            conn.to_track = new_name.clone();
+                        }
+                    }
+                    // Update LV2 graph track reference
+                    if state.lv2_graph_track.as_deref() == Some(old_name) {
+                        state.lv2_graph_track = Some(new_name.clone());
+                    }
+                    // Update LV2 graphs by track
+                    #[cfg(not(target_os = "macos"))]
+                    if let Some(graph) = state.lv2_graphs_by_track.remove(old_name) {
+                        state.lv2_graphs_by_track.insert(new_name.clone(), graph);
+                    }
+                    state.message = format!("Renamed track to '{}'", new_name);
+                }
                 _ => {}
             },
             Message::Response(Err(ref e)) => {
@@ -1043,30 +1085,23 @@ impl Maolan {
             Message::ClipRenameConfirm => {
                 let dialog = self.state.blocking_read().clip_rename_dialog.clone();
                 let Some(dialog) = dialog else {
-                    tracing::info!("ClipRenameConfirm: No dialog found");
                     return Task::none();
                 };
 
                 let new_name = dialog.new_name.trim().to_string();
-                tracing::info!("ClipRenameConfirm: new_name={}", new_name);
                 if new_name.is_empty() {
-                    tracing::info!("ClipRenameConfirm: Empty name, aborting");
                     return Task::none();
                 }
 
                 // Get session directory and old clip name
                 let Some(session_dir) = &self.session_dir else {
-                    tracing::info!("ClipRenameConfirm: No session loaded");
                     self.state.blocking_write().message = "No session loaded".to_string();
                     self.state.blocking_write().clip_rename_dialog = None;
                     return Task::none();
                 };
 
-                tracing::info!("ClipRenameConfirm: session_dir={:?}", session_dir);
-
                 let mut state = self.state.blocking_write();
                 let Some(track) = state.tracks.iter().find(|t| t.name == dialog.track_idx) else {
-                    tracing::info!("ClipRenameConfirm: Track {} not found", dialog.track_idx);
                     state.message = format!("Track {} not found", dialog.track_idx);
                     state.clip_rename_dialog = None;
                     return Task::none();
@@ -1075,7 +1110,6 @@ impl Maolan {
                 let old_name = match dialog.kind {
                     Kind::Audio => {
                         if dialog.clip_idx >= track.audio.clips.len() {
-                            tracing::info!("ClipRenameConfirm: Clip index out of bounds");
                             state.message = "Clip not found".to_string();
                             state.clip_rename_dialog = None;
                             return Task::none();
@@ -1084,7 +1118,6 @@ impl Maolan {
                     }
                     Kind::MIDI => {
                         if dialog.clip_idx >= track.midi.clips.len() {
-                            tracing::info!("ClipRenameConfirm: Clip index out of bounds");
                             state.message = "Clip not found".to_string();
                             state.clip_rename_dialog = None;
                             return Task::none();
@@ -1093,20 +1126,15 @@ impl Maolan {
                     }
                 };
 
-                tracing::info!("ClipRenameConfirm: old_name={}", old_name);
-
                 // Build new file name
                 let new_file_name = match dialog.kind {
                     Kind::Audio => format!("audio/{}.wav", new_name),
                     Kind::MIDI => format!("midi/{}", new_name),
                 };
 
-                tracing::info!("ClipRenameConfirm: new_file_name={}", new_file_name);
-
                 // Check if target already exists
                 let new_path = session_dir.join(&new_file_name);
                 if new_path.exists() {
-                    tracing::info!("ClipRenameConfirm: Target file already exists");
                     state.message = format!("File '{}' already exists", new_file_name);
                     state.clip_rename_dialog = None;
                     return Task::none();
@@ -1114,52 +1142,38 @@ impl Maolan {
 
                 // Rename the physical file
                 let old_path = session_dir.join(&old_name);
-                tracing::info!("ClipRenameConfirm: old_path={:?}, new_path={:?}", old_path, new_path);
                 if old_path.exists() {
-                    tracing::info!("ClipRenameConfirm: File exists, renaming...");
                     if let Err(e) = std::fs::rename(&old_path, &new_path) {
-                        tracing::info!("ClipRenameConfirm: Rename failed: {}", e);
                         state.message = format!("Failed to rename file: {}", e);
                         state.clip_rename_dialog = None;
                         return Task::none();
                     }
-                    tracing::info!("ClipRenameConfirm: File renamed successfully");
-                } else {
-                    tracing::info!("ClipRenameConfirm: Old file does not exist at {:?}", old_path);
                 }
 
                 // Update all clip instances in the GUI state
-                tracing::info!("ClipRenameConfirm: Updating GUI state...");
-                let mut update_count = 0;
                 for track in &mut state.tracks {
                     match dialog.kind {
                         Kind::Audio => {
                             for clip in &mut track.audio.clips {
                                 if clip.name == old_name {
-                                    tracing::info!("ClipRenameConfirm: Updating clip in track {}", track.name);
                                     clip.name = new_file_name.clone();
-                                    update_count += 1;
                                 }
                             }
                         }
                         Kind::MIDI => {
                             for clip in &mut track.midi.clips {
                                 if clip.name == old_name {
-                                    tracing::info!("ClipRenameConfirm: Updating clip in track {}", track.name);
                                     clip.name = new_file_name.clone();
-                                    update_count += 1;
                                 }
                             }
                         }
                     }
                 }
 
-                tracing::info!("ClipRenameConfirm: Updated {} clip instances", update_count);
                 state.message = format!("Renamed to '{}'", new_name);
                 state.clip_rename_dialog = None;
                 drop(state);
 
-                tracing::info!("ClipRenameConfirm: Sending RenameClip action to engine");
                 // Now update the engine by sending a RenameClip action
                 return self.send(Action::RenameClip {
                     track_name: dialog.track_idx,
@@ -1170,6 +1184,38 @@ impl Maolan {
             }
             Message::ClipRenameCancel => {
                 self.state.blocking_write().clip_rename_dialog = None;
+            }
+            Message::TrackRenameShow(ref track_name) => {
+                let mut state = self.state.blocking_write();
+                state.track_rename_dialog = Some(crate::state::TrackRenameDialog {
+                    old_name: track_name.clone(),
+                    new_name: track_name.clone(),
+                });
+            }
+            Message::TrackRenameInput(_) => {
+                // Handled by TrackRenameView
+            }
+            Message::TrackRenameConfirm => {
+                let dialog = self.state.blocking_read().track_rename_dialog.clone();
+                let Some(dialog) = dialog else {
+                    return Task::none();
+                };
+
+                let new_name = dialog.new_name.trim().to_string();
+                if new_name.is_empty() || new_name == dialog.old_name {
+                    return Task::none();
+                }
+
+                self.state.blocking_write().track_rename_dialog = None;
+
+                // Send rename action to engine
+                return self.send(Action::RenameTrack {
+                    old_name: dialog.old_name,
+                    new_name,
+                });
+            }
+            Message::TrackRenameCancel => {
+                self.state.blocking_write().track_rename_dialog = None;
             }
             Message::DeselectAll => {
                 let mut state = self.state.blocking_write();

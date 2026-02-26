@@ -256,6 +256,12 @@ pub struct ClipRenameDialog {
     pub new_name: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct TrackRenameDialog {
+    pub old_name: String,
+    pub new_name: String,
+}
+
 #[derive(Debug)]
 pub struct StateData {
     pub shift: bool,
@@ -327,6 +333,7 @@ pub struct StateData {
     pub lv2_graph_last_plugin_click: Option<(usize, Instant)>,
     pub connections_last_track_click: Option<(String, Instant)>,
     pub clip_rename_dialog: Option<ClipRenameDialog>,
+    pub track_rename_dialog: Option<TrackRenameDialog>,
 }
 
 impl Default for StateData {
@@ -415,6 +422,7 @@ impl Default for StateData {
             lv2_graph_last_plugin_click: None,
             connections_last_track_click: None,
             clip_rename_dialog: None,
+            track_rename_dialog: None,
         }
     }
 }

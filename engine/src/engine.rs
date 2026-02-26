@@ -1342,6 +1342,53 @@ impl Engine {
                     .await;
                 }
             }
+            Action::RenameTrack {
+                ref old_name,
+                ref new_name,
+            } => {
+                // Check if new name already exists
+                if self.state.lock().tracks.contains_key(new_name) {
+                    self.notify_clients(Err(format!("Track '{}' already exists", new_name)))
+                        .await;
+                    return;
+                }
+
+                // Get the track and update its name
+                let Some(track) = self.state.lock().tracks.remove(old_name) else {
+                    self.notify_clients(Err(format!("Track '{}' not found", old_name)))
+                        .await;
+                    return;
+                };
+
+                track.lock().name = new_name.clone();
+                self.state.lock().tracks.insert(new_name.clone(), track);
+
+                // Update recording references
+                if let Some(recording) = self.audio_recordings.remove(old_name) {
+                    self.audio_recordings.insert(new_name.clone(), recording);
+                }
+                if let Some(recording) = self.midi_recordings.remove(old_name) {
+                    self.midi_recordings.insert(new_name.clone(), recording);
+                }
+
+                // Update MIDI routing references
+                for route in &mut self.midi_hw_in_routes {
+                    if route.to_track == *old_name {
+                        route.to_track = new_name.clone();
+                    }
+                }
+                for route in &mut self.midi_hw_out_routes {
+                    if route.from_track == *old_name {
+                        route.from_track = new_name.clone();
+                    }
+                }
+
+                self.notify_clients(Ok(Action::RenameTrack {
+                    old_name: old_name.clone(),
+                    new_name: new_name.clone(),
+                }))
+                .await;
+            }
             Action::RemoveTrack(ref name) => {
                 self.state.lock().tracks.remove(name);
                 self.audio_recordings.remove(name);

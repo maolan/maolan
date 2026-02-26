@@ -3,6 +3,7 @@ use iced::{
     Background, Border, Color, Element, Length,
     widget::{Column, Space, button, column, container, mouse_area, row, text},
 };
+use iced_aw::ContextMenu;
 use iced_drop::droppable;
 use iced_fonts::lucide::{audio_waveform, disc};
 use maolan_engine::message::Action;
@@ -91,8 +92,9 @@ impl Tracks {
                 .on_press(Message::TrackResizeStart(track.name.clone())),
             ];
 
-            droppable(
-                mouse_area(
+            {
+                let track_name_for_menu = track.name.clone();
+                let track_with_mouse = mouse_area(
                     container(track_ui)
                         .id(track.name.clone())
                         .width(Length::Fill)
@@ -128,11 +130,22 @@ impl Tracks {
                         }),
                 )
                 .on_press(Message::SelectTrack(track.name.clone()))
-                .on_double_click(Message::OpenTrackPlugins(track.name.clone())),
-            )
-            .on_drag(move |_, _| Message::TrackDrag(index))
-            .on_drop(Message::TrackDropped)
-            .into()
+                .on_double_click(Message::OpenTrackPlugins(track.name.clone()));
+
+                let track_with_context = ContextMenu::new(
+                    track_with_mouse,
+                    move || {
+                        button("Rename")
+                            .on_press(Message::TrackRenameShow(track_name_for_menu.clone()))
+                            .into()
+                    },
+                );
+
+                droppable(track_with_context)
+                    .on_drag(move |_, _| Message::TrackDrag(index))
+                    .on_drop(Message::TrackDropped)
+                    .into()
+            }
         }));
         mouse_area(result.width(width))
             .on_press(Message::DeselectAll)

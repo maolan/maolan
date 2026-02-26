@@ -163,4 +163,9 @@ pub enum Message {
     ClipRenameInput(String),
     ClipRenameConfirm,
     ClipRenameCancel,
+
+    TrackRenameShow(String),
+    TrackRenameInput(String),
+    TrackRenameConfirm,
+    TrackRenameCancel,
 }

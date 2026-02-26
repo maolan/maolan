@@ -8,7 +8,7 @@ use crate::{
     add_track, clip_rename, connections, hw, menu,
     message::{DraggedClip, Message, Show},
     state::{State, StateData},
-    toolbar, workspace,
+    toolbar, track_rename, workspace,
 };
 #[cfg(not(target_os = "macos"))]
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
@@ -65,6 +65,7 @@ pub struct Maolan {
     modal: Option<Show>,
     add_track: add_track::AddTrackView,
     clip_rename: clip_rename::ClipRenameView,
+    track_rename: track_rename::TrackRenameView,
     #[cfg(not(target_os = "macos"))]
     plugin_filter: String,
     #[cfg(not(target_os = "macos"))]
@@ -120,6 +121,7 @@ impl Default for Maolan {
             modal: None,
             add_track: add_track::AddTrackView::default(),
             clip_rename: clip_rename::ClipRenameView::new(state.clone()),
+            track_rename: track_rename::TrackRenameView::new(state.clone()),
             #[cfg(not(target_os = "macos"))]
             plugin_filter: String::new(),
             #[cfg(not(target_os = "macos"))]
@@ -952,6 +954,7 @@ impl Maolan {
         self.track_plugins.update(message.clone());
         self.add_track.update(message.clone());
         self.clip_rename.update(message.clone());
+        self.track_rename.update(message.clone());
         for track in &mut self.state.blocking_write().tracks {
             track.update(message.clone());
         }

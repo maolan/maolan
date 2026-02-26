@@ -115,6 +115,10 @@ pub enum Action {
         clip_index: usize,
         new_name: String,
     },
+    RenameTrack {
+        old_name: String,
+        new_name: String,
+    },
     RemoveTrack(String),
     TrackLevel(String, f32),
     TrackBalance(String, f32),

@@ -8,6 +8,7 @@ mod message;
 mod state;
 mod style;
 mod toolbar;
+mod track_rename;
 mod ui_timing;
 mod widget;
 mod workspace;
