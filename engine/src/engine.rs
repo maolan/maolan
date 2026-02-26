@@ -1736,6 +1736,174 @@ impl Engine {
                     }
                 }
             }
+            Action::TrackGetVst3Graph { ref track_name } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        let t = track.lock();
+                        let plugins = t.vst3_graph_plugins();
+                        let connections = t.vst3_graph_connections();
+                        self.notify_clients(Ok(Action::TrackVst3Graph {
+                            track_name: track_name.clone(),
+                            plugins,
+                            connections,
+                        }))
+                        .await;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackVst3Graph { .. } => {
+                // Response action, no handling needed
+            }
+            Action::TrackSetVst3Parameter {
+                ref track_name,
+                instance_id,
+                param_id,
+                value,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().set_vst3_parameter(instance_id, param_id, value) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                        self.notify_clients(Ok(a.clone())).await;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackGetVst3Parameters {
+                ref track_name,
+                instance_id,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        match track.lock().get_vst3_parameters(instance_id) {
+                            Ok(parameters) => {
+                                self.notify_clients(Ok(Action::TrackVst3Parameters {
+                                    track_name: track_name.clone(),
+                                    instance_id,
+                                    parameters,
+                                }))
+                                .await;
+                            }
+                            Err(e) => {
+                                self.notify_clients(Err(e)).await;
+                            }
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackVst3Parameters { .. } => {
+                // Response action, no handling needed
+            }
+            Action::TrackVst3SnapshotState {
+                ref track_name,
+                instance_id,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        match track.lock().vst3_snapshot_state(instance_id) {
+                            Ok(state) => {
+                                self.notify_clients(Ok(Action::TrackVst3StateSnapshot {
+                                    track_name: track_name.clone(),
+                                    instance_id,
+                                    state,
+                                }))
+                                .await;
+                            }
+                            Err(e) => {
+                                self.notify_clients(Err(e)).await;
+                            }
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackVst3StateSnapshot { .. } => {
+                // Response action, no handling needed
+            }
+            Action::TrackVst3RestoreState {
+                ref track_name,
+                instance_id,
+                ref state,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().vst3_restore_state(instance_id, state) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                        self.notify_clients(Ok(a.clone())).await;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackConnectVst3Audio {
+                ref track_name,
+                ref from_node,
+                from_port,
+                ref to_node,
+                to_port,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().connect_vst3_audio(from_node, from_port, to_node, to_port) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                        self.notify_clients(Ok(a.clone())).await;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackDisconnectVst3Audio {
+                ref track_name,
+                ref from_node,
+                from_port,
+                ref to_node,
+                to_port,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().disconnect_vst3_audio(from_node, from_port, to_node, to_port) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                        self.notify_clients(Ok(a.clone())).await;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
             Action::ClipMove {
                 ref kind,
                 ref from,

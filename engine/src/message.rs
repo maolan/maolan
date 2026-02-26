@@ -78,6 +78,33 @@ pub struct Lv2GraphConnection {
     pub kind: Kind,
 }
 
+// VST3 graph types
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Vst3GraphNode {
+    TrackInput,
+    TrackOutput,
+    PluginInstance(usize),
+}
+
+#[derive(Clone, Debug)]
+pub struct Vst3GraphPlugin {
+    pub instance_id: usize,
+    pub name: String,
+    pub path: String,
+    pub audio_inputs: usize,
+    pub audio_outputs: usize,
+    pub parameters: Vec<crate::vst3::port::ParameterInfo>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Vst3GraphConnection {
+    pub from_node: Vst3GraphNode,
+    pub from_port: usize,
+    pub to_node: Vst3GraphNode,
+    pub to_port: usize,
+    pub kind: Kind,
+}
+
 #[derive(Clone, Debug)]
 pub enum Action {
     Quit,
@@ -211,6 +238,57 @@ pub enum Action {
     TrackUnloadVst3PluginInstance {
         track_name: String,
         instance_id: usize,
+    },
+    TrackGetVst3Graph {
+        track_name: String,
+    },
+    TrackVst3Graph {
+        track_name: String,
+        plugins: Vec<Vst3GraphPlugin>,
+        connections: Vec<Vst3GraphConnection>,
+    },
+    TrackSetVst3Parameter {
+        track_name: String,
+        instance_id: usize,
+        param_id: u32,
+        value: f32,
+    },
+    TrackGetVst3Parameters {
+        track_name: String,
+        instance_id: usize,
+    },
+    TrackVst3Parameters {
+        track_name: String,
+        instance_id: usize,
+        parameters: Vec<crate::vst3::port::ParameterInfo>,
+    },
+    TrackVst3SnapshotState {
+        track_name: String,
+        instance_id: usize,
+    },
+    TrackVst3StateSnapshot {
+        track_name: String,
+        instance_id: usize,
+        state: crate::vst3::state::Vst3PluginState,
+    },
+    TrackVst3RestoreState {
+        track_name: String,
+        instance_id: usize,
+        state: crate::vst3::state::Vst3PluginState,
+    },
+    TrackConnectVst3Audio {
+        track_name: String,
+        from_node: Vst3GraphNode,
+        from_port: usize,
+        to_node: Vst3GraphNode,
+        to_port: usize,
+    },
+    TrackDisconnectVst3Audio {
+        track_name: String,
+        from_node: Vst3GraphNode,
+        from_port: usize,
+        to_node: Vst3GraphNode,
+        to_port: usize,
     },
     ClipMove {
         kind: Kind,

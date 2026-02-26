@@ -821,6 +821,275 @@ impl Track {
             .collect()
     }
 
+    pub fn vst3_graph_plugins(&self) -> Vec<crate::message::Vst3GraphPlugin> {
+        use crate::message::Vst3GraphPlugin;
+
+        self.vst3_processors
+            .iter()
+            .map(|instance| Vst3GraphPlugin {
+                instance_id: instance.id,
+                name: instance.processor.name().to_string(),
+                path: instance.processor.path().to_string(),
+                audio_inputs: instance.processor.audio_inputs().len(),
+                audio_outputs: instance.processor.audio_outputs().len(),
+                parameters: instance.processor.parameters().to_vec(),
+            })
+            .collect()
+    }
+
+    pub fn vst3_graph_connections(&self) -> Vec<crate::message::Vst3GraphConnection> {
+        use crate::message::{Vst3GraphConnection, Vst3GraphNode};
+        use crate::kind::Kind;
+
+        let mut connections = Vec::new();
+
+        // Build connections by inspecting AudioIO connections
+        // Similar to lv2_graph_connections approach
+        for instance in &self.vst3_processors {
+            // Check audio input connections
+            for (port_idx, input) in instance.processor.audio_inputs().iter().enumerate() {
+                let conns = input.connections.lock();
+                for conn in conns.iter() {
+                    // Try to find source: could be track input, another VST3 output, or LV2 output
+                    let from_node = self.find_vst3_audio_source_node(conn.as_ref());
+                    if let Some((node, from_port)) = from_node {
+                        connections.push(Vst3GraphConnection {
+                            from_node: node,
+                            from_port,
+                            to_node: Vst3GraphNode::PluginInstance(instance.id),
+                            to_port: port_idx,
+                            kind: Kind::Audio,
+                        });
+                    }
+                }
+            }
+
+            // Check audio output connections to track outputs
+            for (port_idx, output) in instance.processor.audio_outputs().iter().enumerate() {
+                let conns = output.connections.lock();
+                for conn in conns.iter() {
+                    // Check if connected to track outputs
+                    if self.audio.outs.iter().any(|out| Arc::ptr_eq(out, conn)) {
+                        let to_port = self.audio.outs
+                            .iter()
+                            .position(|out| Arc::ptr_eq(out, conn))
+                            .unwrap();
+
+                        connections.push(Vst3GraphConnection {
+                            from_node: Vst3GraphNode::PluginInstance(instance.id),
+                            from_port: port_idx,
+                            to_node: Vst3GraphNode::TrackOutput,
+                            to_port,
+                            kind: Kind::Audio,
+                        });
+                    }
+                }
+            }
+        }
+
+        connections
+    }
+
+    fn find_vst3_audio_source_node(
+        &self,
+        audio_io: &crate::audio::io::AudioIO,
+    ) -> Option<(crate::message::Vst3GraphNode, usize)> {
+        use crate::message::Vst3GraphNode;
+
+        // Check if it's a track input
+        for (idx, input) in self.audio.ins.iter().enumerate() {
+            if Arc::ptr_eq(input, &Arc::new(unsafe { std::ptr::read(audio_io as *const _) })) {
+                return Some((Vst3GraphNode::TrackInput, idx));
+            }
+        }
+
+        // Check if it's a VST3 output
+        for instance in &self.vst3_processors {
+            for (port_idx, output) in instance.processor.audio_outputs().iter().enumerate() {
+                if Arc::ptr_eq(output, &Arc::new(unsafe { std::ptr::read(audio_io as *const _) })) {
+                    return Some((Vst3GraphNode::PluginInstance(instance.id), port_idx));
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn set_vst3_parameter(
+        &mut self,
+        instance_id: usize,
+        param_id: u32,
+        value: f32,
+    ) -> Result<(), String> {
+        let instance = self
+            .vst3_processors
+            .iter_mut()
+            .find(|i| i.id == instance_id)
+            .ok_or_else(|| format!("VST3 instance {} not found", instance_id))?;
+
+        instance.processor.set_parameter_value(param_id, value)
+    }
+
+    pub fn get_vst3_parameters(
+        &self,
+        instance_id: usize,
+    ) -> Result<Vec<crate::vst3::port::ParameterInfo>, String> {
+        let instance = self
+            .vst3_processors
+            .iter()
+            .find(|i| i.id == instance_id)
+            .ok_or_else(|| format!("VST3 instance {} not found", instance_id))?;
+
+        Ok(instance.processor.parameters().to_vec())
+    }
+
+    pub fn vst3_snapshot_state(
+        &self,
+        instance_id: usize,
+    ) -> Result<crate::vst3::state::Vst3PluginState, String> {
+        let instance = self
+            .vst3_processors
+            .iter()
+            .find(|i| i.id == instance_id)
+            .ok_or_else(|| format!("VST3 instance {} not found", instance_id))?;
+
+        instance.processor.snapshot_state()
+    }
+
+    pub fn vst3_restore_state(
+        &mut self,
+        instance_id: usize,
+        state: &crate::vst3::state::Vst3PluginState,
+    ) -> Result<(), String> {
+        let instance = self
+            .vst3_processors
+            .iter_mut()
+            .find(|i| i.id == instance_id)
+            .ok_or_else(|| format!("VST3 instance {} not found", instance_id))?;
+
+        instance.processor.restore_state(state)
+    }
+
+    pub fn connect_vst3_audio(
+        &mut self,
+        from_node: &crate::message::Vst3GraphNode,
+        from_port: usize,
+        to_node: &crate::message::Vst3GraphNode,
+        to_port: usize,
+    ) -> Result<(), String> {
+        use crate::message::Vst3GraphNode;
+
+        // Get source AudioIO and clone it immediately to avoid borrow issues
+        let from_io = match from_node {
+            Vst3GraphNode::TrackInput => self
+                .audio
+                .ins
+                .get(from_port)
+                .ok_or("Invalid track input port")?
+                .clone(),
+            Vst3GraphNode::PluginInstance(id) => {
+                let instance = self
+                    .vst3_processors
+                    .iter()
+                    .find(|i| i.id == *id)
+                    .ok_or("VST3 instance not found")?;
+                instance
+                    .processor
+                    .audio_outputs()
+                    .get(from_port)
+                    .ok_or("Invalid plugin output port")?
+                    .clone()
+            }
+            Vst3GraphNode::TrackOutput => return Err("Cannot connect from track output".to_string()),
+        };
+
+        // Get destination AudioIO
+        let to_io = match to_node {
+            Vst3GraphNode::PluginInstance(id) => {
+                let instance = self
+                    .vst3_processors
+                    .iter()
+                    .find(|i| i.id == *id)
+                    .ok_or("VST3 instance not found")?;
+                instance
+                    .processor
+                    .audio_inputs()
+                    .get(to_port)
+                    .ok_or("Invalid plugin input port")?
+            }
+            Vst3GraphNode::TrackOutput => self
+                .audio
+                .outs
+                .get(to_port)
+                .ok_or("Invalid track output port")?,
+            Vst3GraphNode::TrackInput => return Err("Cannot connect to track input".to_string()),
+        };
+
+        // Add connection
+        to_io.connections.lock().push(from_io);
+        Ok(())
+    }
+
+    pub fn disconnect_vst3_audio(
+        &mut self,
+        from_node: &crate::message::Vst3GraphNode,
+        from_port: usize,
+        to_node: &crate::message::Vst3GraphNode,
+        to_port: usize,
+    ) -> Result<(), String> {
+        use crate::message::Vst3GraphNode;
+
+        // Get source AudioIO and clone to avoid borrow issues
+        let from_io = match from_node {
+            Vst3GraphNode::TrackInput => self
+                .audio
+                .ins
+                .get(from_port)
+                .ok_or("Invalid track input port")?
+                .clone(),
+            Vst3GraphNode::PluginInstance(id) => {
+                let instance = self
+                    .vst3_processors
+                    .iter()
+                    .find(|i| i.id == *id)
+                    .ok_or("VST3 instance not found")?;
+                instance
+                    .processor
+                    .audio_outputs()
+                    .get(from_port)
+                    .ok_or("Invalid plugin output port")?
+                    .clone()
+            }
+            Vst3GraphNode::TrackOutput => return Err("Cannot disconnect from track output".to_string()),
+        };
+
+        // Get destination AudioIO
+        let to_io = match to_node {
+            Vst3GraphNode::PluginInstance(id) => {
+                let instance = self
+                    .vst3_processors
+                    .iter()
+                    .find(|i| i.id == *id)
+                    .ok_or("VST3 instance not found")?;
+                instance
+                    .processor
+                    .audio_inputs()
+                    .get(to_port)
+                    .ok_or("Invalid plugin input port")?
+            }
+            Vst3GraphNode::TrackOutput => self
+                .audio
+                .outs
+                .get(to_port)
+                .ok_or("Invalid track output port")?,
+            Vst3GraphNode::TrackInput => return Err("Cannot disconnect to track input".to_string()),
+        };
+
+        // Remove connection
+        to_io.connections.lock().retain(|conn| !Arc::ptr_eq(conn, &from_io));
+        Ok(())
+    }
+
     pub fn clear_default_passthrough(&self) {
         for (audio_in, audio_out) in self.audio.ins.iter().zip(self.audio.outs.iter()) {
             let _ = AudioIO::disconnect(audio_in, audio_out);

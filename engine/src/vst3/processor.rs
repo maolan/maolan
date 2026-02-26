@@ -1,6 +1,9 @@
 use super::interfaces::PluginInstance;
+use super::midi::EventBuffer;
 use super::port::{BusInfo, ParameterInfo};
+use super::state::{MemoryStream, Vst3PluginState};
 use crate::audio::io::AudioIO;
+use crate::midi::io::MidiEvent;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use vst3::Steinberg::Vst::ProcessModes_::kRealtime;
@@ -226,11 +229,56 @@ impl Vst3Processor {
             }
         };
 
-        // Call real VST3 processing
-        if let Err(e) = self.process_vst3(processor, frames) {
+        // Call real VST3 processing (no MIDI)
+        if let Err(e) = self.process_vst3(processor, frames, None) {
             // If VST3 processing fails, fallback to passthrough
             eprintln!("VST3 processing error: {}, falling back to passthrough", e);
             self.process_passthrough(frames);
+        }
+    }
+
+    /// Process audio with MIDI events
+    pub fn process_with_midi(
+        &self,
+        frames: usize,
+        input_events: &[MidiEvent],
+    ) -> Vec<MidiEvent> {
+        // Process all input AudioIO ports
+        for input in &self.audio_inputs {
+            input.process();
+        }
+
+        // If we don't have a real instance, do passthrough with no MIDI output
+        if self.instance.is_none() {
+            self.process_passthrough(frames);
+            return Vec::new();
+        }
+
+        // Get the audio processor
+        let processor = match &self.instance.as_ref().unwrap().audio_processor {
+            Some(proc) => proc,
+            None => {
+                // No processor available, use passthrough
+                self.process_passthrough(frames);
+                return Vec::new();
+            }
+        };
+
+        // Convert input MIDI events to VST3 format
+        let input_event_buffer = EventBuffer::from_midi_events(input_events, 0);
+
+        // Call real VST3 processing with MIDI
+        match self.process_vst3(processor, frames, Some(&input_event_buffer)) {
+            Ok(output_buffer) => {
+                // Convert output events back to MIDI
+                output_buffer.to_midi_events()
+            }
+            Err(e) => {
+                // If VST3 processing fails, fallback to passthrough
+                eprintln!("VST3 processing error: {}, falling back to passthrough", e);
+                self.process_passthrough(frames);
+                Vec::new()
+            }
         }
     }
 
@@ -238,7 +286,8 @@ impl Vst3Processor {
         &self,
         processor: &vst3::ComPtr<vst3::Steinberg::Vst::IAudioProcessor>,
         frames: usize,
-    ) -> Result<(), String> {
+        _input_events: Option<&EventBuffer>,
+    ) -> Result<EventBuffer, String> {
         use vst3::Steinberg::Vst::*;
         use vst3::Steinberg::Vst::IAudioProcessorTrait;
 
@@ -321,7 +370,11 @@ impl Vst3Processor {
             *output.finished.lock() = true;
         }
 
-        Ok(())
+        // For now, return empty output events
+        // Full IEventList implementation would go here
+        let output_events = EventBuffer::new();
+
+        Ok(output_events)
     }
 
     fn process_passthrough(&self, frames: usize) {
@@ -367,6 +420,87 @@ impl Vst3Processor {
                 use vst3::Steinberg::Vst::IEditControllerTrait;
                 unsafe {
                     controller.setParamNormalized(param_id, normalized_value as f64);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Snapshot the current plugin state for saving
+    pub fn snapshot_state(&self) -> Result<Vst3PluginState, String> {
+        use vst3::Steinberg::Vst::{IComponentTrait, IEditControllerTrait};
+
+        let instance = self.instance.as_ref().ok_or("No plugin instance")?;
+
+        // Save component state
+        let mut comp_stream = MemoryStream::new();
+        unsafe {
+            let result = instance.component.getState(comp_stream.as_ibstream_mut() as *mut _ as *mut _);
+            if result != vst3::Steinberg::kResultOk {
+                return Err("Failed to get component state".to_string());
+            }
+        }
+
+        // Save controller state (if available)
+        let mut ctrl_stream = MemoryStream::new();
+        if let Some(controller) = &instance.edit_controller {
+            unsafe {
+                let result = controller.getState(ctrl_stream.as_ibstream_mut() as *mut _ as *mut _);
+                if result != vst3::Steinberg::kResultOk {
+                    // Controller state is optional, so just log warning
+                    eprintln!("Warning: Failed to get controller state");
+                }
+            }
+        }
+
+        Ok(Vst3PluginState {
+            plugin_id: self.plugin_id.clone(),
+            component_state: comp_stream.into_bytes(),
+            controller_state: ctrl_stream.into_bytes(),
+        })
+    }
+
+    /// Restore plugin state from a snapshot
+    pub fn restore_state(&mut self, state: &Vst3PluginState) -> Result<(), String> {
+        use vst3::Steinberg::Vst::{IComponentTrait, IEditControllerTrait};
+
+        if state.plugin_id != self.plugin_id {
+            return Err(format!(
+                "Plugin ID mismatch: expected '{}', got '{}'",
+                self.plugin_id, state.plugin_id
+            ));
+        }
+
+        let instance = self.instance.as_ref().ok_or("No plugin instance")?;
+
+        // Restore component state
+        if !state.component_state.is_empty() {
+            let mut comp_stream = MemoryStream::from_bytes(&state.component_state);
+            unsafe {
+                let result = instance.component.setState(comp_stream.as_ibstream_mut() as *mut _ as *mut _);
+                if result != vst3::Steinberg::kResultOk {
+                    return Err("Failed to set component state".to_string());
+                }
+            }
+        }
+
+        // Restore controller state (if available)
+        if !state.controller_state.is_empty() {
+            if let Some(controller) = &instance.edit_controller {
+                let mut ctrl_stream = MemoryStream::from_bytes(&state.controller_state);
+                unsafe {
+                    let result = controller.setState(ctrl_stream.as_ibstream_mut() as *mut _ as *mut _);
+                    if result != vst3::Steinberg::kResultOk {
+                        eprintln!("Warning: Failed to set controller state");
+                    }
+                }
+
+                // Re-sync parameter values after restoring state
+                for (idx, param) in self.parameters.iter().enumerate() {
+                    let value = unsafe { controller.getParamNormalized(param.id) };
+                    self.scalar_values.lock().unwrap()[idx] = value as f32;
+                    self.previous_values.lock().unwrap()[idx] = value as f32;
                 }
             }
         }

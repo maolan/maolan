@@ -1,12 +1,16 @@
 pub mod host;
 pub mod interfaces;
+pub mod midi;
 pub mod port;
 pub mod processor;
+pub mod state;
 
 // Re-export main types
 pub use host::{Vst3Host, Vst3PluginInfo};
+pub use midi::EventBuffer;
 pub use port::{BusInfo, PortBinding};
 pub use processor::Vst3Processor;
+pub use state::{MemoryStream, Vst3PluginState};
 
 // Re-export from old vst3.rs for backward compatibility
 pub use processor::{list_plugins};
