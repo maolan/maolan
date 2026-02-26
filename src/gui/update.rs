@@ -128,8 +128,10 @@ impl Maolan {
                     }
                     Show::TrackPluginList => {
                         self.modal = Some(Show::TrackPluginList);
-                        #[cfg(not(target_os = "macos"))]
+                        #[cfg(all(unix, not(target_os = "macos")))]
                         self.selected_lv2_plugins.clear();
+                        #[cfg(any(target_os = "windows", target_os = "macos"))]
+                        self.selected_vst3_plugins.clear();
                     }
                 }
             }
@@ -175,7 +177,7 @@ impl Maolan {
                     state.selected_clips.clear();
                     state.connection_view_selection = ConnectionViewSelection::None;
                     state.lv2_graph_track = None;
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(all(unix, not(target_os = "macos")))]
                     {
                         state.lv2_graph_plugins.clear();
                         state.lv2_graph_connections.clear();
@@ -330,13 +332,19 @@ impl Maolan {
                 }
                 return self.send(Action::SetRecordEnabled(true));
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Message::RefreshLv2Plugins => return self.send(Action::ListLv2Plugins),
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            Message::RefreshVst3Plugins => return self.send(Action::ListVst3Plugins),
+            #[cfg(all(unix, not(target_os = "macos")))]
             Message::FilterLv2Plugins(ref query) => {
                 self.plugin_filter = query.clone();
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            Message::FilterVst3Plugins(ref query) => {
+                self.vst3_plugin_filter = query.clone();
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
             Message::SelectLv2Plugin(ref plugin_uri) => {
                 if self.selected_lv2_plugins.contains(plugin_uri) {
                     self.selected_lv2_plugins.remove(plugin_uri);
@@ -344,7 +352,15 @@ impl Maolan {
                     self.selected_lv2_plugins.insert(plugin_uri.clone());
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            Message::SelectVst3Plugin(ref plugin_path) => {
+                if self.selected_vst3_plugins.contains(plugin_path) {
+                    self.selected_vst3_plugins.remove(plugin_path);
+                } else {
+                    self.selected_vst3_plugins.insert(plugin_path.clone());
+                }
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
             Message::LoadSelectedLv2Plugins => {
                 let track_name = {
                     let state = self.state.blocking_read();
@@ -371,6 +387,34 @@ impl Maolan {
                 }
                 self.state.blocking_write().message =
                     "Select a track before loading LV2 plugin".to_string();
+            }
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            Message::LoadSelectedVst3Plugins => {
+                let track_name = {
+                    let state = self.state.blocking_read();
+                    state
+                        .lv2_graph_track
+                        .clone()
+                        .or_else(|| state.selected.iter().next().cloned())
+                };
+                if let Some(track_name) = track_name {
+                    let tasks: Vec<Task<Message>> = self
+                        .selected_vst3_plugins
+                        .iter()
+                        .cloned()
+                        .map(|plugin_path| {
+                            self.send(Action::TrackLoadVst3Plugin {
+                                track_name: track_name.clone(),
+                                plugin_path,
+                            })
+                        })
+                        .collect();
+                    self.selected_vst3_plugins.clear();
+                    self.modal = None;
+                    return Task::batch(tasks);
+                }
+                self.state.blocking_write().message =
+                    "Select a track before loading VST3 plugin".to_string();
             }
             Message::SendMessageFinished(ref result) => {
                 if let Err(e) = result {
@@ -752,15 +796,20 @@ impl Maolan {
                     self.punch_range_samples = *range;
                     self.punch_enabled = range.is_some();
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(all(unix, not(target_os = "macos")))]
                 Action::Lv2Plugins(plugins) => {
                     let mut state = self.state.blocking_write();
                     state.lv2_plugins = plugins.clone();
                     state.message = format!("Loaded {} LV2 plugins", state.lv2_plugins.len());
                 }
+                Action::Vst3Plugins(plugins) => {
+                    let mut state = self.state.blocking_write();
+                    state.vst3_plugins = plugins.clone();
+                    state.message = format!("Loaded {} VST3 plugins", state.vst3_plugins.len());
+                }
                 Action::TrackClearDefaultPassthrough { track_name } => {
                     let lv2_track = self.state.blocking_read().lv2_graph_track.clone();
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(all(unix, not(target_os = "macos")))]
                     if lv2_track.as_deref() == Some(track_name.as_str()) {
                         return self.send(Action::TrackGetLv2Graph {
                             track_name: track_name.clone(),
@@ -768,7 +817,7 @@ impl Maolan {
                     }
                     let _ = (track_name, lv2_track);
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(all(unix, not(target_os = "macos")))]
                 Action::TrackLoadLv2Plugin { track_name, .. }
                 | Action::TrackSetLv2PluginState { track_name, .. }
                 | Action::TrackUnloadLv2PluginInstance { track_name, .. }
@@ -783,7 +832,7 @@ impl Maolan {
                         });
                     }
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(all(unix, not(target_os = "macos")))]
                 Action::TrackLv2Graph {
                     track_name,
                     plugins,
@@ -865,7 +914,7 @@ impl Maolan {
                         state.lv2_graph_track = Some(new_name.clone());
                     }
                     // Update LV2 graphs by track
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(all(unix, not(target_os = "macos")))]
                     if let Some(graph) = state.lv2_graphs_by_track.remove(old_name) {
                         state.lv2_graphs_by_track.insert(new_name.clone(), graph);
                     }
@@ -1338,7 +1387,7 @@ impl Maolan {
                         return self.update(Message::RemoveSelectedTracks);
                     }
                     crate::state::View::TrackPlugins => {
-                        #[cfg(not(target_os = "macos"))]
+                        #[cfg(all(unix, not(target_os = "macos")))]
                         {
                             let (track_name, selected_plugin, selected_indices, connections) = {
                                 let state = self.state.blocking_read();
@@ -2209,7 +2258,7 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     state.view = View::TrackPlugins;
                     state.lv2_graph_track = Some(track_name.clone());
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(all(unix, not(target_os = "macos")))]
                     {
                         state.lv2_graph_connecting = None;
                         state.lv2_graph_moving_plugin = None;
@@ -2217,10 +2266,12 @@ impl Maolan {
                     state.lv2_graph_last_plugin_click = None;
                     state.lv2_graph_selected_plugin = None;
                 }
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(all(unix, not(target_os = "macos")))]
                 return self.send(Action::TrackGetLv2Graph {
                     track_name: track_name.clone(),
                 });
+                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                return self.send(Action::ListVst3Plugins);
             }
             Message::HWSelected(ref hw) => {
                 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]

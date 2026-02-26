@@ -129,7 +129,7 @@ impl Maolan {
                 }
             }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(unix, not(target_os = "macos")))]
         let graphs = {
             let mut graphs = serde_json::Map::new();
             for (track_name, (plugins, connections)) in &state.lv2_graphs_by_track {
@@ -166,7 +166,7 @@ impl Maolan {
             }
             Value::Object(graphs)
         };
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         let graphs = Value::Object(serde_json::Map::new());
         let result = json!({
             "tracks": tracks_json,
@@ -209,7 +209,7 @@ impl Maolan {
             state.selected.clear();
             state.selected_clips.clear();
             state.connection_view_selection = ConnectionViewSelection::None;
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             state.lv2_graphs_by_track.clear();
         }
         let filename = "session.json";
@@ -558,7 +558,7 @@ impl Maolan {
                 "'tracks' is not an array",
             ));
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(unix, not(target_os = "macos")))]
         if let Some(graphs) = session["graphs"].as_object() {
             for (track_name, graph_v) in graphs {
                 restore_actions.push(Action::TrackClearDefaultPassthrough {
@@ -650,7 +650,7 @@ impl Maolan {
     }
 
     pub(super) fn refresh_graphs_then_save(&mut self, path: String) -> Task<Message> {
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(unix, not(target_os = "macos")))]
         {
             let track_names: Vec<String> = self
                 .state
@@ -677,7 +677,7 @@ impl Maolan {
                 .collect::<Vec<_>>();
             return Task::batch(tasks);
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             if let Err(e) = self.save(path.clone()) {
                 error!("{}", e);

@@ -10,7 +10,9 @@ use crate::{
     state::{State, StateData},
     toolbar, track_rename, workspace,
 };
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
+use iced::widget::{button, column, container, row, scrollable, text, text_input};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Length, Size, Task};
 use maolan_engine::{
@@ -20,7 +22,9 @@ use maolan_engine::{
 };
 use midly::{MetaMessage, Smf, Timing, TrackEventKind};
 use serde_json::{Value, json};
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(unix, not(target_os = "macos")))]
+use std::collections::BTreeSet;
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::collections::BTreeSet;
 use std::collections::{HashMap, HashSet};
 use std::{
@@ -59,17 +63,21 @@ pub struct Maolan {
     track: Option<String>,
     workspace: workspace::Workspace,
     connections: connections::canvas_host::CanvasHost<connections::tracks::Graph>,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     track_plugins: connections::canvas_host::CanvasHost<connections::plugins::Graph>,
     hw: hw::HW,
     modal: Option<Show>,
     add_track: add_track::AddTrackView,
     clip_rename: clip_rename::ClipRenameView,
     track_rename: track_rename::TrackRenameView,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     plugin_filter: String,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     selected_lv2_plugins: BTreeSet<String>,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    vst3_plugin_filter: String,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    selected_vst3_plugins: BTreeSet<String>,
     session_dir: Option<PathBuf>,
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
@@ -113,7 +121,7 @@ impl Default for Maolan {
             connections: connections::canvas_host::CanvasHost::new(
                 connections::tracks::Graph::new(state.clone()),
             ),
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             track_plugins: connections::canvas_host::CanvasHost::new(
                 connections::plugins::Graph::new(state.clone()),
             ),
@@ -122,10 +130,14 @@ impl Default for Maolan {
             add_track: add_track::AddTrackView::default(),
             clip_rename: clip_rename::ClipRenameView::new(state.clone()),
             track_rename: track_rename::TrackRenameView::new(state.clone()),
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             plugin_filter: String::new(),
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             selected_lv2_plugins: BTreeSet::new(),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            vst3_plugin_filter: String::new(),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            selected_vst3_plugins: BTreeSet::new(),
             session_dir: None,
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
@@ -750,7 +762,7 @@ impl Maolan {
         Ok((rel, length.max(1)))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn lv2_node_to_json(
         node: &maolan_engine::message::Lv2GraphNode,
         id_to_index: &std::collections::HashMap<usize, usize>,
@@ -766,7 +778,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn lv2_node_from_json(v: &Value) -> Option<maolan_engine::message::Lv2GraphNode> {
         use maolan_engine::message::Lv2GraphNode;
         let t = v["type"].as_str()?;
@@ -795,7 +807,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn lv2_state_to_json(state: &maolan_engine::message::Lv2PluginState) -> Value {
         let port_values = state
             .port_values
@@ -820,7 +832,7 @@ impl Maolan {
         })
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn lv2_state_from_json(v: &Value) -> Option<maolan_engine::message::Lv2PluginState> {
         let port_values = v["port_values"]
             .as_array()
@@ -860,7 +872,7 @@ impl Maolan {
         })
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = state
@@ -936,6 +948,71 @@ impl Maolan {
         .into()
     }
 
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
+        let state = self.state.blocking_read();
+        let title = state
+            .lv2_graph_track
+            .clone()
+            .unwrap_or_else(|| "(no track)".to_string());
+        let mut vst3_list = column![];
+        let filter = self.vst3_plugin_filter.trim().to_lowercase();
+        for plugin in &state.vst3_plugins {
+            if !filter.is_empty() {
+                let name = plugin.name.to_lowercase();
+                let path = plugin.path.to_lowercase();
+                if !name.contains(&filter) && !path.contains(&filter) {
+                    continue;
+                }
+            }
+            let is_selected = self.selected_vst3_plugins.contains(&plugin.path);
+            let row_content = row![
+                text(if is_selected { "[x]" } else { "[ ]" }),
+                text(plugin.name.clone()).width(Length::Fill),
+            ]
+            .spacing(8)
+            .width(Length::Fill);
+            let row_button = if is_selected {
+                button(row_content).style(button::primary)
+            } else {
+                button(row_content).style(button::text)
+            };
+            vst3_list = vst3_list.push(
+                row_button
+                    .width(Length::Fill)
+                    .on_press(Message::SelectVst3Plugin(plugin.path.clone())),
+            );
+        }
+        let load_button = if self.selected_vst3_plugins.is_empty() {
+            button("Load")
+        } else {
+            button(text(format!("Load ({})", self.selected_vst3_plugins.len())))
+                .on_press(Message::LoadSelectedVst3Plugins)
+        };
+        container(
+            column![
+                text(format!("Track Plugins: {title}")),
+                text_input("Filter VST3 plugins...", &self.vst3_plugin_filter)
+                    .on_input(Message::FilterVst3Plugins)
+                    .width(Length::Fill),
+                scrollable(vst3_list).height(Length::Fill),
+                row![
+                    load_button,
+                    button("Rescan").on_press(Message::RefreshVst3Plugins),
+                    button("Close")
+                        .on_press(Message::Cancel)
+                        .style(button::secondary),
+                ]
+                .spacing(10),
+            ]
+            .spacing(10),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
     fn send(&self, action: Action) -> Task<Message> {
         Task::perform(
             async move { CLIENT.send(EngineMessage::Request(action)).await },
@@ -950,7 +1027,7 @@ impl Maolan {
         self.toolbar.update(message.clone());
         self.workspace.update(message.clone());
         self.connections.update(message.clone());
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(all(unix, not(target_os = "macos")))]
         self.track_plugins.update(message.clone());
         self.add_track.update(message.clone());
         self.clip_rename.update(message.clone());

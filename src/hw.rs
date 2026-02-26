@@ -57,9 +57,21 @@ impl HW {
                 crate::state::AudioBackendOption::Alsa => hw.id.starts_with("hw:"),
             })
             .collect();
+        #[cfg(target_os = "windows")]
+        let available_hw: Vec<String> = available_hw
+            .into_iter()
+            .filter(|hw| match selected_backend {
+                crate::state::AudioBackendOption::Wasapi => hw.starts_with("wasapi:"),
+                crate::state::AudioBackendOption::Asio => hw.starts_with("asio:"),
+            })
+            .collect();
         #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
         {
             selected_hw = selected_hw.filter(|s| available_hw.iter().any(|hw| hw.id == s.id));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            selected_hw = selected_hw.filter(|s| available_hw.iter().any(|hw| hw == s));
         }
         #[cfg(unix)]
         let selected_is_jack = matches!(selected_backend, crate::state::AudioBackendOption::Jack);

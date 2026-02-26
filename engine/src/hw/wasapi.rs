@@ -3,7 +3,7 @@ use crate::hw::{common, options::HwOptions, traits};
 use crate::message::HwMidiEvent;
 use crate::midi::io::MidiEvent;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{SampleFormat, SampleRate, Stream, StreamConfig};
+use cpal::{Host, HostId, SampleFormat, SampleRate, Stream, StreamConfig};
 use midir::{Ignore, MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -12,6 +12,8 @@ use tracing::error;
 
 const MIDI_IN_PREFIX: &str = "winmidi:in:";
 const MIDI_OUT_PREFIX: &str = "winmidi:out:";
+const WASAPI_PREFIX: &str = "wasapi:";
+const ASIO_PREFIX: &str = "asio:";
 
 impl Default for HwOptions {
     fn default() -> Self {
@@ -42,6 +44,7 @@ pub struct HwDriver {
     period_frames: usize,
     input_channels: usize,
     output_channels: usize,
+    playing: bool,
 }
 
 impl HwDriver {
@@ -51,11 +54,10 @@ impl HwDriver {
         _bits: i32,
         options: HwOptions,
     ) -> Result<Self, String> {
-        let host = cpal::default_host();
-        let requested_name = device.strip_prefix("wasapi:").unwrap_or(device).trim();
+        let (host, requested_name, backend_label) = select_backend_host_and_device(device)?;
 
         let output_device = select_output_device(&host, requested_name)
-            .ok_or_else(|| format!("No matching WASAPI output device for '{device}'"))?;
+            .ok_or_else(|| format!("No matching {backend_label} output device for '{device}'"))?;
         let output_cfg = select_f32_output_config(&output_device, rate)?;
 
         let sample_rate = output_cfg.sample_rate.0 as usize;
@@ -111,14 +113,14 @@ impl HwDriver {
                         }
                         let _ = cycle_tick_tx.try_send(());
                     },
-                    |e| error!("WASAPI output stream error: {e}"),
+                    move |e| error!("{backend_label} output stream error: {e}"),
                     None,
                 )
-                .map_err(|e| format!("Failed to build WASAPI output stream: {e}"))?
+                .map_err(|e| format!("Failed to build {backend_label} output stream: {e}"))?
         };
         output_stream
             .play()
-            .map_err(|e| format!("Failed to start WASAPI output stream: {e}"))?;
+            .map_err(|e| format!("Failed to start {backend_label} output stream: {e}"))?;
 
         let (input_stream, input_rx) =
             if let (Some(input_device), Some(input_cfg)) = (maybe_input_device, maybe_input_cfg) {
@@ -136,14 +138,14 @@ impl HwDriver {
                                     let _ = input_tx.try_send(chunk);
                                 }
                             },
-                            |e| error!("WASAPI input stream error: {e}"),
+                            move |e| error!("{backend_label} input stream error: {e}"),
                             None,
                         )
-                        .map_err(|e| format!("Failed to build WASAPI input stream: {e}"))?
+                        .map_err(|e| format!("Failed to build {backend_label} input stream: {e}"))?
                 };
                 input_stream
                     .play()
-                    .map_err(|e| format!("Failed to start WASAPI input stream: {e}"))?;
+                    .map_err(|e| format!("Failed to start {backend_label} input stream: {e}"))?;
                 (Some(input_stream), Some(input_rx))
             } else {
                 (None, None)
@@ -164,6 +166,7 @@ impl HwDriver {
             period_frames,
             input_channels,
             output_channels,
+            playing: false,
         })
     }
 
@@ -228,13 +231,15 @@ impl HwDriver {
         let gain = self.output_gain_linear;
         let balance = self.output_balance;
         let mut interleaved = vec![0.0_f32; frames.saturating_mul(channels)];
-        for (ch_idx, io_port) in self.audio_outs.iter().enumerate() {
-            io_port.process();
-            let src = io_port.buffer.lock();
-            let b = common::channel_balance_gain(channels, ch_idx, balance);
-            for frame in 0..frames.min(src.len()) {
-                let idx = frame * channels + ch_idx;
-                interleaved[idx] = src[frame] * gain * b;
+        if self.playing {
+            for (ch_idx, io_port) in self.audio_outs.iter().enumerate() {
+                io_port.process();
+                let src = io_port.buffer.lock();
+                let b = common::channel_balance_gain(channels, ch_idx, balance);
+                for frame in 0..frames.min(src.len()) {
+                    let idx = frame * channels + ch_idx;
+                    interleaved[idx] = src[frame] * gain * b;
+                }
             }
         }
 
@@ -249,7 +254,13 @@ impl HwDriver {
     pub fn channel(&mut self) -> &mut Self {
         self
     }
+
+    pub fn set_playing(&mut self, playing: bool) {
+        self.playing = playing;
+    }
 }
+
+unsafe impl Send for HwDriver {}
 
 fn select_output_device(host: &cpal::Host, requested: &str) -> Option<cpal::Device> {
     if requested.eq_ignore_ascii_case("default") || requested.is_empty() {
@@ -279,6 +290,17 @@ fn select_input_device(host: &cpal::Host, requested: &str) -> Option<cpal::Devic
         }
     }
     None
+}
+
+fn select_backend_host_and_device(device: &str) -> Result<(Host, &str, &'static str), String> {
+    if let Some(name) = device.strip_prefix(ASIO_PREFIX) {
+        let host =
+            cpal::host_from_id(HostId::Asio).map_err(|e| format!("ASIO host is not available: {e}"))?;
+        return Ok((host, name.trim(), "ASIO"));
+    }
+    let requested = device.strip_prefix(WASAPI_PREFIX).unwrap_or(device).trim();
+    let host = cpal::host_from_id(HostId::Wasapi).unwrap_or_else(|_| cpal::default_host());
+    Ok((host, requested, "WASAPI"))
 }
 
 fn select_f32_output_config(

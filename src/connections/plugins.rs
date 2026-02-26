@@ -1,4 +1,4 @@
-#![cfg(not(target_os = "macos"))]
+#![cfg(all(unix, not(target_os = "macos")))]
 
 use crate::{
     connections::colors::{audio_port_color, midi_port_color},

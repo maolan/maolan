@@ -27,10 +27,10 @@ impl Maolan {
 
         fn listener() -> impl Stream<Item = Message> {
             stream::once(CLIENT.subscribe()).flat_map(|receiver| {
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(all(unix, not(target_os = "macos")))]
                 let initial = stream::once(async { Message::RefreshLv2Plugins });
-                #[cfg(target_os = "macos")]
-                let initial = stream::empty();
+                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                let initial = stream::once(async { Message::RefreshVst3Plugins });
                 initial.chain(stream::unfold(
                     (receiver, HashMap::<String, Vec<f32>>::new()),
                     |(mut rx, mut last_meters)| async move {

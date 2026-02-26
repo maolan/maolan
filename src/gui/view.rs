@@ -20,10 +20,10 @@ impl Maolan {
             }
             match self.modal {
                 Some(Show::AddTrack) => self.add_track.view(),
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(all(unix, not(target_os = "macos")))]
                 Some(Show::TrackPluginList) => self.track_plugin_list_view(),
-                #[cfg(target_os = "macos")]
-                Some(Show::TrackPluginList) => self.add_track.view(),
+                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                Some(Show::TrackPluginList) => self.track_plugin_list_view(),
                 _ => {
                     let view = match state.view {
                         View::Workspace => self.workspace.view(
@@ -42,9 +42,9 @@ impl Maolan {
                             Some(self.recording_preview_peaks.clone()),
                         ),
                         View::Connections => self.connections.view(),
-                        #[cfg(not(target_os = "macos"))]
+                        #[cfg(all(unix, not(target_os = "macos")))]
                         View::TrackPlugins => self.track_plugins.view(),
-                        #[cfg(target_os = "macos")]
+                        #[cfg(any(target_os = "windows", target_os = "macos"))]
                         View::TrackPlugins => self.connections.view(),
                     };
 

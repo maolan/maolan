@@ -32,7 +32,9 @@ use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "openbsd")]
 use crate::hw::sndio::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "windows")]
-use crate::hw::wasapi::{self, HwDriver, HwOptions, MidiHub};
+use crate::hw::options::HwOptions;
+#[cfg(target_os = "windows")]
+use crate::hw::wasapi::{self, HwDriver, MidiHub};
 #[cfg(target_os = "freebsd")]
 use crate::oss_worker::HwWorker;
 #[cfg(target_os = "openbsd")]
@@ -137,7 +139,7 @@ pub struct Engine {
 impl Engine {
     const METER_PUBLISH_INTERVAL: Duration = Duration::from_millis(200);
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn session_plugins_dir(&self) -> Option<PathBuf> {
         self.session_dir.as_ref().map(|d| d.join("plugins"))
     }
@@ -1241,10 +1243,10 @@ impl Engine {
             Action::SetSessionPath(ref path) => {
                 self.session_dir = Some(Path::new(path).to_path_buf());
                 self.ensure_session_subdirs();
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(all(unix, not(target_os = "macos")))]
                 let lv2_dir = self.session_plugins_dir();
                 for track in self.state.lock().tracks.values() {
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(all(unix, not(target_os = "macos")))]
                     track.lock().set_lv2_state_base_dir(lv2_dir.clone());
                     track.lock().set_session_base_dir(self.session_dir.clone());
                 }
@@ -1328,7 +1330,7 @@ impl Engine {
                     if let Some(track) = tracks.get(name) {
                         track.lock().ensure_default_audio_passthrough();
                         track.lock().ensure_default_midi_passthrough();
-                        #[cfg(not(target_os = "macos"))]
+                        #[cfg(all(unix, not(target_os = "macos")))]
                         {
                             let lv2_dir = self.session_plugins_dir();
                             track.lock().set_lv2_state_base_dir(lv2_dir);
@@ -1444,7 +1446,7 @@ impl Engine {
                     track.lock().toggle_disk_monitor();
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLoadLv2Plugin {
                 ref track_name,
                 ref plugin_uri,
@@ -1477,7 +1479,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackSetLv2PluginState {
                 ref track_name,
                 instance_id,
@@ -1501,7 +1503,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackUnloadLv2PluginInstance {
                 ref track_name,
                 instance_id,
@@ -1521,7 +1523,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackShowLv2PluginUiInstance {
                 ref track_name,
                 instance_id,
@@ -1541,7 +1543,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackGetLv2Graph { ref track_name } => {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
@@ -1565,9 +1567,9 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLv2Graph { .. } => {}
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackConnectLv2Audio {
                 ref track_name,
                 ref from_node,
@@ -1595,7 +1597,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackConnectLv2Midi {
                 ref track_name,
                 ref from_node,
@@ -1623,7 +1625,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackDisconnectLv2Audio {
                 ref track_name,
                 ref from_node,
@@ -1651,7 +1653,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackDisconnectLv2Midi {
                 ref track_name,
                 ref from_node,
@@ -1679,7 +1681,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::ListLv2Plugins => {
                 let plugins = {
                     let host = crate::lv2::Lv2Host::new(48_000.0);
@@ -1688,8 +1690,52 @@ impl Engine {
                 self.notify_clients(Ok(Action::Lv2Plugins(plugins))).await;
                 return;
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::Lv2Plugins(_) => {}
+            Action::ListVst3Plugins => {
+                self.notify_clients(Ok(Action::Vst3Plugins(crate::vst3::list_plugins())))
+                    .await;
+                return;
+            }
+            Action::Vst3Plugins(_) => {}
+            Action::TrackLoadVst3Plugin {
+                ref track_name,
+                ref plugin_path,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().load_vst3_plugin(plugin_path) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackUnloadVst3PluginInstance {
+                ref track_name,
+                instance_id,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().unload_vst3_plugin_instance(instance_id) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
             Action::ClipMove {
                 ref kind,
                 ref from,
@@ -2209,7 +2255,11 @@ impl Engine {
                             } else if cfg!(target_os = "freebsd") {
                                 "OSS"
                             } else if cfg!(target_os = "windows") {
-                                "WASAPI"
+                                if device.to_ascii_lowercase().starts_with("asio:") {
+                                    "ASIO"
+                                } else {
+                                    "WASAPI"
+                                }
                             } else if cfg!(target_os = "macos") {
                                 "CoreAudio"
                             } else {
@@ -2348,8 +2398,11 @@ impl Engine {
                     | Action::SetSessionPath(_) => {
                         self.handle_request(a).await;
                     }
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(all(unix, not(target_os = "macos")))]
                     Action::ListLv2Plugins => {
+                        self.handle_request(a).await;
+                    }
+                    Action::ListVst3Plugins => {
                         self.handle_request(a).await;
                     }
                     _ => {

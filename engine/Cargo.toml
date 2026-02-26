@@ -24,7 +24,7 @@ lilv = "0.2.4"
 lv2_raw = "0.2.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-cpal = "0.15.3"
+cpal = { version = "0.15.3", features = ["asio"] }
 midir = "0.10.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]

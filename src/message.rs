@@ -135,14 +135,22 @@ pub enum Message {
     Workspace,
     Connections,
     OpenTrackPlugins(String),
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     RefreshLv2Plugins,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     FilterLv2Plugins(String),
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     SelectLv2Plugin(String),
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     LoadSelectedLv2Plugins,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    RefreshVst3Plugins,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    FilterVst3Plugins(String),
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    SelectVst3Plugin(String),
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    LoadSelectedVst3Plugins,
 
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     HWSelected(AudioDeviceOption),

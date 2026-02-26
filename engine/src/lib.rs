@@ -8,6 +8,7 @@ mod engine;
 mod hw;
 mod hw_worker;
 pub mod kind;
+#[cfg(all(unix, not(target_os = "macos")))]
 pub mod lv2;
 pub mod message;
 mod midi;
@@ -21,6 +22,7 @@ pub mod state;
 mod track;
 #[cfg(target_os = "windows")]
 mod wasapi_worker;
+pub mod vst3;
 pub mod worker;
 
 use tokio::sync::mpsc::{Sender, channel};

@@ -28,4 +28,4 @@ nvtree = "0.0.1"
 nix = { version = "0.31.1", features = ["ioctl"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-cpal = "0.15.3"
+cpal = { version = "0.15.3", features = ["asio"] }
