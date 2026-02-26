@@ -93,7 +93,7 @@ impl canvas::Program<Message> for RulerCanvas {
                     let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
                     state.drag_start_x = x;
                     state.last_x = x;
-                    return Some(CanvasAction::publish(Message::SetLoopRange(None)).and_capture());
+                    return Some(CanvasAction::capture());
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -108,7 +108,7 @@ impl canvas::Program<Message> for RulerCanvas {
                 if state.dragging {
                     state.dragging = false;
                     if self.pixels_per_sample <= 1.0e-9 {
-                        return Some(CanvasAction::publish(Message::SetLoopRange(None)));
+                        return None;
                     }
                     let bar_samples =
                         ((self.beat_pixels * 4.0) / self.pixels_per_sample.max(1.0e-9)).max(1.0);
