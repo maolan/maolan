@@ -2,7 +2,7 @@
 use crate::lv2::Lv2PluginInfo;
 use crate::midi::io::MidiEvent;
 use crate::{kind::Kind, mutex::UnsafeMutex, track::Track};
-use crate::clap::ClapPluginInfo;
+use crate::clap::{ClapParameterInfo, ClapPluginInfo};
 use crate::vst3::Vst3PluginInfo;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
@@ -244,6 +244,66 @@ pub enum Action {
     ListClapPlugins,
     ClapPlugins(Vec<ClapPluginInfo>),
     TrackLoadClapPlugin {
+        track_name: String,
+        plugin_path: String,
+    },
+    TrackUnloadClapPlugin {
+        track_name: String,
+        plugin_path: String,
+    },
+    TrackSetClapParameter {
+        track_name: String,
+        instance_id: usize,
+        param_id: u32,
+        value: f64,
+    },
+    TrackSetClapParameterAt {
+        track_name: String,
+        instance_id: usize,
+        param_id: u32,
+        value: f64,
+        frame: u32,
+    },
+    TrackBeginClapParameterEdit {
+        track_name: String,
+        instance_id: usize,
+        param_id: u32,
+        frame: u32,
+    },
+    TrackEndClapParameterEdit {
+        track_name: String,
+        instance_id: usize,
+        param_id: u32,
+        frame: u32,
+    },
+    TrackGetClapParameters {
+        track_name: String,
+        instance_id: usize,
+    },
+    TrackClapParameters {
+        track_name: String,
+        instance_id: usize,
+        parameters: Vec<ClapParameterInfo>,
+    },
+    TrackClapSnapshotState {
+        track_name: String,
+        instance_id: usize,
+    },
+    TrackClapStateSnapshot {
+        track_name: String,
+        instance_id: usize,
+        plugin_path: String,
+        state: crate::clap::ClapPluginState,
+    },
+    TrackClapRestoreState {
+        track_name: String,
+        instance_id: usize,
+        state: crate::clap::ClapPluginState,
+    },
+    TrackSnapshotAllClapStates {
+        track_name: String,
+    },
+    TrackShowClapPluginUi {
         track_name: String,
         plugin_path: String,
     },

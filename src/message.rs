@@ -170,6 +170,8 @@ pub enum Message {
     FilterClapPlugin(String),
     SelectClapPlugin(String),
     LoadSelectedClapPlugins,
+    UnloadClapPlugin(String),
+    ShowClapPluginUi(String),
 
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     HWSelected(AudioDeviceOption),

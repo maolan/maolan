@@ -1,4 +1,5 @@
 use super::{audio::track::AudioTrack, midi::track::MIDITrack};
+use crate::clap::{ClapMidiOutputEvent, ClapProcessor, ClapTransportInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::lv2::Lv2Processor;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -28,6 +29,12 @@ pub struct Vst3Instance {
 }
 
 #[derive(Debug, Clone)]
+pub struct ClapInstance {
+    pub id: usize,
+    pub processor: ClapProcessor,
+}
+
+#[derive(Debug, Clone)]
 struct AudioClipBuffer {
     channels: usize,
     samples: Vec<f32>,
@@ -48,12 +55,14 @@ pub struct Track {
     #[cfg(all(unix, not(target_os = "macos")))]
     pub lv2_processors: Vec<Lv2Instance>,
     pub vst3_processors: Vec<Vst3Instance>,
+    pub clap_plugins: Vec<ClapInstance>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub lv2_midi_connections: Vec<Lv2GraphConnection>,
     pub pending_hw_midi_out_events: Vec<MidiEvent>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub next_lv2_instance_id: usize,
     pub next_vst3_instance_id: usize,
+    pub next_clap_instance_id: usize,
     pub sample_rate: f64,
     pub output_enabled: bool,
     pub transport_sample: usize,
@@ -93,12 +102,14 @@ impl Track {
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_processors: Vec::new(),
             vst3_processors: Vec::new(),
+            clap_plugins: Vec::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_midi_connections: Vec::new(),
             pending_hw_midi_out_events: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]
             next_lv2_instance_id: 0,
             next_vst3_instance_id: 0,
+            next_clap_instance_id: 0,
             sample_rate,
             output_enabled: true,
             transport_sample: 0,
@@ -123,6 +134,9 @@ impl Track {
             instance.processor.setup_audio_ports();
         }
         for instance in &self.vst3_processors {
+            instance.processor.setup_audio_ports();
+        }
+        for instance in &self.clap_plugins {
             instance.processor.setup_audio_ports();
         }
     }
@@ -227,6 +241,11 @@ impl Track {
             self.route_lv2_midi_to_track_outputs(&midi_node_events);
         }
 
+        let mut plugin_midi_events = track_input_midi_events
+            .first()
+            .cloned()
+            .unwrap_or_default();
+
         if !self.vst3_processors.is_empty() {
             for instance in &self.vst3_processors {
                 let ready = instance
@@ -235,12 +254,48 @@ impl Track {
                     .iter()
                     .all(|audio_in| audio_in.ready());
                 if ready {
-                    instance.processor.process_with_audio_io(frames);
+                    plugin_midi_events =
+                        instance
+                            .processor
+                            .process_with_midi(frames, &plugin_midi_events);
+                }
+            }
+        }
+        let mut clap_midi_events = plugin_midi_events.clone();
+        let mut last_clap_output: Vec<ClapMidiOutputEvent> = Vec::new();
+        if !self.clap_plugins.is_empty() {
+            for instance in &self.clap_plugins {
+                let ready = instance
+                    .processor
+                    .audio_inputs()
+                    .iter()
+                    .all(|audio_in| audio_in.ready());
+                if ready {
+                    last_clap_output = instance
+                        .processor
+                        .process_with_midi(frames, &clap_midi_events, ClapTransportInfo {
+                            transport_sample: self.transport_sample,
+                            playing: self.disk_monitor && self.clip_playback_enabled,
+                            loop_enabled: self.loop_enabled,
+                            loop_range_samples: self.loop_range_samples,
+                            bpm: 120.0,
+                            tsig_num: 4,
+                            tsig_denom: 4,
+                        });
+                    clap_midi_events = last_clap_output
+                        .iter()
+                        .map(|evt| evt.event.clone())
+                        .collect();
                 }
             }
         }
 
         self.route_track_inputs_to_track_outputs(&track_input_midi_events);
+        if self.clap_plugins.is_empty() {
+            self.route_plugin_midi_to_track_outputs(&plugin_midi_events);
+        } else {
+            self.route_clap_midi_to_track_outputs(&last_clap_output);
+        }
         self.dispatch_track_output_midi_to_connected_inputs();
         self.collect_hw_midi_output_events();
         self.clear_local_midi_inputs();
@@ -800,6 +855,258 @@ impl Track {
         self.vst3_processors.push(Vst3Instance { id, processor });
         self.rewire_vst3_default_audio_graph();
         Ok(())
+    }
+
+    pub fn load_clap_plugin(&mut self, plugin_path: &str) -> Result<(), String> {
+        let bundle_path = plugin_path
+            .split_once("::")
+            .map(|(path, _)| path)
+            .unwrap_or(plugin_path);
+        let path = Path::new(bundle_path);
+        if !path.exists() {
+            return Err(format!("CLAP plugin not found: {plugin_path}"));
+        }
+        if !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("clap"))
+        {
+            return Err(format!("Not a CLAP plugin path: {plugin_path}"));
+        }
+        if self
+            .clap_plugins
+            .iter()
+            .any(|plugin| plugin.processor.path().eq_ignore_ascii_case(plugin_path))
+        {
+            return Err(format!("CLAP plugin already loaded: {plugin_path}"));
+        }
+
+        let id = self.next_clap_instance_id;
+        self.next_clap_instance_id = self.next_clap_instance_id.saturating_add(1);
+        let buffer_size = self
+            .audio
+            .ins
+            .first()
+            .map(|io| io.buffer.lock().len())
+            .or_else(|| self.audio.outs.first().map(|io| io.buffer.lock().len()))
+            .unwrap_or(0);
+        let input_count = self.audio.ins.len().max(1);
+        let output_count = self.audio.outs.len().max(1);
+        let processor = ClapProcessor::new(
+            self.sample_rate,
+            buffer_size,
+            plugin_path,
+            input_count,
+            output_count,
+        )?;
+        self.clap_plugins.push(ClapInstance {
+            id,
+            processor,
+        });
+        self.rewire_vst3_default_audio_graph();
+        Ok(())
+    }
+
+    pub fn unload_clap_plugin_instance(&mut self, instance_id: usize) -> Result<(), String> {
+        let Some(index) = self
+            .clap_plugins
+            .iter()
+            .position(|instance| instance.id == instance_id)
+        else {
+            return Err(format!(
+                "Track '{}' does not have CLAP instance id: {}",
+                self.name, instance_id
+            ));
+        };
+        self.clap_plugins.remove(index);
+        self.rewire_vst3_default_audio_graph();
+        Ok(())
+    }
+
+    pub fn unload_clap_plugin(&mut self, plugin_path: &str) -> Result<(), String> {
+        let Some(index) = self
+            .clap_plugins
+            .iter()
+            .position(|instance| instance.processor.path().eq_ignore_ascii_case(plugin_path))
+        else {
+            return Err(format!(
+                "Track '{}' does not have CLAP plugin loaded: {}",
+                self.name, plugin_path
+            ));
+        };
+        self.clap_plugins.remove(index);
+        self.rewire_vst3_default_audio_graph();
+        Ok(())
+    }
+
+    pub fn loaded_clap_instances(&self) -> Vec<(usize, String, String)> {
+        self.clap_plugins
+            .iter()
+            .map(|instance| {
+                (
+                    instance.id,
+                    instance.processor.path().to_string(),
+                    instance.processor.name().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    pub fn set_clap_parameter(
+        &self,
+        instance_id: usize,
+        param_id: u32,
+        value: f64,
+    ) -> Result<(), String> {
+        let instance = self
+            .clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| {
+                format!(
+                    "Track '{}' does not have CLAP instance id: {}",
+                    self.name, instance_id
+                )
+        })?;
+        instance.processor.set_parameter(param_id, value)
+    }
+
+    pub fn set_clap_parameter_at(
+        &self,
+        instance_id: usize,
+        param_id: u32,
+        value: f64,
+        frame: u32,
+    ) -> Result<(), String> {
+        let instance = self
+            .clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| {
+                format!(
+                    "Track '{}' does not have CLAP instance id: {}",
+                    self.name, instance_id
+                )
+            })?;
+        instance.processor.set_parameter_at(param_id, value, frame)
+    }
+
+    pub fn begin_clap_parameter_edit(
+        &self,
+        instance_id: usize,
+        param_id: u32,
+        frame: u32,
+    ) -> Result<(), String> {
+        let instance = self
+            .clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| {
+                format!(
+                    "Track '{}' does not have CLAP instance id: {}",
+                    self.name, instance_id
+                )
+            })?;
+        instance.processor.begin_parameter_edit_at(param_id, frame)
+    }
+
+    pub fn end_clap_parameter_edit(
+        &self,
+        instance_id: usize,
+        param_id: u32,
+        frame: u32,
+    ) -> Result<(), String> {
+        let instance = self
+            .clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| {
+                format!(
+                    "Track '{}' does not have CLAP instance id: {}",
+                    self.name, instance_id
+                )
+            })?;
+        instance.processor.end_parameter_edit_at(param_id, frame)
+    }
+
+    pub fn get_clap_parameters(
+        &self,
+        instance_id: usize,
+    ) -> Result<Vec<crate::clap::ClapParameterInfo>, String> {
+        let instance = self
+            .clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| {
+                format!(
+                    "Track '{}' does not have CLAP instance id: {}",
+                    self.name, instance_id
+                )
+            })?;
+        Ok(instance.processor.parameter_infos())
+    }
+
+    pub fn clap_snapshot_state(
+        &self,
+        instance_id: usize,
+    ) -> Result<crate::clap::ClapPluginState, String> {
+        let instance = self
+            .clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| {
+                format!(
+                    "Track '{}' does not have CLAP instance id: {}",
+                    self.name, instance_id
+                )
+            })?;
+        instance.processor.snapshot_state()
+    }
+
+    pub fn clap_restore_state(
+        &self,
+        instance_id: usize,
+        state: &crate::clap::ClapPluginState,
+    ) -> Result<(), String> {
+        let instance = self
+            .clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| {
+                format!(
+                    "Track '{}' does not have CLAP instance id: {}",
+                    self.name, instance_id
+                )
+            })?;
+        instance.processor.restore_state(state)
+    }
+
+    pub fn show_clap_plugin_ui(&self, plugin_path: &str) -> Result<(), String> {
+        let instance = self
+            .clap_plugins
+            .iter()
+            .find(|instance| instance.processor.path().eq_ignore_ascii_case(plugin_path))
+            .ok_or_else(|| {
+                format!(
+                    "Track '{}' does not have CLAP plugin loaded: {}",
+                    self.name, plugin_path
+                )
+            })?;
+        instance.processor.show_ui()
+    }
+
+    pub fn clap_snapshot_all_states(
+        &self,
+    ) -> Vec<(usize, String, crate::clap::ClapPluginState)> {
+        self.clap_plugins
+            .iter()
+            .filter_map(|instance| {
+                instance
+                    .processor
+                    .snapshot_state()
+                    .ok()
+                    .map(|state| (instance.id, instance.processor.path().to_string(), state))
+            })
+            .collect()
     }
 
     pub fn unload_vst3_plugin_instance(&mut self, instance_id: usize) -> Result<(), String> {
@@ -1364,6 +1671,9 @@ impl Track {
         for instance in &self.vst3_processors {
             sources.extend(instance.processor.audio_outputs().iter().cloned());
         }
+        for instance in &self.clap_plugins {
+            sources.extend(instance.processor.audio_outputs().iter().cloned());
+        }
         sources
     }
 
@@ -1383,11 +1693,26 @@ impl Track {
                 Self::disconnect_all(port);
             }
         }
+        for instance in &self.clap_plugins {
+            for port in instance.processor.audio_inputs() {
+                Self::disconnect_all(port);
+            }
+            for port in instance.processor.audio_outputs() {
+                Self::disconnect_all(port);
+            }
+        }
 
         for out in &self.audio.outs {
             out.connections.lock().retain(|source| {
                 !self.audio.ins.iter().any(|input| Arc::ptr_eq(source, input))
                     && !self.vst3_processors.iter().any(|instance| {
+                        instance
+                            .processor
+                            .audio_outputs()
+                            .iter()
+                            .any(|port| Arc::ptr_eq(source, port))
+                    })
+                    && !self.clap_plugins.iter().any(|instance| {
                         instance
                             .processor
                             .audio_outputs()
@@ -1402,19 +1727,61 @@ impl Track {
             }
         }
 
-        if self.vst3_processors.is_empty() {
+        if self.vst3_processors.is_empty() && self.clap_plugins.is_empty() {
             self.ensure_default_audio_passthrough();
             return;
         }
+        if !self.vst3_processors.is_empty() {
+            let first = &self.vst3_processors[0].processor;
+            for (idx, input) in self.audio.ins.iter().enumerate() {
+                if let Some(vin) = first.audio_inputs().get(idx % first.audio_inputs().len()) {
+                    AudioIO::connect(input, vin);
+                }
+            }
 
-        let first = &self.vst3_processors[0].processor;
-        for (idx, input) in self.audio.ins.iter().enumerate() {
-            if let Some(vin) = first.audio_inputs().get(idx % first.audio_inputs().len()) {
-                AudioIO::connect(input, vin);
+            for pair in self.vst3_processors.windows(2) {
+                let from = &pair[0].processor;
+                let to = &pair[1].processor;
+                for (idx, out) in from.audio_outputs().iter().enumerate() {
+                    if let Some(next_in) = to.audio_inputs().get(idx % to.audio_inputs().len()) {
+                        AudioIO::connect(out, next_in);
+                    }
+                }
+            }
+
+            if let Some(first_clap) = self.clap_plugins.first() {
+                let last_vst3 = &self.vst3_processors[self.vst3_processors.len() - 1].processor;
+                for (idx, out) in last_vst3.audio_outputs().iter().enumerate() {
+                    if let Some(next_in) = first_clap
+                        .processor
+                        .audio_inputs()
+                        .get(idx % first_clap.processor.audio_inputs().len())
+                    {
+                        AudioIO::connect(out, next_in);
+                    }
+                }
+            } else {
+                let last = &self.vst3_processors[self.vst3_processors.len() - 1].processor;
+                for (idx, out) in self.audio.outs.iter().enumerate() {
+                    if let Some(vout) = last.audio_outputs().get(idx % last.audio_outputs().len()) {
+                        AudioIO::connect(vout, out);
+                    }
+                }
+                return;
+            }
+        } else if let Some(first_clap) = self.clap_plugins.first() {
+            for (idx, input) in self.audio.ins.iter().enumerate() {
+                if let Some(cin) = first_clap
+                    .processor
+                    .audio_inputs()
+                    .get(idx % first_clap.processor.audio_inputs().len())
+                {
+                    AudioIO::connect(input, cin);
+                }
             }
         }
 
-        for pair in self.vst3_processors.windows(2) {
+        for pair in self.clap_plugins.windows(2) {
             let from = &pair[0].processor;
             let to = &pair[1].processor;
             for (idx, out) in from.audio_outputs().iter().enumerate() {
@@ -1424,10 +1791,15 @@ impl Track {
             }
         }
 
-        let last = &self.vst3_processors[self.vst3_processors.len() - 1].processor;
-        for (idx, out) in self.audio.outs.iter().enumerate() {
-            if let Some(vout) = last.audio_outputs().get(idx % last.audio_outputs().len()) {
-                AudioIO::connect(vout, out);
+        if let Some(last_clap) = self.clap_plugins.last() {
+            for (idx, out) in self.audio.outs.iter().enumerate() {
+                if let Some(cout) = last_clap
+                    .processor
+                    .audio_outputs()
+                    .get(idx % last_clap.processor.audio_outputs().len())
+                {
+                    AudioIO::connect(cout, out);
+                }
             }
         }
     }
@@ -1586,6 +1958,28 @@ impl Track {
                     out.lock().buffer.extend_from_slice(events);
                 }
             }
+        }
+    }
+
+    fn route_plugin_midi_to_track_outputs(&self, plugin_events: &[MidiEvent]) {
+        if !self.output_enabled || plugin_events.is_empty() {
+            return;
+        }
+        for out in &self.midi.outs {
+            out.lock().buffer.extend_from_slice(plugin_events);
+        }
+    }
+
+    fn route_clap_midi_to_track_outputs(&self, plugin_events: &[ClapMidiOutputEvent]) {
+        if !self.output_enabled || plugin_events.is_empty() {
+            return;
+        }
+        for event in plugin_events {
+            let port = event.port.min(self.midi.outs.len().saturating_sub(1));
+            let Some(out) = self.midi.outs.get(port) else {
+                continue;
+            };
+            out.lock().buffer.push(event.event.clone());
         }
     }
 

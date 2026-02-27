@@ -1140,6 +1140,26 @@ impl Maolan {
             button(text(format!("Load CLAP ({})", self.selected_clap_plugins.len())))
                 .on_press(Message::LoadSelectedClapPlugins)
         };
+        let loaded_clap = state
+            .clap_plugins_by_track
+            .get(&title)
+            .cloned()
+            .unwrap_or_default();
+        let mut loaded_clap_list = column![];
+        for path in loaded_clap {
+            let name = std::path::Path::new(&path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.clone());
+            loaded_clap_list = loaded_clap_list.push(
+                row![
+                    text(name).width(Length::Fill),
+                    button("UI").on_press(Message::ShowClapPluginUi(path.clone())),
+                    button("Unload").on_press(Message::UnloadClapPlugin(path)),
+                ]
+                .spacing(8),
+            );
+        }
 
         container(
             column![
@@ -1155,6 +1175,8 @@ impl Maolan {
                     .on_input(Message::FilterClapPlugin)
                     .width(Length::Fill),
                 scrollable(clap_list).height(Length::Fill),
+                text("Loaded CLAP"),
+                scrollable(loaded_clap_list).height(Length::Fixed(100.0)),
                 row![
                     load_clap_button,
                     button("Rescan CLAP").on_press(Message::RefreshClapPlugins),
@@ -1247,6 +1269,26 @@ impl Maolan {
             button(text(format!("Load CLAP ({})", self.selected_clap_plugins.len())))
                 .on_press(Message::LoadSelectedClapPlugins)
         };
+        let loaded_clap = state
+            .clap_plugins_by_track
+            .get(&title)
+            .cloned()
+            .unwrap_or_default();
+        let mut loaded_clap_list = column![];
+        for path in loaded_clap {
+            let name = std::path::Path::new(&path)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.clone());
+            loaded_clap_list = loaded_clap_list.push(
+                row![
+                    text(name).width(Length::Fill),
+                    button("UI").on_press(Message::ShowClapPluginUi(path.clone())),
+                    button("Unload").on_press(Message::UnloadClapPlugin(path)),
+                ]
+                .spacing(8),
+            );
+        }
         container(
             column![
                 text(format!("Track Plugins: {title}")),
@@ -1261,6 +1303,8 @@ impl Maolan {
                     .on_input(Message::FilterClapPlugin)
                     .width(Length::Fill),
                 scrollable(clap_list).height(Length::Fill),
+                text("Loaded CLAP"),
+                scrollable(loaded_clap_list).height(Length::Fixed(100.0)),
                 row![
                     load_clap_button,
                     button("Rescan CLAP").on_press(Message::RefreshClapPlugins),

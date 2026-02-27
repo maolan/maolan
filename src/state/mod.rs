@@ -13,6 +13,7 @@ use cpal::traits::{DeviceTrait, HostTrait};
 use iced::{Length, Point};
 use maolan_engine::kind::Kind;
 use maolan_engine::clap::ClapPluginInfo;
+use maolan_engine::clap::ClapPluginState;
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::lv2::Lv2PluginInfo;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -350,6 +351,8 @@ pub struct StateData {
     pub lv2_plugins: Vec<Lv2PluginInfo>,
     pub vst3_plugins: Vec<Vst3PluginInfo>,
     pub clap_plugins: Vec<ClapPluginInfo>,
+    pub clap_plugins_by_track: HashMap<String, Vec<String>>,
+    pub clap_states_by_track: HashMap<String, HashMap<String, ClapPluginState>>,
     pub lv2_graph_track: Option<String>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub lv2_graph_plugins: Vec<Lv2GraphPlugin>,
@@ -446,6 +449,8 @@ impl Default for StateData {
             lv2_plugins: vec![],
             vst3_plugins: vec![],
             clap_plugins: vec![],
+            clap_plugins_by_track: HashMap::new(),
+            clap_states_by_track: HashMap::new(),
             lv2_graph_track: None,
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_graph_plugins: vec![],

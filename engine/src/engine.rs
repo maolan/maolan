@@ -1734,12 +1734,260 @@ impl Engine {
                 ref track_name,
                 ref plugin_path,
             } => {
-                let _ = (track_name, plugin_path);
-                self.notify_clients(Err(
-                    "CLAP hosting is not implemented yet (scan/list is available)".to_string(),
-                ))
-                .await;
-                return;
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().load_clap_plugin(plugin_path) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackUnloadClapPlugin {
+                ref track_name,
+                ref plugin_path,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().unload_clap_plugin(plugin_path) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackSetClapParameter {
+                ref track_name,
+                instance_id,
+                param_id,
+                value,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().set_clap_parameter(instance_id, param_id, value)
+                        {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                        self.notify_clients(Ok(a.clone())).await;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackSetClapParameterAt {
+                ref track_name,
+                instance_id,
+                param_id,
+                value,
+                frame,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) =
+                            track
+                                .lock()
+                                .set_clap_parameter_at(instance_id, param_id, value, frame)
+                        {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                        self.notify_clients(Ok(a.clone())).await;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackBeginClapParameterEdit {
+                ref track_name,
+                instance_id,
+                param_id,
+                frame,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) =
+                            track
+                                .lock()
+                                .begin_clap_parameter_edit(instance_id, param_id, frame)
+                        {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                        self.notify_clients(Ok(a.clone())).await;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackEndClapParameterEdit {
+                ref track_name,
+                instance_id,
+                param_id,
+                frame,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) =
+                            track
+                                .lock()
+                                .end_clap_parameter_edit(instance_id, param_id, frame)
+                        {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                        self.notify_clients(Ok(a.clone())).await;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackGetClapParameters {
+                ref track_name,
+                instance_id,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => match track.lock().get_clap_parameters(instance_id) {
+                        Ok(parameters) => {
+                            self.notify_clients(Ok(Action::TrackClapParameters {
+                                track_name: track_name.clone(),
+                                instance_id,
+                                parameters,
+                            }))
+                            .await;
+                        }
+                        Err(e) => {
+                            self.notify_clients(Err(e)).await;
+                        }
+                    },
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackClapParameters { .. } => {}
+            Action::TrackClapSnapshotState {
+                ref track_name,
+                instance_id,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        let plugin_path = track
+                            .lock()
+                            .loaded_clap_instances()
+                            .into_iter()
+                            .find(|(id, _, _)| *id == instance_id)
+                            .map(|(_, path, _)| path)
+                            .unwrap_or_default();
+                        match track.lock().clap_snapshot_state(instance_id) {
+                            Ok(state) => {
+                            self.notify_clients(Ok(Action::TrackClapStateSnapshot {
+                                track_name: track_name.clone(),
+                                instance_id,
+                                plugin_path,
+                                state,
+                            }))
+                            .await;
+                            }
+                            Err(e) => {
+                                self.notify_clients(Err(e)).await;
+                            }
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                    }
+                }
+            }
+            Action::TrackClapStateSnapshot { .. } => {}
+            Action::TrackClapRestoreState {
+                ref track_name,
+                instance_id,
+                ref state,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().clap_restore_state(instance_id, state) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackShowClapPluginUi {
+                ref track_name,
+                ref plugin_path,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().show_clap_plugin_ui(plugin_path) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            Action::TrackSnapshotAllClapStates { ref track_name } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        for (instance_id, plugin_path, state) in track.lock().clap_snapshot_all_states()
+                        {
+                            self.notify_clients(Ok(Action::TrackClapStateSnapshot {
+                                track_name: track_name.clone(),
+                                instance_id,
+                                plugin_path,
+                                state,
+                            }))
+                            .await;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
             }
             Action::TrackLoadVst3Plugin {
                 ref track_name,

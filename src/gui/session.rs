@@ -171,10 +171,34 @@ impl Maolan {
         };
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         let graphs = Value::Object(serde_json::Map::new());
+        let clap = Value::Object(
+            state
+                .tracks
+                .iter()
+                .filter_map(|track| {
+                    state
+                        .clap_plugins_by_track
+                        .get(&track.name)
+                        .map(|plugins| (track.name.clone(), json!(plugins)))
+                })
+                .collect(),
+        );
+        let clap_state = Value::Object(
+            state
+                .clap_states_by_track
+                .iter()
+                .map(|(track, states)| {
+                    let v = serde_json::to_value(states).unwrap_or_else(|_| Value::Object(Default::default()));
+                    (track.clone(), v)
+                })
+                .collect(),
+        );
         let result = json!({
             "tracks": tracks_json,
             "connections": &state.connections,
             "graphs": graphs,
+            "clap": clap,
+            "clap_state": clap_state,
             "transport": {
                 "loop_range_samples": self.loop_range_samples.map(|(start, end)| vec![start, end]),
                 "loop_enabled": self.loop_enabled,
@@ -212,6 +236,8 @@ impl Maolan {
             state.selected.clear();
             state.selected_clips.clear();
             state.connection_view_selection = ConnectionViewSelection::None;
+            state.clap_plugins_by_track.clear();
+            state.clap_states_by_track.clear();
             #[cfg(all(unix, not(target_os = "macos")))]
             state.lv2_graphs_by_track.clear();
         }
@@ -584,6 +610,38 @@ impl Maolan {
                 }
             }
         }
+        if let Some(clap_tracks) = session.get("clap").and_then(Value::as_object) {
+            for (track_name, plugins_v) in clap_tracks {
+                let Some(paths) = plugins_v.as_array() else {
+                    continue;
+                };
+                for (instance_id, path_v) in paths.iter().enumerate() {
+                    let Some(path) = path_v.as_str() else {
+                        continue;
+                    };
+                    restore_actions.push(Action::TrackLoadClapPlugin {
+                        track_name: track_name.clone(),
+                        plugin_path: path.to_string(),
+                    });
+                    if let Some(track_states) = session
+                        .get("clap_state")
+                        .and_then(Value::as_object)
+                        .and_then(|o| o.get(track_name))
+                        .cloned()
+                        .and_then(|v| serde_json::from_value::<
+                            std::collections::HashMap<String, maolan_engine::clap::ClapPluginState>,
+                        >(v).ok())
+                        && let Some(state) = track_states.get(path)
+                    {
+                        restore_actions.push(Action::TrackClapRestoreState {
+                            track_name: track_name.clone(),
+                            instance_id,
+                            state: state.clone(),
+                        });
+                    }
+                }
+            }
+        }
         #[cfg(all(unix, not(target_os = "macos")))]
         if let Some(graphs) = session["graphs"].as_object() {
             for (track_name, graph_v) in graphs {
@@ -699,17 +757,43 @@ impl Maolan {
             }
             let tasks = track_names
                 .into_iter()
-                .map(|track_name| self.send(Action::TrackGetLv2Graph { track_name }))
+                .flat_map(|track_name| {
+                    vec![
+                        self.send(Action::TrackGetLv2Graph {
+                            track_name: track_name.clone(),
+                        }),
+                        self.send(Action::TrackSnapshotAllClapStates { track_name }),
+                    ]
+                })
                 .collect::<Vec<_>>();
             return Task::batch(tasks);
         }
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
-            if let Err(e) = self.save(path.clone()) {
-                error!("{}", e);
-                return Task::none();
+            let track_names: Vec<String> = self
+                .state
+                .blocking_read()
+                .tracks
+                .iter()
+                .map(|t| t.name.clone())
+                .collect();
+            self.pending_save_path = Some(path);
+            self.pending_save_tracks = track_names.iter().cloned().collect();
+            if self.pending_save_tracks.is_empty() {
+                let Some(path) = self.pending_save_path.take() else {
+                    return Task::none();
+                };
+                if let Err(e) = self.save(path.clone()) {
+                    error!("{}", e);
+                    return Task::none();
+                }
+                return self.send(Action::SetSessionPath(path));
             }
-            self.send(Action::SetSessionPath(path))
+            let tasks = track_names
+                .into_iter()
+                .map(|track_name| self.send(Action::TrackSnapshotAllClapStates { track_name }))
+                .collect::<Vec<_>>();
+            Task::batch(tasks)
         }
     }
 }

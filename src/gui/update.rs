@@ -258,6 +258,8 @@ impl Maolan {
                         state.lv2_graph_connections.clear();
                         state.lv2_graphs_by_track.clear();
                     }
+                    state.clap_plugins_by_track.clear();
+                    state.clap_states_by_track.clear();
                     state.message = "New session".to_string();
                     state.piano = None;
                 }
@@ -678,6 +680,40 @@ impl Maolan {
                 self.state.blocking_write().message =
                     "Select a track before loading CLAP plugin".to_string();
             }
+            Message::UnloadClapPlugin(ref plugin_path) => {
+                let track_name = {
+                    let state = self.state.blocking_read();
+                    state
+                        .lv2_graph_track
+                        .clone()
+                        .or_else(|| state.selected.iter().next().cloned())
+                };
+                if let Some(track_name) = track_name {
+                    return self.send(Action::TrackUnloadClapPlugin {
+                        track_name,
+                        plugin_path: plugin_path.clone(),
+                    });
+                }
+                self.state.blocking_write().message =
+                    "Select a track before unloading CLAP plugin".to_string();
+            }
+            Message::ShowClapPluginUi(ref plugin_path) => {
+                let track_name = {
+                    let state = self.state.blocking_read();
+                    state
+                        .lv2_graph_track
+                        .clone()
+                        .or_else(|| state.selected.iter().next().cloned())
+                };
+                if let Some(track_name) = track_name {
+                    return self.send(Action::TrackShowClapPluginUi {
+                        track_name,
+                        plugin_path: plugin_path.clone(),
+                    });
+                }
+                self.state.blocking_write().message =
+                    "Select a track before opening CLAP plugin UI".to_string();
+            }
             Message::SendMessageFinished(ref result) => {
                 if let Err(e) = result {
                     error!("Error: {}", e);
@@ -731,6 +767,8 @@ impl Maolan {
                         {
                             set.remove(name);
                         }
+                        state.clap_plugins_by_track.remove(name);
+                        state.clap_states_by_track.remove(name);
                     }
                 }
 
@@ -1079,6 +1117,84 @@ impl Maolan {
                     state.clap_plugins = plugins.clone();
                     state.message = format!("Loaded {} CLAP plugins", state.clap_plugins.len());
                 }
+                Action::TrackLoadClapPlugin {
+                    track_name,
+                    plugin_path,
+                } => {
+                    let plugin_name = std::path::Path::new(plugin_path)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| plugin_path.clone());
+                    {
+                        let mut state = self.state.blocking_write();
+                        let entry = state
+                            .clap_plugins_by_track
+                            .entry(track_name.clone())
+                            .or_default();
+                        if !entry
+                            .iter()
+                            .any(|existing| existing.eq_ignore_ascii_case(plugin_path))
+                        {
+                            entry.push(plugin_path.clone());
+                        }
+                    }
+                    self.state.blocking_write().message =
+                        format!("Loaded CLAP plugin '{plugin_name}' on track '{track_name}'");
+                }
+                Action::TrackUnloadClapPlugin {
+                    track_name,
+                    plugin_path,
+                } => {
+                    {
+                        let mut state = self.state.blocking_write();
+                        if let Some(entry) = state.clap_plugins_by_track.get_mut(track_name) {
+                            if let Some(pos) = entry
+                                .iter()
+                                .position(|existing| existing.eq_ignore_ascii_case(plugin_path))
+                            {
+                                entry.remove(pos);
+                            }
+                        }
+                        if let Some(states) = state.clap_states_by_track.get_mut(track_name) {
+                            states.remove(plugin_path);
+                        }
+                    }
+                    let plugin_name = std::path::Path::new(plugin_path)
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| plugin_path.clone());
+                    self.state.blocking_write().message =
+                        format!("Unloaded CLAP plugin '{plugin_name}' from track '{track_name}'");
+                }
+                Action::TrackClapStateSnapshot {
+                    track_name,
+                    plugin_path,
+                    state: clap_state,
+                    ..
+                } => {
+                    let mut state = self.state.blocking_write();
+                    state
+                        .clap_states_by_track
+                        .entry(track_name.clone())
+                        .or_default()
+                        .insert(plugin_path.clone(), clap_state.clone());
+                }
+                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                Action::TrackSnapshotAllClapStates { track_name } => {
+                    if self.pending_save_path.is_some() {
+                        self.pending_save_tracks.remove(track_name);
+                        if self.pending_save_tracks.is_empty() {
+                            let path = self.pending_save_path.take().unwrap_or_default();
+                            if !path.is_empty() {
+                                if let Err(e) = self.save(path.clone()) {
+                                    error!("{}", e);
+                                } else {
+                                    return self.send(Action::SetSessionPath(path));
+                                }
+                            }
+                        }
+                    }
+                }
                 Action::TrackClearDefaultPassthrough { track_name } => {
                     let lv2_track = self.state.blocking_read().lv2_graph_track.clone();
                     #[cfg(all(unix, not(target_os = "macos")))]
@@ -1186,6 +1302,14 @@ impl Maolan {
                     #[cfg(all(unix, not(target_os = "macos")))]
                     if let Some(graph) = state.lv2_graphs_by_track.remove(old_name) {
                         state.lv2_graphs_by_track.insert(new_name.clone(), graph);
+                    }
+                    if let Some(clap) = state.clap_plugins_by_track.remove(old_name) {
+                        state.clap_plugins_by_track.insert(new_name.clone(), clap);
+                    }
+                    if let Some(clap_states) = state.clap_states_by_track.remove(old_name) {
+                        state
+                            .clap_states_by_track
+                            .insert(new_name.clone(), clap_states);
                     }
                     state.message = format!("Renamed track to '{}'", new_name);
                 }
