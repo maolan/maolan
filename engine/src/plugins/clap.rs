@@ -248,10 +248,6 @@ impl ClapProcessor {
         Ok(())
     }
 
-    pub fn show_ui(&self) -> Result<(), String> {
-        self.plugin_handle.show_ui()
-    }
-
     pub fn snapshot_state(&self) -> Result<ClapPluginState, String> {
         self.plugin_handle.snapshot_state()
     }
@@ -608,26 +604,6 @@ struct ClapPluginNotePorts {
 }
 
 #[repr(C)]
-struct ClapPluginGui {
-    is_api_supported: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char, bool) -> bool>,
-    get_preferred_api:
-        Option<unsafe extern "C" fn(*const ClapPlugin, *mut *const c_char, *mut bool) -> bool>,
-    create: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char, bool) -> bool>,
-    destroy: Option<unsafe extern "C" fn(*const ClapPlugin)>,
-    set_scale: Option<unsafe extern "C" fn(*const ClapPlugin, f64) -> bool>,
-    get_size: Option<unsafe extern "C" fn(*const ClapPlugin, *mut u32, *mut u32) -> bool>,
-    can_resize: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
-    get_resize_hints: Option<unsafe extern "C" fn(*const ClapPlugin, *mut c_void) -> bool>,
-    adjust_size: Option<unsafe extern "C" fn(*const ClapPlugin, *mut u32, *mut u32) -> bool>,
-    set_size: Option<unsafe extern "C" fn(*const ClapPlugin, u32, u32) -> bool>,
-    set_parent: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_void) -> bool>,
-    set_transient: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_void) -> bool>,
-    suggest_title: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char)>,
-    show: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
-    hide: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
-}
-
-#[repr(C)]
 struct ClapHostThreadCheck {
     is_main_thread: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
     is_audio_thread: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
@@ -768,7 +744,6 @@ struct PluginHandle {
     _library: Library,
     entry: *const ClapPluginEntry,
     plugin: *const ClapPlugin,
-    gui_created: UnsafeMutex<bool>,
 }
 
 // SAFETY: PluginHandle only stores pointers/libraries managed by the CLAP ABI.
@@ -893,7 +868,6 @@ impl PluginHandle {
             _library: library,
             entry: entry_ptr,
             plugin,
-            gui_created: UnsafeMutex::new(false),
         })
     }
 
@@ -952,20 +926,6 @@ impl PluginHandle {
         }
         // SAFETY: extension pointer layout follows clap.state ABI.
         Some(unsafe { &*(ext_ptr as *const ClapPluginStateExt) })
-    }
-
-    fn gui_ext(&self) -> Option<&ClapPluginGui> {
-        let ext_id = c"clap.gui";
-        // SAFETY: plugin pointer is valid while self is alive.
-        let plugin = unsafe { &*self.plugin };
-        let get_extension = plugin.get_extension?;
-        // SAFETY: extension id is valid static C string.
-        let ext_ptr = unsafe { get_extension(self.plugin, ext_id.as_ptr()) };
-        if ext_ptr.is_null() {
-            return None;
-        }
-        // SAFETY: extension pointer layout follows clap.gui ABI.
-        Some(unsafe { &*(ext_ptr as *const ClapPluginGui) })
     }
 
     fn audio_ports_ext(&self) -> Option<&ClapPluginAudioPorts> {
@@ -1112,63 +1072,6 @@ impl PluginHandle {
         Ok(())
     }
 
-    fn show_ui(&self) -> Result<(), String> {
-        let Some(gui) = self.gui_ext() else {
-            return Err("CLAP plugin does not expose clap.gui".to_string());
-        };
-        let Some(show) = gui.show else {
-            return Err("CLAP gui.show is unavailable".to_string());
-        };
-        let created = *self.gui_created.lock();
-        if !created {
-            let Some(create) = gui.create else {
-                return Err("CLAP gui.create is unavailable".to_string());
-            };
-            let api_candidates = platform_gui_apis();
-            let mut chosen: Option<CString> = None;
-            if let Some(get_preferred_api) = gui.get_preferred_api {
-                let mut api_ptr: *const c_char = std::ptr::null();
-                let mut floating = true;
-                // SAFETY: plugin pointer valid, out pointers initialized.
-                let ok = unsafe { get_preferred_api(self.plugin, &mut api_ptr, &mut floating) };
-                if ok && floating && !api_ptr.is_null() {
-                    // SAFETY: returned API id is NUL-terminated.
-                    let pref = unsafe { CStr::from_ptr(api_ptr) }
-                        .to_string_lossy()
-                        .to_string();
-                    if api_candidates.iter().any(|c| c == &pref) {
-                        chosen = CString::new(pref).ok();
-                    }
-                }
-            }
-            if chosen.is_none() {
-                if let Some(is_api_supported) = gui.is_api_supported {
-                    for candidate in api_candidates {
-                        let c = CString::new(candidate).map_err(|e| e.to_string())?;
-                        // SAFETY: plugin pointer and static c-string are valid.
-                        if unsafe { is_api_supported(self.plugin, c.as_ptr(), true) } {
-                            chosen = Some(c);
-                            break;
-                        }
-                    }
-                }
-            }
-            let Some(api) = chosen else {
-                return Err("No supported floating CLAP GUI API found".to_string());
-            };
-            // SAFETY: plugin pointer valid; api c-string lives across call.
-            if unsafe { !create(self.plugin, api.as_ptr(), true) } {
-                return Err("CLAP gui.create failed".to_string());
-            }
-            *self.gui_created.lock() = true;
-        }
-        // SAFETY: plugin pointer valid.
-        if unsafe { !show(self.plugin) } {
-            return Err("CLAP gui.show failed".to_string());
-        }
-        Ok(())
-    }
-
     fn audio_port_layout(&self) -> (Option<usize>, Option<usize>) {
         let Some(ext) = self.audio_ports_ext() else {
             return (None, None);
@@ -1204,16 +1107,6 @@ impl Drop for PluginHandle {
         unsafe {
             if !self.plugin.is_null() {
                 let plugin = &*self.plugin;
-                if *self.gui_created.lock()
-                    && let Some(gui_ext) = self.gui_ext()
-                {
-                    if let Some(hide) = gui_ext.hide {
-                        hide(self.plugin);
-                    }
-                    if let Some(destroy_gui) = gui_ext.destroy {
-                        destroy_gui(self.plugin);
-                    }
-                }
                 if let Some(stop_processing) = plugin.stop_processing {
                     stop_processing(self.plugin);
                 }
@@ -1809,24 +1702,6 @@ fn scan_bundle_descriptors(path: &Path) -> Vec<ClapPluginInfo> {
         unsafe { deinit() };
     }
     out
-}
-
-fn platform_gui_apis() -> Vec<&'static str> {
-    let mut apis = Vec::new();
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
-    {
-        apis.push("x11");
-        apis.push("wayland");
-    }
-    #[cfg(target_os = "windows")]
-    {
-        apis.push("win32");
-    }
-    #[cfg(target_os = "macos")]
-    {
-        apis.push("cocoa");
-    }
-    apis
 }
 
 fn default_clap_search_roots() -> Vec<PathBuf> {

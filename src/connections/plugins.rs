@@ -510,11 +510,8 @@ impl canvas::Program<Message> for Graph {
                                         )))
                                     }
                                     PluginGraphNode::ClapPluginInstance(_) => {
-                                        Some(Action::publish(Message::Request(
-                                            EngineAction::TrackShowClapPluginUi {
-                                                track_name,
-                                                plugin_path: plugin.uri.clone(),
-                                            },
+                                        Some(Action::publish(Message::ShowClapPluginUi(
+                                            plugin.uri.clone(),
                                         )))
                                     }
                                     PluginGraphNode::Vst3PluginInstance(_) => {

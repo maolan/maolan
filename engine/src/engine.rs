@@ -1961,25 +1961,6 @@ impl Engine {
                     }
                 }
             }
-            Action::TrackShowClapPluginUi {
-                ref track_name,
-                ref plugin_path,
-            } => {
-                let track_handle = self.state.lock().tracks.get(track_name).cloned();
-                match track_handle {
-                    Some(track) => {
-                        if let Err(e) = track.lock().show_clap_plugin_ui(plugin_path) {
-                            self.notify_clients(Err(e)).await;
-                            return;
-                        }
-                    }
-                    None => {
-                        self.notify_clients(Err(format!("Track not found: {track_name}")))
-                            .await;
-                        return;
-                    }
-                }
-            }
             Action::TrackSnapshotAllClapStates { ref track_name } => {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {

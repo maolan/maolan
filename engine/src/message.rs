@@ -308,10 +308,6 @@ pub enum Action {
     TrackSnapshotAllClapStates {
         track_name: String,
     },
-    TrackShowClapPluginUi {
-        track_name: String,
-        plugin_path: String,
-    },
     TrackLoadVst3Plugin {
         track_name: String,
         plugin_path: String,

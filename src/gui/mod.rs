@@ -4,6 +4,7 @@ mod subscriptions;
 mod update;
 mod view;
 
+use crate::clap_ui::GuiClapUiHost;
 use crate::vst3_ui::GuiVst3UiHost;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
@@ -107,6 +108,7 @@ pub struct Maolan {
     import_file_progress: f32,
     import_current_filename: String,
     import_current_operation: Option<String>,
+    clap_ui_host: GuiClapUiHost,
     vst3_ui_host: GuiVst3UiHost,
 }
 
@@ -174,6 +176,7 @@ impl Default for Maolan {
             import_file_progress: 0.0,
             import_current_filename: String::new(),
             import_current_operation: None,
+            clap_ui_host: GuiClapUiHost::new(),
             vst3_ui_host: GuiVst3UiHost::new(),
         }
     }

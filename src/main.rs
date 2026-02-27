@@ -1,4 +1,5 @@
 mod add_track;
+mod clap_ui;
 mod clip_rename;
 mod connections;
 mod gui;

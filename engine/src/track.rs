@@ -1521,20 +1521,6 @@ impl Track {
         instance.processor.restore_state(state)
     }
 
-    pub fn show_clap_plugin_ui(&self, plugin_path: &str) -> Result<(), String> {
-        let instance = self
-            .clap_plugins
-            .iter()
-            .find(|instance| instance.processor.path().eq_ignore_ascii_case(plugin_path))
-            .ok_or_else(|| {
-                format!(
-                    "Track '{}' does not have CLAP plugin loaded: {}",
-                    self.name, plugin_path
-                )
-            })?;
-        instance.processor.show_ui()
-    }
-
     pub fn clap_snapshot_all_states(&self) -> Vec<(usize, String, crate::clap::ClapPluginState)> {
         self.clap_plugins
             .iter()

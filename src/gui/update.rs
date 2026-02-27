@@ -708,21 +708,9 @@ impl Maolan {
                     "Select a track before unloading CLAP plugin".to_string();
             }
             Message::ShowClapPluginUi(ref plugin_path) => {
-                let track_name = {
-                    let state = self.state.blocking_read();
-                    state
-                        .plugin_graph_track
-                        .clone()
-                        .or_else(|| state.selected.iter().next().cloned())
-                };
-                if let Some(track_name) = track_name {
-                    return self.send(Action::TrackShowClapPluginUi {
-                        track_name,
-                        plugin_path: plugin_path.clone(),
-                    });
+                if let Err(e) = self.clap_ui_host.open_editor(plugin_path) {
+                    self.state.blocking_write().message = e;
                 }
-                self.state.blocking_write().message =
-                    "Select a track before opening CLAP plugin UI".to_string();
             }
             Message::OpenVst3PluginUi {
                 ref plugin_path,
