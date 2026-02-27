@@ -518,7 +518,11 @@ impl canvas::Program<Message> for Graph {
                                         )))
                                     }
                                     PluginGraphNode::Vst3PluginInstance(_) => {
-                                        Some(Action::capture())
+                                        Some(Action::publish(Message::OpenVst3PluginUi {
+                                            plugin_path: plugin.uri.clone(),
+                                            plugin_name: plugin.name.clone(),
+                                            plugin_id: plugin.plugin_id.clone(),
+                                        }))
                                     }
                                     PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => {
                                         Some(Action::capture())

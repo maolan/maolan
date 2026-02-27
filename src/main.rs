@@ -10,6 +10,7 @@ mod style;
 mod toolbar;
 mod track_rename;
 mod ui_timing;
+mod vst3_ui;
 mod widget;
 mod workspace;
 

@@ -2363,7 +2363,9 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "vst3",
  "wavers",
+ "x11-dl",
 ]
 
 [[package]]

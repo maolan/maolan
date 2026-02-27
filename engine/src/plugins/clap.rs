@@ -412,7 +412,7 @@ struct ClapHost {
 #[repr(C)]
 struct ClapPluginEntry {
     clap_version: ClapVersion,
-    init: Option<unsafe extern "C" fn(*const c_char) -> bool>,
+    init: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
     deinit: Option<unsafe extern "C" fn()>,
     get_factory: Option<unsafe extern "C" fn(*const c_char) -> *const c_void>,
 }
@@ -785,7 +785,6 @@ impl PluginHandle {
         sample_rate: f64,
         frames: u32,
     ) -> Result<Self, String> {
-        let c_path = CString::new(plugin_path).map_err(|e| e.to_string())?;
         let factory_id = c"clap.plugin-factory";
 
         // SAFETY: We keep `library` alive for at least as long as plugin and entry pointers.
@@ -805,8 +804,9 @@ impl PluginHandle {
         let init = entry
             .init
             .ok_or_else(|| "CLAP entry missing init()".to_string())?;
-        // SAFETY: Valid C string path for plugin bundle.
-        if unsafe { !init(c_path.as_ptr()) } {
+        let host_ptr = &host_runtime.host as *const ClapHost;
+        // SAFETY: Valid host pointer for plugin bundle.
+        if unsafe { !init(host_ptr) } {
             return Err(format!("CLAP entry init failed for {plugin_path}"));
         }
         let get_factory = entry
@@ -1697,12 +1697,14 @@ fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
-
     for entry in entries.flatten() {
         let path = entry.path();
         let Ok(ft) = entry.file_type() else {
             continue;
         };
+        if ft.is_symlink() {
+            continue;
+        }
 
         if ft.is_dir() {
             collect_clap_plugins(&path, out);
@@ -1732,11 +1734,11 @@ fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>) {
 
 fn scan_bundle_descriptors(path: &Path) -> Vec<ClapPluginInfo> {
     let path_str = path.to_string_lossy().to_string();
-    let c_path = match CString::new(path_str.clone()) {
-        Ok(v) => v,
+    let factory_id = c"clap.plugin-factory";
+    let host_runtime = match HostRuntime::new() {
+        Ok(runtime) => runtime,
         Err(_) => return Vec::new(),
     };
-    let factory_id = c"clap.plugin-factory";
     // SAFETY: path points to plugin module file.
     let library = match unsafe { Library::new(path) } {
         Ok(lib) => lib,
@@ -1757,8 +1759,9 @@ fn scan_bundle_descriptors(path: &Path) -> Vec<ClapPluginInfo> {
     let Some(init) = entry.init else {
         return Vec::new();
     };
-    // SAFETY: valid path c string.
-    if unsafe { !init(c_path.as_ptr()) } {
+    let host_ptr = &host_runtime.host;
+    // SAFETY: valid host pointer.
+    if unsafe { !init(host_ptr) } {
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -1847,7 +1850,9 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     {
         roots.push(PathBuf::from("/usr/lib/clap"));
+        roots.push(PathBuf::from("/usr/lib64/clap"));
         roots.push(PathBuf::from("/usr/local/lib/clap"));
+        roots.push(PathBuf::from("/usr/local/lib64/clap"));
         roots.push(PathBuf::from(format!("{}/.clap", home_dir())));
         roots.push(PathBuf::from(format!("{}/.local/lib/clap", home_dir())));
     }

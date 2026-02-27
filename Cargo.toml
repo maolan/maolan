@@ -9,6 +9,7 @@ iced_aw = "0.13.0"
 iced_drop = { version = "0.2.10", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
 maolan-engine = { path = "./engine" }
+vst3 = "0.3"
 rfd = "0.17.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
@@ -19,6 +20,7 @@ wavers = "1.5.1"
 midly = "0.5.3"
 symphonia = { version = "0.5.5", default-features = false, features = ["all-formats", "all-codecs"] }
 rubato = "0.16.0"
+x11-dl = "2.21.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa = "0.9.1"

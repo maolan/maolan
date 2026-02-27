@@ -64,12 +64,14 @@ fn collect_vst3_plugins(root: &Path, out: &mut Vec<Vst3PluginInfo>) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
-
     for entry in entries.flatten() {
         let path = entry.path();
         let Ok(ft) = entry.file_type() else {
             continue;
         };
+        if ft.is_symlink() {
+            continue;
+        }
 
         if !ft.is_dir() {
             continue;

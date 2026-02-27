@@ -190,6 +190,11 @@ pub enum Message {
     PluginFormatSelected(PluginFormat),
     UnloadClapPlugin(String),
     ShowClapPluginUi(String),
+    OpenVst3PluginUi {
+        plugin_path: String,
+        plugin_name: String,
+        plugin_id: String,
+    },
 
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     HWSelected(AudioDeviceOption),

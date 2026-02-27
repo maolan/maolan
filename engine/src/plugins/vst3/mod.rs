@@ -39,7 +39,9 @@ pub fn default_vst3_search_roots() -> Vec<PathBuf> {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         roots.push(PathBuf::from("/usr/lib/vst3"));
+        roots.push(PathBuf::from("/usr/lib64/vst3"));
         roots.push(PathBuf::from("/usr/local/lib/vst3"));
+        roots.push(PathBuf::from("/usr/local/lib64/vst3"));
         roots.push(PathBuf::from(format!("{}/.vst3", home_dir())));
         roots.push(PathBuf::from(format!("{}/.local/lib/vst3", home_dir())));
     }

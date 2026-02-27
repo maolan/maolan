@@ -724,6 +724,18 @@ impl Maolan {
                 self.state.blocking_write().message =
                     "Select a track before opening CLAP plugin UI".to_string();
             }
+            Message::OpenVst3PluginUi {
+                ref plugin_path,
+                ref plugin_name,
+                ref plugin_id,
+            } => {
+                if let Err(e) = self
+                    .vst3_ui_host
+                    .open_editor(plugin_path, plugin_name, plugin_id)
+                {
+                    self.state.blocking_write().message = e;
+                }
+            }
             Message::SendMessageFinished(Err(ref e)) => {
                 error!("Error: {}", e);
             }
@@ -780,7 +792,6 @@ impl Maolan {
                         state.clap_states_by_track.remove(name);
                     }
                 }
-
                 Action::ClipMove {
                     kind,
                     from,
@@ -2815,18 +2826,11 @@ impl Maolan {
                     state.plugin_graph_selected_plugin = None;
                 }
                 #[cfg(all(unix, not(target_os = "macos")))]
-                return Task::batch(vec![
-                    self.send(Action::TrackGetPluginGraph {
-                        track_name: track_name.clone(),
-                    }),
-                    self.send(Action::ListVst3Plugins),
-                    self.send(Action::ListClapPlugins),
-                ]);
+                return self.send(Action::TrackGetPluginGraph {
+                    track_name: track_name.clone(),
+                });
                 #[cfg(any(target_os = "windows", target_os = "macos"))]
-                return Task::batch(vec![
-                    self.send(Action::ListVst3Plugins),
-                    self.send(Action::ListClapPlugins),
-                ]);
+                return Task::none();
             }
             Message::HWSelected(ref hw) => {
                 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]

@@ -18,10 +18,14 @@ pub struct Vst3Processor {
 
     // COM interfaces
     instance: PluginInstance,
+    // Keep factory/module alive for the plugin instance lifetime.
+    _factory: super::interfaces::PluginFactory,
 
     // Audio I/O (reuse existing AudioIO)
     audio_inputs: Vec<Arc<AudioIO>>,
     audio_outputs: Vec<Arc<AudioIO>>,
+    midi_input_ports: usize,
+    midi_output_ports: usize,
     input_buses: Vec<BusInfo>,
     output_buses: Vec<BusInfo>,
 
@@ -77,25 +81,33 @@ impl Vst3Processor {
         let mut instance = factory.create_instance(&class_info.cid)?;
 
         // Initialize the plugin
-        instance.initialize()?;
+        instance.initialize(&factory)?;
 
-        // Setup processing
-        instance.setup_processing(sample_rate, buffer_size as i32)?;
+        let (plugin_input_buses, plugin_output_buses) = instance.audio_bus_counts();
+        let (midi_input_ports, midi_output_ports) = instance.event_bus_counts();
 
         // Query buses (for now, use the provided counts)
-        let input_buses = vec![BusInfo {
-            index: 0,
-            name: "Input".to_string(),
-            channel_count: audio_inputs.max(1),
-            is_active: true,
-        }];
+        let input_buses = if plugin_input_buses > 0 {
+            vec![BusInfo {
+                index: 0,
+                name: "Input".to_string(),
+                channel_count: audio_inputs.max(1),
+                is_active: true,
+            }]
+        } else {
+            vec![]
+        };
 
-        let output_buses = vec![BusInfo {
-            index: 0,
-            name: "Output".to_string(),
-            channel_count: audio_outputs.max(1),
-            is_active: true,
-        }];
+        let output_buses = if plugin_output_buses > 0 {
+            vec![BusInfo {
+                index: 0,
+                name: "Output".to_string(),
+                channel_count: audio_outputs.max(1),
+                is_active: true,
+            }]
+        } else {
+            vec![]
+        };
 
         // Create AudioIO for each channel
         let mut audio_input_ios = Vec::new();
@@ -108,13 +120,33 @@ impl Vst3Processor {
             audio_output_ios.push(Arc::new(AudioIO::new(buffer_size)));
         }
 
-        // Discover parameters
-        let (parameters, scalar_values) = discover_parameters(&instance)?;
-        let previous_values = Arc::new(Mutex::new(scalar_values.lock().unwrap().clone()));
-
-        // Activate the component
+        // Activate component before entering processing state.
         instance.set_active(true)?;
 
+        // Setup processing after activation (VST3 lifecycle requirement).
+        instance.setup_processing(
+            sample_rate,
+            buffer_size as i32,
+            if plugin_input_buses > 0 {
+                audio_inputs.max(1) as i32
+            } else {
+                0
+            },
+            if plugin_output_buses > 0 {
+                audio_outputs.max(1) as i32
+            } else {
+                0
+            },
+        )?;
+
+        // Temporary workaround: some Linux VST3 plugins (notably lsp-plugins) crash
+        // inside setProcessing(1). We keep initialization stable and rely on process()
+        // calls without explicitly toggling processing state.
+        // Temporary workaround: querying IEditController parameters crashes on
+        // some Linux VST3 plugins (e.g. lsp-plugins), so keep parameter list empty.
+        let parameters = Vec::new();
+        let scalar_values = Arc::new(Mutex::new(Vec::new()));
+        let previous_values = Arc::new(Mutex::new(Vec::new()));
         let plugin_id = format!("{:02X?}", class_info.cid);
 
         Ok(Self {
@@ -122,8 +154,11 @@ impl Vst3Processor {
             name,
             plugin_id,
             instance,
+            _factory: factory,
             audio_inputs: audio_input_ios,
             audio_outputs: audio_output_ios,
+            midi_input_ports,
+            midi_output_ports,
             input_buses,
             output_buses,
             parameters,
@@ -140,6 +175,10 @@ impl Vst3Processor {
         &self.name
     }
 
+    pub fn plugin_id(&self) -> &str {
+        &self.plugin_id
+    }
+
     pub fn audio_inputs(&self) -> &[Arc<AudioIO>] {
         &self.audio_inputs
     }
@@ -149,11 +188,11 @@ impl Vst3Processor {
     }
 
     pub fn midi_input_count(&self) -> usize {
-        1
+        self.midi_input_ports
     }
 
     pub fn midi_output_count(&self) -> usize {
-        1
+        self.midi_output_ports
     }
 
     pub fn setup_audio_ports(&self) {
@@ -229,54 +268,58 @@ impl Vst3Processor {
         use vst3::Steinberg::Vst::IAudioProcessorTrait;
         use vst3::Steinberg::Vst::*;
 
-        // Prepare input bus buffers
-        let mut input_channel_ptrs: Vec<*mut f32> = Vec::new();
-        for input_io in &self.audio_inputs {
-            let buf = input_io.buffer.lock();
-            input_channel_ptrs.push(buf.as_ptr() as *mut f32);
+        // Keep buffer guards alive while the plugin reads/writes through raw pointers.
+        let input_guards: Vec<_> = self.audio_inputs.iter().map(|io| io.buffer.lock()).collect();
+        let output_guards: Vec<_> = self.audio_outputs.iter().map(|io| io.buffer.lock()).collect();
+
+        let mut input_channel_ptrs: Vec<*mut f32> = input_guards
+            .iter()
+            .map(|buf| buf.as_ptr() as *mut f32)
+            .collect();
+        let mut output_channel_ptrs: Vec<*mut f32> = output_guards
+            .iter()
+            .map(|buf| buf.as_ptr() as *mut f32)
+            .collect();
+
+        let max_input_frames = input_guards.iter().map(|buf| buf.len()).min().unwrap_or(frames);
+        let max_output_frames = output_guards
+            .iter()
+            .map(|buf| buf.len())
+            .min()
+            .unwrap_or(frames);
+        let num_frames = frames.min(max_input_frames).min(max_output_frames);
+        if num_frames == 0 {
+            return Ok(EventBuffer::new());
         }
 
-        // Prepare output bus buffers
-        let mut output_channel_ptrs: Vec<*mut f32> = Vec::new();
-        for output_io in &self.audio_outputs {
-            let buf = output_io.buffer.lock();
-            output_channel_ptrs.push(buf.as_ptr() as *mut f32);
-        }
-
-        // Create audio bus buffers using unsafe initialization
-        // AudioBusBuffers has opaque bindgen fields, so we set them via pointer manipulation
         let mut input_buses = Vec::new();
         if !self.input_buses.is_empty() && !input_channel_ptrs.is_empty() {
-            let mut bus: AudioBusBuffers = unsafe { std::mem::zeroed() };
-            unsafe {
-                let bus_ptr = &mut bus as *mut AudioBusBuffers as *mut u8;
-                // numChannels is first field (i32)
-                *(bus_ptr as *mut i32) = self.input_buses[0].channel_count as i32;
-                // silenceFlags is second field (u64) at offset 8
-                *(bus_ptr.add(8) as *mut u64) = 0;
-                // channelBuffers32 is in union at offset 16
-                *(bus_ptr.add(16) as *mut *mut *mut f32) = input_channel_ptrs.as_mut_ptr();
-            }
-            input_buses.push(bus);
+            input_buses.push(AudioBusBuffers {
+                numChannels: input_channel_ptrs.len() as i32,
+                silenceFlags: 0,
+                __field0: AudioBusBuffers__type0 {
+                    channelBuffers32: input_channel_ptrs.as_mut_ptr(),
+                },
+            });
         }
 
         let mut output_buses = Vec::new();
         if !self.output_buses.is_empty() && !output_channel_ptrs.is_empty() {
-            let mut bus: AudioBusBuffers = unsafe { std::mem::zeroed() };
-            unsafe {
-                let bus_ptr = &mut bus as *mut AudioBusBuffers as *mut u8;
-                *(bus_ptr as *mut i32) = self.output_buses[0].channel_count as i32;
-                *(bus_ptr.add(8) as *mut u64) = 0;
-                *(bus_ptr.add(16) as *mut *mut *mut f32) = output_channel_ptrs.as_mut_ptr();
-            }
-            output_buses.push(bus);
+            output_buses.push(AudioBusBuffers {
+                numChannels: output_channel_ptrs.len() as i32,
+                silenceFlags: 0,
+                __field0: AudioBusBuffers__type0 {
+                    channelBuffers32: output_channel_ptrs.as_mut_ptr(),
+                },
+            });
         }
 
         // Create ProcessData
+        let mut process_context: ProcessContext = unsafe { std::mem::zeroed() };
         let mut process_data = ProcessData {
             processMode: kRealtime as i32,
             symbolicSampleSize: kSample32 as i32,
-            numSamples: frames as i32,
+            numSamples: num_frames as i32,
             numInputs: input_buses.len() as i32,
             numOutputs: output_buses.len() as i32,
             inputs: if input_buses.is_empty() {
@@ -293,7 +336,7 @@ impl Vst3Processor {
             outputParameterChanges: std::ptr::null_mut(),
             inputEvents: std::ptr::null_mut(),
             outputEvents: std::ptr::null_mut(),
-            processContext: std::ptr::null_mut(),
+            processContext: &mut process_context,
         };
 
         // Call VST3 process
@@ -445,71 +488,11 @@ impl Vst3Processor {
 
 impl Drop for Vst3Processor {
     fn drop(&mut self) {
+        // Keep symmetric with load workaround: avoid calling setProcessing(0)
+        // when we never called setProcessing(1).
         let _ = self.instance.set_active(false);
         let _ = self.instance.terminate();
     }
-}
-
-fn discover_parameters(
-    instance: &PluginInstance,
-) -> Result<(Vec<ParameterInfo>, Arc<Mutex<Vec<f32>>>), String> {
-    use vst3::Steinberg::Vst::IEditControllerTrait;
-
-    let controller = instance
-        .edit_controller
-        .as_ref()
-        .ok_or("No edit controller available")?;
-
-    let param_count = unsafe { controller.getParameterCount() };
-
-    let mut parameters = Vec::new();
-    let mut values = Vec::new();
-
-    for i in 0..param_count {
-        let mut info = vst3::Steinberg::Vst::ParameterInfo {
-            id: 0,
-            title: [0; 128],
-            shortTitle: [0; 128],
-            units: [0; 128],
-            stepCount: 0,
-            defaultNormalizedValue: 0.0,
-            unitId: 0,
-            flags: 0,
-        };
-
-        let result = unsafe { controller.getParameterInfo(i, &mut info) };
-
-        if result != vst3::Steinberg::kResultOk {
-            continue;
-        }
-
-        // Extract strings from VST3 TChar arrays (UTF-16)
-        let title = extract_tchar_string(&info.title);
-        let short_title = extract_tchar_string(&info.shortTitle);
-        let units = extract_tchar_string(&info.units);
-
-        parameters.push(ParameterInfo {
-            id: info.id,
-            title,
-            short_title,
-            units,
-            step_count: info.stepCount,
-            default_value: info.defaultNormalizedValue,
-            flags: info.flags,
-        });
-
-        // Get current normalized value
-        let value = unsafe { controller.getParamNormalized(info.id) };
-        values.push(value as f32);
-    }
-
-    Ok((parameters, Arc::new(Mutex::new(values))))
-}
-
-fn extract_tchar_string(tchar: &[u16]) -> String {
-    // Find null terminator
-    let len = tchar.iter().position(|&c| c == 0).unwrap_or(tchar.len());
-    String::from_utf16_lossy(&tchar[..len])
 }
 
 // Standalone function for listing plugins (backward compatibility)
