@@ -111,6 +111,9 @@ pub enum Message {
     ZoomVisibleBarsChanged(f32),
     PianoZoomXChanged(f32),
     PianoZoomYChanged(f32),
+    PianoScrollChanged { x: f32, y: f32 },
+    PianoScrollXChanged(f32),
+    PianoScrollYChanged(f32),
     TracksResizeHover(bool),
     MixerResizeHover(bool),
 
@@ -144,7 +147,6 @@ pub enum Message {
         track_idx: String,
         clip_idx: usize,
     },
-    ClosePiano,
     PianoKeyPressed(u8),
     PianoKeyReleased(u8),
     #[cfg(all(unix, not(target_os = "macos")))]

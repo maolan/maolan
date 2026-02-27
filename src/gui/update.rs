@@ -3,8 +3,9 @@ use crate::{
     connections,
     message::Message,
     state::{ConnectionViewSelection, HW, PianoData, Resizing, Track, View},
+    widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
 };
-use iced::widget::Id;
+use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
 use maolan_engine::{
     kind::Kind,
@@ -15,6 +16,46 @@ use std::{collections::HashSet, process::exit, time::Instant};
 use tracing::error;
 
 impl Maolan {
+    fn sync_piano_scrollbars(&self) -> Task<Message> {
+        let (x, y) = {
+            let state = self.state.blocking_read();
+            (
+                state.piano_scroll_x.clamp(0.0, 1.0),
+                state.piano_scroll_y.clamp(0.0, 1.0),
+            )
+        };
+        Task::batch(vec![
+            operation::snap_to(
+                Id::new(NOTES_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: Some(x),
+                    y: Some(y),
+                },
+            ),
+            operation::snap_to(
+                Id::new(CTRL_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: Some(x),
+                    y: None,
+                },
+            ),
+            operation::snap_to(
+                Id::new(H_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: Some(x),
+                    y: None,
+                },
+            ),
+            operation::snap_to(
+                Id::new(V_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: None,
+                    y: Some(y),
+                },
+            ),
+        ])
+    }
+
     fn normalize_period_frames(period_frames: usize) -> usize {
         let v = period_frames.clamp(64, 8192);
         if v.is_power_of_two() {
@@ -366,10 +407,57 @@ impl Maolan {
                 self.zoom_visible_bars = value.clamp(1.0, 256.0);
             }
             Message::PianoZoomXChanged(value) => {
-                self.state.blocking_write().piano_zoom_x = value.clamp(1.0, 127.0);
+                self.state.blocking_write().piano_zoom_x = value;
+                return self.sync_piano_scrollbars();
             }
             Message::PianoZoomYChanged(value) => {
-                self.state.blocking_write().piano_zoom_y = value.clamp(0.25, 6.0);
+                self.state.blocking_write().piano_zoom_y = value;
+                return self.sync_piano_scrollbars();
+            }
+            Message::PianoScrollChanged { x, y } => {
+                let x = x.clamp(0.0, 1.0);
+                let y = y.clamp(0.0, 1.0);
+                let changed = {
+                    let mut state = self.state.blocking_write();
+                    let changed = (state.piano_scroll_x - x).abs() > 0.0005
+                        || (state.piano_scroll_y - y).abs() > 0.0005;
+                    if changed {
+                        state.piano_scroll_x = x;
+                        state.piano_scroll_y = y;
+                    }
+                    changed
+                };
+                if changed {
+                    return self.sync_piano_scrollbars();
+                }
+            }
+            Message::PianoScrollXChanged(value) => {
+                let x = value.clamp(0.0, 1.0);
+                let changed = {
+                    let mut state = self.state.blocking_write();
+                    let changed = (state.piano_scroll_x - x).abs() > 0.0005;
+                    if changed {
+                        state.piano_scroll_x = x;
+                    }
+                    changed
+                };
+                if changed {
+                    return self.sync_piano_scrollbars();
+                }
+            }
+            Message::PianoScrollYChanged(value) => {
+                let y = value.clamp(0.0, 1.0);
+                let changed = {
+                    let mut state = self.state.blocking_write();
+                    let changed = (state.piano_scroll_y - y).abs() > 0.0005;
+                    if changed {
+                        state.piano_scroll_y = y;
+                    }
+                    changed
+                };
+                if changed {
+                    return self.sync_piano_scrollbars();
+                }
             }
             Message::PianoKeyPressed(note) => {
                 let track_name = self
@@ -988,10 +1076,7 @@ impl Maolan {
                         }
                     }
                 }
-                Action::RenameTrack {
-                    old_name,
-                    new_name,
-                } => {
+                Action::RenameTrack { old_name, new_name } => {
                     let mut state = self.state.blocking_write();
                     // Update track name in GUI state
                     if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *old_name) {
@@ -1813,7 +1898,8 @@ impl Maolan {
                             for (clip_idx, clip) in track.audio.clips.iter().enumerate() {
                                 let cx = clip.start as f32 * pps;
                                 let cw = (clip.length as f32 * pps).max(12.0);
-                                let lane = clip.input_channel.min(track.audio.ins.saturating_sub(1));
+                                let lane =
+                                    clip.input_channel.min(track.audio.ins.saturating_sub(1));
                                 let cy = y_offset + track.lane_top(Kind::Audio, lane) + 3.0;
                                 let ch = lane_clip_h.max(1.0);
                                 let intersects =
@@ -1902,10 +1988,7 @@ impl Maolan {
                     let state = self.state.blocking_read();
                     let from_track_name = &clip.track_index;
                     let to_track_zone = zones.iter().find(|(id, _)| {
-                        state
-                            .tracks
-                            .iter()
-                            .any(|t| Id::from(t.name.clone()) == *id)
+                        state.tracks.iter().any(|t| Id::from(t.name.clone()) == *id)
                     });
                     let Some((to_track_id, to_track_rect)) = to_track_zone else {
                         self.clip = None;
@@ -2414,27 +2497,26 @@ impl Maolan {
                 };
                 match Self::parse_midi_clip_for_piano(&path, self.playback_rate_hz) {
                     Ok((notes, controllers, parsed_len)) => {
-                        let mut state = self.state.blocking_write();
-                        state.piano = Some(PianoData {
-                            track_idx: track_idx.clone(),
-                            clip_idx,
-                            clip_name: clip_name.clone(),
-                            clip_length_samples: parsed_len.max(clip_length),
-                            notes,
-                            controllers,
-                        });
-                        state.view = View::Piano;
-                        state.message = format!("Opened piano roll for '{}'", clip_name);
+                        {
+                            let mut state = self.state.blocking_write();
+                            state.piano = Some(PianoData {
+                                track_idx: track_idx.clone(),
+                                clip_length_samples: parsed_len.max(clip_length),
+                                notes,
+                                controllers,
+                            });
+                            state.piano_scroll_x = 0.0;
+                            state.piano_scroll_y = 0.0;
+                            state.view = View::Piano;
+                            state.message = format!("Opened piano roll for '{}'", clip_name);
+                        }
+                        return self.sync_piano_scrollbars();
                     }
                     Err(e) => {
                         self.state.blocking_write().message =
                             format!("Failed to open MIDI clip '{}': {}", clip_name, e);
                     }
                 }
-            }
-            Message::ClosePiano => {
-                let mut state = self.state.blocking_write();
-                state.view = View::Workspace;
             }
             Message::OpenTrackPlugins(ref track_name) => {
                 {

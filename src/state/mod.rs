@@ -288,8 +288,6 @@ pub struct PianoControllerPoint {
 #[derive(Debug, Clone)]
 pub struct PianoData {
     pub track_idx: String,
-    pub clip_idx: usize,
-    pub clip_name: String,
     pub clip_length_samples: usize,
     pub notes: Vec<PianoNote>,
     pub controllers: Vec<PianoControllerPoint>,
@@ -371,6 +369,8 @@ pub struct StateData {
     pub piano: Option<PianoData>,
     pub piano_zoom_x: f32,
     pub piano_zoom_y: f32,
+    pub piano_scroll_x: f32,
+    pub piano_scroll_y: f32,
 }
 
 impl Default for StateData {
@@ -464,6 +464,8 @@ impl Default for StateData {
             piano: None,
             piano_zoom_x: 20.0,
             piano_zoom_y: 1.0,
+            piano_scroll_x: 0.0,
+            piano_scroll_y: 0.0,
         }
     }
 }

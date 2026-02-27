@@ -2,9 +2,9 @@ use crate::{message::Message, state::State};
 use iced::{
     Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::{
-        Stack, button,
+        Stack,
         canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
-        column, container, pin, row, slider, text,
+        Id, column, container, pin, row, scrollable, slider, text, vertical_slider,
     },
 };
 use std::collections::HashSet;
@@ -13,6 +13,11 @@ use std::collections::HashSet;
 pub struct Piano {
     state: State,
 }
+
+pub const NOTES_SCROLL_ID: &str = "piano.notes.scroll";
+pub const CTRL_SCROLL_ID: &str = "piano.ctrl.scroll";
+pub const H_SCROLL_ID: &str = "piano.h.scroll";
+pub const V_SCROLL_ID: &str = "piano.v.scroll";
 
 impl Piano {
     const KEYBOARD_WIDTH: f32 = 84.0;
@@ -59,21 +64,10 @@ impl Piano {
         let zoom_y = state.piano_zoom_y;
 
         let Some(roll) = state.piano.as_ref() else {
-            return container(
-                column![
-                    row![
-                        button("Back").on_press(Message::ClosePiano),
-                        text("Piano").size(18),
-                    ]
-                    .spacing(10),
-                    text("No MIDI clip selected."),
-                ]
-                .spacing(10)
-                .padding(12),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
+            return container(text("No MIDI clip selected."))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
         };
 
         let pitch_count = Self::OCTAVES * Self::NOTES_PER_OCTAVE;
@@ -83,17 +77,18 @@ impl Piano {
             .max(1.0);
         let notes_h = pitch_count as f32 * row_h;
         let ctrl_h = 140.0_f32;
-        let total_h = notes_h + ctrl_h;
-        let pps = (pixels_per_sample * zoom_x).max(0.0001);
-        let content_w = (roll.clip_length_samples as f32 * pps).max(1.0);
+        let pps_notes = (pixels_per_sample * zoom_x).max(0.0001);
+        let pps_ctrl = (pixels_per_sample * zoom_x).max(0.0001);
+        let notes_w = (roll.clip_length_samples as f32 * pps_notes).max(1.0);
+        let ctrl_w = (roll.clip_length_samples as f32 * pps_ctrl).max(1.0);
 
-        let mut layers: Vec<Element<'_, Message>> = vec![];
+        let mut note_layers: Vec<Element<'_, Message>> = vec![];
         for i in 0..pitch_count {
             let pitch = Self::PITCH_MAX.saturating_sub(i as u8);
             let is_black = Self::is_black_key(pitch);
-            layers.push(
+            note_layers.push(
                 pin(container("")
-                    .width(Length::Fixed(content_w))
+                    .width(Length::Fixed(notes_w))
                     .height(Length::Fixed(row_h))
                     .style(move |_theme| container::Style {
                         background: Some(Background::Color(if is_black {
@@ -118,50 +113,68 @@ impl Piano {
             );
         }
 
-        // Controller lane base is a touch brighter than note lanes.
-        layers.push(
-            pin(
-                container("")
-                    .width(Length::Fixed(content_w))
-                    .height(Length::Fixed(ctrl_h))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.16,
-                            g: 0.16,
-                            b: 0.18,
-                            a: 0.9,
-                        })),
-                        ..container::Style::default()
-                    }),
-            )
-            .position(Point::new(0.0, notes_h))
+        let mut ctrl_layers: Vec<Element<'_, Message>> = vec![
+            pin(container("")
+                .width(Length::Fixed(ctrl_w))
+                .height(Length::Fixed(ctrl_h))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.16,
+                        g: 0.16,
+                        b: 0.18,
+                        a: 0.9,
+                    })),
+                    ..container::Style::default()
+                }))
+            .position(Point::new(0.0, 0.0))
             .into(),
-        );
+        ];
 
         let beat_samples = (samples_per_bar / 4.0).max(1.0);
         let mut beat = 0usize;
         loop {
-            let x = beat as f32 * beat_samples * pps;
-            if x > content_w {
+            let x_notes = beat as f32 * beat_samples * pps_notes;
+            let x_ctrl = beat as f32 * beat_samples * pps_ctrl;
+            if x_notes > notes_w && x_ctrl > ctrl_w {
                 break;
             }
             let bar_line = beat % 4 == 0;
-            layers.push(
-                pin(container("")
-                    .width(Length::Fixed(if bar_line { 2.0 } else { 1.0 }))
-                    .height(Length::Fixed(total_h))
-                    .style(move |_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: if bar_line { 0.5 } else { 0.35 },
-                            g: if bar_line { 0.5 } else { 0.35 },
-                            b: if bar_line { 0.55 } else { 0.35 },
-                            a: 0.45,
-                        })),
-                        ..container::Style::default()
-                    }))
-                .position(Point::new(x, 0.0))
-                .into(),
-            );
+            if x_notes <= notes_w {
+                note_layers.push(
+                    pin(container("")
+                        .width(Length::Fixed(if bar_line { 2.0 } else { 1.0 }))
+                        .height(Length::Fixed(notes_h))
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: if bar_line { 0.5 } else { 0.35 },
+                                g: if bar_line { 0.5 } else { 0.35 },
+                                b: if bar_line { 0.55 } else { 0.35 },
+                                a: 0.45,
+                            })),
+                            ..container::Style::default()
+                        }))
+                    .position(Point::new(x_notes, 0.0))
+                    .into(),
+                );
+            }
+            if x_ctrl <= ctrl_w {
+                ctrl_layers.push(
+                    pin(container("")
+                        .width(Length::Fixed(if bar_line { 2.0 } else { 1.0 }))
+                        .height(Length::Fixed(ctrl_h))
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: if bar_line { 0.5 } else { 0.35 },
+                                g: if bar_line { 0.5 } else { 0.35 },
+                                b: if bar_line { 0.55 } else { 0.35 },
+                                a: 0.45,
+                            })),
+                            ..container::Style::default()
+                        }))
+                    .position(Point::new(x_ctrl, 0.0))
+                    .into(),
+                );
+            }
             beat += 1;
         }
 
@@ -171,10 +184,10 @@ impl Piano {
             }
             let y_idx = usize::from(Self::PITCH_MAX.saturating_sub(note.pitch));
             let y = y_idx as f32 * row_h + 1.0;
-            let x = note.start_sample as f32 * pps;
-            let w = (note.length_samples as f32 * pps).max(2.0);
+            let x = note.start_sample as f32 * pps_notes;
+            let w = (note.length_samples as f32 * pps_notes).max(2.0);
             let color = Self::note_color(note.velocity, note.channel);
-            layers.push(
+            note_layers.push(
                 pin(container("")
                     .width(Length::Fixed(w))
                     .height(Length::Fixed((row_h - 2.0).max(2.0)))
@@ -187,12 +200,11 @@ impl Piano {
             );
         }
 
-        let ctrl_base_y = notes_h + 4.0;
         for ctrl in &roll.controllers {
-            let x = ctrl.sample as f32 * pps;
+            let x = ctrl.sample as f32 * pps_ctrl;
             let h = ((ctrl.value as f32 / 127.0) * (ctrl_h - 10.0)).max(1.0);
             let color = Self::controller_color(ctrl.controller, ctrl.channel);
-            layers.push(
+            ctrl_layers.push(
                 pin(container("")
                     .width(Length::Fixed(2.0))
                     .height(Length::Fixed(h))
@@ -200,14 +212,17 @@ impl Piano {
                         background: Some(Background::Color(color)),
                         ..container::Style::default()
                     }))
-                .position(Point::new(x, ctrl_base_y + (ctrl_h - h)))
+                .position(Point::new(x, 4.0 + (ctrl_h - h)))
                 .into(),
             );
         }
 
-        let content = Stack::from_vec(layers)
-            .width(Length::Fixed(content_w))
-            .height(Length::Fixed(total_h));
+        let notes_content = Stack::from_vec(note_layers)
+            .width(Length::Fixed(notes_w))
+            .height(Length::Fixed(notes_h));
+        let ctrl_content = Stack::from_vec(ctrl_layers)
+            .width(Length::Fixed(ctrl_w))
+            .height(Length::Fixed(ctrl_h));
 
         let octave_h = (notes_h / Self::OCTAVES as f32).max(1.0);
         let keyboard = (0..Self::OCTAVES).fold(column![], |col, octave_idx| {
@@ -218,82 +233,140 @@ impl Piano {
                     .height(Length::Fixed(octave_h)),
             )
         });
-        let piano_keys = keyboard
-            .push(
-                container(text("Controllers").size(11))
+        let piano_note_keys = keyboard
+            .width(Length::Fixed(Self::KEYBOARD_WIDTH))
+            .height(Length::Fill);
+        let controller_key = container(text("Controllers").size(11))
+            .width(Length::Fixed(Self::KEYBOARD_WIDTH))
+            .height(Length::Fixed(ctrl_h))
+            .padding([4, 6])
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(Color {
+                    r: 0.15,
+                    g: 0.15,
+                    b: 0.16,
+                    a: 1.0,
+                })),
+                ..container::Style::default()
+            });
+
+        let note_scroll = scrollable(
+            row![
+                container(piano_note_keys)
                     .width(Length::Fixed(Self::KEYBOARD_WIDTH))
-                    .height(Length::Fixed(ctrl_h))
-                    .padding([4, 6])
+                    .height(Length::Fixed(notes_h))
                     .style(|_theme| container::Style {
                         background: Some(Background::Color(Color {
-                            r: 0.15,
-                            g: 0.15,
-                            b: 0.16,
+                            r: 0.12,
+                            g: 0.12,
+                            b: 0.12,
                             a: 1.0,
                         })),
                         ..container::Style::default()
                     }),
-            )
-            .width(Length::Fixed(Self::KEYBOARD_WIDTH))
-            .height(Length::Fixed(total_h));
+                container(notes_content)
+                    .width(Length::Shrink)
+                    .height(Length::Fixed(notes_h))
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.07,
+                            g: 0.07,
+                            b: 0.09,
+                            a: 1.0,
+                        })),
+                        ..container::Style::default()
+                    }),
+            ]
+            .height(Length::Fixed(notes_h)),
+        )
+        .id(Id::new(NOTES_SCROLL_ID))
+        .direction(scrollable::Direction::Both {
+            vertical: scrollable::Scrollbar::hidden(),
+            horizontal: scrollable::Scrollbar::hidden(),
+        })
+        .on_scroll(|viewport| {
+            let offset = viewport.relative_offset();
+            Message::PianoScrollChanged {
+                x: offset.x,
+                y: offset.y,
+            }
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
 
-        container(
+        let ctrl_scroll = scrollable(
+            container(ctrl_content)
+                .width(Length::Shrink)
+                .height(Length::Fixed(ctrl_h))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.12,
+                        g: 0.12,
+                        b: 0.13,
+                        a: 1.0,
+                    })),
+                    ..container::Style::default()
+                }),
+        )
+        .id(Id::new(CTRL_SCROLL_ID))
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::hidden(),
+        ))
+        .on_scroll(|viewport| Message::PianoScrollXChanged(viewport.relative_offset().x))
+        .width(Length::Fill)
+        .height(Length::Fixed(ctrl_h));
+
+        let h_scroll = scrollable(
+            container("")
+                .width(Length::Fixed(notes_w.max(ctrl_w)))
+                .height(Length::Fixed(1.0)),
+        )
+        .id(Id::new(H_SCROLL_ID))
+        .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new()))
+        .on_scroll(|viewport| Message::PianoScrollXChanged(viewport.relative_offset().x))
+        .width(Length::Fill)
+        .height(Length::Fixed(16.0));
+
+        let v_scroll = scrollable(
+            container("")
+                .width(Length::Fixed(1.0))
+                .height(Length::Fixed(notes_h)),
+        )
+        .id(Id::new(V_SCROLL_ID))
+        .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::new()))
+        .on_scroll(|viewport| Message::PianoScrollYChanged(viewport.relative_offset().y))
+        .width(Length::Fixed(16.0))
+        .height(Length::Fill);
+
+        container(row![
             column![
+                note_scroll,
+                row![controller_key, ctrl_scroll],
                 row![
-                    button("Back").on_press(Message::ClosePiano),
-                    text(format!(
-                        "Piano: {} (track: {}, clip #{})",
-                        roll.clip_name, roll.track_idx, roll.clip_idx
-                    ))
-                    .size(18),
-                    text("H Zoom").size(12),
-                    slider(1.0..=127.0, zoom_x, Message::PianoZoomXChanged)
-                        .step(0.1)
-                        .width(Length::Fixed(110.0)),
-                    text(format!("{zoom_x:.2}x")).size(12),
-                    text("V Zoom").size(12),
-                    slider(0.25..=6.0, zoom_y, Message::PianoZoomYChanged)
-                        .step(0.1)
-                        .width(Length::Fixed(110.0)),
-                    text(format!("{zoom_y:.2}x")).size(12),
-                ]
-                .spacing(10),
-                row![
-                    container(piano_keys)
+                    container("")
                         .width(Length::Fixed(Self::KEYBOARD_WIDTH))
-                        .height(Length::Fill)
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.12,
-                                g: 0.12,
-                                b: 0.12,
-                                a: 1.0,
-                            })),
-                            ..container::Style::default()
-                        }),
-                    container(content)
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.07,
-                                g: 0.07,
-                                b: 0.09,
-                                a: 1.0,
-                            })),
-                            ..container::Style::default()
-                        }),
+                        .height(Length::Fixed(16.0)),
+                    row![
+                        h_scroll,
+                        slider(1.0..=127.0, zoom_x, Message::PianoZoomXChanged)
+                            .step(0.1)
+                            .width(Length::Fixed(100.0)),
+                    ]
+                    .spacing(8)
+                    .width(Length::Fill),
                 ]
-                .height(Length::Fill),
-                row![
-                    text(format!("Notes: {}", roll.notes.len())).size(12),
-                    text(format!("Controllers: {}", roll.controllers.len())).size(12),
-                ]
-                .spacing(12),
+            ]
+            .spacing(3)
+            .padding(10),
+            column![
+                v_scroll,
+                vertical_slider(1.0..=8.0, zoom_y, Message::PianoZoomYChanged)
+                    .step(0.1)
+                    .height(Length::Fixed(100.0)),
             ]
             .spacing(8)
-            .padding(10),
-        )
+            .height(Length::Fill),
+        ])
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -448,9 +521,9 @@ impl Program<Message> for OctaveKeyboard {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if let Some(note_class) = state.active_note_class.take() {
                     state.pressed_notes.clear();
-                    return Some(
-                        CanvasAction::publish(Message::PianoKeyReleased(self.midi_note(note_class))),
-                    );
+                    return Some(CanvasAction::publish(Message::PianoKeyReleased(
+                        self.midi_note(note_class),
+                    )));
                 }
             }
             _ => {}
