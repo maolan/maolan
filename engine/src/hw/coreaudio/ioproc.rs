@@ -317,7 +317,7 @@ pub struct IoProcHandle {
 
     has_overload_listener: bool,
 
-    _state: Arc<SharedIOState>,
+    state: Arc<SharedIOState>,
 }
 
 impl IoProcHandle {
@@ -369,7 +369,7 @@ impl IoProcHandle {
             device_id,
             proc_id,
             has_overload_listener: overload_status == kAudioHardwareNoError as OSStatus,
-            _state: state,
+            state,
         })
     }
 }
@@ -381,7 +381,7 @@ impl Drop for IoProcHandle {
             AudioDeviceDestroyIOProcID(self.device_id, self.proc_id);
 
             if self.has_overload_listener {
-                let client_ptr = Arc::as_ptr(&self._state) as *mut c_void;
+                let client_ptr = Arc::as_ptr(&self.state) as *mut c_void;
                 AudioObjectRemovePropertyListener(
                     self.device_id,
                     &OVERLOAD_ADDRESS,
@@ -390,7 +390,7 @@ impl Drop for IoProcHandle {
                 );
             }
 
-            let client_ptr = Arc::as_ptr(&self._state) as *const SharedIOState;
+            let client_ptr = Arc::as_ptr(&self.state) as *const SharedIOState;
             Arc::from_raw(client_ptr);
         }
     }

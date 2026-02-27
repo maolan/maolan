@@ -150,7 +150,7 @@ impl ProcessHandler for Process {
 }
 
 pub struct JackRuntime {
-    _client: jack::AsyncClient<Notifications, Process>,
+    client: Option<jack::AsyncClient<Notifications, Process>>,
     pub audio_ins: Vec<Arc<AudioIO>>,
     pub audio_outs: Vec<Arc<AudioIO>>,
     midi_in_events: Arc<UnsafeMutex<Vec<MidiEvent>>>,
@@ -237,7 +237,7 @@ impl JackRuntime {
             .map_err(|e| format!("Failed to activate JACK client: {e}"))?;
 
         Ok(Self {
-            _client: client,
+            client: Some(client),
             audio_ins,
             audio_outs,
             midi_in_events,
@@ -281,5 +281,13 @@ impl JackRuntime {
         (0..self.midi_output_count)
             .map(|idx| format!("jack:midi_out_{}", idx + 1))
             .collect()
+    }
+}
+
+impl Drop for JackRuntime {
+    fn drop(&mut self) {
+        if let Some(client) = self.client.take() {
+            let _ = client.deactivate();
+        }
     }
 }

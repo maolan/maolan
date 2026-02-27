@@ -30,8 +30,8 @@ impl Default for HwOptions {
 }
 
 pub struct HwDriver {
-    _input_stream: Option<Stream>,
-    _output_stream: Stream,
+    input_stream: Option<Stream>,
+    output_stream: Stream,
     input_rx: Option<Receiver<Vec<f32>>>,
     output_tx: SyncSender<Vec<f32>>,
     cycle_tick_rx: Receiver<()>,
@@ -152,8 +152,8 @@ impl HwDriver {
             };
 
         Ok(Self {
-            _input_stream: input_stream,
-            _output_stream: output_stream,
+            input_stream,
+            output_stream,
             input_rx,
             output_tx,
             cycle_tick_rx,
@@ -383,7 +383,7 @@ pub fn list_midi_output_devices() -> Vec<String> {
 
 struct MidiInputDevice {
     device: String,
-    _connection: MidiInputConnection<()>,
+    connection: MidiInputConnection<()>,
 }
 
 struct MidiOutputDevice {
@@ -437,7 +437,7 @@ impl MidiHub {
 
         self.inputs.push(MidiInputDevice {
             device: device.to_string(),
-            _connection: connection,
+            connection,
         });
         Ok(())
     }
@@ -488,6 +488,26 @@ impl MidiHub {
                     break;
                 }
             }
+        }
+    }
+}
+
+impl Drop for HwDriver {
+    fn drop(&mut self) {
+        if let Some(stream) = &self.input_stream {
+            let _ = stream.pause();
+        }
+        let _ = self.output_stream.pause();
+    }
+}
+
+impl Drop for MidiHub {
+    fn drop(&mut self) {
+        while let Some(input) = self.inputs.pop() {
+            let _ = input.connection.close();
+        }
+        while let Some(output) = self.outputs.pop() {
+            let _ = output.connection.close();
         }
     }
 }

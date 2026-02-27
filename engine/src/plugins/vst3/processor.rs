@@ -30,10 +30,6 @@ pub struct Vst3Processor {
     scalar_values: Arc<Mutex<Vec<f32>>>,
     previous_values: Arc<Mutex<Vec<f32>>>,
 
-    // Processing state
-    _sample_rate: f64,
-    _max_block_size: usize,
-    _is_active: bool,
 }
 
 impl Vst3Processor {
@@ -134,9 +130,6 @@ impl Vst3Processor {
             parameters,
             scalar_values,
             previous_values,
-            _sample_rate: sample_rate,
-            _max_block_size: buffer_size,
-            _is_active: true,
         })
     }
 
@@ -189,7 +182,7 @@ impl Vst3Processor {
         };
 
         // Call real VST3 processing (no MIDI)
-        if let Err(e) = self.process_vst3(processor, frames, None) {
+        if let Err(e) = self.process_vst3(processor, frames) {
             eprintln!("VST3 processing error: {e}, producing silence");
             self.process_silence();
         }
@@ -202,6 +195,10 @@ impl Vst3Processor {
             input.process();
         }
 
+        if !input_events.is_empty() {
+            // MIDI event list wiring into VST3 ProcessData is not implemented yet.
+        }
+
         // Get the audio processor
         let processor = match &self.instance.audio_processor {
             Some(proc) => proc,
@@ -211,11 +208,8 @@ impl Vst3Processor {
             }
         };
 
-        // Convert input MIDI events to VST3 format
-        let input_event_buffer = EventBuffer::from_midi_events(input_events, 0);
-
         // Call real VST3 processing with MIDI
-        match self.process_vst3(processor, frames, Some(&input_event_buffer)) {
+        match self.process_vst3(processor, frames) {
             Ok(output_buffer) => {
                 // Convert output events back to MIDI
                 output_buffer.to_midi_events()
@@ -232,7 +226,6 @@ impl Vst3Processor {
         &self,
         processor: &vst3::ComPtr<vst3::Steinberg::Vst::IAudioProcessor>,
         frames: usize,
-        _input_events: Option<&EventBuffer>,
     ) -> Result<EventBuffer, String> {
         use vst3::Steinberg::Vst::IAudioProcessorTrait;
         use vst3::Steinberg::Vst::*;

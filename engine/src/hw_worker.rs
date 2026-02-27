@@ -6,7 +6,6 @@ use crate::{
 };
 #[cfg(unix)]
 use nix::libc;
-use std::marker::PhantomData;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -33,7 +32,6 @@ pub struct HwWorker<B: Backend> {
     pending_midi_out_events: Vec<HwMidiEvent>,
     midi_in_events: Vec<HwMidiEvent>,
     pending_midi_out_sorted: bool,
-    _backend: PhantomData<B>,
 }
 
 #[derive(Debug, Default)]
@@ -234,7 +232,6 @@ impl<B: Backend> HwWorker<B> {
             pending_midi_out_events: vec![],
             midi_in_events: Vec::with_capacity(64),
             pending_midi_out_sorted: true,
-            _backend: PhantomData,
         }
     }
 

@@ -716,10 +716,6 @@ struct ClapIStreamCtx<'a> {
 }
 
 struct HostRuntime {
-    _name: CString,
-    _vendor: CString,
-    _url: CString,
-    _version: CString,
     callback_flags: Box<UnsafeMutex<HostCallbackFlags>>,
     host: ClapHost,
 }
@@ -733,32 +729,21 @@ struct HostCallbackFlags {
 
 impl HostRuntime {
     fn new() -> Result<Self, String> {
-        let name = CString::new("Maolan").map_err(|e| e.to_string())?;
-        let vendor = CString::new("Maolan").map_err(|e| e.to_string())?;
-        let url = CString::new("https://example.invalid").map_err(|e| e.to_string())?;
-        let version = CString::new("0.0.1").map_err(|e| e.to_string())?;
         let mut callback_flags = Box::new(UnsafeMutex::new(HostCallbackFlags::default()));
         let host = ClapHost {
             clap_version: CLAP_VERSION,
             host_data: (&mut *callback_flags as *mut UnsafeMutex<HostCallbackFlags>)
                 .cast::<c_void>(),
-            name: name.as_ptr(),
-            vendor: vendor.as_ptr(),
-            url: url.as_ptr(),
-            version: version.as_ptr(),
+            name: c"Maolan".as_ptr(),
+            vendor: c"Maolan".as_ptr(),
+            url: c"https://example.invalid".as_ptr(),
+            version: c"0.0.1".as_ptr(),
             get_extension: Some(host_get_extension),
             request_restart: Some(host_request_restart),
             request_process: Some(host_request_process),
             request_callback: Some(host_request_callback),
         };
-        Ok(Self {
-            _name: name,
-            _vendor: vendor,
-            _url: url,
-            _version: version,
-            callback_flags,
-            host,
-        })
+        Ok(Self { callback_flags, host })
     }
 
     fn take_callback_flags(&self) -> HostCallbackFlags {

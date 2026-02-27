@@ -36,7 +36,7 @@ pub struct HwDriver {
     output_gain_linear: f32,
     output_balance: f32,
     io_state: Arc<SharedIOState>,
-    _io_proc_handle: IoProcHandle,
+    io_proc_handle: Option<IoProcHandle>,
 }
 
 impl HwDriver {
@@ -96,7 +96,7 @@ impl HwDriver {
             output_gain_linear: 1.0,
             output_balance: 0.0,
             io_state,
-            _io_proc_handle: io_proc_handle,
+            io_proc_handle: Some(io_proc_handle),
         })
     }
 
@@ -145,6 +145,12 @@ impl HwDriver {
             self.input_latency_frames,
             self.output_latency_frames,
         )
+    }
+}
+
+impl Drop for HwDriver {
+    fn drop(&mut self) {
+        let _ = self.io_proc_handle.take();
     }
 }
 
