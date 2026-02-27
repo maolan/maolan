@@ -349,8 +349,12 @@ pub struct StateData {
     pub hw_out_meter_db: Vec<f32>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub lv2_plugins: Vec<Lv2PluginInfo>,
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub lv2_plugins_loaded: bool,
     pub vst3_plugins: Vec<Vst3PluginInfo>,
+    pub vst3_plugins_loaded: bool,
     pub clap_plugins: Vec<ClapPluginInfo>,
+    pub clap_plugins_loaded: bool,
     pub clap_plugins_by_track: HashMap<String, Vec<String>>,
     pub clap_states_by_track: HashMap<String, HashMap<String, ClapPluginState>>,
     pub plugin_graph_track: Option<String>,
@@ -454,8 +458,12 @@ impl Default for StateData {
             hw_out_meter_db: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_plugins: vec![],
+            #[cfg(all(unix, not(target_os = "macos")))]
+            lv2_plugins_loaded: false,
             vst3_plugins: vec![],
+            vst3_plugins_loaded: false,
             clap_plugins: vec![],
+            clap_plugins_loaded: false,
             clap_plugins_by_track: HashMap::new(),
             clap_states_by_track: HashMap::new(),
             plugin_graph_track: None,

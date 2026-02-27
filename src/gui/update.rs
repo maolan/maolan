@@ -1114,16 +1114,19 @@ impl Maolan {
                 Action::Lv2Plugins(plugins) => {
                     let mut state = self.state.blocking_write();
                     state.lv2_plugins = plugins.clone();
+                    state.lv2_plugins_loaded = true;
                     state.message = format!("Loaded {} LV2 plugins", state.lv2_plugins.len());
                 }
                 Action::Vst3Plugins(plugins) => {
                     let mut state = self.state.blocking_write();
                     state.vst3_plugins = plugins.clone();
+                    state.vst3_plugins_loaded = true;
                     state.message = format!("Loaded {} VST3 plugins", state.vst3_plugins.len());
                 }
                 Action::ClapPlugins(plugins) => {
                     let mut state = self.state.blocking_write();
                     state.clap_plugins = plugins.clone();
+                    state.clap_plugins_loaded = true;
                     state.message = format!("Loaded {} CLAP plugins", state.clap_plugins.len());
                 }
                 Action::TrackLoadClapPlugin {

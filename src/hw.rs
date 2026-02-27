@@ -98,8 +98,26 @@ impl HW {
         } else {
             bit_options.first().copied().unwrap_or(32)
         };
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+        let plugins_loaded = {
+            let state = self.state.blocking_read();
+            state.lv2_plugins_loaded && state.vst3_plugins_loaded && state.clap_plugins_loaded
+        };
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let plugins_loaded = {
+            let state = self.state.blocking_read();
+            state.vst3_plugins_loaded && state.clap_plugins_loaded
+        };
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "windows",
+            target_os = "macos"
+        )))]
+        let plugins_loaded = true;
         let mut submit = button("Open Audio");
-        if selected_is_jack || selected_hw.is_some() {
+        if plugins_loaded && (selected_is_jack || selected_hw.is_some()) {
             #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
             let device = if selected_is_jack {
                 "jack".to_string()
