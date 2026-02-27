@@ -4,8 +4,8 @@ mod subscriptions;
 mod update;
 mod view;
 
-use crate::clap_ui::GuiClapUiHost;
-use crate::vst3_ui::GuiVst3UiHost;
+use crate::plugins::clap_ui::GuiClapUiHost;
+use crate::plugins::vst3_ui::GuiVst3UiHost;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
     message::{DraggedClip, Message, PluginFormat, Show},

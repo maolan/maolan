@@ -1,17 +1,16 @@
 mod add_track;
-mod clap_ui;
 mod clip_rename;
 mod connections;
 mod gui;
 mod hw;
 mod menu;
 mod message;
+mod plugins;
 mod state;
 mod style;
 mod toolbar;
 mod track_rename;
 mod ui_timing;
-mod vst3_ui;
 mod widget;
 mod workspace;
 
