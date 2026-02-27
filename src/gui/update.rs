@@ -14,6 +14,8 @@ use maolan_engine::{
     kind::Kind,
     message::{Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage},
 };
+#[cfg(all(unix, not(target_os = "macos")))]
+use maolan_engine::message::PluginGraphNode;
 use rfd::AsyncFileDialog;
 use std::{collections::HashSet, process::exit, time::Instant};
 use tracing::error;
@@ -1146,6 +1148,15 @@ impl Maolan {
                     }
                     self.state.blocking_write().message =
                         format!("Loaded CLAP plugin '{plugin_name}' on track '{track_name}'");
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        let plugin_track = self.state.blocking_read().plugin_graph_track.clone();
+                        if plugin_track.as_deref() == Some(track_name.as_str()) {
+                            return self.send(Action::TrackGetPluginGraph {
+                                track_name: track_name.clone(),
+                            });
+                        }
+                    }
                 }
                 Action::TrackUnloadClapPlugin {
                     track_name,
@@ -1171,6 +1182,15 @@ impl Maolan {
                         .unwrap_or_else(|| plugin_path.clone());
                     self.state.blocking_write().message =
                         format!("Unloaded CLAP plugin '{plugin_name}' from track '{track_name}'");
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        let plugin_track = self.state.blocking_read().plugin_graph_track.clone();
+                        if plugin_track.as_deref() == Some(track_name.as_str()) {
+                            return self.send(Action::TrackGetPluginGraph {
+                                track_name: track_name.clone(),
+                            });
+                        }
+                    }
                 }
                 Action::TrackClapStateSnapshot {
                     track_name,
@@ -1215,6 +1235,8 @@ impl Maolan {
                 Action::TrackLoadLv2Plugin { track_name, .. }
                 | Action::TrackSetLv2PluginState { track_name, .. }
                 | Action::TrackUnloadLv2PluginInstance { track_name, .. }
+                | Action::TrackLoadVst3Plugin { track_name, .. }
+                | Action::TrackUnloadVst3PluginInstance { track_name, .. }
                 | Action::TrackConnectPluginAudio { track_name, .. }
                 | Action::TrackDisconnectPluginAudio { track_name, .. }
                 | Action::TrackConnectPluginMidi { track_name, .. }
@@ -1812,10 +1834,46 @@ impl Maolan {
                                         .blocking_write()
                                         .plugin_graph_selected_connections
                                         .clear();
-                                    return self.send(Action::TrackUnloadLv2PluginInstance {
-                                        track_name,
-                                        instance_id,
-                                    });
+                                    let selected_node = self
+                                        .state
+                                        .blocking_read()
+                                        .plugin_graph_plugins
+                                        .iter()
+                                        .find(|p| p.instance_id == instance_id)
+                                        .map(|p| p.node.clone());
+                                    if let Some(node) = selected_node {
+                                        return match node {
+                                            PluginGraphNode::Lv2PluginInstance(_) => self.send(
+                                                Action::TrackUnloadLv2PluginInstance {
+                                                    track_name,
+                                                    instance_id,
+                                                },
+                                            ),
+                                            PluginGraphNode::Vst3PluginInstance(_) => self.send(
+                                                Action::TrackUnloadVst3PluginInstance {
+                                                    track_name,
+                                                    instance_id,
+                                                },
+                                            ),
+                                            PluginGraphNode::ClapPluginInstance(_) => {
+                                                let plugin_path = self
+                                                    .state
+                                                    .blocking_read()
+                                                    .plugin_graph_plugins
+                                                    .iter()
+                                                    .find(|p| p.instance_id == instance_id)
+                                                    .map(|p| p.uri.clone())
+                                                    .unwrap_or_default();
+                                                self.send(Action::TrackUnloadClapPlugin {
+                                                    track_name,
+                                                    plugin_path,
+                                                })
+                                            }
+                                            PluginGraphNode::TrackInput
+                                            | PluginGraphNode::TrackOutput => Task::none(),
+                                        };
+                                    }
+                                    return Task::none();
                                 }
                                 let actions = connections::selection::plugin_disconnect_actions(
                                     &track_name,

@@ -164,20 +164,17 @@ impl ClapProcessor {
                 port.process();
             }
         }
-        let (processed, processed_midi) =
-            self.process_native(frames, midi_in, transport)
-                .unwrap_or((false, Vec::new()));
+        let (processed, processed_midi) = match self.process_native(frames, midi_in, transport) {
+            Ok(v) => v,
+            Err(err) => {
+                eprintln!("CLAP processing error: {err}, producing silence");
+                (false, Vec::new())
+            }
+        };
         if !processed {
-            // Safe fallback while CLAP processing matures: passthrough.
-            for (idx, out) in self.audio_outputs.iter().enumerate() {
-                if let Some(input) = self.audio_inputs.get(idx % self.audio_inputs.len()) {
-                    let in_buf = input.buffer.lock();
-                    let out_buf = out.buffer.lock();
-                    out_buf.fill(0.0);
-                    for (dst, src) in out_buf.iter_mut().zip(in_buf.iter()) {
-                        *dst = *src;
-                    }
-                }
+            for out in &self.audio_outputs {
+                let out_buf = out.buffer.lock();
+                out_buf.fill(0.0);
                 *out.finished.lock() = true;
             }
         }

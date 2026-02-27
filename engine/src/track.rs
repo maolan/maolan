@@ -1067,11 +1067,11 @@ impl Track {
             .unwrap_or(0);
         let input_count = self.audio.ins.len().max(1);
         let output_count = self.audio.outs.len().max(1);
-        let processor = Vst3Processor::new(buffer_size, plugin_path, input_count, output_count);
+        let processor =
+            Vst3Processor::new(buffer_size, plugin_path, input_count, output_count)?;
         let id = self.alloc_plugin_instance_id();
         self.next_vst3_instance_id = self.next_vst3_instance_id.max(id.saturating_add(1));
         self.vst3_processors.push(Vst3Instance { id, processor });
-        self.rewire_vst3_default_audio_graph();
         Ok(())
     }
 
@@ -1120,7 +1120,6 @@ impl Track {
             id,
             processor,
         });
-        self.rewire_vst3_default_audio_graph();
         Ok(())
     }
 
@@ -1138,7 +1137,6 @@ impl Track {
         self.clap_plugins.remove(index);
         #[cfg(all(unix, not(target_os = "macos")))]
         self.prune_plugin_midi_connections(PluginGraphNode::ClapPluginInstance(instance_id));
-        self.rewire_vst3_default_audio_graph();
         Ok(())
     }
 
@@ -1157,7 +1155,6 @@ impl Track {
         self.clap_plugins.remove(index);
         #[cfg(all(unix, not(target_os = "macos")))]
         self.prune_plugin_midi_connections(PluginGraphNode::ClapPluginInstance(removed_id));
-        self.rewire_vst3_default_audio_graph();
         Ok(())
     }
 
@@ -1352,7 +1349,6 @@ impl Track {
         }
         #[cfg(all(unix, not(target_os = "macos")))]
         self.prune_plugin_midi_connections(PluginGraphNode::Vst3PluginInstance(instance_id));
-        self.rewire_vst3_default_audio_graph();
         Ok(())
     }
 
@@ -1962,126 +1958,6 @@ impl Track {
         let connections = port.connections.lock().clone();
         for other in connections {
             let _ = AudioIO::disconnect(&other, port);
-        }
-    }
-
-    fn rewire_vst3_default_audio_graph(&self) {
-        for instance in &self.vst3_processors {
-            for port in instance.processor.audio_inputs() {
-                Self::disconnect_all(port);
-            }
-            for port in instance.processor.audio_outputs() {
-                Self::disconnect_all(port);
-            }
-        }
-        for instance in &self.clap_plugins {
-            for port in instance.processor.audio_inputs() {
-                Self::disconnect_all(port);
-            }
-            for port in instance.processor.audio_outputs() {
-                Self::disconnect_all(port);
-            }
-        }
-
-        for out in &self.audio.outs {
-            out.connections.lock().retain(|source| {
-                !self.audio.ins.iter().any(|input| Arc::ptr_eq(source, input))
-                    && !self.vst3_processors.iter().any(|instance| {
-                        instance
-                            .processor
-                            .audio_outputs()
-                            .iter()
-                            .any(|port| Arc::ptr_eq(source, port))
-                    })
-                    && !self.clap_plugins.iter().any(|instance| {
-                        instance
-                            .processor
-                            .audio_outputs()
-                            .iter()
-                            .any(|port| Arc::ptr_eq(source, port))
-                    })
-            });
-        }
-        for input in &self.audio.ins {
-            for out in &self.audio.outs {
-                let _ = AudioIO::disconnect(input, out);
-            }
-        }
-
-        if self.vst3_processors.is_empty() && self.clap_plugins.is_empty() {
-            self.ensure_default_audio_passthrough();
-            return;
-        }
-        if !self.vst3_processors.is_empty() {
-            let first = &self.vst3_processors[0].processor;
-            for (idx, input) in self.audio.ins.iter().enumerate() {
-                if let Some(vin) = first.audio_inputs().get(idx % first.audio_inputs().len()) {
-                    AudioIO::connect(input, vin);
-                }
-            }
-
-            for pair in self.vst3_processors.windows(2) {
-                let from = &pair[0].processor;
-                let to = &pair[1].processor;
-                for (idx, out) in from.audio_outputs().iter().enumerate() {
-                    if let Some(next_in) = to.audio_inputs().get(idx % to.audio_inputs().len()) {
-                        AudioIO::connect(out, next_in);
-                    }
-                }
-            }
-
-            if let Some(first_clap) = self.clap_plugins.first() {
-                let last_vst3 = &self.vst3_processors[self.vst3_processors.len() - 1].processor;
-                for (idx, out) in last_vst3.audio_outputs().iter().enumerate() {
-                    if let Some(next_in) = first_clap
-                        .processor
-                        .audio_inputs()
-                        .get(idx % first_clap.processor.audio_inputs().len())
-                    {
-                        AudioIO::connect(out, next_in);
-                    }
-                }
-            } else {
-                let last = &self.vst3_processors[self.vst3_processors.len() - 1].processor;
-                for (idx, out) in self.audio.outs.iter().enumerate() {
-                    if let Some(vout) = last.audio_outputs().get(idx % last.audio_outputs().len()) {
-                        AudioIO::connect(vout, out);
-                    }
-                }
-                return;
-            }
-        } else if let Some(first_clap) = self.clap_plugins.first() {
-            for (idx, input) in self.audio.ins.iter().enumerate() {
-                if let Some(cin) = first_clap
-                    .processor
-                    .audio_inputs()
-                    .get(idx % first_clap.processor.audio_inputs().len())
-                {
-                    AudioIO::connect(input, cin);
-                }
-            }
-        }
-
-        for pair in self.clap_plugins.windows(2) {
-            let from = &pair[0].processor;
-            let to = &pair[1].processor;
-            for (idx, out) in from.audio_outputs().iter().enumerate() {
-                if let Some(next_in) = to.audio_inputs().get(idx % to.audio_inputs().len()) {
-                    AudioIO::connect(out, next_in);
-                }
-            }
-        }
-
-        if let Some(last_clap) = self.clap_plugins.last() {
-            for (idx, out) in self.audio.outs.iter().enumerate() {
-                if let Some(cout) = last_clap
-                    .processor
-                    .audio_outputs()
-                    .get(idx % last_clap.processor.audio_outputs().len())
-                {
-                    AudioIO::connect(cout, out);
-                }
-            }
         }
     }
 

@@ -472,42 +472,66 @@ impl canvas::Program<Message> for Graph {
                         return Some(Action::request_redraw());
                     }
 
+                    let mut clicked_plugin: Option<(usize, usize, Point)> = None;
                     for (idx, plugin) in data.plugin_graph_plugins.iter().enumerate().rev() {
-                        let instance_id = plugin.instance_id;
                         let pos = Self::plugin_pos(&data, plugin, idx, bounds);
                         let rect = Rectangle::new(
                             pos,
                             iced::Size::new(PLUGIN_W, Self::plugin_height(plugin)),
                         );
                         if rect.contains(cursor_position) {
-                            data.plugin_graph_selected_plugin = Some(instance_id);
-                            data.plugin_graph_selected_connections.clear();
-                            let now = Instant::now();
-                            if let Some((last_instance, last_time)) =
-                                data.plugin_graph_last_plugin_click
-                                && last_instance == instance_id
+                            clicked_plugin = Some((idx, plugin.instance_id, pos));
+                            break;
+                        }
+                    }
+                    if let Some((plugin_idx, instance_id, pos)) = clicked_plugin {
+                        data.plugin_graph_selected_plugin = Some(instance_id);
+                        data.plugin_graph_selected_connections.clear();
+                        let now = Instant::now();
+                        let is_double_click = if let Some((last_instance, last_time)) =
+                            data.plugin_graph_last_plugin_click
+                        {
+                            last_instance == instance_id
                                 && now.duration_since(last_time) <= DOUBLE_CLICK
-                            {
-                                data.plugin_graph_last_plugin_click = None;
-                                if let Some(track_name) = data.plugin_graph_track.clone() {
-                                    return Some(Action::publish(Message::Request(
-                                        EngineAction::TrackShowLv2PluginUiInstance {
-                                            track_name,
-                                            instance_id,
-                                        },
-                                    )));
-                                }
-                                return Some(Action::capture());
+                        } else {
+                            false
+                        };
+                        if is_double_click {
+                            data.plugin_graph_last_plugin_click = None;
+                            if let Some(track_name) = data.plugin_graph_track.clone() {
+                                let plugin = &data.plugin_graph_plugins[plugin_idx];
+                                return match &plugin.node {
+                                    PluginGraphNode::Lv2PluginInstance(_) => {
+                                        Some(Action::publish(Message::Request(
+                                            EngineAction::TrackShowLv2PluginUiInstance {
+                                                track_name,
+                                                instance_id,
+                                            },
+                                        )))
+                                    }
+                                    PluginGraphNode::ClapPluginInstance(_) => {
+                                        Some(Action::publish(Message::Request(
+                                            EngineAction::TrackShowClapPluginUi {
+                                                track_name,
+                                                plugin_path: plugin.uri.clone(),
+                                            },
+                                        )))
+                                    }
+                                    PluginGraphNode::Vst3PluginInstance(_) => Some(Action::capture()),
+                                    PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => {
+                                        Some(Action::capture())
+                                    }
+                                };
                             }
-                            data.plugin_graph_last_plugin_click = Some((instance_id, now));
-
-                            data.plugin_graph_moving_plugin = Some(MovingPlugin {
-                                instance_id,
-                                offset_x: cursor_position.x - pos.x,
-                                offset_y: cursor_position.y - pos.y,
-                            });
                             return Some(Action::capture());
                         }
+                        data.plugin_graph_last_plugin_click = Some((instance_id, now));
+                        data.plugin_graph_moving_plugin = Some(MovingPlugin {
+                            instance_id,
+                            offset_x: cursor_position.x - pos.x,
+                            offset_y: cursor_position.y - pos.y,
+                        });
+                        return Some(Action::capture());
                     }
 
                     data.plugin_graph_selected_connections.clear();

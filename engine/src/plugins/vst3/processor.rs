@@ -17,7 +17,7 @@ pub struct Vst3Processor {
     plugin_id: String,
 
     // COM interfaces
-    instance: Option<PluginInstance>,
+    instance: PluginInstance,
 
     // Audio I/O (reuse existing AudioIO)
     audio_inputs: Vec<Arc<AudioIO>>,
@@ -43,13 +43,9 @@ impl Vst3Processor {
         path: &str,
         audio_inputs: usize,
         audio_outputs: usize,
-    ) -> Self {
+    ) -> Result<Self, String> {
         // Use default sample rate
         Self::new_with_sample_rate(44100.0, sample_frames, path, audio_inputs, audio_outputs)
-            .unwrap_or_else(|_| {
-                // Fallback to stub implementation if loading fails
-                Self::new_stub(sample_frames, path, audio_inputs, audio_outputs)
-            })
     }
 
     /// Create a new VST3 processor with explicit sample rate
@@ -130,7 +126,7 @@ impl Vst3Processor {
             path: plugin_path.to_string(),
             name,
             plugin_id,
-            instance: Some(instance),
+            instance,
             audio_inputs: audio_input_ios,
             audio_outputs: audio_output_ios,
             input_buses,
@@ -142,44 +138,6 @@ impl Vst3Processor {
             _max_block_size: buffer_size,
             _is_active: true,
         })
-    }
-
-    /// Create a stub processor (fallback when real loading fails)
-    fn new_stub(
-        sample_frames: usize,
-        path: &str,
-        audio_inputs: usize,
-        audio_outputs: usize,
-    ) -> Self {
-        let in_count = audio_inputs.max(1);
-        let out_count = audio_outputs.max(1);
-        let name = Path::new(path)
-            .file_stem()
-            .or_else(|| Path::new(path).file_name())
-            .and_then(|s| s.to_str())
-            .unwrap_or("Unknown VST3")
-            .to_string();
-
-        Self {
-            path: path.to_string(),
-            name,
-            plugin_id: String::new(),
-            instance: None,
-            audio_inputs: (0..in_count)
-                .map(|_| Arc::new(AudioIO::new(sample_frames)))
-                .collect(),
-            audio_outputs: (0..out_count)
-                .map(|_| Arc::new(AudioIO::new(sample_frames)))
-                .collect(),
-            input_buses: vec![],
-            output_buses: vec![],
-            parameters: vec![],
-            scalar_values: Arc::new(Mutex::new(vec![])),
-            previous_values: Arc::new(Mutex::new(vec![])),
-            _sample_rate: 44100.0,
-            _max_block_size: sample_frames,
-            _is_active: false,
-        }
     }
 
     pub fn path(&self) -> &str {
@@ -221,27 +179,19 @@ impl Vst3Processor {
             input.process();
         }
 
-        // If we don't have a real instance, do passthrough
-        if self.instance.is_none() {
-            self.process_passthrough(frames);
-            return;
-        }
-
         // Get the audio processor
-        let processor = match &self.instance.as_ref().unwrap().audio_processor {
+        let processor = match &self.instance.audio_processor {
             Some(proc) => proc,
             None => {
-                // No processor available, use passthrough
-                self.process_passthrough(frames);
+                self.process_silence();
                 return;
             }
         };
 
         // Call real VST3 processing (no MIDI)
         if let Err(e) = self.process_vst3(processor, frames, None) {
-            // If VST3 processing fails, fallback to passthrough
-            eprintln!("VST3 processing error: {}, falling back to passthrough", e);
-            self.process_passthrough(frames);
+            eprintln!("VST3 processing error: {e}, producing silence");
+            self.process_silence();
         }
     }
 
@@ -256,18 +206,11 @@ impl Vst3Processor {
             input.process();
         }
 
-        // If we don't have a real instance, do passthrough with no MIDI output
-        if self.instance.is_none() {
-            self.process_passthrough(frames);
-            return Vec::new();
-        }
-
         // Get the audio processor
-        let processor = match &self.instance.as_ref().unwrap().audio_processor {
+        let processor = match &self.instance.audio_processor {
             Some(proc) => proc,
             None => {
-                // No processor available, use passthrough
-                self.process_passthrough(frames);
+                self.process_silence();
                 return Vec::new();
             }
         };
@@ -282,9 +225,8 @@ impl Vst3Processor {
                 output_buffer.to_midi_events()
             }
             Err(e) => {
-                // If VST3 processing fails, fallback to passthrough
-                eprintln!("VST3 processing error: {}, falling back to passthrough", e);
-                self.process_passthrough(frames);
+                eprintln!("VST3 processing error: {e}, producing silence");
+                self.process_silence();
                 Vec::new()
             }
         }
@@ -385,21 +327,10 @@ impl Vst3Processor {
         Ok(output_events)
     }
 
-    fn process_passthrough(&self, frames: usize) {
-        for (out_idx, output) in self.audio_outputs.iter().enumerate() {
+    fn process_silence(&self) {
+        for output in &self.audio_outputs {
             let out_buf = output.buffer.lock();
             out_buf.fill(0.0);
-
-            if self.audio_inputs.is_empty() {
-                *output.finished.lock() = true;
-                continue;
-            }
-
-            let input = &self.audio_inputs[out_idx % self.audio_inputs.len()];
-            let in_buf = input.buffer.lock();
-            for (o, i) in out_buf.iter_mut().zip(in_buf.iter()).take(frames) {
-                *o = *i;
-            }
             *output.finished.lock() = true;
         }
     }
@@ -423,12 +354,10 @@ impl Vst3Processor {
         self.scalar_values.lock().unwrap()[idx] = normalized_value;
 
         // Update controller if available
-        if let Some(instance) = &self.instance {
-            if let Some(controller) = &instance.edit_controller {
-                use vst3::Steinberg::Vst::IEditControllerTrait;
-                unsafe {
-                    controller.setParamNormalized(param_id, normalized_value as f64);
-                }
+        if let Some(controller) = &self.instance.edit_controller {
+            use vst3::Steinberg::Vst::IEditControllerTrait;
+            unsafe {
+                controller.setParamNormalized(param_id, normalized_value as f64);
             }
         }
 
@@ -439,7 +368,7 @@ impl Vst3Processor {
     pub fn snapshot_state(&self) -> Result<Vst3PluginState, String> {
         use vst3::Steinberg::Vst::{IComponentTrait, IEditControllerTrait};
 
-        let instance = self.instance.as_ref().ok_or("No plugin instance")?;
+        let instance = &self.instance;
 
         // Save component state
         let mut comp_stream = MemoryStream::new();
@@ -480,7 +409,7 @@ impl Vst3Processor {
             ));
         }
 
-        let instance = self.instance.as_ref().ok_or("No plugin instance")?;
+        let instance = &self.instance;
 
         // Restore component state
         if !state.component_state.is_empty() {
@@ -519,10 +448,8 @@ impl Vst3Processor {
 
 impl Drop for Vst3Processor {
     fn drop(&mut self) {
-        if let Some(ref mut instance) = self.instance {
-            let _ = instance.set_active(false);
-            let _ = instance.terminate();
-        }
+        let _ = self.instance.set_active(false);
+        let _ = self.instance.terminate();
     }
 }
 
