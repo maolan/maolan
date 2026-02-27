@@ -18,6 +18,9 @@ impl Piano {
     const KEYBOARD_WIDTH: f32 = 84.0;
     const OCTAVES: usize = 10;
     const WHITE_KEYS_PER_OCTAVE: usize = 7;
+    const NOTES_PER_OCTAVE: usize = 12;
+    const PITCH_MIN: u8 = 0;
+    const PITCH_MAX: u8 = (Self::OCTAVES as u8 * Self::NOTES_PER_OCTAVE as u8) - 1;
     const WHITE_KEY_HEIGHT: f32 = 14.0;
 
     pub fn new(state: State) -> Self {
@@ -50,17 +53,6 @@ impl Piano {
         }
     }
 
-    fn pitch_range(notes: &[crate::state::PianoNote]) -> (u8, u8) {
-        if notes.is_empty() {
-            return (36, 84);
-        }
-        let min = notes.iter().map(|n| n.pitch).min().unwrap_or(36);
-        let max = notes.iter().map(|n| n.pitch).max().unwrap_or(84);
-        let min = min.saturating_sub(6);
-        let max = (max.saturating_add(6)).min(127);
-        (min.min(max), max.max(min))
-    }
-
     pub fn view(&self, pixels_per_sample: f32, samples_per_bar: f32) -> Element<'_, Message> {
         let state = self.state.blocking_read();
         let zoom_x = state.piano_zoom_x;
@@ -84,12 +76,12 @@ impl Piano {
             .into();
         };
 
-        let (pitch_min, pitch_max) = Self::pitch_range(&roll.notes);
-        let pitch_count = usize::from(pitch_max.saturating_sub(pitch_min)) + 1;
-        let row_h = (Self::WHITE_KEY_HEIGHT * zoom_y).max(1.0);
-        let min_keyboard_h =
-            (Self::OCTAVES * Self::WHITE_KEYS_PER_OCTAVE) as f32 * Self::WHITE_KEY_HEIGHT;
-        let notes_h = (pitch_count as f32 * row_h).max(min_keyboard_h * zoom_y);
+        let pitch_count = Self::OCTAVES * Self::NOTES_PER_OCTAVE;
+        let row_h = ((Self::WHITE_KEY_HEIGHT * Self::WHITE_KEYS_PER_OCTAVE as f32
+            / Self::NOTES_PER_OCTAVE as f32)
+            * zoom_y)
+            .max(1.0);
+        let notes_h = pitch_count as f32 * row_h;
         let ctrl_h = 140.0_f32;
         let total_h = notes_h + ctrl_h;
         let pps = (pixels_per_sample * zoom_x).max(0.0001);
@@ -97,7 +89,7 @@ impl Piano {
 
         let mut layers: Vec<Element<'_, Message>> = vec![];
         for i in 0..pitch_count {
-            let pitch = pitch_max.saturating_sub(i as u8);
+            let pitch = Self::PITCH_MAX.saturating_sub(i as u8);
             let is_black = Self::is_black_key(pitch);
             layers.push(
                 pin(container("")
@@ -174,10 +166,10 @@ impl Piano {
         }
 
         for note in &roll.notes {
-            if note.pitch < pitch_min || note.pitch > pitch_max {
+            if note.pitch < Self::PITCH_MIN || note.pitch > Self::PITCH_MAX {
                 continue;
             }
-            let y_idx = usize::from(pitch_max.saturating_sub(note.pitch));
+            let y_idx = usize::from(Self::PITCH_MAX.saturating_sub(note.pitch));
             let y = y_idx as f32 * row_h + 1.0;
             let x = note.start_sample as f32 * pps;
             let w = (note.length_samples as f32 * pps).max(2.0);
@@ -419,8 +411,7 @@ impl OctaveKeyboard {
     }
 
     fn midi_note(&self, note_class: u8) -> u8 {
-        ((usize::from(self.octave) + 1) * 12 + usize::from(note_class))
-            .min(127) as u8
+        (usize::from(self.octave) * 12 + usize::from(note_class)) as u8
     }
 }
 
