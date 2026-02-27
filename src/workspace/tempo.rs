@@ -47,6 +47,7 @@ impl Tempo {
         pixels_per_sample: f32,
         playhead_x: Option<f32>,
         punch_range_samples: Option<(usize, usize)>,
+        content_width: f32,
     ) -> Element<'_, Message> {
         canvas(TempoCanvas {
             bpm,
@@ -56,7 +57,7 @@ impl Tempo {
             playhead_x,
             punch_range_samples,
         })
-        .width(Length::Fill)
+        .width(Length::Fixed(content_width.max(1.0)))
         .height(Length::Fill)
         .into()
     }

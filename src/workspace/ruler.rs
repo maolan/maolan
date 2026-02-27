@@ -58,6 +58,7 @@ impl Ruler {
         beat_pixels: f32,
         pixels_per_sample: f32,
         loop_range_samples: Option<(usize, usize)>,
+        content_width: f32,
     ) -> Element<'_, Message> {
         canvas(RulerCanvas {
             playhead_x,
@@ -65,7 +66,7 @@ impl Ruler {
             pixels_per_sample,
             loop_range_samples,
         })
-        .width(Length::Fill)
+        .width(Length::Fixed(content_width.max(1.0)))
         .height(Length::Fill)
         .into()
     }

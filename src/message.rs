@@ -95,6 +95,7 @@ pub enum Message {
 
     MouseMoved(mouse::Event),
     EditorMouseMoved(Point),
+    EditorScrollXChanged(f32),
     MousePressed(mouse::Button),
     MouseReleased,
 

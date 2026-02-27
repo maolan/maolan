@@ -3,6 +3,7 @@ use crate::{
     connections,
     message::Message,
     state::{ConnectionViewSelection, HW, PianoData, Resizing, Track, View},
+    workspace::{EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID},
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
 };
 use iced::widget::{Id, operation};
@@ -16,6 +17,26 @@ use std::{collections::HashSet, process::exit, time::Instant};
 use tracing::error;
 
 impl Maolan {
+    fn sync_editor_scrollbars(&self) -> Task<Message> {
+        let x = self.editor_scroll_x.clamp(0.0, 1.0);
+        Task::batch(vec![
+            operation::snap_to(
+                Id::new(EDITOR_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: Some(x),
+                    y: None,
+                },
+            ),
+            operation::snap_to(
+                Id::new(EDITOR_H_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: Some(x),
+                    y: None,
+                },
+            ),
+        ])
+    }
+
     fn sync_piano_scrollbars(&self) -> Task<Message> {
         let (x, y) = {
             let state = self.state.blocking_read();
@@ -117,6 +138,7 @@ impl Maolan {
             }
             Message::WindowResized(size) => {
                 self.size = size;
+                return self.sync_editor_scrollbars();
             }
             Message::Show(ref show) => {
                 use crate::message::Show;
@@ -405,6 +427,14 @@ impl Maolan {
             }
             Message::ZoomVisibleBarsChanged(value) => {
                 self.zoom_visible_bars = value.clamp(1.0, 256.0);
+                return self.sync_editor_scrollbars();
+            }
+            Message::EditorScrollXChanged(value) => {
+                let x = value.clamp(0.0, 1.0);
+                if (self.editor_scroll_x - x).abs() > 0.0005 {
+                    self.editor_scroll_x = x;
+                    return self.sync_editor_scrollbars();
+                }
             }
             Message::PianoZoomXChanged(value) => {
                 self.state.blocking_write().piano_zoom_x = value;

@@ -11,9 +11,12 @@ use crate::{
 };
 use iced::{
     Background, Color, Element, Length, Point,
-    widget::{Stack, column, container, mouse_area, pin, row, slider},
+    widget::{Id, Stack, column, container, mouse_area, pin, row, scrollable, slider},
 };
 use std::collections::HashMap;
+
+pub const EDITOR_SCROLL_ID: &str = "workspace.editor.scroll";
+pub const EDITOR_H_SCROLL_ID: &str = "workspace.editor.h_scroll";
 
 pub struct Workspace {
     state: State,
@@ -26,6 +29,8 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    const MIN_TIMELINE_BARS: f32 = 256.0;
+
     pub fn new(state: State) -> Self {
         Self {
             state: state.clone(),
@@ -72,7 +77,36 @@ impl Workspace {
         recording_preview_bounds: Option<(usize, usize)>,
         recording_preview_peaks: Option<HashMap<String, Vec<Vec<f32>>>>,
     ) -> Element<'_, Message> {
-        let tracks_width = self.state.blocking_read().tracks_width;
+        let (tracks_width, max_end_samples) = {
+            let state = self.state.blocking_read();
+            let max_end_samples = state
+                .tracks
+                .iter()
+                .map(|track| {
+                    let audio_max = track
+                        .audio
+                        .clips
+                        .iter()
+                        .map(|clip| clip.start.saturating_add(clip.length))
+                        .max()
+                        .unwrap_or(0);
+                    let midi_max = track
+                        .midi
+                        .clips
+                        .iter()
+                        .map(|clip| clip.start.saturating_add(clip.length))
+                        .max()
+                        .unwrap_or(0);
+                    audio_max.max(midi_max)
+                })
+                .max()
+                .unwrap_or(0);
+            (state.tracks_width, max_end_samples)
+        };
+        let min_visible_samples = (samples_per_bar * zoom_visible_bars).max(1.0) as usize;
+        let min_timeline_samples = (samples_per_bar * Self::MIN_TIMELINE_BARS).max(1.0) as usize;
+        let timeline_samples = max_end_samples.max(min_visible_samples).max(min_timeline_samples);
+        let editor_content_width = (timeline_samples as f32 * pixels_per_sample).max(1.0);
         let playhead_x =
             playhead_samples.map(|sample| (sample as f32 * pixels_per_sample).max(0.0));
 
@@ -104,15 +138,64 @@ impl Workspace {
             )
         };
 
+        let right_lanes_scrolled = scrollable(
+            column![
+                container(self.tempo.view(
+                    120.0,
+                    (4, 4),
+                    beat_pixels,
+                    pixels_per_sample,
+                    playhead_x,
+                    punch_range_samples,
+                    editor_content_width,
+                ))
+                .height(Length::Fixed(self.tempo.height())),
+                container(self.ruler.view(
+                    playhead_x,
+                    beat_pixels,
+                    pixels_per_sample,
+                    loop_range_samples,
+                    editor_content_width,
+                ))
+                .height(Length::Fixed(self.ruler.height())),
+                container(editor_with_playhead)
+                    .width(Length::Fixed(editor_content_width))
+                    .height(Length::Fill),
+            ]
+            .height(Length::Fill),
+        )
+        .id(Id::new(EDITOR_SCROLL_ID))
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::hidden(),
+        ))
+        .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        let h_scroll = scrollable(
+            container("")
+                .width(Length::Fixed(editor_content_width))
+                .height(Length::Fixed(1.0)),
+        )
+        .id(Id::new(EDITOR_H_SCROLL_ID))
+        .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new()))
+        .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
+        .width(Length::Fill)
+        .height(Length::Fixed(16.0));
+
         let editor_with_zoom = Stack::from_vec(vec![
-            editor_with_playhead,
+            right_lanes_scrolled.into(),
             pin(container(
-                slider(
-                    1.0..=256.0,
-                    zoom_visible_bars,
-                    Message::ZoomVisibleBarsChanged,
-                )
-                .width(Length::Fixed(105.0)),
+                row![
+                    h_scroll,
+                    slider(
+                        1.0..=256.0,
+                        zoom_visible_bars,
+                        Message::ZoomVisibleBarsChanged,
+                    )
+                    .width(Length::Fixed(105.0)),
+                ]
+                .spacing(8),
             )
             .width(Length::Fill)
             .height(Length::Fill)
@@ -126,92 +209,74 @@ impl Workspace {
 
         column![
             row![
-                container("")
-                    .width(tracks_width)
-                    .height(Length::Fill)
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.1,
-                            a: 1.0,
-                        })),
-                        ..container::Style::default()
-                    }),
-                container("")
-                    .width(Length::Fixed(3.0))
-                    .height(Length::Fill)
-                    .style(|_theme| {
-                        container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.5,
-                                g: 0.5,
-                                b: 0.5,
-                                a: 0.5,
-                            })),
-                            ..container::Style::default()
-                        }
-                    }),
-                self.tempo.view(
-                    120.0,
-                    (4, 4),
-                    beat_pixels,
-                    pixels_per_sample,
-                    playhead_x,
-                    punch_range_samples,
-                ),
-            ]
-            .height(Length::Fixed(self.tempo.height())),
-            row![
-                container("")
-                    .width(tracks_width)
-                    .height(Length::Fill)
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.1,
-                            a: 1.0,
-                        })),
-                        ..container::Style::default()
-                    }),
-                container("")
-                    .width(Length::Fixed(3.0))
-                    .height(Length::Fill)
-                    .style(|_theme| {
-                        container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.5,
-                                g: 0.5,
-                                b: 0.5,
-                                a: 0.5,
-                            })),
-                            ..container::Style::default()
-                        }
-                    }),
-                self.ruler.view(
-                    playhead_x,
-                    beat_pixels,
-                    pixels_per_sample,
-                    loop_range_samples,
-                ),
-            ]
-            .height(Length::Fixed(self.ruler.height())),
-            row![
-                self.tracks.view(),
-                mouse_area(
+                column![
                     container("")
-                        .width(Length::Fixed(3.0))
-                        .height(Length::Fill)
-                        .style(move |_theme| container::Style {
+                        .width(tracks_width)
+                        .height(Length::Fixed(self.tempo.height()))
+                        .style(|_theme| container::Style {
                             background: Some(Background::Color(Color {
-                                r: 0.7,
-                                g: 0.7,
-                                b: 0.7,
-                                a: if tracks_resize_hovered { 0.95 } else { 0.6 },
+                                r: 0.1,
+                                g: 0.1,
+                                b: 0.1,
+                                a: 1.0,
                             })),
                             ..container::Style::default()
                         }),
+                    container("")
+                        .width(tracks_width)
+                        .height(Length::Fixed(self.ruler.height()))
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.1,
+                                g: 0.1,
+                                b: 0.1,
+                                a: 1.0,
+                            })),
+                            ..container::Style::default()
+                        }),
+                    self.tracks.view(),
+                ]
+                .width(tracks_width)
+                .height(Length::Fill),
+                mouse_area(
+                    column![
+                        container("")
+                            .width(Length::Fixed(3.0))
+                            .height(Length::Fixed(self.tempo.height()))
+                            .style(|_theme| container::Style {
+                                background: Some(Background::Color(Color {
+                                    r: 0.5,
+                                    g: 0.5,
+                                    b: 0.5,
+                                    a: 0.5,
+                                })),
+                                ..container::Style::default()
+                            }),
+                        container("")
+                            .width(Length::Fixed(3.0))
+                            .height(Length::Fixed(self.ruler.height()))
+                            .style(|_theme| container::Style {
+                                background: Some(Background::Color(Color {
+                                    r: 0.5,
+                                    g: 0.5,
+                                    b: 0.5,
+                                    a: 0.5,
+                                })),
+                                ..container::Style::default()
+                            }),
+                        container("")
+                            .width(Length::Fixed(3.0))
+                            .height(Length::Fill)
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(Color {
+                                    r: 0.7,
+                                    g: 0.7,
+                                    b: 0.7,
+                                    a: if tracks_resize_hovered { 0.95 } else { 0.6 },
+                                })),
+                                ..container::Style::default()
+                            }),
+                    ],
                 )
                 .on_enter(Message::TracksResizeHover(true))
                 .on_exit(Message::TracksResizeHover(false))
