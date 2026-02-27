@@ -60,6 +60,7 @@ impl Maolan {
                         self.menu.view(),
                         self.toolbar.view(
                             self.playing,
+                            self.paused,
                             self.record_armed,
                             has_session_end,
                             self.loop_range_samples.is_some(),

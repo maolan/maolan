@@ -86,6 +86,9 @@ impl Maolan {
                     }
                 }
                 match key {
+                    keyboard::Key::Named(keyboard::key::Named::Space) if modifiers.shift() => {
+                        Message::TransportPause
+                    }
                     keyboard::Key::Named(keyboard::key::Named::Space) => Message::ToggleTransport,
                     keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
                     keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
@@ -113,20 +116,28 @@ impl Maolan {
             _ => Message::None,
         });
 
-        let playback_sub = if self.playing {
+        let playback_sub = if self.playing && !self.paused {
             iced::time::every(PLAYHEAD_UPDATE_INTERVAL).map(|_| Message::PlaybackTick)
         } else {
             Subscription::none()
         };
         let recording_preview_sub =
-            if self.playing && self.record_armed && self.recording_preview_start_sample.is_some() {
+            if self.playing
+                && !self.paused
+                && self.record_armed
+                && self.recording_preview_start_sample.is_some()
+            {
                 iced::time::every(RECORDING_PREVIEW_UPDATE_INTERVAL)
                     .map(|_| Message::RecordingPreviewTick)
             } else {
                 Subscription::none()
             };
         let recording_preview_peaks_sub =
-            if self.playing && self.record_armed && self.recording_preview_start_sample.is_some() {
+            if self.playing
+                && !self.paused
+                && self.record_armed
+                && self.recording_preview_start_sample.is_some()
+            {
                 iced::time::every(RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL)
                     .map(|_| Message::RecordingPreviewPeaksTick)
             } else {

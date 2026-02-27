@@ -33,20 +33,30 @@ impl Maolan {
                 if !self.state.blocking_read().hw_loaded {
                     return Task::none();
                 }
-                if self.playing {
+                if self.playing && !self.paused {
                     self.toolbar.update(message.clone());
                     self.playing = false;
+                    self.paused = false;
                     self.last_playback_tick = None;
                     self.stop_recording_preview();
-                    return self.send(Action::Stop);
+                    return Task::batch(vec![
+                        self.send(Action::SetClipPlaybackEnabled(true)),
+                        self.send(Action::Stop),
+                    ]);
                 }
+                let was_playing = self.playing;
                 self.toolbar.update(message.clone());
                 self.playing = true;
+                self.paused = false;
                 self.last_playback_tick = Some(Instant::now());
                 if self.record_armed {
                     self.start_recording_preview();
                 }
-                return self.send(Action::Play);
+                let mut tasks = vec![self.send(Action::SetClipPlaybackEnabled(true))];
+                if !was_playing {
+                    tasks.push(self.send(Action::Play));
+                }
+                return Task::batch(tasks);
             }
             Message::ToggleLoop => {
                 if self.loop_range_samples.is_none() {
@@ -140,6 +150,7 @@ impl Maolan {
                     return Task::none();
                 }
                 self.playing = false;
+                self.paused = false;
                 self.transport_samples = 0.0;
                 self.loop_enabled = false;
                 self.loop_range_samples = None;
@@ -192,19 +203,42 @@ impl Maolan {
             Message::Request(ref a) => return self.send(a.clone()),
             Message::TransportPlay => {
                 self.toolbar.update(message.clone());
+                let was_playing = self.playing;
                 self.playing = true;
+                self.paused = false;
                 self.last_playback_tick = Some(Instant::now());
                 if self.record_armed {
                     self.start_recording_preview();
                 }
-                return self.send(Action::Play);
+                let mut tasks = vec![self.send(Action::SetClipPlaybackEnabled(true))];
+                if !was_playing {
+                    tasks.push(self.send(Action::Play));
+                }
+                return Task::batch(tasks);
+            }
+            Message::TransportPause => {
+                self.toolbar.update(message.clone());
+                let was_playing = self.playing;
+                self.playing = true;
+                self.paused = true;
+                self.last_playback_tick = None;
+                self.stop_recording_preview();
+                let mut tasks = vec![self.send(Action::SetClipPlaybackEnabled(false))];
+                if !was_playing {
+                    tasks.push(self.send(Action::Play));
+                }
+                return Task::batch(tasks);
             }
             Message::TransportStop => {
                 self.toolbar.update(message.clone());
                 self.playing = false;
+                self.paused = false;
                 self.last_playback_tick = None;
                 self.stop_recording_preview();
-                return self.send(Action::Stop);
+                return Task::batch(vec![
+                    self.send(Action::SetClipPlaybackEnabled(true)),
+                    self.send(Action::Stop),
+                ]);
             }
             Message::JumpToStart => {
                 self.transport_samples = 0.0;
@@ -237,6 +271,7 @@ impl Maolan {
             }
             Message::PlaybackTick => {
                 if self.playing
+                    && !self.paused
                     && let Some(last) = self.last_playback_tick
                 {
                     let now = Instant::now();
@@ -271,6 +306,7 @@ impl Maolan {
             }
             Message::RecordingPreviewTick => {
                 if self.playing
+                    && !self.paused
                     && self.record_armed
                     && self.recording_preview_start_sample.is_some()
                 {
@@ -288,6 +324,7 @@ impl Maolan {
             }
             Message::RecordingPreviewPeaksTick => {
                 if self.playing
+                    && !self.paused
                     && self.record_armed
                     && self.recording_preview_start_sample.is_some()
                 {
@@ -851,7 +888,7 @@ impl Maolan {
                 }
                 Action::TransportPosition(sample) => {
                     self.transport_samples = *sample as f64;
-                    if self.playing {
+                    if self.playing && !self.paused {
                         self.last_playback_tick = Some(Instant::now());
                     }
                 }

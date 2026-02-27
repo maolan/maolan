@@ -59,6 +59,7 @@ pub struct Track {
     pub transport_sample: usize,
     pub loop_enabled: bool,
     pub loop_range_samples: Option<(usize, usize)>,
+    pub clip_playback_enabled: bool,
     pub record_tap_outs: Vec<Vec<f32>>,
     pub record_tap_midi_in: Vec<MidiEvent>,
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -103,6 +104,7 @@ impl Track {
             transport_sample: 0,
             loop_enabled: false,
             loop_range_samples: None,
+            clip_playback_enabled: true,
             record_tap_outs: vec![vec![0.0; buffer_size]; audio_outs],
             record_tap_midi_in: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -142,7 +144,7 @@ impl Track {
             })
             .unwrap_or(0);
         let mut track_input_midi_events = self.collect_track_input_midi_events();
-        if self.disk_monitor {
+        if self.disk_monitor && self.clip_playback_enabled {
             self.mix_clip_midi_into_inputs(&mut track_input_midi_events, frames);
         }
 
@@ -296,7 +298,7 @@ impl Track {
                     }
                 }
             }
-            if self.disk_monitor {
+            if self.disk_monitor && self.clip_playback_enabled {
                 self.mix_clip_audio_into_output(out_idx, out_samples, linear_gain, balance_gain);
             }
             self.record_tap_outs[out_idx] = tap;
@@ -355,6 +357,9 @@ impl Track {
     pub fn set_loop_config(&mut self, enabled: bool, range: Option<(usize, usize)>) {
         self.loop_enabled = enabled;
         self.loop_range_samples = range;
+    }
+    pub fn set_clip_playback_enabled(&mut self, enabled: bool) {
+        self.clip_playback_enabled = enabled;
     }
     pub fn mute(&mut self) {
         self.muted = !self.muted;

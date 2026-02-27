@@ -4,13 +4,14 @@ use iced::{
     widget::{button, row},
 };
 use iced_fonts::lucide::{
-    audio_lines, brackets, cable, circle, fast_forward, play, repeat, rewind, square,
+    audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind, square,
 };
 use maolan_engine::message::Action;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TransportLatch {
     Play,
+    Pause,
     Stop,
 }
 
@@ -28,6 +29,7 @@ impl Toolbar {
     pub fn update(&mut self, message: Message) {
         match message {
             Message::TransportPlay => self.latch = TransportLatch::Play,
+            Message::TransportPause => self.latch = TransportLatch::Pause,
             Message::TransportStop => self.latch = TransportLatch::Stop,
             Message::ToggleTransport => {
                 self.latch = if self.latch == TransportLatch::Play {
@@ -74,6 +76,7 @@ impl Toolbar {
     pub fn view(
         &self,
         _playing: bool,
+        paused: bool,
         recording: bool,
         has_session_end: bool,
         has_loop_range: bool,
@@ -81,8 +84,9 @@ impl Toolbar {
         has_punch_range: bool,
         punch_enabled: bool,
     ) -> iced::Element<'_, Message> {
-        let play_active = self.latch == TransportLatch::Play;
-        let stop_active = self.latch == TransportLatch::Stop;
+        let play_active = _playing && !paused;
+        let pause_active = _playing && paused;
+        let stop_active = !_playing && !paused;
         let rec_active = recording;
         let loop_active = has_loop_range && loop_enabled;
         let punch_active = has_punch_range && punch_enabled;
@@ -132,6 +136,13 @@ impl Toolbar {
                         Color::from_rgba(0.2, 0.7, 0.35, 0.35)
                     ))
                     .on_press(Message::TransportPlay),
+                button(pause())
+                    .style(Self::button_style(
+                        true,
+                        pause_active,
+                        Color::from_rgba(0.85, 0.7, 0.1, 0.35)
+                    ))
+                    .on_press(Message::TransportPause),
                 button(square())
                     .style(Self::button_style(
                         true,

@@ -124,6 +124,7 @@ pub enum Message {
         operation: Option<String>,
     },
     TransportPlay,
+    TransportPause,
     TransportStop,
     JumpToStart,
     JumpToEnd,

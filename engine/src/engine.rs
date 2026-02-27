@@ -127,6 +127,7 @@ pub struct Engine {
     completed_audio_recordings: Vec<(String, RecordingSession)>,
     completed_midi_recordings: Vec<(String, MidiRecordingSession)>,
     playing: bool,
+    clip_playback_enabled: bool,
     record_enabled: bool,
     session_dir: Option<PathBuf>,
     hw_out_level_db: f32,
@@ -284,6 +285,7 @@ impl Engine {
             completed_audio_recordings: Vec::new(),
             completed_midi_recordings: Vec::new(),
             playing: false,
+            clip_playback_enabled: true,
             record_enabled: false,
             session_dir: None,
             hw_out_level_db: 0.0,
@@ -1075,6 +1077,7 @@ impl Engine {
                 let worker_index = self.ready_workers.remove(0);
                 t.set_transport_sample(self.transport_sample);
                 t.set_loop_config(self.loop_enabled, self.loop_range_samples);
+                t.set_clip_playback_enabled(self.clip_playback_enabled);
                 t.audio.processing = true;
                 let worker = &self.workers[worker_index];
                 if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
@@ -1189,6 +1192,12 @@ impl Engine {
                 self.flush_recordings().await;
                 self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
                     .await;
+            }
+            Action::SetClipPlaybackEnabled(enabled) => {
+                self.clip_playback_enabled = enabled;
+                for track in self.state.lock().tracks.values() {
+                    track.lock().set_clip_playback_enabled(enabled);
+                }
             }
             Action::TransportPosition(sample) => {
                 self.transport_sample = self.normalize_transport_sample(sample);
@@ -1332,6 +1341,9 @@ impl Engine {
                     if let Some(track) = tracks.get(name) {
                         track.lock().ensure_default_audio_passthrough();
                         track.lock().ensure_default_midi_passthrough();
+                        track
+                            .lock()
+                            .set_clip_playback_enabled(self.clip_playback_enabled);
                         #[cfg(all(unix, not(target_os = "macos")))]
                         {
                             let lv2_dir = self.session_plugins_dir();
@@ -2598,6 +2610,7 @@ impl Engine {
                     | Action::SetLoopRange(_)
                     | Action::SetPunchEnabled(_)
                     | Action::SetPunchRange(_)
+                    | Action::SetClipPlaybackEnabled(_)
                     | Action::SetRecordEnabled(_)
                     | Action::SetSessionPath(_)
                     | Action::PianoKey { .. } => {

@@ -116,6 +116,7 @@ pub enum Action {
     SetLoopRange(Option<(usize, usize)>),
     SetPunchEnabled(bool),
     SetPunchRange(Option<(usize, usize)>),
+    SetClipPlaybackEnabled(bool),
     SetRecordEnabled(bool),
     SetSessionPath(String),
     AddTrack {
