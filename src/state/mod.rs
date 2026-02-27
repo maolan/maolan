@@ -17,7 +17,7 @@ use maolan_engine::kind::Kind;
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::lv2::Lv2PluginInfo;
 #[cfg(all(unix, not(target_os = "macos")))]
-use maolan_engine::message::{PluginGraphConnection, PluginGraphPlugin, PluginGraphNode};
+use maolan_engine::message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin};
 use maolan_engine::vst3::Vst3PluginInfo;
 #[cfg(target_os = "freebsd")]
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
@@ -359,7 +359,8 @@ pub struct StateData {
     #[cfg(all(unix, not(target_os = "macos")))]
     pub plugin_graph_connections: Vec<PluginGraphConnection>,
     #[cfg(all(unix, not(target_os = "macos")))]
-    pub plugin_graphs_by_track: HashMap<String, (Vec<PluginGraphPlugin>, Vec<PluginGraphConnection>)>,
+    pub plugin_graphs_by_track:
+        HashMap<String, (Vec<PluginGraphPlugin>, Vec<PluginGraphConnection>)>,
     pub plugin_graph_selected_connections: std::collections::HashSet<usize>,
     pub plugin_graph_selected_plugin: Option<usize>,
     pub plugin_graph_plugin_positions: HashMap<usize, Point>,
@@ -400,6 +401,12 @@ impl Default for StateData {
             target_os = "macos"
         )))]
         let hw: Vec<String> = vec![];
+        #[cfg(target_os = "freebsd")]
+        let selected_hw = hw.first().cloned();
+        #[cfg(any(target_os = "linux", target_os = "openbsd"))]
+        let selected_hw: Option<AudioDeviceOption> = None;
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+        let selected_hw: Option<String> = None;
         Self {
             shift: false,
             ctrl: false,
@@ -428,7 +435,7 @@ impl Default for StateData {
             available_backends,
             selected_backend,
             available_hw: hw,
-            selected_hw: None,
+            selected_hw,
             oss_exclusive: true,
             oss_bits: 32,
             oss_period_frames: 1024,

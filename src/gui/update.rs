@@ -2885,6 +2885,19 @@ impl Maolan {
                 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
                 {
                     state.oss_bits = 32;
+                    #[cfg(target_os = "freebsd")]
+                    if matches!(backend, crate::state::AudioBackendOption::Oss) {
+                        let refreshed = crate::state::discover_freebsd_audio_devices();
+                        if !refreshed.is_empty() {
+                            state.available_hw = refreshed.clone();
+                        }
+                        if let Some(selected) = refreshed.first().cloned() {
+                            if let Some(bits) = selected.preferred_bits() {
+                                state.oss_bits = bits;
+                            }
+                            state.selected_hw = Some(selected);
+                        }
+                    }
                 }
             }
             Message::HWExclusiveToggled(exclusive) => {

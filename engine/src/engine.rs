@@ -16,10 +16,6 @@ use tracing::error;
 use wavers::write as write_wav;
 
 #[cfg(target_os = "linux")]
-use crate::workers::alsa_worker::HwWorker;
-#[cfg(target_os = "macos")]
-use crate::workers::coreaudio_worker::HwWorker;
-#[cfg(target_os = "linux")]
 use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "macos")]
 use crate::hw::coreaudio::{HwDriver, HwOptions, MidiHub};
@@ -35,6 +31,10 @@ use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
 use crate::hw::sndio::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "windows")]
 use crate::hw::wasapi::{self, HwDriver, MidiHub};
+#[cfg(target_os = "linux")]
+use crate::workers::alsa_worker::HwWorker;
+#[cfg(target_os = "macos")]
+use crate::workers::coreaudio_worker::HwWorker;
 #[cfg(target_os = "freebsd")]
 use crate::workers::oss_worker::HwWorker;
 #[cfg(target_os = "openbsd")]
@@ -1083,6 +1083,8 @@ impl Engine {
                 t.set_loop_config(self.loop_enabled, self.loop_range_samples);
                 // Avoid continuously mixing clip audio/MIDI while transport is stopped.
                 t.set_clip_playback_enabled(self.clip_playback_enabled && self.playing);
+                // Tap buffers are only needed while actively recording.
+                t.set_record_tap_enabled(self.playing && self.record_enabled);
                 t.audio.processing = true;
                 let worker = &self.workers[worker_index];
                 if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
@@ -2538,12 +2540,14 @@ impl Engine {
                                 (Some(f_t), Some(t_t)) => {
                                     let to_in_res = t_t.lock().midi.ins.get(to_port).cloned();
                                     if let Some(to_in) = to_in_res {
+                                        let from_track = f_t.lock();
                                         if let Err(e) =
-                                            f_t.lock().midi.connect_out(from_port, to_in)
+                                            from_track.midi.connect_out(from_port, to_in)
                                         {
                                             self.notify_clients(Err(e)).await;
                                             return;
                                         }
+                                        from_track.invalidate_midi_route_cache();
                                     } else {
                                         self.notify_clients(Err(format!(
                                             "MIDI input port {} not found on track '{}'",
@@ -2655,9 +2659,11 @@ impl Engine {
                         (state.tracks.get(from_track), state.tracks.get(to_track))
                         && let Some(to_in) = t_t.lock().midi.ins.get(to_port).cloned()
                     {
-                        if let Err(e) = f_t.lock().midi.disconnect_out(from_port, &to_in) {
+                        let from_track = f_t.lock();
+                        if let Err(e) = from_track.midi.disconnect_out(from_port, &to_in) {
                             self.notify_clients(Err(e)).await;
                         } else {
+                            from_track.invalidate_midi_route_cache();
                             self.notify_clients(Ok(a.clone())).await;
                         }
                     } else {

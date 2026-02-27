@@ -1,6 +1,6 @@
+use super::hw_worker::Backend;
 use crate::hw::config;
 use crate::hw::wasapi;
-use super::hw_worker::Backend;
 
 #[derive(Debug)]
 pub struct WasapiBackend;

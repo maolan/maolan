@@ -1,6 +1,6 @@
+use super::hw_worker::Backend;
 use crate::hw::alsa;
 use crate::hw::config;
-use super::hw_worker::Backend;
 
 #[derive(Debug)]
 pub struct AlsaBackend;

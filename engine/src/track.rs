@@ -4,12 +4,16 @@ use crate::clap::ClapMidiOutputEvent;
 use crate::clap::{ClapProcessor, ClapTransportInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::lv2::{Lv2Processor, Lv2TransportInfo};
-#[cfg(unix)]
-use crate::message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::message::Lv2PluginState;
+#[cfg(unix)]
+use crate::message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin};
+use crate::mutex::UnsafeMutex;
 use crate::vst3::Vst3Processor;
-use crate::{audio::io::AudioIO, midi::io::MidiEvent};
+use crate::{
+    audio::io::AudioIO,
+    midi::io::{MIDIIO, MidiEvent},
+};
 #[cfg(unix)]
 use crate::{kind::Kind, routing};
 use midly::{MetaMessage, Smf, Timing, TrackEventKind, live::LiveEvent};
@@ -79,8 +83,14 @@ pub struct Track {
     #[cfg(all(unix, not(target_os = "macos")))]
     pub lv2_state_base_dir: Option<PathBuf>,
     pub session_base_dir: Option<PathBuf>,
-    audio_clip_cache: HashMap<String, AudioClipBuffer>,
-    midi_clip_cache: HashMap<String, Vec<(usize, Vec<u8>)>>,
+    record_tap_enabled: bool,
+    audio_clip_cache: HashMap<String, Arc<AudioClipBuffer>>,
+    midi_clip_cache: HashMap<String, Arc<Vec<(usize, Vec<u8>)>>>,
+    internal_output_routes_cache: Vec<Vec<Arc<AudioIO>>>,
+    audio_route_cache_dirty: bool,
+    midi_input_to_out_routes_cache: Vec<Vec<usize>>,
+    midi_out_external_targets_cache: Vec<Vec<Arc<UnsafeMutex<Box<MIDIIO>>>>>,
+    midi_route_cache_dirty: bool,
 }
 
 impl Track {
@@ -127,8 +137,14 @@ impl Track {
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_state_base_dir: None,
             session_base_dir: None,
+            record_tap_enabled: false,
             audio_clip_cache: HashMap::new(),
             midi_clip_cache: HashMap::new(),
+            internal_output_routes_cache: Vec::new(),
+            audio_route_cache_dirty: true,
+            midi_input_to_out_routes_cache: Vec::new(),
+            midi_out_external_targets_cache: Vec::new(),
+            midi_route_cache_dirty: true,
         }
         .with_default_passthrough()
     }
@@ -153,6 +169,128 @@ impl Track {
         }
     }
 
+    fn invalidate_audio_route_cache(&mut self) {
+        self.audio_route_cache_dirty = true;
+    }
+
+    fn ensure_audio_route_cache(&mut self) {
+        if !self.audio_route_cache_dirty
+            && self.internal_output_routes_cache.len() == self.audio.outs.len()
+        {
+            return;
+        }
+        let internal_sources = self.internal_audio_sources();
+        let mut routes = Vec::with_capacity(self.audio.outs.len());
+        for audio_out in &self.audio.outs {
+            let connections = audio_out.connections.lock();
+            let mut route_sources = Vec::new();
+            for source in connections.iter() {
+                if internal_sources
+                    .iter()
+                    .any(|candidate| Arc::ptr_eq(candidate, source))
+                {
+                    route_sources.push(source.clone());
+                }
+            }
+            routes.push(route_sources);
+        }
+        self.internal_output_routes_cache = routes;
+        self.audio_route_cache_dirty = false;
+    }
+
+    pub fn invalidate_midi_route_cache(&mut self) {
+        self.midi_route_cache_dirty = true;
+    }
+
+    fn ensure_midi_route_cache(&mut self) {
+        if !self.midi_route_cache_dirty
+            && self.midi_input_to_out_routes_cache.len() == self.midi.ins.len()
+            && self.midi_out_external_targets_cache.len() == self.midi.outs.len()
+        {
+            return;
+        }
+
+        let mut input_to_out = vec![Vec::<usize>::new(); self.midi.ins.len()];
+        let mut out_external_targets =
+            vec![Vec::<Arc<UnsafeMutex<Box<MIDIIO>>>>::new(); self.midi.outs.len()];
+
+        for (out_idx, out) in self.midi.outs.iter().enumerate() {
+            let out_lock = out.lock();
+            for target in &out_lock.connections {
+                if let Some(input_idx) = self
+                    .midi
+                    .ins
+                    .iter()
+                    .position(|input| Arc::ptr_eq(input, target))
+                {
+                    input_to_out[input_idx].push(out_idx);
+                } else {
+                    out_external_targets[out_idx].push(target.clone());
+                }
+            }
+        }
+
+        self.midi_input_to_out_routes_cache = input_to_out;
+        self.midi_out_external_targets_cache = out_external_targets;
+        self.midi_route_cache_dirty = false;
+    }
+
+    #[inline(always)]
+    fn copy_unity_with_zero_tail(dst: &mut [f32], src: &[f32]) {
+        let len = dst.len().min(src.len());
+        unsafe {
+            std::ptr::copy_nonoverlapping(src.as_ptr(), dst.as_mut_ptr(), len);
+        }
+        if len < dst.len() {
+            dst[len..].fill(0.0);
+        }
+    }
+
+    #[inline(always)]
+    fn copy_scaled_with_zero_tail(dst: &mut [f32], src: &[f32], gain: f32) {
+        let len = dst.len().min(src.len());
+        unsafe {
+            let mut i = 0usize;
+            let dp = dst.as_mut_ptr();
+            let sp = src.as_ptr();
+            while i < len {
+                *dp.add(i) = *sp.add(i) * gain;
+                i += 1;
+            }
+        }
+        if len < dst.len() {
+            dst[len..].fill(0.0);
+        }
+    }
+
+    #[inline(always)]
+    fn add_unity(dst: &mut [f32], src: &[f32]) {
+        let len = dst.len().min(src.len());
+        unsafe {
+            let mut i = 0usize;
+            let dp = dst.as_mut_ptr();
+            let sp = src.as_ptr();
+            while i < len {
+                *dp.add(i) += *sp.add(i);
+                i += 1;
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn add_scaled(dst: &mut [f32], src: &[f32], gain: f32) {
+        let len = dst.len().min(src.len());
+        unsafe {
+            let mut i = 0usize;
+            let dp = dst.as_mut_ptr();
+            let sp = src.as_ptr();
+            while i < len {
+                *dp.add(i) += *sp.add(i) * gain;
+                i += 1;
+            }
+        }
+    }
+
     pub fn process(&mut self) {
         for audio_in in &self.audio.ins {
             audio_in.process();
@@ -169,8 +307,13 @@ impl Track {
                     .map(|audio_out| audio_out.buffer.lock().len())
             })
             .unwrap_or(0);
+        let clip_playback_active = self.disk_monitor && self.clip_playback_enabled;
+        if clip_playback_active {
+            self.preload_audio_clip_cache();
+            self.preload_midi_clip_cache();
+        }
         let mut track_input_midi_events = self.collect_track_input_midi_events();
-        if self.disk_monitor && self.clip_playback_enabled {
+        if clip_playback_active {
             self.mix_clip_midi_into_inputs(&mut track_input_midi_events, frames);
         }
 
@@ -189,9 +332,6 @@ impl Track {
             let mut remaining = lv2_processed.len() + vst3_processed.len() + clap_processed.len();
             let mut processed_midi_plugins = HashSet::<PluginGraphNode>::new();
             let mut midi_node_events = HashMap::<(PluginGraphNode, usize), Vec<MidiEvent>>::new();
-            for (port, events) in track_input_midi_events.iter().enumerate() {
-                midi_node_events.insert((PluginGraphNode::TrackInput, port), events.clone());
-            }
 
             while remaining > 0 {
                 let mut progressed = false;
@@ -220,6 +360,7 @@ impl Track {
                     let midi_inputs = self.plugin_midi_input_events(
                         &node,
                         self.lv2_processors[idx].processor.midi_input_count(),
+                        &track_input_midi_events,
                         &midi_node_events,
                     );
                     let midi_outputs = self.lv2_processors[idx].processor.process_with_audio_io(
@@ -263,6 +404,7 @@ impl Track {
                     let midi_inputs = self.plugin_midi_input_events(
                         &node,
                         self.vst3_processors[idx].processor.midi_input_count(),
+                        &track_input_midi_events,
                         &midi_node_events,
                     );
                     let vst3_input = midi_inputs.first().cloned().unwrap_or_default();
@@ -297,6 +439,7 @@ impl Track {
                     let midi_inputs = self.plugin_midi_input_events(
                         &node,
                         self.clap_plugins[idx].processor.midi_input_count(),
+                        &track_input_midi_events,
                         &midi_node_events,
                     );
                     let clap_input = midi_inputs.first().cloned().unwrap_or_default();
@@ -342,6 +485,7 @@ impl Track {
                 let midi_inputs = self.plugin_midi_input_events(
                     &node,
                     self.lv2_processors[idx].processor.midi_input_count(),
+                    &track_input_midi_events,
                     &midi_node_events,
                 );
                 let midi_outputs = self.lv2_processors[idx].processor.process_with_audio_io(
@@ -369,6 +513,7 @@ impl Track {
                 let midi_inputs = self.plugin_midi_input_events(
                     &node,
                     self.vst3_processors[idx].processor.midi_input_count(),
+                    &track_input_midi_events,
                     &midi_node_events,
                 );
                 let vst3_input = midi_inputs.first().cloned().unwrap_or_default();
@@ -387,6 +532,7 @@ impl Track {
                 let midi_inputs = self.plugin_midi_input_events(
                     &node,
                     self.clap_plugins[idx].processor.midi_input_count(),
+                    &track_input_midi_events,
                     &midi_node_events,
                 );
                 let clap_input = midi_inputs.first().cloned().unwrap_or_default();
@@ -411,7 +557,10 @@ impl Track {
                 }
             }
 
-            self.route_plugin_midi_to_track_outputs_graph(&midi_node_events);
+            self.route_plugin_midi_to_track_outputs_graph(
+                &track_input_midi_events,
+                &midi_node_events,
+            );
         }
 
         #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -461,6 +610,7 @@ impl Track {
             }
         }
 
+        self.ensure_midi_route_cache();
         self.route_track_inputs_to_track_outputs(&track_input_midi_events);
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
@@ -481,21 +631,19 @@ impl Track {
             (1.0, 1.0)
         };
 
-        let internal_sources = self.internal_audio_sources();
-        let internal_source_ptrs: HashSet<*const AudioIO> =
-            internal_sources.iter().map(Arc::as_ptr).collect();
+        self.ensure_audio_route_cache();
         for out_idx in 0..self.audio.outs.len() {
             let audio_out = self.audio.outs[out_idx].clone();
             let out_samples = audio_out.buffer.lock();
-            out_samples.fill(0.0);
-            if self.record_tap_outs.len() <= out_idx {
-                self.record_tap_outs.push(vec![0.0; out_samples.len()]);
+            let capture_record_tap = self.armed && self.record_tap_enabled;
+            if capture_record_tap {
+                if self.record_tap_outs.len() <= out_idx {
+                    self.record_tap_outs.push(vec![0.0; out_samples.len()]);
+                }
+                if self.record_tap_outs[out_idx].len() != out_samples.len() {
+                    self.record_tap_outs[out_idx].resize(out_samples.len(), 0.0);
+                }
             }
-            let mut tap = std::mem::take(&mut self.record_tap_outs[out_idx]);
-            if tap.len() != out_samples.len() {
-                tap.resize(out_samples.len(), 0.0);
-            }
-            tap.fill(0.0);
             let balance_gain = if self.audio.outs.len() == 2 {
                 if out_idx == 0 {
                     left_balance
@@ -505,32 +653,69 @@ impl Track {
             } else {
                 1.0
             };
-            let connections = audio_out.connections.lock();
-            for source in connections.iter() {
-                if !internal_source_ptrs.contains(&Arc::as_ptr(source)) {
-                    continue;
-                }
-                let source_buf = source.buffer.lock();
+            let output_gain = linear_gain * balance_gain;
+            let unity_output_gain = (output_gain - 1.0).abs() <= f32::EPSILON;
+            let monitor_to_output = self.input_monitor && self.output_enabled;
+            let clips_to_output = self.disk_monitor && self.clip_playback_enabled;
+            let sources = self.internal_output_routes_cache.get(out_idx);
+            let has_sources = sources.is_some_and(|s| !s.is_empty());
+            let can_seed_output_from_input = monitor_to_output && has_sources;
 
-                if self.input_monitor && self.output_enabled {
-                    for ((tap_sample, out_sample), in_sample) in tap
-                        .iter_mut()
-                        .zip(out_samples.iter_mut())
-                        .zip(source_buf.iter())
-                    {
-                        *tap_sample += *in_sample;
-                        *out_sample += *in_sample * linear_gain * balance_gain;
+            if can_seed_output_from_input {
+                if let Some(sources) = sources {
+                    let first = sources[0].buffer.lock();
+                    if unity_output_gain {
+                        Self::copy_unity_with_zero_tail(out_samples, &first);
+                    } else {
+                        Self::copy_scaled_with_zero_tail(out_samples, &first, output_gain);
+                    }
+                    if unity_output_gain {
+                        for source in &sources[1..] {
+                            let source_buf = source.buffer.lock();
+                            Self::add_unity(out_samples, &source_buf);
+                        }
+                    } else {
+                        for source in &sources[1..] {
+                            let source_buf = source.buffer.lock();
+                            Self::add_scaled(out_samples, &source_buf, output_gain);
+                        }
+                    }
+                }
+            } else {
+                out_samples.fill(0.0);
+                if monitor_to_output && let Some(sources) = sources {
+                    if unity_output_gain {
+                        for source in sources {
+                            let source_buf = source.buffer.lock();
+                            Self::add_unity(out_samples, &source_buf);
+                        }
+                    } else {
+                        for source in sources {
+                            let source_buf = source.buffer.lock();
+                            Self::add_scaled(out_samples, &source_buf, output_gain);
+                        }
+                    }
+                }
+            }
+
+            if capture_record_tap {
+                let tap = &mut self.record_tap_outs[out_idx];
+                if has_sources {
+                    if let Some(sources) = sources {
+                        let first = sources[0].buffer.lock();
+                        Self::copy_unity_with_zero_tail(tap, &first);
+                        for source in &sources[1..] {
+                            let source_buf = source.buffer.lock();
+                            Self::add_unity(tap, &source_buf);
+                        }
                     }
                 } else {
-                    for (tap_sample, in_sample) in tap.iter_mut().zip(source_buf.iter()) {
-                        *tap_sample += *in_sample;
-                    }
+                    tap.fill(0.0);
                 }
             }
-            if self.disk_monitor && self.clip_playback_enabled {
+            if clips_to_output {
                 self.mix_clip_audio_into_output(out_idx, out_samples, linear_gain, balance_gain);
             }
-            self.record_tap_outs[out_idx] = tap;
             *audio_out.finished.lock() = true;
         }
 
@@ -590,6 +775,9 @@ impl Track {
     pub fn set_clip_playback_enabled(&mut self, enabled: bool) {
         self.clip_playback_enabled = enabled;
     }
+    pub fn set_record_tap_enabled(&mut self, enabled: bool) {
+        self.record_tap_enabled = enabled;
+    }
     pub fn mute(&mut self) {
         self.muted = !self.muted;
     }
@@ -630,15 +818,34 @@ impl Track {
         })
     }
 
-    fn clip_buffer(&mut self, clip_name: &str) -> Option<AudioClipBuffer> {
+    fn clip_buffer(&mut self, clip_name: &str) -> Option<Arc<AudioClipBuffer>> {
         if let Some(cached) = self.audio_clip_cache.get(clip_name) {
             return Some(cached.clone());
         }
         let path = self.resolve_clip_path(clip_name);
         let loaded = Self::load_audio_clip_buffer(&path)?;
+        let loaded = Arc::new(loaded);
         self.audio_clip_cache
             .insert(clip_name.to_string(), loaded.clone());
         Some(loaded)
+    }
+
+    fn preload_audio_clip_cache(&mut self) {
+        let missing: Vec<String> = self
+            .audio
+            .clips
+            .iter()
+            .filter_map(|clip| {
+                if self.audio_clip_cache.contains_key(&clip.name) {
+                    None
+                } else {
+                    Some(clip.name.clone())
+                }
+            })
+            .collect();
+        for clip_name in missing {
+            let _ = self.clip_buffer(&clip_name);
+        }
     }
 
     fn load_midi_clip_events(path: &Path, sample_rate: f64) -> Option<Vec<(usize, Vec<u8>)>> {
@@ -714,15 +921,34 @@ impl Track {
         Some(out)
     }
 
-    fn midi_clip_events(&mut self, clip_name: &str) -> Option<Vec<(usize, Vec<u8>)>> {
+    fn midi_clip_events(&mut self, clip_name: &str) -> Option<Arc<Vec<(usize, Vec<u8>)>>> {
         if let Some(cached) = self.midi_clip_cache.get(clip_name) {
             return Some(cached.clone());
         }
         let path = self.resolve_clip_path(clip_name);
         let loaded = Self::load_midi_clip_events(&path, self.sample_rate)?;
+        let loaded = Arc::new(loaded);
         self.midi_clip_cache
             .insert(clip_name.to_string(), loaded.clone());
         Some(loaded)
+    }
+
+    fn preload_midi_clip_cache(&mut self) {
+        let missing: Vec<String> = self
+            .midi
+            .clips
+            .iter()
+            .filter_map(|clip| {
+                if self.midi_clip_cache.contains_key(&clip.name) {
+                    None
+                } else {
+                    Some(clip.name.clone())
+                }
+            })
+            .collect();
+        for clip_name in missing {
+            let _ = self.midi_clip_events(&clip_name);
+        }
     }
 
     fn cycle_segments(&self, frames: usize) -> Vec<(usize, usize, usize)> {
@@ -785,8 +1011,7 @@ impl Track {
             return;
         }
         let segments = self.cycle_segments(frames);
-        let clips = self.audio.clips.clone();
-        for clip in clips {
+        for clip in &self.audio.clips {
             let clip_start = clip.start;
             let clip_len = clip.end;
             if clip_len == 0 {
@@ -799,7 +1024,7 @@ impl Track {
                 continue;
             }
             let clip_end = clip_start.saturating_add(clip_len);
-            let Some(buffer) = self.clip_buffer(&clip.name) else {
+            let Some(buffer) = self.audio_clip_cache.get(&clip.name) else {
                 continue;
             };
             let channels = buffer.channels.max(1);
@@ -838,8 +1063,7 @@ impl Track {
             return;
         }
         let segments = self.cycle_segments(frames);
-        let clips = self.midi.clips.clone();
-        for clip in clips {
+        for clip in &self.midi.clips {
             let clip_start = clip.start;
             let clip_len = clip.end;
             if clip_len == 0 {
@@ -847,7 +1071,7 @@ impl Track {
             }
             let input_lane = clip.input_channel.min(input_events.len().saturating_sub(1));
             let clip_end = clip_start.saturating_add(clip_len);
-            let Some(events) = self.midi_clip_events(&clip.name) else {
+            let Some(events) = self.midi_clip_cache.get(&clip.name) else {
                 continue;
             };
             for (segment_start, segment_end, out_offset) in &segments {
@@ -858,7 +1082,7 @@ impl Track {
                 let to = (*segment_end).min(clip_end);
                 let source_from = from.saturating_sub(clip_start).saturating_add(clip.offset);
                 let source_to = to.saturating_sub(clip_start).saturating_add(clip.offset);
-                for (source_sample, data) in &events {
+                for (source_sample, data) in events.iter() {
                     if *source_sample < source_from {
                         continue;
                     }
@@ -897,6 +1121,7 @@ impl Track {
         let id = self.alloc_plugin_instance_id();
         self.next_lv2_instance_id = self.next_lv2_instance_id.max(id.saturating_add(1));
         self.lv2_processors.push(Lv2Instance { id, processor });
+        self.invalidate_audio_route_cache();
         Ok(())
     }
 
@@ -947,6 +1172,7 @@ impl Track {
             conn.from_node != PluginGraphNode::Lv2PluginInstance(removed.id)
                 && conn.to_node != PluginGraphNode::Lv2PluginInstance(removed.id)
         });
+        self.invalidate_audio_route_cache();
     }
 
     #[cfg(unix)]
@@ -1063,6 +1289,7 @@ impl Track {
         let id = self.alloc_plugin_instance_id();
         self.next_vst3_instance_id = self.next_vst3_instance_id.max(id.saturating_add(1));
         self.vst3_processors.push(Vst3Instance { id, processor });
+        self.invalidate_audio_route_cache();
         Ok(())
     }
 
@@ -1108,6 +1335,7 @@ impl Track {
             output_count,
         )?;
         self.clap_plugins.push(ClapInstance { id, processor });
+        self.invalidate_audio_route_cache();
         Ok(())
     }
 
@@ -1125,6 +1353,7 @@ impl Track {
         self.clap_plugins.remove(index);
         #[cfg(unix)]
         self.prune_plugin_midi_connections(PluginGraphNode::ClapPluginInstance(instance_id));
+        self.invalidate_audio_route_cache();
         Ok(())
     }
 
@@ -1143,6 +1372,7 @@ impl Track {
         self.clap_plugins.remove(index);
         #[cfg(unix)]
         self.prune_plugin_midi_connections(PluginGraphNode::ClapPluginInstance(removed_id));
+        self.invalidate_audio_route_cache();
         Ok(())
     }
 
@@ -1335,6 +1565,7 @@ impl Track {
         }
         #[cfg(unix)]
         self.prune_plugin_midi_connections(PluginGraphNode::Vst3PluginInstance(instance_id));
+        self.invalidate_audio_route_cache();
         Ok(())
     }
 
@@ -1567,6 +1798,7 @@ impl Track {
 
         // Add connection
         to_io.connections.lock().push(from_io);
+        self.invalidate_audio_route_cache();
         Ok(())
     }
 
@@ -1632,10 +1864,11 @@ impl Track {
             .connections
             .lock()
             .retain(|conn| !Arc::ptr_eq(conn, &from_io));
+        self.invalidate_audio_route_cache();
         Ok(())
     }
 
-    pub fn clear_default_passthrough(&self) {
+    pub fn clear_default_passthrough(&mut self) {
         for (audio_in, audio_out) in self.audio.ins.iter().zip(self.audio.outs.iter()) {
             let _ = AudioIO::disconnect(audio_in, audio_out);
             let _ = AudioIO::disconnect(audio_out, audio_in);
@@ -1643,6 +1876,8 @@ impl Track {
         for (midi_in, midi_out) in self.midi.ins.iter().zip(self.midi.outs.iter()) {
             let _ = midi_out.lock().disconnect(midi_in);
         }
+        self.invalidate_audio_route_cache();
+        self.invalidate_midi_route_cache();
     }
 
     #[cfg(unix)]
@@ -1786,7 +2021,7 @@ impl Track {
 
     #[cfg(unix)]
     pub fn connect_plugin_audio(
-        &self,
+        &mut self,
         from_node: PluginGraphNode,
         from_port: usize,
         to_node: PluginGraphNode,
@@ -1807,12 +2042,13 @@ impl Track {
                 .lock()
                 .retain(|conn| !Arc::ptr_eq(conn, &target));
         }
+        self.invalidate_audio_route_cache();
         Ok(())
     }
 
     #[cfg(unix)]
     pub fn disconnect_plugin_audio(
-        &self,
+        &mut self,
         from_node: PluginGraphNode,
         from_port: usize,
         to_node: PluginGraphNode,
@@ -1820,7 +2056,9 @@ impl Track {
     ) -> Result<(), String> {
         let source = self.plugin_source_io(&from_node, from_port)?;
         let target = self.plugin_target_io(&to_node, to_port)?;
-        AudioIO::disconnect(&source, &target)
+        AudioIO::disconnect(&source, &target)?;
+        self.invalidate_audio_route_cache();
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -1908,13 +2146,13 @@ impl Track {
         instance.processor.show_ui()
     }
 
-    fn with_default_passthrough(self) -> Self {
+    fn with_default_passthrough(mut self) -> Self {
         self.ensure_default_audio_passthrough();
         self.ensure_default_midi_passthrough();
         self
     }
 
-    pub(crate) fn ensure_default_audio_passthrough(&self) {
+    pub(crate) fn ensure_default_audio_passthrough(&mut self) {
         for (audio_in, audio_out) in self.audio.ins.iter().zip(self.audio.outs.iter()) {
             audio_in
                 .connections
@@ -1930,9 +2168,10 @@ impl Track {
                 audio_out.connections.lock().push(audio_in.clone());
             }
         }
+        self.invalidate_audio_route_cache();
     }
 
-    pub(crate) fn ensure_default_midi_passthrough(&self) {
+    pub(crate) fn ensure_default_midi_passthrough(&mut self) {
         for (midi_in, midi_out) in self.midi.ins.iter().zip(self.midi.outs.iter()) {
             let out = midi_out.lock();
             let exists = out
@@ -1943,6 +2182,7 @@ impl Track {
                 out.connect(midi_in.clone());
             }
         }
+        self.invalidate_midi_route_cache();
     }
 
     fn internal_audio_sources(&self) -> Vec<Arc<AudioIO>> {
@@ -1994,7 +2234,9 @@ impl Track {
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    Err(format!("LV2 instance {instance_id} is not supported on macOS"))
+                    Err(format!(
+                        "LV2 instance {instance_id} is not supported on macOS"
+                    ))
                 }
             }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
@@ -2039,7 +2281,9 @@ impl Track {
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    Err(format!("LV2 instance {instance_id} is not supported on macOS"))
+                    Err(format!(
+                        "LV2 instance {instance_id} is not supported on macOS"
+                    ))
                 }
             }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
@@ -2088,7 +2332,9 @@ impl Track {
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    Err(format!("LV2 instance {instance_id} is not supported on macOS"))
+                    Err(format!(
+                        "LV2 instance {instance_id} is not supported on macOS"
+                    ))
                 }
             }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
@@ -2141,7 +2387,9 @@ impl Track {
                 }
                 #[cfg(target_os = "macos")]
                 {
-                    Err(format!("LV2 instance {instance_id} is not supported on macOS"))
+                    Err(format!(
+                        "LV2 instance {instance_id} is not supported on macOS"
+                    ))
                 }
             }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
@@ -2199,21 +2447,19 @@ impl Track {
     }
 
     fn collect_track_input_midi_events(&mut self) -> Vec<Vec<MidiEvent>> {
-        let events: Vec<Vec<MidiEvent>> = self
-            .midi
-            .ins
-            .iter()
-            .map(|input| input.lock().buffer.clone())
-            .collect();
-        self.record_tap_midi_in = events
-            .iter()
-            .flat_map(|port_events| port_events.iter().cloned())
-            .collect();
+        let mut events: Vec<Vec<MidiEvent>> = Vec::with_capacity(self.midi.ins.len());
+        self.record_tap_midi_in.clear();
+        for input in &self.midi.ins {
+            let input_lock = input.lock();
+            let port_events = std::mem::take(&mut input_lock.buffer);
+            self.record_tap_midi_in.extend(port_events.iter().cloned());
+            events.push(port_events);
+        }
         self.record_tap_midi_in.sort_by_key(|e| e.frame);
         events
     }
 
-    fn route_track_inputs_to_track_outputs(&self, input_events: &[Vec<MidiEvent>]) {
+    fn route_track_inputs_to_track_outputs(&mut self, input_events: &[Vec<MidiEvent>]) {
         for out in &self.midi.outs {
             out.lock().buffer.clear();
         }
@@ -2224,16 +2470,11 @@ impl Track {
             if events.is_empty() {
                 continue;
             }
-            let Some(local_input) = self.midi.ins.get(input_idx) else {
+            let Some(out_indices) = self.midi_input_to_out_routes_cache.get(input_idx) else {
                 continue;
             };
-            for out in &self.midi.outs {
-                let should_route = out
-                    .lock()
-                    .connections
-                    .iter()
-                    .any(|conn| Arc::ptr_eq(conn, local_input));
-                if should_route {
+            for out_idx in out_indices {
+                if let Some(out) = self.midi.outs.get(*out_idx) {
                     out.lock().buffer.extend_from_slice(events);
                 }
             }
@@ -2290,13 +2531,19 @@ impl Track {
         &self,
         node: &PluginGraphNode,
         midi_inputs: usize,
+        track_input_events: &[Vec<MidiEvent>],
         node_events: &HashMap<(PluginGraphNode, usize), Vec<MidiEvent>>,
     ) -> Vec<Vec<MidiEvent>> {
         let mut per_port = vec![Vec::new(); midi_inputs];
         for conn in self.plugin_midi_connections.iter().filter(|conn| {
             conn.kind == Kind::MIDI && &conn.to_node == node && conn.to_port < midi_inputs
         }) {
-            if let Some(events) = node_events.get(&(conn.from_node.clone(), conn.from_port)) {
+            let events_opt = if conn.from_node == PluginGraphNode::TrackInput {
+                track_input_events.get(conn.from_port)
+            } else {
+                node_events.get(&(conn.from_node.clone(), conn.from_port))
+            };
+            if let Some(events) = events_opt {
                 per_port[conn.to_port].extend_from_slice(events);
             }
         }
@@ -2306,6 +2553,7 @@ impl Track {
     #[cfg(unix)]
     fn route_plugin_midi_to_track_outputs_graph(
         &self,
+        track_input_events: &[Vec<MidiEvent>],
         node_events: &HashMap<(PluginGraphNode, usize), Vec<MidiEvent>>,
     ) {
         if !self.output_enabled {
@@ -2319,30 +2567,30 @@ impl Track {
             let Some(out) = self.midi.outs.get(conn.to_port) else {
                 continue;
             };
-            if let Some(events) = node_events.get(&(conn.from_node.clone(), conn.from_port)) {
+            let events_opt = if conn.from_node == PluginGraphNode::TrackInput {
+                track_input_events.get(conn.from_port)
+            } else {
+                node_events.get(&(conn.from_node.clone(), conn.from_port))
+            };
+            if let Some(events) = events_opt {
                 out.lock().buffer.extend_from_slice(events);
             }
         }
     }
 
-    fn dispatch_track_output_midi_to_connected_inputs(&self) {
-        for out in &self.midi.outs {
-            let (events, targets) = {
+    fn dispatch_track_output_midi_to_connected_inputs(&mut self) {
+        for (out_idx, out) in self.midi.outs.iter().enumerate() {
+            let events = {
                 let out_lock = out.lock();
-                (out_lock.buffer.clone(), out_lock.connections.clone())
+                std::mem::take(&mut out_lock.buffer)
             };
             if events.is_empty() {
                 continue;
             }
-            for target in targets {
-                if self
-                    .midi
-                    .ins
-                    .iter()
-                    .any(|input| Arc::ptr_eq(input, &target))
-                {
-                    continue;
-                }
+            let Some(targets) = self.midi_out_external_targets_cache.get(out_idx) else {
+                continue;
+            };
+            for target in targets.iter() {
                 target.lock().buffer.extend_from_slice(&events);
             }
         }

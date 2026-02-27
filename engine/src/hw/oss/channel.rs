@@ -125,9 +125,9 @@ impl<'a> DuplexChannelApi<'a> {
             let mut chan = std::mem::replace(
                 &mut audio.channel,
                 if audio.input {
-                    DoubleBufferedChannel::new_read(0, 0)
+                    DoubleBufferedChannel::new_empty_read()
                 } else {
-                    DoubleBufferedChannel::new_write(0, 0)
+                    DoubleBufferedChannel::new_empty_write()
                 },
             );
             let res = chan.process(audio, now);

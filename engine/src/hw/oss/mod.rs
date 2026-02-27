@@ -521,9 +521,9 @@ impl Audio {
             let mut chan = std::mem::replace(
                 &mut self.channel,
                 if self.input {
-                    DoubleBufferedChannel::new_read(0, 0)
+                    DoubleBufferedChannel::new_empty_read()
                 } else {
-                    DoubleBufferedChannel::new_write(0, 0)
+                    DoubleBufferedChannel::new_empty_write()
                 },
             );
             let res = chan.process(self, now);

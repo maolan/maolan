@@ -11,7 +11,11 @@ pub(super) struct Buffer {
 impl Buffer {
     pub(super) fn with_size(size: usize) -> Self {
         Self {
-            data: vec![0_u8; size],
+            data: if size == 0 {
+                Vec::new()
+            } else {
+                vec![0_u8; size]
+            },
             pos: 0,
         }
     }
@@ -76,7 +80,7 @@ pub(super) struct BufferRecord {
 impl BufferRecord {
     fn empty() -> Self {
         Self {
-            buffer: Buffer::with_size(0),
+            buffer: Buffer::default(),
             end_frames: 0,
         }
     }
@@ -133,23 +137,31 @@ pub(super) struct DoubleBufferedChannel {
 }
 
 impl DoubleBufferedChannel {
-    pub(super) fn new_read(buffer_bytes: usize, frames: i64) -> Self {
-        let mut s = Self {
+    pub(super) fn new_empty_read() -> Self {
+        Self {
             kind: ChannelKind::Read(ReadChannel::default()),
             buffer_a: BufferRecord::empty(),
             buffer_b: BufferRecord::empty(),
-        };
+        }
+    }
+
+    pub(super) fn new_empty_write() -> Self {
+        Self {
+            kind: ChannelKind::Write(WriteChannel::default()),
+            buffer_a: BufferRecord::empty(),
+            buffer_b: BufferRecord::empty(),
+        }
+    }
+
+    pub(super) fn new_read(buffer_bytes: usize, frames: i64) -> Self {
+        let mut s = Self::new_empty_read();
         s.set_buffer(Buffer::with_size(buffer_bytes), 0);
         s.set_buffer(Buffer::with_size(buffer_bytes), frames);
         s
     }
 
     pub(super) fn new_write(buffer_bytes: usize, frames: i64) -> Self {
-        let mut s = Self {
-            kind: ChannelKind::Write(WriteChannel::default()),
-            buffer_a: BufferRecord::empty(),
-            buffer_b: BufferRecord::empty(),
-        };
+        let mut s = Self::new_empty_write();
         s.set_buffer(Buffer::with_size(buffer_bytes), 0);
         s.set_buffer(Buffer::with_size(buffer_bytes), frames);
         s

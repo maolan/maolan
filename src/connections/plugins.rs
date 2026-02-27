@@ -20,7 +20,7 @@ use iced::{
     },
 };
 use maolan_engine::kind::Kind;
-use maolan_engine::message::{Action as EngineAction, PluginGraphPlugin, PluginGraphNode};
+use maolan_engine::message::{Action as EngineAction, PluginGraphNode, PluginGraphPlugin};
 use std::time::Instant;
 
 const PLUGIN_W: f32 = 170.0;
