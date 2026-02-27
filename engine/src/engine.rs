@@ -16,9 +16,9 @@ use tracing::error;
 use wavers::write as write_wav;
 
 #[cfg(target_os = "linux")]
-use crate::alsa_worker::HwWorker;
+use crate::workers::alsa_worker::HwWorker;
 #[cfg(target_os = "macos")]
-use crate::coreaudio_worker::HwWorker;
+use crate::workers::coreaudio_worker::HwWorker;
 #[cfg(target_os = "linux")]
 use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "macos")]
@@ -36,11 +36,11 @@ use crate::hw::sndio::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "windows")]
 use crate::hw::wasapi::{self, HwDriver, MidiHub};
 #[cfg(target_os = "freebsd")]
-use crate::oss_worker::HwWorker;
+use crate::workers::oss_worker::HwWorker;
 #[cfg(target_os = "openbsd")]
-use crate::sndio_worker::HwWorker;
+use crate::workers::sndio_worker::HwWorker;
 #[cfg(target_os = "windows")]
-use crate::wasapi_worker::HwWorker;
+use crate::workers::wasapi_worker::HwWorker;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
@@ -53,7 +53,7 @@ use crate::{
     routing,
     state::State,
     track::Track,
-    worker::Worker,
+    workers::worker::Worker,
 };
 
 #[derive(Debug)]

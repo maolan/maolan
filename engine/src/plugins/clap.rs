@@ -743,7 +743,10 @@ impl HostRuntime {
             request_process: Some(host_request_process),
             request_callback: Some(host_request_callback),
         };
-        Ok(Self { callback_flags, host })
+        Ok(Self {
+            callback_flags,
+            host,
+        })
     }
 
     fn take_callback_flags(&self) -> HostCallbackFlags {

@@ -1,27 +1,17 @@
-#[cfg(target_os = "linux")]
-mod alsa_worker;
 mod audio;
 pub mod client;
-#[cfg(target_os = "macos")]
-mod coreaudio_worker;
 mod engine;
 mod hw;
-mod hw_worker;
 pub mod kind;
 pub mod message;
 mod midi;
 pub mod mutex;
-#[cfg(target_os = "freebsd")]
-mod oss_worker;
 pub mod plugins;
 mod routing;
-#[cfg(target_os = "openbsd")]
-mod sndio_worker;
 pub mod state;
 mod track;
-#[cfg(target_os = "windows")]
-mod wasapi_worker;
-pub mod worker;
+pub mod workers;
+pub use workers::worker;
 
 pub use plugins::clap;
 #[cfg(all(unix, not(target_os = "macos")))]

@@ -29,7 +29,6 @@ pub struct Vst3Processor {
     parameters: Vec<ParameterInfo>,
     scalar_values: Arc<Mutex<Vec<f32>>>,
     previous_values: Arc<Mutex<Vec<f32>>>,
-
 }
 
 impl Vst3Processor {

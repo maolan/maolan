@@ -2,7 +2,7 @@
 
 use crate::hw::config;
 use crate::hw::coreaudio;
-use crate::hw_worker::{Backend, HwWorker as GenericHwWorker};
+use super::hw_worker::Backend;
 
 #[derive(Debug)]
 pub struct CoreAudioBackend;
@@ -17,4 +17,4 @@ impl Backend for CoreAudioBackend {
     const ASSIST_AUTONOMOUS_ENV: &'static str = config::COREAUDIO_ASSIST_AUTONOMOUS_ENV;
 }
 
-pub type HwWorker = GenericHwWorker<CoreAudioBackend>;
+pub type HwWorker = super::hw_worker::HwWorker<CoreAudioBackend>;
