@@ -5,8 +5,8 @@
 
 use std::ffi::c_void;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use vst3::Steinberg::Vst::ProcessModes_::kRealtime;
 use vst3::Steinberg::Vst::SymbolicSampleSizes_::kSample32;
@@ -331,7 +331,8 @@ impl PluginInstance {
             query_interface(component_raw as *mut _, iid, &mut controller_ptr)
         };
         if query_result == kResultOk && !controller_ptr.is_null() {
-            self.edit_controller = unsafe { ComPtr::from_raw(controller_ptr as *mut IEditController) };
+            self.edit_controller =
+                unsafe { ComPtr::from_raw(controller_ptr as *mut IEditController) };
         }
 
         // If not available directly, instantiate the dedicated controller class.
@@ -401,7 +402,9 @@ impl PluginInstance {
             let mut output_arrangements = vec![SpeakerArr::kEmpty; output_bus_count];
 
             for (idx, arr) in input_arrangements.iter_mut().enumerate() {
-                let r = unsafe { processor.getBusArrangement(BusDirections_::kInput as i32, idx as i32, arr) };
+                let r = unsafe {
+                    processor.getBusArrangement(BusDirections_::kInput as i32, idx as i32, arr)
+                };
                 if r != kResultOk {
                     *arr = if input_channels > 1 {
                         SpeakerArr::kStereo
@@ -411,7 +414,9 @@ impl PluginInstance {
                 }
             }
             for (idx, arr) in output_arrangements.iter_mut().enumerate() {
-                let r = unsafe { processor.getBusArrangement(BusDirections_::kOutput as i32, idx as i32, arr) };
+                let r = unsafe {
+                    processor.getBusArrangement(BusDirections_::kOutput as i32, idx as i32, arr)
+                };
                 if r != kResultOk {
                     *arr = if output_channels > 1 {
                         SpeakerArr::kStereo
@@ -731,7 +736,11 @@ unsafe extern "system" fn host_get_name(
     // SAFETY: `name` points to writable `String128`.
     unsafe {
         (*name).fill(0);
-        for (idx, ch) in encoded.iter().take((*name).len().saturating_sub(1)).enumerate() {
+        for (idx, ch) in encoded
+            .iter()
+            .take((*name).len().saturating_sub(1))
+            .enumerate()
+        {
             (*name)[idx] = *ch;
         }
     }

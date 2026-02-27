@@ -269,8 +269,16 @@ impl Vst3Processor {
         use vst3::Steinberg::Vst::*;
 
         // Keep buffer guards alive while the plugin reads/writes through raw pointers.
-        let input_guards: Vec<_> = self.audio_inputs.iter().map(|io| io.buffer.lock()).collect();
-        let output_guards: Vec<_> = self.audio_outputs.iter().map(|io| io.buffer.lock()).collect();
+        let input_guards: Vec<_> = self
+            .audio_inputs
+            .iter()
+            .map(|io| io.buffer.lock())
+            .collect();
+        let output_guards: Vec<_> = self
+            .audio_outputs
+            .iter()
+            .map(|io| io.buffer.lock())
+            .collect();
 
         let mut input_channel_ptrs: Vec<*mut f32> = input_guards
             .iter()
@@ -281,7 +289,11 @@ impl Vst3Processor {
             .map(|buf| buf.as_ptr() as *mut f32)
             .collect();
 
-        let max_input_frames = input_guards.iter().map(|buf| buf.len()).min().unwrap_or(frames);
+        let max_input_frames = input_guards
+            .iter()
+            .map(|buf| buf.len())
+            .min()
+            .unwrap_or(frames);
         let max_output_frames = output_guards
             .iter()
             .map(|buf| buf.len())

@@ -468,7 +468,7 @@ fn run_vst3_x11_editor(
         return Err("Failed to create X11 embed window for VST3 editor".to_string());
     }
 
-    let view_ptr = unsafe { controller.createView(ViewType::kEditor as *const i8) };
+    let view_ptr = unsafe { controller.createView(ViewType::kEditor) };
     if view_ptr.is_null() {
         unsafe {
             let _ = XDestroyWindow(display, window);
@@ -535,7 +535,7 @@ fn run_vst3_x11_editor(
     let attached = unsafe {
         view.attached(
             embed_window as usize as *mut c_void,
-            vst3::Steinberg::kPlatformTypeX11EmbedWindowID as *const i8,
+            vst3::Steinberg::kPlatformTypeX11EmbedWindowID,
         )
     };
     if attached != vst3::Steinberg::kResultOk && attached != vst3::Steinberg::kResultTrue {

@@ -397,7 +397,9 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
             chosen = CString::new(pref).ok();
         }
     }
-    if chosen.is_none() && let Some(is_api_supported) = gui.is_api_supported {
+    if chosen.is_none()
+        && let Some(is_api_supported) = gui.is_api_supported
+    {
         for candidate in ["x11", "cocoa", "win32"] {
             let c = CString::new(candidate).map_err(|e| e.to_string())?;
             if unsafe { is_api_supported(plugin, c.as_ptr(), true) } {
