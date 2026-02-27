@@ -2547,12 +2547,24 @@ impl Maolan {
 
                                 let tx_clone = tx.clone();
                                 let filename_for_progress = filename.clone();
+                                let mut last_progress_bucket: Option<u16> = None;
+                                let mut last_operation: Option<String> = None;
                                 let progress_fn =
                                     move |progress: f32, operation: Option<String>| {
+                                        // Reduce UI/queue churn from high-frequency decode callbacks.
+                                        let clamped = progress.clamp(0.0, 1.0);
+                                        let bucket = (clamped * 100.0).round() as u16;
+                                        if last_progress_bucket == Some(bucket)
+                                            && last_operation == operation
+                                        {
+                                            return;
+                                        }
+                                        last_progress_bucket = Some(bucket);
+                                        last_operation = operation.clone();
                                         let _ = tx_clone.send(Message::ImportProgress {
                                             file_index,
                                             total_files,
-                                            file_progress: progress,
+                                            file_progress: clamped,
                                             filename: filename_for_progress.clone(),
                                             operation,
                                         });
@@ -2684,6 +2696,7 @@ impl Maolan {
                                 filename: "Done".to_string(),
                                 operation: None,
                             });
+                            drop(tx);
                         });
 
                         iced::futures::stream::unfold(rx, |mut rx| async move {
@@ -2701,6 +2714,14 @@ impl Maolan {
                 ref filename,
                 ref operation,
             } => {
+                if self.import_current_file == file_index
+                    && self.import_total_files == total_files
+                    && (self.import_file_progress - file_progress).abs() < f32::EPSILON
+                    && self.import_current_filename == *filename
+                    && self.import_current_operation == *operation
+                {
+                    return Task::none();
+                }
                 self.import_current_file = file_index;
                 self.import_total_files = total_files;
                 self.import_file_progress = file_progress;

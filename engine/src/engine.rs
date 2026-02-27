@@ -1081,7 +1081,8 @@ impl Engine {
                 let worker_index = self.ready_workers.remove(0);
                 t.set_transport_sample(self.transport_sample);
                 t.set_loop_config(self.loop_enabled, self.loop_range_samples);
-                t.set_clip_playback_enabled(self.clip_playback_enabled);
+                // Avoid continuously mixing clip audio/MIDI while transport is stopped.
+                t.set_clip_playback_enabled(self.clip_playback_enabled && self.playing);
                 t.audio.processing = true;
                 let worker = &self.workers[worker_index];
                 if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
