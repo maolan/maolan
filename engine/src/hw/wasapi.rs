@@ -533,26 +533,6 @@ impl traits::HwDevice for HwDriver {
         self.sample_rate()
     }
 
-    fn cycle_samples(&self) -> usize {
-        self.cycle_samples()
-    }
-
-    fn input_port(&self, idx: usize) -> Option<Arc<AudioIO>> {
-        self.input_port(idx)
-    }
-
-    fn output_port(&self, idx: usize) -> Option<Arc<AudioIO>> {
-        self.output_port(idx)
-    }
-
-    fn set_output_gain_balance(&mut self, gain: f32, balance: f32) {
-        self.set_output_gain_balance(gain, balance);
-    }
-
-    fn output_meter_db(&self, gain: f32, balance: f32) -> Vec<f32> {
-        self.output_meter_db(gain, balance)
-    }
-
     fn latency_ranges(&self) -> ((usize, usize), (usize, usize)) {
         ((0, 0), (0, 0))
     }

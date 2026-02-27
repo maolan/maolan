@@ -80,7 +80,6 @@ pub struct ClapProcessor {
     audio_outputs: Vec<Arc<AudioIO>>,
     midi_input_ports: usize,
     midi_output_ports: usize,
-    #[allow(dead_code)]
     host_runtime: Arc<HostRuntime>,
     plugin_handle: Arc<PluginHandle>,
     param_infos: Arc<Vec<ClapParameterInfo>>,
@@ -717,14 +716,10 @@ struct ClapIStreamCtx<'a> {
 }
 
 struct HostRuntime {
-    #[allow(dead_code)]
-    name: CString,
-    #[allow(dead_code)]
-    vendor: CString,
-    #[allow(dead_code)]
-    url: CString,
-    #[allow(dead_code)]
-    version: CString,
+    _name: CString,
+    _vendor: CString,
+    _url: CString,
+    _version: CString,
     callback_flags: Box<UnsafeMutex<HostCallbackFlags>>,
     host: ClapHost,
 }
@@ -757,10 +752,10 @@ impl HostRuntime {
             request_callback: Some(host_request_callback),
         };
         Ok(Self {
-            name,
-            vendor,
-            url,
-            version,
+            _name: name,
+            _vendor: vendor,
+            _url: url,
+            _version: version,
             callback_flags,
             host,
         })

@@ -48,22 +48,6 @@ impl EventBuffer {
     }
 }
 
-/// Convert MIDI status byte to event type description
-#[allow(dead_code)]
-fn midi_event_type(status: u8) -> &'static str {
-    match status & 0xF0 {
-        0x80 => "Note Off",
-        0x90 => "Note On",
-        0xA0 => "Poly Aftertouch",
-        0xB0 => "Control Change",
-        0xC0 => "Program Change",
-        0xD0 => "Channel Aftertouch",
-        0xE0 => "Pitch Bend",
-        0xF0 => "System",
-        _ => "Unknown",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

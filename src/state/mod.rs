@@ -480,24 +480,26 @@ impl Default for StateData {
 
 pub type State = Arc<RwLock<StateData>>;
 
-#[allow(clippy::vec_init_then_push)]
 fn supported_audio_backends() -> Vec<AudioBackendOption> {
-    let mut out = vec![];
-    #[cfg(unix)]
-    out.push(AudioBackendOption::Jack);
-    #[cfg(target_os = "freebsd")]
-    out.push(AudioBackendOption::Oss);
-    #[cfg(target_os = "openbsd")]
-    out.push(AudioBackendOption::Sndio);
-    #[cfg(target_os = "linux")]
-    out.push(AudioBackendOption::Alsa);
-    #[cfg(target_os = "windows")]
-    out.push(AudioBackendOption::Wasapi);
-    #[cfg(target_os = "windows")]
-    out.push(AudioBackendOption::Asio);
-    #[cfg(target_os = "macos")]
-    out.push(AudioBackendOption::CoreAudio);
-    out
+    [
+        #[cfg(unix)]
+        Some(AudioBackendOption::Jack),
+        #[cfg(target_os = "freebsd")]
+        Some(AudioBackendOption::Oss),
+        #[cfg(target_os = "openbsd")]
+        Some(AudioBackendOption::Sndio),
+        #[cfg(target_os = "linux")]
+        Some(AudioBackendOption::Alsa),
+        #[cfg(target_os = "windows")]
+        Some(AudioBackendOption::Wasapi),
+        #[cfg(target_os = "windows")]
+        Some(AudioBackendOption::Asio),
+        #[cfg(target_os = "macos")]
+        Some(AudioBackendOption::CoreAudio),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn default_audio_backend() -> AudioBackendOption {

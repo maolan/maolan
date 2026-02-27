@@ -1,6 +1,4 @@
-use crate::audio::io::AudioIO;
 use crate::message::HwMidiEvent;
-use std::sync::Arc;
 
 pub trait HwWorkerDriver {
     fn cycle_samples(&self) -> usize;
@@ -14,16 +12,10 @@ pub trait HwMidiHub {
     fn write_events(&mut self, events: &[HwMidiEvent]);
 }
 
-#[allow(dead_code)]
 pub trait HwDevice {
     fn input_channels(&self) -> usize;
     fn output_channels(&self) -> usize;
     fn sample_rate(&self) -> i32;
-    fn cycle_samples(&self) -> usize;
-    fn input_port(&self, idx: usize) -> Option<Arc<AudioIO>>;
-    fn output_port(&self, idx: usize) -> Option<Arc<AudioIO>>;
-    fn set_output_gain_balance(&mut self, gain: f32, balance: f32);
-    fn output_meter_db(&self, gain: f32, balance: f32) -> Vec<f32>;
     fn latency_ranges(&self) -> ((usize, usize), (usize, usize));
 }
 
@@ -64,26 +56,6 @@ macro_rules! impl_hw_device_for_driver {
 
             fn sample_rate(&self) -> i32 {
                 self.sample_rate()
-            }
-
-            fn cycle_samples(&self) -> usize {
-                self.cycle_samples()
-            }
-
-            fn input_port(&self, idx: usize) -> Option<std::sync::Arc<crate::audio::io::AudioIO>> {
-                self.input_port(idx)
-            }
-
-            fn output_port(&self, idx: usize) -> Option<std::sync::Arc<crate::audio::io::AudioIO>> {
-                self.output_port(idx)
-            }
-
-            fn set_output_gain_balance(&mut self, gain: f32, balance: f32) {
-                self.set_output_gain_balance(gain, balance);
-            }
-
-            fn output_meter_db(&self, gain: f32, balance: f32) -> Vec<f32> {
-                self.output_meter_db(gain, balance)
             }
 
             fn latency_ranges(&self) -> ((usize, usize), (usize, usize)) {
