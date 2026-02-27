@@ -196,11 +196,7 @@ impl Vst3Processor {
     }
 
     /// Process audio with MIDI events
-    pub fn process_with_midi(
-        &self,
-        frames: usize,
-        input_events: &[MidiEvent],
-    ) -> Vec<MidiEvent> {
+    pub fn process_with_midi(&self, frames: usize, input_events: &[MidiEvent]) -> Vec<MidiEvent> {
         // Process all input AudioIO ports
         for input in &self.audio_inputs {
             input.process();
@@ -238,8 +234,8 @@ impl Vst3Processor {
         frames: usize,
         _input_events: Option<&EventBuffer>,
     ) -> Result<EventBuffer, String> {
-        use vst3::Steinberg::Vst::*;
         use vst3::Steinberg::Vst::IAudioProcessorTrait;
+        use vst3::Steinberg::Vst::*;
 
         // Prepare input bus buffers
         let mut input_channel_ptrs: Vec<*mut f32> = Vec::new();
@@ -344,7 +340,11 @@ impl Vst3Processor {
         Some(self.scalar_values.lock().unwrap()[idx])
     }
 
-    pub fn set_parameter_value(&mut self, param_id: u32, normalized_value: f32) -> Result<(), String> {
+    pub fn set_parameter_value(
+        &mut self,
+        param_id: u32,
+        normalized_value: f32,
+    ) -> Result<(), String> {
         let idx = self
             .parameters
             .iter()
@@ -373,7 +373,9 @@ impl Vst3Processor {
         // Save component state
         let mut comp_stream = MemoryStream::new();
         unsafe {
-            let result = instance.component.getState(comp_stream.as_ibstream_mut() as *mut _ as *mut _);
+            let result = instance
+                .component
+                .getState(comp_stream.as_ibstream_mut() as *mut _ as *mut _);
             if result != vst3::Steinberg::kResultOk {
                 return Err("Failed to get component state".to_string());
             }
@@ -415,7 +417,9 @@ impl Vst3Processor {
         if !state.component_state.is_empty() {
             let mut comp_stream = MemoryStream::from_bytes(&state.component_state);
             unsafe {
-                let result = instance.component.setState(comp_stream.as_ibstream_mut() as *mut _ as *mut _);
+                let result = instance
+                    .component
+                    .setState(comp_stream.as_ibstream_mut() as *mut _ as *mut _);
                 if result != vst3::Steinberg::kResultOk {
                     return Err("Failed to set component state".to_string());
                 }
@@ -427,7 +431,8 @@ impl Vst3Processor {
             if let Some(controller) = &instance.edit_controller {
                 let mut ctrl_stream = MemoryStream::from_bytes(&state.controller_state);
                 unsafe {
-                    let result = controller.setState(ctrl_stream.as_ibstream_mut() as *mut _ as *mut _);
+                    let result =
+                        controller.setState(ctrl_stream.as_ibstream_mut() as *mut _ as *mut _);
                     if result != vst3::Steinberg::kResultOk {
                         eprintln!("Warning: Failed to set controller state");
                     }
@@ -453,7 +458,9 @@ impl Drop for Vst3Processor {
     }
 }
 
-fn discover_parameters(instance: &PluginInstance) -> Result<(Vec<ParameterInfo>, Arc<Mutex<Vec<f32>>>), String> {
+fn discover_parameters(
+    instance: &PluginInstance,
+) -> Result<(Vec<ParameterInfo>, Arc<Mutex<Vec<f32>>>), String> {
     use vst3::Steinberg::Vst::IEditControllerTrait;
 
     let controller = instance

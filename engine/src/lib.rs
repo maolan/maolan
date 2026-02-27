@@ -11,9 +11,9 @@ pub mod kind;
 pub mod message;
 mod midi;
 pub mod mutex;
-pub mod plugins;
 #[cfg(target_os = "freebsd")]
 mod oss_worker;
+pub mod plugins;
 mod routing;
 #[cfg(target_os = "openbsd")]
 mod sndio_worker;

@@ -294,8 +294,8 @@ fn select_input_device(host: &cpal::Host, requested: &str) -> Option<cpal::Devic
 
 fn select_backend_host_and_device(device: &str) -> Result<(Host, &str, &'static str), String> {
     if let Some(name) = device.strip_prefix(ASIO_PREFIX) {
-        let host =
-            cpal::host_from_id(HostId::Asio).map_err(|e| format!("ASIO host is not available: {e}"))?;
+        let host = cpal::host_from_id(HostId::Asio)
+            .map_err(|e| format!("ASIO host is not available: {e}"))?;
         return Ok((host, name.trim(), "ASIO"));
     }
     let requested = device.strip_prefix(WASAPI_PREFIX).unwrap_or(device).trim();

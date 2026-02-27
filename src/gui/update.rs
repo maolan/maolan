@@ -1,21 +1,21 @@
 use super::{CLIENT, MIN_CLIP_WIDTH_PX, Maolan, platform};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use crate::message::PluginFormat;
 use crate::{
     connections,
     message::Message,
     state::{ConnectionViewSelection, HW, PianoData, Resizing, Track, View},
-    workspace::{EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID},
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
+    workspace::{EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID},
 };
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-use crate::message::PluginFormat;
 use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
+#[cfg(all(unix, not(target_os = "macos")))]
+use maolan_engine::message::PluginGraphNode;
 use maolan_engine::{
     kind::Kind,
     message::{Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage},
 };
-#[cfg(all(unix, not(target_os = "macos")))]
-use maolan_engine::message::PluginGraphNode;
 use rfd::AsyncFileDialog;
 use std::{collections::HashSet, process::exit, time::Instant};
 use tracing::error;
@@ -415,7 +415,9 @@ impl Maolan {
                         if entry.len() != channels {
                             entry.resize_with(channels, Vec::new);
                         }
-                        for channel_idx in 0..channels {
+                        for (channel_idx, channel_entry) in
+                            entry.iter_mut().enumerate().take(channels)
+                        {
                             let db = track
                                 .meter_out_db
                                 .get(channel_idx)
@@ -426,7 +428,7 @@ impl Maolan {
                             } else {
                                 10.0_f32.powf(db / 20.0).clamp(0.0, 1.0)
                             };
-                            entry[channel_idx].push(amp);
+                            channel_entry.push(amp);
                         }
                     }
                 }
@@ -722,11 +724,10 @@ impl Maolan {
                 self.state.blocking_write().message =
                     "Select a track before opening CLAP plugin UI".to_string();
             }
-            Message::SendMessageFinished(ref result) => {
-                if let Err(e) = result {
-                    error!("Error: {}", e);
-                }
+            Message::SendMessageFinished(Err(ref e)) => {
+                error!("Error: {}", e);
             }
+            Message::SendMessageFinished(Ok(())) => {}
             Message::Response(Ok(ref a)) => match a {
                 Action::Quit => {
                     exit(0);
@@ -1164,13 +1165,12 @@ impl Maolan {
                 } => {
                     {
                         let mut state = self.state.blocking_write();
-                        if let Some(entry) = state.clap_plugins_by_track.get_mut(track_name) {
-                            if let Some(pos) = entry
+                        if let Some(entry) = state.clap_plugins_by_track.get_mut(track_name)
+                            && let Some(pos) = entry
                                 .iter()
                                 .position(|existing| existing.eq_ignore_ascii_case(plugin_path))
-                            {
-                                entry.remove(pos);
-                            }
+                        {
+                            entry.remove(pos);
                         }
                         if let Some(states) = state.clap_states_by_track.get_mut(track_name) {
                             states.remove(plugin_path);
@@ -1305,13 +1305,11 @@ impl Maolan {
                         state.selected.insert(new_name.clone());
                     }
                     // Update connection view selection
-                    match &mut state.connection_view_selection {
-                        crate::state::ConnectionViewSelection::Tracks(tracks) => {
-                            if tracks.remove(old_name) {
-                                tracks.insert(new_name.clone());
-                            }
-                        }
-                        _ => {}
+                    if let crate::state::ConnectionViewSelection::Tracks(tracks) =
+                        &mut state.connection_view_selection
+                        && tracks.remove(old_name)
+                    {
+                        tracks.insert(new_name.clone());
                     }
                     // Update connections
                     for conn in &mut state.connections {
@@ -1619,12 +1617,12 @@ impl Maolan {
                     }
 
                     let old_path = session_dir.join(&old_name);
-                    if old_path.exists() {
-                        if let Err(e) = std::fs::rename(&old_path, &new_path) {
-                            state.message = format!("Failed to rename file: {}", e);
-                            state.clip_rename_dialog = None;
-                            return Task::none();
-                        }
+                    if old_path.exists()
+                        && let Err(e) = std::fs::rename(&old_path, &new_path)
+                    {
+                        state.message = format!("Failed to rename file: {}", e);
+                        state.clip_rename_dialog = None;
+                        return Task::none();
                     }
                 }
 
@@ -1843,18 +1841,18 @@ impl Maolan {
                                         .map(|p| p.node.clone());
                                     if let Some(node) = selected_node {
                                         return match node {
-                                            PluginGraphNode::Lv2PluginInstance(_) => self.send(
-                                                Action::TrackUnloadLv2PluginInstance {
+                                            PluginGraphNode::Lv2PluginInstance(_) => {
+                                                self.send(Action::TrackUnloadLv2PluginInstance {
                                                     track_name,
                                                     instance_id,
-                                                },
-                                            ),
-                                            PluginGraphNode::Vst3PluginInstance(_) => self.send(
-                                                Action::TrackUnloadVst3PluginInstance {
+                                                })
+                                            }
+                                            PluginGraphNode::Vst3PluginInstance(_) => {
+                                                self.send(Action::TrackUnloadVst3PluginInstance {
                                                     track_name,
                                                     instance_id,
-                                                },
-                                            ),
+                                                })
+                                            }
                                             PluginGraphNode::ClapPluginInstance(_) => {
                                                 let plugin_path = self
                                                     .state
@@ -2109,11 +2107,10 @@ impl Maolan {
                     && !state.clip_click_consumed
                     && matches!(state.view, View::Workspace)
                     && self.modal.is_none()
+                    && state.clip_marquee_start.is_none()
                 {
-                    if state.clip_marquee_start.is_none() {
-                        state.clip_marquee_start = Some(position);
-                        state.clip_marquee_end = Some(position);
-                    }
+                    state.clip_marquee_start = Some(position);
+                    state.clip_marquee_end = Some(position);
                 }
             }
             Message::MouseReleased => {
@@ -2561,9 +2558,9 @@ impl Maolan {
                                         });
                                     };
 
-                                if Self::is_import_audio_path(&path) {
+                                if Self::is_import_audio_path(path) {
                                     match Self::import_audio_to_session_wav_with_progress(
-                                        &path,
+                                        path,
                                         &session_root,
                                         playback_rate as u32,
                                         progress_fn,
@@ -2571,7 +2568,7 @@ impl Maolan {
                                     .await
                                     {
                                         Ok((clip_rel, channels, length)) => {
-                                            let base = Self::import_track_base_name(&path);
+                                            let base = Self::import_track_base_name(path);
                                             let track_name =
                                                 Self::unique_track_name(&base, &mut used_names);
 
@@ -2608,7 +2605,7 @@ impl Maolan {
                                             failures.push(format!("{} ({e})", path.display()));
                                         }
                                     }
-                                } else if Self::is_import_midi_path(&path) {
+                                } else if Self::is_import_midi_path(path) {
                                     let _ = tx.send(Message::ImportProgress {
                                         file_index,
                                         total_files,
@@ -2618,12 +2615,12 @@ impl Maolan {
                                     });
 
                                     match Self::import_midi_to_session(
-                                        &path,
+                                        path,
                                         &session_root,
                                         playback_rate,
                                     ) {
                                         Ok((clip_rel, length)) => {
-                                            let base = Self::import_track_base_name(&path);
+                                            let base = Self::import_track_base_name(path);
                                             let track_name =
                                                 Self::unique_track_name(&base, &mut used_names);
 

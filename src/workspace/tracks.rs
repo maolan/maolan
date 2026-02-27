@@ -173,14 +173,11 @@ impl Tracks {
                 .on_press(Message::SelectTrack(track.name.clone()))
                 .on_double_click(Message::OpenTrackPlugins(track.name.clone()));
 
-                let track_with_context = ContextMenu::new(
-                    track_with_mouse,
-                    move || {
-                        button("Rename")
-                            .on_press(Message::TrackRenameShow(track_name_for_menu.clone()))
-                            .into()
-                    },
-                );
+                let track_with_context = ContextMenu::new(track_with_mouse, move || {
+                    button("Rename")
+                        .on_press(Message::TrackRenameShow(track_name_for_menu.clone()))
+                        .into()
+                });
 
                 droppable(track_with_context)
                     .on_drag(move |_, _| Message::TrackDrag(index))

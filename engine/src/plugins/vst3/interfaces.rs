@@ -5,9 +5,9 @@
 
 use std::ffi::c_void;
 use std::path::Path;
-use vst3::Steinberg::Vst::*;
 use vst3::Steinberg::Vst::ProcessModes_::kRealtime;
 use vst3::Steinberg::Vst::SymbolicSampleSizes_::kSample32;
+use vst3::Steinberg::Vst::*;
 use vst3::Steinberg::*;
 use vst3::{ComPtr, Interface};
 
@@ -153,7 +153,10 @@ impl PluginInstance {
         let result = unsafe { self.component.initialize(std::ptr::null_mut()) };
 
         if result != kResultOk {
-            return Err(format!("Failed to initialize component (result: {})", result));
+            return Err(format!(
+                "Failed to initialize component (result: {})",
+                result
+            ));
         }
 
         // Query for IAudioProcessor
@@ -165,11 +168,7 @@ impl PluginInstance {
             let query_interface = (*vtbl).base.base.queryInterface;
             // Cast IID from [u8; 16] to [i8; 16]
             let iid = std::mem::transmute::<&[u8; 16], &[i8; 16]>(&IAudioProcessor::IID);
-            query_interface(
-                component_raw as *mut _,
-                iid,
-                &mut processor_ptr,
-            )
+            query_interface(component_raw as *mut _, iid, &mut processor_ptr)
         };
 
         if result == kResultOk && !processor_ptr.is_null() {
@@ -186,11 +185,7 @@ impl PluginInstance {
             let query_interface = (*vtbl).base.base.queryInterface;
             // Cast IID from [u8; 16] to [i8; 16]
             let iid = std::mem::transmute::<&[u8; 16], &[i8; 16]>(&IEditController::IID);
-            query_interface(
-                component_raw as *mut _,
-                iid,
-                &mut controller_ptr,
-            )
+            query_interface(component_raw as *mut _, iid, &mut controller_ptr)
         };
 
         if result == kResultOk && !controller_ptr.is_null() {
@@ -244,7 +239,10 @@ impl PluginInstance {
         let result = unsafe { self.component.terminate() };
 
         if result != kResultOk {
-            return Err(format!("Failed to terminate component (result: {})", result));
+            return Err(format!(
+                "Failed to terminate component (result: {})",
+                result
+            ));
         }
 
         Ok(())

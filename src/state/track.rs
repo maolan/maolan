@@ -166,7 +166,8 @@ impl Track {
     }
 
     pub fn total_lane_count(&self) -> usize {
-        self.audio_lane_count().saturating_add(self.midi_lane_count())
+        self.audio_lane_count()
+            .saturating_add(self.midi_lane_count())
     }
 
     pub fn min_height_for_layout(&self) -> f32 {

@@ -20,6 +20,18 @@ pub struct Toolbar {
     latch: TransportLatch,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ToolbarViewState {
+    pub playing: bool,
+    pub paused: bool,
+    pub recording: bool,
+    pub has_session_end: bool,
+    pub has_loop_range: bool,
+    pub loop_enabled: bool,
+    pub has_punch_range: bool,
+    pub punch_enabled: bool,
+}
+
 impl Toolbar {
     pub fn new() -> Self {
         Self {
@@ -73,56 +85,46 @@ impl Toolbar {
         }
     }
 
-    pub fn view(
-        &self,
-        _playing: bool,
-        paused: bool,
-        recording: bool,
-        has_session_end: bool,
-        has_loop_range: bool,
-        loop_enabled: bool,
-        has_punch_range: bool,
-        punch_enabled: bool,
-    ) -> iced::Element<'_, Message> {
-        let play_active = _playing && !paused;
-        let pause_active = _playing && paused;
-        let stop_active = !_playing && !paused;
-        let rec_active = recording;
-        let loop_active = has_loop_range && loop_enabled;
-        let punch_active = has_punch_range && punch_enabled;
-        let loop_button = if has_loop_range {
+    pub fn view(&self, view_state: ToolbarViewState) -> iced::Element<'_, Message> {
+        let play_active = view_state.playing && !view_state.paused;
+        let pause_active = view_state.playing && view_state.paused;
+        let stop_active = !view_state.playing && !view_state.paused;
+        let rec_active = view_state.recording;
+        let loop_active = view_state.has_loop_range && view_state.loop_enabled;
+        let punch_active = view_state.has_punch_range && view_state.punch_enabled;
+        let loop_button = if view_state.has_loop_range {
             button(repeat())
                 .style(Self::button_style(
-                    has_loop_range,
+                    view_state.has_loop_range,
                     loop_active,
                     Color::from_rgba(0.2, 0.55, 0.9, 0.35),
                 ))
                 .on_press(Message::ToggleLoop)
         } else {
             button(repeat()).style(Self::button_style(
-                has_loop_range,
+                view_state.has_loop_range,
                 loop_active,
                 Color::from_rgba(0.2, 0.55, 0.9, 0.35),
             ))
         };
-        let punch_button = if has_punch_range {
+        let punch_button = if view_state.has_punch_range {
             button(brackets())
                 .style(Self::button_style(
-                    has_punch_range,
+                    view_state.has_punch_range,
                     punch_active,
                     Color::from_rgba(0.85, 0.25, 0.25, 0.4),
                 ))
                 .on_press(Message::TogglePunch)
         } else {
             button(brackets()).style(Self::button_style(
-                has_punch_range,
+                view_state.has_punch_range,
                 punch_active,
                 Color::from_rgba(0.85, 0.25, 0.25, 0.4),
             ))
         };
         row![
             row![
-                if has_session_end {
+                if view_state.has_session_end {
                     button(rewind())
                         .style(Self::button_style(true, false, Color::TRANSPARENT))
                         .on_press(Message::JumpToStart)
@@ -159,7 +161,7 @@ impl Toolbar {
                     .on_press(Message::TransportRecordToggle),
                 loop_button,
                 punch_button,
-                if has_session_end {
+                if view_state.has_session_end {
                     button(fast_forward())
                         .style(Self::button_style(true, false, Color::TRANSPARENT))
                         .on_press(Message::JumpToEnd)

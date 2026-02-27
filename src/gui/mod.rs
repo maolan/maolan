@@ -40,6 +40,8 @@ use wavers::Wav;
 
 static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
 const MIN_CLIP_WIDTH_PX: f32 = 12.0;
+type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
+type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct AudioClipKey {
@@ -188,7 +190,10 @@ impl Maolan {
     pub fn title(&self) -> String {
         self.session_dir
             .as_ref()
-            .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
+            .and_then(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+            })
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "<New>".to_string())
     }
@@ -557,7 +562,7 @@ impl Maolan {
             samples.extend_from_slice(sample_buffer.samples());
 
             packets_decoded += 1;
-            if packets_decoded % report_interval == 0 {
+            if packets_decoded.is_multiple_of(report_interval) {
                 let bytes_read = samples.len() * std::mem::size_of::<f32>();
                 let progress = if file_size > 0 {
                     (bytes_read as f64 / file_size as f64).clamp(0.0, 1.0) as f32
@@ -640,8 +645,8 @@ impl Maolan {
         let out_frames = resampled[0].len();
         let mut output = Vec::with_capacity(out_frames * channels);
         for frame_idx in 0..out_frames {
-            for ch_idx in 0..channels {
-                output.push(resampled[ch_idx][frame_idx]);
+            for channel in resampled.iter().take(channels) {
+                output.push(channel[frame_idx]);
             }
         }
 
@@ -762,10 +767,7 @@ impl Maolan {
         Ok(ticks_to_samples(max_tick).max(1))
     }
 
-    fn midi_ticks_to_samples(
-        smf: &Smf<'_>,
-        sample_rate: f64,
-    ) -> Option<(Box<dyn Fn(u64) -> usize + Send + Sync>, u64, u64)> {
+    fn midi_ticks_to_samples(smf: &Smf<'_>, sample_rate: f64) -> Option<MidiTickMap> {
         let Timing::Metrical(ppq) = smf.header.timing else {
             return None;
         };
@@ -830,7 +832,8 @@ impl Maolan {
         let smf = Smf::parse(&bytes).map_err(|e| {
             io::Error::other(format!("Failed to parse MIDI '{}': {e}", path.display()))
         })?;
-        let Some((ticks_to_samples, ppq, max_tick)) = Self::midi_ticks_to_samples(&smf, sample_rate)
+        let Some((ticks_to_samples, ppq, max_tick)) =
+            Self::midi_ticks_to_samples(&smf, sample_rate)
         else {
             return Ok((vec![], vec![], sample_rate.max(1.0) as usize));
         };
@@ -855,7 +858,8 @@ impl Maolan {
                                 {
                                     let start_sample = ticks_to_samples(start_tick);
                                     let end_sample = ticks_to_samples(tick);
-                                    let length_samples = end_sample.saturating_sub(start_sample).max(1);
+                                    let length_samples =
+                                        end_sample.saturating_sub(start_sample).max(1);
                                     notes.push(PianoNote {
                                         start_sample,
                                         length_samples,
@@ -966,8 +970,7 @@ impl Maolan {
                 .get(id)
                 .copied()
                 .map(|idx| json!({"type":"plugin","plugin_index":idx})),
-            PluginGraphNode::Vst3PluginInstance(_)
-            | PluginGraphNode::ClapPluginInstance(_) => None,
+            PluginGraphNode::Vst3PluginInstance(_) | PluginGraphNode::ClapPluginInstance(_) => None,
         }
     }
 
@@ -979,7 +982,7 @@ impl Maolan {
             "track_input" => Some(PluginGraphNode::TrackInput),
             "track_output" => Some(PluginGraphNode::TrackOutput),
             "plugin" => Some(PluginGraphNode::Lv2PluginInstance(
-                v["plugin_index"].as_u64()? as usize
+                v["plugin_index"].as_u64()? as usize,
             )),
             _ => None,
         }

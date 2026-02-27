@@ -11,13 +11,13 @@ pub use connection::Connection;
 #[cfg(target_os = "windows")]
 use cpal::traits::{DeviceTrait, HostTrait};
 use iced::{Length, Point};
-use maolan_engine::kind::Kind;
 use maolan_engine::clap::ClapPluginInfo;
 use maolan_engine::clap::ClapPluginState;
+use maolan_engine::kind::Kind;
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::lv2::Lv2PluginInfo;
 #[cfg(all(unix, not(target_os = "macos")))]
-use maolan_engine::message::{Lv2GraphConnection, PluginGraphNode, Lv2GraphPlugin};
+use maolan_engine::message::{Lv2GraphConnection, Lv2GraphPlugin, PluginGraphNode};
 use maolan_engine::vst3::Vst3PluginInfo;
 #[cfg(target_os = "freebsd")]
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
@@ -480,6 +480,7 @@ impl Default for StateData {
 
 pub type State = Arc<RwLock<StateData>>;
 
+#[allow(clippy::vec_init_then_push)]
 fn supported_audio_backends() -> Vec<AudioBackendOption> {
     let mut out = vec![];
     #[cfg(unix)]

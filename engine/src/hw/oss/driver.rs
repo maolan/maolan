@@ -125,7 +125,8 @@ impl HwDriver {
     }
 
     pub fn set_playing(&mut self, playing: bool) {
-        self.playing.store(playing, std::sync::atomic::Ordering::Relaxed);
+        self.playing
+            .store(playing, std::sync::atomic::Ordering::Relaxed);
     }
 
     fn apply_playback_prefill(&mut self) {

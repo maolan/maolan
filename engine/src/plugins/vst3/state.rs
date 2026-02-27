@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::cell::UnsafeCell;
-use vst3::Steinberg::{IBStreamTrait, kResultOk, kResultFalse};
+use vst3::Steinberg::{IBStreamTrait, kResultFalse, kResultOk};
 
 type TResult = i32;
 
@@ -61,7 +61,12 @@ impl MemoryStream {
 }
 
 impl IBStreamTrait for MemoryStream {
-    unsafe fn read(&self, buffer: *mut std::os::raw::c_void, num_bytes: i32, num_bytes_read: *mut i32) -> TResult {
+    unsafe fn read(
+        &self,
+        buffer: *mut std::os::raw::c_void,
+        num_bytes: i32,
+        num_bytes_read: *mut i32,
+    ) -> TResult {
         if buffer.is_null() || num_bytes < 0 {
             return kResultFalse;
         }
@@ -74,7 +79,9 @@ impl IBStreamTrait for MemoryStream {
 
         if actual_read == 0 {
             if !num_bytes_read.is_null() {
-                unsafe { *num_bytes_read = 0; }
+                unsafe {
+                    *num_bytes_read = 0;
+                }
             }
             return kResultFalse;
         }
@@ -84,16 +91,25 @@ impl IBStreamTrait for MemoryStream {
         let dst_slice = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, actual_read) };
         dst_slice.copy_from_slice(src_slice);
 
-        unsafe { *self.position_mut() += actual_read; }
+        unsafe {
+            *self.position_mut() += actual_read;
+        }
 
         if !num_bytes_read.is_null() {
-            unsafe { *num_bytes_read = actual_read as i32; }
+            unsafe {
+                *num_bytes_read = actual_read as i32;
+            }
         }
 
         kResultOk
     }
 
-    unsafe fn write(&self, buffer: *mut std::os::raw::c_void, num_bytes: i32, num_bytes_written: *mut i32) -> TResult {
+    unsafe fn write(
+        &self,
+        buffer: *mut std::os::raw::c_void,
+        num_bytes: i32,
+        num_bytes_written: *mut i32,
+    ) -> TResult {
         if buffer.is_null() || num_bytes < 0 {
             return kResultFalse;
         }
@@ -112,10 +128,14 @@ impl IBStreamTrait for MemoryStream {
 
         // Write data
         data[position..position + bytes_to_write].copy_from_slice(src_slice);
-        unsafe { *self.position_mut() += bytes_to_write; }
+        unsafe {
+            *self.position_mut() += bytes_to_write;
+        }
 
         if !num_bytes_written.is_null() {
-            unsafe { *num_bytes_written = bytes_to_write as i32; }
+            unsafe {
+                *num_bytes_written = bytes_to_write as i32;
+            }
         }
 
         kResultOk
@@ -151,10 +171,14 @@ impl IBStreamTrait for MemoryStream {
             _ => return kResultFalse,
         };
 
-        unsafe { *self.position_mut() = new_position; }
+        unsafe {
+            *self.position_mut() = new_position;
+        }
 
         if !result.is_null() {
-            unsafe { *result = new_position as i64; }
+            unsafe {
+                *result = new_position as i64;
+            }
         }
 
         kResultOk
@@ -165,7 +189,9 @@ impl IBStreamTrait for MemoryStream {
             return kResultFalse;
         }
 
-        unsafe { *pos = *self.position_ref() as i64; }
+        unsafe {
+            *pos = *self.position_ref() as i64;
+        }
         kResultOk
     }
 }

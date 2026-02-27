@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClapParameterInfo {
@@ -50,9 +50,19 @@ struct PendingParamValue {
 
 #[derive(Clone, Copy, Debug)]
 enum PendingParamEvent {
-    Value { param_id: u32, value: f64, frame: u32 },
-    GestureBegin { param_id: u32, frame: u32 },
-    GestureEnd { param_id: u32, frame: u32 },
+    Value {
+        param_id: u32,
+        value: f64,
+        frame: u32,
+    },
+    GestureBegin {
+        param_id: u32,
+        frame: u32,
+    },
+    GestureEnd {
+        param_id: u32,
+        frame: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -123,7 +133,9 @@ impl ClapProcessor {
             .map(|_| Arc::new(AudioIO::new(buffer_size)))
             .collect();
         let param_infos = Arc::new(plugin_handle.parameter_infos());
-        let param_values = Arc::new(UnsafeMutex::new(plugin_handle.parameter_values(&param_infos)));
+        let param_values = Arc::new(UnsafeMutex::new(
+            plugin_handle.parameter_values(&param_infos),
+        ));
         Ok(Self {
             path: plugin_spec.to_string(),
             name,
@@ -201,10 +213,10 @@ impl ClapProcessor {
         self.pending_param_events
             .lock()
             .push(PendingParamEvent::Value {
-            param_id,
-            value: clamped,
-            frame,
-        });
+                param_id,
+                value: clamped,
+                frame,
+            });
         self.param_values.lock().insert(param_id, clamped);
         Ok(())
     }
@@ -322,12 +334,8 @@ impl ClapProcessor {
         }
 
         let pending_params = std::mem::take(self.pending_param_events.lock());
-        let (in_events, in_ctx) = input_events_from(
-            midi_in,
-            &pending_params,
-            self.sample_rate,
-            transport,
-        );
+        let (in_events, in_ctx) =
+            input_events_from(midi_in, &pending_params, self.sample_rate, transport);
         let out_cap = midi_in
             .len()
             .saturating_add(self.midi_output_ports.saturating_mul(64));
@@ -450,8 +458,7 @@ struct ClapPlugin {
     stop_processing: Option<unsafe extern "C" fn(*const ClapPlugin)>,
     reset: Option<unsafe extern "C" fn(*const ClapPlugin)>,
     process: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapProcess) -> i32>,
-    get_extension:
-        Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char) -> *const c_void>,
+    get_extension: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char) -> *const c_void>,
     on_main_thread: Option<unsafe extern "C" fn(*const ClapPlugin)>,
 }
 
@@ -459,16 +466,13 @@ struct ClapPlugin {
 struct ClapInputEvents {
     ctx: *const c_void,
     size: Option<unsafe extern "C" fn(*const ClapInputEvents) -> u32>,
-    get: Option<
-        unsafe extern "C" fn(*const ClapInputEvents, u32) -> *const ClapEventHeader,
-    >,
+    get: Option<unsafe extern "C" fn(*const ClapInputEvents, u32) -> *const ClapEventHeader>,
 }
 
 #[repr(C)]
 struct ClapOutputEvents {
     ctx: *mut c_void,
-    try_push:
-        Option<unsafe extern "C" fn(*const ClapOutputEvents, *const ClapEventHeader) -> bool>,
+    try_push: Option<unsafe extern "C" fn(*const ClapOutputEvents, *const ClapEventHeader) -> bool>,
 }
 
 #[repr(C)]
@@ -559,8 +563,9 @@ struct ClapPluginParams {
         Option<unsafe extern "C" fn(*const ClapPlugin, u32, f64, *mut c_char, u32) -> bool>,
     text_to_value:
         Option<unsafe extern "C" fn(*const ClapPlugin, u32, *const c_char, *mut f64) -> bool>,
-    flush:
-        Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapInputEvents, *const ClapOutputEvents)>,
+    flush: Option<
+        unsafe extern "C" fn(*const ClapPlugin, *const ClapInputEvents, *const ClapOutputEvents),
+    >,
 }
 
 #[repr(C)]
@@ -582,7 +587,9 @@ struct ClapAudioPortInfoRaw {
 #[repr(C)]
 struct ClapPluginAudioPorts {
     count: Option<unsafe extern "C" fn(*const ClapPlugin, bool) -> u32>,
-    get: Option<unsafe extern "C" fn(*const ClapPlugin, u32, bool, *mut ClapAudioPortInfoRaw) -> bool>,
+    get: Option<
+        unsafe extern "C" fn(*const ClapPlugin, u32, bool, *mut ClapAudioPortInfoRaw) -> bool,
+    >,
 }
 
 #[repr(C)]
@@ -596,7 +603,9 @@ struct ClapNotePortInfoRaw {
 #[repr(C)]
 struct ClapPluginNotePorts {
     count: Option<unsafe extern "C" fn(*const ClapPlugin, bool) -> u32>,
-    get: Option<unsafe extern "C" fn(*const ClapPlugin, u32, bool, *mut ClapNotePortInfoRaw) -> bool>,
+    get: Option<
+        unsafe extern "C" fn(*const ClapPlugin, u32, bool, *mut ClapNotePortInfoRaw) -> bool,
+    >,
 }
 
 #[repr(C)]
@@ -736,7 +745,8 @@ impl HostRuntime {
         let mut callback_flags = Box::new(UnsafeMutex::new(HostCallbackFlags::default()));
         let host = ClapHost {
             clap_version: CLAP_VERSION,
-            host_data: (&mut *callback_flags as *mut UnsafeMutex<HostCallbackFlags>).cast::<c_void>(),
+            host_data: (&mut *callback_flags as *mut UnsafeMutex<HostCallbackFlags>)
+                .cast::<c_void>(),
             name: name.as_ptr(),
             vendor: vendor.as_ptr(),
             url: url.as_ptr(),
@@ -1081,7 +1091,12 @@ impl PluginHandle {
             write: Some(clap_ostream_write),
         };
         // SAFETY: stream callbacks reference `bytes` for duration of call.
-        if unsafe { !save_fn(self.plugin, &mut stream as *mut ClapOStream as *const ClapOStream) } {
+        if unsafe {
+            !save_fn(
+                self.plugin,
+                &mut stream as *mut ClapOStream as *const ClapOStream,
+            )
+        } {
             return Err("CLAP state save failed".to_string());
         }
         Ok(ClapPluginState { bytes })
@@ -1103,7 +1118,12 @@ impl PluginHandle {
             read: Some(clap_istream_read),
         };
         // SAFETY: stream callbacks reference `ctx` for duration of call.
-        if unsafe { !load_fn(self.plugin, &mut stream as *mut ClapIStream as *const ClapIStream) } {
+        if unsafe {
+            !load_fn(
+                self.plugin,
+                &mut stream as *mut ClapIStream as *const ClapIStream,
+            )
+        } {
             return Err("CLAP state load failed".to_string());
         }
         Ok(())
@@ -1130,7 +1150,9 @@ impl PluginHandle {
                 let ok = unsafe { get_preferred_api(self.plugin, &mut api_ptr, &mut floating) };
                 if ok && floating && !api_ptr.is_null() {
                     // SAFETY: returned API id is NUL-terminated.
-                    let pref = unsafe { CStr::from_ptr(api_ptr) }.to_string_lossy().to_string();
+                    let pref = unsafe { CStr::from_ptr(api_ptr) }
+                        .to_string_lossy()
+                        .to_string();
                     if api_candidates.iter().any(|c| c == &pref) {
                         chosen = CString::new(pref).ok();
                     }
@@ -1255,8 +1277,9 @@ unsafe extern "C" fn host_get_extension(
     // SAFETY: extension id is expected to be a valid NUL-terminated string.
     let id = unsafe { CStr::from_ptr(_extension_id) }.to_string_lossy();
     match id.as_ref() {
-        "clap.host.thread-check" => (&HOST_THREAD_CHECK_EXT as *const ClapHostThreadCheck)
-            .cast::<c_void>(),
+        "clap.host.thread-check" => {
+            (&HOST_THREAD_CHECK_EXT as *const ClapHostThreadCheck).cast::<c_void>()
+        }
         "clap.host.latency" => (&HOST_LATENCY_EXT as *const ClapHostLatency).cast::<c_void>(),
         "clap.host.tail" => (&HOST_TAIL_EXT as *const ClapHostTail).cast::<c_void>(),
         "clap.host.timer-support" => {
@@ -1762,9 +1785,10 @@ fn scan_bundle_descriptors(path: &Path) -> Vec<ClapPluginInfo> {
         if !factory.is_null() {
             // SAFETY: factory pointer validated above.
             let factory_ref = unsafe { &*factory };
-            if let (Some(get_count), Some(get_desc)) =
-                (factory_ref.get_plugin_count, factory_ref.get_plugin_descriptor)
-            {
+            if let (Some(get_count), Some(get_desc)) = (
+                factory_ref.get_plugin_count,
+                factory_ref.get_plugin_descriptor,
+            ) {
                 // SAFETY: function pointer from plugin.
                 let count = unsafe { get_count(factory) };
                 for i in 0..count {
@@ -1779,7 +1803,9 @@ fn scan_bundle_descriptors(path: &Path) -> Vec<ClapPluginInfo> {
                         continue;
                     }
                     // SAFETY: CLAP descriptor strings are NUL-terminated.
-                    let id = unsafe { CStr::from_ptr(desc.id) }.to_string_lossy().to_string();
+                    let id = unsafe { CStr::from_ptr(desc.id) }
+                        .to_string_lossy()
+                        .to_string();
                     // SAFETY: CLAP descriptor strings are NUL-terminated.
                     let name = unsafe { CStr::from_ptr(desc.name) }
                         .to_string_lossy()

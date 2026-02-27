@@ -2,9 +2,9 @@ use crate::{message::Message, state::State};
 use iced::{
     Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::{
-        Stack,
+        Id, Stack,
         canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
-        Id, column, container, pin, row, scrollable, slider, text, vertical_slider,
+        column, container, pin, row, scrollable, slider, text, vertical_slider,
     },
 };
 use std::collections::HashSet;
@@ -24,7 +24,6 @@ impl Piano {
     const OCTAVES: usize = 10;
     const WHITE_KEYS_PER_OCTAVE: usize = 7;
     const NOTES_PER_OCTAVE: usize = 12;
-    const PITCH_MIN: u8 = 0;
     const PITCH_MAX: u8 = (Self::OCTAVES as u8 * Self::NOTES_PER_OCTAVE as u8) - 1;
     const WHITE_KEY_HEIGHT: f32 = 14.0;
 
@@ -138,7 +137,7 @@ impl Piano {
             if x_notes > notes_w && x_ctrl > ctrl_w {
                 break;
             }
-            let bar_line = beat % 4 == 0;
+            let bar_line = beat.is_multiple_of(4);
             if x_notes <= notes_w {
                 note_layers.push(
                     pin(container("")
@@ -179,7 +178,7 @@ impl Piano {
         }
 
         for note in &roll.notes {
-            if note.pitch < Self::PITCH_MIN || note.pitch > Self::PITCH_MAX {
+            if note.pitch > Self::PITCH_MAX {
                 continue;
             }
             let y_idx = usize::from(Self::PITCH_MAX.saturating_sub(note.pitch));
@@ -322,7 +321,9 @@ impl Piano {
                 .height(Length::Fixed(1.0)),
         )
         .id(Id::new(H_SCROLL_ID))
-        .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new()))
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new(),
+        ))
         .on_scroll(|viewport| Message::PianoScrollXChanged(viewport.relative_offset().x))
         .width(Length::Fill)
         .height(Length::Fixed(16.0));

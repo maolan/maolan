@@ -4,11 +4,22 @@ use crate::{
 };
 use iced::{
     Background, Border, Color, Element, Length, Point,
-    widget::{Stack, column, container, mouse_area, pin, row, text, button},
+    widget::{Stack, button, column, container, mouse_area, pin, row, text},
 };
 use iced_aw::ContextMenu;
 use maolan_engine::kind::Kind;
 use std::collections::HashMap;
+
+struct TrackElementViewArgs<'a> {
+    state: &'a StateData,
+    track: Track,
+    pixels_per_sample: f32,
+    samples_per_bar: f32,
+    active_clip_drag: Option<&'a DraggedClip>,
+    active_target_track: Option<&'a str>,
+    recording_preview_bounds: Option<(usize, usize)>,
+    recording_preview_peaks: Option<&'a HashMap<String, Vec<Vec<f32>>>>,
+}
 
 fn clean_clip_name(name: &str) -> String {
     let mut cleaned = name.to_string();
@@ -72,16 +83,17 @@ fn audio_waveform_overlay(
         .into()
 }
 
-fn view_track_elements(
-    state: &StateData,
-    track: Track,
-    pixels_per_sample: f32,
-    samples_per_bar: f32,
-    active_clip_drag: Option<&DraggedClip>,
-    active_target_track: Option<&str>,
-    recording_preview_bounds: Option<(usize, usize)>,
-    recording_preview_peaks: Option<&HashMap<String, Vec<Vec<f32>>>>,
-) -> Element<'static, Message> {
+fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Message> {
+    let TrackElementViewArgs {
+        state,
+        track,
+        pixels_per_sample,
+        samples_per_bar,
+        active_clip_drag,
+        active_target_track,
+        recording_preview_bounds,
+        recording_preview_peaks,
+    } = args;
     let snap_sample_to_bar = |sample: f32| -> f32 {
         let bar = samples_per_bar.max(1.0);
         (sample.max(0.0) / bar).round() * bar
@@ -98,21 +110,19 @@ fn view_track_elements(
     let track_name_cloned = track.name.clone();
 
     clips.push(
-        pin(
-            container(text(track.name.clone()).size(11))
-                .width(Length::Fill)
-                .height(Length::Fixed(layout.header_height))
-                .padding(4)
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(Color {
-                        r: 0.08,
-                        g: 0.08,
-                        b: 0.1,
-                        a: 0.5,
-                    })),
-                    ..container::Style::default()
-                }),
-        )
+        pin(container(text(track.name.clone()).size(11))
+            .width(Length::Fill)
+            .height(Length::Fixed(layout.header_height))
+            .padding(4)
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(Color {
+                    r: 0.08,
+                    g: 0.08,
+                    b: 0.1,
+                    a: 0.5,
+                })),
+                ..container::Style::default()
+            }))
         .position(Point::new(0.0, 0.0))
         .into(),
     );
@@ -120,20 +130,18 @@ fn view_track_elements(
     for lane in 0..track.audio.ins {
         let y = track.lane_top(Kind::Audio, lane);
         clips.push(
-            pin(
-                container("")
-                    .width(Length::Fill)
-                    .height(Length::Fixed(lane_height))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.15,
-                            g: 0.2,
-                            b: 0.28,
-                            a: 0.22,
-                        })),
-                        ..container::Style::default()
-                    }),
-            )
+            pin(container("")
+                .width(Length::Fill)
+                .height(Length::Fixed(lane_height))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.15,
+                        g: 0.2,
+                        b: 0.28,
+                        a: 0.22,
+                    })),
+                    ..container::Style::default()
+                }))
             .position(Point::new(0.0, y))
             .into(),
         );
@@ -141,20 +149,18 @@ fn view_track_elements(
     for lane in 0..track.midi.ins {
         let y = track.lane_top(Kind::MIDI, lane);
         clips.push(
-            pin(
-                container("")
-                    .width(Length::Fill)
-                    .height(Length::Fixed(lane_height))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.12,
-                            g: 0.26,
-                            b: 0.14,
-                            a: 0.25,
-                        })),
-                        ..container::Style::default()
-                    }),
-            )
+            pin(container("")
+                .width(Length::Fill)
+                .height(Length::Fixed(lane_height))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.12,
+                        g: 0.26,
+                        b: 0.14,
+                        a: 0.25,
+                    })),
+                    ..container::Style::default()
+                }))
             .position(Point::new(0.0, y))
             .into(),
         );
@@ -339,18 +345,15 @@ fn view_track_elements(
 
             let track_idx_for_menu = track_name_cloned.clone();
             let index_for_menu = index;
-            let clip_with_context = ContextMenu::new(
-                clip_with_mouse,
-                move || {
-                    button("Rename")
-                        .on_press(Message::ClipRenameShow {
-                            track_idx: track_idx_for_menu.clone(),
-                            clip_idx: index_for_menu,
-                            kind: Kind::Audio,
-                        })
-                        .into()
-                },
-            );
+            let clip_with_context = ContextMenu::new(clip_with_mouse, move || {
+                button("Rename")
+                    .on_press(Message::ClipRenameShow {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::Audio,
+                    })
+                    .into()
+            });
 
             clips.push(
                 pin(clip_with_context)
@@ -508,31 +511,32 @@ fn view_track_elements(
             true,
         ));
 
-        let clip_content = container(container(text(clean_clip_name(&clip_name)).size(12)).padding(5))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(0)
-            .style(move |_theme| {
-                use container::Style;
-                Style {
-                    background: Some(Background::Color(if is_selected {
-                        Color {
-                            r: 0.82,
-                            g: 1.0,
-                            b: 0.84,
-                            a: 1.0,
-                        }
-                    } else {
-                        Color {
-                            r: 0.24,
-                            g: 0.5,
-                            b: 0.26,
-                            a: 0.82,
-                        }
-                    })),
-                    ..Style::default()
-                }
-            });
+        let clip_content =
+            container(container(text(clean_clip_name(&clip_name)).size(12)).padding(5))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(0)
+                .style(move |_theme| {
+                    use container::Style;
+                    Style {
+                        background: Some(Background::Color(if is_selected {
+                            Color {
+                                r: 0.82,
+                                g: 1.0,
+                                b: 0.84,
+                                a: 1.0,
+                            }
+                        } else {
+                            Color {
+                                r: 0.24,
+                                g: 0.5,
+                                b: 0.26,
+                                a: 0.82,
+                            }
+                        })),
+                        ..Style::default()
+                    }
+                });
 
         let clip_widget = container(row![left_handle, clip_content, right_handle])
             .width(Length::Fixed(clip_width))
@@ -587,18 +591,15 @@ fn view_track_elements(
 
             let track_idx_for_menu = track_name_cloned.clone();
             let index_for_menu = index;
-            let clip_with_context = ContextMenu::new(
-                clip_with_mouse,
-                move || {
-                    button("Rename")
-                        .on_press(Message::ClipRenameShow {
-                            track_idx: track_idx_for_menu.clone(),
-                            clip_idx: index_for_menu,
-                            kind: Kind::MIDI,
-                        })
-                        .into()
-                },
-            );
+            let clip_with_context = ContextMenu::new(clip_with_mouse, move || {
+                button("Rename")
+                    .on_press(Message::ClipRenameShow {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::MIDI,
+                    })
+                    .into()
+            });
 
             clips.push(
                 pin(clip_with_context)
@@ -610,22 +611,23 @@ fn view_track_elements(
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = snap_sample_to_bar(clip.start as f32 + delta_samples);
-            let preview_content = container(container(text(clean_clip_name(&clip_name)).size(12)).padding(5))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(0)
-                .style(|_theme| {
-                    use container::Style;
-                    Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.82,
-                            g: 1.0,
-                            b: 0.84,
-                            a: 0.7,
-                        })),
-                        ..Style::default()
-                    }
-                });
+            let preview_content =
+                container(container(text(clean_clip_name(&clip_name)).size(12)).padding(5))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(0)
+                    .style(|_theme| {
+                        use container::Style;
+                        Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.82,
+                                g: 1.0,
+                                b: 0.84,
+                                a: 0.7,
+                            })),
+                            ..Style::default()
+                        }
+                    });
             let preview = container(row![
                 container("").width(Length::Fixed(5.0)).height(Length::Fill),
                 preview_content,
@@ -685,7 +687,9 @@ fn view_track_elements(
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let clip_height = lane_clip_height;
-                        let lane = source_clip.input_channel.min(track.audio.ins.saturating_sub(1));
+                        let lane = source_clip
+                            .input_channel
+                            .min(track.audio.ins.saturating_sub(1));
                         let lane_top = track.lane_top(Kind::Audio, lane) + 3.0;
                         let preview_start =
                             snap_sample_to_bar(source_clip.start as f32 + delta_samples);
@@ -761,7 +765,9 @@ fn view_track_elements(
                             continue;
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
-                        let lane = source_clip.input_channel.min(track.midi.ins.saturating_sub(1));
+                        let lane = source_clip
+                            .input_channel
+                            .min(track.midi.ins.saturating_sub(1));
                         let lane_top = track.lane_top(Kind::MIDI, lane) + 3.0;
                         let preview_start =
                             snap_sample_to_bar(source_clip.start as f32 + delta_samples);
@@ -867,7 +873,10 @@ fn view_track_elements(
         });
         clips.push(
             pin(preview_clip)
-                .position(Point::new(preview_start as f32 * pixels_per_sample, preview_top))
+                .position(Point::new(
+                    preview_start as f32 * pixels_per_sample,
+                    preview_top,
+                ))
                 .into(),
         );
     }
@@ -924,16 +933,16 @@ impl Editor {
         let mut result = column![];
         let state = self.state.blocking_read();
         for track in state.tracks.iter() {
-            result = result.push(view_track_elements(
-                &state,
-                track.clone(),
+            result = result.push(view_track_elements(TrackElementViewArgs {
+                state: &state,
+                track: track.clone(),
                 pixels_per_sample,
                 samples_per_bar,
                 active_clip_drag,
                 active_target_track,
                 recording_preview_bounds,
-                recording_preview_peaks.as_ref(),
-            ));
+                recording_preview_peaks: recording_preview_peaks.as_ref(),
+            }));
         }
         let mut layers: Vec<Element<'_, Message>> =
             vec![result.width(Length::Fill).height(Length::Fill).into()];

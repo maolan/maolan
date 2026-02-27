@@ -2,6 +2,8 @@ use super::Maolan;
 use crate::{
     message::{Message, Show},
     state::View,
+    toolbar::ToolbarViewState,
+    workspace::WorkspaceViewArgs,
 };
 use iced::{
     Length,
@@ -26,48 +28,48 @@ impl Maolan {
                 Some(Show::TrackPluginList) => self.track_plugin_list_view(),
                 _ => {
                     let view = match state.view {
-                        View::Workspace => self.workspace.view(
-                            Some(self.transport_samples),
-                            self.pixels_per_sample(),
-                            self.beat_pixels(),
-                            self.samples_per_bar() as f32,
-                            self.loop_range_samples,
-                            self.punch_range_samples,
-                            self.zoom_visible_bars,
-                            self.tracks_resize_hovered,
-                            self.mixer_resize_hovered,
-                            self.clip.as_ref(),
-                            self.clip_preview_target_track.as_deref(),
-                            self.recording_preview_bounds(),
-                            Some(self.recording_preview_peaks.clone()),
-                        ),
+                        View::Workspace => self.workspace.view(WorkspaceViewArgs {
+                            playhead_samples: Some(self.transport_samples),
+                            pixels_per_sample: self.pixels_per_sample(),
+                            beat_pixels: self.beat_pixels(),
+                            samples_per_bar: self.samples_per_bar() as f32,
+                            loop_range_samples: self.loop_range_samples,
+                            punch_range_samples: self.punch_range_samples,
+                            zoom_visible_bars: self.zoom_visible_bars,
+                            tracks_resize_hovered: self.tracks_resize_hovered,
+                            mixer_resize_hovered: self.mixer_resize_hovered,
+                            active_clip_drag: self.clip.as_ref(),
+                            active_clip_target_track: self.clip_preview_target_track.as_deref(),
+                            recording_preview_bounds: self.recording_preview_bounds(),
+                            recording_preview_peaks: Some(self.recording_preview_peaks.clone()),
+                        }),
                         View::Connections => self.connections.view(),
                         #[cfg(all(unix, not(target_os = "macos")))]
                         View::TrackPlugins => self.track_plugins.view(),
-                        View::Piano => self.workspace.piano_view(
-                            self.pixels_per_sample(),
-                            self.samples_per_bar() as f32,
-                        ),
+                        View::Piano => self
+                            .workspace
+                            .piano_view(self.pixels_per_sample(), self.samples_per_bar() as f32),
                         #[cfg(any(target_os = "windows", target_os = "macos"))]
                         View::TrackPlugins => self.connections.view(),
                     };
 
-                    let has_session_end = state.tracks.iter().any(|track| {
-                        !track.audio.clips.is_empty() || !track.midi.clips.is_empty()
-                    });
+                    let has_session_end = state
+                        .tracks
+                        .iter()
+                        .any(|track| !track.audio.clips.is_empty() || !track.midi.clips.is_empty());
 
                     let mut content = column![
                         self.menu.view(),
-                        self.toolbar.view(
-                            self.playing,
-                            self.paused,
-                            self.record_armed,
+                        self.toolbar.view(ToolbarViewState {
+                            playing: self.playing,
+                            paused: self.paused,
+                            recording: self.record_armed,
                             has_session_end,
-                            self.loop_range_samples.is_some(),
-                            self.loop_enabled,
-                            self.punch_range_samples.is_some(),
-                            self.punch_enabled,
-                        )
+                            has_loop_range: self.loop_range_samples.is_some(),
+                            loop_enabled: self.loop_enabled,
+                            has_punch_range: self.punch_range_samples.is_some(),
+                            punch_enabled: self.punch_enabled,
+                        })
                     ];
                     if matches!(state.view, View::TrackPlugins) {
                         content = content.push(

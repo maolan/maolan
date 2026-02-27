@@ -14,6 +14,7 @@ use iced::{
     widget::{Id, Stack, column, container, mouse_area, pin, row, scrollable, slider},
 };
 use std::collections::HashMap;
+use tempo::TempoViewArgs;
 
 pub const EDITOR_SCROLL_ID: &str = "workspace.editor.scroll";
 pub const EDITOR_H_SCROLL_ID: &str = "workspace.editor.h_scroll";
@@ -26,6 +27,22 @@ pub struct Workspace {
     ruler: ruler::Ruler,
     tempo: tempo::Tempo,
     tracks: tracks::Tracks,
+}
+
+pub struct WorkspaceViewArgs<'a> {
+    pub playhead_samples: Option<f64>,
+    pub pixels_per_sample: f32,
+    pub beat_pixels: f32,
+    pub samples_per_bar: f32,
+    pub loop_range_samples: Option<(usize, usize)>,
+    pub punch_range_samples: Option<(usize, usize)>,
+    pub zoom_visible_bars: f32,
+    pub tracks_resize_hovered: bool,
+    pub mixer_resize_hovered: bool,
+    pub active_clip_drag: Option<&'a DraggedClip>,
+    pub active_clip_target_track: Option<&'a str>,
+    pub recording_preview_bounds: Option<(usize, usize)>,
+    pub recording_preview_peaks: Option<HashMap<String, Vec<Vec<f32>>>>,
 }
 
 impl Workspace {
@@ -61,22 +78,22 @@ impl Workspace {
             .into()
     }
 
-    pub fn view(
-        &self,
-        playhead_samples: Option<f64>,
-        pixels_per_sample: f32,
-        beat_pixels: f32,
-        samples_per_bar: f32,
-        loop_range_samples: Option<(usize, usize)>,
-        punch_range_samples: Option<(usize, usize)>,
-        zoom_visible_bars: f32,
-        tracks_resize_hovered: bool,
-        mixer_resize_hovered: bool,
-        active_clip_drag: Option<&DraggedClip>,
-        active_clip_target_track: Option<&str>,
-        recording_preview_bounds: Option<(usize, usize)>,
-        recording_preview_peaks: Option<HashMap<String, Vec<Vec<f32>>>>,
-    ) -> Element<'_, Message> {
+    pub fn view(&self, args: WorkspaceViewArgs<'_>) -> Element<'_, Message> {
+        let WorkspaceViewArgs {
+            playhead_samples,
+            pixels_per_sample,
+            beat_pixels,
+            samples_per_bar,
+            loop_range_samples,
+            punch_range_samples,
+            zoom_visible_bars,
+            tracks_resize_hovered,
+            mixer_resize_hovered,
+            active_clip_drag,
+            active_clip_target_track,
+            recording_preview_bounds,
+            recording_preview_peaks,
+        } = args;
         let (tracks_width, max_end_samples) = {
             let state = self.state.blocking_read();
             let max_end_samples = state
@@ -105,7 +122,9 @@ impl Workspace {
         };
         let min_visible_samples = (samples_per_bar * zoom_visible_bars).max(1.0) as usize;
         let min_timeline_samples = (samples_per_bar * Self::MIN_TIMELINE_BARS).max(1.0) as usize;
-        let timeline_samples = max_end_samples.max(min_visible_samples).max(min_timeline_samples);
+        let timeline_samples = max_end_samples
+            .max(min_visible_samples)
+            .max(min_timeline_samples);
         let editor_content_width = (timeline_samples as f32 * pixels_per_sample).max(1.0);
         let playhead_x =
             playhead_samples.map(|sample| (sample as f32 * pixels_per_sample).max(0.0));
@@ -140,15 +159,15 @@ impl Workspace {
 
         let right_lanes_scrolled = scrollable(
             column![
-                container(self.tempo.view(
-                    120.0,
-                    (4, 4),
+                container(self.tempo.view(TempoViewArgs {
+                    bpm: 120.0,
+                    time_signature: (4, 4),
                     beat_pixels,
                     pixels_per_sample,
                     playhead_x,
                     punch_range_samples,
-                    editor_content_width,
-                ))
+                    content_width: editor_content_width,
+                }))
                 .height(Length::Fixed(self.tempo.height())),
                 container(self.ruler.view(
                     playhead_x,
@@ -178,7 +197,9 @@ impl Workspace {
                 .height(Length::Fixed(1.0)),
         )
         .id(Id::new(EDITOR_H_SCROLL_ID))
-        .direction(scrollable::Direction::Horizontal(scrollable::Scrollbar::new()))
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new(),
+        ))
         .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
         .width(Length::Fill)
         .height(Length::Fixed(16.0));
@@ -238,46 +259,44 @@ impl Workspace {
                 ]
                 .width(tracks_width)
                 .height(Length::Fill),
-                mouse_area(
-                    column![
-                        container("")
-                            .width(Length::Fixed(3.0))
-                            .height(Length::Fixed(self.tempo.height()))
-                            .style(|_theme| container::Style {
-                                background: Some(Background::Color(Color {
-                                    r: 0.5,
-                                    g: 0.5,
-                                    b: 0.5,
-                                    a: 0.5,
-                                })),
-                                ..container::Style::default()
-                            }),
-                        container("")
-                            .width(Length::Fixed(3.0))
-                            .height(Length::Fixed(self.ruler.height()))
-                            .style(|_theme| container::Style {
-                                background: Some(Background::Color(Color {
-                                    r: 0.5,
-                                    g: 0.5,
-                                    b: 0.5,
-                                    a: 0.5,
-                                })),
-                                ..container::Style::default()
-                            }),
-                        container("")
-                            .width(Length::Fixed(3.0))
-                            .height(Length::Fill)
-                            .style(move |_theme| container::Style {
-                                background: Some(Background::Color(Color {
-                                    r: 0.7,
-                                    g: 0.7,
-                                    b: 0.7,
-                                    a: if tracks_resize_hovered { 0.95 } else { 0.6 },
-                                })),
-                                ..container::Style::default()
-                            }),
-                    ],
-                )
+                mouse_area(column![
+                    container("")
+                        .width(Length::Fixed(3.0))
+                        .height(Length::Fixed(self.tempo.height()))
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.5,
+                                g: 0.5,
+                                b: 0.5,
+                                a: 0.5,
+                            })),
+                            ..container::Style::default()
+                        }),
+                    container("")
+                        .width(Length::Fixed(3.0))
+                        .height(Length::Fixed(self.ruler.height()))
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.5,
+                                g: 0.5,
+                                b: 0.5,
+                                a: 0.5,
+                            })),
+                            ..container::Style::default()
+                        }),
+                    container("")
+                        .width(Length::Fixed(3.0))
+                        .height(Length::Fill)
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.7,
+                                g: 0.7,
+                                b: 0.7,
+                                a: if tracks_resize_hovered { 0.95 } else { 0.6 },
+                            })),
+                            ..container::Style::default()
+                        }),
+                ],)
                 .on_enter(Message::TracksResizeHover(true))
                 .on_exit(Message::TracksResizeHover(false))
                 .on_press(Message::TracksResizeStart),
@@ -307,11 +326,7 @@ impl Workspace {
         .into()
     }
 
-    pub fn piano_view(
-        &self,
-        pixels_per_sample: f32,
-        samples_per_bar: f32,
-    ) -> Element<'_, Message> {
+    pub fn piano_view(&self, pixels_per_sample: f32, samples_per_bar: f32) -> Element<'_, Message> {
         self.piano.view(pixels_per_sample, samples_per_bar)
     }
 }

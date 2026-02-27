@@ -30,6 +30,17 @@ struct TempoCanvas {
     punch_range_samples: Option<(usize, usize)>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TempoViewArgs {
+    pub bpm: f32,
+    pub time_signature: (u8, u8),
+    pub beat_pixels: f32,
+    pub pixels_per_sample: f32,
+    pub playhead_x: Option<f32>,
+    pub punch_range_samples: Option<(usize, usize)>,
+    pub content_width: f32,
+}
+
 impl Tempo {
     pub fn new() -> Self {
         Self
@@ -39,25 +50,16 @@ impl Tempo {
         TEMPO_HEIGHT
     }
 
-    pub fn view(
-        &self,
-        bpm: f32,
-        time_signature: (u8, u8),
-        beat_pixels: f32,
-        pixels_per_sample: f32,
-        playhead_x: Option<f32>,
-        punch_range_samples: Option<(usize, usize)>,
-        content_width: f32,
-    ) -> Element<'_, Message> {
+    pub fn view(&self, args: TempoViewArgs) -> Element<'_, Message> {
         canvas(TempoCanvas {
-            bpm,
-            time_signature,
-            beat_pixels,
-            pixels_per_sample,
-            playhead_x,
-            punch_range_samples,
+            bpm: args.bpm,
+            time_signature: args.time_signature,
+            beat_pixels: args.beat_pixels,
+            pixels_per_sample: args.pixels_per_sample,
+            playhead_x: args.playhead_x,
+            punch_range_samples: args.punch_range_samples,
         })
-        .width(Length::Fixed(content_width.max(1.0)))
+        .width(Length::Fixed(args.content_width.max(1.0)))
         .height(Length::Fill)
         .into()
     }

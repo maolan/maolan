@@ -1,9 +1,9 @@
+use crate::clap::{ClapParameterInfo, ClapPluginInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::lv2::Lv2PluginInfo;
 use crate::midi::io::MidiEvent;
-use crate::{kind::Kind, mutex::UnsafeMutex, track::Track};
-use crate::clap::{ClapParameterInfo, ClapPluginInfo};
 use crate::vst3::Vst3PluginInfo;
+use crate::{kind::Kind, mutex::UnsafeMutex, track::Track};
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 

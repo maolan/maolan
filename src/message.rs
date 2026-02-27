@@ -130,7 +130,10 @@ pub enum Message {
     ZoomVisibleBarsChanged(f32),
     PianoZoomXChanged(f32),
     PianoZoomYChanged(f32),
-    PianoScrollChanged { x: f32, y: f32 },
+    PianoScrollChanged {
+        x: f32,
+        y: f32,
+    },
     PianoScrollXChanged(f32),
     PianoScrollYChanged(f32),
     TracksResizeHover(bool),

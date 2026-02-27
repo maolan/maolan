@@ -13,7 +13,7 @@ pub use processor::Vst3Processor;
 pub use state::{MemoryStream, Vst3PluginState};
 
 // Re-export from old vst3.rs for backward compatibility
-pub use processor::{list_plugins};
+pub use processor::list_plugins;
 
 // Helper for VST3 search paths (moved from old vst3.rs)
 use std::path::PathBuf;

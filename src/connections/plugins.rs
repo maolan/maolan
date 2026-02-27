@@ -6,7 +6,7 @@ use crate::{
     connections::ports::hover_radius,
     connections::selection::is_bezier_hit,
     message::Message,
-    state::{PluginConnecting, MovingPlugin, State},
+    state::{MovingPlugin, PluginConnecting, State},
     ui_timing::DOUBLE_CLICK,
 };
 use iced::{
@@ -20,7 +20,7 @@ use iced::{
     },
 };
 use maolan_engine::kind::Kind;
-use maolan_engine::message::{Action as EngineAction, PluginGraphNode, Lv2GraphPlugin};
+use maolan_engine::message::{Action as EngineAction, Lv2GraphPlugin, PluginGraphNode};
 use std::time::Instant;
 
 const PLUGIN_W: f32 = 170.0;
@@ -227,9 +227,7 @@ impl canvas::Program<Message> for Graph {
         let cursor_position = cursor.position_in(bounds)?;
 
         if let Ok(mut data) = self.state.try_write() {
-            if data.plugin_graph_track.is_none() {
-                return None;
-            }
+            data.plugin_graph_track.as_ref()?;
 
             let mut audio_ports: Vec<PortHit> = vec![];
             let mut midi_ports: Vec<PortHit> = vec![];
@@ -369,92 +367,94 @@ impl canvas::Program<Message> for Graph {
 
                     let mut clicked_connection = None;
                     for (idx, conn) in data.plugin_graph_connections.iter().enumerate() {
-                        let start = match &conn.from_node {
-                            PluginGraphNode::TrackInput => {
-                                let Some(track) = data
-                                    .tracks
-                                    .iter()
-                                    .find(|t| Some(&t.name) == data.plugin_graph_track.as_ref())
-                                else {
-                                    continue;
-                                };
-                                let Some(py) = Self::track_input_port_y(
-                                    track,
-                                    in_rect,
-                                    conn.kind,
-                                    conn.from_port,
-                                ) else {
-                                    continue;
-                                };
-                                Point::new(in_rect.x + in_rect.width, py)
-                            }
-                            PluginGraphNode::Lv2PluginInstance(id) | PluginGraphNode::Vst3PluginInstance(id) | PluginGraphNode::ClapPluginInstance(id) => {
-                                let Some((pidx, plugin)) = data
-                                    .plugin_graph_plugins
-                                    .iter()
-                                    .enumerate()
-                                    .find(|(_, p)| p.instance_id == *id)
-                                else {
-                                    continue;
-                                };
-                                let pos = Self::plugin_pos(&data, plugin, pidx, bounds);
-                                let plugin_h = Self::plugin_height(plugin);
-                                let Some(py) = Self::plugin_output_port_y(
-                                    plugin,
-                                    plugin_h,
-                                    pos.y,
-                                    conn.kind,
-                                    conn.from_port,
-                                ) else {
-                                    continue;
-                                };
-                                Point::new(pos.x + PLUGIN_W, py)
-                            }
-                            PluginGraphNode::TrackOutput => continue,
-                        };
-                        let end = match &conn.to_node {
-                            PluginGraphNode::TrackOutput => {
-                                let Some(track) = data
-                                    .tracks
-                                    .iter()
-                                    .find(|t| Some(&t.name) == data.plugin_graph_track.as_ref())
-                                else {
-                                    continue;
-                                };
-                                let Some(py) = Self::track_output_port_y(
-                                    track,
-                                    out_rect,
-                                    conn.kind,
-                                    conn.to_port,
-                                ) else {
-                                    continue;
-                                };
-                                Point::new(out_rect.x, py)
-                            }
-                            PluginGraphNode::Lv2PluginInstance(id) | PluginGraphNode::Vst3PluginInstance(id) | PluginGraphNode::ClapPluginInstance(id) => {
-                                let Some((pidx, plugin)) = data
-                                    .plugin_graph_plugins
-                                    .iter()
-                                    .enumerate()
-                                    .find(|(_, p)| p.instance_id == *id)
-                                else {
-                                    continue;
-                                };
-                                let pos = Self::plugin_pos(&data, plugin, pidx, bounds);
-                                let plugin_h = Self::plugin_height(plugin);
-                                let Some(py) = Self::plugin_input_port_y(
-                                    plugin,
-                                    plugin_h,
-                                    pos.y,
-                                    conn.kind,
-                                    conn.to_port,
-                                ) else {
-                                    continue;
-                                };
-                                Point::new(pos.x, py)
-                            }
-                            PluginGraphNode::TrackInput => continue,
-                        };
+                        let start =
+                            match &conn.from_node {
+                                PluginGraphNode::TrackInput => {
+                                    let Some(track) = data.tracks.iter().find(|t| {
+                                        Some(&t.name) == data.plugin_graph_track.as_ref()
+                                    }) else {
+                                        continue;
+                                    };
+                                    let Some(py) = Self::track_input_port_y(
+                                        track,
+                                        in_rect,
+                                        conn.kind,
+                                        conn.from_port,
+                                    ) else {
+                                        continue;
+                                    };
+                                    Point::new(in_rect.x + in_rect.width, py)
+                                }
+                                PluginGraphNode::Lv2PluginInstance(id)
+                                | PluginGraphNode::Vst3PluginInstance(id)
+                                | PluginGraphNode::ClapPluginInstance(id) => {
+                                    let Some((pidx, plugin)) = data
+                                        .plugin_graph_plugins
+                                        .iter()
+                                        .enumerate()
+                                        .find(|(_, p)| p.instance_id == *id)
+                                    else {
+                                        continue;
+                                    };
+                                    let pos = Self::plugin_pos(&data, plugin, pidx, bounds);
+                                    let plugin_h = Self::plugin_height(plugin);
+                                    let Some(py) = Self::plugin_output_port_y(
+                                        plugin,
+                                        plugin_h,
+                                        pos.y,
+                                        conn.kind,
+                                        conn.from_port,
+                                    ) else {
+                                        continue;
+                                    };
+                                    Point::new(pos.x + PLUGIN_W, py)
+                                }
+                                PluginGraphNode::TrackOutput => continue,
+                            };
+                        let end =
+                            match &conn.to_node {
+                                PluginGraphNode::TrackOutput => {
+                                    let Some(track) = data.tracks.iter().find(|t| {
+                                        Some(&t.name) == data.plugin_graph_track.as_ref()
+                                    }) else {
+                                        continue;
+                                    };
+                                    let Some(py) = Self::track_output_port_y(
+                                        track,
+                                        out_rect,
+                                        conn.kind,
+                                        conn.to_port,
+                                    ) else {
+                                        continue;
+                                    };
+                                    Point::new(out_rect.x, py)
+                                }
+                                PluginGraphNode::Lv2PluginInstance(id)
+                                | PluginGraphNode::Vst3PluginInstance(id)
+                                | PluginGraphNode::ClapPluginInstance(id) => {
+                                    let Some((pidx, plugin)) = data
+                                        .plugin_graph_plugins
+                                        .iter()
+                                        .enumerate()
+                                        .find(|(_, p)| p.instance_id == *id)
+                                    else {
+                                        continue;
+                                    };
+                                    let pos = Self::plugin_pos(&data, plugin, pidx, bounds);
+                                    let plugin_h = Self::plugin_height(plugin);
+                                    let Some(py) = Self::plugin_input_port_y(
+                                        plugin,
+                                        plugin_h,
+                                        pos.y,
+                                        conn.kind,
+                                        conn.to_port,
+                                    ) else {
+                                        continue;
+                                    };
+                                    Point::new(pos.x, py)
+                                }
+                                PluginGraphNode::TrackInput => continue,
+                            };
 
                         if is_bezier_hit(start, end, cursor_position, 100, 12.0) {
                             clicked_connection = Some(idx);
@@ -517,7 +517,9 @@ impl canvas::Program<Message> for Graph {
                                             },
                                         )))
                                     }
-                                    PluginGraphNode::Vst3PluginInstance(_) => Some(Action::capture()),
+                                    PluginGraphNode::Vst3PluginInstance(_) => {
+                                        Some(Action::capture())
+                                    }
                                     PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => {
                                         Some(Action::capture())
                                     }
@@ -796,7 +798,8 @@ impl canvas::Program<Message> for Graph {
                 let plugin_h = Self::plugin_height(plugin);
                 let rect = Path::rectangle(pos, iced::Size::new(PLUGIN_W, plugin_h));
                 frame.fill(&rect, Color::from_rgb8(28, 28, 42));
-                let is_selected_plugin = data.plugin_graph_selected_plugin == Some(plugin.instance_id);
+                let is_selected_plugin =
+                    data.plugin_graph_selected_plugin == Some(plugin.instance_id);
                 frame.stroke(
                     &rect,
                     canvas::Stroke::default()
@@ -936,7 +939,9 @@ impl canvas::Program<Message> for Graph {
                         };
                         Point::new(in_rect.x + in_rect.width, py)
                     }
-                    PluginGraphNode::Lv2PluginInstance(id) | PluginGraphNode::Vst3PluginInstance(id) | PluginGraphNode::ClapPluginInstance(id) => {
+                    PluginGraphNode::Lv2PluginInstance(id)
+                    | PluginGraphNode::Vst3PluginInstance(id)
+                    | PluginGraphNode::ClapPluginInstance(id) => {
                         let Some((idx, plugin)) = data
                             .plugin_graph_plugins
                             .iter()
@@ -969,7 +974,9 @@ impl canvas::Program<Message> for Graph {
                         };
                         Point::new(out_rect.x, py)
                     }
-                    PluginGraphNode::Lv2PluginInstance(id) | PluginGraphNode::Vst3PluginInstance(id) | PluginGraphNode::ClapPluginInstance(id) => {
+                    PluginGraphNode::Lv2PluginInstance(id)
+                    | PluginGraphNode::Vst3PluginInstance(id)
+                    | PluginGraphNode::ClapPluginInstance(id) => {
                         let Some((idx, plugin)) = data
                             .plugin_graph_plugins
                             .iter()
@@ -1048,7 +1055,9 @@ impl canvas::Program<Message> for Graph {
                         };
                         Point::new(out_rect.x, py)
                     }
-                    PluginGraphNode::Lv2PluginInstance(id) | PluginGraphNode::Vst3PluginInstance(id) | PluginGraphNode::ClapPluginInstance(id) => {
+                    PluginGraphNode::Lv2PluginInstance(id)
+                    | PluginGraphNode::Vst3PluginInstance(id)
+                    | PluginGraphNode::ClapPluginInstance(id) => {
                         let Some((idx, plugin)) = data
                             .plugin_graph_plugins
                             .iter()

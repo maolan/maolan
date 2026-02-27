@@ -473,11 +473,11 @@ impl canvas::Program<Message> for Graph {
                             })
                         };
 
-                        if let (Some(start), Some(end)) = (start_point, end_point) {
-                            if is_bezier_hit(start, end, cursor_position, 20, 10.0) {
-                                clicked_connection = Some(idx);
-                                break;
-                            }
+                        if let (Some(start), Some(end)) = (start_point, end_point)
+                            && is_bezier_hit(start, end, cursor_position, 20, 10.0)
+                        {
+                            clicked_connection = Some(idx);
+                            break;
                         }
                     }
 

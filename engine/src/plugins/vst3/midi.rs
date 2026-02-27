@@ -77,8 +77,8 @@ mod tests {
     #[test]
     fn test_midi_events_conversion() {
         let midi = vec![
-            MidiEvent::new(0, vec![0x90, 60, 100]),   // Note On C4
-            MidiEvent::new(100, vec![0x80, 60, 64]),  // Note Off C4
+            MidiEvent::new(0, vec![0x90, 60, 100]),  // Note On C4
+            MidiEvent::new(100, vec![0x80, 60, 64]), // Note Off C4
         ];
 
         let buffer = EventBuffer::from_midi_events(&midi, 0);

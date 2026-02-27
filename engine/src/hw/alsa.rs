@@ -303,8 +303,7 @@ impl HwDriver {
                     !all_in_connected,
                     |ch, frame| {
                         let idx = frame * self.channels_in + ch;
-                        let mut sample =
-                            self.capture_buffer_i16.get(idx).copied().unwrap_or(0);
+                        let mut sample = self.capture_buffer_i16.get(idx).copied().unwrap_or(0);
                         if needs_swap {
                             sample = sample.swap_bytes();
                         }
@@ -321,8 +320,7 @@ impl HwDriver {
                     !all_in_connected,
                     |ch, frame| {
                         let idx = frame * self.channels_in + ch;
-                        let mut raw =
-                            self.capture_buffer_i32.get(idx).copied().unwrap_or(0);
+                        let mut raw = self.capture_buffer_i32.get(idx).copied().unwrap_or(0);
                         if needs_swap {
                             raw = raw.swap_bytes();
                         }
@@ -339,8 +337,7 @@ impl HwDriver {
                     !all_in_connected,
                     |ch, frame| {
                         let idx = frame * self.channels_in + ch;
-                        let mut sample =
-                            self.capture_buffer_i32.get(idx).copied().unwrap_or(0);
+                        let mut sample = self.capture_buffer_i32.get(idx).copied().unwrap_or(0);
                         if needs_swap {
                             sample = sample.swap_bytes();
                         }
@@ -389,9 +386,7 @@ impl HwDriver {
                         tracing::warn!("ALSA playback xrun #{}", self.xrun_count);
                         let _ = self.playback.prepare();
                     } else {
-                        return Err(error_fmt::backend_rw_error(
-                            "ALSA", "playback", "write", e,
-                        ));
+                        return Err(error_fmt::backend_rw_error("ALSA", "playback", "write", e));
                     }
                 }
             }
@@ -432,9 +427,7 @@ impl HwDriver {
                         tracing::warn!("ALSA playback xrun #{}", self.xrun_count);
                         let _ = self.playback.prepare();
                     } else {
-                        return Err(error_fmt::backend_rw_error(
-                            "ALSA", "playback", "write", e,
-                        ));
+                        return Err(error_fmt::backend_rw_error("ALSA", "playback", "write", e));
                     }
                 }
             }
@@ -453,8 +446,7 @@ impl HwDriver {
                         !all_out_connected,
                         |ch, frame, sample| {
                             let idx = frame * self.channels_out + ch;
-                            let v24 =
-                                (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I24) as i32;
+                            let v24 = (sample.clamp(-1.0, 1.0) * convert_policy::F32_TO_I24) as i32;
                             let mut v = if is_be { v24 << 8 } else { v24 & 0x00FF_FFFF };
                             if needs_swap {
                                 v = v.swap_bytes();
@@ -477,9 +469,7 @@ impl HwDriver {
                         tracing::warn!("ALSA playback xrun #{}", self.xrun_count);
                         let _ = self.playback.prepare();
                     } else {
-                        return Err(error_fmt::backend_rw_error(
-                            "ALSA", "playback", "write", e,
-                        ));
+                        return Err(error_fmt::backend_rw_error("ALSA", "playback", "write", e));
                     }
                 }
             }
@@ -520,9 +510,7 @@ impl HwDriver {
                         tracing::warn!("ALSA playback xrun #{}", self.xrun_count);
                         let _ = self.playback.prepare();
                     } else {
-                        return Err(error_fmt::backend_rw_error(
-                            "ALSA", "playback", "write", e,
-                        ));
+                        return Err(error_fmt::backend_rw_error("ALSA", "playback", "write", e));
                     }
                 }
             }

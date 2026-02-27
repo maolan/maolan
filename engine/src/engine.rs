@@ -539,7 +539,11 @@ impl Engine {
                 continue;
             }
             let audio_channels = track.record_tap_outs.len();
-            let audio_frames = track.record_tap_outs.first().map(|ch| ch.len()).unwrap_or(0);
+            let audio_frames = track
+                .record_tap_outs
+                .first()
+                .map(|ch| ch.len())
+                .unwrap_or(0);
             let frames = audio_frames.max(self.current_cycle_samples());
             if frames == 0 {
                 continue;
@@ -552,15 +556,15 @@ impl Engine {
                 }
 
                 if audio_channels > 0 && audio_frames > 0 {
-                    let audio_entry = self
-                        .audio_recordings
-                        .entry(name.clone())
-                        .or_insert_with(|| RecordingSession {
-                            start_sample: segment_start,
-                            samples: Vec::with_capacity(segment_len * audio_channels * 2),
-                            channels: audio_channels,
-                            file_name: Self::next_recording_file_name(name),
-                        });
+                    let audio_entry =
+                        self.audio_recordings
+                            .entry(name.clone())
+                            .or_insert_with(|| RecordingSession {
+                                start_sample: segment_start,
+                                samples: Vec::with_capacity(segment_len * audio_channels * 2),
+                                channels: audio_channels,
+                                file_name: Self::next_recording_file_name(name),
+                            });
                     if audio_entry.channels != audio_channels {
                         continue;
                     }
@@ -1576,7 +1580,10 @@ impl Engine {
                     Some(track) => {
                         let (plugins, connections) = {
                             let track = track.lock();
-                            (track.plugin_graph_plugins(), track.plugin_graph_connections())
+                            (
+                                track.plugin_graph_plugins(),
+                                track.plugin_graph_connections(),
+                            )
                         };
                         self.notify_clients(Ok(Action::TrackPluginGraph {
                             track_name: track_name.clone(),
@@ -1777,7 +1784,10 @@ impl Engine {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        if let Err(e) = track.lock().set_clap_parameter(instance_id, param_id, value)
+                        if let Err(e) =
+                            track
+                                .lock()
+                                .set_clap_parameter(instance_id, param_id, value)
                         {
                             self.notify_clients(Err(e)).await;
                             return;
@@ -1908,13 +1918,13 @@ impl Engine {
                             .unwrap_or_default();
                         match track.lock().clap_snapshot_state(instance_id) {
                             Ok(state) => {
-                            self.notify_clients(Ok(Action::TrackClapStateSnapshot {
-                                track_name: track_name.clone(),
-                                instance_id,
-                                plugin_path,
-                                state,
-                            }))
-                            .await;
+                                self.notify_clients(Ok(Action::TrackClapStateSnapshot {
+                                    track_name: track_name.clone(),
+                                    instance_id,
+                                    plugin_path,
+                                    state,
+                                }))
+                                .await;
                             }
                             Err(e) => {
                                 self.notify_clients(Err(e)).await;
@@ -1971,7 +1981,8 @@ impl Engine {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        for (instance_id, plugin_path, state) in track.lock().clap_snapshot_all_states()
+                        for (instance_id, plugin_path, state) in
+                            track.lock().clap_snapshot_all_states()
                         {
                             self.notify_clients(Ok(Action::TrackClapStateSnapshot {
                                 track_name: track_name.clone(),
@@ -2059,7 +2070,11 @@ impl Engine {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        if let Err(e) = track.lock().set_vst3_parameter(instance_id, param_id, value) {
+                        if let Err(e) =
+                            track
+                                .lock()
+                                .set_vst3_parameter(instance_id, param_id, value)
+                        {
                             self.notify_clients(Err(e)).await;
                             return;
                         }
@@ -2077,21 +2092,19 @@ impl Engine {
             } => {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
-                    Some(track) => {
-                        match track.lock().get_vst3_parameters(instance_id) {
-                            Ok(parameters) => {
-                                self.notify_clients(Ok(Action::TrackVst3Parameters {
-                                    track_name: track_name.clone(),
-                                    instance_id,
-                                    parameters,
-                                }))
-                                .await;
-                            }
-                            Err(e) => {
-                                self.notify_clients(Err(e)).await;
-                            }
+                    Some(track) => match track.lock().get_vst3_parameters(instance_id) {
+                        Ok(parameters) => {
+                            self.notify_clients(Ok(Action::TrackVst3Parameters {
+                                track_name: track_name.clone(),
+                                instance_id,
+                                parameters,
+                            }))
+                            .await;
                         }
-                    }
+                        Err(e) => {
+                            self.notify_clients(Err(e)).await;
+                        }
+                    },
                     None => {
                         self.notify_clients(Err(format!("Track not found: {track_name}")))
                             .await;
@@ -2107,21 +2120,19 @@ impl Engine {
             } => {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
-                    Some(track) => {
-                        match track.lock().vst3_snapshot_state(instance_id) {
-                            Ok(state) => {
-                                self.notify_clients(Ok(Action::TrackVst3StateSnapshot {
-                                    track_name: track_name.clone(),
-                                    instance_id,
-                                    state,
-                                }))
-                                .await;
-                            }
-                            Err(e) => {
-                                self.notify_clients(Err(e)).await;
-                            }
+                    Some(track) => match track.lock().vst3_snapshot_state(instance_id) {
+                        Ok(state) => {
+                            self.notify_clients(Ok(Action::TrackVst3StateSnapshot {
+                                track_name: track_name.clone(),
+                                instance_id,
+                                state,
+                            }))
+                            .await;
                         }
-                    }
+                        Err(e) => {
+                            self.notify_clients(Err(e)).await;
+                        }
+                    },
                     None => {
                         self.notify_clients(Err(format!("Track not found: {track_name}")))
                             .await;
@@ -2161,7 +2172,10 @@ impl Engine {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        if let Err(e) = track.lock().connect_vst3_audio(from_node, from_port, to_node, to_port) {
+                        if let Err(e) = track
+                            .lock()
+                            .connect_vst3_audio(from_node, from_port, to_node, to_port)
+                        {
                             self.notify_clients(Err(e)).await;
                             return;
                         }
@@ -2183,7 +2197,10 @@ impl Engine {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        if let Err(e) = track.lock().disconnect_vst3_audio(from_node, from_port, to_node, to_port) {
+                        if let Err(e) = track
+                            .lock()
+                            .disconnect_vst3_audio(from_node, from_port, to_node, to_port)
+                        {
                             self.notify_clients(Err(e)).await;
                             return;
                         }

@@ -1367,7 +1367,11 @@ impl Lv2Processor {
         } else {
             transport.tsig_denom as i64
         };
-        let bpm = if transport.bpm > 0.0 { transport.bpm } else { 120.0 };
+        let bpm = if transport.bpm > 0.0 {
+            transport.bpm
+        } else {
+            120.0
+        };
         let speed = if transport.playing { 1.0 } else { 0.0 };
         let sample = transport.transport_sample as i64;
         let seconds = (transport.transport_sample as f64) / self.sample_rate.max(1.0);
@@ -1401,12 +1405,7 @@ impl Lv2Processor {
             self.atom_double_urid,
             speed,
         );
-        append_object_double_property(
-            &mut payload,
-            self.time_bpm_urid,
-            self.atom_double_urid,
-            bpm,
-        );
+        append_object_double_property(&mut payload, self.time_bpm_urid, self.atom_double_urid, bpm);
         append_object_long_property(&mut payload, self.time_bar_urid, self.atom_long_urid, bar);
         append_object_double_property(
             &mut payload,
@@ -2469,11 +2468,8 @@ fn instantiate_plugin(
     state_path_feature: &mut StatePathFeature,
 ) -> Result<(lilv::instance::Instance, InstantiateFeatureSet), String> {
     let required_features = plugin_feature_uris(plugin);
-    let feature_set = build_instantiate_features(
-        &required_features,
-        urid_feature,
-        state_path_feature,
-    )?;
+    let feature_set =
+        build_instantiate_features(&required_features, urid_feature, state_path_feature)?;
     let feature_refs: Vec<&LV2Feature> = feature_set.features.iter().collect();
     let instance = unsafe { plugin.instantiate(sample_rate, feature_refs) }.ok_or_else(|| {
         if required_features.is_empty() {
@@ -2518,11 +2514,7 @@ fn build_instantiate_features(
     push_feature(LV2_URID__MAP, urid_feature.map_feature().data, false)?;
     push_feature(LV2_URID__UNMAP, urid_feature.unmap_feature().data, false)?;
     let worker_feature = WorkerFeature::new()?;
-    push_feature(
-        LV2_WORKER__SCHEDULE,
-        worker_feature.feature.data,
-        false,
-    )?;
+    push_feature(LV2_WORKER__SCHEDULE, worker_feature.feature.data, false)?;
 
     let state_features = state_path_feature.feature_ptrs();
     for feature_ptr in state_features {
@@ -2591,7 +2583,9 @@ fn build_instantiate_features(
                 .cast::<c_void>(),
             LV2_URID__MAP_URI_TYPO_COMPAT => urid_feature.map_feature().data,
             LV2_WORKER__SCHEDULE => worker_feature.feature.data,
-            _ => (&*flag_feature_data as *const u8).cast_mut().cast::<c_void>(),
+            _ => (&*flag_feature_data as *const u8)
+                .cast_mut()
+                .cast::<c_void>(),
         };
         push_feature(required, data, false)?;
     }
@@ -2679,7 +2673,10 @@ fn append_object_long_property(buffer: &mut Vec<u8>, key: LV2Urid, atom_type: LV
     };
     let prop_size = std::mem::size_of::<LV2AtomPropertyBody>();
     let prop_bytes = unsafe {
-        std::slice::from_raw_parts((&prop as *const LV2AtomPropertyBody).cast::<u8>(), prop_size)
+        std::slice::from_raw_parts(
+            (&prop as *const LV2AtomPropertyBody).cast::<u8>(),
+            prop_size,
+        )
     };
     buffer.extend_from_slice(prop_bytes);
     let atom = LV2AtomLong {
@@ -2699,7 +2696,10 @@ fn append_object_long_property(buffer: &mut Vec<u8>, key: LV2Urid, atom_type: LV
     let written = (prop_size + std::mem::size_of::<i64>()) as u32;
     let padded = lv2_atom_pad_size(written) as usize;
     if padded > (prop_size + std::mem::size_of::<i64>()) {
-        buffer.resize(buffer.len() + (padded - prop_size - std::mem::size_of::<i64>()), 0);
+        buffer.resize(
+            buffer.len() + (padded - prop_size - std::mem::size_of::<i64>()),
+            0,
+        );
     }
 }
 
@@ -2719,7 +2719,10 @@ fn append_object_double_property(
     };
     let prop_size = std::mem::size_of::<LV2AtomPropertyBody>();
     let prop_bytes = unsafe {
-        std::slice::from_raw_parts((&prop as *const LV2AtomPropertyBody).cast::<u8>(), prop_size)
+        std::slice::from_raw_parts(
+            (&prop as *const LV2AtomPropertyBody).cast::<u8>(),
+            prop_size,
+        )
     };
     buffer.extend_from_slice(prop_bytes);
     let atom = LV2AtomDouble {
@@ -2739,7 +2742,10 @@ fn append_object_double_property(
     let written = (prop_size + std::mem::size_of::<f64>()) as u32;
     let padded = lv2_atom_pad_size(written) as usize;
     if padded > (prop_size + std::mem::size_of::<f64>()) {
-        buffer.resize(buffer.len() + (padded - prop_size - std::mem::size_of::<f64>()), 0);
+        buffer.resize(
+            buffer.len() + (padded - prop_size - std::mem::size_of::<f64>()),
+            0,
+        );
     }
 }
 
@@ -3152,10 +3158,7 @@ extern "C" fn urid_map_callback(handle: LV2UridMapHandle, uri: *const c_char) ->
     mapped
 }
 
-extern "C" fn urid_unmap_callback(
-    handle: LV2UridMapHandle,
-    urid: LV2Urid,
-) -> *const c_char {
+extern "C" fn urid_unmap_callback(handle: LV2UridMapHandle, urid: LV2Urid) -> *const c_char {
     if handle.is_null() || urid == 0 {
         return std::ptr::null();
     }

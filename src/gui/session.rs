@@ -188,7 +188,8 @@ impl Maolan {
                 .clap_states_by_track
                 .iter()
                 .map(|(track, states)| {
-                    let v = serde_json::to_value(states).unwrap_or_else(|_| Value::Object(Default::default()));
+                    let v = serde_json::to_value(states)
+                        .unwrap_or_else(|_| Value::Object(Default::default()));
                     (track.clone(), v)
                 })
                 .collect(),
@@ -628,9 +629,15 @@ impl Maolan {
                         .and_then(Value::as_object)
                         .and_then(|o| o.get(track_name))
                         .cloned()
-                        .and_then(|v| serde_json::from_value::<
-                            std::collections::HashMap<String, maolan_engine::clap::ClapPluginState>,
-                        >(v).ok())
+                        .and_then(|v| {
+                            serde_json::from_value::<
+                                std::collections::HashMap<
+                                    String,
+                                    maolan_engine::clap::ClapPluginState,
+                                >,
+                            >(v)
+                            .ok()
+                        })
                         && let Some(state) = track_states.get(path)
                     {
                         restore_actions.push(Action::TrackClapRestoreState {
@@ -766,7 +773,7 @@ impl Maolan {
                     ]
                 })
                 .collect::<Vec<_>>();
-            return Task::batch(tasks);
+            Task::batch(tasks)
         }
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {

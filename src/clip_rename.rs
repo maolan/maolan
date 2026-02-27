@@ -16,10 +16,10 @@ impl ClipRenameView {
     }
 
     pub fn update(&mut self, message: Message) {
-        if let Message::ClipRenameInput(input) = message {
-            if let Some(dialog) = &mut self.state.blocking_write().clip_rename_dialog {
-                dialog.new_name = input;
-            }
+        if let Message::ClipRenameInput(input) = message
+            && let Some(dialog) = &mut self.state.blocking_write().clip_rename_dialog
+        {
+            dialog.new_name = input;
         }
     }
 

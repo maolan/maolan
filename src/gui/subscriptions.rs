@@ -124,28 +124,26 @@ impl Maolan {
         } else {
             Subscription::none()
         };
-        let recording_preview_sub =
-            if self.playing
-                && !self.paused
-                && self.record_armed
-                && self.recording_preview_start_sample.is_some()
-            {
-                iced::time::every(RECORDING_PREVIEW_UPDATE_INTERVAL)
-                    .map(|_| Message::RecordingPreviewTick)
-            } else {
-                Subscription::none()
-            };
-        let recording_preview_peaks_sub =
-            if self.playing
-                && !self.paused
-                && self.record_armed
-                && self.recording_preview_start_sample.is_some()
-            {
-                iced::time::every(RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL)
-                    .map(|_| Message::RecordingPreviewPeaksTick)
-            } else {
-                Subscription::none()
-            };
+        let recording_preview_sub = if self.playing
+            && !self.paused
+            && self.record_armed
+            && self.recording_preview_start_sample.is_some()
+        {
+            iced::time::every(RECORDING_PREVIEW_UPDATE_INTERVAL)
+                .map(|_| Message::RecordingPreviewTick)
+        } else {
+            Subscription::none()
+        };
+        let recording_preview_peaks_sub = if self.playing
+            && !self.paused
+            && self.record_armed
+            && self.recording_preview_start_sample.is_some()
+        {
+            iced::time::every(RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL)
+                .map(|_| Message::RecordingPreviewPeaksTick)
+        } else {
+            Subscription::none()
+        };
         Subscription::batch(vec![
             engine_sub,
             keyboard_sub,

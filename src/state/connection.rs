@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "Kind")]
+#[allow(clippy::upper_case_acronyms)]
 enum KindDef {
     Audio,
     MIDI,

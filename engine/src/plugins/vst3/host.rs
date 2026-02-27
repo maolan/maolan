@@ -5,10 +5,10 @@ use std::path::Path;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Vst3PluginInfo {
-    pub id: String,        // FUID as string
+    pub id: String, // FUID as string
     pub name: String,
     pub vendor: String,
-    pub path: String,      // Path to .vst3 bundle
+    pub path: String, // Path to .vst3 bundle
     pub category: String,
     pub version: String,
     pub audio_inputs: usize,
@@ -112,9 +112,9 @@ fn scan_vst3_bundle(bundle_path: &Path) -> Option<Vst3PluginInfo> {
         path: bundle_path.to_string_lossy().to_string(),
         category: class_info.category,
         version: String::new(), // We'd need to parse class_info.version
-        audio_inputs: 0, // TODO: Query bus info
-        audio_outputs: 0, // TODO: Query bus info
-        has_midi_input: false, // TODO: Query event bus info
+        audio_inputs: 0,        // TODO: Query bus info
+        audio_outputs: 0,       // TODO: Query bus info
+        has_midi_input: false,  // TODO: Query event bus info
         has_midi_output: false, // TODO: Query event bus info
     })
 }
