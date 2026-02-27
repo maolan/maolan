@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::state::AudioBackendOption;
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 use crate::state::AudioDeviceOption;
+use std::fmt;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Show {
@@ -13,6 +14,23 @@ pub enum Show {
     Save,
     SaveAs,
     Open,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginFormat {
+    Lv2,
+    Clap,
+    Vst3,
+}
+
+impl fmt::Display for PluginFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Lv2 => write!(f, "LV2"),
+            Self::Clap => write!(f, "CLAP"),
+            Self::Vst3 => write!(f, "VST3"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -158,18 +176,15 @@ pub enum Message {
     SelectLv2Plugin(String),
     #[cfg(all(unix, not(target_os = "macos")))]
     LoadSelectedLv2Plugins,
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
     RefreshVst3Plugins,
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
     FilterVst3Plugins(String),
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
     SelectVst3Plugin(String),
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
     LoadSelectedVst3Plugins,
     RefreshClapPlugins,
     FilterClapPlugin(String),
     SelectClapPlugin(String),
     LoadSelectedClapPlugins,
+    PluginFormatSelected(PluginFormat),
     UnloadClapPlugin(String),
     ShowClapPluginUi(String),
 

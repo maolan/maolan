@@ -6,6 +6,8 @@ use crate::{
     workspace::{EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID},
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
 };
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use crate::message::PluginFormat;
 use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
 use maolan_engine::{
@@ -203,7 +205,6 @@ impl Maolan {
                         self.modal = Some(Show::TrackPluginList);
                         #[cfg(all(unix, not(target_os = "macos")))]
                         self.selected_lv2_plugins.clear();
-                        #[cfg(any(target_os = "windows", target_os = "macos"))]
                         self.selected_vst3_plugins.clear();
                         self.selected_clap_plugins.clear();
                     }
@@ -560,14 +561,12 @@ impl Maolan {
             }
             #[cfg(all(unix, not(target_os = "macos")))]
             Message::RefreshLv2Plugins => return self.send(Action::ListLv2Plugins),
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
             Message::RefreshVst3Plugins => return self.send(Action::ListVst3Plugins),
             Message::RefreshClapPlugins => return self.send(Action::ListClapPlugins),
             #[cfg(all(unix, not(target_os = "macos")))]
             Message::FilterLv2Plugins(ref query) => {
                 self.plugin_filter = query.clone();
             }
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
             Message::FilterVst3Plugins(ref query) => {
                 self.vst3_plugin_filter = query.clone();
             }
@@ -582,7 +581,6 @@ impl Maolan {
                     self.selected_lv2_plugins.insert(plugin_uri.clone());
                 }
             }
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
             Message::SelectVst3Plugin(ref plugin_path) => {
                 if self.selected_vst3_plugins.contains(plugin_path) {
                     self.selected_vst3_plugins.remove(plugin_path);
@@ -625,7 +623,6 @@ impl Maolan {
                 self.state.blocking_write().message =
                     "Select a track before loading LV2 plugin".to_string();
             }
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
             Message::LoadSelectedVst3Plugins => {
                 let track_name = {
                     let state = self.state.blocking_read();
@@ -679,6 +676,15 @@ impl Maolan {
                 }
                 self.state.blocking_write().message =
                     "Select a track before loading CLAP plugin".to_string();
+            }
+            Message::PluginFormatSelected(format) => {
+                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                let format = if format == PluginFormat::Lv2 {
+                    PluginFormat::Vst3
+                } else {
+                    format
+                };
+                self.plugin_format = format;
             }
             Message::UnloadClapPlugin(ref plugin_path) => {
                 let track_name = {
@@ -2734,6 +2740,7 @@ impl Maolan {
                     self.send(Action::TrackGetLv2Graph {
                         track_name: track_name.clone(),
                     }),
+                    self.send(Action::ListVst3Plugins),
                     self.send(Action::ListClapPlugins),
                 ]);
                 #[cfg(any(target_os = "windows", target_os = "macos"))]

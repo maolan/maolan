@@ -29,6 +29,8 @@ impl Maolan {
             stream::once(CLIENT.subscribe()).flat_map(|receiver| {
                 #[cfg(all(unix, not(target_os = "macos")))]
                 let initial = stream::once(async { Message::RefreshLv2Plugins });
+                #[cfg(all(unix, not(target_os = "macos")))]
+                let initial = initial.chain(stream::once(async { Message::RefreshVst3Plugins }));
                 #[cfg(any(target_os = "windows", target_os = "macos"))]
                 let initial = stream::once(async { Message::RefreshVst3Plugins });
                 let initial = initial.chain(stream::once(async { Message::RefreshClapPlugins }));
