@@ -95,14 +95,14 @@ pub fn plugin_disconnect_actions(
         .iter()
         .filter_map(|idx| connections.get(*idx))
         .map(|conn| match conn.kind {
-            maolan_engine::kind::Kind::Audio => Action::TrackDisconnectLv2Audio {
+            maolan_engine::kind::Kind::Audio => Action::TrackDisconnectPluginAudio {
                 track_name: track_name.to_string(),
                 from_node: conn.from_node.clone(),
                 from_port: conn.from_port,
                 to_node: conn.to_node.clone(),
                 to_port: conn.to_port,
             },
-            maolan_engine::kind::Kind::MIDI => Action::TrackDisconnectLv2Midi {
+            maolan_engine::kind::Kind::MIDI => Action::TrackDisconnectPluginMidi {
                 track_name: track_name.to_string(),
                 from_node: conn.from_node.clone(),
                 from_port: conn.from_port,

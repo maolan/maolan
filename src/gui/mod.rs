@@ -954,29 +954,31 @@ impl Maolan {
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    fn lv2_node_to_json(
-        node: &maolan_engine::message::Lv2GraphNode,
+    fn plugin_node_to_json(
+        node: &maolan_engine::message::PluginGraphNode,
         id_to_index: &std::collections::HashMap<usize, usize>,
     ) -> Option<Value> {
-        use maolan_engine::message::Lv2GraphNode;
+        use maolan_engine::message::PluginGraphNode;
         match node {
-            Lv2GraphNode::TrackInput => Some(json!({"type":"track_input"})),
-            Lv2GraphNode::TrackOutput => Some(json!({"type":"track_output"})),
-            Lv2GraphNode::PluginInstance(id) => id_to_index
+            PluginGraphNode::TrackInput => Some(json!({"type":"track_input"})),
+            PluginGraphNode::TrackOutput => Some(json!({"type":"track_output"})),
+            PluginGraphNode::Lv2PluginInstance(id) => id_to_index
                 .get(id)
                 .copied()
                 .map(|idx| json!({"type":"plugin","plugin_index":idx})),
+            PluginGraphNode::Vst3PluginInstance(_)
+            | PluginGraphNode::ClapPluginInstance(_) => None,
         }
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    fn lv2_node_from_json(v: &Value) -> Option<maolan_engine::message::Lv2GraphNode> {
-        use maolan_engine::message::Lv2GraphNode;
+    fn plugin_node_from_json(v: &Value) -> Option<maolan_engine::message::PluginGraphNode> {
+        use maolan_engine::message::PluginGraphNode;
         let t = v["type"].as_str()?;
         match t {
-            "track_input" => Some(Lv2GraphNode::TrackInput),
-            "track_output" => Some(Lv2GraphNode::TrackOutput),
-            "plugin" => Some(Lv2GraphNode::PluginInstance(
+            "track_input" => Some(PluginGraphNode::TrackInput),
+            "track_output" => Some(PluginGraphNode::TrackOutput),
+            "plugin" => Some(PluginGraphNode::Lv2PluginInstance(
                 v["plugin_index"].as_u64()? as usize
             )),
             _ => None,
@@ -1067,7 +1069,7 @@ impl Maolan {
     fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = state
-            .lv2_graph_track
+            .plugin_graph_track
             .clone()
             .unwrap_or_else(|| "(no track)".to_string());
 
@@ -1299,7 +1301,7 @@ impl Maolan {
     fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = state
-            .lv2_graph_track
+            .plugin_graph_track
             .clone()
             .unwrap_or_else(|| "(no track)".to_string());
         let mut vst3_items = Vec::new();

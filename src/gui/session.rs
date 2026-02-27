@@ -148,8 +148,8 @@ impl Maolan {
                 let conns_json: Vec<Value> = connections
                     .iter()
                     .filter_map(|c| {
-                        let from_node = Self::lv2_node_to_json(&c.from_node, &id_to_index)?;
-                        let to_node = Self::lv2_node_to_json(&c.to_node, &id_to_index)?;
+                        let from_node = Self::plugin_node_to_json(&c.from_node, &id_to_index)?;
+                        let to_node = Self::plugin_node_to_json(&c.to_node, &id_to_index)?;
                         Some(json!({
                             "from_node": from_node,
                             "from_port": c.from_port,
@@ -673,10 +673,10 @@ impl Maolan {
 
                 if let Some(connections_arr) = graph_v["connections"].as_array() {
                     for c in connections_arr {
-                        let Some(from_node) = Self::lv2_node_from_json(&c["from_node"]) else {
+                        let Some(from_node) = Self::plugin_node_from_json(&c["from_node"]) else {
                             continue;
                         };
-                        let Some(to_node) = Self::lv2_node_from_json(&c["to_node"]) else {
+                        let Some(to_node) = Self::plugin_node_from_json(&c["to_node"]) else {
                             continue;
                         };
                         let Some(kind) = Self::kind_from_json(&c["kind"]) else {
@@ -684,8 +684,8 @@ impl Maolan {
                         };
                         let from_port = c["from_port"].as_u64().unwrap_or(0) as usize;
                         let to_port = c["to_port"].as_u64().unwrap_or(0) as usize;
-                        let valid_node = |n: &maolan_engine::message::Lv2GraphNode| match n {
-                            maolan_engine::message::Lv2GraphNode::PluginInstance(idx) => {
+                        let valid_node = |n: &maolan_engine::message::PluginGraphNode| match n {
+                            maolan_engine::message::PluginGraphNode::Lv2PluginInstance(idx) => {
                                 *idx < plugin_count
                             }
                             _ => true,
@@ -694,14 +694,14 @@ impl Maolan {
                             continue;
                         }
                         match kind {
-                            Kind::Audio => restore_actions.push(Action::TrackConnectLv2Audio {
+                            Kind::Audio => restore_actions.push(Action::TrackConnectPluginAudio {
                                 track_name: track_name.clone(),
                                 from_node,
                                 from_port,
                                 to_node,
                                 to_port,
                             }),
-                            Kind::MIDI => restore_actions.push(Action::TrackConnectLv2Midi {
+                            Kind::MIDI => restore_actions.push(Action::TrackConnectPluginMidi {
                                 track_name: track_name.clone(),
                                 from_node,
                                 from_port,
@@ -759,7 +759,7 @@ impl Maolan {
                 .into_iter()
                 .flat_map(|track_name| {
                     vec![
-                        self.send(Action::TrackGetLv2Graph {
+                        self.send(Action::TrackGetPluginGraph {
                             track_name: track_name.clone(),
                         }),
                         self.send(Action::TrackSnapshotAllClapStates { track_name }),

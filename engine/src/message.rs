@@ -28,16 +28,20 @@ pub struct ClipMoveTo {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Lv2GraphNode {
+pub enum PluginGraphNode {
     TrackInput,
     TrackOutput,
-    PluginInstance(usize),
+    Lv2PluginInstance(usize),
+    Vst3PluginInstance(usize),
+    ClapPluginInstance(usize),
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lv2GraphPlugin {
+    pub node: PluginGraphNode,
     pub instance_id: usize,
+    pub format: String,
     pub uri: String,
     pub name: String,
     pub audio_inputs: usize,
@@ -73,9 +77,9 @@ pub struct Lv2PluginState {
 #[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lv2GraphConnection {
-    pub from_node: Lv2GraphNode,
+    pub from_node: PluginGraphNode,
     pub from_port: usize,
-    pub to_node: Lv2GraphNode,
+    pub to_node: PluginGraphNode,
     pub to_port: usize,
     pub kind: Kind,
 }
@@ -194,45 +198,45 @@ pub enum Action {
         instance_id: usize,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
-    TrackGetLv2Graph {
+    TrackGetPluginGraph {
         track_name: String,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
-    TrackLv2Graph {
+    TrackPluginGraph {
         track_name: String,
         plugins: Vec<Lv2GraphPlugin>,
         connections: Vec<Lv2GraphConnection>,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
-    TrackConnectLv2Audio {
+    TrackConnectPluginAudio {
         track_name: String,
-        from_node: Lv2GraphNode,
+        from_node: PluginGraphNode,
         from_port: usize,
-        to_node: Lv2GraphNode,
+        to_node: PluginGraphNode,
         to_port: usize,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
-    TrackConnectLv2Midi {
+    TrackConnectPluginMidi {
         track_name: String,
-        from_node: Lv2GraphNode,
+        from_node: PluginGraphNode,
         from_port: usize,
-        to_node: Lv2GraphNode,
+        to_node: PluginGraphNode,
         to_port: usize,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
-    TrackDisconnectLv2Audio {
+    TrackDisconnectPluginAudio {
         track_name: String,
-        from_node: Lv2GraphNode,
+        from_node: PluginGraphNode,
         from_port: usize,
-        to_node: Lv2GraphNode,
+        to_node: PluginGraphNode,
         to_port: usize,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
-    TrackDisconnectLv2Midi {
+    TrackDisconnectPluginMidi {
         track_name: String,
-        from_node: Lv2GraphNode,
+        from_node: PluginGraphNode,
         from_port: usize,
-        to_node: Lv2GraphNode,
+        to_node: PluginGraphNode,
         to_port: usize,
     },
     #[cfg(all(unix, not(target_os = "macos")))]

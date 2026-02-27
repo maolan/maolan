@@ -1570,15 +1570,15 @@ impl Engine {
                 }
             }
             #[cfg(all(unix, not(target_os = "macos")))]
-            Action::TrackGetLv2Graph { ref track_name } => {
+            Action::TrackGetPluginGraph { ref track_name } => {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
                         let (plugins, connections) = {
                             let track = track.lock();
-                            (track.lv2_graph_plugins(), track.lv2_graph_connections())
+                            (track.plugin_graph_plugins(), track.plugin_graph_connections())
                         };
-                        self.notify_clients(Ok(Action::TrackLv2Graph {
+                        self.notify_clients(Ok(Action::TrackPluginGraph {
                             track_name: track_name.clone(),
                             plugins,
                             connections,
@@ -1594,9 +1594,9 @@ impl Engine {
                 }
             }
             #[cfg(all(unix, not(target_os = "macos")))]
-            Action::TrackLv2Graph { .. } => {}
+            Action::TrackPluginGraph { .. } => {}
             #[cfg(all(unix, not(target_os = "macos")))]
-            Action::TrackConnectLv2Audio {
+            Action::TrackConnectPluginAudio {
                 ref track_name,
                 ref from_node,
                 from_port,
@@ -1624,7 +1624,7 @@ impl Engine {
                 }
             }
             #[cfg(all(unix, not(target_os = "macos")))]
-            Action::TrackConnectLv2Midi {
+            Action::TrackConnectPluginMidi {
                 ref track_name,
                 ref from_node,
                 from_port,
@@ -1652,7 +1652,7 @@ impl Engine {
                 }
             }
             #[cfg(all(unix, not(target_os = "macos")))]
-            Action::TrackDisconnectLv2Audio {
+            Action::TrackDisconnectPluginAudio {
                 ref track_name,
                 ref from_node,
                 from_port,
@@ -1680,7 +1680,7 @@ impl Engine {
                 }
             }
             #[cfg(all(unix, not(target_os = "macos")))]
-            Action::TrackDisconnectLv2Midi {
+            Action::TrackDisconnectPluginMidi {
                 ref track_name,
                 ref from_node,
                 from_port,

@@ -17,7 +17,7 @@ use maolan_engine::clap::ClapPluginState;
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::lv2::Lv2PluginInfo;
 #[cfg(all(unix, not(target_os = "macos")))]
-use maolan_engine::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin};
+use maolan_engine::message::{Lv2GraphConnection, PluginGraphNode, Lv2GraphPlugin};
 use maolan_engine::vst3::Vst3PluginInfo;
 #[cfg(target_os = "freebsd")]
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
@@ -240,8 +240,8 @@ pub struct HW {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Debug, Clone)]
-pub struct Lv2Connecting {
-    pub from_node: Lv2GraphNode,
+pub struct PluginConnecting {
+    pub from_node: PluginGraphNode,
     pub from_port: usize,
     pub kind: Kind,
     pub point: Point,
@@ -353,21 +353,21 @@ pub struct StateData {
     pub clap_plugins: Vec<ClapPluginInfo>,
     pub clap_plugins_by_track: HashMap<String, Vec<String>>,
     pub clap_states_by_track: HashMap<String, HashMap<String, ClapPluginState>>,
-    pub lv2_graph_track: Option<String>,
+    pub plugin_graph_track: Option<String>,
     #[cfg(all(unix, not(target_os = "macos")))]
-    pub lv2_graph_plugins: Vec<Lv2GraphPlugin>,
+    pub plugin_graph_plugins: Vec<Lv2GraphPlugin>,
     #[cfg(all(unix, not(target_os = "macos")))]
-    pub lv2_graph_connections: Vec<Lv2GraphConnection>,
+    pub plugin_graph_connections: Vec<Lv2GraphConnection>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub lv2_graphs_by_track: HashMap<String, (Vec<Lv2GraphPlugin>, Vec<Lv2GraphConnection>)>,
-    pub lv2_graph_selected_connections: std::collections::HashSet<usize>,
-    pub lv2_graph_selected_plugin: Option<usize>,
-    pub lv2_graph_plugin_positions: HashMap<usize, Point>,
+    pub plugin_graph_selected_connections: std::collections::HashSet<usize>,
+    pub plugin_graph_selected_plugin: Option<usize>,
+    pub plugin_graph_plugin_positions: HashMap<usize, Point>,
     #[cfg(all(unix, not(target_os = "macos")))]
-    pub lv2_graph_connecting: Option<Lv2Connecting>,
+    pub plugin_graph_connecting: Option<PluginConnecting>,
     #[cfg(all(unix, not(target_os = "macos")))]
-    pub lv2_graph_moving_plugin: Option<MovingPlugin>,
-    pub lv2_graph_last_plugin_click: Option<(usize, Instant)>,
+    pub plugin_graph_moving_plugin: Option<MovingPlugin>,
+    pub plugin_graph_last_plugin_click: Option<(usize, Instant)>,
     pub connections_last_track_click: Option<(String, Instant)>,
     pub clip_rename_dialog: Option<ClipRenameDialog>,
     pub track_rename_dialog: Option<TrackRenameDialog>,
@@ -451,21 +451,21 @@ impl Default for StateData {
             clap_plugins: vec![],
             clap_plugins_by_track: HashMap::new(),
             clap_states_by_track: HashMap::new(),
-            lv2_graph_track: None,
+            plugin_graph_track: None,
             #[cfg(all(unix, not(target_os = "macos")))]
-            lv2_graph_plugins: vec![],
+            plugin_graph_plugins: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]
-            lv2_graph_connections: vec![],
+            plugin_graph_connections: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_graphs_by_track: HashMap::new(),
-            lv2_graph_selected_connections: HashSet::new(),
-            lv2_graph_selected_plugin: None,
-            lv2_graph_plugin_positions: HashMap::new(),
+            plugin_graph_selected_connections: HashSet::new(),
+            plugin_graph_selected_plugin: None,
+            plugin_graph_plugin_positions: HashMap::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
-            lv2_graph_connecting: None,
+            plugin_graph_connecting: None,
             #[cfg(all(unix, not(target_os = "macos")))]
-            lv2_graph_moving_plugin: None,
-            lv2_graph_last_plugin_click: None,
+            plugin_graph_moving_plugin: None,
+            plugin_graph_last_plugin_click: None,
             connections_last_track_click: None,
             clip_rename_dialog: None,
             track_rename_dialog: None,
