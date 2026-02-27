@@ -12,6 +12,7 @@ pub use connection::Connection;
 use cpal::traits::{DeviceTrait, HostTrait};
 use iced::{Length, Point};
 use maolan_engine::kind::Kind;
+use maolan_engine::clap::ClapPluginInfo;
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::lv2::Lv2PluginInfo;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -348,6 +349,7 @@ pub struct StateData {
     #[cfg(all(unix, not(target_os = "macos")))]
     pub lv2_plugins: Vec<Lv2PluginInfo>,
     pub vst3_plugins: Vec<Vst3PluginInfo>,
+    pub clap_plugins: Vec<ClapPluginInfo>,
     pub lv2_graph_track: Option<String>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub lv2_graph_plugins: Vec<Lv2GraphPlugin>,
@@ -443,6 +445,7 @@ impl Default for StateData {
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_plugins: vec![],
             vst3_plugins: vec![],
+            clap_plugins: vec![],
             lv2_graph_track: None,
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_graph_plugins: vec![],

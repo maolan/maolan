@@ -2,6 +2,7 @@
 use crate::lv2::Lv2PluginInfo;
 use crate::midi::io::MidiEvent;
 use crate::{kind::Kind, mutex::UnsafeMutex, track::Track};
+use crate::clap::ClapPluginInfo;
 use crate::vst3::Vst3PluginInfo;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
@@ -240,6 +241,12 @@ pub enum Action {
     Lv2Plugins(Vec<Lv2PluginInfo>),
     ListVst3Plugins,
     Vst3Plugins(Vec<Vst3PluginInfo>),
+    ListClapPlugins,
+    ClapPlugins(Vec<ClapPluginInfo>),
+    TrackLoadClapPlugin {
+        track_name: String,
+        plugin_path: String,
+    },
     TrackLoadVst3Plugin {
         track_name: String,
         plugin_path: String,

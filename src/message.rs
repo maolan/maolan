@@ -166,6 +166,10 @@ pub enum Message {
     SelectVst3Plugin(String),
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     LoadSelectedVst3Plugins,
+    RefreshClapPlugins,
+    FilterClapPlugin(String),
+    SelectClapPlugin(String),
+    LoadSelectedClapPlugins,
 
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     HWSelected(AudioDeviceOption),

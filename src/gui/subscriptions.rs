@@ -31,6 +31,7 @@ impl Maolan {
                 let initial = stream::once(async { Message::RefreshLv2Plugins });
                 #[cfg(any(target_os = "windows", target_os = "macos"))]
                 let initial = stream::once(async { Message::RefreshVst3Plugins });
+                let initial = initial.chain(stream::once(async { Message::RefreshClapPlugins }));
                 initial.chain(stream::unfold(
                     (receiver, HashMap::<String, Vec<f32>>::new()),
                     |(mut rx, mut last_meters)| async move {

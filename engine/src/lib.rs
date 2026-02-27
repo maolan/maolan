@@ -8,11 +8,10 @@ mod engine;
 mod hw;
 mod hw_worker;
 pub mod kind;
-#[cfg(all(unix, not(target_os = "macos")))]
-pub mod lv2;
 pub mod message;
 mod midi;
 pub mod mutex;
+pub mod plugins;
 #[cfg(target_os = "freebsd")]
 mod oss_worker;
 mod routing;
@@ -22,8 +21,12 @@ pub mod state;
 mod track;
 #[cfg(target_os = "windows")]
 mod wasapi_worker;
-pub mod vst3;
 pub mod worker;
+
+pub use plugins::clap;
+#[cfg(all(unix, not(target_os = "macos")))]
+pub use plugins::lv2;
+pub use plugins::vst3;
 
 use tokio::sync::mpsc::{Sender, channel};
 use tokio::task::JoinHandle;

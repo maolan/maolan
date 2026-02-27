@@ -22,9 +22,6 @@ use maolan_engine::{
 };
 use midly::{MetaMessage, Smf, Timing, TrackEventKind};
 use serde_json::{Value, json};
-#[cfg(all(unix, not(target_os = "macos")))]
-use std::collections::BTreeSet;
-#[cfg(any(target_os = "windows", target_os = "macos"))]
 use std::collections::BTreeSet;
 use std::collections::{HashMap, HashSet};
 use std::{
@@ -78,6 +75,8 @@ pub struct Maolan {
     vst3_plugin_filter: String,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     selected_vst3_plugins: BTreeSet<String>,
+    clap_plugin_filter: String,
+    selected_clap_plugins: BTreeSet<String>,
     session_dir: Option<PathBuf>,
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
@@ -140,6 +139,8 @@ impl Default for Maolan {
             vst3_plugin_filter: String::new(),
             #[cfg(any(target_os = "windows", target_os = "macos"))]
             selected_vst3_plugins: BTreeSet::new(),
+            clap_plugin_filter: String::new(),
+            selected_clap_plugins: BTreeSet::new(),
             session_dir: None,
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
@@ -1104,6 +1105,42 @@ impl Maolan {
                 .on_press(Message::LoadSelectedLv2Plugins)
         };
 
+        let mut clap_list = column![];
+        let clap_filter = self.clap_plugin_filter.trim().to_lowercase();
+        for plugin in &state.clap_plugins {
+            if !clap_filter.is_empty() {
+                let name = plugin.name.to_lowercase();
+                let path = plugin.path.to_lowercase();
+                if !name.contains(&clap_filter) && !path.contains(&clap_filter) {
+                    continue;
+                }
+            }
+            let is_selected = self.selected_clap_plugins.contains(&plugin.path);
+            let row_content = row![
+                text(if is_selected { "[x]" } else { "[ ]" }),
+                text(plugin.name.clone()).width(Length::Fill),
+            ]
+            .spacing(8)
+            .width(Length::Fill);
+            let row_button = if is_selected {
+                button(row_content).style(button::primary)
+            } else {
+                button(row_content).style(button::text)
+            };
+            clap_list = clap_list.push(
+                row_button
+                    .width(Length::Fill)
+                    .on_press(Message::SelectClapPlugin(plugin.path.clone())),
+            );
+        }
+
+        let load_clap_button = if self.selected_clap_plugins.is_empty() {
+            button("Load CLAP")
+        } else {
+            button(text(format!("Load CLAP ({})", self.selected_clap_plugins.len())))
+                .on_press(Message::LoadSelectedClapPlugins)
+        };
+
         container(
             column![
                 text(format!("Track Plugins: {title}")),
@@ -1111,8 +1148,16 @@ impl Maolan {
                     .on_input(Message::FilterLv2Plugins)
                     .width(Length::Fill),
                 scrollable(lv2_list).height(Length::Fill),
+                row![load_button, button("Rescan LV2").on_press(Message::RefreshLv2Plugins)]
+                    .spacing(10),
+                text("CLAP"),
+                text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
+                    .on_input(Message::FilterClapPlugin)
+                    .width(Length::Fill),
+                scrollable(clap_list).height(Length::Fill),
                 row![
-                    load_button,
+                    load_clap_button,
+                    button("Rescan CLAP").on_press(Message::RefreshClapPlugins),
                     button("Close")
                         .on_press(Message::Cancel)
                         .style(button::secondary),
@@ -1168,6 +1213,40 @@ impl Maolan {
             button(text(format!("Load ({})", self.selected_vst3_plugins.len())))
                 .on_press(Message::LoadSelectedVst3Plugins)
         };
+        let mut clap_list = column![];
+        let clap_filter = self.clap_plugin_filter.trim().to_lowercase();
+        for plugin in &state.clap_plugins {
+            if !clap_filter.is_empty() {
+                let name = plugin.name.to_lowercase();
+                let path = plugin.path.to_lowercase();
+                if !name.contains(&clap_filter) && !path.contains(&clap_filter) {
+                    continue;
+                }
+            }
+            let is_selected = self.selected_clap_plugins.contains(&plugin.path);
+            let row_content = row![
+                text(if is_selected { "[x]" } else { "[ ]" }),
+                text(plugin.name.clone()).width(Length::Fill),
+            ]
+            .spacing(8)
+            .width(Length::Fill);
+            let row_button = if is_selected {
+                button(row_content).style(button::primary)
+            } else {
+                button(row_content).style(button::text)
+            };
+            clap_list = clap_list.push(
+                row_button
+                    .width(Length::Fill)
+                    .on_press(Message::SelectClapPlugin(plugin.path.clone())),
+            );
+        }
+        let load_clap_button = if self.selected_clap_plugins.is_empty() {
+            button("Load CLAP")
+        } else {
+            button(text(format!("Load CLAP ({})", self.selected_clap_plugins.len())))
+                .on_press(Message::LoadSelectedClapPlugins)
+        };
         container(
             column![
                 text(format!("Track Plugins: {title}")),
@@ -1175,9 +1254,16 @@ impl Maolan {
                     .on_input(Message::FilterVst3Plugins)
                     .width(Length::Fill),
                 scrollable(vst3_list).height(Length::Fill),
+                row![load_button, button("Rescan VST3").on_press(Message::RefreshVst3Plugins)]
+                    .spacing(10),
+                text("CLAP"),
+                text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
+                    .on_input(Message::FilterClapPlugin)
+                    .width(Length::Fill),
+                scrollable(clap_list).height(Length::Fill),
                 row![
-                    load_button,
-                    button("Rescan").on_press(Message::RefreshVst3Plugins),
+                    load_clap_button,
+                    button("Rescan CLAP").on_press(Message::RefreshClapPlugins),
                     button("Close")
                         .on_press(Message::Cancel)
                         .style(button::secondary),

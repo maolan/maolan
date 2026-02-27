@@ -1724,6 +1724,23 @@ impl Engine {
                 return;
             }
             Action::Vst3Plugins(_) => {}
+            Action::ListClapPlugins => {
+                self.notify_clients(Ok(Action::ClapPlugins(crate::clap::list_plugins())))
+                    .await;
+                return;
+            }
+            Action::ClapPlugins(_) => {}
+            Action::TrackLoadClapPlugin {
+                ref track_name,
+                ref plugin_path,
+            } => {
+                let _ = (track_name, plugin_path);
+                self.notify_clients(Err(
+                    "CLAP hosting is not implemented yet (scan/list is available)".to_string(),
+                ))
+                .await;
+                return;
+            }
             Action::TrackLoadVst3Plugin {
                 ref track_name,
                 ref plugin_path,
@@ -2621,6 +2638,9 @@ impl Engine {
                         self.handle_request(a).await;
                     }
                     Action::ListVst3Plugins => {
+                        self.handle_request(a).await;
+                    }
+                    Action::ListClapPlugins => {
                         self.handle_request(a).await;
                     }
                     _ => {
