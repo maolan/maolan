@@ -198,6 +198,14 @@ impl Vst3Processor {
         &self.audio_outputs
     }
 
+    pub fn midi_input_count(&self) -> usize {
+        1
+    }
+
+    pub fn midi_output_count(&self) -> usize {
+        1
+    }
+
     pub fn setup_audio_ports(&self) {
         for port in &self.audio_inputs {
             port.setup();

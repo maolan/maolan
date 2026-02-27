@@ -260,6 +260,14 @@ impl ClapProcessor {
         &self.audio_outputs
     }
 
+    pub fn midi_input_count(&self) -> usize {
+        self.midi_input_ports
+    }
+
+    pub fn midi_output_count(&self) -> usize {
+        self.midi_output_ports
+    }
+
     pub fn path(&self) -> &str {
         &self.path
     }

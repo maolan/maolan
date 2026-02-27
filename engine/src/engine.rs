@@ -1606,7 +1606,7 @@ impl Engine {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        if let Err(e) = track.lock().connect_lv2_audio(
+                        if let Err(e) = track.lock().connect_plugin_audio(
                             from_node.clone(),
                             from_port,
                             to_node.clone(),
@@ -1634,7 +1634,7 @@ impl Engine {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        if let Err(e) = track.lock().connect_lv2_midi(
+                        if let Err(e) = track.lock().connect_plugin_midi(
                             from_node.clone(),
                             from_port,
                             to_node.clone(),
@@ -1662,7 +1662,7 @@ impl Engine {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        if let Err(e) = track.lock().disconnect_lv2_audio(
+                        if let Err(e) = track.lock().disconnect_plugin_audio(
                             from_node.clone(),
                             from_port,
                             to_node.clone(),
@@ -1690,7 +1690,7 @@ impl Engine {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        if let Err(e) = track.lock().disconnect_lv2_midi(
+                        if let Err(e) = track.lock().disconnect_plugin_midi(
                             from_node.clone(),
                             from_port,
                             to_node.clone(),
