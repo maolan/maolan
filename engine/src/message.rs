@@ -161,6 +161,12 @@ pub enum Action {
     TrackToggleSolo(String),
     TrackToggleInputMonitor(String),
     TrackToggleDiskMonitor(String),
+    PianoKey {
+        track_name: String,
+        note: u8,
+        velocity: u8,
+        on: bool,
+    },
     #[cfg(all(unix, not(target_os = "macos")))]
     TrackLoadLv2Plugin {
         track_name: String,

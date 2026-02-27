@@ -7,7 +7,7 @@ mod view;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
     message::{DraggedClip, Message, Show},
-    state::{PianoRollControllerPoint, PianoRollNote, State, StateData},
+    state::{PianoControllerPoint, PianoNote, State, StateData},
     toolbar, track_rename, workspace,
 };
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -798,10 +798,10 @@ impl Maolan {
         Some((Box::new(mapper), ppq, max_tick))
     }
 
-    fn parse_midi_clip_for_piano_roll(
+    fn parse_midi_clip_for_piano(
         path: &Path,
         sample_rate: f64,
-    ) -> std::io::Result<(Vec<PianoRollNote>, Vec<PianoRollControllerPoint>, usize)> {
+    ) -> std::io::Result<(Vec<PianoNote>, Vec<PianoControllerPoint>, usize)> {
         let bytes = fs::read(path)?;
         let smf = Smf::parse(&bytes).map_err(|e| {
             io::Error::other(format!("Failed to parse MIDI '{}': {e}", path.display()))
@@ -811,8 +811,8 @@ impl Maolan {
             return Ok((vec![], vec![], sample_rate.max(1.0) as usize));
         };
 
-        let mut notes = Vec::<PianoRollNote>::new();
-        let mut controllers = Vec::<PianoRollControllerPoint>::new();
+        let mut notes = Vec::<PianoNote>::new();
+        let mut controllers = Vec::<PianoControllerPoint>::new();
         let mut active_notes: HashMap<(u8, u8), Vec<(u64, u8)>> = HashMap::new();
 
         for track in &smf.tracks {
@@ -832,7 +832,7 @@ impl Maolan {
                                     let start_sample = ticks_to_samples(start_tick);
                                     let end_sample = ticks_to_samples(tick);
                                     let length_samples = end_sample.saturating_sub(start_sample).max(1);
-                                    notes.push(PianoRollNote {
+                                    notes.push(PianoNote {
                                         start_sample,
                                         length_samples,
                                         pitch,
@@ -855,7 +855,7 @@ impl Maolan {
                                 let start_sample = ticks_to_samples(start_tick);
                                 let end_sample = ticks_to_samples(tick);
                                 let length_samples = end_sample.saturating_sub(start_sample).max(1);
-                                notes.push(PianoRollNote {
+                                notes.push(PianoNote {
                                     start_sample,
                                     length_samples,
                                     pitch,
@@ -865,7 +865,7 @@ impl Maolan {
                             }
                         }
                         midly::MidiMessage::Controller { controller, value } => {
-                            controllers.push(PianoRollControllerPoint {
+                            controllers.push(PianoControllerPoint {
                                 sample: ticks_to_samples(tick),
                                 controller: controller.as_int(),
                                 value: value.as_int(),
@@ -883,7 +883,7 @@ impl Maolan {
                 let start_sample = ticks_to_samples(start_tick);
                 let end_sample = ticks_to_samples(start_tick.saturating_add(ppq / 8));
                 let length_samples = end_sample.saturating_sub(start_sample).max(1);
-                notes.push(PianoRollNote {
+                notes.push(PianoNote {
                     start_sample,
                     length_samples,
                     pitch,

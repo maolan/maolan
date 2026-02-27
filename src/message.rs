@@ -109,6 +109,8 @@ pub enum Message {
     RecordingPreviewPeaksTick,
     ToggleTransport,
     ZoomVisibleBarsChanged(f32),
+    PianoZoomXChanged(f32),
+    PianoZoomYChanged(f32),
     TracksResizeHover(bool),
     MixerResizeHover(bool),
 
@@ -135,11 +137,13 @@ pub enum Message {
     Workspace,
     Connections,
     OpenTrackPlugins(String),
-    OpenMidiPianoRoll {
+    OpenMidiPiano {
         track_idx: String,
         clip_idx: usize,
     },
-    ClosePianoRoll,
+    ClosePiano,
+    PianoKeyPressed(u8),
+    PianoKeyReleased(u8),
     #[cfg(all(unix, not(target_os = "macos")))]
     RefreshLv2Plugins,
     #[cfg(all(unix, not(target_os = "macos")))]

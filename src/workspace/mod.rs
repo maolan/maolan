@@ -1,6 +1,5 @@
 mod editor;
 mod mixer;
-mod piano_roll;
 mod ruler;
 mod tempo;
 mod tracks;
@@ -8,6 +7,7 @@ mod tracks;
 use crate::{
     message::{DraggedClip, Message},
     state::State,
+    widget::piano,
 };
 use iced::{
     Background, Color, Element, Length, Point,
@@ -19,7 +19,7 @@ pub struct Workspace {
     state: State,
     editor: editor::Editor,
     mixer: mixer::Mixer,
-    piano_roll: piano_roll::PianoRoll,
+    piano: piano::Piano,
     ruler: ruler::Ruler,
     tempo: tempo::Tempo,
     tracks: tracks::Tracks,
@@ -31,7 +31,7 @@ impl Workspace {
             state: state.clone(),
             editor: editor::Editor::new(state.clone()),
             mixer: mixer::Mixer::new(state.clone()),
-            piano_roll: piano_roll::PianoRoll::new(state.clone()),
+            piano: piano::Piano::new(state.clone()),
             ruler: ruler::Ruler::new(),
             tempo: tempo::Tempo::new(),
             tracks: tracks::Tracks::new(state.clone()),
@@ -242,11 +242,11 @@ impl Workspace {
         .into()
     }
 
-    pub fn piano_roll_view(
+    pub fn piano_view(
         &self,
         pixels_per_sample: f32,
         samples_per_bar: f32,
     ) -> Element<'_, Message> {
-        self.piano_roll.view(pixels_per_sample, samples_per_bar)
+        self.piano.view(pixels_per_sample, samples_per_bar)
     }
 }

@@ -228,7 +228,7 @@ pub enum View {
     Workspace,
     Connections,
     TrackPlugins,
-    PianoRoll,
+    Piano,
 }
 
 #[derive(Debug, Clone)]
@@ -269,7 +269,7 @@ pub struct TrackRenameDialog {
 }
 
 #[derive(Debug, Clone)]
-pub struct PianoRollNote {
+pub struct PianoNote {
     pub start_sample: usize,
     pub length_samples: usize,
     pub pitch: u8,
@@ -278,7 +278,7 @@ pub struct PianoRollNote {
 }
 
 #[derive(Debug, Clone)]
-pub struct PianoRollControllerPoint {
+pub struct PianoControllerPoint {
     pub sample: usize,
     pub controller: u8,
     pub value: u8,
@@ -286,13 +286,13 @@ pub struct PianoRollControllerPoint {
 }
 
 #[derive(Debug, Clone)]
-pub struct PianoRollData {
+pub struct PianoData {
     pub track_idx: String,
     pub clip_idx: usize,
     pub clip_name: String,
     pub clip_length_samples: usize,
-    pub notes: Vec<PianoRollNote>,
-    pub controllers: Vec<PianoRollControllerPoint>,
+    pub notes: Vec<PianoNote>,
+    pub controllers: Vec<PianoControllerPoint>,
 }
 
 #[derive(Debug)]
@@ -368,7 +368,9 @@ pub struct StateData {
     pub connections_last_track_click: Option<(String, Instant)>,
     pub clip_rename_dialog: Option<ClipRenameDialog>,
     pub track_rename_dialog: Option<TrackRenameDialog>,
-    pub piano_roll: Option<PianoRollData>,
+    pub piano: Option<PianoData>,
+    pub piano_zoom_x: f32,
+    pub piano_zoom_y: f32,
 }
 
 impl Default for StateData {
@@ -459,7 +461,9 @@ impl Default for StateData {
             connections_last_track_click: None,
             clip_rename_dialog: None,
             track_rename_dialog: None,
-            piano_roll: None,
+            piano: None,
+            piano_zoom_x: 20.0,
+            piano_zoom_y: 1.0,
         }
     }
 }

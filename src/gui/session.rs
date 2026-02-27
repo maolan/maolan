@@ -1,5 +1,8 @@
 use super::{CLIENT, Maolan};
-use crate::{message::Message, state::ConnectionViewSelection};
+use crate::{
+    message::Message,
+    state::{Connection, ConnectionViewSelection},
+};
 use iced::{Length, Point, Task};
 use maolan_engine::{
     kind::Kind,
@@ -561,6 +564,25 @@ impl Maolan {
                 io::ErrorKind::InvalidInput,
                 "'tracks' is not an array",
             ));
+        }
+
+        if let Some(connections_value) = session.get("connections") {
+            match serde_json::from_value::<Vec<Connection>>(connections_value.clone()) {
+                Ok(saved_connections) => {
+                    for conn in saved_connections {
+                        restore_actions.push(Action::Connect {
+                            from_track: conn.from_track,
+                            from_port: conn.from_port,
+                            to_track: conn.to_track,
+                            to_port: conn.to_port,
+                            kind: conn.kind,
+                        });
+                    }
+                }
+                Err(e) => {
+                    warnings.push(format!("Failed to parse 'connections': {e}"));
+                }
+            }
         }
         #[cfg(all(unix, not(target_os = "macos")))]
         if let Some(graphs) = session["graphs"].as_object() {

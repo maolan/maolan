@@ -2,7 +2,7 @@ use super::{CLIENT, MIN_CLIP_WIDTH_PX, Maolan, platform};
 use crate::{
     connections,
     message::Message,
-    state::{ConnectionViewSelection, HW, PianoRollData, Resizing, Track, View},
+    state::{ConnectionViewSelection, HW, PianoData, Resizing, Track, View},
 };
 use iced::widget::Id;
 use iced::{Length, Point, Task, mouse};
@@ -184,7 +184,7 @@ impl Maolan {
                         state.lv2_graphs_by_track.clear();
                     }
                     state.message = "New session".to_string();
-                    state.piano_roll = None;
+                    state.piano = None;
                 }
                 return Task::batch(tasks);
             }
@@ -298,6 +298,44 @@ impl Maolan {
             }
             Message::ZoomVisibleBarsChanged(value) => {
                 self.zoom_visible_bars = value.clamp(1.0, 256.0);
+            }
+            Message::PianoZoomXChanged(value) => {
+                self.state.blocking_write().piano_zoom_x = value.clamp(1.0, 127.0);
+            }
+            Message::PianoZoomYChanged(value) => {
+                self.state.blocking_write().piano_zoom_y = value.clamp(0.25, 6.0);
+            }
+            Message::PianoKeyPressed(note) => {
+                let track_name = self
+                    .state
+                    .blocking_read()
+                    .piano
+                    .as_ref()
+                    .map(|p| p.track_idx.clone());
+                if let Some(track_name) = track_name {
+                    return self.send(Action::PianoKey {
+                        track_name,
+                        note,
+                        velocity: 100,
+                        on: true,
+                    });
+                }
+            }
+            Message::PianoKeyReleased(note) => {
+                let track_name = self
+                    .state
+                    .blocking_read()
+                    .piano
+                    .as_ref()
+                    .map(|p| p.track_idx.clone());
+                if let Some(track_name) = track_name {
+                    return self.send(Action::PianoKey {
+                        track_name,
+                        note,
+                        velocity: 0,
+                        on: false,
+                    });
+                }
             }
             Message::TracksResizeHover(hovered) => {
                 self.tracks_resize_hovered = hovered;
@@ -1442,7 +1480,7 @@ impl Maolan {
                             }
                         }
                     }
-                    crate::state::View::PianoRoll => {
+                    crate::state::View::Piano => {
                         return self.update(Message::RemoveSelected);
                     }
                 }
@@ -2284,7 +2322,7 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.view = View::Connections;
             }
-            Message::OpenMidiPianoRoll {
+            Message::OpenMidiPiano {
                 ref track_idx,
                 clip_idx,
             } => {
@@ -2308,10 +2346,10 @@ impl Maolan {
                         clip_path
                     }
                 };
-                match Self::parse_midi_clip_for_piano_roll(&path, self.playback_rate_hz) {
+                match Self::parse_midi_clip_for_piano(&path, self.playback_rate_hz) {
                     Ok((notes, controllers, parsed_len)) => {
                         let mut state = self.state.blocking_write();
-                        state.piano_roll = Some(PianoRollData {
+                        state.piano = Some(PianoData {
                             track_idx: track_idx.clone(),
                             clip_idx,
                             clip_name: clip_name.clone(),
@@ -2319,7 +2357,7 @@ impl Maolan {
                             notes,
                             controllers,
                         });
-                        state.view = View::PianoRoll;
+                        state.view = View::Piano;
                         state.message = format!("Opened piano roll for '{}'", clip_name);
                     }
                     Err(e) => {
@@ -2328,7 +2366,7 @@ impl Maolan {
                     }
                 }
             }
-            Message::ClosePianoRoll => {
+            Message::ClosePiano => {
                 let mut state = self.state.blocking_write();
                 state.view = View::Workspace;
             }

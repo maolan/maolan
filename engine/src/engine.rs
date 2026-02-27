@@ -1448,6 +1448,18 @@ impl Engine {
                     track.lock().toggle_disk_monitor();
                 }
             }
+            Action::PianoKey {
+                ref track_name,
+                note,
+                velocity,
+                on,
+            } => {
+                if let Some(track) = self.state.lock().tracks.get(track_name) {
+                    let status = if on { 0x90 } else { 0x80 };
+                    let event = MidiEvent::new(0, vec![status, note.min(127), velocity.min(127)]);
+                    track.lock().push_hw_midi_events(&[event]);
+                }
+            }
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLoadLv2Plugin {
                 ref track_name,
@@ -2587,7 +2599,8 @@ impl Engine {
                     | Action::SetPunchEnabled(_)
                     | Action::SetPunchRange(_)
                     | Action::SetRecordEnabled(_)
-                    | Action::SetSessionPath(_) => {
+                    | Action::SetSessionPath(_)
+                    | Action::PianoKey { .. } => {
                         self.handle_request(a).await;
                     }
                     #[cfg(all(unix, not(target_os = "macos")))]
