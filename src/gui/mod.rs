@@ -173,6 +173,14 @@ impl Default for Maolan {
 }
 
 impl Maolan {
+    pub fn title(&self) -> String {
+        self.session_dir
+            .as_ref()
+            .and_then(|path| path.file_name().map(|name| name.to_string_lossy().to_string()))
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "<New>".to_string())
+    }
+
     fn samples_per_beat(&self) -> f64 {
         self.playback_rate_hz * 0.5
     }

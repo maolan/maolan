@@ -43,7 +43,7 @@ fn run_app() -> iced::Result {
     };
 
     iced::application(Maolan::default, Maolan::update, Maolan::view)
-        .title("Maolan")
+        .title(Maolan::title)
         .settings(settings)
         .theme(Theme::Dark)
         .font(LUCIDE_FONT_BYTES)
