@@ -52,11 +52,16 @@ impl Maolan {
                         View::TrackPlugins => self.connections.view(),
                     };
 
+                    let has_session_end = state.tracks.iter().any(|track| {
+                        !track.audio.clips.is_empty() || !track.midi.clips.is_empty()
+                    });
+
                     let mut content = column![
                         self.menu.view(),
                         self.toolbar.view(
                             self.playing,
                             self.record_armed,
+                            has_session_end,
                             self.loop_range_samples.is_some(),
                             self.loop_enabled,
                             self.punch_range_samples.is_some(),

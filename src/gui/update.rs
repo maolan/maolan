@@ -206,6 +206,35 @@ impl Maolan {
                 self.stop_recording_preview();
                 return self.send(Action::Stop);
             }
+            Message::JumpToStart => {
+                self.transport_samples = 0.0;
+                return self.send(Action::TransportPosition(0));
+            }
+            Message::JumpToEnd => {
+                let end_sample = {
+                    let state = self.state.blocking_read();
+                    state
+                        .tracks
+                        .iter()
+                        .flat_map(|track| {
+                            let audio = track
+                                .audio
+                                .clips
+                                .iter()
+                                .map(|clip| clip.start.saturating_add(clip.length));
+                            let midi = track
+                                .midi
+                                .clips
+                                .iter()
+                                .map(|clip| clip.start.saturating_add(clip.length));
+                            audio.chain(midi)
+                        })
+                        .max()
+                        .unwrap_or(0)
+                };
+                self.transport_samples = end_sample as f64;
+                return self.send(Action::TransportPosition(end_sample));
+            }
             Message::PlaybackTick => {
                 if self.playing
                     && let Some(last) = self.last_playback_tick

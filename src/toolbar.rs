@@ -3,7 +3,9 @@ use iced::{
     Background, Color, Length, Theme,
     widget::{button, row},
 };
-use iced_fonts::lucide::{audio_lines, brackets, cable, circle, play, repeat, square};
+use iced_fonts::lucide::{
+    audio_lines, brackets, cable, circle, fast_forward, play, repeat, rewind, square,
+};
 use maolan_engine::message::Action;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +75,7 @@ impl Toolbar {
         &self,
         _playing: bool,
         recording: bool,
+        has_session_end: bool,
         has_loop_range: bool,
         loop_enabled: bool,
         has_punch_range: bool,
@@ -115,6 +118,13 @@ impl Toolbar {
         };
         row![
             row![
+                if has_session_end {
+                    button(rewind())
+                        .style(Self::button_style(true, false, Color::TRANSPARENT))
+                        .on_press(Message::JumpToStart)
+                } else {
+                    button(rewind()).style(Self::button_style(false, false, Color::TRANSPARENT))
+                },
                 button(play())
                     .style(Self::button_style(
                         true,
@@ -138,6 +148,17 @@ impl Toolbar {
                     .on_press(Message::TransportRecordToggle),
                 loop_button,
                 punch_button,
+                if has_session_end {
+                    button(fast_forward())
+                        .style(Self::button_style(true, false, Color::TRANSPARENT))
+                        .on_press(Message::JumpToEnd)
+                } else {
+                    button(fast_forward()).style(Self::button_style(
+                        false,
+                        false,
+                        Color::TRANSPARENT,
+                    ))
+                },
             ]
             .width(Length::Fill),
             button(audio_lines())

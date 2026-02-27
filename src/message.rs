@@ -125,6 +125,8 @@ pub enum Message {
     },
     TransportPlay,
     TransportStop,
+    JumpToStart,
+    JumpToEnd,
     TransportRecordToggle,
     ToggleLoop,
     SetLoopRange(Option<(usize, usize)>),
