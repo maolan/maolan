@@ -17,10 +17,13 @@ use std::{
 use crate::audio::io::AudioIO;
 use crate::message::{Lv2PluginState, Lv2StatePortValue, Lv2StateProperty};
 use crate::midi::io::MidiEvent;
+use crate::mutex::UnsafeMutex;
 use lilv::{World, instance::ActiveInstance, node::Node, plugin::Plugin};
 use lv2_raw::{
-    LV2_ATOM__FRAMETIME, LV2_ATOM__INT, LV2_ATOM__SEQUENCE, LV2_URID__MAP, LV2_URID__UNMAP,
-    LV2AtomSequence, LV2AtomSequenceBody, LV2Feature, LV2Urid, LV2UridMap, LV2UridMapHandle,
+    LV2_ATOM__DOUBLE, LV2_ATOM__FRAMETIME, LV2_ATOM__INT, LV2_ATOM__LONG, LV2_ATOM__OBJECT,
+    LV2_ATOM__SEQUENCE, LV2_URID__MAP, LV2_URID__UNMAP, LV2Atom, LV2AtomDouble, LV2AtomEvent,
+    LV2AtomLong, LV2AtomObjectBody, LV2AtomPropertyBody, LV2AtomSequence, LV2AtomSequenceBody,
+    LV2Feature, LV2Urid, LV2UridMap, LV2UridMapHandle, lv2_atom_pad_size,
     lv2_atom_sequence_append_event, lv2_atom_sequence_begin, lv2_atom_sequence_is_end,
     lv2_atom_sequence_next,
 };
@@ -45,6 +48,61 @@ pub struct Lv2Host {
     loaded_plugins: HashMap<String, LoadedPlugin>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Lv2TransportInfo {
+    pub transport_sample: usize,
+    pub playing: bool,
+    pub bpm: f64,
+    pub tsig_num: u32,
+    pub tsig_denom: u32,
+}
+
+type Lv2WorkerStatus = u32;
+const LV2_WORKER_SUCCESS: Lv2WorkerStatus = 0;
+const LV2_WORKER_ERR_UNKNOWN: Lv2WorkerStatus = 1;
+const LV2_WORKER__SCHEDULE: &str = "http://lv2plug.in/ns/ext/worker#schedule";
+const LV2_WORKER__INTERFACE: &str = "http://lv2plug.in/ns/ext/worker#interface";
+
+#[repr(C)]
+struct Lv2WorkerSchedule {
+    handle: *mut c_void,
+    schedule_work:
+        Option<unsafe extern "C" fn(handle: *mut c_void, size: u32, data: *const c_void) -> u32>,
+}
+
+type Lv2WorkerRespondFunc =
+    Option<unsafe extern "C" fn(handle: *mut c_void, size: u32, data: *const c_void) -> u32>;
+
+#[repr(C)]
+struct Lv2WorkerInterface {
+    work: Option<
+        unsafe extern "C" fn(
+            handle: *mut c_void,
+            respond: Lv2WorkerRespondFunc,
+            respond_handle: *mut c_void,
+            size: u32,
+            data: *const c_void,
+        ) -> u32,
+    >,
+    work_response:
+        Option<unsafe extern "C" fn(handle: *mut c_void, size: u32, data: *const c_void) -> u32>,
+    end_run: Option<unsafe extern "C" fn(handle: *mut c_void)>,
+}
+
+struct WorkerScheduleState {
+    jobs: UnsafeMutex<Vec<Vec<u8>>>,
+    responses: UnsafeMutex<Vec<Vec<u8>>>,
+}
+
+struct WorkerFeature {
+    _uri: CString,
+    _schedule: Box<Lv2WorkerSchedule>,
+    feature: LV2Feature,
+    state: Box<WorkerScheduleState>,
+}
+
+unsafe impl Send for WorkerFeature {}
+
 #[derive(Clone, Copy)]
 enum PortBinding {
     AudioInput(usize),
@@ -57,9 +115,11 @@ enum PortBinding {
 pub struct Lv2Processor {
     uri: String,
     plugin_name: String,
+    sample_rate: f64,
     instance: Option<ActiveInstance>,
     _urid_feature: UridMapFeature,
     _state_path_feature: StatePathFeature,
+    _instantiate_features: InstantiateFeatureSet,
     port_bindings: Vec<PortBinding>,
     scalar_values: Arc<Mutex<Vec<f32>>>,
     port_symbol_to_index: Arc<HashMap<String, u32>>,
@@ -68,8 +128,19 @@ pub struct Lv2Processor {
     atom_inputs: Vec<AtomBuffer>,
     atom_outputs: Vec<AtomBuffer>,
     atom_sequence_urid: LV2Urid,
+    atom_object_urid: LV2Urid,
+    atom_long_urid: LV2Urid,
+    atom_double_urid: LV2Urid,
     atom_frame_time_urid: LV2Urid,
     midi_event_urid: LV2Urid,
+    time_position_urid: LV2Urid,
+    time_frame_urid: LV2Urid,
+    time_speed_urid: LV2Urid,
+    time_bpm_urid: LV2Urid,
+    time_bar_urid: LV2Urid,
+    time_bar_beat_urid: LV2Urid,
+    time_beats_per_bar_urid: LV2Urid,
+    time_beat_unit_urid: LV2Urid,
     midi_inputs: usize,
     midi_outputs: usize,
     skip_deactivate_on_drop: bool,
@@ -83,6 +154,7 @@ struct LoadedPlugin {
     instance: ActiveInstance,
     _urid_feature: UridMapFeature,
     _state_path_feature: StatePathFeature,
+    _instantiate_features: InstantiateFeatureSet,
 }
 
 #[derive(Default)]
@@ -113,10 +185,13 @@ struct LV2UridUnmap {
 struct InstantiateFeatureSet {
     _feature_uris: Vec<CString>,
     features: Vec<LV2Feature>,
+    _worker_feature: WorkerFeature,
     _option_values: Vec<u32>,
     _options: Vec<LV2OptionsOption>,
     _flag_feature_data: Box<u8>,
 }
+
+unsafe impl Send for InstantiateFeatureSet {}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -560,7 +635,7 @@ impl Lv2Processor {
 
         let mut urid_feature = UridMapFeature::new()?;
         let mut state_path_feature = StatePathFeature::new(default_state_base_dir());
-        let instance = instantiate_plugin(
+        let (instance, instantiate_features) = instantiate_plugin(
             &plugin,
             sample_rate,
             uri,
@@ -588,8 +663,19 @@ impl Lv2Processor {
         let mut midi_outputs = 0_usize;
         let mut control_ports = vec![];
         let atom_sequence_urid = urid_feature.map_uri(LV2_ATOM__SEQUENCE);
+        let atom_object_urid = urid_feature.map_uri(LV2_ATOM__OBJECT);
+        let atom_long_urid = urid_feature.map_uri(LV2_ATOM__LONG);
+        let atom_double_urid = urid_feature.map_uri(LV2_ATOM__DOUBLE);
         let atom_frame_time_urid = urid_feature.map_uri(LV2_ATOM__FRAMETIME);
         let midi_event_urid = urid_feature.map_uri(lv2_raw::LV2_MIDI__MIDIEVENT);
+        let time_position_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__POSITION);
+        let time_frame_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__FRAME);
+        let time_speed_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__SPEED);
+        let time_bpm_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BEATSPERMINUTE);
+        let time_bar_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BAR);
+        let time_bar_beat_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BARBEAT);
+        let time_beats_per_bar_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BEATSPERBAR);
+        let time_beat_unit_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BEATUNIT);
         let mut has_atom_ports = false;
 
         for port in plugin.iter_ports() {
@@ -684,9 +770,11 @@ impl Lv2Processor {
                 .as_str()
                 .map(str::to_string)
                 .unwrap_or_else(|| uri.to_string()),
+            sample_rate,
             instance: Some(active_instance),
             _urid_feature: urid_feature,
             _state_path_feature: state_path_feature,
+            _instantiate_features: instantiate_features,
             port_bindings,
             scalar_values: Arc::new(Mutex::new(scalar_values)),
             port_symbol_to_index: Arc::new(port_symbol_to_index),
@@ -695,8 +783,19 @@ impl Lv2Processor {
             atom_inputs,
             atom_outputs,
             atom_sequence_urid,
+            atom_object_urid,
+            atom_long_urid,
+            atom_double_urid,
             atom_frame_time_urid,
             midi_event_urid,
+            time_position_urid,
+            time_frame_urid,
+            time_speed_urid,
+            time_bpm_urid,
+            time_bar_urid,
+            time_bar_beat_urid,
+            time_beats_per_bar_urid,
+            time_beat_unit_urid,
             midi_inputs,
             midi_outputs,
             skip_deactivate_on_drop: has_atom_ports,
@@ -812,6 +911,7 @@ impl Lv2Processor {
         &mut self,
         frames: usize,
         midi_inputs: &[Vec<MidiEvent>],
+        transport: Lv2TransportInfo,
     ) -> Vec<Vec<MidiEvent>> {
         if let Ok(mut values) = self.scalar_values.lock() {
             if values.is_empty() {
@@ -838,6 +938,9 @@ impl Lv2Processor {
                 self.atom_frame_time_urid,
             );
         }
+        for port in 0..self.atom_inputs.len() {
+            self.write_transport_event(port, transport);
+        }
         for (port, events) in midi_inputs.iter().enumerate() {
             self.write_midi_input_events(port, events);
         }
@@ -848,6 +951,7 @@ impl Lv2Processor {
                 instance.run(frames);
             }
         }
+        self.run_worker_cycle();
 
         for io in &self.audio_outputs {
             *io.finished.lock() = true;
@@ -866,6 +970,65 @@ impl Lv2Processor {
             self.ui_feedback_tx = None;
         }
         midi_outputs
+    }
+
+    fn run_worker_cycle(&mut self) {
+        let Some(worker_iface) = self.worker_interface() else {
+            return;
+        };
+        let (work_fn, work_response_fn, end_run_fn) = (
+            worker_iface.work,
+            worker_iface.work_response,
+            worker_iface.end_run,
+        );
+        let Some(work_fn) = work_fn else {
+            return;
+        };
+        let instance_handle = self.instance_handle();
+        if instance_handle.is_null() {
+            return;
+        }
+
+        let worker_state = &self._instantiate_features._worker_feature.state;
+        let mut jobs = std::mem::take(worker_state.jobs.lock());
+        for job in jobs.drain(..) {
+            if job.len() > (u32::MAX as usize) {
+                continue;
+            }
+            unsafe {
+                work_fn(
+                    instance_handle,
+                    Some(lv2_worker_respond_callback),
+                    &**worker_state as *const WorkerScheduleState as *mut c_void,
+                    job.len() as u32,
+                    job.as_ptr().cast::<c_void>(),
+                );
+            }
+        }
+        *worker_state.jobs.lock() = jobs;
+
+        if let Some(work_response_fn) = work_response_fn {
+            let mut responses = std::mem::take(worker_state.responses.lock());
+            for response in responses.drain(..) {
+                if response.len() > (u32::MAX as usize) {
+                    continue;
+                }
+                unsafe {
+                    work_response_fn(
+                        instance_handle,
+                        response.len() as u32,
+                        response.as_ptr().cast::<c_void>(),
+                    );
+                }
+            }
+            *worker_state.responses.lock() = responses;
+        }
+
+        if let Some(end_run_fn) = end_run_fn {
+            unsafe {
+                end_run_fn(instance_handle);
+            }
+        }
     }
 
     fn collect_scalar_changes(&mut self) -> Vec<(u32, f32)> {
@@ -1089,6 +1252,16 @@ impl Lv2Processor {
         Some(unsafe { ptr.as_ref() })
     }
 
+    fn worker_interface(&self) -> Option<&Lv2WorkerInterface> {
+        let instance = self.instance.as_ref()?;
+        let ptr = unsafe {
+            instance
+                .instance()
+                .extension_data::<Lv2WorkerInterface>(LV2_WORKER__INTERFACE)?
+        };
+        Some(unsafe { ptr.as_ref() })
+    }
+
     fn instance_handle(&self) -> Lv2Handle {
         self.instance
             .as_ref()
@@ -1168,6 +1341,105 @@ impl Lv2Processor {
                     break;
                 }
             }
+        }
+    }
+
+    fn write_transport_event(&mut self, port: usize, transport: Lv2TransportInfo) {
+        let Some(buffer) = self.atom_inputs.get_mut(port) else {
+            return;
+        };
+        let bytes = buffer.bytes_mut();
+        if bytes.len() < std::mem::size_of::<LV2AtomSequence>() {
+            return;
+        }
+        let seq = bytes.as_mut_ptr() as *mut LV2AtomSequence;
+        let capacity = bytes
+            .len()
+            .saturating_sub(std::mem::size_of::<lv2_raw::LV2Atom>()) as u32;
+
+        let beats_per_bar = if transport.tsig_num == 0 {
+            4.0
+        } else {
+            transport.tsig_num as f64
+        };
+        let beat_unit = if transport.tsig_denom == 0 {
+            4_i64
+        } else {
+            transport.tsig_denom as i64
+        };
+        let bpm = if transport.bpm > 0.0 { transport.bpm } else { 120.0 };
+        let speed = if transport.playing { 1.0 } else { 0.0 };
+        let sample = transport.transport_sample as i64;
+        let seconds = (transport.transport_sample as f64) / self.sample_rate.max(1.0);
+        let absolute_beats = seconds * bpm / 60.0;
+        let bar = (absolute_beats / beats_per_bar).floor().max(0.0) as i64;
+        let bar_beat = absolute_beats - (bar as f64 * beats_per_bar);
+
+        let mut payload =
+            Vec::<u8>::with_capacity(std::mem::size_of::<LV2AtomObjectBody>() + (7 * 32));
+        let object_body = LV2AtomObjectBody {
+            id: 0,
+            otype: self.time_position_urid,
+        };
+        let object_body_bytes = unsafe {
+            std::slice::from_raw_parts(
+                (&object_body as *const LV2AtomObjectBody).cast::<u8>(),
+                std::mem::size_of::<LV2AtomObjectBody>(),
+            )
+        };
+        payload.extend_from_slice(object_body_bytes);
+
+        append_object_long_property(
+            &mut payload,
+            self.time_frame_urid,
+            self.atom_long_urid,
+            sample,
+        );
+        append_object_double_property(
+            &mut payload,
+            self.time_speed_urid,
+            self.atom_double_urid,
+            speed,
+        );
+        append_object_double_property(
+            &mut payload,
+            self.time_bpm_urid,
+            self.atom_double_urid,
+            bpm,
+        );
+        append_object_long_property(&mut payload, self.time_bar_urid, self.atom_long_urid, bar);
+        append_object_double_property(
+            &mut payload,
+            self.time_bar_beat_urid,
+            self.atom_double_urid,
+            bar_beat,
+        );
+        append_object_double_property(
+            &mut payload,
+            self.time_beats_per_bar_urid,
+            self.atom_double_urid,
+            beats_per_bar,
+        );
+        append_object_long_property(
+            &mut payload,
+            self.time_beat_unit_urid,
+            self.atom_long_urid,
+            beat_unit,
+        );
+
+        if payload.len() > (u32::MAX as usize) {
+            return;
+        }
+
+        let mut raw = vec![0_u8; std::mem::size_of::<LV2AtomEvent>() + payload.len()];
+        let raw_event = raw.as_mut_ptr() as *mut LV2AtomEvent;
+        unsafe {
+            (*raw_event).time_in_frames = 0;
+            (*raw_event).body.mytype = self.atom_object_urid;
+            (*raw_event).body.size = payload.len() as u32;
+            let data_ptr = (raw_event as *mut u8).add(std::mem::size_of::<LV2AtomEvent>());
+            std::ptr::copy_nonoverlapping(payload.as_ptr(), data_ptr, payload.len());
+            let _ = lv2_atom_sequence_append_event(seq, capacity, raw_event);
         }
     }
 
@@ -1298,7 +1570,7 @@ impl Lv2Host {
 
         let mut urid_feature = UridMapFeature::new()?;
         let mut state_path_feature = StatePathFeature::new(default_state_base_dir());
-        let instance = instantiate_plugin(
+        let (instance, instantiate_features) = instantiate_plugin(
             &plugin,
             self.sample_rate,
             uri,
@@ -1312,6 +1584,7 @@ impl Lv2Host {
                 instance: active_instance,
                 _urid_feature: urid_feature,
                 _state_path_feature: state_path_feature,
+                _instantiate_features: instantiate_features,
             },
         );
         Ok(())
@@ -2194,7 +2467,7 @@ fn instantiate_plugin(
     uri: &str,
     urid_feature: &mut UridMapFeature,
     state_path_feature: &mut StatePathFeature,
-) -> Result<lilv::instance::Instance, String> {
+) -> Result<(lilv::instance::Instance, InstantiateFeatureSet), String> {
     let required_features = plugin_feature_uris(plugin);
     let feature_set = build_instantiate_features(
         &required_features,
@@ -2202,7 +2475,7 @@ fn instantiate_plugin(
         state_path_feature,
     )?;
     let feature_refs: Vec<&LV2Feature> = feature_set.features.iter().collect();
-    unsafe { plugin.instantiate(sample_rate, feature_refs) }.ok_or_else(|| {
+    let instance = unsafe { plugin.instantiate(sample_rate, feature_refs) }.ok_or_else(|| {
         if required_features.is_empty() {
             format!(
                 "Failed to instantiate '{uri}'. It likely requires LV2 host features that are not wired yet."
@@ -2213,7 +2486,8 @@ fn instantiate_plugin(
                 required_features.join(", ")
             )
         }
-    })
+    })?;
+    Ok((instance, feature_set))
 }
 
 fn build_instantiate_features(
@@ -2243,6 +2517,12 @@ fn build_instantiate_features(
 
     push_feature(LV2_URID__MAP, urid_feature.map_feature().data, false)?;
     push_feature(LV2_URID__UNMAP, urid_feature.unmap_feature().data, false)?;
+    let worker_feature = WorkerFeature::new()?;
+    push_feature(
+        LV2_WORKER__SCHEDULE,
+        worker_feature.feature.data,
+        false,
+    )?;
 
     let state_features = state_path_feature.feature_ptrs();
     for feature_ptr in state_features {
@@ -2310,6 +2590,7 @@ fn build_instantiate_features(
                 .cast_mut()
                 .cast::<c_void>(),
             LV2_URID__MAP_URI_TYPO_COMPAT => urid_feature.map_feature().data,
+            LV2_WORKER__SCHEDULE => worker_feature.feature.data,
             _ => (&*flag_feature_data as *const u8).cast_mut().cast::<c_void>(),
         };
         push_feature(required, data, false)?;
@@ -2318,10 +2599,148 @@ fn build_instantiate_features(
     Ok(InstantiateFeatureSet {
         _feature_uris: feature_uris,
         features,
+        _worker_feature: worker_feature,
         _option_values: option_values,
         _options: options,
         _flag_feature_data: flag_feature_data,
     })
+}
+
+impl WorkerFeature {
+    fn new() -> Result<Self, String> {
+        let mut schedule = Box::new(Lv2WorkerSchedule {
+            handle: std::ptr::null_mut(),
+            schedule_work: Some(lv2_worker_schedule_work_callback),
+        });
+        let state = Box::new(WorkerScheduleState {
+            jobs: UnsafeMutex::new(vec![]),
+            responses: UnsafeMutex::new(vec![]),
+        });
+        schedule.handle = &*state as *const WorkerScheduleState as *mut c_void;
+        let uri =
+            CString::new(LV2_WORKER__SCHEDULE).map_err(|e| format!("Invalid worker URI: {e}"))?;
+        let feature = LV2Feature {
+            uri: uri.as_ptr(),
+            data: (&mut *schedule as *mut Lv2WorkerSchedule).cast::<c_void>(),
+        };
+        Ok(Self {
+            _uri: uri,
+            _schedule: schedule,
+            feature,
+            state,
+        })
+    }
+}
+
+unsafe extern "C" fn lv2_worker_schedule_work_callback(
+    handle: *mut c_void,
+    size: u32,
+    data: *const c_void,
+) -> u32 {
+    if handle.is_null() || (size > 0 && data.is_null()) {
+        return LV2_WORKER_ERR_UNKNOWN;
+    }
+    let state = unsafe { &*(handle as *const WorkerScheduleState) };
+    let bytes = if size == 0 {
+        vec![]
+    } else {
+        unsafe { std::slice::from_raw_parts(data.cast::<u8>(), size as usize).to_vec() }
+    };
+    state.jobs.lock().push(bytes);
+    LV2_WORKER_SUCCESS
+}
+
+unsafe extern "C" fn lv2_worker_respond_callback(
+    handle: *mut c_void,
+    size: u32,
+    data: *const c_void,
+) -> u32 {
+    if handle.is_null() || (size > 0 && data.is_null()) {
+        return LV2_WORKER_ERR_UNKNOWN;
+    }
+    let state = unsafe { &*(handle as *const WorkerScheduleState) };
+    let bytes = if size == 0 {
+        vec![]
+    } else {
+        unsafe { std::slice::from_raw_parts(data.cast::<u8>(), size as usize).to_vec() }
+    };
+    state.responses.lock().push(bytes);
+    LV2_WORKER_SUCCESS
+}
+
+fn append_object_long_property(buffer: &mut Vec<u8>, key: LV2Urid, atom_type: LV2Urid, value: i64) {
+    let prop = LV2AtomPropertyBody {
+        key,
+        context: 0,
+        value: LV2Atom {
+            size: std::mem::size_of::<i64>() as u32,
+            mytype: atom_type,
+        },
+    };
+    let prop_size = std::mem::size_of::<LV2AtomPropertyBody>();
+    let prop_bytes = unsafe {
+        std::slice::from_raw_parts((&prop as *const LV2AtomPropertyBody).cast::<u8>(), prop_size)
+    };
+    buffer.extend_from_slice(prop_bytes);
+    let atom = LV2AtomLong {
+        atom: LV2Atom {
+            size: std::mem::size_of::<i64>() as u32,
+            mytype: atom_type,
+        },
+        body: value,
+    };
+    let value_bytes = unsafe {
+        std::slice::from_raw_parts(
+            (&atom.body as *const i64).cast::<u8>(),
+            std::mem::size_of::<i64>(),
+        )
+    };
+    buffer.extend_from_slice(value_bytes);
+    let written = (prop_size + std::mem::size_of::<i64>()) as u32;
+    let padded = lv2_atom_pad_size(written) as usize;
+    if padded > (prop_size + std::mem::size_of::<i64>()) {
+        buffer.resize(buffer.len() + (padded - prop_size - std::mem::size_of::<i64>()), 0);
+    }
+}
+
+fn append_object_double_property(
+    buffer: &mut Vec<u8>,
+    key: LV2Urid,
+    atom_type: LV2Urid,
+    value: f64,
+) {
+    let prop = LV2AtomPropertyBody {
+        key,
+        context: 0,
+        value: LV2Atom {
+            size: std::mem::size_of::<f64>() as u32,
+            mytype: atom_type,
+        },
+    };
+    let prop_size = std::mem::size_of::<LV2AtomPropertyBody>();
+    let prop_bytes = unsafe {
+        std::slice::from_raw_parts((&prop as *const LV2AtomPropertyBody).cast::<u8>(), prop_size)
+    };
+    buffer.extend_from_slice(prop_bytes);
+    let atom = LV2AtomDouble {
+        atom: LV2Atom {
+            size: std::mem::size_of::<f64>() as u32,
+            mytype: atom_type,
+        },
+        body: value,
+    };
+    let value_bytes = unsafe {
+        std::slice::from_raw_parts(
+            (&atom.body as *const f64).cast::<u8>(),
+            std::mem::size_of::<f64>(),
+        )
+    };
+    buffer.extend_from_slice(value_bytes);
+    let written = (prop_size + std::mem::size_of::<f64>()) as u32;
+    let padded = lv2_atom_pad_size(written) as usize;
+    if padded > (prop_size + std::mem::size_of::<f64>()) {
+        buffer.resize(buffer.len() + (padded - prop_size - std::mem::size_of::<f64>()), 0);
+    }
 }
 
 impl UridMapFeature {

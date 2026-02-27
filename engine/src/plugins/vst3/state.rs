@@ -176,13 +176,13 @@ mod tests {
 
     #[test]
     fn test_memory_stream_write_read() {
-        let mut stream = MemoryStream::new();
+        let stream = MemoryStream::new();
         let test_data = b"Hello, VST3!";
 
         unsafe {
             let mut written = 0;
             let result = stream.write(
-                test_data.as_ptr() as *const _,
+                test_data.as_ptr() as *mut std::os::raw::c_void,
                 test_data.len() as i32,
                 &mut written,
             );
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn test_memory_stream_seek() {
-        let mut stream = MemoryStream::from_bytes(b"0123456789");
+        let stream = MemoryStream::from_bytes(b"0123456789");
 
         // Seek to position 5
         unsafe {

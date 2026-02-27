@@ -1,7 +1,7 @@
 use super::{audio::track::AudioTrack, midi::track::MIDITrack};
 use crate::clap::{ClapMidiOutputEvent, ClapProcessor, ClapTransportInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
-use crate::lv2::Lv2Processor;
+use crate::lv2::{Lv2Processor, Lv2TransportInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::message::{Lv2GraphConnection, Lv2GraphNode, Lv2GraphPlugin, Lv2PluginState};
 use crate::vst3::Vst3Processor;
@@ -197,7 +197,17 @@ impl Track {
                     let midi_inputs = self.lv2_plugin_input_events(instance_id, &midi_node_events);
                     let midi_outputs = self.lv2_processors[idx]
                         .processor
-                        .process_with_audio_io(frames, &midi_inputs);
+                        .process_with_audio_io(
+                            frames,
+                            &midi_inputs,
+                            Lv2TransportInfo {
+                                transport_sample: self.transport_sample,
+                                playing: self.disk_monitor && self.clip_playback_enabled,
+                                bpm: 120.0,
+                                tsig_num: 4,
+                                tsig_denom: 4,
+                            },
+                        );
                     for (port, events) in midi_outputs.into_iter().enumerate() {
                         if !events.is_empty() {
                             midi_node_events
@@ -227,7 +237,17 @@ impl Track {
                     let midi_inputs = self.lv2_plugin_input_events(instance_id, &midi_node_events);
                     let midi_outputs = self.lv2_processors[idx]
                         .processor
-                        .process_with_audio_io(frames, &midi_inputs);
+                        .process_with_audio_io(
+                            frames,
+                            &midi_inputs,
+                            Lv2TransportInfo {
+                                transport_sample: self.transport_sample,
+                                playing: self.disk_monitor && self.clip_playback_enabled,
+                                bpm: 120.0,
+                                tsig_num: 4,
+                                tsig_denom: 4,
+                            },
+                        );
                     for (port, events) in midi_outputs.into_iter().enumerate() {
                         if !events.is_empty() {
                             midi_node_events
