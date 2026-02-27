@@ -17,7 +17,7 @@ use maolan_engine::kind::Kind;
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::lv2::Lv2PluginInfo;
 #[cfg(all(unix, not(target_os = "macos")))]
-use maolan_engine::message::{Lv2GraphConnection, Lv2GraphPlugin, PluginGraphNode};
+use maolan_engine::message::{PluginGraphConnection, PluginGraphPlugin, PluginGraphNode};
 use maolan_engine::vst3::Vst3PluginInfo;
 #[cfg(target_os = "freebsd")]
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
@@ -355,11 +355,11 @@ pub struct StateData {
     pub clap_states_by_track: HashMap<String, HashMap<String, ClapPluginState>>,
     pub plugin_graph_track: Option<String>,
     #[cfg(all(unix, not(target_os = "macos")))]
-    pub plugin_graph_plugins: Vec<Lv2GraphPlugin>,
+    pub plugin_graph_plugins: Vec<PluginGraphPlugin>,
     #[cfg(all(unix, not(target_os = "macos")))]
-    pub plugin_graph_connections: Vec<Lv2GraphConnection>,
+    pub plugin_graph_connections: Vec<PluginGraphConnection>,
     #[cfg(all(unix, not(target_os = "macos")))]
-    pub lv2_graphs_by_track: HashMap<String, (Vec<Lv2GraphPlugin>, Vec<Lv2GraphConnection>)>,
+    pub plugin_graphs_by_track: HashMap<String, (Vec<PluginGraphPlugin>, Vec<PluginGraphConnection>)>,
     pub plugin_graph_selected_connections: std::collections::HashSet<usize>,
     pub plugin_graph_selected_plugin: Option<usize>,
     pub plugin_graph_plugin_positions: HashMap<usize, Point>,
@@ -457,7 +457,7 @@ impl Default for StateData {
             #[cfg(all(unix, not(target_os = "macos")))]
             plugin_graph_connections: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]
-            lv2_graphs_by_track: HashMap::new(),
+            plugin_graphs_by_track: HashMap::new(),
             plugin_graph_selected_connections: HashSet::new(),
             plugin_graph_selected_plugin: None,
             plugin_graph_plugin_positions: HashMap::new(),

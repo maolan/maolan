@@ -20,7 +20,7 @@ use iced::{
     },
 };
 use maolan_engine::kind::Kind;
-use maolan_engine::message::{Action as EngineAction, Lv2GraphPlugin, PluginGraphNode};
+use maolan_engine::message::{Action as EngineAction, PluginGraphPlugin, PluginGraphNode};
 use std::time::Instant;
 
 const PLUGIN_W: f32 = 170.0;
@@ -51,7 +51,7 @@ impl Graph {
         }
     }
 
-    fn plugin_height(plugin: &Lv2GraphPlugin) -> f32 {
+    fn plugin_height(plugin: &PluginGraphPlugin) -> f32 {
         MIN_PLUGIN_H
             .max(Self::required_height_for_ports(
                 plugin.audio_inputs,
@@ -73,7 +73,7 @@ impl Graph {
 
     fn plugin_pos(
         data: &crate::state::StateData,
-        plugin: &Lv2GraphPlugin,
+        plugin: &PluginGraphPlugin,
         idx: usize,
         bounds: Rectangle,
     ) -> Point {
@@ -158,7 +158,7 @@ impl Graph {
     }
 
     fn plugin_input_port_y(
-        plugin: &Lv2GraphPlugin,
+        plugin: &PluginGraphPlugin,
         plugin_h: f32,
         y: f32,
         kind: Kind,
@@ -175,7 +175,7 @@ impl Graph {
     }
 
     fn plugin_output_port_y(
-        plugin: &Lv2GraphPlugin,
+        plugin: &PluginGraphPlugin,
         plugin_h: f32,
         y: f32,
         kind: Kind,

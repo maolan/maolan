@@ -259,7 +259,7 @@ impl Maolan {
                     {
                         state.plugin_graph_plugins.clear();
                         state.plugin_graph_connections.clear();
-                        state.lv2_graphs_by_track.clear();
+                        state.plugin_graphs_by_track.clear();
                     }
                     state.clap_plugins_by_track.clear();
                     state.clap_states_by_track.clear();
@@ -1256,7 +1256,7 @@ impl Maolan {
                 } => {
                     let mut state = self.state.blocking_write();
                     state
-                        .lv2_graphs_by_track
+                        .plugin_graphs_by_track
                         .insert(track_name.clone(), (plugins.clone(), connections.clone()));
                     if state.plugin_graph_track.as_deref() == Some(track_name.as_str()) {
                         state.plugin_graph_track = Some(track_name.clone());
@@ -1326,8 +1326,8 @@ impl Maolan {
                     }
                     // Update LV2 graphs by track
                     #[cfg(all(unix, not(target_os = "macos")))]
-                    if let Some(graph) = state.lv2_graphs_by_track.remove(old_name) {
-                        state.lv2_graphs_by_track.insert(new_name.clone(), graph);
+                    if let Some(graph) = state.plugin_graphs_by_track.remove(old_name) {
+                        state.plugin_graphs_by_track.insert(new_name.clone(), graph);
                     }
                     if let Some(clap) = state.clap_plugins_by_track.remove(old_name) {
                         state.clap_plugins_by_track.insert(new_name.clone(), clap);

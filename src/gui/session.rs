@@ -135,7 +135,7 @@ impl Maolan {
         #[cfg(all(unix, not(target_os = "macos")))]
         let graphs = {
             let mut graphs = serde_json::Map::new();
-            for (track_name, (plugins, connections)) in &state.lv2_graphs_by_track {
+            for (track_name, (plugins, connections)) in &state.plugin_graphs_by_track {
                 let id_to_index: std::collections::HashMap<usize, usize> = plugins
                     .iter()
                     .enumerate()
@@ -143,7 +143,14 @@ impl Maolan {
                     .collect();
                 let plugins_json: Vec<Value> = plugins
                     .iter()
-                    .map(|p| json!({"uri":p.uri, "state": Self::lv2_state_to_json(&p.state)}))
+                    .map(|p| {
+                        let state_json = p
+                            .state
+                            .as_ref()
+                            .map(Self::lv2_state_to_json)
+                            .unwrap_or(Value::Null);
+                        json!({"uri": p.uri, "state": state_json})
+                    })
                     .collect();
                 let conns_json: Vec<Value> = connections
                     .iter()
@@ -240,7 +247,7 @@ impl Maolan {
             state.clap_plugins_by_track.clear();
             state.clap_states_by_track.clear();
             #[cfg(all(unix, not(target_os = "macos")))]
-            state.lv2_graphs_by_track.clear();
+            state.plugin_graphs_by_track.clear();
         }
         let filename = "session.json";
         let mut p = PathBuf::from(path.clone());

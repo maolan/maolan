@@ -1573,7 +1573,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Action::TrackGetPluginGraph { ref track_name } => {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
@@ -1600,9 +1600,9 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Action::TrackPluginGraph { .. } => {}
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Action::TrackConnectPluginAudio {
                 ref track_name,
                 ref from_node,
@@ -1630,7 +1630,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Action::TrackConnectPluginMidi {
                 ref track_name,
                 ref from_node,
@@ -1658,7 +1658,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Action::TrackDisconnectPluginAudio {
                 ref track_name,
                 ref from_node,
@@ -1686,7 +1686,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             Action::TrackDisconnectPluginMidi {
                 ref track_name,
                 ref from_node,

@@ -4,11 +4,13 @@ use crate::clap::ClapMidiOutputEvent;
 use crate::clap::{ClapProcessor, ClapTransportInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::lv2::{Lv2Processor, Lv2TransportInfo};
+#[cfg(unix)]
+use crate::message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin};
 #[cfg(all(unix, not(target_os = "macos")))]
-use crate::message::{Lv2GraphConnection, Lv2GraphPlugin, Lv2PluginState, PluginGraphNode};
+use crate::message::Lv2PluginState;
 use crate::vst3::Vst3Processor;
 use crate::{audio::io::AudioIO, midi::io::MidiEvent};
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(unix)]
 use crate::{kind::Kind, routing};
 use midly::{MetaMessage, Smf, Timing, TrackEventKind, live::LiveEvent};
 use std::{
@@ -58,8 +60,8 @@ pub struct Track {
     pub lv2_processors: Vec<Lv2Instance>,
     pub vst3_processors: Vec<Vst3Instance>,
     pub clap_plugins: Vec<ClapInstance>,
-    #[cfg(all(unix, not(target_os = "macos")))]
-    pub plugin_midi_connections: Vec<Lv2GraphConnection>,
+    #[cfg(unix)]
+    pub plugin_midi_connections: Vec<PluginGraphConnection>,
     pub pending_hw_midi_out_events: Vec<MidiEvent>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub next_lv2_instance_id: usize,
@@ -106,7 +108,7 @@ impl Track {
             lv2_processors: Vec::new(),
             vst3_processors: Vec::new(),
             clap_plugins: Vec::new(),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(unix)]
             plugin_midi_connections: Vec::new(),
             pending_hw_midi_out_events: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -947,7 +949,7 @@ impl Track {
         });
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn prune_plugin_midi_connections(&mut self, node: PluginGraphNode) {
         self.plugin_midi_connections
             .retain(|conn| conn.from_node != node && conn.to_node != node);
@@ -969,11 +971,12 @@ impl Track {
             .collect()
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
-    pub fn plugin_graph_plugins(&self) -> Vec<Lv2GraphPlugin> {
+    #[cfg(unix)]
+    pub fn plugin_graph_plugins(&self) -> Vec<PluginGraphPlugin> {
         let mut plugins = Vec::new();
+        #[cfg(all(unix, not(target_os = "macos")))]
         for instance in &self.lv2_processors {
-            plugins.push(Lv2GraphPlugin {
+            plugins.push(PluginGraphPlugin {
                 node: PluginGraphNode::Lv2PluginInstance(instance.id),
                 instance_id: instance.id,
                 format: "LV2".to_string(),
@@ -983,11 +986,11 @@ impl Track {
                 audio_outputs: instance.processor.audio_output_count(),
                 midi_inputs: instance.processor.midi_input_count(),
                 midi_outputs: instance.processor.midi_output_count(),
-                state: instance.processor.snapshot_state(),
+                state: Some(instance.processor.snapshot_state()),
             });
         }
         for instance in &self.vst3_processors {
-            plugins.push(Lv2GraphPlugin {
+            plugins.push(PluginGraphPlugin {
                 node: PluginGraphNode::Vst3PluginInstance(instance.id),
                 instance_id: instance.id,
                 format: "VST3".to_string(),
@@ -997,14 +1000,11 @@ impl Track {
                 audio_outputs: instance.processor.audio_outputs().len(),
                 midi_inputs: instance.processor.midi_input_count(),
                 midi_outputs: instance.processor.midi_output_count(),
-                state: Lv2PluginState {
-                    port_values: vec![],
-                    properties: vec![],
-                },
+                state: None,
             });
         }
         for instance in &self.clap_plugins {
-            plugins.push(Lv2GraphPlugin {
+            plugins.push(PluginGraphPlugin {
                 node: PluginGraphNode::ClapPluginInstance(instance.id),
                 instance_id: instance.id,
                 format: "CLAP".to_string(),
@@ -1014,10 +1014,7 @@ impl Track {
                 audio_outputs: instance.processor.audio_outputs().len(),
                 midi_inputs: instance.processor.midi_input_count(),
                 midi_outputs: instance.processor.midi_output_count(),
-                state: Lv2PluginState {
-                    port_values: vec![],
-                    properties: vec![],
-                },
+                state: None,
             });
         }
         plugins
@@ -1126,7 +1123,7 @@ impl Track {
             ));
         };
         self.clap_plugins.remove(index);
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         self.prune_plugin_midi_connections(PluginGraphNode::ClapPluginInstance(instance_id));
         Ok(())
     }
@@ -1144,7 +1141,7 @@ impl Track {
         };
         let removed_id = self.clap_plugins[index].id;
         self.clap_plugins.remove(index);
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         self.prune_plugin_midi_connections(PluginGraphNode::ClapPluginInstance(removed_id));
         Ok(())
     }
@@ -1336,7 +1333,7 @@ impl Track {
         for port in removed.processor.audio_outputs() {
             Self::disconnect_all(port);
         }
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(unix)]
         self.prune_plugin_midi_connections(PluginGraphNode::Vst3PluginInstance(instance_id));
         Ok(())
     }
@@ -1648,8 +1645,8 @@ impl Track {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
-    pub fn plugin_graph_connections(&self) -> Vec<Lv2GraphConnection> {
+    #[cfg(unix)]
+    pub fn plugin_graph_connections(&self) -> Vec<PluginGraphConnection> {
         let mut source_ports: Vec<(PluginGraphNode, usize, Arc<AudioIO>)> = self
             .audio
             .ins
@@ -1657,6 +1654,7 @@ impl Track {
             .enumerate()
             .map(|(idx, io)| (PluginGraphNode::TrackInput, idx, io.clone()))
             .collect();
+        #[cfg(all(unix, not(target_os = "macos")))]
         for instance in &self.lv2_processors {
             source_ports.extend(instance.processor.audio_outputs().iter().enumerate().map(
                 |(idx, io)| {
@@ -1698,7 +1696,7 @@ impl Track {
                     .iter()
                     .find(|(_, _, source_io)| Arc::ptr_eq(source_io, conn))
                 {
-                    connections.push(Lv2GraphConnection {
+                    connections.push(PluginGraphConnection {
                         from_node: from_node.clone(),
                         from_port: *from_port,
                         to_node: PluginGraphNode::TrackOutput,
@@ -1708,6 +1706,7 @@ impl Track {
                 }
             }
         }
+        #[cfg(all(unix, not(target_os = "macos")))]
         for instance in &self.lv2_processors {
             for (to_port, to_io) in instance.processor.audio_inputs().iter().enumerate() {
                 for conn in to_io.connections.lock().iter() {
@@ -1715,7 +1714,7 @@ impl Track {
                         .iter()
                         .find(|(_, _, source_io)| Arc::ptr_eq(source_io, conn))
                     {
-                        connections.push(Lv2GraphConnection {
+                        connections.push(PluginGraphConnection {
                             from_node: from_node.clone(),
                             from_port: *from_port,
                             to_node: PluginGraphNode::Lv2PluginInstance(instance.id),
@@ -1733,7 +1732,7 @@ impl Track {
                         .iter()
                         .find(|(_, _, source_io)| Arc::ptr_eq(source_io, conn))
                     {
-                        connections.push(Lv2GraphConnection {
+                        connections.push(PluginGraphConnection {
                             from_node: from_node.clone(),
                             from_port: *from_port,
                             to_node: PluginGraphNode::Vst3PluginInstance(instance.id),
@@ -1751,7 +1750,7 @@ impl Track {
                         .iter()
                         .find(|(_, _, source_io)| Arc::ptr_eq(source_io, conn))
                     {
-                        connections.push(Lv2GraphConnection {
+                        connections.push(PluginGraphConnection {
                             from_node: from_node.clone(),
                             from_port: *from_port,
                             to_node: PluginGraphNode::ClapPluginInstance(instance.id),
@@ -1771,7 +1770,7 @@ impl Track {
                     .enumerate()
                     .find(|(_, in_io)| Arc::ptr_eq(in_io, conn))
                 {
-                    connections.push(Lv2GraphConnection {
+                    connections.push(PluginGraphConnection {
                         from_node: PluginGraphNode::TrackInput,
                         from_port,
                         to_node: PluginGraphNode::TrackOutput,
@@ -1785,7 +1784,7 @@ impl Track {
         connections
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     pub fn connect_plugin_audio(
         &self,
         from_node: PluginGraphNode,
@@ -1811,7 +1810,7 @@ impl Track {
         Ok(())
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     pub fn disconnect_plugin_audio(
         &self,
         from_node: PluginGraphNode,
@@ -1824,7 +1823,7 @@ impl Track {
         AudioIO::disconnect(&source, &target)
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     pub fn connect_plugin_midi(
         &mut self,
         from_node: PluginGraphNode,
@@ -1842,7 +1841,7 @@ impl Track {
         }) {
             return Err("Circular routing is not allowed!".to_string());
         }
-        let new_conn = Lv2GraphConnection {
+        let new_conn = PluginGraphConnection {
             from_node,
             from_port,
             to_node,
@@ -1856,7 +1855,7 @@ impl Track {
         Ok(())
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     pub fn disconnect_plugin_midi(
         &mut self,
         from_node: PluginGraphNode,
@@ -1873,7 +1872,7 @@ impl Track {
                 && c.to_port == to_port)
         });
         if self.plugin_midi_connections.len() == before {
-            Err("MIDI LV2 graph connection not found".to_string())
+            Err("MIDI plugin graph connection not found".to_string())
         } else {
             Ok(())
         }
@@ -1968,7 +1967,7 @@ impl Track {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn plugin_source_io(
         &self,
         node: &PluginGraphNode,
@@ -1982,12 +1981,22 @@ impl Track {
                 .cloned()
                 .ok_or_else(|| format!("Track input port {port} not found")),
             PluginGraphNode::TrackOutput => Err("Track output node cannot be source".to_string()),
-            PluginGraphNode::Lv2PluginInstance(instance_id) => self
-                .lv2_processors
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
-                .ok_or_else(|| format!("Plugin instance {instance_id} output port {port} missing")),
+            PluginGraphNode::Lv2PluginInstance(instance_id) => {
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    self.lv2_processors
+                        .iter()
+                        .find(|instance| instance.id == *instance_id)
+                        .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
+                        .ok_or_else(|| {
+                            format!("Plugin instance {instance_id} output port {port} missing")
+                        })
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    Err(format!("LV2 instance {instance_id} is not supported on macOS"))
+                }
+            }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
                 .vst3_processors
                 .iter()
@@ -2003,7 +2012,7 @@ impl Track {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn plugin_target_io(
         &self,
         node: &PluginGraphNode,
@@ -2017,12 +2026,22 @@ impl Track {
                 .get(port)
                 .cloned()
                 .ok_or_else(|| format!("Track output port {port} not found")),
-            PluginGraphNode::Lv2PluginInstance(instance_id) => self
-                .lv2_processors
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
-                .ok_or_else(|| format!("Plugin instance {instance_id} input port {port} missing")),
+            PluginGraphNode::Lv2PluginInstance(instance_id) => {
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    self.lv2_processors
+                        .iter()
+                        .find(|instance| instance.id == *instance_id)
+                        .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
+                        .ok_or_else(|| {
+                            format!("Plugin instance {instance_id} input port {port} missing")
+                        })
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    Err(format!("LV2 instance {instance_id} is not supported on macOS"))
+                }
+            }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
                 .vst3_processors
                 .iter()
@@ -2038,7 +2057,7 @@ impl Track {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn validate_plugin_midi_source(
         &self,
         node: &PluginGraphNode,
@@ -2054,14 +2073,24 @@ impl Track {
             PluginGraphNode::TrackOutput => {
                 Err("Track output node cannot be MIDI source".to_string())
             }
-            PluginGraphNode::Lv2PluginInstance(instance_id) => self
-                .lv2_processors
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| (port < instance.processor.midi_output_count()).then_some(()))
-                .ok_or_else(|| {
-                    format!("Plugin instance {instance_id} MIDI output port {port} missing")
-                }),
+            PluginGraphNode::Lv2PluginInstance(instance_id) => {
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    self.lv2_processors
+                        .iter()
+                        .find(|instance| instance.id == *instance_id)
+                        .and_then(|instance| {
+                            (port < instance.processor.midi_output_count()).then_some(())
+                        })
+                        .ok_or_else(|| {
+                            format!("Plugin instance {instance_id} MIDI output port {port} missing")
+                        })
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    Err(format!("LV2 instance {instance_id} is not supported on macOS"))
+                }
+            }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
                 .vst3_processors
                 .iter()
@@ -2081,7 +2110,7 @@ impl Track {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn validate_plugin_midi_target(
         &self,
         node: &PluginGraphNode,
@@ -2097,14 +2126,24 @@ impl Track {
                 .get(port)
                 .map(|_| ())
                 .ok_or_else(|| format!("Track MIDI output port {port} not found")),
-            PluginGraphNode::Lv2PluginInstance(instance_id) => self
-                .lv2_processors
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| (port < instance.processor.midi_input_count()).then_some(()))
-                .ok_or_else(|| {
-                    format!("Plugin instance {instance_id} MIDI input port {port} missing")
-                }),
+            PluginGraphNode::Lv2PluginInstance(instance_id) => {
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    self.lv2_processors
+                        .iter()
+                        .find(|instance| instance.id == *instance_id)
+                        .and_then(|instance| {
+                            (port < instance.processor.midi_input_count()).then_some(())
+                        })
+                        .ok_or_else(|| {
+                            format!("Plugin instance {instance_id} MIDI input port {port} missing")
+                        })
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    Err(format!("LV2 instance {instance_id} is not supported on macOS"))
+                }
+            }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
                 .vst3_processors
                 .iter()
@@ -2124,7 +2163,7 @@ impl Track {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn plugin_connected_neighbors(
         &self,
         kind: Kind,
@@ -2225,7 +2264,7 @@ impl Track {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn plugin_midi_ready(
         &self,
         node: &PluginGraphNode,
@@ -2246,7 +2285,7 @@ impl Track {
             .all(|conn| processed.contains(&conn.from_node))
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn plugin_midi_input_events(
         &self,
         node: &PluginGraphNode,
@@ -2264,7 +2303,7 @@ impl Track {
         per_port
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn route_plugin_midi_to_track_outputs_graph(
         &self,
         node_events: &HashMap<(PluginGraphNode, usize), Vec<MidiEvent>>,
@@ -2331,7 +2370,7 @@ impl Track {
 #[cfg(test)]
 mod tests {
     use super::Track;
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     use crate::{kind::Kind, message::PluginGraphNode};
     use std::sync::Arc;
 
@@ -2380,7 +2419,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(unix)]
     fn plugin_graph_includes_default_track_midi_passthrough() {
         let track = Track::new("t".to_string(), 0, 0, 1, 2, 64, 48_000.0);
         let connections = track.plugin_graph_connections();
