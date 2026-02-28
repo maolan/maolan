@@ -75,6 +75,16 @@ pub struct Lv2PluginState {
     pub properties: Vec<Lv2StateProperty>,
 }
 
+#[cfg(all(unix, not(target_os = "macos")))]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lv2ControlPortInfo {
+    pub index: u32,
+    pub name: String,
+    pub min: f32,
+    pub max: f32,
+    pub value: f32,
+}
+
 #[cfg(unix)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginGraphConnection {
@@ -194,9 +204,23 @@ pub enum Action {
         instance_id: usize,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
-    TrackShowLv2PluginUiInstance {
+    TrackGetLv2PluginControls {
         track_name: String,
         instance_id: usize,
+    },
+    #[cfg(all(unix, not(target_os = "macos")))]
+    TrackLv2PluginControls {
+        track_name: String,
+        instance_id: usize,
+        controls: Vec<Lv2ControlPortInfo>,
+        instance_access_handle: Option<usize>,
+    },
+    #[cfg(all(unix, not(target_os = "macos")))]
+    TrackSetLv2ControlValue {
+        track_name: String,
+        instance_id: usize,
+        index: u32,
+        value: f32,
     },
     #[cfg(unix)]
     TrackGetPluginGraph {

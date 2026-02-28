@@ -5,7 +5,7 @@ use crate::clap::{ClapProcessor, ClapTransportInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::lv2::{Lv2Processor, Lv2TransportInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
-use crate::message::Lv2PluginState;
+use crate::message::{Lv2ControlPortInfo, Lv2PluginState};
 #[cfg(unix)]
 use crate::message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin};
 use crate::mutex::UnsafeMutex;
@@ -1213,7 +1213,7 @@ impl Track {
                 audio_outputs: instance.processor.audio_output_count(),
                 midi_inputs: instance.processor.midi_input_count(),
                 midi_outputs: instance.processor.midi_output_count(),
-                state: Some(instance.processor.snapshot_state()),
+                state: Some(instance.processor.snapshot_port_state()),
             });
         }
         for instance in &self.vst3_processors {
@@ -1266,6 +1266,47 @@ impl Track {
             ));
         };
         instance.processor.restore_state(&state)
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub fn lv2_plugin_controls(
+        &self,
+        instance_id: usize,
+    ) -> Result<(Vec<Lv2ControlPortInfo>, Option<usize>), String> {
+        let Some(instance) = self
+            .lv2_processors
+            .iter()
+            .find(|instance| instance.id == instance_id)
+        else {
+            return Err(format!(
+                "Track '{}' does not have LV2 instance id: {}",
+                self.name, instance_id
+            ));
+        };
+        Ok((
+            instance.processor.control_ports_with_values(),
+            instance.processor.instance_access_handle(),
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub fn set_lv2_control_value(
+        &mut self,
+        instance_id: usize,
+        index: u32,
+        value: f32,
+    ) -> Result<(), String> {
+        let Some(instance) = self
+            .lv2_processors
+            .iter_mut()
+            .find(|instance| instance.id == instance_id)
+        else {
+            return Err(format!(
+                "Track '{}' does not have LV2 instance id: {}",
+                self.name, instance_id
+            ));
+        };
+        instance.processor.set_control_value(index, value)
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -2103,36 +2144,6 @@ impl Track {
         } else {
             Ok(())
         }
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    pub fn show_lv2_plugin_ui(&mut self, uri: &str) -> Result<(), String> {
-        let Some(instance) = self
-            .lv2_processors
-            .iter_mut()
-            .find(|instance| instance.processor.uri() == uri)
-        else {
-            return Err(format!(
-                "Track '{}' does not have LV2 plugin loaded: {uri}",
-                self.name
-            ));
-        };
-        instance.processor.show_ui()
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    pub fn show_lv2_plugin_ui_instance(&mut self, instance_id: usize) -> Result<(), String> {
-        let Some(instance) = self
-            .lv2_processors
-            .iter_mut()
-            .find(|instance| instance.id == instance_id)
-        else {
-            return Err(format!(
-                "Track '{}' does not have LV2 instance id: {}",
-                self.name, instance_id
-            ));
-        };
-        instance.processor.show_ui()
     }
 
     fn with_default_passthrough(mut self) -> Self {

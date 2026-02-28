@@ -2352,6 +2352,7 @@ dependencies = [
  "iced_drop",
  "iced_fonts",
  "libloading 0.8.9",
+ "lilv",
  "maolan-engine",
  "midly",
  "nix",

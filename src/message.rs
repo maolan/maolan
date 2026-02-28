@@ -179,6 +179,13 @@ pub enum Message {
     SelectLv2Plugin(String),
     #[cfg(all(unix, not(target_os = "macos")))]
     LoadSelectedLv2Plugins,
+    #[cfg(all(unix, not(target_os = "macos")))]
+    OpenLv2PluginUi {
+        track_name: String,
+        instance_id: usize,
+    },
+    #[cfg(all(unix, not(target_os = "macos")))]
+    PumpLv2Ui,
     RefreshVst3Plugins,
     FilterVst3Plugins(String),
     SelectVst3Plugin(String),

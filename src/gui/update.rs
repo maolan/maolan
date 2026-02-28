@@ -712,6 +712,20 @@ impl Maolan {
                     self.state.blocking_write().message = e;
                 }
             }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            Message::OpenLv2PluginUi {
+                ref track_name,
+                instance_id,
+            } => {
+                return self.send(Action::TrackGetLv2PluginControls {
+                    track_name: track_name.clone(),
+                    instance_id,
+                });
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            Message::PumpLv2Ui => {
+                self.lv2_ui_host.pump();
+            }
             Message::OpenVst3PluginUi {
                 ref plugin_path,
                 ref plugin_name,
@@ -1237,6 +1251,7 @@ impl Maolan {
                 Action::TrackLoadLv2Plugin { track_name, .. }
                 | Action::TrackSetLv2PluginState { track_name, .. }
                 | Action::TrackUnloadLv2PluginInstance { track_name, .. }
+                | Action::TrackSetLv2ControlValue { track_name, .. }
                 | Action::TrackLoadVst3Plugin { track_name, .. }
                 | Action::TrackUnloadVst3PluginInstance { track_name, .. }
                 | Action::TrackConnectPluginAudio { track_name, .. }
@@ -1248,6 +1263,36 @@ impl Maolan {
                         return self.send(Action::TrackGetPluginGraph {
                             track_name: track_name.clone(),
                         });
+                    }
+                }
+                #[cfg(all(unix, not(target_os = "macos")))]
+                Action::TrackLv2PluginControls {
+                    track_name,
+                    instance_id,
+                    controls,
+                    instance_access_handle,
+                } => {
+                    let (plugin_name, plugin_uri) = {
+                        let state = self.state.blocking_read();
+                        state
+                            .plugin_graph_plugins
+                            .iter()
+                            .find(|plugin| plugin.instance_id == *instance_id)
+                            .map(|plugin| (plugin.name.clone(), plugin.uri.clone()))
+                            .unwrap_or_else(|| {
+                                (format!("LV2 #{instance_id}"), String::new())
+                            })
+                    };
+                    if let Err(err) = self.lv2_ui_host.open_editor(
+                        track_name.clone(),
+                        *instance_id,
+                        plugin_name,
+                        plugin_uri,
+                        controls.clone(),
+                        *instance_access_handle,
+                        CLIENT.clone(),
+                    ) {
+                        self.state.blocking_write().message = err;
                     }
                 }
                 #[cfg(all(unix, not(target_os = "macos")))]

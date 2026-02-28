@@ -11,6 +11,8 @@ use iced::keyboard::Event as KeyEvent;
 use iced::{Subscription, event, keyboard, mouse, window};
 use maolan_engine::message::{Action as EngineAction, Message as EngineMessage};
 use std::collections::HashMap;
+#[cfg(all(unix, not(target_os = "macos")))]
+use std::time::Duration;
 
 const METER_DIRTY_EPSILON_DB: f32 = 0.2;
 
@@ -144,6 +146,12 @@ impl Maolan {
         } else {
             Subscription::none()
         };
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let lv2_ui_sub = if self.lv2_ui_host.has_open_windows() {
+            iced::time::every(Duration::from_millis(16)).map(|_| Message::PumpLv2Ui)
+        } else {
+            Subscription::none()
+        };
         Subscription::batch(vec![
             engine_sub,
             keyboard_sub,
@@ -151,6 +159,8 @@ impl Maolan {
             playback_sub,
             recording_preview_sub,
             recording_preview_peaks_sub,
+            #[cfg(all(unix, not(target_os = "macos")))]
+            lv2_ui_sub,
         ])
     }
 }

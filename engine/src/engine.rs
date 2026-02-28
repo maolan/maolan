@@ -1557,14 +1557,49 @@ impl Engine {
                 }
             }
             #[cfg(all(unix, not(target_os = "macos")))]
-            Action::TrackShowLv2PluginUiInstance {
+            Action::TrackGetLv2PluginControls {
                 ref track_name,
                 instance_id,
             } => {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        if let Err(e) = track.lock().show_lv2_plugin_ui_instance(instance_id) {
+                        let (controls, instance_access_handle) =
+                            match track.lock().lv2_plugin_controls(instance_id) {
+                                Ok(result) => result,
+                                Err(e) => {
+                                    self.notify_clients(Err(e)).await;
+                                    return;
+                                }
+                            };
+                        self.notify_clients(Ok(Action::TrackLv2PluginControls {
+                            track_name: track_name.clone(),
+                            instance_id,
+                            controls,
+                            instance_access_handle,
+                        }))
+                        .await;
+                        return;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            Action::TrackSetLv2ControlValue {
+                ref track_name,
+                instance_id,
+                index,
+                value,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().set_lv2_control_value(instance_id, index, value)
+                        {
                             self.notify_clients(Err(e)).await;
                             return;
                         }
@@ -2841,6 +2876,8 @@ impl Engine {
                     return;
                 }
             }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            Action::TrackLv2PluginControls { .. } => {}
             Action::HWInfo { .. } => {}
         }
         self.notify_clients(Ok(a.clone())).await;

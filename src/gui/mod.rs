@@ -5,6 +5,8 @@ mod update;
 mod view;
 
 use crate::plugins::clap_ui::GuiClapUiHost;
+#[cfg(all(unix, not(target_os = "macos")))]
+use crate::plugins::lv2_ui::GuiLv2UiHost;
 use crate::plugins::vst3_ui::GuiVst3UiHost;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
@@ -109,6 +111,8 @@ pub struct Maolan {
     import_current_filename: String,
     import_current_operation: Option<String>,
     clap_ui_host: GuiClapUiHost,
+    #[cfg(all(unix, not(target_os = "macos")))]
+    lv2_ui_host: GuiLv2UiHost,
     vst3_ui_host: GuiVst3UiHost,
 }
 
@@ -177,6 +181,8 @@ impl Default for Maolan {
             import_current_filename: String::new(),
             import_current_operation: None,
             clap_ui_host: GuiClapUiHost::new(),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            lv2_ui_host: GuiLv2UiHost::new(),
             vst3_ui_host: GuiVst3UiHost::new(),
         }
     }

@@ -502,12 +502,10 @@ impl canvas::Program<Message> for Graph {
                                 let plugin = &data.plugin_graph_plugins[plugin_idx];
                                 return match &plugin.node {
                                     PluginGraphNode::Lv2PluginInstance(_) => {
-                                        Some(Action::publish(Message::Request(
-                                            EngineAction::TrackShowLv2PluginUiInstance {
-                                                track_name,
-                                                instance_id,
-                                            },
-                                        )))
+                                        Some(Action::publish(Message::OpenLv2PluginUi {
+                                            track_name,
+                                            instance_id,
+                                        }))
                                     }
                                     PluginGraphNode::ClapPluginInstance(_) => {
                                         Some(Action::publish(Message::ShowClapPluginUi(

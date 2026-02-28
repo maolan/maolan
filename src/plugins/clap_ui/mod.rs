@@ -1,8 +1,9 @@
 use libloading::Library;
 use std::ffi::{CStr, CString, c_char, c_void};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct GuiClapUiHost;
 
@@ -126,6 +127,11 @@ struct ClapPluginGui {
 }
 
 #[repr(C)]
+struct ClapPluginTimerSupport {
+    on_timer: Option<unsafe extern "C" fn(*const ClapPlugin, u32)>,
+}
+
+#[repr(C)]
 struct ClapHostThreadCheck {
     is_main_thread: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
     is_audio_thread: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
@@ -149,6 +155,13 @@ struct ClapHostGui {
 struct UiHostState {
     should_close: AtomicBool,
     callback_requested: AtomicBool,
+    timers: Mutex<Vec<HostTimer>>,
+}
+
+struct HostTimer {
+    id: u32,
+    period: Duration,
+    next_tick: Instant,
 }
 
 static NEXT_TIMER_ID: AtomicU32 = AtomicU32::new(1);
@@ -206,19 +219,33 @@ unsafe extern "C" fn host_is_audio_thread(_host: *const ClapHost) -> bool {
 }
 
 unsafe extern "C" fn host_timer_register(
-    _host: *const ClapHost,
-    _period_ms: u32,
+    host: *const ClapHost,
+    period_ms: u32,
     timer_id: *mut u32,
 ) -> bool {
     if timer_id.is_null() {
         return false;
     }
     let id = NEXT_TIMER_ID.fetch_add(1, Ordering::Relaxed);
+    let period_ms = period_ms.max(1);
+    let period = Duration::from_millis(period_ms as u64);
+    let state = host_state(host);
+    {
+        let mut timers = state.timers.lock().unwrap();
+        timers.push(HostTimer {
+            id,
+            period,
+            next_tick: Instant::now() + period,
+        });
+    }
     unsafe { *timer_id = id };
     true
 }
 
-unsafe extern "C" fn host_timer_unregister(_host: *const ClapHost, _timer_id: u32) -> bool {
+unsafe extern "C" fn host_timer_unregister(host: *const ClapHost, timer_id: u32) -> bool {
+    let state = host_state(host);
+    let mut timers = state.timers.lock().unwrap();
+    timers.retain(|timer| timer.id != timer_id);
     true
 }
 
@@ -271,6 +298,7 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
     let mut host_state = Box::new(UiHostState {
         should_close: AtomicBool::new(false),
         callback_requested: AtomicBool::new(false),
+        timers: Mutex::new(Vec::new()),
     });
     let host = ClapHost {
         clap_version: CLAP_VERSION,
@@ -286,6 +314,7 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
     };
     let factory_id = c"clap.plugin-factory";
     let gui_ext_id = c"clap.gui";
+    let timer_ext_id = c"clap.timer-support";
 
     let library = unsafe { Library::new(plugin_path) }.map_err(|e| e.to_string())?;
     let entry_ptr = unsafe {
@@ -378,6 +407,13 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
         return Err("CLAP plugin does not expose clap.gui".to_string());
     }
     let gui = unsafe { &*(gui_ptr as *const ClapPluginGui) };
+    let timer_ext_ptr = unsafe { get_extension(plugin, timer_ext_id.as_ptr()) };
+    let timer_ext = if timer_ext_ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { &*(timer_ext_ptr as *const ClapPluginTimerSupport) })
+    };
+    let on_timer = timer_ext.and_then(|ext| ext.on_timer);
 
     let create = gui
         .create
@@ -424,6 +460,22 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
             && let Some(on_main_thread) = plugin_ref.on_main_thread
         {
             unsafe { on_main_thread(plugin) };
+        }
+        if let Some(on_timer) = on_timer {
+            let now = Instant::now();
+            let mut due_ids = Vec::new();
+            {
+                let mut timers = host_state.timers.lock().unwrap();
+                for timer in timers.iter_mut() {
+                    if now >= timer.next_tick {
+                        due_ids.push(timer.id);
+                        timer.next_tick = now + timer.period;
+                    }
+                }
+            }
+            for timer_id in due_ids {
+                unsafe { on_timer(plugin, timer_id) };
+            }
         }
         thread::sleep(Duration::from_millis(16));
     }
