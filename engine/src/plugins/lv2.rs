@@ -383,6 +383,9 @@ impl Lv2Processor {
         let output_port = world.new_uri("http://lv2plug.in/ns/lv2core#OutputPort");
         let audio_port = world.new_uri("http://lv2plug.in/ns/lv2core#AudioPort");
         let control_port = world.new_uri("http://lv2plug.in/ns/lv2core#ControlPort");
+        let toggled_property = world.new_uri("http://lv2plug.in/ns/lv2core#toggled");
+        let integer_property = world.new_uri("http://lv2plug.in/ns/lv2core#integer");
+        let enumeration_property = world.new_uri("http://lv2plug.in/ns/lv2core#enumeration");
         let atom_port = world.new_uri("http://lv2plug.in/ns/ext/atom#AtomPort");
         let event_port = world.new_uri("http://lv2plug.in/ns/ext/event#EventPort");
 
@@ -451,24 +454,55 @@ impl Lv2Processor {
                 atom_outputs.push(buffer);
                 port_bindings[index] = PortBinding::AtomOutput(atom_idx);
             } else {
-                let default_value = port
-                    .range()
-                    .default
-                    .and_then(|node| node.as_float())
+                let range = port.range();
+                let min = range
+                    .minimum
+                    .as_ref()
+                    .and_then(lv2_node_to_f32)
                     .unwrap_or(0.0);
+                let max = range
+                    .maximum
+                    .as_ref()
+                    .and_then(lv2_node_to_f32)
+                    .unwrap_or(1.0);
+                let explicit_default = range.default.as_ref().and_then(lv2_node_to_f32);
+                let is_toggled = is_control
+                    && is_input
+                    && port.has_property(&toggled_property);
+                let is_discrete = is_control
+                    && is_input
+                    && (port.has_property(&integer_property)
+                        || port.has_property(&enumeration_property));
+                let (fallback_default, fallback_reason) =
+                    infer_missing_control_default(min, max, is_toggled, is_discrete);
+                let default_value = explicit_default.unwrap_or(fallback_default);
                 scalar_values[index] = default_value;
                 port_bindings[index] = PortBinding::Scalar(index);
 
+                if explicit_default.is_none()
+                    && is_control
+                    && is_input
+                    && std::env::var_os("MAOLAN_TRACE_LV2_DEFAULTS").is_some()
+                {
+                    let symbol = port
+                        .symbol()
+                        .and_then(|node| node.as_str().map(str::to_string))
+                        .unwrap_or_else(|| format!("port_{index}"));
+                    eprintln!(
+                        "TRACE LV2 default uri='{}' port={} symbol='{}' range=[{}, {}] value={} reason={}",
+                        uri,
+                        index,
+                        symbol,
+                        min,
+                        max,
+                        default_value,
+                        fallback_reason
+                    );
+                }
+
                 if is_control && is_input {
-                    let range = port.range();
-                    let mut min = range
-                        .minimum
-                        .and_then(|node| node.as_float())
-                        .unwrap_or(0.0);
-                    let mut max = range
-                        .maximum
-                        .and_then(|node| node.as_float())
-                        .unwrap_or(1.0);
+                    let mut min = min;
+                    let mut max = max;
                     if !matches!(min.partial_cmp(&max), Some(std::cmp::Ordering::Less)) {
                         min = default_value - 1.0;
                         max = default_value + 1.0;
@@ -2076,4 +2110,42 @@ fn plugin_port_counts(
     }
 
     (audio_inputs, audio_outputs, midi_inputs, midi_outputs)
+}
+
+fn infer_missing_control_default(
+    min: f32,
+    max: f32,
+    is_toggled: bool,
+    is_discrete: bool,
+) -> (f32, &'static str) {
+    if !min.is_finite() || !max.is_finite() {
+        return (0.0, "non-finite-range->0");
+    }
+    if is_toggled {
+        let off = if min <= 0.0 && max >= 0.0 { 0.0 } else { min };
+        return (off.clamp(min, max), "toggled->off");
+    }
+    if is_discrete {
+        if min < 0.0 && max > 0.0 {
+            return (0.0, "discrete-bipolar->0");
+        }
+        return (min, "discrete->min");
+    }
+    if min < 0.0 && max > 0.0 {
+        return (0.0, "bipolar->0");
+    }
+    if min <= 1.0 && max >= 1.0 {
+        return (1.0, "range-has-unity->1");
+    }
+    (min + (max - min) * 0.5, "midpoint")
+}
+
+fn lv2_node_to_f32(node: &Node) -> Option<f32> {
+    if let Some(v) = node.as_float() {
+        return Some(v);
+    }
+    if let Some(v) = node.as_int() {
+        return Some(v as f32);
+    }
+    node.as_bool().map(|v| if v { 1.0 } else { 0.0 })
 }

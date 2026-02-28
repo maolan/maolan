@@ -1279,9 +1279,7 @@ impl Maolan {
                             .iter()
                             .find(|plugin| plugin.instance_id == *instance_id)
                             .map(|plugin| (plugin.name.clone(), plugin.uri.clone()))
-                            .unwrap_or_else(|| {
-                                (format!("LV2 #{instance_id}"), String::new())
-                            })
+                            .unwrap_or_else(|| (format!("LV2 #{instance_id}"), String::new()))
                     };
                     if let Err(err) = self.lv2_ui_host.open_editor(
                         track_name.clone(),

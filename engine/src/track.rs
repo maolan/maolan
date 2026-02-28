@@ -20,7 +20,7 @@ use midly::{MetaMessage, Smf, Timing, TrackEventKind, live::LiveEvent};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, atomic::Ordering},
 };
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -169,6 +169,17 @@ impl Track {
         }
     }
 
+    fn connect_directed_audio(from: &Arc<AudioIO>, to: &Arc<AudioIO>) {
+        let new_len = {
+            let conns = to.connections.lock();
+            if !conns.iter().any(|conn| Arc::ptr_eq(conn, from)) {
+                conns.push(from.clone());
+            }
+            conns.len()
+        };
+        to.connection_count.store(new_len, Ordering::Relaxed);
+    }
+
     fn invalidate_audio_route_cache(&mut self) {
         self.audio_route_cache_dirty = true;
     }
@@ -291,6 +302,13 @@ impl Track {
         }
     }
 
+    fn buffer_peak(io: &Arc<AudioIO>) -> f32 {
+        io.buffer
+            .lock()
+            .iter()
+            .fold(0.0_f32, |acc, sample| acc.max(sample.abs()))
+    }
+
     pub fn process(&mut self) {
         for audio_in in &self.audio.ins {
             audio_in.process();
@@ -315,6 +333,12 @@ impl Track {
         let mut track_input_midi_events = self.collect_track_input_midi_events();
         if clip_playback_active {
             self.mix_clip_midi_into_inputs(&mut track_input_midi_events, frames);
+            if !self.input_monitor {
+                for audio_in in &self.audio.ins {
+                    audio_in.buffer.lock().fill(0.0);
+                }
+            }
+            self.mix_clip_audio_into_inputs();
         }
 
         #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -655,45 +679,30 @@ impl Track {
             };
             let output_gain = linear_gain * balance_gain;
             let unity_output_gain = (output_gain - 1.0).abs() <= f32::EPSILON;
-            let monitor_to_output = self.input_monitor && self.output_enabled;
-            let clips_to_output = self.disk_monitor && self.clip_playback_enabled;
             let sources = self.internal_output_routes_cache.get(out_idx);
             let has_sources = sources.is_some_and(|s| !s.is_empty());
-            let can_seed_output_from_input = monitor_to_output && has_sources;
-
-            if can_seed_output_from_input {
-                if let Some(sources) = sources {
-                    let first = sources[0].buffer.lock();
-                    if unity_output_gain {
-                        Self::copy_unity_with_zero_tail(out_samples, &first);
-                    } else {
-                        Self::copy_scaled_with_zero_tail(out_samples, &first, output_gain);
+            out_samples.fill(0.0);
+            if self.output_enabled && let Some(sources) = sources {
+                let mut seeded = false;
+                for source in sources {
+                    if !self.input_monitor
+                        && !clip_playback_active
+                        && self.is_track_input_source(source)
+                    {
+                        continue;
                     }
-                    if unity_output_gain {
-                        for source in &sources[1..] {
-                            let source_buf = source.buffer.lock();
-                            Self::add_unity(out_samples, &source_buf);
+                    let source_buf = source.buffer.lock();
+                    if !seeded {
+                        if unity_output_gain {
+                            Self::copy_unity_with_zero_tail(out_samples, &source_buf);
+                        } else {
+                            Self::copy_scaled_with_zero_tail(out_samples, &source_buf, output_gain);
                         }
+                        seeded = true;
+                    } else if unity_output_gain {
+                        Self::add_unity(out_samples, &source_buf);
                     } else {
-                        for source in &sources[1..] {
-                            let source_buf = source.buffer.lock();
-                            Self::add_scaled(out_samples, &source_buf, output_gain);
-                        }
-                    }
-                }
-            } else {
-                out_samples.fill(0.0);
-                if monitor_to_output && let Some(sources) = sources {
-                    if unity_output_gain {
-                        for source in sources {
-                            let source_buf = source.buffer.lock();
-                            Self::add_unity(out_samples, &source_buf);
-                        }
-                    } else {
-                        for source in sources {
-                            let source_buf = source.buffer.lock();
-                            Self::add_scaled(out_samples, &source_buf, output_gain);
-                        }
+                        Self::add_scaled(out_samples, &source_buf, output_gain);
                     }
                 }
             }
@@ -713,10 +722,82 @@ impl Track {
                     tap.fill(0.0);
                 }
             }
-            if clips_to_output {
-                self.mix_clip_audio_into_output(out_idx, out_samples, linear_gain, balance_gain);
-            }
             *audio_out.finished.lock() = true;
+        }
+
+        if std::env::var_os("MAOLAN_TRACE_PLUGIN_AUDIO").is_some()
+            && (!self.vst3_processors.is_empty()
+                || !self.clap_plugins.is_empty()
+                || {
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        !self.lv2_processors.is_empty()
+                    }
+                    #[cfg(not(all(unix, not(target_os = "macos"))))]
+                    {
+                        false
+                    }
+                })
+        {
+            let track_in: Vec<f32> = self.audio.ins.iter().map(Self::buffer_peak).collect();
+            let track_out: Vec<f32> = self.audio.outs.iter().map(Self::buffer_peak).collect();
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                for instance in &self.lv2_processors {
+                    let pin: Vec<f32> = instance
+                        .processor
+                        .audio_inputs()
+                        .iter()
+                        .map(Self::buffer_peak)
+                        .collect();
+                    let pout: Vec<f32> = instance
+                        .processor
+                        .audio_outputs()
+                        .iter()
+                        .map(Self::buffer_peak)
+                        .collect();
+                    eprintln!(
+                        "TRACE track='{}' lv2#{} in={:?} out={:?} track_in={:?} track_out={:?}",
+                        self.name, instance.id, pin, pout, track_in, track_out
+                    );
+                }
+            }
+            for instance in &self.vst3_processors {
+                let pin: Vec<f32> = instance
+                    .processor
+                    .audio_inputs()
+                    .iter()
+                    .map(Self::buffer_peak)
+                    .collect();
+                let pout: Vec<f32> = instance
+                    .processor
+                    .audio_outputs()
+                    .iter()
+                    .map(Self::buffer_peak)
+                    .collect();
+                eprintln!(
+                    "TRACE track='{}' vst3#{} in={:?} out={:?} track_in={:?} track_out={:?}",
+                    self.name, instance.id, pin, pout, track_in, track_out
+                );
+            }
+            for instance in &self.clap_plugins {
+                let pin: Vec<f32> = instance
+                    .processor
+                    .audio_inputs()
+                    .iter()
+                    .map(Self::buffer_peak)
+                    .collect();
+                let pout: Vec<f32> = instance
+                    .processor
+                    .audio_outputs()
+                    .iter()
+                    .map(Self::buffer_peak)
+                    .collect();
+                eprintln!(
+                    "TRACE track='{}' clap#{} in={:?} out={:?} track_in={:?} track_out={:?}",
+                    self.name, instance.id, pin, pout, track_in, track_out
+                );
+            }
         }
 
         self.audio.finished = true;
@@ -999,28 +1080,22 @@ impl Track {
         segments
     }
 
-    fn mix_clip_audio_into_output(
-        &mut self,
-        out_channel: usize,
-        out_samples: &mut [f32],
-        linear_gain: f32,
-        balance_gain: f32,
-    ) {
-        let frames = out_samples.len();
-        if frames == 0 {
+    fn mix_clip_audio_into_inputs(&mut self) {
+        let frames = self
+            .audio
+            .ins
+            .first()
+            .map(|audio_in| audio_in.buffer.lock().len())
+            .unwrap_or(0);
+        if frames == 0 || self.audio.ins.is_empty() {
             return;
         }
+
         let segments = self.cycle_segments(frames);
         for clip in &self.audio.clips {
             let clip_start = clip.start;
             let clip_len = clip.end;
             if clip_len == 0 {
-                continue;
-            }
-            let destination_lane = clip
-                .input_channel
-                .min(self.audio.outs.len().saturating_sub(1));
-            if self.audio.outs.len() > 1 && out_channel != destination_lane {
                 continue;
             }
             let clip_end = clip_start.saturating_add(clip_len);
@@ -1032,26 +1107,31 @@ impl Track {
             if total_frames == 0 {
                 continue;
             }
-            let source_channel = if channels == 1 {
-                0
-            } else {
-                clip.input_channel.min(channels - 1)
-            };
-            for (segment_start, segment_end, out_offset) in &segments {
-                if clip_end <= *segment_start || clip_start >= *segment_end {
+
+            for in_channel in 0..self.audio.ins.len() {
+                let source_channel = if channels == 1 {
+                    0
+                } else if in_channel < channels {
+                    in_channel
+                } else {
                     continue;
-                }
-                let from = (*segment_start).max(clip_start);
-                let to = (*segment_end).min(clip_end);
-                for absolute_sample in from..to {
-                    let track_idx = out_offset + (absolute_sample - *segment_start);
-                    let clip_idx = absolute_sample - clip_start + clip.offset;
-                    if clip_idx >= total_frames || track_idx >= out_samples.len() {
-                        break;
+                };
+                let in_samples = self.audio.ins[in_channel].buffer.lock();
+
+                for (segment_start, segment_end, out_offset) in &segments {
+                    if clip_end <= *segment_start || clip_start >= *segment_end {
+                        continue;
                     }
-                    let sample = buffer.samples[clip_idx * channels + source_channel];
-                    if self.output_enabled {
-                        out_samples[track_idx] += sample * linear_gain * balance_gain;
+                    let from = (*segment_start).max(clip_start);
+                    let to = (*segment_end).min(clip_end);
+                    for absolute_sample in from..to {
+                        let track_idx = out_offset + (absolute_sample - *segment_start);
+                        let clip_idx = absolute_sample - clip_start + clip.offset;
+                        if clip_idx >= total_frames || track_idx >= in_samples.len() {
+                            break;
+                        }
+                        let sample = buffer.samples[clip_idx * channels + source_channel];
+                        in_samples[track_idx] += sample;
                     }
                 }
             }
@@ -2064,13 +2144,10 @@ impl Track {
         }) {
             return Err("Circular routing is not allowed!".to_string());
         }
-        AudioIO::connect(&source, &target);
-
         if matches!(from_node, PluginGraphNode::TrackInput) {
-            source
-                .connections
-                .lock()
-                .retain(|conn| !Arc::ptr_eq(conn, &target));
+            Self::connect_directed_audio(&source, &target);
+        } else {
+            AudioIO::connect(&source, &target);
         }
         self.invalidate_audio_route_cache();
         Ok(())
@@ -2153,19 +2230,31 @@ impl Track {
     }
 
     pub(crate) fn ensure_default_audio_passthrough(&mut self) {
-        for (audio_in, audio_out) in self.audio.ins.iter().zip(self.audio.outs.iter()) {
+        if self.audio.ins.is_empty() {
+            self.invalidate_audio_route_cache();
+            return;
+        }
+
+        for audio_in in &self.audio.ins {
             audio_in
                 .connections
                 .lock()
-                .retain(|conn| !Arc::ptr_eq(conn, audio_out));
+                .retain(|conn| !self.audio.outs.iter().any(|out| Arc::ptr_eq(out, conn)));
+        }
 
-            let exists = audio_out
-                .connections
-                .lock()
-                .iter()
-                .any(|conn| Arc::ptr_eq(conn, audio_in));
-            if !exists {
-                audio_out.connections.lock().push(audio_in.clone());
+        for (out_idx, audio_out) in self.audio.outs.iter().enumerate() {
+            let source_idx = out_idx.min(self.audio.ins.len().saturating_sub(1));
+            let audio_in = &self.audio.ins[source_idx];
+            let conns = audio_out.connections.lock();
+            conns.retain(|conn| {
+                !self
+                    .audio
+                    .ins
+                    .iter()
+                    .any(|input| Arc::ptr_eq(input, conn))
+            });
+            if !conns.iter().any(|conn| Arc::ptr_eq(conn, audio_in)) {
+                conns.push(audio_in.clone());
             }
         }
         self.invalidate_audio_route_cache();
@@ -2198,6 +2287,10 @@ impl Track {
             sources.extend(instance.processor.audio_outputs().iter().cloned());
         }
         sources
+    }
+
+    fn is_track_input_source(&self, source: &Arc<AudioIO>) -> bool {
+        self.audio.ins.iter().any(|input| Arc::ptr_eq(input, source))
     }
 
     fn disconnect_all(port: &Arc<AudioIO>) {
@@ -2617,7 +2710,9 @@ impl Track {
 
 #[cfg(test)]
 mod tests {
-    use super::Track;
+    use crate::audio::clip::AudioClip;
+    use crate::audio::io::AudioIO;
+    use super::{AudioClipBuffer, Track};
     #[cfg(unix)]
     use crate::{kind::Kind, message::PluginGraphNode};
     use std::sync::Arc;
@@ -2640,7 +2735,7 @@ mod tests {
                 .connections
                 .lock()
                 .iter()
-                .all(|conn| !Arc::ptr_eq(conn, &track.audio.ins[0]))
+                .any(|conn| Arc::ptr_eq(conn, &track.audio.ins[0]))
         );
     }
 
@@ -2687,4 +2782,79 @@ mod tests {
                 && c.to_port == 1)
         }));
     }
+
+    #[test]
+    fn track_input_passthrough_respects_input_monitor() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 8, 48_000.0);
+        let source = Arc::new(AudioIO::new(8));
+        source.buffer.lock()[0] = 0.5;
+        source.buffer.lock()[1] = -0.25;
+        AudioIO::connect(&source, &track.audio.ins[0]);
+
+        track.input_monitor = false;
+        track.process();
+        let out = track.audio.outs[0].buffer.lock().to_vec();
+        assert_eq!(out[0], 0.0);
+        assert_eq!(out[1], 0.0);
+
+        track.input_monitor = true;
+        track.process();
+        let out = track.audio.outs[0].buffer.lock().to_vec();
+        assert_eq!(out[0], 0.5);
+        assert_eq!(out[1], -0.25);
+    }
+
+    #[test]
+    fn clip_playback_audible_with_input_monitor_off() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 8, 48_000.0);
+        track.input_monitor = false;
+        track.disk_monitor = true;
+        track.audio.clips.push(AudioClip::new("clip".to_string(), 0, 4));
+        track.audio_clip_cache.insert(
+            "clip".to_string(),
+            Arc::new(AudioClipBuffer {
+                channels: 1,
+                samples: vec![0.8, 0.0, 0.0, 0.0],
+            }),
+        );
+
+        track.process();
+        let out = track.audio.outs[0].buffer.lock().to_vec();
+        assert_eq!(out[0], 0.8);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn disconnecting_one_stereo_internal_channel_mutes_only_that_channel() {
+        let mut track = Track::new("t".to_string(), 2, 2, 0, 0, 8, 48_000.0);
+        let left = Arc::new(AudioIO::new(8));
+        let right = Arc::new(AudioIO::new(8));
+        left.buffer.lock()[0] = 0.25;
+        right.buffer.lock()[0] = 0.75;
+        AudioIO::connect(&left, &track.audio.ins[0]);
+        AudioIO::connect(&right, &track.audio.ins[1]);
+        track.input_monitor = true;
+        track.disk_monitor = false;
+
+        track.process();
+        let out_l = track.audio.outs[0].buffer.lock().to_vec();
+        let out_r = track.audio.outs[1].buffer.lock().to_vec();
+        assert_eq!(out_l[0], 0.25);
+        assert_eq!(out_r[0], 0.75);
+
+        track
+            .disconnect_plugin_audio(
+                PluginGraphNode::TrackInput,
+                1,
+                PluginGraphNode::TrackOutput,
+                1,
+            )
+            .unwrap();
+        track.process();
+        let out_l = track.audio.outs[0].buffer.lock().to_vec();
+        let out_r = track.audio.outs[1].buffer.lock().to_vec();
+        assert_eq!(out_l[0], 0.25);
+        assert_eq!(out_r[0], 0.0);
+    }
+
 }

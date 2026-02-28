@@ -414,7 +414,9 @@ unsafe extern "C" fn on_window_close_data_destroy(data: *mut c_void, _closure: *
         return;
     }
     unsafe {
-        drop(Box::<WindowCloseData>::from_raw(data as *mut WindowCloseData));
+        drop(Box::<WindowCloseData>::from_raw(
+            data as *mut WindowCloseData,
+        ));
     }
 }
 
@@ -446,9 +448,12 @@ unsafe extern "C" fn on_slider_changed(range: *mut c_void, data: *mut c_void) {
     }
     let data = unsafe { &*(data as *const SliderCallbackData) };
     let value = unsafe { gtk_range_get_value(range) as f32 };
-    let _ = data
-        .tx
-        .send((data.track_name.clone(), data.instance_id, data.port_index, value));
+    let _ = data.tx.send((
+        data.track_name.clone(),
+        data.instance_id,
+        data.port_index,
+        value,
+    ));
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -518,7 +523,12 @@ impl GuiLv2UiHost {
         }
 
         // Mark that a window is open for this key (before spawning thread)
-        self.windows.insert(key.clone(), WindowEntry::Generic(GenericWindowEntry { _window: std::ptr::null_mut() }));
+        self.windows.insert(
+            key.clone(),
+            WindowEntry::Generic(GenericWindowEntry {
+                _window: std::ptr::null_mut(),
+            }),
+        );
 
         let closed_tx = self.closed_tx.clone();
 
@@ -623,7 +633,9 @@ impl GuiLv2UiHost {
             )
         };
         if suil_host.is_null() {
-            unsafe { drop(Box::from_raw(controller_ptr)); }
+            unsafe {
+                drop(Box::from_raw(controller_ptr));
+            }
             unsafe { gtk_widget_destroy(window) };
             return Err("Failed to create suil host".to_string());
         }
@@ -920,7 +932,8 @@ impl GuiLv2UiHost {
             let label_txt = CString::new(port.name).map_err(|e| e.to_string())?;
             let label = unsafe { gtk_label_new(label_txt.as_ptr()) };
             let step = ((port.max - port.min).abs() / 200.0).max(0.0001) as f64;
-            let slider = unsafe { gtk_hscale_new_with_range(port.min as f64, port.max as f64, step) };
+            let slider =
+                unsafe { gtk_hscale_new_with_range(port.min as f64, port.max as f64, step) };
             if slider.is_null() {
                 continue;
             }
@@ -1354,12 +1367,14 @@ fn spawn_control_sender(client: Client) -> mpsc::Sender<(String, usize, u32, f32
             }
         };
         for (track_name, instance_id, index, value) in rx {
-            let _ = runtime.block_on(client.send(EngineMessage::Request(Action::TrackSetLv2ControlValue {
-                track_name,
-                instance_id,
-                index,
-                value,
-            })));
+            let _ = runtime.block_on(client.send(EngineMessage::Request(
+                Action::TrackSetLv2ControlValue {
+                    track_name,
+                    instance_id,
+                    index,
+                    value,
+                },
+            )));
         }
     });
     tx
