@@ -19,6 +19,12 @@ pub struct MemoryStream {
     position: UnsafeCell<usize>,
 }
 
+impl Default for MemoryStream {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryStream {
     pub fn new() -> Self {
         Self {
@@ -43,10 +49,12 @@ impl MemoryStream {
     }
 
     // Helper methods for safe access (used in unsafe blocks)
+    #[allow(clippy::mut_from_ref)]
     unsafe fn data_mut(&self) -> &mut Vec<u8> {
         unsafe { &mut *self.data.get() }
     }
 
+    #[allow(clippy::mut_from_ref)]
     unsafe fn position_mut(&self) -> &mut usize {
         unsafe { &mut *self.position.get() }
     }

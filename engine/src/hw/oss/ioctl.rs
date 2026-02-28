@@ -305,8 +305,8 @@ pub fn add_to_sync_group(fd: i32, group: i32, input: bool) -> i32 {
 }
 
 pub fn start_sync_group(fd: i32, group: i32) -> std::io::Result<()> {
-    let mut id = group;
-    unsafe { oss_start_group(fd, &mut id) }
+    let id = group;
+    unsafe { oss_start_group(fd, &id) }
         .map(|_| ())
         .map_err(|_| std::io::Error::last_os_error())
 }

@@ -466,9 +466,7 @@ impl Lv2Processor {
                     .and_then(lv2_node_to_f32)
                     .unwrap_or(1.0);
                 let explicit_default = range.default.as_ref().and_then(lv2_node_to_f32);
-                let is_toggled = is_control
-                    && is_input
-                    && port.has_property(&toggled_property);
+                let is_toggled = is_control && is_input && port.has_property(&toggled_property);
                 let is_discrete = is_control
                     && is_input
                     && (port.has_property(&integer_property)
@@ -490,13 +488,7 @@ impl Lv2Processor {
                         .unwrap_or_else(|| format!("port_{index}"));
                     eprintln!(
                         "TRACE LV2 default uri='{}' port={} symbol='{}' range=[{}, {}] value={} reason={}",
-                        uri,
-                        index,
-                        symbol,
-                        min,
-                        max,
-                        default_value,
-                        fallback_reason
+                        uri, index, symbol, min, max, default_value, fallback_reason
                     );
                 }
 
@@ -610,10 +602,10 @@ impl Lv2Processor {
     }
 
     pub fn process(&mut self, input_channels: &[Vec<f32>], frames: usize) -> Vec<Vec<f32>> {
-        if let Ok(mut values) = self.scalar_values.lock() {
-            if values.is_empty() {
-                values.push(0.0);
-            }
+        if let Ok(mut values) = self.scalar_values.lock()
+            && values.is_empty()
+        {
+            values.push(0.0);
         }
 
         for (channel, io) in self.audio_inputs.iter_mut().enumerate() {
@@ -661,10 +653,10 @@ impl Lv2Processor {
         midi_inputs: &[Vec<MidiEvent>],
         transport: Lv2TransportInfo,
     ) -> Vec<Vec<MidiEvent>> {
-        if let Ok(mut values) = self.scalar_values.lock() {
-            if values.is_empty() {
-                values.push(0.0);
-            }
+        if let Ok(mut values) = self.scalar_values.lock()
+            && values.is_empty()
+        {
+            values.push(0.0);
         }
 
         for io in &self.audio_outputs {
@@ -809,13 +801,13 @@ impl Lv2Processor {
                     }
                 }
                 PortBinding::Scalar(index) => {
-                    if let Ok(mut values) = self.scalar_values.lock() {
-                        if *index < values.len() {
-                            let ptr = (&mut values[*index]) as *mut f32;
-                            if let Some(instance) = self.instance.as_mut() {
-                                unsafe {
-                                    instance.instance_mut().connect_port_mut(port_index, ptr);
-                                }
+                    if let Ok(mut values) = self.scalar_values.lock()
+                        && *index < values.len()
+                    {
+                        let ptr = (&mut values[*index]) as *mut f32;
+                        if let Some(instance) = self.instance.as_mut() {
+                            unsafe {
+                                instance.instance_mut().connect_port_mut(port_index, ptr);
                             }
                         }
                     }

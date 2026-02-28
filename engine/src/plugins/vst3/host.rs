@@ -21,6 +21,12 @@ pub struct Vst3Host {
     plugins: Vec<Vst3PluginInfo>,
 }
 
+impl Default for Vst3Host {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Vst3Host {
     pub fn new() -> Self {
         Self {

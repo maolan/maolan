@@ -431,6 +431,7 @@ impl GuiLv2UiHost {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn open_editor(
         &mut self,
         track_name: String,
@@ -543,7 +544,7 @@ fn run_native_ui_with_gtk_main(
         gtk_window_set_default_size(window, 780, 520);
         g_signal_connect_data(
             window,
-            b"destroy\0".as_ptr() as *const c_char,
+            c"destroy".as_ptr(),
             Some(on_gtk_destroy),
             std::ptr::null_mut(),
             None,
@@ -600,13 +601,10 @@ fn run_native_ui_with_gtk_main(
     let ui_bundle_path = CString::new(ui_spec.ui_bundle_path).map_err(|e| e.to_string())?;
     let ui_binary_path = CString::new(ui_spec.ui_binary_path).map_err(|e| e.to_string())?;
 
-    let urid_feature = UridMapFeature::new().map_err(|e| {
-        unsafe {
-            suil_host_free(suil_host);
-            drop(Box::from_raw(controller_ptr));
-            gtk_widget_destroy(window);
-        }
-        e
+    let urid_feature = UridMapFeature::new().inspect_err(|_e| unsafe {
+        suil_host_free(suil_host);
+        drop(Box::from_raw(controller_ptr));
+        gtk_widget_destroy(window);
     })?;
 
     let parent_uri = CString::new(LV2_UI_PARENT).map_err(|e| e.to_string())?;
@@ -779,7 +777,7 @@ fn run_generic_ui_with_gtk_main(
         gtk_window_set_default_size(window, 720, 480);
         g_signal_connect_data(
             window,
-            b"destroy\0".as_ptr() as *const c_char,
+            c"destroy".as_ptr(),
             Some(on_gtk_destroy),
             std::ptr::null_mut(),
             None,
@@ -822,7 +820,7 @@ fn run_generic_ui_with_gtk_main(
         unsafe {
             g_signal_connect_data(
                 slider,
-                b"value-changed\0".as_ptr() as *const c_char,
+                c"value-changed".as_ptr(),
                 Some(on_generic_slider_changed),
                 data_ptr.cast::<c_void>(),
                 None,

@@ -1,11 +1,11 @@
+#[cfg(target_os = "windows")]
+pub mod editor_win32;
 pub mod host;
 pub mod interfaces;
 pub mod midi;
 pub mod port;
 pub mod processor;
 pub mod state;
-#[cfg(target_os = "windows")]
-pub mod editor_win32;
 
 // Re-export main types
 pub use host::{Vst3Host, Vst3PluginInfo};

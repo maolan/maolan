@@ -14,6 +14,7 @@ impl MidiEvent {
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::upper_case_acronyms)]
 pub struct MIDIIO {
     pub connections: Vec<Arc<UnsafeMutex<Box<Self>>>>,
     pub buffer: Vec<MidiEvent>,

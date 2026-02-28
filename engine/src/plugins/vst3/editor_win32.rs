@@ -1,10 +1,10 @@
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
+use vst3::ComPtr;
 use vst3::Interface;
 use vst3::Steinberg::IPlugViewTrait;
 use vst3::Steinberg::Vst::{IEditController, IEditControllerTrait, ViewType};
 use vst3::Steinberg::kResultTrue;
-use vst3::ComPtr;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -137,7 +137,10 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-pub fn open_editor_blocking(controller: ComPtr<IEditController>, title: &str) -> Result<(), String> {
+pub fn open_editor_blocking(
+    controller: ComPtr<IEditController>,
+    title: &str,
+) -> Result<(), String> {
     let coinit_hr = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
     let did_init_com = coinit_hr == 0 || coinit_hr == 1;
 
@@ -226,8 +229,12 @@ pub fn open_editor_blocking(controller: ComPtr<IEditController>, title: &str) ->
             let _ = MoveWindow(embed_window, 0, 0, width, height, 1);
         }
 
-        let attached =
-            unsafe { view.attached(embed_window.cast::<c_void>(), vst3::Steinberg::kPlatformTypeHWND) };
+        let attached = unsafe {
+            view.attached(
+                embed_window.cast::<c_void>(),
+                vst3::Steinberg::kPlatformTypeHWND,
+            )
+        };
         if attached != vst3::Steinberg::kResultOk && attached != vst3::Steinberg::kResultTrue {
             unsafe {
                 let _ = DestroyWindow(window);

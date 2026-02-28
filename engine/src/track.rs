@@ -23,6 +23,9 @@ use std::{
     sync::{Arc, atomic::Ordering},
 };
 
+/// MIDI clip events: vector of (timestamp, midi_bytes) pairs
+type MidiClipEvents = Arc<Vec<(usize, Vec<u8>)>>;
+
 #[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Debug)]
 pub struct Lv2Instance {
@@ -85,7 +88,7 @@ pub struct Track {
     pub session_base_dir: Option<PathBuf>,
     record_tap_enabled: bool,
     audio_clip_cache: HashMap<String, Arc<AudioClipBuffer>>,
-    midi_clip_cache: HashMap<String, Arc<Vec<(usize, Vec<u8>)>>>,
+    midi_clip_cache: HashMap<String, MidiClipEvents>,
     internal_output_routes_cache: Vec<Vec<Arc<AudioIO>>>,
     audio_route_cache_dirty: bool,
     midi_input_to_out_routes_cache: Vec<Vec<usize>>,
@@ -682,7 +685,9 @@ impl Track {
             let sources = self.internal_output_routes_cache.get(out_idx);
             let has_sources = sources.is_some_and(|s| !s.is_empty());
             out_samples.fill(0.0);
-            if self.output_enabled && let Some(sources) = sources {
+            if self.output_enabled
+                && let Some(sources) = sources
+            {
                 let mut seeded = false;
                 for source in sources {
                     if !self.input_monitor
@@ -694,15 +699,15 @@ impl Track {
                     let source_buf = source.buffer.lock();
                     if !seeded {
                         if unity_output_gain {
-                            Self::copy_unity_with_zero_tail(out_samples, &source_buf);
+                            Self::copy_unity_with_zero_tail(out_samples, source_buf);
                         } else {
-                            Self::copy_scaled_with_zero_tail(out_samples, &source_buf, output_gain);
+                            Self::copy_scaled_with_zero_tail(out_samples, source_buf, output_gain);
                         }
                         seeded = true;
                     } else if unity_output_gain {
-                        Self::add_unity(out_samples, &source_buf);
+                        Self::add_unity(out_samples, source_buf);
                     } else {
-                        Self::add_scaled(out_samples, &source_buf, output_gain);
+                        Self::add_scaled(out_samples, source_buf, output_gain);
                     }
                 }
             }
@@ -712,10 +717,10 @@ impl Track {
                 if has_sources {
                     if let Some(sources) = sources {
                         let first = sources[0].buffer.lock();
-                        Self::copy_unity_with_zero_tail(tap, &first);
+                        Self::copy_unity_with_zero_tail(tap, first);
                         for source in &sources[1..] {
                             let source_buf = source.buffer.lock();
-                            Self::add_unity(tap, &source_buf);
+                            Self::add_unity(tap, source_buf);
                         }
                     }
                 } else {
@@ -726,18 +731,16 @@ impl Track {
         }
 
         if std::env::var_os("MAOLAN_TRACE_PLUGIN_AUDIO").is_some()
-            && (!self.vst3_processors.is_empty()
-                || !self.clap_plugins.is_empty()
-                || {
-                    #[cfg(all(unix, not(target_os = "macos")))]
-                    {
-                        !self.lv2_processors.is_empty()
-                    }
-                    #[cfg(not(all(unix, not(target_os = "macos"))))]
-                    {
-                        false
-                    }
-                })
+            && (!self.vst3_processors.is_empty() || !self.clap_plugins.is_empty() || {
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    !self.lv2_processors.is_empty()
+                }
+                #[cfg(not(all(unix, not(target_os = "macos"))))]
+                {
+                    false
+                }
+            })
         {
             let track_in: Vec<f32> = self.audio.ins.iter().map(Self::buffer_peak).collect();
             let track_out: Vec<f32> = self.audio.outs.iter().map(Self::buffer_peak).collect();
@@ -1002,7 +1005,7 @@ impl Track {
         Some(out)
     }
 
-    fn midi_clip_events(&mut self, clip_name: &str) -> Option<Arc<Vec<(usize, Vec<u8>)>>> {
+    fn midi_clip_events(&mut self, clip_name: &str) -> Option<MidiClipEvents> {
         if let Some(cached) = self.midi_clip_cache.get(clip_name) {
             return Some(cached.clone());
         }
@@ -2256,13 +2259,7 @@ impl Track {
             let source_idx = out_idx.min(self.audio.ins.len().saturating_sub(1));
             let audio_in = &self.audio.ins[source_idx];
             let conns = audio_out.connections.lock();
-            conns.retain(|conn| {
-                !self
-                    .audio
-                    .ins
-                    .iter()
-                    .any(|input| Arc::ptr_eq(input, conn))
-            });
+            conns.retain(|conn| !self.audio.ins.iter().any(|input| Arc::ptr_eq(input, conn)));
             if !conns.iter().any(|conn| Arc::ptr_eq(conn, audio_in)) {
                 conns.push(audio_in.clone());
             }
@@ -2300,7 +2297,10 @@ impl Track {
     }
 
     fn is_track_input_source(&self, source: &Arc<AudioIO>) -> bool {
-        self.audio.ins.iter().any(|input| Arc::ptr_eq(input, source))
+        self.audio
+            .ins
+            .iter()
+            .any(|input| Arc::ptr_eq(input, source))
     }
 
     fn disconnect_all(port: &Arc<AudioIO>) {
@@ -2744,9 +2744,9 @@ impl Track {
 
 #[cfg(test)]
 mod tests {
+    use super::{AudioClipBuffer, Track};
     use crate::audio::clip::AudioClip;
     use crate::audio::io::AudioIO;
-    use super::{AudioClipBuffer, Track};
     #[cfg(any(unix, target_os = "windows"))]
     use crate::{kind::Kind, message::PluginGraphNode};
     use std::sync::Arc;
@@ -2843,7 +2843,10 @@ mod tests {
         let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 8, 48_000.0);
         track.input_monitor = false;
         track.disk_monitor = true;
-        track.audio.clips.push(AudioClip::new("clip".to_string(), 0, 4));
+        track
+            .audio
+            .clips
+            .push(AudioClip::new("clip".to_string(), 0, 4));
         track.audio_clip_cache.insert(
             "clip".to_string(),
             Arc::new(AudioClipBuffer {
@@ -2890,5 +2893,4 @@ mod tests {
         assert_eq!(out_l[0], 0.25);
         assert_eq!(out_r[0], 0.0);
     }
-
 }

@@ -77,7 +77,7 @@ pub fn pump_host_run_loop() {
             continue;
         }
         unsafe {
-            let _ = ((*(*handler_ptr).vtbl).onTimer)(handler_ptr);
+            ((*(*handler_ptr).vtbl).onTimer)(handler_ptr);
         }
     }
 }
@@ -902,7 +902,7 @@ unsafe extern "system" fn run_loop_register_timer(
     });
     unsafe {
         // Kick timer once so plugins that defer first paint to timer callbacks can initialize.
-        let _ = ((*(*handler).vtbl).onTimer)(handler);
+        ((*(*handler).vtbl).onTimer)(handler);
     }
     kResultOk
 }

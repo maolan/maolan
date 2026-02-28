@@ -1,5 +1,4 @@
-use crate::message::Message;
-use crate::state::State;
+use crate::{message::Message, state::State};
 use iced::{
     Alignment, Element, Length,
     widget::{button, column, container, row, text, text_input},

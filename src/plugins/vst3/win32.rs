@@ -9,9 +9,7 @@ use vst3::Steinberg::Vst::IComponentTrait;
 use vst3::Steinberg::Vst::{IEditControllerTrait, ViewType};
 use vst3::Steinberg::kResultTrue;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows_sys::Win32::System::Com::{
-    COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize,
-};
+use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
@@ -260,7 +258,8 @@ fn run_vst3_win32_editor(
     }
     let view = unsafe { vst3::ComPtr::from_raw(view_ptr) }
         .ok_or("Failed to manage VST3 editor view pointer")?;
-    let hwnd_supported = unsafe { view.isPlatformTypeSupported(vst3::Steinberg::kPlatformTypeHWND) };
+    let hwnd_supported =
+        unsafe { view.isPlatformTypeSupported(vst3::Steinberg::kPlatformTypeHWND) };
     if hwnd_supported != kResultTrue && hwnd_supported != vst3::Steinberg::kResultOk {
         return Err("VST3 editor does not support Win32 embedding".to_string());
     }

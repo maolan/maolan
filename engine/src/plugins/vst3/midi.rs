@@ -12,6 +12,12 @@ pub struct EventBuffer {
     midi_events: Vec<MidiEvent>,
 }
 
+impl Default for EventBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventBuffer {
     pub fn new() -> Self {
         Self {

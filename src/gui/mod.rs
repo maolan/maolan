@@ -4,21 +4,19 @@ mod subscriptions;
 mod update;
 mod view;
 
-use crate::plugins::clap_ui::GuiClapUiHost;
 #[cfg(all(unix, not(target_os = "macos")))]
-use crate::plugins::lv2_ui::GuiLv2UiHost;
-use crate::plugins::vst3_ui::GuiVst3UiHost;
+use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
     message::{DraggedClip, Message, PluginFormat, Show},
+    plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{PianoControllerPoint, PianoNote, State, StateData},
     toolbar, track_rename, workspace,
 };
-#[cfg(all(unix, not(target_os = "macos")))]
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
-use iced::{Length, Size, Task};
+use iced::{
+    Length, Size, Task,
+    widget::{button, column, container, pick_list, row, scrollable, text, text_input},
+};
 use maolan_engine::{
     self as engine,
     kind::Kind,
@@ -26,9 +24,8 @@ use maolan_engine::{
 };
 use midly::{MetaMessage, Smf, Timing, TrackEventKind};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
-use std::collections::{HashMap, HashSet};
 use std::{
+    collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
     io::{self, BufReader},
     path::{Path, PathBuf},
@@ -213,14 +210,16 @@ impl Maolan {
     }
 
     pub fn title(&self) -> String {
-        self.session_dir
+        let session = self
+            .session_dir
             .as_ref()
             .and_then(|path| {
                 path.file_name()
                     .map(|name| name.to_string_lossy().to_string())
             })
             .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| "<New>".to_string())
+            .unwrap_or_else(|| "<New>".to_string());
+        format!("Maolan: {session}")
     }
 
     fn samples_per_beat(&self) -> f64 {

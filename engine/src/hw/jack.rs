@@ -57,8 +57,8 @@ impl Process {
                 dst[i] = src[i];
             }
             if n < dst.len() {
-                for i in n..dst.len() {
-                    dst[i] = 0.0;
+                for item in dst.iter_mut().skip(n) {
+                    *item = 0.0;
                 }
             }
             *bridge.finished.lock() = true;
@@ -98,8 +98,8 @@ impl Process {
                 dst[i] = src[i] * gain * balance_gain;
             }
             if n < dst.len() {
-                for i in n..dst.len() {
-                    dst[i] = 0.0;
+                for item in dst.iter_mut().skip(n) {
+                    *item = 0.0;
                 }
             }
         }

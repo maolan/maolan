@@ -90,37 +90,17 @@ impl BufferRecord {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(super) struct ReadChannel {
     st: ChannelState,
     map_progress: i64,
     read_position: i64,
 }
-
-impl Default for ReadChannel {
-    fn default() -> Self {
-        Self {
-            st: ChannelState::default(),
-            map_progress: 0,
-            read_position: 0,
-        }
-    }
-}
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(super) struct WriteChannel {
     st: ChannelState,
     map_progress: i64,
     write_position: i64,
-}
-
-impl Default for WriteChannel {
-    fn default() -> Self {
-        Self {
-            st: ChannelState::default(),
-            map_progress: 0,
-            write_position: 0,
-        }
-    }
 }
 
 #[derive(Debug)]

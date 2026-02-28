@@ -15,6 +15,9 @@ use tokio::task::JoinHandle;
 use tracing::error;
 use wavers::write as write_wav;
 
+/// Hardware device information: (input_channels, output_channels, sample_rate, latency_ranges)
+type HwDeviceInfo = (usize, usize, usize, ((usize, usize), (usize, usize)));
+
 #[cfg(target_os = "linux")]
 use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "macos")]
@@ -396,9 +399,7 @@ impl Engine {
         clipped
     }
 
-    fn hw_device_info<D: HwDevice>(
-        d: &D,
-    ) -> (usize, usize, usize, ((usize, usize), (usize, usize))) {
+    fn hw_device_info<D: HwDevice>(d: &D) -> HwDeviceInfo {
         (
             d.input_channels(),
             d.output_channels(),
@@ -1220,11 +1221,7 @@ impl Engine {
                         None
                     }
                 });
-                if self.loop_range_samples.is_none() {
-                    self.loop_enabled = false;
-                } else {
-                    self.loop_enabled = true;
-                }
+                self.loop_enabled = self.loop_range_samples.is_some();
                 if self.loop_enabled
                     && let Some((loop_start, loop_end)) = self.loop_range_samples
                     && self.transport_sample >= loop_end
@@ -1598,7 +1595,10 @@ impl Engine {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
-                        if let Err(e) = track.lock().set_lv2_control_value(instance_id, index, value)
+                        if let Err(e) =
+                            track
+                                .lock()
+                                .set_lv2_control_value(instance_id, index, value)
                         {
                             self.notify_clients(Err(e)).await;
                             return;

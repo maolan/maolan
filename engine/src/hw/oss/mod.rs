@@ -263,9 +263,7 @@ impl Audio {
         }
         if (caps & PCM_CAP_MMAP) != 0 {
             let ver = cstr_fixed_prefix(&sys.version);
-            if ver.as_bytes().len() >= 7
-                && ver.as_bytes()[..7].cmp(b"1302000") == std::cmp::Ordering::Less
-            {
+            if ver.len() >= 7 && ver.as_bytes()[..7].cmp(b"1302000") == std::cmp::Ordering::Less {
                 caps &= !PCM_CAP_MMAP;
             }
         }
@@ -277,11 +275,10 @@ impl Audio {
         } else {
             0
         };
-        let chsamples = if options.ignore_hwbuf {
-            requested_period
-        } else if hw_chsamples == 0 {
-            requested_period
-        } else if requested_period >= hw_chsamples && (requested_period % hw_chsamples == 0) {
+        let chsamples = if options.ignore_hwbuf
+            || hw_chsamples == 0
+            || (requested_period >= hw_chsamples && requested_period.is_multiple_of(hw_chsamples))
+        {
             requested_period
         } else {
             hw_chsamples.max(1)
@@ -449,7 +446,7 @@ impl Audio {
             || info.ptr < 0
             || info.blocks < 0
             || (info.ptr as usize) >= self.buffer_info.bytes as usize
-            || ((info.ptr as usize) % self.frame_size()) != 0
+            || !(info.ptr as usize).is_multiple_of(self.frame_size())
         {
             return None;
         }
@@ -579,25 +576,24 @@ impl Audio {
             0
         };
 
-        if self.last_underrun_count >= 0 || self.last_overrun_count >= 0 {
-            if current_underruns > self.last_underrun_count
-                || current_overruns > self.last_overrun_count
-            {
-                self.xrun_count += 1;
-                let delta_underruns = current_underruns - self.last_underrun_count;
-                let delta_overruns = current_overruns - self.last_overrun_count;
-                self.last_underrun_count = current_underruns;
-                self.last_overrun_count = current_overruns;
+        if (self.last_underrun_count >= 0 || self.last_overrun_count >= 0)
+            && (current_underruns > self.last_underrun_count
+                || current_overruns > self.last_overrun_count)
+        {
+            self.xrun_count += 1;
+            let delta_underruns = current_underruns - self.last_underrun_count;
+            let delta_overruns = current_overruns - self.last_overrun_count;
+            self.last_underrun_count = current_underruns;
+            self.last_overrun_count = current_overruns;
 
-                tracing::warn!(
-                    "OSS hardware xrun detected (#{}, underruns +{}, overruns +{})",
-                    self.xrun_count,
-                    delta_underruns,
-                    delta_overruns
-                );
+            tracing::warn!(
+                "OSS hardware xrun detected (#{}, underruns +{}, overruns +{})",
+                self.xrun_count,
+                delta_underruns,
+                delta_overruns
+            );
 
-                return self.chsamples as i64;
-            }
+            return self.chsamples as i64;
         }
 
         self.last_underrun_count = current_underruns;

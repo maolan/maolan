@@ -505,14 +505,16 @@ impl canvas::Program<Message> for Graph {
                                 let plugin = &data.plugin_graph_plugins[plugin_idx];
                                 return match &plugin.node {
                                     #[cfg(all(unix, not(target_os = "macos")))]
-                                    PluginGraphNode::Lv2PluginInstance(_) => Some(Action::publish(
-                                        Message::OpenLv2PluginUi {
+                                    PluginGraphNode::Lv2PluginInstance(_) => {
+                                        Some(Action::publish(Message::OpenLv2PluginUi {
                                             track_name,
                                             instance_id,
-                                        },
-                                    )),
+                                        }))
+                                    }
                                     #[cfg(target_os = "windows")]
-                                    PluginGraphNode::Lv2PluginInstance(_) => Some(Action::capture()),
+                                    PluginGraphNode::Lv2PluginInstance(_) => {
+                                        Some(Action::capture())
+                                    }
                                     PluginGraphNode::ClapPluginInstance(_) => {
                                         Some(Action::publish(Message::ShowClapPluginUi(
                                             plugin.uri.clone(),

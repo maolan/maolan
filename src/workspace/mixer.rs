@@ -4,13 +4,12 @@ use crate::{
     style,
     widget::{horizontal_slider::HorizontalSlider, slider::Slider},
 };
-use std::sync::LazyLock;
-
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Point,
     widget::{Space, Stack, button, column, container, mouse_area, pin, row, text},
 };
 use maolan_engine::message::Action;
+use std::sync::LazyLock;
 
 #[derive(Debug, Default)]
 pub struct Mixer {

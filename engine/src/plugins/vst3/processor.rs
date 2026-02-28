@@ -484,23 +484,22 @@ impl Vst3Processor {
         }
 
         // Restore controller state (if available)
-        if !state.controller_state.is_empty() {
-            if let Some(controller) = &instance.edit_controller {
-                let mut ctrl_stream = MemoryStream::from_bytes(&state.controller_state);
-                unsafe {
-                    let result =
-                        controller.setState(ctrl_stream.as_ibstream_mut() as *mut _ as *mut _);
-                    if result != vst3::Steinberg::kResultOk {
-                        eprintln!("Warning: Failed to set controller state");
-                    }
+        if !state.controller_state.is_empty()
+            && let Some(controller) = &instance.edit_controller
+        {
+            let mut ctrl_stream = MemoryStream::from_bytes(&state.controller_state);
+            unsafe {
+                let result = controller.setState(ctrl_stream.as_ibstream_mut() as *mut _ as *mut _);
+                if result != vst3::Steinberg::kResultOk {
+                    eprintln!("Warning: Failed to set controller state");
                 }
+            }
 
-                // Re-sync parameter values after restoring state
-                for (idx, param) in self.parameters.iter().enumerate() {
-                    let value = unsafe { controller.getParamNormalized(param.id) };
-                    self.scalar_values.lock().unwrap()[idx] = value as f32;
-                    self.previous_values.lock().unwrap()[idx] = value as f32;
-                }
+            // Re-sync parameter values after restoring state
+            for (idx, param) in self.parameters.iter().enumerate() {
+                let value = unsafe { controller.getParamNormalized(param.id) };
+                self.scalar_values.lock().unwrap()[idx] = value as f32;
+                self.previous_values.lock().unwrap()[idx] = value as f32;
             }
         }
 

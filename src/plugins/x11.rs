@@ -1,5 +1,5 @@
-use maolan_engine::plugins::vst3::interfaces::{PluginFactory, pump_host_run_loop};
 use maolan_engine::plugins::vst3::MemoryStream;
+use maolan_engine::plugins::vst3::interfaces::{PluginFactory, pump_host_run_loop};
 use std::ffi::{CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -136,35 +136,35 @@ static HOST_PLUG_FRAME_VTBL: vst3::Steinberg::IPlugFrameVtbl = vst3::Steinberg::
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-union XEvent {
-    type_: c_int,
-    xclient: XClientMessageEvent,
-    xconfigure: XConfigureEvent,
+pub union XEvent {
+    pub type_: c_int,
+    pub xclient: XClientMessageEvent,
+    pub xconfigure: XConfigureEvent,
     pad: [c_long; 24],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XClientMessageData {
-    longs: [c_long; 5],
+pub struct XClientMessageData {
+    pub longs: [c_long; 5],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XClientMessageEvent {
-    type_: c_int,
-    serial: c_ulong,
-    send_event: c_int,
-    display: *mut c_void,
-    window: c_ulong,
-    message_type: c_ulong,
-    format: c_int,
-    data: XClientMessageData,
+pub struct XClientMessageEvent {
+    pub type_: c_int,
+    pub serial: c_ulong,
+    pub send_event: c_int,
+    pub display: *mut c_void,
+    pub window: c_ulong,
+    pub message_type: c_ulong,
+    pub format: c_int,
+    pub data: XClientMessageData,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XConfigureEvent {
+pub struct XConfigureEvent {
     type_: c_int,
     serial: c_ulong,
     send_event: c_int,
@@ -181,7 +181,7 @@ struct XConfigureEvent {
 }
 
 #[repr(C)]
-struct XErrorEvent {
+pub struct XErrorEvent {
     type_: c_int,
     display: *mut c_void,
     resourceid: c_ulong,
@@ -232,14 +232,14 @@ impl Drop for X11ErrorHandlerGuard {
 
 #[link(name = "X11")]
 unsafe extern "C" {
-    fn XInitThreads() -> c_int;
-    fn XOpenDisplay(display_name: *const c_char) -> *mut c_void;
-    fn XCloseDisplay(display: *mut c_void) -> c_int;
-    fn XDefaultScreen(display: *mut c_void) -> c_int;
-    fn XRootWindow(display: *mut c_void, screen_number: c_int) -> c_ulong;
-    fn XBlackPixel(display: *mut c_void, screen_number: c_int) -> c_ulong;
-    fn XWhitePixel(display: *mut c_void, screen_number: c_int) -> c_ulong;
-    fn XCreateSimpleWindow(
+    pub fn XInitThreads() -> c_int;
+    pub fn XOpenDisplay(display_name: *const c_char) -> *mut c_void;
+    pub fn XCloseDisplay(display: *mut c_void) -> c_int;
+    pub fn XDefaultScreen(display: *mut c_void) -> c_int;
+    pub fn XRootWindow(display: *mut c_void, screen_number: c_int) -> c_ulong;
+    pub fn XBlackPixel(display: *mut c_void, screen_number: c_int) -> c_ulong;
+    pub fn XWhitePixel(display: *mut c_void, screen_number: c_int) -> c_ulong;
+    pub fn XCreateSimpleWindow(
         display: *mut c_void,
         parent: c_ulong,
         x: c_int,
@@ -250,23 +250,27 @@ unsafe extern "C" {
         border: c_ulong,
         background: c_ulong,
     ) -> c_ulong;
-    fn XStoreName(display: *mut c_void, window: c_ulong, window_name: *const c_char) -> c_int;
-    fn XSelectInput(display: *mut c_void, window: c_ulong, event_mask: c_long) -> c_int;
-    fn XInternAtom(
+    pub fn XStoreName(display: *mut c_void, window: c_ulong, window_name: *const c_char) -> c_int;
+    pub fn XSelectInput(display: *mut c_void, window: c_ulong, event_mask: c_long) -> c_int;
+    pub fn XInternAtom(
         display: *mut c_void,
         atom_name: *const c_char,
         only_if_exists: c_int,
     ) -> c_ulong;
-    fn XSetWMProtocols(
+    pub fn XSetWMProtocols(
         display: *mut c_void,
         window: c_ulong,
         protocols: *mut c_ulong,
         count: c_int,
     ) -> c_int;
-    fn XMapRaised(display: *mut c_void, window: c_ulong) -> c_int;
-    fn XMapSubwindows(display: *mut c_void, window: c_ulong) -> c_int;
-    fn XResizeWindow(display: *mut c_void, window: c_ulong, width: c_uint, height: c_uint)
-    -> c_int;
+    pub fn XMapRaised(display: *mut c_void, window: c_ulong) -> c_int;
+    pub fn XMapSubwindows(display: *mut c_void, window: c_ulong) -> c_int;
+    pub fn XResizeWindow(
+        display: *mut c_void,
+        window: c_ulong,
+        width: c_uint,
+        height: c_uint,
+    ) -> c_int;
     fn XMoveResizeWindow(
         display: *mut c_void,
         window: c_ulong,
@@ -275,8 +279,8 @@ unsafe extern "C" {
         width: c_uint,
         height: c_uint,
     ) -> c_int;
-    fn XDestroyWindow(display: *mut c_void, window: c_ulong) -> c_int;
-    fn XQueryTree(
+    pub fn XDestroyWindow(display: *mut c_void, window: c_ulong) -> c_int;
+    pub fn XQueryTree(
         display: *mut c_void,
         window: c_ulong,
         root_return: *mut c_ulong,
@@ -284,19 +288,19 @@ unsafe extern "C" {
         children_return: *mut *mut c_ulong,
         nchildren_return: *mut c_uint,
     ) -> c_int;
-    fn XFree(data: *mut c_void) -> c_int;
-    fn XSync(display: *mut c_void, discard: c_int) -> c_int;
-    fn XPending(display: *mut c_void) -> c_int;
-    fn XNextEvent(display: *mut c_void, event_return: *mut XEvent) -> c_int;
-    fn XFlush(display: *mut c_void) -> c_int;
-    fn XSendEvent(
+    pub fn XFree(data: *mut c_void) -> c_int;
+    pub fn XSync(display: *mut c_void, discard: c_int) -> c_int;
+    pub fn XPending(display: *mut c_void) -> c_int;
+    pub fn XNextEvent(display: *mut c_void, event_return: *mut XEvent) -> c_int;
+    pub fn XFlush(display: *mut c_void) -> c_int;
+    pub fn XSendEvent(
         display: *mut c_void,
         w: c_ulong,
         propagate: c_int,
         event_mask: c_long,
         event_send: *mut XEvent,
     ) -> c_int;
-    fn XSetErrorHandler(handler: Option<XErrorHandler>) -> Option<XErrorHandler>;
+    pub fn XSetErrorHandler(handler: Option<XErrorHandler>) -> Option<XErrorHandler>;
 }
 
 fn ensure_x11_threads() -> bool {
@@ -394,6 +398,7 @@ fn send_xembed_message(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn open_editor_blocking(
     plugin_path: &str,
     plugin_name: &str,
@@ -430,15 +435,15 @@ pub fn open_editor_blocking(
     let mut instance = factory.create_instance(&class_info.cid)?;
     instance.initialize(&factory)?;
 
-    if let Some(snapshot) = state.as_ref() {
-        if !snapshot.component_state.is_empty() {
-            let mut comp_stream = MemoryStream::from_bytes(&snapshot.component_state);
-            let _ = unsafe {
-                instance
-                    .component
-                    .setState(comp_stream.as_ibstream_mut() as *mut _ as *mut _)
-            };
-        }
+    if let Some(snapshot) = state.as_ref()
+        && !snapshot.component_state.is_empty()
+    {
+        let mut comp_stream = MemoryStream::from_bytes(&snapshot.component_state);
+        let _ = unsafe {
+            instance
+                .component
+                .setState(comp_stream.as_ibstream_mut() as *mut _ as *mut _)
+        };
     }
 
     let controller = instance

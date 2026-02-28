@@ -151,7 +151,7 @@ impl<B: Backend> HwWorker<B> {
             }
             #[cfg(target_os = "freebsd")]
             unsafe {
-                let _ = libc::pthread_set_name_np(thread, c_name.as_ptr());
+                libc::pthread_set_name_np(thread, c_name.as_ptr());
             }
 
             let param = unsafe {

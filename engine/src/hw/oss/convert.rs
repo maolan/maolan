@@ -138,7 +138,7 @@ pub(super) fn convert_out_from_i32_interleaved(
     }
     let bps = bytes_per_sample(format).unwrap_or(4);
     let n = frames.saturating_mul(channels);
-    for i in 0..n.min(src.len()) {
+    for (i, _item) in src.iter().enumerate().take(n.min(src.len())) {
         let o = i * bps;
         let s = src[i];
         match format {

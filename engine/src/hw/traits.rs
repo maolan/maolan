@@ -22,7 +22,7 @@ pub trait HwDevice {
 #[macro_export]
 macro_rules! impl_hw_worker_traits_for_driver {
     ($driver:ty) => {
-        impl crate::hw::traits::HwWorkerDriver for $driver {
+        impl $crate::hw::traits::HwWorkerDriver for $driver {
             fn cycle_samples(&self) -> usize {
                 self.cycle_samples()
             }
@@ -45,7 +45,7 @@ macro_rules! impl_hw_worker_traits_for_driver {
 #[macro_export]
 macro_rules! impl_hw_device_for_driver {
     ($driver:ty) => {
-        impl crate::hw::traits::HwDevice for $driver {
+        impl $crate::hw::traits::HwDevice for $driver {
             fn input_channels(&self) -> usize {
                 self.input_channels()
             }
@@ -68,12 +68,12 @@ macro_rules! impl_hw_device_for_driver {
 #[macro_export]
 macro_rules! impl_hw_midi_hub_traits {
     ($hub:ty) => {
-        impl crate::hw::traits::HwMidiHub for $hub {
-            fn read_events_into(&mut self, out: &mut Vec<crate::message::HwMidiEvent>) {
+        impl $crate::hw::traits::HwMidiHub for $hub {
+            fn read_events_into(&mut self, out: &mut Vec<$crate::message::HwMidiEvent>) {
                 <$hub>::read_events_into(self, out);
             }
 
-            fn write_events(&mut self, events: &[crate::message::HwMidiEvent]) {
+            fn write_events(&mut self, events: &[$crate::message::HwMidiEvent]) {
                 <$hub>::write_events(self, events);
             }
         }

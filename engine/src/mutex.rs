@@ -12,6 +12,7 @@ impl<T> UnsafeMutex<T> {
         }
     }
 
+    #[allow(clippy::mut_from_ref)]
     pub fn lock(&self) -> &mut T {
         unsafe { &mut *self.data.get() }
     }

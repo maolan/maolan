@@ -1471,11 +1471,6 @@ fn input_events_from(
         ClapInputEvent::ParamGesture(e) => e.header.time,
         ClapInputEvent::Transport(e) => e.header.time,
     });
-    for event in &mut events {
-        if let ClapInputEvent::ParamValue(p) = event {
-            p.header.time = p.header.time.min(u32::MAX);
-        }
-    }
     let mut ctx = Box::new(ClapInputEventsCtx { events });
     let list = ClapInputEvents {
         ctx: (&mut *ctx as *mut ClapInputEventsCtx).cast::<c_void>(),
@@ -1507,10 +1502,10 @@ fn c_char_buf_to_string<const N: usize>(buf: &[c_char; N]) -> String {
 }
 
 fn split_plugin_spec(spec: &str) -> (&str, Option<&str>) {
-    if let Some((path, id)) = spec.split_once("::") {
-        if !id.trim().is_empty() {
-            return (path, Some(id.trim()));
-        }
+    if let Some((path, id)) = spec.split_once("::")
+        && !id.trim().is_empty()
+    {
+        return (path, Some(id.trim()));
     }
     (spec, None)
 }

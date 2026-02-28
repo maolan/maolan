@@ -3,22 +3,23 @@ mod connection;
 mod track;
 
 #[cfg(target_os = "linux")]
-use alsa::Direction;
-#[cfg(target_os = "linux")]
-use alsa::pcm::{Access, Format, HwParams, PCM};
+use alsa::{
+    Direction,
+    pcm::{Access, Format, HwParams, PCM},
+};
 pub use clip::{AudioClip, MIDIClip};
 pub use connection::Connection;
 #[cfg(target_os = "windows")]
 use cpal::traits::{DeviceTrait, HostTrait};
 use iced::{Length, Point};
-use maolan_engine::clap::ClapPluginInfo;
-use maolan_engine::clap::ClapPluginState;
-use maolan_engine::kind::Kind;
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::lv2::Lv2PluginInfo;
-#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-use maolan_engine::message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin};
-use maolan_engine::vst3::Vst3PluginInfo;
+use maolan_engine::{
+    clap::{ClapPluginInfo, ClapPluginState},
+    kind::Kind,
+    message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin},
+    vst3::Vst3PluginInfo,
+};
 #[cfg(target_os = "freebsd")]
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
 use std::{
