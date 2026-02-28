@@ -668,10 +668,13 @@ unsafe extern "system" fn host_query_interface(
         .iter()
         .zip(FUnknown::IID.iter())
         .all(|(a, b)| (*a as u8) == *b);
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     let requested_run_loop = iid_bytes
         .iter()
         .zip(Linux::IRunLoop::IID.iter())
         .all(|(a, b)| (*a as u8) == *b);
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+    let requested_run_loop = false;
     if !(requested_host || requested_unknown || requested_run_loop) {
         if !obj.is_null() {
             // SAFETY: Caller provides output storage.

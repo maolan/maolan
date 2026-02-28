@@ -5,12 +5,13 @@ use crate::{
     connections,
     message::Message,
     state::{ConnectionViewSelection, HW, PianoData, Resizing, Track, View},
+    ui_timing::DOUBLE_CLICK,
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
     workspace::{EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID},
 };
 use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
 use maolan_engine::message::PluginGraphNode;
 use maolan_engine::{
     kind::Kind,
@@ -727,15 +728,48 @@ impl Maolan {
                 self.lv2_ui_host.pump();
             }
             Message::OpenVst3PluginUi {
+                ref track_name,
+                instance_id,
                 ref plugin_path,
                 ref plugin_name,
                 ref plugin_id,
+                audio_inputs,
+                audio_outputs,
             } => {
-                if let Err(e) = self
-                    .vst3_ui_host
-                    .open_editor(plugin_path, plugin_name, plugin_id)
+                #[cfg(target_os = "windows")]
                 {
-                    self.state.blocking_write().message = e;
+                    let _ = (
+                        plugin_path,
+                        plugin_name,
+                        plugin_id,
+                        audio_inputs,
+                        audio_outputs,
+                    );
+                    return self.send(Action::TrackOpenVst3Editor {
+                        track_name: track_name.clone(),
+                        instance_id,
+                    });
+                }
+
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let _ = (track_name, instance_id);
+                    let (sample_rate_hz, block_size) = {
+                        let st = self.state.blocking_read();
+                        (self.playback_rate_hz.max(1.0), st.oss_period_frames.max(1))
+                    };
+                    if let Err(e) = self.vst3_ui_host.open_editor(
+                        plugin_path,
+                        plugin_name,
+                        plugin_id,
+                        sample_rate_hz,
+                        block_size,
+                        audio_inputs,
+                        audio_outputs,
+                        None,
+                    ) {
+                        self.state.blocking_write().message = e;
+                    }
                 }
             }
             Message::SendMessageFinished(Err(ref e)) => {
@@ -1007,11 +1041,14 @@ impl Maolan {
                     nperiods,
                     sync_mode,
                 } => {
-                    self.state.blocking_write().message = format!(
+                    let mut state = self.state.blocking_write();
+                    state.message = format!(
                         "Opened device {} (bits={}, exclusive={}, period={}, nperiods={}, sync_mode={})",
                         device, bits, exclusive, period_frames, nperiods, sync_mode
                     );
-                    self.state.blocking_write().hw_loaded = true;
+                    state.hw_loaded = true;
+                    state.oss_period_frames = (*period_frames).max(1);
+                    state.oss_nperiods = (*nperiods).max(1);
                 }
                 Action::OpenMidiInputDevice(s) => {
                     let mut state = self.state.blocking_write();
@@ -1165,7 +1202,7 @@ impl Maolan {
                     }
                     self.state.blocking_write().message =
                         format!("Loaded CLAP plugin '{plugin_name}' on track '{track_name}'");
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
                     {
                         let plugin_track = self.state.blocking_read().plugin_graph_track.clone();
                         if plugin_track.as_deref() == Some(track_name.as_str()) {
@@ -1198,7 +1235,7 @@ impl Maolan {
                         .unwrap_or_else(|| plugin_path.clone());
                     self.state.blocking_write().message =
                         format!("Unloaded CLAP plugin '{plugin_name}' from track '{track_name}'");
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
                     {
                         let plugin_track = self.state.blocking_read().plugin_graph_track.clone();
                         if plugin_track.as_deref() == Some(track_name.as_str()) {
@@ -1239,7 +1276,7 @@ impl Maolan {
                 }
                 Action::TrackClearDefaultPassthrough { track_name } => {
                     let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
                     if lv2_track.as_deref() == Some(track_name.as_str()) {
                         return self.send(Action::TrackGetPluginGraph {
                             track_name: track_name.clone(),
@@ -1253,6 +1290,48 @@ impl Maolan {
                 | Action::TrackUnloadLv2PluginInstance { track_name, .. }
                 | Action::TrackSetLv2ControlValue { track_name, .. }
                 | Action::TrackLoadVst3Plugin { track_name, .. }
+                | Action::TrackUnloadVst3PluginInstance { track_name, .. }
+                | Action::TrackConnectPluginAudio { track_name, .. }
+                | Action::TrackDisconnectPluginAudio { track_name, .. }
+                | Action::TrackConnectPluginMidi { track_name, .. }
+                | Action::TrackDisconnectPluginMidi { track_name, .. } => {
+                    let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
+                    if lv2_track.as_deref() == Some(track_name.as_str()) {
+                        return self.send(Action::TrackGetPluginGraph {
+                            track_name: track_name.clone(),
+                        });
+                    }
+                }
+                Action::TrackVst3StateSnapshot {
+                    track_name,
+                    instance_id,
+                    state,
+                } => {
+                    if let Some(pending) = self.pending_vst3_ui_open.clone()
+                        && &pending.track_name == track_name
+                        && pending.instance_id == *instance_id
+                    {
+                        let (sample_rate_hz, block_size) = {
+                            let st = self.state.blocking_read();
+                            (self.playback_rate_hz.max(1.0), st.oss_period_frames.max(1))
+                        };
+                        if let Err(e) = self.vst3_ui_host.open_editor(
+                            &pending.plugin_path,
+                            &pending.plugin_name,
+                            &pending.plugin_id,
+                            sample_rate_hz,
+                            block_size,
+                            pending.audio_inputs,
+                            pending.audio_outputs,
+                            Some(state.clone()),
+                        ) {
+                            self.state.blocking_write().message = e;
+                        }
+                        self.pending_vst3_ui_open = None;
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                Action::TrackLoadVst3Plugin { track_name, .. }
                 | Action::TrackUnloadVst3PluginInstance { track_name, .. }
                 | Action::TrackConnectPluginAudio { track_name, .. }
                 | Action::TrackDisconnectPluginAudio { track_name, .. }
@@ -1293,7 +1372,7 @@ impl Maolan {
                         self.state.blocking_write().message = err;
                     }
                 }
-                #[cfg(all(unix, not(target_os = "macos")))]
+                #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
                 Action::TrackPluginGraph {
                     track_name,
                     plugins,
@@ -1460,9 +1539,22 @@ impl Maolan {
                 self.state.blocking_write().ctrl = false;
             }
             Message::SelectTrack(ref name) => {
+                let now = Instant::now();
+                let track_name = name.clone();
                 let ctrl = self.state.blocking_read().ctrl;
                 let selected = self.state.blocking_read().selected.contains(name);
                 let mut state = self.state.blocking_write();
+                if ctrl {
+                    state.connections_last_track_click = None;
+                } else if let Some((last_track, last_time)) = &state.connections_last_track_click
+                    && *last_track == track_name
+                    && now.duration_since(*last_time) <= DOUBLE_CLICK.saturating_mul(2)
+                {
+                    state.connections_last_track_click = None;
+                    return Task::perform(async {}, move |_| Message::OpenTrackPlugins(track_name));
+                } else {
+                    state.connections_last_track_click = Some((track_name.clone(), now));
+                }
 
                 if ctrl {
                     if selected {
@@ -1859,7 +1951,7 @@ impl Maolan {
                         return self.update(Message::RemoveSelectedTracks);
                     }
                     crate::state::View::TrackPlugins => {
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
                         {
                             let (track_name, selected_plugin, selected_indices, connections) = {
                                 let state = self.state.blocking_read();
@@ -1886,12 +1978,15 @@ impl Maolan {
                                         .map(|p| p.node.clone());
                                     if let Some(node) = selected_node {
                                         return match node {
+                                            #[cfg(all(unix, not(target_os = "macos")))]
                                             PluginGraphNode::Lv2PluginInstance(_) => {
                                                 self.send(Action::TrackUnloadLv2PluginInstance {
                                                     track_name,
                                                     instance_id,
                                                 })
                                             }
+                                            #[cfg(target_os = "windows")]
+                                            PluginGraphNode::Lv2PluginInstance(_) => Task::none(),
                                             PluginGraphNode::Vst3PluginInstance(_) => {
                                                 self.send(Action::TrackUnloadVst3PluginInstance {
                                                     track_name,
@@ -2848,7 +2943,7 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     state.view = View::TrackPlugins;
                     state.plugin_graph_track = Some(track_name.clone());
-                    #[cfg(all(unix, not(target_os = "macos")))]
+                    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
                     {
                         state.plugin_graph_connecting = None;
                         state.plugin_graph_moving_plugin = None;
@@ -2856,12 +2951,14 @@ impl Maolan {
                     state.plugin_graph_last_plugin_click = None;
                     state.plugin_graph_selected_plugin = None;
                 }
-                #[cfg(all(unix, not(target_os = "macos")))]
+                #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
                 return self.send(Action::TrackGetPluginGraph {
                     track_name: track_name.clone(),
                 });
-                #[cfg(any(target_os = "windows", target_os = "macos"))]
-                return Task::none();
+                #[cfg(target_os = "macos")]
+                return Task::perform(async {}, |_| {
+                    Message::Show(crate::message::Show::TrackPluginList)
+                });
             }
             Message::HWSelected(ref hw) => {
                 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]

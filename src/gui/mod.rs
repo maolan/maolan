@@ -56,6 +56,17 @@ struct AudioClipKey {
     offset: usize,
 }
 
+#[derive(Debug, Clone)]
+struct PendingVst3UiOpen {
+    track_name: String,
+    instance_id: usize,
+    plugin_path: String,
+    plugin_name: String,
+    plugin_id: String,
+    audio_inputs: usize,
+    audio_outputs: usize,
+}
+
 pub struct Maolan {
     clip: Option<DraggedClip>,
     clip_preview_target_track: Option<String>,
@@ -66,7 +77,7 @@ pub struct Maolan {
     track: Option<String>,
     workspace: workspace::Workspace,
     connections: connections::canvas_host::CanvasHost<connections::tracks::Graph>,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
     track_plugins: connections::canvas_host::CanvasHost<connections::plugins::Graph>,
     hw: hw::HW,
     modal: Option<Show>,
@@ -114,6 +125,7 @@ pub struct Maolan {
     #[cfg(all(unix, not(target_os = "macos")))]
     lv2_ui_host: GuiLv2UiHost,
     vst3_ui_host: GuiVst3UiHost,
+    pending_vst3_ui_open: Option<PendingVst3UiOpen>,
 }
 
 impl Default for Maolan {
@@ -131,7 +143,7 @@ impl Default for Maolan {
             connections: connections::canvas_host::CanvasHost::new(
                 connections::tracks::Graph::new(state.clone()),
             ),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
             track_plugins: connections::canvas_host::CanvasHost::new(
                 connections::plugins::Graph::new(state.clone()),
             ),
@@ -184,6 +196,7 @@ impl Default for Maolan {
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_ui_host: GuiLv2UiHost::new(),
             vst3_ui_host: GuiVst3UiHost::new(),
+            pending_vst3_ui_open: None,
         }
     }
 }
@@ -1488,7 +1501,7 @@ impl Maolan {
         self.toolbar.update(message.clone());
         self.workspace.update(message.clone());
         self.connections.update(message.clone());
-        #[cfg(all(unix, not(target_os = "macos")))]
+        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
         self.track_plugins.update(message.clone());
         self.add_track.update(message.clone());
         self.clip_rename.update(message.clone());

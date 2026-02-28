@@ -16,7 +16,7 @@ use maolan_engine::clap::ClapPluginState;
 use maolan_engine::kind::Kind;
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::lv2::Lv2PluginInfo;
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
 use maolan_engine::message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin};
 use maolan_engine::vst3::Vst3PluginInfo;
 #[cfg(target_os = "freebsd")]
@@ -238,7 +238,7 @@ pub struct HW {
     pub channels: usize,
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
 #[derive(Debug, Clone)]
 pub struct PluginConnecting {
     pub from_node: PluginGraphNode,
@@ -248,7 +248,7 @@ pub struct PluginConnecting {
     pub is_input: bool,
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
 #[derive(Debug, Clone)]
 pub struct MovingPlugin {
     pub instance_id: usize,
@@ -358,19 +358,19 @@ pub struct StateData {
     pub clap_plugins_by_track: HashMap<String, Vec<String>>,
     pub clap_states_by_track: HashMap<String, HashMap<String, ClapPluginState>>,
     pub plugin_graph_track: Option<String>,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
     pub plugin_graph_plugins: Vec<PluginGraphPlugin>,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
     pub plugin_graph_connections: Vec<PluginGraphConnection>,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
     pub plugin_graphs_by_track:
         HashMap<String, (Vec<PluginGraphPlugin>, Vec<PluginGraphConnection>)>,
     pub plugin_graph_selected_connections: std::collections::HashSet<usize>,
     pub plugin_graph_selected_plugin: Option<usize>,
     pub plugin_graph_plugin_positions: HashMap<usize, Point>,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
     pub plugin_graph_connecting: Option<PluginConnecting>,
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
     pub plugin_graph_moving_plugin: Option<MovingPlugin>,
     pub plugin_graph_last_plugin_click: Option<(usize, Instant)>,
     pub connections_last_track_click: Option<(String, Instant)>,
@@ -467,18 +467,18 @@ impl Default for StateData {
             clap_plugins_by_track: HashMap::new(),
             clap_states_by_track: HashMap::new(),
             plugin_graph_track: None,
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
             plugin_graph_plugins: vec![],
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
             plugin_graph_connections: vec![],
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
             plugin_graphs_by_track: HashMap::new(),
             plugin_graph_selected_connections: HashSet::new(),
             plugin_graph_selected_plugin: None,
             plugin_graph_plugin_positions: HashMap::new(),
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
             plugin_graph_connecting: None,
-            #[cfg(all(unix, not(target_os = "macos")))]
+            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
             plugin_graph_moving_plugin: None,
             plugin_graph_last_plugin_click: None,
             connections_last_track_click: None,

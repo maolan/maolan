@@ -1611,7 +1611,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "windows"))]
             Action::TrackGetPluginGraph { ref track_name } => {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
@@ -1638,9 +1638,9 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "windows"))]
             Action::TrackPluginGraph { .. } => {}
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "windows"))]
             Action::TrackConnectPluginAudio {
                 ref track_name,
                 ref from_node,
@@ -1668,7 +1668,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "windows"))]
             Action::TrackConnectPluginMidi {
                 ref track_name,
                 ref from_node,
@@ -1696,7 +1696,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "windows"))]
             Action::TrackDisconnectPluginAudio {
                 ref track_name,
                 ref from_node,
@@ -1724,7 +1724,7 @@ impl Engine {
                     }
                 }
             }
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "windows"))]
             Action::TrackDisconnectPluginMidi {
                 ref track_name,
                 ref from_node,
@@ -2046,6 +2046,26 @@ impl Engine {
                 match track_handle {
                     Some(track) => {
                         if let Err(e) = track.lock().unload_vst3_plugin_instance(instance_id) {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            #[cfg(target_os = "windows")]
+            Action::TrackOpenVst3Editor {
+                ref track_name,
+                instance_id,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        if let Err(e) = track.lock().open_vst3_editor(instance_id) {
                             self.notify_clients(Err(e)).await;
                             return;
                         }
@@ -2921,6 +2941,10 @@ impl Engine {
                     | Action::SetRecordEnabled(_)
                     | Action::SetSessionPath(_)
                     | Action::PianoKey { .. } => {
+                        self.handle_request(a).await;
+                    }
+                    #[cfg(target_os = "windows")]
+                    Action::TrackOpenVst3Editor { .. } => {
                         self.handle_request(a).await;
                     }
                     #[cfg(all(unix, not(target_os = "macos")))]

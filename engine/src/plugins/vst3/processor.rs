@@ -179,6 +179,16 @@ impl Vst3Processor {
         &self.plugin_id
     }
 
+    #[cfg(target_os = "windows")]
+    pub fn open_editor_blocking(&mut self) -> Result<(), String> {
+        let controller = self
+            .instance
+            .edit_controller
+            .clone()
+            .ok_or("VST3 plugin has no edit controller")?;
+        super::editor_win32::open_editor_blocking(controller, &self.name)
+    }
+
     pub fn audio_inputs(&self) -> &[Arc<AudioIO>] {
         &self.audio_inputs
     }

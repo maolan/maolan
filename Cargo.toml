@@ -35,3 +35,4 @@ lilv = "0.2.4"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cpal = { version = "0.15.3", features = ["asio"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }

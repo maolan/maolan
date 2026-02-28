@@ -1,10 +1,12 @@
 use maolan_engine::plugins::vst3::interfaces::{PluginFactory, pump_host_run_loop};
+use maolan_engine::plugins::vst3::MemoryStream;
 use std::ffi::{CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
 use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use vst3::Interface;
 use vst3::Steinberg::IPlugViewTrait;
+use vst3::Steinberg::Vst::IComponentTrait;
 use vst3::Steinberg::Vst::{IEditControllerTrait, ViewType};
 use vst3::Steinberg::kResultTrue;
 
@@ -396,6 +398,11 @@ pub fn open_editor_blocking(
     plugin_path: &str,
     plugin_name: &str,
     plugin_id: &str,
+    _sample_rate_hz: f64,
+    _block_size: usize,
+    _audio_inputs: usize,
+    _audio_outputs: usize,
+    state: Option<maolan_engine::vst3::Vst3PluginState>,
 ) -> Result<(), String> {
     let path = Path::new(plugin_path);
     let factory = PluginFactory::from_module(path)?;
@@ -422,6 +429,18 @@ pub fn open_editor_blocking(
     };
     let mut instance = factory.create_instance(&class_info.cid)?;
     instance.initialize(&factory)?;
+
+    if let Some(snapshot) = state.as_ref() {
+        if !snapshot.component_state.is_empty() {
+            let mut comp_stream = MemoryStream::from_bytes(&snapshot.component_state);
+            let _ = unsafe {
+                instance
+                    .component
+                    .setState(comp_stream.as_ibstream_mut() as *mut _ as *mut _)
+            };
+        }
+    }
+
     let controller = instance
         .edit_controller
         .clone()

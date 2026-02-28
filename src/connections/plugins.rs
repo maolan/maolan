@@ -1,4 +1,4 @@
-#![cfg(all(unix, not(target_os = "macos")))]
+#![cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
 
 use crate::{
     connections::colors::{audio_port_color, midi_port_color},
@@ -498,15 +498,21 @@ impl canvas::Program<Message> for Graph {
                         };
                         if is_double_click {
                             data.plugin_graph_last_plugin_click = None;
-                            if let Some(track_name) = data.plugin_graph_track.clone() {
+                            if data.plugin_graph_track.is_some() {
+                                let Some(track_name) = data.plugin_graph_track.clone() else {
+                                    return Some(Action::capture());
+                                };
                                 let plugin = &data.plugin_graph_plugins[plugin_idx];
                                 return match &plugin.node {
-                                    PluginGraphNode::Lv2PluginInstance(_) => {
-                                        Some(Action::publish(Message::OpenLv2PluginUi {
+                                    #[cfg(all(unix, not(target_os = "macos")))]
+                                    PluginGraphNode::Lv2PluginInstance(_) => Some(Action::publish(
+                                        Message::OpenLv2PluginUi {
                                             track_name,
                                             instance_id,
-                                        }))
-                                    }
+                                        },
+                                    )),
+                                    #[cfg(target_os = "windows")]
+                                    PluginGraphNode::Lv2PluginInstance(_) => Some(Action::capture()),
                                     PluginGraphNode::ClapPluginInstance(_) => {
                                         Some(Action::publish(Message::ShowClapPluginUi(
                                             plugin.uri.clone(),
@@ -514,9 +520,13 @@ impl canvas::Program<Message> for Graph {
                                     }
                                     PluginGraphNode::Vst3PluginInstance(_) => {
                                         Some(Action::publish(Message::OpenVst3PluginUi {
+                                            track_name,
+                                            instance_id,
                                             plugin_path: plugin.uri.clone(),
                                             plugin_name: plugin.name.clone(),
                                             plugin_id: plugin.plugin_id.clone(),
+                                            audio_inputs: plugin.audio_inputs,
+                                            audio_outputs: plugin.audio_outputs,
                                         }))
                                     }
                                     PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => {

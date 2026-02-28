@@ -44,12 +44,12 @@ impl Maolan {
                             recording_preview_peaks: Some(self.recording_preview_peaks.clone()),
                         }),
                         View::Connections => self.connections.view(),
-                        #[cfg(all(unix, not(target_os = "macos")))]
+                        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
                         View::TrackPlugins => self.track_plugins.view(),
                         View::Piano => self
                             .workspace
                             .piano_view(self.pixels_per_sample(), self.samples_per_bar() as f32),
-                        #[cfg(any(target_os = "windows", target_os = "macos"))]
+                        #[cfg(target_os = "macos")]
                         View::TrackPlugins => self.connections.view(),
                     };
 

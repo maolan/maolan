@@ -6,7 +6,7 @@ use crate::clap::{ClapProcessor, ClapTransportInfo};
 use crate::lv2::{Lv2Processor, Lv2TransportInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::message::{Lv2ControlPortInfo, Lv2PluginState};
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "windows"))]
 use crate::message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin};
 use crate::mutex::UnsafeMutex;
 use crate::vst3::Vst3Processor;
@@ -14,7 +14,7 @@ use crate::{
     audio::io::AudioIO,
     midi::io::{MIDIIO, MidiEvent},
 };
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "windows"))]
 use crate::{kind::Kind, routing};
 use midly::{MetaMessage, Smf, Timing, TrackEventKind, live::LiveEvent};
 use std::{
@@ -64,7 +64,7 @@ pub struct Track {
     pub lv2_processors: Vec<Lv2Instance>,
     pub vst3_processors: Vec<Vst3Instance>,
     pub clap_plugins: Vec<ClapInstance>,
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     pub plugin_midi_connections: Vec<PluginGraphConnection>,
     pub pending_hw_midi_out_events: Vec<MidiEvent>,
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -118,7 +118,7 @@ impl Track {
             lv2_processors: Vec::new(),
             vst3_processors: Vec::new(),
             clap_plugins: Vec::new(),
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "windows"))]
             plugin_midi_connections: Vec::new(),
             pending_hw_midi_out_events: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -1255,7 +1255,7 @@ impl Track {
         self.invalidate_audio_route_cache();
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn prune_plugin_midi_connections(&mut self, node: PluginGraphNode) {
         self.plugin_midi_connections
             .retain(|conn| conn.from_node != node && conn.to_node != node);
@@ -1277,7 +1277,7 @@ impl Track {
             .collect()
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     pub fn plugin_graph_plugins(&self) -> Vec<PluginGraphPlugin> {
         let mut plugins = Vec::new();
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -1475,7 +1475,7 @@ impl Track {
             ));
         };
         self.clap_plugins.remove(index);
-        #[cfg(unix)]
+        #[cfg(any(unix, target_os = "windows"))]
         self.prune_plugin_midi_connections(PluginGraphNode::ClapPluginInstance(instance_id));
         self.invalidate_audio_route_cache();
         Ok(())
@@ -1494,7 +1494,7 @@ impl Track {
         };
         let removed_id = self.clap_plugins[index].id;
         self.clap_plugins.remove(index);
-        #[cfg(unix)]
+        #[cfg(any(unix, target_os = "windows"))]
         self.prune_plugin_midi_connections(PluginGraphNode::ClapPluginInstance(removed_id));
         self.invalidate_audio_route_cache();
         Ok(())
@@ -1673,7 +1673,7 @@ impl Track {
         for port in removed.processor.audio_outputs() {
             Self::disconnect_all(port);
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, target_os = "windows"))]
         self.prune_plugin_midi_connections(PluginGraphNode::Vst3PluginInstance(instance_id));
         self.invalidate_audio_route_cache();
         Ok(())
@@ -1849,6 +1849,16 @@ impl Track {
         instance.processor.restore_state(state)
     }
 
+    #[cfg(target_os = "windows")]
+    pub fn open_vst3_editor(&mut self, instance_id: usize) -> Result<(), String> {
+        let instance = self
+            .vst3_processors
+            .iter_mut()
+            .find(|i| i.id == instance_id)
+            .ok_or_else(|| format!("VST3 instance {} not found", instance_id))?;
+        instance.processor.open_editor_blocking()
+    }
+
     pub fn connect_vst3_audio(
         &mut self,
         from_node: &crate::message::Vst3GraphNode,
@@ -1990,7 +2000,7 @@ impl Track {
         self.invalidate_midi_route_cache();
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     pub fn plugin_graph_connections(&self) -> Vec<PluginGraphConnection> {
         let mut source_ports: Vec<(PluginGraphNode, usize, Arc<AudioIO>)> = self
             .audio
@@ -2129,7 +2139,7 @@ impl Track {
         connections
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     pub fn connect_plugin_audio(
         &mut self,
         from_node: PluginGraphNode,
@@ -2153,7 +2163,7 @@ impl Track {
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     pub fn disconnect_plugin_audio(
         &mut self,
         from_node: PluginGraphNode,
@@ -2168,7 +2178,7 @@ impl Track {
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     pub fn connect_plugin_midi(
         &mut self,
         from_node: PluginGraphNode,
@@ -2200,7 +2210,7 @@ impl Track {
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     pub fn disconnect_plugin_midi(
         &mut self,
         from_node: PluginGraphNode,
@@ -2300,7 +2310,7 @@ impl Track {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn plugin_source_io(
         &self,
         node: &PluginGraphNode,
@@ -2331,6 +2341,12 @@ impl Track {
                         "LV2 instance {instance_id} is not supported on macOS"
                     ))
                 }
+                #[cfg(target_os = "windows")]
+                {
+                    Err(format!(
+                        "LV2 instance {instance_id} is not supported on Windows"
+                    ))
+                }
             }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
                 .vst3_processors
@@ -2347,7 +2363,7 @@ impl Track {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn plugin_target_io(
         &self,
         node: &PluginGraphNode,
@@ -2378,6 +2394,12 @@ impl Track {
                         "LV2 instance {instance_id} is not supported on macOS"
                     ))
                 }
+                #[cfg(target_os = "windows")]
+                {
+                    Err(format!(
+                        "LV2 instance {instance_id} is not supported on Windows"
+                    ))
+                }
             }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
                 .vst3_processors
@@ -2394,7 +2416,7 @@ impl Track {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn validate_plugin_midi_source(
         &self,
         node: &PluginGraphNode,
@@ -2429,6 +2451,12 @@ impl Track {
                         "LV2 instance {instance_id} is not supported on macOS"
                     ))
                 }
+                #[cfg(target_os = "windows")]
+                {
+                    Err(format!(
+                        "LV2 instance {instance_id} is not supported on Windows"
+                    ))
+                }
             }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
                 .vst3_processors
@@ -2449,7 +2477,7 @@ impl Track {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn validate_plugin_midi_target(
         &self,
         node: &PluginGraphNode,
@@ -2484,6 +2512,12 @@ impl Track {
                         "LV2 instance {instance_id} is not supported on macOS"
                     ))
                 }
+                #[cfg(target_os = "windows")]
+                {
+                    Err(format!(
+                        "LV2 instance {instance_id} is not supported on Windows"
+                    ))
+                }
             }
             PluginGraphNode::Vst3PluginInstance(instance_id) => self
                 .vst3_processors
@@ -2504,7 +2538,7 @@ impl Track {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn plugin_connected_neighbors(
         &self,
         kind: Kind,
@@ -2598,7 +2632,7 @@ impl Track {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn plugin_midi_ready(
         &self,
         node: &PluginGraphNode,
@@ -2619,7 +2653,7 @@ impl Track {
             .all(|conn| processed.contains(&conn.from_node))
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn plugin_midi_input_events(
         &self,
         node: &PluginGraphNode,
@@ -2643,7 +2677,7 @@ impl Track {
         per_port
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn route_plugin_midi_to_track_outputs_graph(
         &self,
         track_input_events: &[Vec<MidiEvent>],
@@ -2713,7 +2747,7 @@ mod tests {
     use crate::audio::clip::AudioClip;
     use crate::audio::io::AudioIO;
     use super::{AudioClipBuffer, Track};
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     use crate::{kind::Kind, message::PluginGraphNode};
     use std::sync::Arc;
 
@@ -2762,7 +2796,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn plugin_graph_includes_default_track_midi_passthrough() {
         let track = Track::new("t".to_string(), 0, 0, 1, 2, 64, 48_000.0);
         let connections = track.plugin_graph_connections();
@@ -2824,7 +2858,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn disconnecting_one_stereo_internal_channel_mutes_only_that_channel() {
         let mut track = Track::new("t".to_string(), 2, 2, 0, 0, 8, 48_000.0);
         let left = Arc::new(AudioIO::new(8));
