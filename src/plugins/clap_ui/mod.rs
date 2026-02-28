@@ -5,6 +5,194 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "windows")]
+use std::ffi::c_int;
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use std::ffi::{c_int, c_long, c_uint, c_ulong};
+
+// Platform-specific window creation and event handling for Win32
+#[cfg(target_os = "windows")]
+use std::ffi::c_ushort;
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct MSG {
+    hwnd: *mut c_void,
+    message: u32,
+    w_param: usize,
+    l_param: isize,
+    time: u32,
+    pt: POINT,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct POINT {
+    x: i32,
+    y: i32,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct WNDCLASSEXW {
+    cb_size: u32,
+    style: u32,
+    lpfn_wnd_proc: *const c_void,
+    cb_cls_extra: c_int,
+    cb_wnd_extra: c_int,
+    h_instance: *mut c_void,
+    h_icon: *mut c_void,
+    h_cursor: *mut c_void,
+    hbr_background: *mut c_void,
+    lpsz_menu_name: *const c_ushort,
+    lpsz_class_name: *const c_ushort,
+    h_icon_sm: *mut c_void,
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct RECT {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+#[cfg(target_os = "windows")]
+const WM_DESTROY: u32 = 0x0002;
+#[cfg(target_os = "windows")]
+const WM_CLOSE: u32 = 0x0010;
+#[cfg(target_os = "windows")]
+const WM_QUIT: u32 = 0x0012;
+#[cfg(target_os = "windows")]
+const PM_REMOVE: u32 = 0x0001;
+#[cfg(target_os = "windows")]
+const WS_OVERLAPPEDWINDOW: u32 = 0x00CF0000;
+#[cfg(target_os = "windows")]
+const WS_VISIBLE: u32 = 0x10000000;
+#[cfg(target_os = "windows")]
+const CW_USEDEFAULT: c_int = -2147483648i32;
+#[cfg(target_os = "windows")]
+const SW_SHOW: c_int = 5;
+
+#[cfg(target_os = "windows")]
+#[link(name = "user32")]
+extern "system" {
+    fn DefWindowProcW(hWnd: *mut c_void, Msg: u32, wParam: usize, lParam: isize) -> isize;
+    fn RegisterClassExW(lpwcx: *const WNDCLASSEXW) -> u16;
+    fn CreateWindowExW(
+        dwExStyle: u32,
+        lpClassName: *const c_ushort,
+        lpWindowName: *const c_ushort,
+        dwStyle: u32,
+        x: c_int,
+        y: c_int,
+        nWidth: c_int,
+        nHeight: c_int,
+        hWndParent: *mut c_void,
+        hMenu: *mut c_void,
+        hInstance: *mut c_void,
+        lpParam: *mut c_void,
+    ) -> *mut c_void;
+    fn DestroyWindow(hWnd: *mut c_void) -> c_int;
+    fn ShowWindow(hWnd: *mut c_void, nCmdShow: c_int) -> c_int;
+    fn PeekMessageW(
+        lpMsg: *mut MSG,
+        hWnd: *mut c_void,
+        wMsgFilterMin: u32,
+        wMsgFilterMax: u32,
+        wRemoveMsg: u32,
+    ) -> c_int;
+    fn TranslateMessage(lpMsg: *const MSG) -> c_int;
+    fn DispatchMessageW(lpMsg: *const MSG) -> isize;
+    fn PostQuitMessage(nExitCode: c_int);
+    fn IsWindow(hWnd: *mut c_void) -> c_int;
+    fn GetModuleHandleW(lpModuleName: *const c_ushort) -> *mut c_void;
+    fn GetClientRect(hWnd: *mut c_void, lpRect: *mut RECT) -> c_int;
+    fn MoveWindow(hWnd: *mut c_void, x: c_int, y: c_int, nWidth: c_int, nHeight: c_int, bRepaint: c_int) -> c_int;
+}
+
+// Platform-specific event handling for X11
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct XClientMessageEvent {
+    type_: c_int,
+    serial: c_ulong,
+    send_event: c_int,
+    display: *mut c_void,
+    window: c_ulong,
+    message_type: c_ulong,
+    format: c_int,
+    data: XClientMessageData,
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[repr(C)]
+#[derive(Copy, Clone)]
+union XClientMessageData {
+    bytes: [c_char; 20],
+    shorts: [c_int; 10],
+    longs: [c_long; 5],
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[repr(C)]
+#[derive(Copy, Clone)]
+union XEvent {
+    type_: c_int,
+    xclient: XClientMessageEvent,
+    pad: [c_long; 24],
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+const DESTROY_NOTIFY: c_int = 17;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+const CLIENT_MESSAGE: c_int = 33;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+const STRUCTURE_NOTIFY_MASK: c_long = 1 << 17;
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[link(name = "X11")]
+unsafe extern "C" {
+    fn XOpenDisplay(display_name: *const c_char) -> *mut c_void;
+    fn XCloseDisplay(display: *mut c_void) -> c_int;
+    fn XDefaultScreen(display: *mut c_void) -> c_int;
+    fn XRootWindow(display: *mut c_void, screen_number: c_int) -> c_ulong;
+    fn XBlackPixel(display: *mut c_void, screen_number: c_int) -> c_ulong;
+    fn XWhitePixel(display: *mut c_void, screen_number: c_int) -> c_ulong;
+    fn XCreateSimpleWindow(
+        display: *mut c_void,
+        parent: c_ulong,
+        x: c_int,
+        y: c_int,
+        width: c_uint,
+        height: c_uint,
+        border_width: c_uint,
+        border: c_ulong,
+        background: c_ulong,
+    ) -> c_ulong;
+    fn XStoreName(display: *mut c_void, window: c_ulong, window_name: *const c_char) -> c_int;
+    fn XSelectInput(display: *mut c_void, w: c_ulong, event_mask: c_long) -> c_int;
+    fn XInternAtom(display: *mut c_void, atom_name: *const c_char, only_if_exists: c_int) -> c_ulong;
+    fn XSetWMProtocols(display: *mut c_void, w: c_ulong, protocols: *mut c_ulong, count: c_int) -> c_int;
+    fn XMapRaised(display: *mut c_void, window: c_ulong) -> c_int;
+    fn XResizeWindow(display: *mut c_void, window: c_ulong, width: c_uint, height: c_uint) -> c_int;
+    fn XDestroyWindow(display: *mut c_void, window: c_ulong) -> c_int;
+    fn XPending(display: *mut c_void) -> c_int;
+    fn XNextEvent(display: *mut c_void, event: *mut XEvent) -> c_int;
+    fn XFlush(display: *mut c_void) -> c_int;
+    fn XSync(display: *mut c_void, discard: c_int) -> c_int;
+}
+
+// Platform-specific event handling for macOS
+#[cfg(target_os = "macos")]
+#[link(name = "AppKit", kind = "framework")]
+unsafe extern "C" {
+    fn NSApplicationLoad() -> bool;
+}
+
 pub struct GuiClapUiHost;
 
 impl GuiClapUiHost {
@@ -119,11 +307,24 @@ struct ClapPluginGui {
     get_resize_hints: Option<unsafe extern "C" fn(*const ClapPlugin, *mut c_void) -> bool>,
     adjust_size: Option<unsafe extern "C" fn(*const ClapPlugin, *mut u32, *mut u32) -> bool>,
     set_size: Option<unsafe extern "C" fn(*const ClapPlugin, u32, u32) -> bool>,
-    set_parent: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_void) -> bool>,
-    set_transient: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_void) -> bool>,
+    set_parent: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapWindow) -> bool>,
+    set_transient: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapWindow) -> bool>,
     suggest_title: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char)>,
     show: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
     hide: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
+}
+
+#[repr(C)]
+union ClapWindowHandle {
+    x11: c_ulong,
+    win32: *mut c_void,
+    cocoa: *mut c_void,
+}
+
+#[repr(C)]
+struct ClapWindow {
+    api: *const c_char,
+    handle: ClapWindowHandle,
 }
 
 #[repr(C)]
@@ -264,12 +465,14 @@ unsafe extern "C" fn host_gui_request_show(_host: *const ClapHost) -> bool {
 }
 
 unsafe extern "C" fn host_gui_request_hide(host: *const ClapHost) -> bool {
+    eprintln!("[clap-ui] Plugin requested hide");
     let state = host_state(host);
     state.should_close.store(true, Ordering::SeqCst);
     true
 }
 
-unsafe extern "C" fn host_gui_closed(host: *const ClapHost, _was_destroyed: bool) {
+unsafe extern "C" fn host_gui_closed(host: *const ClapHost, was_destroyed: bool) {
+    eprintln!("[clap-ui] Plugin reported GUI closed (was_destroyed: {})", was_destroyed);
     let state = host_state(host);
     state.should_close.store(true, Ordering::SeqCst);
 }
@@ -291,6 +494,370 @@ fn split_plugin_spec(spec: &str) -> (&str, Option<&str>) {
     } else {
         (spec, None)
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn create_x11_window_for_clap(
+    gui: &ClapPluginGui,
+    plugin: *const ClapPlugin,
+) -> Result<(*mut c_void, c_ulong, c_ulong, c_ulong, c_ulong), String> {
+    eprintln!("[clap-ui] Opening X11 display...");
+    let display = unsafe { XOpenDisplay(std::ptr::null()) };
+    if display.is_null() {
+        return Err("Failed to open X display for CLAP UI".to_string());
+    }
+    eprintln!("[clap-ui] Display opened: {:p}", display);
+
+    eprintln!("[clap-ui] Getting screen info...");
+    let screen = unsafe { XDefaultScreen(display) };
+    let root = unsafe { XRootWindow(display, screen) };
+    let black = unsafe { XBlackPixel(display, screen) };
+    let white = unsafe { XWhitePixel(display, screen) };
+    eprintln!("[clap-ui] Screen: {}, Root: {}", screen, root);
+
+    // Start with default size - we'll get actual size after creating GUI
+    let mut width = 900u32;
+    let mut height = 600u32;
+
+    // Create main window with default size
+    eprintln!("[clap-ui] Creating main window...");
+    let window = unsafe {
+        XCreateSimpleWindow(
+            display,
+            root,
+            120,
+            120,
+            width,
+            height,
+            1,
+            black,
+            white,
+        )
+    };
+    if window == 0 {
+        unsafe { XCloseDisplay(display) };
+        return Err("Failed to create X11 window for CLAP UI".to_string());
+    }
+    eprintln!("[clap-ui] Main window created: {}", window);
+
+    // Create embed window (child window for plugin)
+    eprintln!("[clap-ui] Creating embed window...");
+    let embed_window = unsafe {
+        XCreateSimpleWindow(display, window, 0, 0, width, height, 0, black, white)
+    };
+    if embed_window == 0 {
+        unsafe {
+            XDestroyWindow(display, window);
+            XCloseDisplay(display);
+        }
+        return Err("Failed to create X11 embed window for CLAP UI".to_string());
+    }
+    eprintln!("[clap-ui] Embed window created: {}", embed_window);
+
+    // Set window title
+    eprintln!("[clap-ui] Setting window title...");
+    let title = CString::new("CLAP Plugin").unwrap();
+    unsafe {
+        XStoreName(display, window, title.as_ptr());
+    }
+    eprintln!("[clap-ui] Title set");
+
+    // Set up event masks
+    unsafe {
+        XSelectInput(display, window, STRUCTURE_NOTIFY_MASK);
+        XSelectInput(display, embed_window, STRUCTURE_NOTIFY_MASK);
+    }
+
+    // Set up WM_DELETE_WINDOW protocol
+    let wm_delete_atom_name = CString::new("WM_DELETE_WINDOW").map_err(|e| e.to_string())?;
+    let wm_delete = unsafe { XInternAtom(display, wm_delete_atom_name.as_ptr(), 0) };
+    let wm_protocols_atom_name = CString::new("WM_PROTOCOLS").map_err(|e| e.to_string())?;
+    let wm_protocols = unsafe { XInternAtom(display, wm_protocols_atom_name.as_ptr(), 0) };
+    if wm_delete != 0 {
+        let mut protocols = [wm_delete];
+        unsafe {
+            XSetWMProtocols(display, window, protocols.as_mut_ptr(), 1);
+        }
+    }
+
+    // Get GUI callbacks
+    eprintln!("[clap-ui] Getting GUI callbacks...");
+    let create = gui
+        .create
+        .ok_or_else(|| "CLAP gui.create is unavailable".to_string())?;
+    let set_parent = gui
+        .set_parent
+        .ok_or_else(|| "CLAP gui.set_parent is unavailable".to_string())?;
+    let show = gui
+        .show
+        .ok_or_else(|| "CLAP gui.show is unavailable".to_string())?;
+    eprintln!("[clap-ui] Got create, set_parent, show callbacks");
+
+    // Create the GUI (must be done BEFORE get_size)
+    eprintln!("[clap-ui] Calling gui.create...");
+    let api_x11 = CString::new("x11").map_err(|e| e.to_string())?;
+    if unsafe { !create(plugin, api_x11.as_ptr(), false) } {
+        unsafe {
+            XDestroyWindow(display, embed_window);
+            XDestroyWindow(display, window);
+            XCloseDisplay(display);
+        }
+        return Err("CLAP gui.create failed".to_string());
+    }
+    eprintln!("[clap-ui] gui.create succeeded");
+
+    // Now get the actual size from the plugin (AFTER creating GUI)
+    eprintln!("[clap-ui] Getting actual plugin size...");
+    if let Some(get_size) = gui.get_size {
+        unsafe {
+            if get_size(plugin, &mut width, &mut height) {
+                width = width.max(320);
+                height = height.max(240);
+                eprintln!("[clap-ui] Plugin size: {}x{}", width, height);
+
+                // Resize windows to match plugin's preferred size
+                XResizeWindow(display, window, width, height);
+                XResizeWindow(display, embed_window, width, height);
+            }
+        }
+    }
+
+    // Set the parent window for the plugin UI
+    // For X11, CLAP expects a ClapWindow structure with api="x11" and the Window ID
+    eprintln!("[clap-ui] Creating ClapWindow structure with window {}...", embed_window);
+    let clap_window = ClapWindow {
+        api: c"x11".as_ptr(),
+        handle: ClapWindowHandle { x11: embed_window },
+    };
+
+    eprintln!("[clap-ui] Calling gui.set_parent...");
+    let set_parent_result = unsafe { set_parent(plugin, &clap_window) };
+    eprintln!("[clap-ui] gui.set_parent returned: {}", set_parent_result);
+
+    if !set_parent_result {
+        if let Some(destroy_gui) = gui.destroy {
+            unsafe { destroy_gui(plugin) };
+        }
+        unsafe {
+            XDestroyWindow(display, embed_window);
+            XDestroyWindow(display, window);
+            XCloseDisplay(display);
+        }
+        return Err("CLAP gui.set_parent failed".to_string());
+    }
+    eprintln!("[clap-ui] gui.set_parent succeeded");
+
+    // Show the GUI
+    eprintln!("[clap-ui] Calling gui.show...");
+    if unsafe { !show(plugin) } {
+        if let Some(destroy_gui) = gui.destroy {
+            unsafe { destroy_gui(plugin) };
+        }
+        unsafe {
+            XDestroyWindow(display, embed_window);
+            XDestroyWindow(display, window);
+            XCloseDisplay(display);
+        }
+        return Err("CLAP gui.show failed".to_string());
+    }
+
+    // Map windows
+    unsafe {
+        XMapRaised(display, embed_window);
+        XMapRaised(display, window);
+        XFlush(display);
+    }
+
+    eprintln!("[clap-ui] Created X11 window: {} with embed window: {}", window, embed_window);
+
+    Ok((display, window, embed_window, wm_delete, wm_protocols))
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn get_all_windows(display: *mut c_void, parent: c_ulong, windows: &mut Vec<c_ulong>) {
+    #[link(name = "X11")]
+    unsafe extern "C" {
+        fn XQueryTree(
+            display: *mut c_void,
+            w: c_ulong,
+            root_return: *mut c_ulong,
+            parent_return: *mut c_ulong,
+            children_return: *mut *mut c_ulong,
+            nchildren_return: *mut c_uint,
+        ) -> c_int;
+        fn XFree(data: *mut c_void) -> c_int;
+    }
+
+    unsafe {
+        let mut root_return: c_ulong = 0;
+        let mut parent_return: c_ulong = 0;
+        let mut children: *mut c_ulong = std::ptr::null_mut();
+        let mut nchildren: c_uint = 0;
+
+        if XQueryTree(
+            display,
+            parent,
+            &mut root_return,
+            &mut parent_return,
+            &mut children,
+            &mut nchildren,
+        ) != 0
+            && !children.is_null()
+        {
+            for i in 0..nchildren {
+                let child = *children.add(i as usize);
+                windows.push(child);
+                get_all_windows(display, child, windows);
+            }
+            XFree(children as *mut c_void);
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn create_x11_wrapper_for_floating_clap(
+    gui: &ClapPluginGui,
+    plugin: *const ClapPlugin,
+) -> Result<(*mut c_void, c_ulong, c_ulong, c_ulong, c_ulong), String> {
+    let display = unsafe { XOpenDisplay(std::ptr::null()) };
+    if display.is_null() {
+        return Err("Failed to open X display for CLAP UI".to_string());
+    }
+
+    let screen = unsafe { XDefaultScreen(display) };
+    let root = unsafe { XRootWindow(display, screen) };
+
+    // Get list of windows before creating plugin UI
+    let mut windows_before = Vec::new();
+    get_all_windows(display, root, &mut windows_before);
+
+    // Create the plugin's floating UI
+    let create = gui
+        .create
+        .ok_or_else(|| "CLAP gui.create is unavailable".to_string())?;
+    let show = gui
+        .show
+        .ok_or_else(|| "CLAP gui.show is unavailable".to_string())?;
+
+    let api_x11 = CString::new("x11").map_err(|e| e.to_string())?;
+    if unsafe { !create(plugin, api_x11.as_ptr(), true) } {
+        unsafe { XCloseDisplay(display) };
+        return Err("CLAP gui.create failed (floating mode)".to_string());
+    }
+
+    if unsafe { !show(plugin) } {
+        if let Some(destroy_gui) = gui.destroy {
+            unsafe { destroy_gui(plugin) };
+        }
+        unsafe { XCloseDisplay(display) };
+        return Err("CLAP gui.show failed".to_string());
+    }
+
+    // Give the plugin time to create its window
+    std::thread::sleep(Duration::from_millis(100));
+    unsafe { XSync(display, 0) };
+
+    // Get list of windows after creating plugin UI
+    let mut windows_after = Vec::new();
+    get_all_windows(display, root, &mut windows_after);
+
+    // Find the new window (plugin's window)
+    let mut plugin_window = 0;
+    for &window in &windows_after {
+        if !windows_before.contains(&window) {
+            plugin_window = window;
+            eprintln!("[clap-ui] Found plugin's floating window: {}", window);
+            break;
+        }
+    }
+
+    if plugin_window == 0 {
+        eprintln!("[clap-ui] Warning: Could not find plugin's window, will rely on plugin callbacks");
+        // Return display but no window to monitor
+        return Ok((display, 0, 0, 0, 0));
+    }
+
+    // Set up event monitoring on the plugin's window
+    unsafe {
+        XSelectInput(display, plugin_window, STRUCTURE_NOTIFY_MASK);
+    }
+
+    // Set up WM_DELETE_WINDOW protocol (in case we can intercept it)
+    let wm_delete_atom_name = CString::new("WM_DELETE_WINDOW").map_err(|e| e.to_string())?;
+    let wm_delete = unsafe { XInternAtom(display, wm_delete_atom_name.as_ptr(), 0) };
+    let wm_protocols_atom_name = CString::new("WM_PROTOCOLS").map_err(|e| e.to_string())?;
+    let wm_protocols = unsafe { XInternAtom(display, wm_protocols_atom_name.as_ptr(), 0) };
+
+    eprintln!("[clap-ui] Monitoring plugin's floating window for close events");
+
+    Ok((display, plugin_window, 0, wm_delete, wm_protocols))
+}
+
+// Platform-specific event pumping to detect window close
+#[cfg(target_os = "windows")]
+fn pump_platform_events() -> bool {
+    unsafe {
+        let mut msg: MSG = std::mem::zeroed();
+        while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+            if msg.message == WM_QUIT {
+                return true; // Window was closed
+            }
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    false // Continue running
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn pump_platform_events_x11(
+    display: *mut c_void,
+    window: c_ulong,
+    wm_delete: c_ulong,
+    wm_protocols: c_ulong,
+) -> bool {
+    if display.is_null() || window == 0 {
+        return false;
+    }
+    unsafe {
+        let pending = XPending(display);
+        if pending > 0 {
+            let mut event: XEvent = std::mem::zeroed();
+            for _ in 0..pending {
+                XNextEvent(display, &mut event);
+                let event_type = event.type_;
+
+                // Check for window destruction
+                if event_type == DESTROY_NOTIFY {
+                    eprintln!("[clap-ui] X11 DESTROY_NOTIFY received");
+                    return true;
+                }
+
+                // Check for WM_DELETE_WINDOW (user clicked close button)
+                if event_type == CLIENT_MESSAGE {
+                    let msg = event.xclient;
+                    if wm_delete != 0
+                        && wm_protocols != 0
+                        && msg.window == window
+                        && msg.message_type == wm_protocols
+                        && msg.format == 32
+                        && (msg.data.longs[0] as c_ulong) == wm_delete
+                    {
+                        eprintln!("[clap-ui] X11 WM_DELETE_WINDOW received");
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false // Continue running
+}
+
+#[cfg(target_os = "macos")]
+fn pump_platform_events_cocoa() -> bool {
+    // For macOS, we would need to integrate with NSRunLoop
+    // This is a placeholder for now
+    false
 }
 
 fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
@@ -415,47 +982,98 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
     };
     let on_timer = timer_ext.and_then(|ext| ext.on_timer);
 
-    let create = gui
-        .create
-        .ok_or_else(|| "CLAP gui.create is unavailable".to_string())?;
-    let show = gui
-        .show
-        .ok_or_else(|| "CLAP gui.show is unavailable".to_string())?;
+    // Determine which GUI API to use and whether embedded mode is supported
     let mut chosen: Option<CString> = None;
-    if let Some(get_preferred_api) = gui.get_preferred_api {
-        let mut api_ptr: *const c_char = std::ptr::null();
-        let mut floating = true;
-        let ok = unsafe { get_preferred_api(plugin, &mut api_ptr, &mut floating) };
-        if ok && floating && !api_ptr.is_null() {
-            let pref = unsafe { CStr::from_ptr(api_ptr) }
-                .to_string_lossy()
-                .to_string();
-            chosen = CString::new(pref).ok();
-        }
-    }
-    if chosen.is_none()
-        && let Some(is_api_supported) = gui.is_api_supported
-    {
+    let mut supports_embedded = false;
+
+    if let Some(is_api_supported) = gui.is_api_supported {
+        // Try embedded (non-floating) mode first
         for candidate in ["x11", "cocoa", "win32"] {
             let c = CString::new(candidate).map_err(|e| e.to_string())?;
-            if unsafe { is_api_supported(plugin, c.as_ptr(), true) } {
+            if unsafe { is_api_supported(plugin, c.as_ptr(), false) } {
+                eprintln!("[clap-ui] Plugin supports {} in embedded mode", candidate);
                 chosen = Some(c);
+                supports_embedded = true;
                 break;
             }
         }
+
+        // Fall back to floating mode if embedded not supported
+        if chosen.is_none() {
+            for candidate in ["x11", "cocoa", "win32"] {
+                let c = CString::new(candidate).map_err(|e| e.to_string())?;
+                if unsafe { is_api_supported(plugin, c.as_ptr(), true) } {
+                    eprintln!("[clap-ui] Plugin supports {} in floating mode only", candidate);
+                    chosen = Some(c);
+                    supports_embedded = false;
+                    break;
+                }
+            }
+        }
     }
+
     let Some(api) = chosen else {
-        return Err("No supported floating CLAP GUI API found".to_string());
+        return Err("No supported CLAP GUI API found".to_string());
     };
 
-    if unsafe { !create(plugin, api.as_ptr(), true) } {
-        return Err("CLAP gui.create failed".to_string());
-    }
-    if unsafe { !show(plugin) } {
-        return Err("CLAP gui.show failed".to_string());
+    // Platform-specific window creation
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    let (x11_display, x11_window, x11_embed_window, wm_delete, wm_protocols) =
+        if api.to_str().map(|s| s == "x11").unwrap_or(false) && supports_embedded {
+            eprintln!("[clap-ui] Creating embedded X11 window");
+            create_x11_window_for_clap(gui, plugin)?
+        } else if api.to_str().map(|s| s == "x11").unwrap_or(false) {
+            eprintln!("[clap-ui] Plugin only supports floating mode, creating wrapper window");
+            create_x11_wrapper_for_floating_clap(gui, plugin)?
+        } else {
+            (std::ptr::null_mut(), 0, 0, 0, 0)
+        };
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    {
+        let create = gui
+            .create
+            .ok_or_else(|| "CLAP gui.create is unavailable".to_string())?;
+        let show = gui
+            .show
+            .ok_or_else(|| "CLAP gui.show is unavailable".to_string())?;
+
+        let floating = !supports_embedded;
+        if unsafe { !create(plugin, api.as_ptr(), floating) } {
+            return Err("CLAP gui.create failed".to_string());
+        }
+        if unsafe { !show(plugin) } {
+            return Err("CLAP gui.show failed".to_string());
+        }
     }
 
+    eprintln!("[clap-ui] Event loop started, API: {:?}", api);
+    let mut iteration_count = 0u32;
     while !host_state.should_close.load(Ordering::SeqCst) {
+        iteration_count += 1;
+        // Pump platform-specific events to detect window close
+        #[cfg(target_os = "windows")]
+        if pump_platform_events() {
+            eprintln!("[clap-ui] Window close detected via Windows events");
+            host_state.should_close.store(true, Ordering::SeqCst);
+            break;
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        if !x11_display.is_null()
+            && x11_window != 0
+            && pump_platform_events_x11(x11_display, x11_window, wm_delete, wm_protocols)
+        {
+            host_state.should_close.store(true, Ordering::SeqCst);
+            break;
+        }
+
+        #[cfg(target_os = "macos")]
+        if pump_platform_events_cocoa() {
+            eprintln!("[clap-ui] Window close detected via Cocoa events");
+            host_state.should_close.store(true, Ordering::SeqCst);
+            break;
+        }
         if host_state.callback_requested.swap(false, Ordering::SeqCst)
             && let Some(on_main_thread) = plugin_ref.on_main_thread
         {
@@ -477,9 +1095,18 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
                 unsafe { on_timer(plugin, timer_id) };
             }
         }
+
+        // Debug: log periodically to show we're still running
+        if iteration_count % 600 == 0 {
+            eprintln!("[clap-ui] Still running (iteration {}), should_close = {}",
+                iteration_count, host_state.should_close.load(Ordering::SeqCst));
+        }
+
         thread::sleep(Duration::from_millis(16));
     }
+    eprintln!("[clap-ui] Event loop exited, cleaning up...");
 
+    // Clean up GUI
     if let Some(hide) = gui.hide {
         let _ = unsafe { hide(plugin) };
     }
@@ -497,6 +1124,22 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
     }
     if let Some(deinit) = entry.deinit {
         unsafe { deinit() };
+    }
+
+    // Clean up platform-specific resources
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    if !x11_display.is_null() {
+        unsafe {
+            if x11_embed_window != 0 {
+                XDestroyWindow(x11_display, x11_embed_window);
+            }
+            if x11_window != 0 {
+                XDestroyWindow(x11_display, x11_window);
+            }
+            XSync(x11_display, 0);
+            XCloseDisplay(x11_display);
+        }
+        eprintln!("[clap-ui] X11 resources cleaned up");
     }
 
     Ok(())
