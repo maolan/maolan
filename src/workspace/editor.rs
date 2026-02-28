@@ -210,7 +210,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 snap_sample_to_bar(clip.start as f32 + delta_samples)
             })
             .unwrap_or(clip.start as f32);
-        let lane = clip.input_channel.min(track.audio.ins.saturating_sub(1));
+        // All audio clips are displayed on lane 0 (single audio lane)
+        let lane = 0;
         let lane_top = track.lane_top(Kind::Audio, lane) + 3.0;
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
         let clip_height = lane_clip_height;
@@ -687,9 +688,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let clip_height = lane_clip_height;
-                        let lane = source_clip
-                            .input_channel
-                            .min(track.audio.ins.saturating_sub(1));
+                        // All audio clips are displayed on lane 0 (single audio lane)
+                        let lane = 0;
                         let lane_top = track.lane_top(Kind::Audio, lane) + 3.0;
                         let preview_start =
                             snap_sample_to_bar(source_clip.start as f32 + delta_samples);

@@ -158,7 +158,12 @@ impl Track {
     }
 
     pub fn audio_lane_count(&self) -> usize {
-        self.audio.ins
+        // Always return 1 audio lane if we have any audio inputs
+        if self.audio.ins > 0 {
+            1
+        } else {
+            0
+        }
     }
 
     pub fn midi_lane_count(&self) -> usize {
