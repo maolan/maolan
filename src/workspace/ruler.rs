@@ -1,4 +1,4 @@
-use crate::message::Message;
+use crate::message::{Message, SnapMode};
 use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
     event::Event,
@@ -30,6 +30,8 @@ struct RulerCanvas {
     beat_pixels: f32,
     pixels_per_sample: f32,
     loop_range_samples: Option<(usize, usize)>,
+    snap_mode: SnapMode,
+    samples_per_beat: f64,
 }
 
 impl Ruler {
@@ -58,6 +60,8 @@ impl Ruler {
         beat_pixels: f32,
         pixels_per_sample: f32,
         loop_range_samples: Option<(usize, usize)>,
+        snap_mode: SnapMode,
+        samples_per_beat: f64,
         content_width: f32,
     ) -> Element<'_, Message> {
         canvas(RulerCanvas {
@@ -65,6 +69,8 @@ impl Ruler {
             beat_pixels,
             pixels_per_sample,
             loop_range_samples,
+            snap_mode,
+            samples_per_beat,
         })
         .width(Length::Fixed(content_width.max(1.0)))
         .height(Length::Fill)
@@ -111,8 +117,7 @@ impl canvas::Program<Message> for RulerCanvas {
                     if self.pixels_per_sample <= 1.0e-9 {
                         return None;
                     }
-                    let bar_samples =
-                        ((self.beat_pixels * 4.0) / self.pixels_per_sample.max(1.0e-9)).max(1.0);
+
                     let drag_delta = (state.last_x - state.drag_start_x).abs();
                     if drag_delta < 3.0 {
                         let sample = (state.last_x / self.pixels_per_sample).max(0.0) as usize;
@@ -120,14 +125,36 @@ impl canvas::Program<Message> for RulerCanvas {
                             EngineAction::TransportPosition(sample),
                         )));
                     }
+
+                    let snap_interval = match self.snap_mode {
+                        SnapMode::NoSnap => 1.0,
+                        SnapMode::Bar => (self.samples_per_beat * 4.0).max(1.0),
+                        SnapMode::Beat => self.samples_per_beat.max(1.0),
+                        SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
+                        SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
+                        SnapMode::ThirtySecond => (self.samples_per_beat / 8.0).max(1.0),
+                        SnapMode::SixtyFourth => (self.samples_per_beat / 16.0).max(1.0),
+                    };
+
                     let start_x = state.drag_start_x.min(state.last_x).max(0.0);
                     let end_x = state.drag_start_x.max(state.last_x).max(0.0);
-                    let start_sample =
-                        ((start_x / self.pixels_per_sample) / bar_samples).floor() * bar_samples;
-                    let mut end_sample =
-                        ((end_x / self.pixels_per_sample) / bar_samples).ceil() * bar_samples;
+
+                    let snap_interval_f32 = snap_interval as f32;
+
+                    let start_sample = if matches!(self.snap_mode, SnapMode::NoSnap) {
+                        (start_x / self.pixels_per_sample).max(0.0)
+                    } else {
+                        ((start_x / self.pixels_per_sample) / snap_interval_f32).floor() * snap_interval_f32
+                    };
+
+                    let mut end_sample = if matches!(self.snap_mode, SnapMode::NoSnap) {
+                        (end_x / self.pixels_per_sample).max(0.0)
+                    } else {
+                        ((end_x / self.pixels_per_sample) / snap_interval_f32).ceil() * snap_interval_f32
+                    };
+
                     if end_sample <= start_sample {
-                        end_sample = start_sample + bar_samples;
+                        end_sample = start_sample + snap_interval_f32;
                     }
                     return Some(CanvasAction::publish(Message::SetLoopRange(Some((
                         start_sample.max(0.0) as usize,

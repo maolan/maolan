@@ -5,7 +5,7 @@ mod tempo;
 mod tracks;
 
 use crate::{
-    message::{DraggedClip, Message},
+    message::{DraggedClip, Message, SnapMode},
     state::State,
     widget::piano,
 };
@@ -36,6 +36,8 @@ pub struct WorkspaceViewArgs<'a> {
     pub samples_per_bar: f32,
     pub loop_range_samples: Option<(usize, usize)>,
     pub punch_range_samples: Option<(usize, usize)>,
+    pub snap_mode: SnapMode,
+    pub samples_per_beat: f64,
     pub zoom_visible_bars: f32,
     pub tracks_resize_hovered: bool,
     pub mixer_resize_hovered: bool,
@@ -86,6 +88,8 @@ impl Workspace {
             samples_per_bar,
             loop_range_samples,
             punch_range_samples,
+            snap_mode,
+            samples_per_beat,
             zoom_visible_bars,
             tracks_resize_hovered,
             mixer_resize_hovered,
@@ -134,6 +138,8 @@ impl Workspace {
                 self.editor.view(
                     pixels_per_sample,
                     samples_per_bar,
+                    snap_mode,
+                    samples_per_beat,
                     active_clip_drag,
                     active_clip_target_track,
                     recording_preview_bounds,
@@ -150,6 +156,8 @@ impl Workspace {
             self.editor.view(
                 pixels_per_sample,
                 samples_per_bar,
+                snap_mode,
+                samples_per_beat,
                 active_clip_drag,
                 active_clip_target_track,
                 recording_preview_bounds,
@@ -162,10 +170,11 @@ impl Workspace {
                 container(self.tempo.view(TempoViewArgs {
                     bpm: 120.0,
                     time_signature: (4, 4),
-                    beat_pixels,
                     pixels_per_sample,
                     playhead_x,
                     punch_range_samples,
+                    snap_mode,
+                    samples_per_beat,
                     content_width: editor_content_width,
                 }))
                 .height(Length::Fixed(self.tempo.height())),
@@ -174,6 +183,8 @@ impl Workspace {
                     beat_pixels,
                     pixels_per_sample,
                     loop_range_samples,
+                    snap_mode,
+                    samples_per_beat,
                     editor_content_width,
                 ))
                 .height(Length::Fixed(self.ruler.height())),

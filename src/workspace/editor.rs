@@ -1,5 +1,5 @@
 use crate::{
-    message::{DraggedClip, Message},
+    message::{DraggedClip, Message, SnapMode},
     state::{State, StateData, Track},
 };
 use iced::{
@@ -10,11 +10,15 @@ use iced_aw::ContextMenu;
 use maolan_engine::kind::Kind;
 use std::collections::HashMap;
 
+const CLIP_RESIZE_HANDLE_WIDTH: f32 = 5.0;
+
 struct TrackElementViewArgs<'a> {
     state: &'a StateData,
     track: Track,
     pixels_per_sample: f32,
     samples_per_bar: f32,
+    snap_mode: SnapMode,
+    samples_per_beat: f64,
     active_clip_drag: Option<&'a DraggedClip>,
     active_target_track: Option<&'a str>,
     recording_preview_bounds: Option<(usize, usize)>,
@@ -89,14 +93,41 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         track,
         pixels_per_sample,
         samples_per_bar,
+        snap_mode,
+        samples_per_beat,
         active_clip_drag,
         active_target_track,
         recording_preview_bounds,
         recording_preview_peaks,
     } = args;
-    let snap_sample_to_bar = |sample: f32| -> f32 {
-        let bar = samples_per_bar.max(1.0);
-        (sample.max(0.0) / bar).round() * bar
+    let snap_sample = |sample: f32| -> f32 {
+        match snap_mode {
+            SnapMode::NoSnap => sample.max(0.0),
+            SnapMode::Bar => {
+                let interval = samples_per_bar.max(1.0);
+                (sample.max(0.0) / interval).round() * interval
+            }
+            SnapMode::Beat => {
+                let interval = samples_per_beat.max(1.0) as f32;
+                (sample.max(0.0) / interval).round() * interval
+            }
+            SnapMode::Eighth => {
+                let interval = (samples_per_beat / 2.0).max(1.0) as f32;
+                (sample.max(0.0) / interval).round() * interval
+            }
+            SnapMode::Sixteenth => {
+                let interval = (samples_per_beat / 4.0).max(1.0) as f32;
+                (sample.max(0.0) / interval).round() * interval
+            }
+            SnapMode::ThirtySecond => {
+                let interval = (samples_per_beat / 8.0).max(1.0) as f32;
+                (sample.max(0.0) / interval).round() * interval
+            }
+            SnapMode::SixtyFourth => {
+                let interval = (samples_per_beat / 16.0).max(1.0) as f32;
+                (sample.max(0.0) / interval).round() * interval
+            }
+        }
     };
     let mut clips: Vec<Element<'static, Message>> = vec![
         mouse_area(container("").width(Length::Fill).height(Length::Fill))
@@ -207,18 +238,18 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .filter(|d| !d.copy)
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
-                snap_sample_to_bar(clip.start as f32 + delta_samples)
+                snap_sample(clip.start as f32 + delta_samples)
             })
             .unwrap_or(clip.start as f32);
         // All audio clips are displayed on lane 0 (single audio lane)
         let lane = 0;
         let lane_top = track.lane_top(Kind::Audio, lane) + 3.0;
-        let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
+        let clip_width = ((clip.length as f32 * pixels_per_sample) - CLIP_RESIZE_HANDLE_WIDTH * 2.0).max(12.0);
         let clip_height = lane_clip_height;
 
         let left_handle = mouse_area(
             container("")
-                .width(Length::Fixed(5.0))
+                .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
                 .height(Length::Fill)
                 .style(|_theme| {
                     use container::Style;
@@ -242,7 +273,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         let right_handle = mouse_area(
             container("")
-                .width(Length::Fixed(5.0))
+                .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
                 .height(Length::Fill)
                 .style(|_theme| {
                     use container::Style;
@@ -365,7 +396,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
-            let preview_start = snap_sample_to_bar(clip.start as f32 + delta_samples);
+            let preview_start = snap_sample(clip.start as f32 + delta_samples);
             let preview_content = container(Stack::with_children(vec![
                 audio_waveform_overlay(&clip_peaks, clip_width, clip_height),
                 container(text(clean_clip_name(&clip_name)).size(12))
@@ -390,9 +421,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 }
             });
             let preview = container(row![
-                container("").width(Length::Fixed(5.0)).height(Length::Fill),
+                container("").width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH)).height(Length::Fill),
                 preview_content,
-                container("").width(Length::Fixed(5.0)).height(Length::Fill)
+                container("").width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH)).height(Length::Fill)
             ])
             .width(Length::Fixed(clip_width))
             .height(Length::Fill)
@@ -457,16 +488,16 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .filter(|d| !d.copy)
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
-                snap_sample_to_bar(clip.start as f32 + delta_samples)
+                snap_sample(clip.start as f32 + delta_samples)
             })
             .unwrap_or(clip.start as f32);
         let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
         let lane_top = track.lane_top(Kind::MIDI, lane) + 3.0;
-        let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
+        let clip_width = ((clip.length as f32 * pixels_per_sample) - CLIP_RESIZE_HANDLE_WIDTH * 2.0).max(12.0);
 
         let left_handle = mouse_area(
             container("")
-                .width(Length::Fixed(5.0))
+                .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
                 .height(Length::Fill)
                 .style(|_theme| {
                     use container::Style;
@@ -490,7 +521,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         let right_handle = mouse_area(
             container("")
-                .width(Length::Fixed(5.0))
+                .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
                 .height(Length::Fill)
                 .style(|_theme| {
                     use container::Style;
@@ -611,7 +642,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
-            let preview_start = snap_sample_to_bar(clip.start as f32 + delta_samples);
+            let preview_start = snap_sample(clip.start as f32 + delta_samples);
             let preview_content =
                 container(container(text(clean_clip_name(&clip_name)).size(12)).padding(5))
                     .width(Length::Fill)
@@ -630,9 +661,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         }
                     });
             let preview = container(row![
-                container("").width(Length::Fixed(5.0)).height(Length::Fill),
+                container("").width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH)).height(Length::Fill),
                 preview_content,
-                container("").width(Length::Fixed(5.0)).height(Length::Fill)
+                container("").width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH)).height(Length::Fill)
             ])
             .width(Length::Fixed(clip_width))
             .height(Length::Fill)
@@ -686,13 +717,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let Some(source_clip) = source_track.audio.clips.get(clip_index) else {
                             continue;
                         };
-                        let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
+                        let clip_width = ((source_clip.length as f32 * pixels_per_sample) - CLIP_RESIZE_HANDLE_WIDTH * 2.0).max(12.0);
                         let clip_height = lane_clip_height;
                         // All audio clips are displayed on lane 0 (single audio lane)
                         let lane = 0;
                         let lane_top = track.lane_top(Kind::Audio, lane) + 3.0;
                         let preview_start =
-                            snap_sample_to_bar(source_clip.start as f32 + delta_samples);
+                            snap_sample(source_clip.start as f32 + delta_samples);
                         let preview_content = container(Stack::with_children(vec![
                             audio_waveform_overlay(&source_clip.peaks, clip_width, clip_height),
                             container(text(clean_clip_name(&source_clip.name)).size(12))
@@ -717,9 +748,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             }
                         });
                         let preview = container(row![
-                            container("").width(Length::Fixed(5.0)).height(Length::Fill),
+                            container("").width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH)).height(Length::Fill),
                             preview_content,
-                            container("").width(Length::Fixed(5.0)).height(Length::Fill)
+                            container("").width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH)).height(Length::Fill)
                         ])
                         .width(Length::Fixed(clip_width))
                         .height(Length::Fill)
@@ -764,13 +795,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let Some(source_clip) = source_track.midi.clips.get(clip_index) else {
                             continue;
                         };
-                        let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
+                        let clip_width = ((source_clip.length as f32 * pixels_per_sample) - CLIP_RESIZE_HANDLE_WIDTH * 2.0).max(12.0);
                         let lane = source_clip
                             .input_channel
                             .min(track.midi.ins.saturating_sub(1));
                         let lane_top = track.lane_top(Kind::MIDI, lane) + 3.0;
                         let preview_start =
-                            snap_sample_to_bar(source_clip.start as f32 + delta_samples);
+                            snap_sample(source_clip.start as f32 + delta_samples);
                         let preview_content = container(
                             container(text(clean_clip_name(&source_clip.name)).size(12)).padding(5),
                         )
@@ -790,9 +821,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             }
                         });
                         let preview = container(row![
-                            container("").width(Length::Fixed(5.0)).height(Length::Fill),
+                            container("").width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH)).height(Length::Fill),
                             preview_content,
-                            container("").width(Length::Fixed(5.0)).height(Length::Fill)
+                            container("").width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH)).height(Length::Fill)
                         ])
                         .width(Length::Fixed(clip_width))
                         .height(Length::Fill)
@@ -925,6 +956,8 @@ impl Editor {
         &self,
         pixels_per_sample: f32,
         samples_per_bar: f32,
+        snap_mode: SnapMode,
+        samples_per_beat: f64,
         active_clip_drag: Option<&DraggedClip>,
         active_target_track: Option<&str>,
         recording_preview_bounds: Option<(usize, usize)>,
@@ -938,6 +971,8 @@ impl Editor {
                 track: track.clone(),
                 pixels_per_sample,
                 samples_per_bar,
+                snap_mode,
+                samples_per_beat,
                 active_clip_drag,
                 active_target_track,
                 recording_preview_bounds,

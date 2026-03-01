@@ -374,6 +374,9 @@ impl Maolan {
                 self.punch_range_samples = normalized;
                 return self.send(Action::SetPunchRange(normalized));
             }
+            Message::SetSnapMode(mode) => {
+                self.snap_mode = mode;
+            }
             Message::RecordingPreviewTick => {
                 if self.playing
                     && !self.paused

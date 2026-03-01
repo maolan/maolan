@@ -1,7 +1,7 @@
-use crate::message::Message;
+use crate::message::{Message, SnapMode};
 use iced::{
     Background, Color, Length, Theme,
-    widget::{button, row},
+    widget::{button, pick_list, row},
 };
 use iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind, square,
@@ -30,6 +30,7 @@ pub struct ToolbarViewState {
     pub loop_enabled: bool,
     pub has_punch_range: bool,
     pub punch_enabled: bool,
+    pub snap_mode: SnapMode,
 }
 
 impl Toolbar {
@@ -173,6 +174,12 @@ impl Toolbar {
                     ))
                 },
             ]
+            .spacing(5),
+            row![pick_list(
+                &SnapMode::ALL[..],
+                Some(view_state.snap_mode),
+                Message::SetSnapMode
+            )]
             .width(Length::Fill),
             button(audio_lines())
                 .style(Self::button_style(true, false, Color::TRANSPARENT))

@@ -33,6 +33,43 @@ impl fmt::Display for PluginFormat {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapMode {
+    NoSnap,
+    Bar,
+    Beat,
+    Eighth,
+    Sixteenth,
+    ThirtySecond,
+    SixtyFourth,
+}
+
+impl fmt::Display for SnapMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoSnap => write!(f, "No Snap"),
+            Self::Bar => write!(f, "Bar"),
+            Self::Beat => write!(f, "Beat"),
+            Self::Eighth => write!(f, "1/8"),
+            Self::Sixteenth => write!(f, "1/16"),
+            Self::ThirtySecond => write!(f, "1/32"),
+            Self::SixtyFourth => write!(f, "1/64"),
+        }
+    }
+}
+
+impl SnapMode {
+    pub const ALL: [SnapMode; 7] = [
+        SnapMode::NoSnap,
+        SnapMode::Bar,
+        SnapMode::Beat,
+        SnapMode::Eighth,
+        SnapMode::Sixteenth,
+        SnapMode::ThirtySecond,
+        SnapMode::SixtyFourth,
+    ];
+}
+
 #[derive(Debug, Clone)]
 pub enum AddTrack {
     Name(String),
@@ -158,6 +195,7 @@ pub enum Message {
     SetLoopRange(Option<(usize, usize)>),
     TogglePunch,
     SetPunchRange(Option<(usize, usize)>),
+    SetSnapMode(SnapMode),
     RecordFolderSelected(Option<PathBuf>),
 
     SendMessageFinished(Result<(), String>),

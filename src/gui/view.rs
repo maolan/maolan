@@ -35,6 +35,8 @@ impl Maolan {
                             samples_per_bar: self.samples_per_bar() as f32,
                             loop_range_samples: self.loop_range_samples,
                             punch_range_samples: self.punch_range_samples,
+                            snap_mode: self.snap_mode,
+                            samples_per_beat: self.samples_per_beat(),
                             zoom_visible_bars: self.zoom_visible_bars,
                             tracks_resize_hovered: self.tracks_resize_hovered,
                             mixer_resize_hovered: self.mixer_resize_hovered,
@@ -69,6 +71,7 @@ impl Maolan {
                             loop_enabled: self.loop_enabled,
                             has_punch_range: self.punch_range_samples.is_some(),
                             punch_enabled: self.punch_enabled,
+                            snap_mode: self.snap_mode,
                         })
                     ];
                     if matches!(state.view, View::TrackPlugins) {

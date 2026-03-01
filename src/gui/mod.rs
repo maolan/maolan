@@ -8,7 +8,7 @@ mod view;
 use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
-    message::{DraggedClip, Message, PluginFormat, Show},
+    message::{DraggedClip, Message, PluginFormat, Show, SnapMode},
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{PianoControllerPoint, PianoNote, State, StateData},
     toolbar, track_rename, workspace,
@@ -106,6 +106,7 @@ pub struct Maolan {
     loop_range_samples: Option<(usize, usize)>,
     punch_enabled: bool,
     punch_range_samples: Option<(usize, usize)>,
+    snap_mode: SnapMode,
     zoom_visible_bars: f32,
     editor_scroll_x: f32,
     tracks_resize_hovered: bool,
@@ -177,6 +178,7 @@ impl Default for Maolan {
             loop_range_samples: None,
             punch_enabled: false,
             punch_range_samples: None,
+            snap_mode: SnapMode::Bar,
             zoom_visible_bars: 127.0,
             editor_scroll_x: 0.0,
             tracks_resize_hovered: false,
@@ -234,8 +236,33 @@ impl Maolan {
     }
 
     fn snap_sample_to_bar(&self, sample: f32) -> usize {
-        let bar = self.samples_per_bar().max(1.0);
-        ((sample.max(0.0) as f64 / bar).round() * bar) as usize
+        match self.snap_mode {
+            SnapMode::NoSnap => sample.max(0.0) as usize,
+            SnapMode::Bar => {
+                let interval = self.samples_per_bar().max(1.0);
+                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
+            }
+            SnapMode::Beat => {
+                let interval = self.samples_per_beat().max(1.0);
+                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
+            }
+            SnapMode::Eighth => {
+                let interval = (self.samples_per_beat() / 2.0).max(1.0);
+                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
+            }
+            SnapMode::Sixteenth => {
+                let interval = (self.samples_per_beat() / 4.0).max(1.0);
+                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
+            }
+            SnapMode::ThirtySecond => {
+                let interval = (self.samples_per_beat() / 8.0).max(1.0);
+                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
+            }
+            SnapMode::SixtyFourth => {
+                let interval = (self.samples_per_beat() / 16.0).max(1.0);
+                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
+            }
+        }
     }
 
     fn tracks_width_px(&self) -> f32 {
