@@ -3038,18 +3038,10 @@ impl Maolan {
             Message::HWExclusiveToggled(exclusive) => {
                 self.state.blocking_write().oss_exclusive = exclusive;
             }
+            #[cfg(unix)]
             Message::HWBitsChanged(bits) => {
-                #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
-                {
-                    let mut state = self.state.blocking_write();
-                    state.oss_bits = bits;
-                }
-                #[cfg(not(any(
-                    target_os = "linux",
-                    target_os = "freebsd",
-                    target_os = "openbsd"
-                )))]
-                let _ = bits;
+                let mut state = self.state.blocking_write();
+                state.oss_bits = bits;
             }
             Message::HWPeriodFramesChanged(period_frames) => {
                 self.state.blocking_write().oss_period_frames =

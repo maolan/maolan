@@ -347,8 +347,6 @@ impl Track {
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         let mut plugin_midi_events = track_input_midi_events.first().cloned().unwrap_or_default();
         #[cfg(any(target_os = "windows", target_os = "macos"))]
-        let mut clap_midi_events = plugin_midi_events.clone();
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
         let mut last_clap_output: Vec<ClapMidiOutputEvent> = Vec::new();
 
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -606,8 +604,8 @@ impl Track {
                     }
                 }
             }
-            clap_midi_events = plugin_midi_events.clone();
             if !self.clap_plugins.is_empty() {
+                let mut clap_midi_events = plugin_midi_events.clone();
                 for instance in &self.clap_plugins {
                     let ready = instance
                         .processor
@@ -2632,7 +2630,7 @@ impl Track {
         }
     }
 
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn plugin_midi_ready(
         &self,
         node: &PluginGraphNode,
@@ -2653,7 +2651,7 @@ impl Track {
             .all(|conn| processed.contains(&conn.from_node))
     }
 
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn plugin_midi_input_events(
         &self,
         node: &PluginGraphNode,
@@ -2677,7 +2675,7 @@ impl Track {
         per_port
     }
 
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn route_plugin_midi_to_track_outputs_graph(
         &self,
         track_input_events: &[Vec<MidiEvent>],

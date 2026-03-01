@@ -1,5 +1,6 @@
 #[cfg(target_os = "windows")]
 mod win32;
+#[cfg(all(unix, not(target_os = "macos")))]
 use crate::plugins::x11::open_editor_blocking;
 
 pub struct GuiVst3UiHost;

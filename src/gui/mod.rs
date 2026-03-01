@@ -19,11 +19,14 @@ use iced::{
 };
 use maolan_engine::{
     self as engine,
-    kind::Kind,
     message::{Action, Message as EngineMessage},
 };
+#[cfg(unix)]
+use maolan_engine::kind::Kind;
 use midly::{MetaMessage, Smf, Timing, TrackEventKind};
-use serde_json::{Value, json};
+#[cfg(unix)]
+use serde_json::json;
+use serde_json::Value;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
@@ -1012,6 +1015,7 @@ impl Maolan {
         }
     }
 
+    #[cfg(unix)]
     fn kind_to_json(kind: Kind) -> Value {
         match kind {
             Kind::Audio => json!("audio"),
@@ -1019,6 +1023,7 @@ impl Maolan {
         }
     }
 
+    #[cfg(unix)]
     fn kind_from_json(v: &Value) -> Option<Kind> {
         match v.as_str()? {
             "audio" => Some(Kind::Audio),

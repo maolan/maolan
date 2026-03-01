@@ -213,6 +213,7 @@ pub enum Message {
     HWSelected(String),
     HWBackendSelected(AudioBackendOption),
     HWExclusiveToggled(bool),
+    #[cfg(unix)]
     HWBitsChanged(usize),
     HWPeriodFramesChanged(usize),
     HWNPeriodsChanged(usize),

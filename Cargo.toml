@@ -20,7 +20,6 @@ wavers = "1.5.1"
 midly = "0.5.3"
 symphonia = { version = "0.5.5", default-features = false, features = ["all-formats", "all-codecs"] }
 rubato = "0.16.0"
-x11-dl = "2.21.0"
 libloading = "0.8"
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -32,6 +31,7 @@ nix = { version = "0.31.1", features = ["ioctl"] }
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 lilv = "0.2.4"
+x11-dl = "2.21.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cpal = { version = "0.15.3", features = ["asio"] }

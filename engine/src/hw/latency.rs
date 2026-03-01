@@ -1,3 +1,4 @@
+#[cfg(unix)]
 pub fn latency_ranges(
     cycle_samples: usize,
     nperiods: usize,

@@ -1,12 +1,16 @@
+#[cfg(unix)]
 use crate::audio::io::AudioIO;
+#[cfg(unix)]
 use std::sync::Arc;
 
+#[cfg(unix)]
 pub fn has_audio_connections(port: &Arc<AudioIO>) -> bool {
     port.connection_count
         .load(std::sync::atomic::Ordering::Relaxed)
         > 0
 }
 
+#[cfg(unix)]
 pub fn fill_ports_from_interleaved(
     ports: &[Arc<AudioIO>],
     frames: usize,
@@ -27,6 +31,7 @@ pub fn fill_ports_from_interleaved(
     }
 }
 
+#[cfg(unix)]
 pub fn write_interleaved_from_ports(
     ports: &[Arc<AudioIO>],
     frames: usize,

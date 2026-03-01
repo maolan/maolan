@@ -5,7 +5,7 @@ use crate::plugins::x11::{
     XRootWindow, XSelectInput, XSetWMProtocols, XStoreName, XSync, XWhitePixel,
 };
 use libloading::Library;
-use std::ffi::{CStr, CString, c_char, c_void};
+use std::ffi::{CStr, CString, c_char, c_ulong, c_void};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread;
@@ -15,11 +15,7 @@ use std::time::{Duration, Instant};
 use std::ffi::c_int;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use std::ffi::{c_int, c_long, c_uint, c_ulong};
-
-// Platform-specific window creation and event handling for Win32
-#[cfg(target_os = "windows")]
-use std::ffi::c_ushort;
+use std::ffi::{c_int, c_long, c_uint};
 
 #[cfg(target_os = "windows")]
 #[repr(C)]
@@ -40,69 +36,13 @@ struct POINT {
 }
 
 #[cfg(target_os = "windows")]
-#[repr(C)]
-struct WNDCLASSEXW {
-    cb_size: u32,
-    style: u32,
-    lpfn_wnd_proc: *const c_void,
-    cb_cls_extra: c_int,
-    cb_wnd_extra: c_int,
-    h_instance: *mut c_void,
-    h_icon: *mut c_void,
-    h_cursor: *mut c_void,
-    hbr_background: *mut c_void,
-    lpsz_menu_name: *const c_ushort,
-    lpsz_class_name: *const c_ushort,
-    h_icon_sm: *mut c_void,
-}
-
-#[cfg(target_os = "windows")]
-#[repr(C)]
-struct RECT {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-}
-
-#[cfg(target_os = "windows")]
-const WM_DESTROY: u32 = 0x0002;
-#[cfg(target_os = "windows")]
-const WM_CLOSE: u32 = 0x0010;
-#[cfg(target_os = "windows")]
 const WM_QUIT: u32 = 0x0012;
 #[cfg(target_os = "windows")]
 const PM_REMOVE: u32 = 0x0001;
-#[cfg(target_os = "windows")]
-const WS_OVERLAPPEDWINDOW: u32 = 0x00CF0000;
-#[cfg(target_os = "windows")]
-const WS_VISIBLE: u32 = 0x10000000;
-#[cfg(target_os = "windows")]
-const CW_USEDEFAULT: c_int = -2147483648i32;
-#[cfg(target_os = "windows")]
-const SW_SHOW: c_int = 5;
 
 #[cfg(target_os = "windows")]
 #[link(name = "user32")]
-extern "system" {
-    fn DefWindowProcW(hWnd: *mut c_void, Msg: u32, wParam: usize, lParam: isize) -> isize;
-    fn RegisterClassExW(lpwcx: *const WNDCLASSEXW) -> u16;
-    fn CreateWindowExW(
-        dwExStyle: u32,
-        lpClassName: *const c_ushort,
-        lpWindowName: *const c_ushort,
-        dwStyle: u32,
-        x: c_int,
-        y: c_int,
-        nWidth: c_int,
-        nHeight: c_int,
-        hWndParent: *mut c_void,
-        hMenu: *mut c_void,
-        hInstance: *mut c_void,
-        lpParam: *mut c_void,
-    ) -> *mut c_void;
-    fn DestroyWindow(hWnd: *mut c_void) -> c_int;
-    fn ShowWindow(hWnd: *mut c_void, nCmdShow: c_int) -> c_int;
+unsafe extern "system" {
     fn PeekMessageW(
         lpMsg: *mut MSG,
         hWnd: *mut c_void,
@@ -112,18 +52,6 @@ extern "system" {
     ) -> c_int;
     fn TranslateMessage(lpMsg: *const MSG) -> c_int;
     fn DispatchMessageW(lpMsg: *const MSG) -> isize;
-    fn PostQuitMessage(nExitCode: c_int);
-    fn IsWindow(hWnd: *mut c_void) -> c_int;
-    fn GetModuleHandleW(lpModuleName: *const c_ushort) -> *mut c_void;
-    fn GetClientRect(hWnd: *mut c_void, lpRect: *mut RECT) -> c_int;
-    fn MoveWindow(
-        hWnd: *mut c_void,
-        x: c_int,
-        y: c_int,
-        nWidth: c_int,
-        nHeight: c_int,
-        bRepaint: c_int,
-    ) -> c_int;
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]

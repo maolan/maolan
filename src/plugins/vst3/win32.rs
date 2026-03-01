@@ -193,28 +193,35 @@ pub fn open_editor_blocking(
             }
         }
         let (input_buses, output_buses) = instance.audio_bus_counts();
+        // Keep editor-host setup conservative: some plugins are sensitive to
+        // unrealistic process settings and crash during UI bring-up.
+        let setup_sample_rate = if sample_rate_hz.is_finite() && sample_rate_hz > 1.0 {
+            sample_rate_hz
+        } else {
+            48_000.0
+        };
+        let setup_block_size = block_size.clamp(64, 8192);
         let ui_audio_inputs = if input_buses == 0 {
             0
         } else {
-            audio_inputs.max(2)
+            audio_inputs.max(1)
         };
         let ui_audio_outputs = if output_buses == 0 {
             0
         } else {
-            audio_outputs.max(2)
+            audio_outputs.max(1)
         };
         instance.set_active(true)?;
         instance.setup_processing(
-            sample_rate_hz.max(1.0),
-            block_size.max(1).min(i32::MAX as usize) as i32,
+            setup_sample_rate,
+            setup_block_size.min(i32::MAX as usize) as i32,
             ui_audio_inputs.min(i32::MAX as usize) as i32,
             ui_audio_outputs.min(i32::MAX as usize) as i32,
         )?;
-        let _ = instance.start_processing();
         eprintln!(
             "[vst3-ui] processing setup sr={} block={} in={} out={} (requested in={} out={})",
-            sample_rate_hz.max(1.0),
-            block_size.max(1),
+            setup_sample_rate,
+            setup_block_size,
             ui_audio_inputs,
             ui_audio_outputs,
             audio_inputs,
@@ -354,11 +361,6 @@ fn run_vst3_win32_editor(
     let frame_ptr = &mut frame.iface as *mut vst3::Steinberg::IPlugFrame;
     eprintln!("[vst3-ui] setFrame");
     let _ = unsafe { view.setFrame(frame_ptr) };
-
-    rect.left = 0;
-    rect.top = 0;
-    rect.right = width;
-    rect.bottom = height;
     // Keep attach lifecycle minimal for plugin compatibility.
 
     let mut last_w = width;
@@ -392,8 +394,6 @@ fn run_vst3_win32_editor(
         if w != last_w || h != last_h {
             last_w = w;
             last_h = h;
-            rect.right = w;
-            rect.bottom = h;
         }
 
         std::thread::sleep(std::time::Duration::from_millis(16));

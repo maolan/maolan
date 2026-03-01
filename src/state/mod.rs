@@ -333,6 +333,7 @@ pub struct StateData {
     #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
     pub selected_hw: Option<String>,
     pub oss_exclusive: bool,
+    #[cfg(unix)]
     pub oss_bits: usize,
     pub oss_period_frames: usize,
     pub oss_nperiods: usize,
@@ -442,6 +443,7 @@ impl Default for StateData {
             available_hw: hw,
             selected_hw,
             oss_exclusive: true,
+            #[cfg(unix)]
             oss_bits: 32,
             oss_period_frames: 1024,
             oss_nperiods: 1,

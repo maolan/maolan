@@ -1730,6 +1730,7 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
     roots
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 fn home_dir() -> String {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
