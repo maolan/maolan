@@ -131,6 +131,12 @@ pub enum Message {
 
     SaveFolderSelected(Option<PathBuf>),
     OpenFolderSelected(Option<PathBuf>),
+    OpenExporter,
+    ExportFileSelected(Option<PathBuf>),
+    ExportProgress {
+        progress: f32,
+        operation: Option<String>,
+    },
 
     TrackResizeStart(String),
     TrackResizeHover(String, bool),

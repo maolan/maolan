@@ -65,6 +65,7 @@ fn menu_item(label: &str, message: Message) -> Element<'_, Message, iced::Theme,
     menu_button(label, Some(Length::Fill), Some(Length::Shrink), message)
 }
 
+#[allow(dead_code)]
 fn submenu(label: &str, msg: Message) -> Element<'_, Message, iced::Theme, iced::Renderer> {
     base_button(
         row![
@@ -99,10 +100,11 @@ impl Menu {
                     (menu_item("Save", Message::Show(Show::Save))),
                     (menu_item("Save as", Message::Show(Show::SaveAs))),
                     (menu_item("Import", Message::OpenFileImporter)),
-                    (submenu("Open Recent", Message::None), menu_tpl(menu_items!(
-                        (menu_item("First", Message::None)),
-                        (menu_item("Second", Message::None)),
-                    ))),
+                    (menu_item("Export", Message::OpenExporter)),
+                    // (submenu("Open Recent", Message::None), menu_tpl(menu_items!(
+                    //     (menu_item("First", Message::None)),
+                    //     (menu_item("Second", Message::None)),
+                    // ))),
                     (menu_item("Close", Message::None)),
                     (menu_item("Quit", Message::Request(Action::Quit))),
                 ))

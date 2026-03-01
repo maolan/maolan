@@ -17,16 +17,16 @@ use iced::{
     Length, Size, Task,
     widget::{button, column, container, pick_list, row, scrollable, text, text_input},
 };
+#[cfg(unix)]
+use maolan_engine::kind::Kind;
 use maolan_engine::{
     self as engine,
     message::{Action, Message as EngineMessage},
 };
-#[cfg(unix)]
-use maolan_engine::kind::Kind;
 use midly::{MetaMessage, Smf, Timing, TrackEventKind};
+use serde_json::Value;
 #[cfg(unix)]
 use serde_json::json;
-use serde_json::Value;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
@@ -122,6 +122,9 @@ pub struct Maolan {
     import_file_progress: f32,
     import_current_filename: String,
     import_current_operation: Option<String>,
+    export_in_progress: bool,
+    export_progress: f32,
+    export_operation: Option<String>,
     clap_ui_host: GuiClapUiHost,
     #[cfg(all(unix, not(target_os = "macos")))]
     lv2_ui_host: GuiLv2UiHost,
@@ -194,6 +197,9 @@ impl Default for Maolan {
             import_file_progress: 0.0,
             import_current_filename: String::new(),
             import_current_operation: None,
+            export_in_progress: false,
+            export_progress: 0.0,
+            export_operation: None,
             clap_ui_host: GuiClapUiHost::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_ui_host: GuiLv2UiHost::new(),
@@ -763,6 +769,176 @@ impl Maolan {
         progress_callback(1.0, None);
         let frames = final_samples.len() / channels.max(1);
         Ok((rel, channels.max(1), frames.max(1)))
+    }
+
+    async fn export_to_wav<F>(
+        export_path: &Path,
+        sample_rate: i32,
+        state: State,
+        session_root: &Path,
+        mut progress_callback: F,
+    ) -> std::io::Result<()>
+    where
+        F: FnMut(f32, Option<String>),
+    {
+        progress_callback(0.0, Some("Analyzing tracks".to_string()));
+        tokio::task::yield_now().await;
+
+        let (tracks, total_length) = {
+            let state = state.read().await;
+            let mut max_length = 0_usize;
+            let tracks_data: Vec<_> = state
+                .tracks
+                .iter()
+                .map(|track| {
+                    let mut track_max = 0_usize;
+                    for clip in &track.audio.clips {
+                        let clip_end = clip.start + clip.length;
+                        track_max = track_max.max(clip_end);
+                    }
+                    max_length = max_length.max(track_max);
+                    (
+                        track.name.clone(),
+                        track.level,
+                        track.balance,
+                        track.muted,
+                        track.soloed,
+                        track.audio.clips.clone(),
+                    )
+                })
+                .collect();
+            (tracks_data, max_length)
+        };
+
+        if total_length == 0 {
+            return Err(io::Error::other(
+                "No audio clips found. Nothing to export.".to_string(),
+            ));
+        }
+
+        let has_solo = tracks.iter().any(|(_, _, _, _, soloed, _)| *soloed);
+        let output_channels = 2;
+        let mut mixed_buffer = vec![0.0_f32; total_length * output_channels];
+
+        progress_callback(0.1, Some("Loading and mixing tracks".to_string()));
+        tokio::task::yield_now().await;
+
+        for (track_idx, (track_name, level, balance, muted, soloed, clips)) in
+            tracks.iter().enumerate()
+        {
+            if *muted || (has_solo && !soloed) {
+                continue;
+            }
+
+            let track_progress_start = 0.1 + (track_idx as f32 / tracks.len() as f32) * 0.7;
+            let track_progress_span = 0.7 / tracks.len() as f32;
+
+            progress_callback(
+                track_progress_start,
+                Some(format!("Processing track: {}", track_name)),
+            );
+            tokio::task::yield_now().await;
+
+            for clip in clips {
+                let clip_path = if std::path::PathBuf::from(&clip.name).is_absolute() {
+                    std::path::PathBuf::from(&clip.name)
+                } else {
+                    session_root.join(&clip.name)
+                };
+
+                let mut wav = Wav::<f32>::from_path(&clip_path).map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to open WAV '{}': {}",
+                        clip_path.display(),
+                        e
+                    ))
+                })?;
+
+                let clip_channels = wav.n_channels().max(1) as usize;
+                let samples: wavers::Samples<f32> = wav.read().map_err(|e| {
+                    io::Error::other(format!("WAV read error '{}': {}", clip_path.display(), e))
+                })?;
+
+                if samples.is_empty() {
+                    continue;
+                }
+
+                let clip_frames = samples.len() / clip_channels;
+                let start_frame = clip.start;
+                let offset_frame = clip.offset;
+                let length_frames = clip.length.min(clip_frames.saturating_sub(offset_frame));
+
+                let level_amp = 10.0_f32.powf(*level / 20.0);
+                let left_gain = if *balance <= 0.0 {
+                    level_amp
+                } else {
+                    level_amp * (1.0 - *balance)
+                };
+                let right_gain = if *balance >= 0.0 {
+                    level_amp
+                } else {
+                    level_amp * (1.0 + *balance)
+                };
+
+                for frame_idx in 0..length_frames {
+                    let src_frame = offset_frame + frame_idx;
+                    let dst_frame = start_frame + frame_idx;
+
+                    if dst_frame >= total_length {
+                        break;
+                    }
+
+                    let src_idx = src_frame * clip_channels;
+                    if src_idx + clip_channels > samples.len() {
+                        break;
+                    }
+
+                    let left_sample = if clip_channels == 1 {
+                        samples[src_idx]
+                    } else {
+                        samples[src_idx]
+                    };
+
+                    let right_sample = if clip_channels == 1 {
+                        samples[src_idx]
+                    } else if clip_channels >= 2 {
+                        samples[src_idx + 1]
+                    } else {
+                        left_sample
+                    };
+
+                    let dst_idx = dst_frame * output_channels;
+                    mixed_buffer[dst_idx] += left_sample * left_gain;
+                    mixed_buffer[dst_idx + 1] += right_sample * right_gain;
+                }
+            }
+
+            progress_callback(
+                track_progress_start + track_progress_span,
+                Some(format!("Finished: {}", track_name)),
+            );
+            tokio::task::yield_now().await;
+        }
+
+        progress_callback(0.9, Some("Writing WAV file".to_string()));
+        tokio::task::yield_now().await;
+
+        wavers::write::<f32, _>(
+            export_path,
+            &mixed_buffer,
+            sample_rate,
+            output_channels as u16,
+        )
+        .map_err(|e| {
+            io::Error::other(format!(
+                "Failed to write '{}': {}",
+                export_path.display(),
+                e
+            ))
+        })?;
+
+        progress_callback(1.0, Some("Complete".to_string()));
+        Ok(())
     }
 
     fn midi_length_in_samples(path: &Path, sample_rate: f64) -> std::io::Result<usize> {

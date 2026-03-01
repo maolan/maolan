@@ -83,6 +83,9 @@ impl Maolan {
                     if s == "i" {
                         return Message::OpenFileImporter;
                     }
+                    if s == "e" {
+                        return Message::OpenExporter;
+                    }
                     if s == "s" {
                         if modifiers.shift() {
                             return Message::Show(Show::SaveAs);

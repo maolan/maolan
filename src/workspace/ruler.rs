@@ -144,13 +144,15 @@ impl canvas::Program<Message> for RulerCanvas {
                     let start_sample = if matches!(self.snap_mode, SnapMode::NoSnap) {
                         (start_x / self.pixels_per_sample).max(0.0)
                     } else {
-                        ((start_x / self.pixels_per_sample) / snap_interval_f32).floor() * snap_interval_f32
+                        ((start_x / self.pixels_per_sample) / snap_interval_f32).floor()
+                            * snap_interval_f32
                     };
 
                     let mut end_sample = if matches!(self.snap_mode, SnapMode::NoSnap) {
                         (end_x / self.pixels_per_sample).max(0.0)
                     } else {
-                        ((end_x / self.pixels_per_sample) / snap_interval_f32).ceil() * snap_interval_f32
+                        ((end_x / self.pixels_per_sample) / snap_interval_f32).ceil()
+                            * snap_interval_f32
                     };
 
                     if end_sample <= start_sample {

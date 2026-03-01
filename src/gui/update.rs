@@ -2180,9 +2180,12 @@ impl Maolan {
                                         clip.start = new_start as usize;
                                         clip.length = updated_length as usize;
                                         if start_delta >= 0 {
-                                            clip.offset = (clip.offset + start_delta as usize).min(clip.max_length_samples.saturating_sub(clip.length));
+                                            clip.offset = (clip.offset + start_delta as usize).min(
+                                                clip.max_length_samples.saturating_sub(clip.length),
+                                            );
                                         } else {
-                                            clip.offset = clip.offset.saturating_sub((-start_delta) as usize);
+                                            clip.offset =
+                                                clip.offset.saturating_sub((-start_delta) as usize);
                                         }
                                     }
                                 }
@@ -2206,9 +2209,12 @@ impl Maolan {
                                         clip.start = new_start as usize;
                                         clip.length = updated_length as usize;
                                         if start_delta >= 0 {
-                                            clip.offset = (clip.offset + start_delta as usize).min(clip.max_length_samples.saturating_sub(clip.length));
+                                            clip.offset = (clip.offset + start_delta as usize).min(
+                                                clip.max_length_samples.saturating_sub(clip.length),
+                                            );
                                         } else {
-                                            clip.offset = clip.offset.saturating_sub((-start_delta) as usize);
+                                            clip.offset =
+                                                clip.offset.saturating_sub((-start_delta) as usize);
                                         }
                                     }
                                 }
@@ -2862,6 +2868,113 @@ impl Maolan {
                 );
             }
             Message::ImportFilesSelected(None) => {}
+            Message::OpenExporter => {
+                return Task::perform(
+                    async {
+                        AsyncFileDialog::new()
+                            .set_title("Export to WAV")
+                            .add_filter("WAV Audio", &["wav"])
+                            .set_file_name("export.wav")
+                            .save_file()
+                            .await
+                            .map(|handle| handle.path().to_path_buf())
+                    },
+                    Message::ExportFileSelected,
+                );
+            }
+            Message::ExportFileSelected(Some(ref path)) => {
+                let Some(session_root) = self.session_dir.clone() else {
+                    self.state.blocking_write().message =
+                        "Export requires an opened/saved session".to_string();
+                    return Task::none();
+                };
+
+                let export_path = path.clone();
+                let sample_rate = self.playback_rate_hz as i32;
+                let state_clone = self.state.clone();
+
+                self.export_in_progress = true;
+                self.export_progress = 0.0;
+                self.export_operation = Some("Preparing".to_string());
+
+                return Task::run(
+                    {
+                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                        tokio::spawn(async move {
+                            let tx_clone = tx.clone();
+                            let mut last_progress_bucket: Option<u16> = None;
+                            let mut last_operation: Option<String> = None;
+                            let progress_fn = move |progress: f32, operation: Option<String>| {
+                                // Reduce UI/queue churn from high-frequency callbacks
+                                let clamped = progress.clamp(0.0, 1.0);
+                                let bucket = (clamped * 100.0).round() as u16;
+                                if last_progress_bucket == Some(bucket)
+                                    && last_operation == operation
+                                {
+                                    return;
+                                }
+                                last_progress_bucket = Some(bucket);
+                                last_operation = operation.clone();
+                                let _ = tx_clone.send(Message::ExportProgress {
+                                    progress: clamped,
+                                    operation,
+                                });
+                            };
+
+                            let result = Self::export_to_wav(
+                                &export_path,
+                                sample_rate,
+                                state_clone,
+                                &session_root,
+                                progress_fn,
+                            )
+                            .await;
+
+                            if let Err(e) = result {
+                                let _ = tx.send(Message::ExportProgress {
+                                    progress: 0.0,
+                                    operation: Some(format!("Error: {}", e)),
+                                });
+                            } else {
+                                let _ = tx.send(Message::ExportProgress {
+                                    progress: 1.0,
+                                    operation: Some("Complete".to_string()),
+                                });
+                            }
+                            drop(tx);
+                        });
+
+                        iced::futures::stream::unfold(rx, |mut rx| async move {
+                            rx.recv().await.map(|msg| (msg, rx))
+                        })
+                    },
+                    |msg| msg,
+                );
+            }
+            Message::ExportFileSelected(None) => {}
+            Message::ExportProgress {
+                progress,
+                ref operation,
+            } => {
+                if (self.export_progress - progress).abs() < f32::EPSILON
+                    && self.export_operation == *operation
+                {
+                    return Task::none();
+                }
+                self.export_progress = progress;
+                self.export_operation = operation.clone();
+
+                if progress >= 1.0 {
+                    self.export_in_progress = false;
+                    self.state.blocking_write().message = "Export complete".to_string();
+                } else if let Some(op) = operation {
+                    let percent = (progress * 100.0) as usize;
+                    self.state.blocking_write().message = format!("Exporting ({percent}%): {}", op);
+                } else {
+                    let percent = (progress * 100.0) as usize;
+                    self.state.blocking_write().message = format!("Exporting ({percent}%)...");
+                }
+            }
             Message::ImportProgress {
                 file_index,
                 total_files,

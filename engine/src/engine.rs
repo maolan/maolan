@@ -3,6 +3,8 @@ use midly::{
     live::LiveEvent,
     num::{u15, u24, u28},
 };
+#[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
+use std::fs::read_dir;
 use std::{
     collections::{HashMap, VecDeque},
     fs::File,
@@ -10,8 +12,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-#[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
-use std::fs::read_dir;
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio::task::JoinHandle;
 use tracing::error;
