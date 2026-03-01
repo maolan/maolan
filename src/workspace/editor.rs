@@ -40,6 +40,9 @@ fn audio_waveform_overlay(
     peaks: &[Vec<f32>],
     clip_width: f32,
     clip_height: f32,
+    clip_offset: usize,
+    clip_length: usize,
+    max_length: usize,
 ) -> Element<'static, Message> {
     if peaks.is_empty() {
         return container("")
@@ -56,11 +59,22 @@ fn audio_waveform_overlay(
         if channel_peaks.is_empty() {
             continue;
         }
-        let display_bins = ((inner_w / 2.0) as usize).clamp(1, channel_peaks.len());
+        let display_bins = ((inner_w / 2.0) as usize).clamp(1, clip_length.min(channel_peaks.len()));
         let x_step = inner_w / display_bins as f32;
         let center_y = channel_h * (channel_idx as f32 + 0.5);
+
+        // Calculate the range of peaks to display based on clip offset and length
+        let total_peaks = channel_peaks.len();
+        let max_len = max_length.max(1);
+
         for i in 0..display_bins {
-            let src_idx = i * channel_peaks.len() / display_bins;
+            // Map display bin to position within the clip (0 to clip_length)
+            let clip_sample_pos = (i * clip_length) / display_bins;
+            // Add offset to get absolute position in the audio file
+            let absolute_sample_pos = clip_offset + clip_sample_pos;
+            // Map absolute sample position to peak index
+            let src_idx = ((absolute_sample_pos * total_peaks) / max_len).min(total_peaks.saturating_sub(1));
+
             let amp = channel_peaks[src_idx].clamp(0.0, 1.0);
             let bar_h = (amp * channel_h).max(1.0);
             bars.push(
@@ -296,7 +310,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         ));
 
         let clip_content = container(Stack::with_children(vec![
-            audio_waveform_overlay(&clip_peaks, clip_width, clip_height),
+            audio_waveform_overlay(&clip_peaks, clip_width, clip_height, clip.offset, clip.length, clip.max_length_samples),
             container(text(clean_clip_name(&clip_name)).size(12))
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -398,7 +412,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = snap_sample(clip.start as f32 + delta_samples);
             let preview_content = container(Stack::with_children(vec![
-                audio_waveform_overlay(&clip_peaks, clip_width, clip_height),
+                audio_waveform_overlay(&clip_peaks, clip_width, clip_height, clip.offset, clip.length, clip.max_length_samples),
                 container(text(clean_clip_name(&clip_name)).size(12))
                     .width(Length::Fill)
                     .height(Length::Fill)
@@ -725,7 +739,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let preview_start =
                             snap_sample(source_clip.start as f32 + delta_samples);
                         let preview_content = container(Stack::with_children(vec![
-                            audio_waveform_overlay(&source_clip.peaks, clip_width, clip_height),
+                            audio_waveform_overlay(&source_clip.peaks, clip_width, clip_height, source_clip.offset, source_clip.length, source_clip.max_length_samples),
                             container(text(clean_clip_name(&source_clip.name)).size(12))
                                 .width(Length::Fill)
                                 .height(Length::Fill)
@@ -864,9 +878,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .and_then(|map| map.get(&track.name))
             .cloned()
             .unwrap_or_default();
+        let preview_length = preview_current - preview_start;
         let preview_clip = container(
             container(Stack::with_children(vec![
-                audio_waveform_overlay(&preview_peaks, preview_width, preview_height),
+                audio_waveform_overlay(&preview_peaks, preview_width, preview_height, 0, preview_length, preview_length),
                 container(text("REC").size(12))
                     .width(Length::Fill)
                     .height(Length::Fill)

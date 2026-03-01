@@ -2176,8 +2176,14 @@ impl Maolan {
                                             .clamp(min_start, max_start);
                                         let updated_length = (right_edge - new_start)
                                             .clamp(min_length_samples, max_length_samples);
+                                        let start_delta = new_start as isize - clip.start as isize;
                                         clip.start = new_start as usize;
                                         clip.length = updated_length as usize;
+                                        if start_delta >= 0 {
+                                            clip.offset = (clip.offset + start_delta as usize).min(clip.max_length_samples.saturating_sub(clip.length));
+                                        } else {
+                                            clip.offset = clip.offset.saturating_sub((-start_delta) as usize);
+                                        }
                                     }
                                 }
                                 Kind::MIDI => {
@@ -2196,8 +2202,14 @@ impl Maolan {
                                             .clamp(min_start, max_start);
                                         let updated_length = (right_edge - new_start)
                                             .clamp(min_length_samples, max_length_samples);
+                                        let start_delta = new_start as isize - clip.start as isize;
                                         clip.start = new_start as usize;
                                         clip.length = updated_length as usize;
+                                        if start_delta >= 0 {
+                                            clip.offset = (clip.offset + start_delta as usize).min(clip.max_length_samples.saturating_sub(clip.length));
+                                        } else {
+                                            clip.offset = clip.offset.saturating_sub((-start_delta) as usize);
+                                        }
                                     }
                                 }
                             }
