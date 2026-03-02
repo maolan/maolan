@@ -173,13 +173,13 @@ impl Toolbar {
                         Color::TRANSPARENT,
                     ))
                 },
+                pick_list(
+                    &SnapMode::ALL[..],
+                    Some(view_state.snap_mode),
+                    Message::SetSnapMode
+                )
             ]
-            .spacing(5),
-            row![pick_list(
-                &SnapMode::ALL[..],
-                Some(view_state.snap_mode),
-                Message::SetSnapMode
-            )]
+            .spacing(3)
             .width(Length::Fill),
             button(audio_lines())
                 .style(Self::button_style(true, false, Color::TRANSPARENT))

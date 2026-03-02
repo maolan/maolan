@@ -237,7 +237,9 @@ impl Drop for PluginFactory {
         }
 
         unsafe {
-            if let Ok(exit_dll) = self.module.get::<unsafe extern "system" fn() -> bool>(b"ExitDll")
+            if let Ok(exit_dll) = self
+                .module
+                .get::<unsafe extern "system" fn() -> bool>(b"ExitDll")
             {
                 let _ = exit_dll();
             }
