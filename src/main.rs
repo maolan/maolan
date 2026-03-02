@@ -1,5 +1,6 @@
 mod add_track;
 mod clip_rename;
+mod config;
 mod connections;
 mod gui;
 mod hw;
@@ -56,8 +57,10 @@ fn prefer_x11_backend() {
 }
 
 fn run_app() -> iced::Result {
+    let config = config::Config::load().unwrap_or_default();
+
     let settings = Settings {
-        default_text_size: Pixels(16.0),
+        default_text_size: Pixels(config.font_size),
         ..Default::default()
     };
 

@@ -2,6 +2,8 @@ mod clip;
 mod connection;
 mod track;
 
+use crate::config;
+
 #[cfg(target_os = "linux")]
 use alsa::{
     Direction,
@@ -387,6 +389,7 @@ pub struct StateData {
 
 impl Default for StateData {
     fn default() -> Self {
+        let cfg = config::Config::load().unwrap_or_default();
         let available_backends = supported_audio_backends();
         let selected_backend = default_audio_backend();
         #[cfg(target_os = "freebsd")]
@@ -431,8 +434,8 @@ impl Default for StateData {
             mouse_left_down: false,
             clip_marquee_start: None,
             clip_marquee_end: None,
-            mixer_height: Length::Fixed(300.0),
-            tracks_width: Length::Fixed(200.0),
+            mixer_height: Length::Fixed(cfg.mixer_height),
+            tracks_width: Length::Fixed(cfg.track_width),
             view: View::Workspace,
             pending_track_positions: HashMap::new(),
             pending_track_heights: HashMap::new(),
