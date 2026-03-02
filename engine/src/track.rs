@@ -1407,7 +1407,8 @@ impl Track {
             .first()
             .map(|io| io.buffer.lock().len())
             .or_else(|| self.audio.outs.first().map(|io| io.buffer.lock().len()))
-            .unwrap_or(0);
+            .unwrap_or(64)
+            .max(1);
         let input_count = self.audio.ins.len().max(1);
         let output_count = self.audio.outs.len().max(1);
         let processor = Vst3Processor::new(buffer_size, plugin_path, input_count, output_count)?;

@@ -86,14 +86,15 @@ pub fn pump_host_run_loop() {
 pub struct PluginFactory {
     // Keep COM objects before the module so they are released before dlclose.
     factory: ComPtr<IPluginFactory>,
-    _module: libloading::Library,
+    module: libloading::Library,
+    module_inited: bool,
 }
 
 impl std::fmt::Debug for PluginFactory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PluginFactory")
             .field("factory", &"<COM ptr>")
-            .field("_module", &"<library>")
+            .field("module", &"<library>")
             .finish()
     }
 }
@@ -108,6 +109,15 @@ impl PluginFactory {
         let library = unsafe {
             libloading::Library::new(&module_path)
                 .map_err(|e| format!("Failed to load VST3 module {:?}: {}", module_path, e))?
+        };
+
+        // Many Windows plugins (including iPlug2-based VST3) rely on InitDll to
+        // initialize module globals used for resource lookup and UI setup.
+        let module_inited = unsafe {
+            match library.get::<unsafe extern "system" fn() -> bool>(b"InitDll") {
+                Ok(init_dll) => init_dll(),
+                Err(_) => false,
+            }
         };
 
         // Get the factory function
@@ -130,7 +140,8 @@ impl PluginFactory {
 
         Ok(Self {
             factory,
-            _module: library,
+            module: library,
+            module_inited,
         })
     }
 
@@ -216,6 +227,21 @@ impl PluginFactory {
 
         unsafe { ComPtr::from_raw(instance_ptr as *mut IEditController) }
             .ok_or("Failed to create ComPtr for IEditController".to_string())
+    }
+}
+
+impl Drop for PluginFactory {
+    fn drop(&mut self) {
+        if !self.module_inited {
+            return;
+        }
+
+        unsafe {
+            if let Ok(exit_dll) = self.module.get::<unsafe extern "system" fn() -> bool>(b"ExitDll")
+            {
+                let _ = exit_dll();
+            }
+        }
     }
 }
 

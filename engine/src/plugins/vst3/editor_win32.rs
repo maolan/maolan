@@ -9,27 +9,29 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
-    DispatchMessageW, GetClientRect, IDC_ARROW, IsWindow, LoadCursorW, MSG, MoveWindow, PM_REMOVE,
-    PeekMessageW, PostQuitMessage, RegisterClassW, SW_SHOWDEFAULT, ShowWindow, TranslateMessage,
-    WM_CLOSE, WM_DESTROY, WM_QUIT, WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    BringWindowToTop, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
+    DestroyWindow, DispatchMessageW, GetClientRect, GetParent, GetWindowRect, IDC_ARROW, IsWindow,
+    LoadCursorW, MSG, MoveWindow, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassW,
+    SW_SHOWDEFAULT, SetForegroundWindow, ShowWindow, TranslateMessage, WM_CLOSE, WM_DESTROY,
+    WM_QUIT, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW,
+    WS_VISIBLE,
 };
 
 #[repr(C)]
 struct HostPlugFrame {
     iface: vst3::Steinberg::IPlugFrame,
     ref_count: AtomicU32,
-    window: HWND,
+    embed_window: HWND,
 }
 
 impl HostPlugFrame {
-    fn new(window: HWND) -> Self {
+    fn new(embed_window: HWND) -> Self {
         Self {
             iface: vst3::Steinberg::IPlugFrame {
                 vtbl: &HOST_PLUG_FRAME_VTBL,
             },
             ref_count: AtomicU32::new(1),
-            window,
+            embed_window,
         }
     }
 }
@@ -94,8 +96,34 @@ unsafe extern "system" fn frame_resize_view(
     let width = unsafe { ((*new_size).right - (*new_size).left).max(1) };
     let height = unsafe { ((*new_size).bottom - (*new_size).top).max(1) };
     unsafe {
-        if !(*frame).window.is_null() {
-            let _ = MoveWindow((*frame).window, 0, 0, width, height, 1);
+        if !(*frame).embed_window.is_null() {
+            let _ = MoveWindow((*frame).embed_window, 0, 0, width, height, 1);
+
+            // Match the top-level host window to requested client size so first open
+            // does not appear too small on high DPI / themed non-client metrics.
+            let host_window = GetParent((*frame).embed_window);
+            if !host_window.is_null() {
+                let mut wr: RECT = std::mem::zeroed();
+                let mut cr: RECT = std::mem::zeroed();
+                let _ = GetWindowRect(host_window, &mut wr);
+                let _ = GetClientRect(host_window, &mut cr);
+                let outer_w = (wr.right - wr.left).max(1);
+                let outer_h = (wr.bottom - wr.top).max(1);
+                let client_w = (cr.right - cr.left).max(1);
+                let client_h = (cr.bottom - cr.top).max(1);
+                let non_client_w = (outer_w - client_w).max(0);
+                let non_client_h = (outer_h - client_h).max(0);
+                let target_outer_w = width + non_client_w;
+                let target_outer_h = height + non_client_h;
+                let _ = MoveWindow(
+                    host_window,
+                    wr.left,
+                    wr.top,
+                    target_outer_w.max(1),
+                    target_outer_h.max(1),
+                    1,
+                );
+            }
         }
     }
     vst3::Steinberg::kResultOk
@@ -187,7 +215,7 @@ pub fn open_editor_blocking(
                 0,
                 class_name.as_ptr(),
                 title_w.as_ptr(),
-                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,
                 CW_USEDEFAULT,
                 CW_USEDEFAULT,
                 width + 20,
@@ -207,7 +235,7 @@ pub fn open_editor_blocking(
                 0,
                 static_class.as_ptr(),
                 std::ptr::null(),
-                WS_CHILD | WS_VISIBLE,
+                WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
                 0,
                 0,
                 width,
@@ -226,25 +254,65 @@ pub fn open_editor_blocking(
         }
         unsafe {
             let _ = ShowWindow(window, SW_SHOWDEFAULT);
+            let _ = BringWindowToTop(window);
+            let _ = SetForegroundWindow(window);
             let _ = MoveWindow(embed_window, 0, 0, width, height, 1);
         }
+        // Make sure initial WM_SIZE/WM_PAINT traffic is processed before attach.
+        for _ in 0..4 {
+            let mut msg: MSG = unsafe { std::mem::zeroed() };
+            while unsafe { PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) } != 0 {
+                unsafe {
+                    let _ = TranslateMessage(&msg);
+                    let _ = DispatchMessageW(&msg);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        let mut embed_client: RECT = unsafe { std::mem::zeroed() };
+        unsafe {
+            let _ = GetClientRect(embed_window, &mut embed_client);
+        }
+        let embed_w = (embed_client.right - embed_client.left).max(1);
+        let embed_h = (embed_client.bottom - embed_client.top).max(1);
+        if embed_w != width || embed_h != height {
+            unsafe {
+                let _ = MoveWindow(embed_window, 0, 0, embed_w, embed_h, 1);
+            }
+        }
 
+        // Keep lifecycle conservative for compatibility with iPlug2-based editors.
+        // Avoid pre-attach size/content-scale calls that some plugins don't tolerate.
+        let attach_parent = embed_window;
+        let mut frame = Box::new(HostPlugFrame::new(attach_parent));
+        let frame_ptr = &mut frame.iface as *mut vst3::Steinberg::IPlugFrame;
+        let set_frame = unsafe { view.setFrame(frame_ptr) };
+        if set_frame != vst3::Steinberg::kResultOk && set_frame != vst3::Steinberg::kResultTrue {
+            unsafe {
+                let _ = DestroyWindow(window);
+            }
+            return Err(format!("VST3 editor setFrame failed (result: {set_frame})"));
+        }
         let attached = unsafe {
             view.attached(
-                embed_window.cast::<c_void>(),
+                attach_parent.cast::<c_void>(),
                 vst3::Steinberg::kPlatformTypeHWND,
             )
         };
         if attached != vst3::Steinberg::kResultOk && attached != vst3::Steinberg::kResultTrue {
+            let _ = unsafe { view.setFrame(std::ptr::null_mut()) };
             unsafe {
                 let _ = DestroyWindow(window);
             }
             return Err(format!("VST3 editor attach failed (result: {attached})"));
         }
-
-        let mut frame = Box::new(HostPlugFrame::new(embed_window));
-        let frame_ptr = &mut frame.iface as *mut vst3::Steinberg::IPlugFrame;
-        let _ = unsafe { view.setFrame(frame_ptr) };
+        let mut initial_rect = vst3::Steinberg::ViewRect {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: height,
+        };
+        let _ = unsafe { view.onSize(&mut initial_rect) };
 
         let mut last_w = width;
         let mut last_h = height;
