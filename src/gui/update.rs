@@ -145,6 +145,9 @@ impl Maolan {
                 self.size = size;
                 return self.sync_editor_scrollbars();
             }
+            Message::WindowCloseRequested => {
+                exit(0);
+            }
             Message::Show(ref show) => {
                 use crate::message::Show;
                 if !self.state.blocking_read().hw_loaded

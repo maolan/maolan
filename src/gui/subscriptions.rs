@@ -121,6 +121,7 @@ impl Maolan {
                 _ => Message::None,
             },
             event::Event::Window(window::Event::Resized(size)) => Message::WindowResized(size),
+            event::Event::Window(window::Event::CloseRequested) => Message::WindowCloseRequested,
             _ => Message::None,
         });
 

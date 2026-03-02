@@ -166,6 +166,7 @@ pub enum Message {
     CtrlReleased,
 
     WindowResized(Size),
+    WindowCloseRequested,
     PlaybackTick,
     RecordingPreviewTick,
     RecordingPreviewPeaksTick,
