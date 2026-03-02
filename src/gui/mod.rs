@@ -11,7 +11,7 @@ use crate::{
     message::{DraggedClip, Message, PluginFormat, Show, SnapMode},
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{PianoControllerPoint, PianoNote, State, StateData},
-    toolbar, track_rename, workspace,
+    template_save, toolbar, track_rename, workspace,
 };
 use iced::{
     Length, Size, Task,
@@ -84,6 +84,7 @@ pub struct Maolan {
     add_track: add_track::AddTrackView,
     clip_rename: clip_rename::ClipRenameView,
     track_rename: track_rename::TrackRenameView,
+    template_save: template_save::TemplateSaveView,
     #[cfg(all(unix, not(target_os = "macos")))]
     plugin_filter: String,
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -96,6 +97,7 @@ pub struct Maolan {
     session_dir: Option<PathBuf>,
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
+    pending_save_is_template: bool,
     pending_audio_peaks: HashMap<AudioClipKey, Vec<Vec<f32>>>,
     playing: bool,
     paused: bool,
@@ -132,13 +134,38 @@ pub struct Maolan {
     pending_vst3_ui_open: Option<PendingVst3UiOpen>,
 }
 
+fn scan_templates() -> Vec<String> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let templates_dir = format!("{}/.config/maolan/session_templates", home);
+
+    let Ok(entries) = std::fs::read_dir(&templates_dir) else {
+        return vec![];
+    };
+
+    entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.is_dir() {
+                path.file_name()?.to_str().map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 impl Default for Maolan {
     fn default() -> Self {
-        let state = Arc::new(RwLock::new(StateData::default()));
+        let mut state_data = StateData::default();
+        state_data.available_templates = scan_templates();
+        let state = Arc::new(RwLock::new(state_data));
+        let mut menu = menu::Menu::default();
+        menu.update_templates(scan_templates());
         Self {
             clip: None,
             clip_preview_target_track: None,
-            menu: menu::Menu::default(),
+            menu,
             size: Size::new(0.0, 0.0),
             state: state.clone(),
             toolbar: toolbar::Toolbar::new(),
@@ -156,6 +183,7 @@ impl Default for Maolan {
             add_track: add_track::AddTrackView::default(),
             clip_rename: clip_rename::ClipRenameView::new(state.clone()),
             track_rename: track_rename::TrackRenameView::new(state.clone()),
+            template_save: template_save::TemplateSaveView::new(state.clone()),
             #[cfg(all(unix, not(target_os = "macos")))]
             plugin_filter: String::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -171,6 +199,7 @@ impl Default for Maolan {
             session_dir: None,
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
+            pending_save_is_template: false,
             pending_audio_peaks: HashMap::new(),
             playing: false,
             paused: false,

@@ -274,6 +274,11 @@ pub struct TrackRenameDialog {
 }
 
 #[derive(Debug, Clone)]
+pub struct TemplateSaveDialog {
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct PianoNote {
     pub start_sample: usize,
     pub length_samples: usize,
@@ -380,11 +385,14 @@ pub struct StateData {
     pub connections_last_track_click: Option<(String, Instant)>,
     pub clip_rename_dialog: Option<ClipRenameDialog>,
     pub track_rename_dialog: Option<TrackRenameDialog>,
+    pub template_save_dialog: Option<TemplateSaveDialog>,
     pub piano: Option<PianoData>,
     pub piano_zoom_x: f32,
     pub piano_zoom_y: f32,
     pub piano_scroll_x: f32,
     pub piano_scroll_y: f32,
+    pub tempo: f32,
+    pub available_templates: Vec<String>,
 }
 
 impl Default for StateData {
@@ -490,11 +498,14 @@ impl Default for StateData {
             connections_last_track_click: None,
             clip_rename_dialog: None,
             track_rename_dialog: None,
+            template_save_dialog: None,
             piano: None,
             piano_zoom_x: 20.0,
             piano_zoom_y: 1.0,
             piano_scroll_x: 0.0,
             piano_scroll_y: 0.0,
+            tempo: 120.0,
+            available_templates: vec![],
         }
     }
 }

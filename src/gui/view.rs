@@ -20,6 +20,9 @@ impl Maolan {
             if state.track_rename_dialog.is_some() {
                 return self.track_rename.view();
             }
+            if state.template_save_dialog.is_some() {
+                return self.template_save.view();
+            }
             match self.modal {
                 Some(Show::AddTrack) => self.add_track.view(),
                 #[cfg(all(unix, not(target_os = "macos")))]

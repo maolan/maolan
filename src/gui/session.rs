@@ -32,6 +32,140 @@ impl Maolan {
         )
     }
 
+    pub(super) fn save_template(&self, path: String) -> std::io::Result<()> {
+        use tracing::info;
+        info!("Saving template to: {}", path);
+        let filename = "session.json";
+        let template_root = PathBuf::from(path.clone());
+        fs::create_dir_all(&path)?;
+        fs::create_dir_all(template_root.join("plugins"))?;
+        fs::create_dir_all(template_root.join("audio"))?;
+        fs::create_dir_all(template_root.join("midi"))?;
+        fs::create_dir_all(template_root.join("peaks"))?;
+        info!("Created template directories in: {}", path);
+
+        let mut p = template_root.clone();
+        p.push(filename);
+        let file = File::create(&p)?;
+        let state = self.state.blocking_read();
+        let tracks_width = match state.tracks_width {
+            Length::Fixed(v) => v,
+            _ => 200.0,
+        };
+        let mixer_height = match state.mixer_height {
+            Length::Fixed(v) => v,
+            _ => 300.0,
+        };
+
+        // Serialize tracks but exclude clips
+        let mut tracks_json = serde_json::to_value(&state.tracks).map_err(io::Error::other)?;
+        if let Some(tracks) = tracks_json.as_array_mut() {
+            for track in tracks.iter_mut() {
+                // Clear audio clips
+                if let Some(audio) = track.get_mut("audio").and_then(Value::as_object_mut) {
+                    audio.insert("clips".to_string(), Value::Array(vec![]));
+                }
+                // Clear MIDI clips
+                if let Some(midi) = track.get_mut("midi").and_then(Value::as_object_mut) {
+                    midi.insert("clips".to_string(), Value::Array(vec![]));
+                }
+            }
+        }
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let graphs = {
+            let mut graphs = serde_json::Map::new();
+            for (track_name, (plugins, connections)) in &state.plugin_graphs_by_track {
+                let id_to_index: std::collections::HashMap<usize, usize> = plugins
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, p)| (p.instance_id, idx))
+                    .collect();
+                let plugins_json: Vec<Value> = plugins
+                    .iter()
+                    .map(|p| {
+                        let state_json = p
+                            .state
+                            .as_ref()
+                            .map(Self::lv2_state_to_json)
+                            .unwrap_or(Value::Null);
+                        json!({"uri": p.uri, "state": state_json})
+                    })
+                    .collect();
+                let conns_json: Vec<Value> = connections
+                    .iter()
+                    .filter_map(|c| {
+                        let from_node = Self::plugin_node_to_json(&c.from_node, &id_to_index)?;
+                        let to_node = Self::plugin_node_to_json(&c.to_node, &id_to_index)?;
+                        Some(json!({
+                            "from_node": from_node,
+                            "from_port": c.from_port,
+                            "to_node": to_node,
+                            "to_port": c.to_port,
+                            "kind": Self::kind_to_json(c.kind),
+                        }))
+                    })
+                    .collect();
+                graphs.insert(
+                    track_name.clone(),
+                    json!({
+                        "plugins": plugins_json,
+                        "connections": conns_json,
+                    }),
+                );
+            }
+            Value::Object(graphs)
+        };
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        let graphs = Value::Object(serde_json::Map::new());
+
+        let clap = Value::Object(
+            state
+                .tracks
+                .iter()
+                .filter_map(|track| {
+                    state
+                        .clap_plugins_by_track
+                        .get(&track.name)
+                        .map(|plugins| (track.name.clone(), json!(plugins)))
+                })
+                .collect(),
+        );
+        let clap_state = Value::Object(
+            state
+                .clap_states_by_track
+                .iter()
+                .map(|(track, states)| {
+                    let v = serde_json::to_value(states)
+                        .unwrap_or_else(|_| Value::Object(Default::default()));
+                    (track.clone(), v)
+                })
+                .collect(),
+        );
+
+        let result = json!({
+            "tracks": tracks_json,
+            "connections": &state.connections,
+            "graphs": graphs,
+            "clap": clap,
+            "clap_state": clap_state,
+            "transport": {
+                "loop_range_samples": self.loop_range_samples.map(|(start, end)| vec![start, end]),
+                "loop_enabled": self.loop_enabled,
+                "punch_range_samples": self.punch_range_samples.map(|(start, end)| vec![start, end]),
+                "punch_enabled": self.punch_enabled,
+                "tempo": state.tempo,
+            },
+            "ui": {
+                "tracks_width": tracks_width,
+                "mixer_height": mixer_height,
+            }
+        });
+        serde_json::to_writer_pretty(file, &result)?;
+        info!("Template saved successfully to: {}", path);
+        Ok(())
+    }
+
     pub(super) fn save(&self, path: String) -> std::io::Result<()> {
         let filename = "session.json";
         let session_root = PathBuf::from(path.clone());
@@ -212,6 +346,7 @@ impl Maolan {
                 "loop_enabled": self.loop_enabled,
                 "punch_range_samples": self.punch_range_samples.map(|(start, end)| vec![start, end]),
                 "punch_enabled": self.punch_enabled,
+                "tempo": state.tempo,
             },
             "ui": {
                 "tracks_width": tracks_width,
@@ -324,6 +459,13 @@ impl Maolan {
         restore_actions.push(Action::SetLoopEnabled(loaded_loop_enabled));
         restore_actions.push(Action::SetPunchRange(loaded_punch_range));
         restore_actions.push(Action::SetPunchEnabled(loaded_punch_enabled));
+
+        // Load tempo if present, default to 120.0
+        let loaded_tempo = transport
+            .get("tempo")
+            .and_then(Value::as_f64)
+            .unwrap_or(120.0) as f32;
+        self.state.blocking_write().tempo = loaded_tempo;
 
         {
             let mut state = self.state.blocking_write();
@@ -747,6 +889,75 @@ impl Maolan {
         Ok(Task::batch(tasks))
     }
 
+    pub(super) fn refresh_graphs_then_save_template(&mut self, path: String) -> Task<Message> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let track_names: Vec<String> = self
+                .state
+                .blocking_read()
+                .tracks
+                .iter()
+                .map(|t| t.name.clone())
+                .collect();
+            self.pending_save_path = Some(path);
+            self.pending_save_tracks = track_names.iter().cloned().collect();
+            self.pending_save_is_template = true;
+            if self.pending_save_tracks.is_empty() {
+                let Some(path) = self.pending_save_path.take() else {
+                    return Task::none();
+                };
+                if let Err(e) = self.save_template(path.clone()) {
+                    error!("{}", e);
+                    self.state.blocking_write().message = format!("Failed to save template: {}", e);
+                    return Task::none();
+                }
+                self.state.blocking_write().message = "Template saved".to_string();
+                return Task::none();
+            }
+            let tasks = track_names
+                .into_iter()
+                .flat_map(|track_name| {
+                    vec![
+                        self.send(Action::TrackGetPluginGraph {
+                            track_name: track_name.clone(),
+                        }),
+                        self.send(Action::TrackSnapshotAllClapStates { track_name }),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            Task::batch(tasks)
+        }
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        {
+            let track_names: Vec<String> = self
+                .state
+                .blocking_read()
+                .tracks
+                .iter()
+                .map(|t| t.name.clone())
+                .collect();
+            self.pending_save_path = Some(path);
+            self.pending_save_tracks = track_names.iter().cloned().collect();
+            if self.pending_save_tracks.is_empty() {
+                let Some(path) = self.pending_save_path.take() else {
+                    return Task::none();
+                };
+                if let Err(e) = self.save_template(path.clone()) {
+                    error!("{}", e);
+                    self.state.blocking_write().message = format!("Failed to save template: {}", e);
+                    return Task::none();
+                }
+                self.state.blocking_write().message = "Template saved".to_string();
+                return Task::none();
+            }
+            let tasks = track_names
+                .into_iter()
+                .map(|track_name| self.send(Action::TrackSnapshotAllClapStates { track_name }))
+                .collect::<Vec<_>>();
+            Task::batch(tasks)
+        }
+    }
+
     pub(super) fn refresh_graphs_then_save(&mut self, path: String) -> Task<Message> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
@@ -759,6 +970,7 @@ impl Maolan {
                 .collect();
             self.pending_save_path = Some(path);
             self.pending_save_tracks = track_names.iter().cloned().collect();
+            self.pending_save_is_template = false;
             if self.pending_save_tracks.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {
                     return Task::none();
@@ -793,6 +1005,7 @@ impl Maolan {
                 .collect();
             self.pending_save_path = Some(path);
             self.pending_save_tracks = track_names.iter().cloned().collect();
+            self.pending_save_is_template = false;
             if self.pending_save_tracks.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {
                     return Task::none();

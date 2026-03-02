@@ -100,7 +100,7 @@ impl Workspace {
             recording_preview_bounds,
             recording_preview_peaks,
         } = args;
-        let (tracks_width, max_end_samples) = {
+        let (tracks_width, max_end_samples, tempo) = {
             let state = self.state.blocking_read();
             let max_end_samples = state
                 .tracks
@@ -124,7 +124,7 @@ impl Workspace {
                 })
                 .max()
                 .unwrap_or(0);
-            (state.tracks_width, max_end_samples)
+            (state.tracks_width, max_end_samples, state.tempo)
         };
         let min_visible_samples = (samples_per_bar * zoom_visible_bars).max(1.0) as usize;
         let min_timeline_samples = (samples_per_bar * Self::MIN_TIMELINE_BARS).max(1.0) as usize;
@@ -170,7 +170,7 @@ impl Workspace {
         let right_lanes_scrolled = scrollable(
             column![
                 container(self.tempo.view(TempoViewArgs {
-                    bpm: 120.0,
+                    bpm: tempo,
                     time_signature: (4, 4),
                     pixels_per_sample,
                     playhead_x,

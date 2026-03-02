@@ -151,7 +151,7 @@ impl Maolan {
             Message::Show(ref show) => {
                 use crate::message::Show;
                 if !self.state.blocking_read().hw_loaded
-                    && matches!(show, Show::Save | Show::SaveAs | Show::Open)
+                    && matches!(show, Show::Save | Show::SaveAs | Show::SaveTemplateAs | Show::Open)
                 {
                     return Task::none();
                 }
@@ -191,6 +191,13 @@ impl Maolan {
                             Message::SaveFolderSelected,
                         );
                     }
+                    Show::SaveTemplateAs => {
+                        self.state.blocking_write().template_save_dialog =
+                            Some(crate::state::TemplateSaveDialog {
+                                name: String::new(),
+                            });
+                        self.modal = Some(Show::SaveTemplateAs);
+                    }
                     Show::Open => {
                         return Task::perform(
                             async {
@@ -213,6 +220,19 @@ impl Maolan {
                         self.selected_lv2_plugins.clear();
                         self.selected_vst3_plugins.clear();
                         self.selected_clap_plugins.clear();
+                    }
+                }
+            }
+            Message::NewFromTemplate(ref template_name) => {
+                // Load template from ~/.config/maolan/session_templates/<template_name>
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                let template_path = format!("{}/.config/maolan/session_templates/{}", home, template_name);
+
+                match self.load(template_path.clone()) {
+                    Ok(task) => return task,
+                    Err(e) => {
+                        error!("Failed to load template '{}' from {}: {}", template_name, template_path, e);
+                        self.state.blocking_write().message = format!("Failed to load template: {}", e);
                     }
                 }
             }
@@ -1270,8 +1290,21 @@ impl Maolan {
                         self.pending_save_tracks.remove(track_name);
                         if self.pending_save_tracks.is_empty() {
                             let path = self.pending_save_path.take().unwrap_or_default();
+                            let is_template = self.pending_save_is_template;
+                            self.pending_save_is_template = false;
                             if !path.is_empty() {
-                                if let Err(e) = self.save(path.clone()) {
+                                if is_template {
+                                    if let Err(e) = self.save_template(path.clone()) {
+                                        error!("{}", e);
+                                        self.state.blocking_write().message = format!("Failed to save template: {}", e);
+                                    } else {
+                                        self.state.blocking_write().message = "Template saved".to_string();
+                                        // Rescan templates and update menu
+                                        let templates = crate::gui::scan_templates();
+                                        self.state.blocking_write().available_templates = templates.clone();
+                                        self.menu.update_templates(templates);
+                                    }
+                                } else if let Err(e) = self.save(path.clone()) {
                                     error!("{}", e);
                                 } else {
                                     return self.send(Action::SetSessionPath(path));
@@ -1384,6 +1417,13 @@ impl Maolan {
                     plugins,
                     connections,
                 } => {
+                    use tracing::info;
+                    info!("Received plugin graph for track '{}' with {} plugins", track_name, plugins.len());
+                    for (idx, plugin) in plugins.iter().enumerate() {
+                        info!("  Plugin {}: uri={}, state properties count={}",
+                              idx, plugin.uri,
+                              plugin.state.as_ref().map(|s| s.properties.len()).unwrap_or(0));
+                    }
                     let mut state = self.state.blocking_write();
                     state
                         .plugin_graphs_by_track
@@ -1414,8 +1454,21 @@ impl Maolan {
                         self.pending_save_tracks.remove(track_name);
                         if self.pending_save_tracks.is_empty() {
                             let path = self.pending_save_path.take().unwrap_or_default();
+                            let is_template = self.pending_save_is_template;
+                            self.pending_save_is_template = false;
                             if !path.is_empty() {
-                                if let Err(e) = self.save(path.clone()) {
+                                if is_template {
+                                    if let Err(e) = self.save_template(path.clone()) {
+                                        error!("{}", e);
+                                        self.state.blocking_write().message = format!("Failed to save template: {}", e);
+                                    } else {
+                                        self.state.blocking_write().message = "Template saved".to_string();
+                                        // Rescan templates and update menu
+                                        let templates = crate::gui::scan_templates();
+                                        self.state.blocking_write().available_templates = templates.clone();
+                                        self.menu.update_templates(templates);
+                                    }
+                                } else if let Err(e) = self.save(path.clone()) {
                                     error!("{}", e);
                                 } else {
                                     return self.send(Action::SetSessionPath(path));
@@ -1814,6 +1867,9 @@ impl Maolan {
             Message::TrackRenameInput(_) => {
                 // Handled by TrackRenameView
             }
+            Message::TemplateSaveInput(_) => {
+                self.template_save.update(message.clone());
+            }
             Message::TrackRenameConfirm => {
                 let dialog = self.state.blocking_read().track_rename_dialog.clone();
                 let Some(dialog) = dialog else {
@@ -1835,6 +1891,30 @@ impl Maolan {
             }
             Message::TrackRenameCancel => {
                 self.state.blocking_write().track_rename_dialog = None;
+            }
+            Message::TemplateSaveConfirm => {
+                let dialog = self.state.blocking_read().template_save_dialog.clone();
+                let Some(dialog) = dialog else {
+                    return Task::none();
+                };
+
+                let name = dialog.name.trim().to_string();
+                if name.is_empty() {
+                    return Task::none();
+                }
+
+                self.state.blocking_write().template_save_dialog = None;
+                self.modal = None;
+
+                // Construct path: ~/.config/maolan/session_templates/<name>
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                let template_path = format!("{}/.config/maolan/session_templates/{}", home, name);
+
+                return self.refresh_graphs_then_save_template(template_path);
+            }
+            Message::TemplateSaveCancel => {
+                self.state.blocking_write().template_save_dialog = None;
+                self.modal = None;
             }
             Message::DeselectAll => {
                 let mut state = self.state.blocking_write();

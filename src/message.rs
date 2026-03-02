@@ -13,6 +13,7 @@ pub enum Show {
     TrackPluginList,
     Save,
     SaveAs,
+    SaveTemplateAs,
     Open,
 }
 
@@ -111,7 +112,6 @@ pub enum Message {
 
     Show(Show),
     Cancel,
-    NewSession,
 
     AddTrack(AddTrack),
     SelectTrack(String),
@@ -277,4 +277,11 @@ pub enum Message {
     TrackRenameInput(String),
     TrackRenameConfirm,
     TrackRenameCancel,
+
+    TemplateSaveInput(String),
+    TemplateSaveConfirm,
+    TemplateSaveCancel,
+
+    NewSession,
+    NewFromTemplate(String),
 }
