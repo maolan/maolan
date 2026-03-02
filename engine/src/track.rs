@@ -1294,7 +1294,7 @@ impl Track {
                 audio_outputs: instance.processor.audio_output_count(),
                 midi_inputs: instance.processor.midi_input_count(),
                 midi_outputs: instance.processor.midi_output_count(),
-                state: Some(instance.processor.snapshot_port_state()),
+                state: Some(instance.processor.snapshot_state()),
             });
         }
         for instance in &self.vst3_processors {

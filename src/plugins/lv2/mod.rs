@@ -391,8 +391,11 @@ unsafe extern "C" fn on_generic_slider_changed(range: *mut c_void, data: *mut c_
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-unsafe extern "C" fn on_gtk_destroy(_widget: *mut c_void, _data: *mut c_void) {
-    unsafe { gtk_main_quit() };
+unsafe extern "C" fn on_gtk_destroy(_widget: *mut c_void, data: *mut c_void) {
+    if !data.is_null() {
+        let should_close = unsafe { &*(data as *const std::sync::atomic::AtomicBool) };
+        should_close.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -539,6 +542,8 @@ fn run_native_ui_with_gtk_main(
     }
 
     let title = CString::new(format!("LV2 UI - {}", plugin_name)).map_err(|e| e.to_string())?;
+    let window_open_flag = Box::new(std::sync::atomic::AtomicBool::new(false));
+    let window_open_ptr = Box::into_raw(window_open_flag);
     unsafe {
         gtk_window_set_title(window, title.as_ptr());
         gtk_window_set_default_size(window, 780, 520);
@@ -546,7 +551,7 @@ fn run_native_ui_with_gtk_main(
             window,
             c"destroy".as_ptr(),
             Some(on_gtk_destroy),
-            std::ptr::null_mut(),
+            window_open_ptr.cast::<c_void>(),
             None,
             0,
         );
@@ -729,11 +734,37 @@ fn run_native_ui_with_gtk_main(
             gtk_container_add(window, widget);
             gtk_widget_show_all(window);
         }
-        // This blocks until the window is closed
-        gtk_main();
     }
 
-    // Cleanup after gtk_main returns
+    // Manual event loop instead of blocking gtk_main()
+    // This properly pumps events for X11 UIs embedded via GtkSocket
+    loop {
+        // Pump all pending GTK events
+        unsafe {
+            while gtk_events_pending() != 0 {
+                gtk_main_iteration_do(0);
+            }
+        }
+
+        // Call idle interface if the plugin provides one
+        if !idle_iface_ptr.is_null() {
+            let idle_iface = unsafe { &*idle_iface_ptr };
+            if let Some(idle_fn) = idle_iface.idle {
+                let _ = idle_fn(ui_handle);
+            }
+        }
+
+        // Check if window was destroyed by user or system
+        let should_close = unsafe { (*window_open_ptr).load(std::sync::atomic::Ordering::Relaxed) };
+        if should_close {
+            break;
+        }
+
+        // Sleep to avoid busy-waiting (60 FPS)
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+
+    // Cleanup after event loop exits
     if !hide_iface_ptr.is_null()
         && let Some(hide) = unsafe { (*hide_iface_ptr).hide }
     {
@@ -753,6 +784,7 @@ fn run_native_ui_with_gtk_main(
         suil_instance_free(suil_instance);
         suil_host_free(suil_host);
         drop(Box::from_raw(controller_ptr));
+        drop(Box::from_raw(window_open_ptr));
     }
 
     let _ = &urid_feature; // Keep feature alive
@@ -772,6 +804,8 @@ fn run_generic_ui_with_gtk_main(
 
     let title =
         CString::new(format!("LV2 Generic UI - {}", plugin_name)).map_err(|e| e.to_string())?;
+    let window_open_flag = Box::new(std::sync::atomic::AtomicBool::new(false));
+    let window_open_ptr = Box::into_raw(window_open_flag);
     unsafe {
         gtk_window_set_title(window, title.as_ptr());
         gtk_window_set_default_size(window, 720, 480);
@@ -779,7 +813,7 @@ fn run_generic_ui_with_gtk_main(
             window,
             c"destroy".as_ptr(),
             Some(on_gtk_destroy),
-            std::ptr::null_mut(),
+            window_open_ptr.cast::<c_void>(),
             None,
             0,
         );
@@ -835,15 +869,35 @@ fn run_generic_ui_with_gtk_main(
     unsafe {
         gtk_container_add(window, root);
         gtk_widget_show_all(window);
-        // This blocks until the window is closed
-        gtk_main();
     }
 
-    // Cleanup after gtk_main returns
+    // Manual event loop instead of blocking gtk_main()
+    loop {
+        // Pump all pending GTK events
+        unsafe {
+            while gtk_events_pending() != 0 {
+                gtk_main_iteration_do(0);
+            }
+        }
+
+        // Check if window was destroyed
+        let should_close = unsafe { (*window_open_ptr).load(std::sync::atomic::Ordering::Relaxed) };
+        if should_close {
+            break;
+        }
+
+        // Sleep to avoid busy-waiting (60 FPS)
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+
+    // Cleanup after event loop exits
     for data_ptr in slider_data {
         unsafe {
             drop(Box::from_raw(data_ptr));
         }
+    }
+    unsafe {
+        drop(Box::from_raw(window_open_ptr));
     }
 
     Ok(())
@@ -1059,8 +1113,6 @@ unsafe extern "C" {
     fn gtk_socket_get_id(socket: *mut c_void) -> c_ulong;
     fn gtk_events_pending() -> i32;
     fn gtk_main_iteration_do(blocking: i32);
-    fn gtk_main();
-    fn gtk_main_quit();
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]

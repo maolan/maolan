@@ -920,6 +920,9 @@ impl Lv2Processor {
 
     fn state_interface(&self) -> Option<&Lv2StateInterface> {
         let instance = self.instance.as_ref()?;
+        if !self.has_extension_data_callback(instance.instance()) {
+            return None;
+        }
         let ptr = unsafe {
             instance
                 .instance()
@@ -930,12 +933,22 @@ impl Lv2Processor {
 
     fn worker_interface(&self) -> Option<&Lv2WorkerInterface> {
         let instance = self.instance.as_ref()?;
+        if !self.has_extension_data_callback(instance.instance()) {
+            return None;
+        }
         let ptr = unsafe {
             instance
                 .instance()
                 .extension_data::<Lv2WorkerInterface>(LV2_WORKER__INTERFACE)?
         };
         Some(unsafe { ptr.as_ref() })
+    }
+
+    fn has_extension_data_callback(&self, instance: &lilv::instance::Instance) -> bool {
+        let Some(descriptor) = instance.descriptor() else {
+            return false;
+        };
+        (descriptor.extension_data as *const ()) as usize != 0
     }
 
     fn instance_handle(&self) -> Lv2Handle {
