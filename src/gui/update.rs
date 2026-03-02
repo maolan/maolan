@@ -923,6 +923,9 @@ impl Maolan {
                     offset,
                     input_channel,
                     kind,
+                    fade_enabled,
+                    fade_in_samples,
+                    fade_out_samples,
                 } => {
                     let mut audio_peaks = vec![];
                     let mut max_length_samples = offset.saturating_add(*length);
@@ -968,6 +971,9 @@ impl Maolan {
                                     max_length_samples,
                                     peaks_file: None,
                                     peaks: audio_peaks,
+                                    fade_enabled: *fade_enabled,
+                                    fade_in_samples: *fade_in_samples,
+                                    fade_out_samples: *fade_out_samples,
                                 });
                             }
                             Kind::MIDI => {
@@ -978,6 +984,9 @@ impl Maolan {
                                     offset: *offset,
                                     input_channel: *input_channel,
                                     max_length_samples,
+                                    fade_enabled: *fade_enabled,
+                                    fade_in_samples: *fade_in_samples,
+                                    fade_out_samples: *fade_out_samples,
                                 });
                             }
                         }
@@ -1857,6 +1866,73 @@ impl Maolan {
             Message::ClipRenameCancel => {
                 self.state.blocking_write().clip_rename_dialog = None;
             }
+            Message::ClipToggleFade {
+                ref track_idx,
+                clip_idx,
+                kind,
+            } => {
+                let new_fade_enabled = {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_idx) {
+                        match kind {
+                            Kind::Audio => {
+                                if let Some(clip) = track.audio.clips.get_mut(clip_idx) {
+                                    clip.fade_enabled = !clip.fade_enabled;
+                                    Some(clip.fade_enabled)
+                                } else {
+                                    None
+                                }
+                            }
+                            Kind::MIDI => {
+                                if let Some(clip) = track.midi.clips.get_mut(clip_idx) {
+                                    clip.fade_enabled = !clip.fade_enabled;
+                                    Some(clip.fade_enabled)
+                                } else {
+                                    None
+                                }
+                            }
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(fade_enabled) = new_fade_enabled {
+                    // Get the fade samples from the clip
+                    let (fade_in_samples, fade_out_samples) = {
+                        let state = self.state.blocking_read();
+                        if let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) {
+                            match kind {
+                                Kind::Audio => {
+                                    if let Some(clip) = track.audio.clips.get(clip_idx) {
+                                        (clip.fade_in_samples, clip.fade_out_samples)
+                                    } else {
+                                        (240, 240)
+                                    }
+                                }
+                                Kind::MIDI => {
+                                    if let Some(clip) = track.midi.clips.get(clip_idx) {
+                                        (clip.fade_in_samples, clip.fade_out_samples)
+                                    } else {
+                                        (240, 240)
+                                    }
+                                }
+                            }
+                        } else {
+                            (240, 240)
+                        }
+                    };
+
+                    return self.send(Action::SetClipFade {
+                        track_name: track_idx.clone(),
+                        clip_index: clip_idx,
+                        kind,
+                        fade_enabled,
+                        fade_in_samples,
+                        fade_out_samples,
+                    });
+                }
+            }
             Message::TrackRenameShow(ref track_name) => {
                 let mut state = self.state.blocking_write();
                 state.track_rename_dialog = Some(crate::state::TrackRenameDialog {
@@ -2208,6 +2284,48 @@ impl Maolan {
                     }
                 }
             }
+            Message::FadeResizeStart {
+                ref kind,
+                ref track_idx,
+                clip_idx,
+                is_fade_out,
+            } => {
+                self.clip = None;
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) {
+                    let initial_samples = match kind {
+                        Kind::Audio => {
+                            track.audio.clips.get(clip_idx).map(|clip| {
+                                if is_fade_out {
+                                    clip.fade_out_samples
+                                } else {
+                                    clip.fade_in_samples
+                                }
+                            })
+                        }
+                        Kind::MIDI => {
+                            track.midi.clips.get(clip_idx).map(|clip| {
+                                if is_fade_out {
+                                    clip.fade_out_samples
+                                } else {
+                                    clip.fade_in_samples
+                                }
+                            })
+                        }
+                    };
+
+                    if let Some(initial_samples) = initial_samples {
+                        state.resizing = Some(Resizing::Fade {
+                            kind: *kind,
+                            track_name: track_idx.clone(),
+                            index: clip_idx,
+                            is_fade_out,
+                            initial_samples,
+                            initial_mouse_x: state.cursor.x,
+                        });
+                    }
+                }
+            }
             Message::MouseMoved(mouse::Event::CursorMoved { position }) => {
                 let resizing = self.state.blocking_read().resizing.clone();
                 let previous_cursor = {
@@ -2314,6 +2432,52 @@ impl Maolan {
                         self.state.blocking_write().mixer_height =
                             Length::Fixed((initial_height - delta).max(60.0));
                     }
+                    Some(Resizing::Fade {
+                        kind,
+                        ref track_name,
+                        index,
+                        is_fade_out,
+                        initial_samples,
+                        initial_mouse_x,
+                    }) => {
+                        let pixels_per_sample = self.pixels_per_sample().max(1.0e-6);
+                        let mut state = self.state.blocking_write();
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        {
+                            let delta_samples = if is_fade_out {
+                                // For fade-out, dragging left (negative) increases fade length
+                                (initial_mouse_x - position.x) / pixels_per_sample
+                            } else {
+                                // For fade-in, dragging right (positive) increases fade length
+                                (position.x - initial_mouse_x) / pixels_per_sample
+                            };
+                            let new_fade_samples =
+                                ((initial_samples as f32 + delta_samples).max(0.0) as usize).min(96000); // Max 2 seconds at 48kHz
+
+                            match kind {
+                                Kind::Audio => {
+                                    if let Some(clip) = track.audio.clips.get_mut(index) {
+                                        let max_fade = clip.length / 2; // Can't fade more than half the clip
+                                        if is_fade_out {
+                                            clip.fade_out_samples = new_fade_samples.min(max_fade);
+                                        } else {
+                                            clip.fade_in_samples = new_fade_samples.min(max_fade);
+                                        }
+                                    }
+                                }
+                                Kind::MIDI => {
+                                    if let Some(clip) = track.midi.clips.get_mut(index) {
+                                        let max_fade = clip.length / 2; // Can't fade more than half the clip
+                                        if is_fade_out {
+                                            clip.fade_out_samples = new_fade_samples.min(max_fade);
+                                        } else {
+                                            clip.fade_in_samples = new_fade_samples.min(max_fade);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 }
                 let mouse_left_down = self.state.blocking_read().mouse_left_down;
@@ -2379,6 +2543,43 @@ impl Maolan {
                     (resizing, marquee_start, marquee_end)
                 };
                 if matches!(resizing, Some(Resizing::Clip { .. })) {
+                    return Task::none();
+                }
+                if let Some(Resizing::Fade {
+                    kind,
+                    track_name,
+                    index,
+                    ..
+                }) = resizing
+                {
+                    // Send updated fade values to engine
+                    let state = self.state.blocking_read();
+                    if let Some(track) = state.tracks.iter().find(|t| t.name == track_name) {
+                        let (fade_enabled, fade_in_samples, fade_out_samples) = match kind {
+                            Kind::Audio => {
+                                if let Some(clip) = track.audio.clips.get(index) {
+                                    (clip.fade_enabled, clip.fade_in_samples, clip.fade_out_samples)
+                                } else {
+                                    return Task::none();
+                                }
+                            }
+                            Kind::MIDI => {
+                                if let Some(clip) = track.midi.clips.get(index) {
+                                    (clip.fade_enabled, clip.fade_in_samples, clip.fade_out_samples)
+                                } else {
+                                    return Task::none();
+                                }
+                            }
+                        };
+                        return self.send(Action::SetClipFade {
+                            track_name,
+                            clip_index: index,
+                            kind,
+                            fade_enabled,
+                            fade_in_samples,
+                            fade_out_samples,
+                        });
+                    }
                     return Task::none();
                 }
                 if let (Some(start), Some(end)) = (marquee_start, marquee_end) {
@@ -2850,6 +3051,9 @@ impl Maolan {
                                                     offset: 0,
                                                     input_channel: 0,
                                                     kind: Kind::Audio,
+                                                    fade_enabled: true,
+                                                    fade_in_samples: 240,
+                                                    fade_out_samples: 240,
                                                 }))
                                                 .await
                                             {
@@ -2902,6 +3106,9 @@ impl Maolan {
                                                     offset: 0,
                                                     input_channel: 0,
                                                     kind: Kind::MIDI,
+                                                    fade_enabled: true,
+                                                    fade_in_samples: 240,
+                                                    fade_out_samples: 240,
                                                 }))
                                                 .await
                                             {

@@ -756,7 +756,7 @@ impl Engine {
         let clip_rel_name = format!("audio/{}", rec.file_name);
         let clip = AudioClip::new(clip_rel_name.clone(), rec.start_sample, length);
         if let Some(track) = self.state.lock().tracks.get(&track_name) {
-            track.lock().audio.clips.push(clip);
+            track.lock().audio.clips.push(clip.clone());
         }
         self.notify_clients(Ok(Action::AddClip {
             name: clip_rel_name,
@@ -766,6 +766,9 @@ impl Engine {
             offset: 0,
             input_channel: 0,
             kind: Kind::Audio,
+            fade_enabled: clip.fade_enabled,
+            fade_in_samples: clip.fade_in_samples,
+            fade_out_samples: clip.fade_out_samples,
         }))
         .await;
     }
@@ -880,6 +883,9 @@ impl Engine {
             offset: 0,
             input_channel: 0,
             kind: Kind::MIDI,
+            fade_enabled: true,
+            fade_in_samples: 240,
+            fade_out_samples: 240,
         }))
         .await;
     }
@@ -2318,6 +2324,9 @@ impl Engine {
                 offset,
                 input_channel,
                 kind,
+                fade_enabled,
+                fade_in_samples,
+                fade_out_samples,
             } => {
                 if let Some(track) = self.state.lock().tracks.get(track_name) {
                     let track = track.lock();
@@ -2327,6 +2336,9 @@ impl Engine {
                             clip.offset = offset;
                             let max_lane = track.audio.ins.len().saturating_sub(1);
                             clip.input_channel = input_channel.min(max_lane);
+                            clip.fade_enabled = fade_enabled;
+                            clip.fade_in_samples = fade_in_samples;
+                            clip.fade_out_samples = fade_out_samples;
                             track.audio.clips.push(clip);
                         }
                         Kind::MIDI => {
@@ -2428,6 +2440,32 @@ impl Engine {
                                 }
                             }
                         }
+                    }
+                }
+            }
+            Action::SetClipFade {
+                ref track_name,
+                clip_index,
+                kind,
+                fade_enabled,
+                fade_in_samples,
+                fade_out_samples,
+            } => {
+                let Some(track) = self.state.lock().tracks.get(track_name) else {
+                    return;
+                };
+
+                let track = track.lock();
+                match kind {
+                    Kind::Audio => {
+                        if let Some(clip) = track.audio.clips.get_mut(clip_index) {
+                            clip.fade_enabled = fade_enabled;
+                            clip.fade_in_samples = fade_in_samples;
+                            clip.fade_out_samples = fade_out_samples;
+                        }
+                    }
+                    Kind::MIDI => {
+                        // MIDI clips don't have fade implemented in engine yet
                     }
                 }
             }

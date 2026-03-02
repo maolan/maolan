@@ -624,6 +624,9 @@ impl Maolan {
                         let offset = clip["offset"].as_u64().unwrap_or(0) as usize;
                         let input_channel = clip["input_channel"].as_u64().unwrap_or(0) as usize;
                         let peaks_file = clip["peaks_file"].as_str().map(|s| s.to_string());
+                        let fade_enabled = clip["fade_enabled"].as_bool().unwrap_or(true);
+                        let fade_in_samples = clip["fade_in_samples"].as_u64().unwrap_or(240) as usize;
+                        let fade_out_samples = clip["fade_out_samples"].as_u64().unwrap_or(240) as usize;
 
                         if clip_name.trim().is_empty() {
                             warnings.push(format!(
@@ -682,6 +685,9 @@ impl Maolan {
                             offset,
                             input_channel,
                             kind: Kind::Audio,
+                            fade_enabled,
+                            fade_in_samples,
+                            fade_out_samples,
                         }));
                     }
                 }
@@ -693,6 +699,9 @@ impl Maolan {
                         let length = clip["length"].as_u64().unwrap_or(0) as usize;
                         let offset = clip["offset"].as_u64().unwrap_or(0) as usize;
                         let input_channel = clip["input_channel"].as_u64().unwrap_or(0) as usize;
+                        let fade_enabled = clip["fade_enabled"].as_bool().unwrap_or(true);
+                        let fade_in_samples = clip["fade_in_samples"].as_u64().unwrap_or(240) as usize;
+                        let fade_out_samples = clip["fade_out_samples"].as_u64().unwrap_or(240) as usize;
 
                         if clip_name.trim().is_empty() {
                             warnings
@@ -731,6 +740,9 @@ impl Maolan {
                             offset,
                             input_channel,
                             kind: Kind::MIDI,
+                            fade_enabled,
+                            fade_in_samples,
+                            fade_out_samples,
                         }));
                     }
                 }

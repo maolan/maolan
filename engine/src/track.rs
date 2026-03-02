@@ -1081,6 +1081,23 @@ impl Track {
         segments
     }
 
+    /// Ease-in curve for fade-in: starts slow, accelerates (quadratic)
+    /// Input: t in range [0.0, 1.0] (position within fade-in region)
+    /// Output: gain value in range [0.0, 1.0]
+    #[inline]
+    fn fade_in_curve(t: f32) -> f32 {
+        t * t
+    }
+
+    /// Ease-out curve for fade-out: starts at 1.0, decelerates to 0.0 (quadratic)
+    /// Input: t in range [0.0, 1.0] (position within fade-out region)
+    /// Output: gain value in range [1.0, 0.0]
+    #[inline]
+    fn fade_out_curve(t: f32) -> f32 {
+        let remaining = 1.0 - t;
+        remaining * remaining
+    }
+
     fn mix_clip_audio_into_inputs(&mut self) {
         let frames = self
             .audio
@@ -1131,7 +1148,26 @@ impl Track {
                         if clip_idx >= total_frames || track_idx >= in_samples.len() {
                             break;
                         }
-                        let sample = buffer.samples[clip_idx * channels + source_channel];
+                        let mut sample = buffer.samples[clip_idx * channels + source_channel];
+
+                        // Apply fade curves if enabled
+                        if clip.fade_enabled {
+                            let clip_sample_pos = absolute_sample - clip_start;
+
+                            // Apply fade-in
+                            if clip_sample_pos < clip.fade_in_samples {
+                                let t = clip_sample_pos as f32 / clip.fade_in_samples.max(1) as f32;
+                                sample *= Self::fade_in_curve(t);
+                            }
+
+                            // Apply fade-out
+                            if clip_sample_pos >= clip_len.saturating_sub(clip.fade_out_samples) {
+                                let fade_out_start = clip_len.saturating_sub(clip.fade_out_samples);
+                                let t = (clip_sample_pos - fade_out_start) as f32 / clip.fade_out_samples.max(1) as f32;
+                                sample *= Self::fade_out_curve(t);
+                            }
+                        }
+
                         in_samples[track_idx] += sample;
                     }
                 }

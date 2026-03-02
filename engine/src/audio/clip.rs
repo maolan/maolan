@@ -5,6 +5,9 @@ pub struct AudioClip {
     pub end: usize,
     pub offset: usize,
     pub input_channel: usize,
+    pub fade_enabled: bool,
+    pub fade_in_samples: usize,
+    pub fade_out_samples: usize,
 }
 
 impl AudioClip {
@@ -15,6 +18,9 @@ impl AudioClip {
             end,
             offset: 0,
             input_channel: 0,
+            fade_enabled: true,
+            fade_in_samples: 240, // 5ms at 48kHz
+            fade_out_samples: 240,
         }
     }
 }

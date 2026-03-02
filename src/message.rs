@@ -143,6 +143,12 @@ pub enum Message {
     TracksResizeStart,
     MixerResizeStart,
     ClipResizeStart(Kind, String, usize, bool),
+    FadeResizeStart {
+        kind: Kind,
+        track_idx: String,
+        clip_idx: usize,
+        is_fade_out: bool,
+    },
 
     ClipDrag(DraggedClip),
     HandleClipZones(Vec<(Id, Rectangle)>),
@@ -272,6 +278,12 @@ pub enum Message {
     ClipRenameInput(String),
     ClipRenameConfirm,
     ClipRenameCancel,
+
+    ClipToggleFade {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+    },
 
     TrackRenameShow(String),
     TrackRenameInput(String),

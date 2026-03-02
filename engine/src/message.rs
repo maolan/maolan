@@ -150,11 +150,22 @@ pub enum Action {
         offset: usize,
         input_channel: usize,
         kind: Kind,
+        fade_enabled: bool,
+        fade_in_samples: usize,
+        fade_out_samples: usize,
     },
     RemoveClip {
         track_name: String,
         kind: Kind,
         clip_indices: Vec<usize>,
+    },
+    SetClipFade {
+        track_name: String,
+        clip_index: usize,
+        kind: Kind,
+        fade_enabled: bool,
+        fade_in_samples: usize,
+        fade_out_samples: usize,
     },
     RenameClip {
         track_name: String,
