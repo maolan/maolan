@@ -34,6 +34,16 @@ struct RulerCanvas {
     samples_per_beat: f64,
 }
 
+pub struct RulerViewArgs {
+    pub playhead_x: Option<f32>,
+    pub beat_pixels: f32,
+    pub pixels_per_sample: f32,
+    pub loop_range_samples: Option<(usize, usize)>,
+    pub snap_mode: SnapMode,
+    pub samples_per_beat: f64,
+    pub content_width: f32,
+}
+
 impl Ruler {
     pub fn new() -> Self {
         Self
@@ -54,16 +64,16 @@ impl Ruler {
         step
     }
 
-    pub fn view(
-        &self,
-        playhead_x: Option<f32>,
-        beat_pixels: f32,
-        pixels_per_sample: f32,
-        loop_range_samples: Option<(usize, usize)>,
-        snap_mode: SnapMode,
-        samples_per_beat: f64,
-        content_width: f32,
-    ) -> Element<'_, Message> {
+    pub fn view(&self, args: RulerViewArgs) -> Element<'_, Message> {
+        let RulerViewArgs {
+            playhead_x,
+            beat_pixels,
+            pixels_per_sample,
+            loop_range_samples,
+            snap_mode,
+            samples_per_beat,
+            content_width,
+        } = args;
         canvas(RulerCanvas {
             playhead_x,
             beat_pixels,

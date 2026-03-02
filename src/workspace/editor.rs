@@ -1012,22 +1012,33 @@ pub struct Editor {
     state: State,
 }
 
+pub struct EditorViewArgs<'a> {
+    pub pixels_per_sample: f32,
+    pub samples_per_bar: f32,
+    pub snap_mode: SnapMode,
+    pub samples_per_beat: f64,
+    pub active_clip_drag: Option<&'a DraggedClip>,
+    pub active_target_track: Option<&'a str>,
+    pub recording_preview_bounds: Option<(usize, usize)>,
+    pub recording_preview_peaks: Option<&'a HashMap<String, Vec<Vec<f32>>>>,
+}
+
 impl Editor {
     pub fn new(state: State) -> Self {
         Self { state }
     }
 
-    pub fn view(
-        &self,
-        pixels_per_sample: f32,
-        samples_per_bar: f32,
-        snap_mode: SnapMode,
-        samples_per_beat: f64,
-        active_clip_drag: Option<&DraggedClip>,
-        active_target_track: Option<&str>,
-        recording_preview_bounds: Option<(usize, usize)>,
-        recording_preview_peaks: Option<HashMap<String, Vec<Vec<f32>>>>,
-    ) -> Element<'_, Message> {
+    pub fn view(&self, args: EditorViewArgs<'_>) -> Element<'_, Message> {
+        let EditorViewArgs {
+            pixels_per_sample,
+            samples_per_bar,
+            snap_mode,
+            samples_per_beat,
+            active_clip_drag,
+            active_target_track,
+            recording_preview_bounds,
+            recording_preview_peaks,
+        } = args;
         let mut result = column![];
         let state = self.state.blocking_read();
         for track in state.tracks.iter() {
@@ -1041,7 +1052,7 @@ impl Editor {
                 active_clip_drag,
                 active_target_track,
                 recording_preview_bounds,
-                recording_preview_peaks: recording_preview_peaks.as_ref(),
+                recording_preview_peaks,
             }));
         }
         let mut layers: Vec<Element<'_, Message>> =

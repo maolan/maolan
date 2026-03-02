@@ -13,6 +13,8 @@ use iced::{
     Background, Color, Element, Length, Point,
     widget::{Id, Stack, column, container, mouse_area, pin, row, scrollable, slider},
 };
+use editor::EditorViewArgs;
+use ruler::RulerViewArgs;
 use std::collections::HashMap;
 use tempo::TempoViewArgs;
 
@@ -135,16 +137,16 @@ impl Workspace {
 
         let editor_with_playhead = if let Some(x) = playhead_x {
             Stack::from_vec(vec![
-                self.editor.view(
+                self.editor.view(EditorViewArgs {
                     pixels_per_sample,
                     samples_per_bar,
                     snap_mode,
                     samples_per_beat,
                     active_clip_drag,
-                    active_clip_target_track,
+                    active_target_track: active_clip_target_track,
                     recording_preview_bounds,
-                    recording_preview_peaks.clone(),
-                ),
+                    recording_preview_peaks: recording_preview_peaks.as_ref(),
+                }),
                 pin(Self::playhead_line())
                     .position(Point::new(x.max(0.0), 0.0))
                     .into(),
@@ -153,16 +155,16 @@ impl Workspace {
             .height(Length::Fill)
             .into()
         } else {
-            self.editor.view(
+            self.editor.view(EditorViewArgs {
                 pixels_per_sample,
                 samples_per_bar,
                 snap_mode,
                 samples_per_beat,
                 active_clip_drag,
-                active_clip_target_track,
+                active_target_track: active_clip_target_track,
                 recording_preview_bounds,
-                recording_preview_peaks.clone(),
-            )
+                recording_preview_peaks: recording_preview_peaks.as_ref(),
+            })
         };
 
         let right_lanes_scrolled = scrollable(
@@ -178,15 +180,15 @@ impl Workspace {
                     content_width: editor_content_width,
                 }))
                 .height(Length::Fixed(self.tempo.height())),
-                container(self.ruler.view(
+                container(self.ruler.view(RulerViewArgs {
                     playhead_x,
                     beat_pixels,
                     pixels_per_sample,
                     loop_range_samples,
                     snap_mode,
                     samples_per_beat,
-                    editor_content_width,
-                ))
+                    content_width: editor_content_width,
+                }))
                 .height(Length::Fixed(self.ruler.height())),
                 container(editor_with_playhead)
                     .width(Length::Fixed(editor_content_width))

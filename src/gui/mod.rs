@@ -893,11 +893,7 @@ impl Maolan {
                         break;
                     }
 
-                    let left_sample = if clip_channels == 1 {
-                        samples[src_idx]
-                    } else {
-                        samples[src_idx]
-                    };
+                    let left_sample = samples[src_idx];
 
                     let right_sample = if clip_channels == 1 {
                         samples[src_idx]
