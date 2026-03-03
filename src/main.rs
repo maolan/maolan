@@ -44,16 +44,10 @@ pub fn main() -> iced::Result {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 fn prefer_x11_backend() {
-    let keep_wayland = std::env::var("MAOLAN_USE_WAYLAND")
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false);
-
-    if !keep_wayland {
-        // winit picks Wayland whenever WAYLAND_DISPLAY exists and does not fallback to X11.
-        unsafe {
-            std::env::remove_var("WAYLAND_DISPLAY");
-            std::env::remove_var("WAYLAND_SOCKET");
-        }
+    // winit picks Wayland whenever WAYLAND_DISPLAY exists and does not fallback to X11.
+    unsafe {
+        std::env::remove_var("WAYLAND_DISPLAY");
+        std::env::remove_var("WAYLAND_SOCKET");
     }
 }
 
