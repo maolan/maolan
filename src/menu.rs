@@ -129,7 +129,6 @@ impl Menu {
                     //     (menu_item("First", Message::None)),
                     //     (menu_item("Second", Message::None)),
                     // ))),
-                    (menu_item("Close", Message::None)),
                     (menu_item("Quit", Message::Request(Action::Quit))),
                 ))
             }),

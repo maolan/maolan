@@ -231,6 +231,7 @@ struct ClapHostGui {
 struct UiHostState {
     should_close: AtomicBool,
     callback_requested: AtomicBool,
+    main_thread_id: thread::ThreadId,
     timers: Mutex<Vec<HostTimer>>,
 }
 
@@ -286,8 +287,9 @@ unsafe extern "C" fn host_request_callback(host: *const ClapHost) {
     state.callback_requested.store(true, Ordering::SeqCst);
 }
 
-unsafe extern "C" fn host_is_main_thread(_host: *const ClapHost) -> bool {
-    true
+unsafe extern "C" fn host_is_main_thread(host: *const ClapHost) -> bool {
+    let state = host_state(host);
+    state.main_thread_id == thread::current().id()
 }
 
 unsafe extern "C" fn host_is_audio_thread(_host: *const ClapHost) -> bool {
@@ -739,6 +741,7 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
     let mut host_state = Box::new(UiHostState {
         should_close: AtomicBool::new(false),
         callback_requested: AtomicBool::new(false),
+        main_thread_id: thread::current().id(),
         timers: Mutex::new(Vec::new()),
     });
     let host = ClapHost {

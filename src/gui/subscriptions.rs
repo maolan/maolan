@@ -92,6 +92,9 @@ impl Maolan {
                         }
                         return Message::Show(Show::Save);
                     }
+                    if s == "t" {
+                        return Message::Show(Show::AddTrack);
+                    }
                 }
                 match key {
                     keyboard::Key::Named(keyboard::key::Named::Space) if modifiers.shift() => {
