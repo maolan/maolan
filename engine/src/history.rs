@@ -87,6 +87,9 @@ pub fn should_record(action: &Action) -> bool {
             | Action::TrackSetClapParameter { .. }
             | Action::TrackSetVst3Parameter { .. }
             | Action::TrackClearDefaultPassthrough { .. }
+            | Action::ModifyMidiNotes { .. }
+            | Action::DeleteMidiNotes { .. }
+            | Action::InsertMidiNotes { .. }
     )
 }
 
@@ -345,6 +348,46 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             track_name: track_name.clone(),
             plugin_path: plugin_path.clone(),
         }),
+
+        Action::ModifyMidiNotes {
+            track_name,
+            clip_index,
+            note_indices,
+            new_notes,
+            old_notes,
+        } => Some(Action::ModifyMidiNotes {
+            track_name: track_name.clone(),
+            clip_index: *clip_index,
+            note_indices: note_indices.clone(),
+            new_notes: old_notes.clone(),
+            old_notes: new_notes.clone(),
+        }),
+
+        Action::DeleteMidiNotes {
+            track_name,
+            clip_index,
+            deleted_notes,
+            ..
+        } => Some(Action::InsertMidiNotes {
+            track_name: track_name.clone(),
+            clip_index: *clip_index,
+            notes: deleted_notes.clone(),
+        }),
+
+        Action::InsertMidiNotes {
+            track_name,
+            clip_index,
+            notes,
+        } => {
+            let mut note_indices: Vec<usize> = notes.iter().map(|(idx, _)| *idx).collect();
+            note_indices.sort_unstable_by(|a, b| b.cmp(a));
+            Some(Action::DeleteMidiNotes {
+                track_name: track_name.clone(),
+                clip_index: *clip_index,
+                note_indices,
+                deleted_notes: notes.clone(),
+            })
+        }
 
         // These are more complex and would need additional state tracking
         Action::TrackLoadVst3Plugin { .. } => None,

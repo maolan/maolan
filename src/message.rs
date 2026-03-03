@@ -281,6 +281,22 @@ pub enum Message {
     },
     PianoKeyPressed(u8),
     PianoKeyReleased(u8),
+    PianoNoteClick {
+        note_index: usize,
+        position: Point,
+    },
+    PianoNotesDrag {
+        position: Point,
+    },
+    PianoNotesEndDrag,
+    PianoSelectRectStart {
+        position: Point,
+    },
+    PianoSelectRectDrag {
+        position: Point,
+    },
+    PianoSelectRectEnd,
+    PianoDeleteSelectedNotes,
     #[cfg(all(unix, not(target_os = "macos")))]
     RefreshLv2Plugins,
     #[cfg(all(unix, not(target_os = "macos")))]

@@ -228,6 +228,20 @@ impl Piano {
             );
         }
 
+        // Add interactive canvas overlay for note selection and dragging
+        note_layers.push(
+            pin(
+                iced::widget::canvas(PianoRollInteraction::new(
+                    self.state.clone(),
+                    pixels_per_sample,
+                ))
+                .width(Length::Fixed(notes_w))
+                .height(Length::Fixed(notes_h)),
+            )
+            .position(Point::new(0.0, 0.0))
+            .into(),
+        );
+
         let notes_content = Stack::from_vec(note_layers)
             .width(Length::Fixed(notes_w))
             .height(Length::Fixed(notes_h));
@@ -565,5 +579,280 @@ impl Program<Message> for OctaveKeyboard {
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         draw_octave(renderer, bounds, &state.pressed_notes)
+    }
+}
+
+#[derive(Debug)]
+pub struct PianoRollInteraction {
+    pub state: State,
+    pub pixels_per_sample: f32,
+}
+
+impl PianoRollInteraction {
+    pub fn new(state: State, pixels_per_sample: f32) -> Self {
+        Self {
+            state,
+            pixels_per_sample,
+        }
+    }
+
+    fn note_at_position(
+        &self,
+        position: Point,
+        row_h: f32,
+        pps: f32,
+        notes: &[crate::state::PianoNote],
+    ) -> Option<usize> {
+        for (idx, note) in notes.iter().enumerate() {
+            if note.pitch > Piano::PITCH_MAX {
+                continue;
+            }
+            let y_idx = usize::from(Piano::PITCH_MAX.saturating_sub(note.pitch));
+            let y = y_idx as f32 * row_h + 1.0;
+            let x = note.start_sample as f32 * pps;
+            let w = (note.length_samples as f32 * pps).max(2.0);
+            let h = (row_h - 2.0).max(2.0);
+
+            if position.x >= x
+                && position.x <= x + w
+                && position.y >= y
+                && position.y <= y + h
+            {
+                return Some(idx);
+            }
+        }
+        None
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct PianoRollInteractionState {
+    dragging_mode: DraggingMode,
+    drag_start: Option<Point>,
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
+enum DraggingMode {
+    #[default]
+    None,
+    SelectingRect,
+    DraggingNotes,
+}
+
+impl Program<Message> for PianoRollInteraction {
+    type State = PianoRollInteractionState;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<CanvasAction<Message>> {
+        let app_state = self.state.blocking_read();
+        let Some(roll) = app_state.piano.as_ref() else {
+            return None;
+        };
+
+        let zoom_x = app_state.piano_zoom_x;
+        let zoom_y = app_state.piano_zoom_y;
+        let row_h = ((Piano::WHITE_KEY_HEIGHT * Piano::WHITE_KEYS_PER_OCTAVE as f32
+            / Piano::NOTES_PER_OCTAVE as f32)
+            * zoom_y)
+            .max(1.0);
+        let pps = (self.pixels_per_sample * zoom_x).max(0.0001);
+        let notes = roll.notes.clone();
+        drop(app_state);
+
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                if let Some(position) = cursor.position_in(bounds) {
+                    if let Some(note_idx) = self.note_at_position(position, row_h, pps, &notes) {
+                        state.drag_start = Some(position);
+                        state.dragging_mode = DraggingMode::DraggingNotes;
+                        return Some(
+                            CanvasAction::publish(Message::PianoNoteClick {
+                                note_index: note_idx,
+                                position,
+                            })
+                            .and_capture(),
+                        );
+                    } else {
+                        // Clicking on empty space starts rectangle selection
+                        state.drag_start = Some(position);
+                        state.dragging_mode = DraggingMode::SelectingRect;
+                        return Some(
+                            CanvasAction::publish(Message::PianoSelectRectStart { position })
+                                .and_capture(),
+                        );
+                    }
+                }
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if let Some(position) = cursor.position_in(bounds) {
+                    if state.drag_start.is_some() {
+                        match state.dragging_mode {
+                            DraggingMode::SelectingRect => {
+                                return Some(CanvasAction::publish(Message::PianoSelectRectDrag {
+                                    position,
+                                }));
+                            }
+                            DraggingMode::DraggingNotes => {
+                                return Some(CanvasAction::publish(Message::PianoNotesDrag {
+                                    position,
+                                }));
+                            }
+                            DraggingMode::None => {}
+                        }
+                    }
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if state.drag_start.is_some() {
+                    let mode = state.dragging_mode;
+                    state.drag_start = None;
+                    state.dragging_mode = DraggingMode::None;
+
+                    match mode {
+                        DraggingMode::SelectingRect => {
+                            return Some(CanvasAction::publish(Message::PianoSelectRectEnd));
+                        }
+                        DraggingMode::DraggingNotes => {
+                            return Some(CanvasAction::publish(Message::PianoNotesEndDrag));
+                        }
+                        DraggingMode::None => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let app_state = self.state.blocking_read();
+        let Some(roll) = app_state.piano.as_ref() else {
+            return vec![];
+        };
+
+        let zoom_x = app_state.piano_zoom_x;
+        let zoom_y = app_state.piano_zoom_y;
+        let selected_notes = &app_state.piano_selected_notes;
+        let selecting_rect = app_state.piano_selecting_rect;
+        let dragging_notes = app_state.piano_dragging_notes.as_ref();
+
+        let row_h = ((Piano::WHITE_KEY_HEIGHT * Piano::WHITE_KEYS_PER_OCTAVE as f32
+            / Piano::NOTES_PER_OCTAVE as f32)
+            * zoom_y)
+            .max(1.0);
+        let pps = (self.pixels_per_sample * zoom_x).max(0.0001);
+
+        let mut frame = Frame::new(renderer, bounds.size());
+
+        // Draw selection highlights for selected notes
+        for &note_idx in selected_notes {
+            if let Some(note) = roll.notes.get(note_idx) {
+                if note.pitch > Piano::PITCH_MAX {
+                    continue;
+                }
+                let y_idx = usize::from(Piano::PITCH_MAX.saturating_sub(note.pitch));
+                let y = y_idx as f32 * row_h + 1.0;
+                let x = note.start_sample as f32 * pps;
+                let w = (note.length_samples as f32 * pps).max(2.0);
+                let h = (row_h - 2.0).max(2.0);
+
+                let selection_rect = Rectangle {
+                    x: x - 1.0,
+                    y: y - 1.0,
+                    width: w + 2.0,
+                    height: h + 2.0,
+                };
+
+                let path = Path::rectangle(Point::new(selection_rect.x, selection_rect.y), Size::new(selection_rect.width, selection_rect.height));
+                frame.stroke(
+                    &path,
+                    canvas::Stroke::default()
+                        .with_color(Color::from_rgb(0.9, 0.7, 0.3))
+                        .with_width(2.0),
+                );
+            }
+        }
+
+        // Draw dragging notes preview
+        if let Some(dragging) = dragging_notes {
+            let delta_x = dragging.current_point.x - dragging.start_point.x;
+            let delta_y = dragging.current_point.y - dragging.start_point.y;
+
+            for note in &dragging.original_notes {
+                if note.pitch > Piano::PITCH_MAX {
+                    continue;
+                }
+                let y_idx = usize::from(Piano::PITCH_MAX.saturating_sub(note.pitch));
+                let y = y_idx as f32 * row_h + 1.0 + delta_y;
+                let x = note.start_sample as f32 * pps + delta_x;
+                let w = (note.length_samples as f32 * pps).max(2.0);
+                let h = (row_h - 2.0).max(2.0);
+
+                let note_rect = Rectangle {
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                };
+
+                let path = Path::rectangle(Point::new(note_rect.x, note_rect.y), Size::new(note_rect.width, note_rect.height));
+                frame.fill(
+                    &path,
+                    Color {
+                        r: 0.5,
+                        g: 0.5,
+                        b: 0.7,
+                        a: 0.5,
+                    },
+                );
+            }
+        }
+
+        // Draw rectangle selection box
+        if let Some((start, end)) = selecting_rect {
+            let min_x = start.x.min(end.x);
+            let min_y = start.y.min(end.y);
+            let max_x = start.x.max(end.x);
+            let max_y = start.y.max(end.y);
+
+            let selection_rect = Rectangle {
+                x: min_x,
+                y: min_y,
+                width: max_x - min_x,
+                height: max_y - min_y,
+            };
+
+            let path = Path::rectangle(Point::new(selection_rect.x, selection_rect.y), Size::new(selection_rect.width, selection_rect.height));
+            frame.fill(
+                &path,
+                Color {
+                    r: 0.3,
+                    g: 0.5,
+                    b: 0.8,
+                    a: 0.2,
+                },
+            );
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_color(Color::from_rgb(0.4, 0.6, 0.9))
+                    .with_width(1.5),
+            );
+        }
+
+        drop(app_state);
+        vec![frame.into_geometry()]
     }
 }

@@ -1217,12 +1217,13 @@ impl Engine {
 
         // Record action in history before processing (capture current state)
         // Skip recording for undo/redo actions themselves
-        let inverse_action = if should_record(&action_to_process) && !matches!(&a, Action::Undo | Action::Redo) {
-            let state = self.state.lock();
-            create_inverse_action(&action_to_process, &state)
-        } else {
-            None
-        };
+        let inverse_action =
+            if should_record(&action_to_process) && !matches!(&a, Action::Undo | Action::Redo) {
+                let state = self.state.lock();
+                create_inverse_action(&action_to_process, &state)
+            } else {
+                None
+            };
 
         match action_to_process {
             Action::Play => {
@@ -1517,6 +1518,9 @@ impl Engine {
                     track.lock().push_hw_midi_events(&[event]);
                 }
             }
+            Action::ModifyMidiNotes { .. } => {}
+            Action::DeleteMidiNotes { .. } => {}
+            Action::InsertMidiNotes { .. } => {}
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLoadLv2Plugin {
                 ref track_name,
@@ -2979,8 +2983,8 @@ impl Engine {
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLv2PluginControls { .. } => {}
             Action::HWInfo { .. } => {}
-            Action::Undo => {}  // Already handled at the beginning
-            Action::Redo => {}  // Already handled at the beginning
+            Action::Undo => {} // Already handled at the beginning
+            Action::Redo => {} // Already handled at the beginning
         }
 
         // Record action in history after successful processing
@@ -3032,7 +3036,10 @@ impl Engine {
                     | Action::SetClipPlaybackEnabled(_)
                     | Action::SetRecordEnabled(_)
                     | Action::SetSessionPath(_)
-                    | Action::PianoKey { .. } => {
+                    | Action::PianoKey { .. }
+                    | Action::ModifyMidiNotes { .. }
+                    | Action::DeleteMidiNotes { .. }
+                    | Action::InsertMidiNotes { .. } => {
                         self.handle_request(a).await;
                     }
                     #[cfg(target_os = "windows")]

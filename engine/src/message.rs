@@ -8,6 +8,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
 
 #[derive(Clone, Debug)]
+pub struct MidiNoteData {
+    pub start_sample: usize,
+    pub length_samples: usize,
+    pub pitch: u8,
+    pub velocity: u8,
+    pub channel: u8,
+}
+
+#[derive(Clone, Debug)]
 pub struct HwMidiEvent {
     pub device: String,
     pub event: MidiEvent,
@@ -194,6 +203,24 @@ pub enum Action {
         note: u8,
         velocity: u8,
         on: bool,
+    },
+    ModifyMidiNotes {
+        track_name: String,
+        clip_index: usize,
+        note_indices: Vec<usize>,
+        new_notes: Vec<MidiNoteData>,
+        old_notes: Vec<MidiNoteData>,
+    },
+    DeleteMidiNotes {
+        track_name: String,
+        clip_index: usize,
+        note_indices: Vec<usize>,
+        deleted_notes: Vec<(usize, MidiNoteData)>,
+    },
+    InsertMidiNotes {
+        track_name: String,
+        clip_index: usize,
+        notes: Vec<(usize, MidiNoteData)>,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
     TrackLoadLv2Plugin {
