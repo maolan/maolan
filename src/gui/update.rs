@@ -279,7 +279,8 @@ impl Maolan {
                 });
 
                 // Store pending template load
-                self.state.blocking_write().pending_track_template_load = Some((name.clone(), template.clone()));
+                self.state.blocking_write().pending_track_template_load =
+                    Some((name.clone(), template.clone()));
 
                 self.modal = None;
                 return task;
@@ -673,6 +674,7 @@ impl Maolan {
             }
             Message::PianoNotesEndDrag => {
                 let mut state = self.state.blocking_write();
+                let copy = state.ctrl;
                 if let Some(dragging) = state.piano_dragging_notes.take() {
                     let zoom_x = state.piano_zoom_x;
                     let zoom_y = state.piano_zoom_y;
@@ -692,6 +694,44 @@ impl Maolan {
                     let delta_samples = (delta_x / pps) as i64;
                     let delta_pitch = -(delta_y / row_h).round() as i8;
 
+                    if copy
+                        && let Some(piano) = state.piano.as_ref()
+                    {
+                        let track_name = piano.track_idx.clone();
+                        let clip_idx = 0; // TODO: Get actual clip index
+                        let insert_base = piano.notes.len();
+
+                        let notes: Vec<(usize, maolan_engine::message::MidiNoteData)> = dragging
+                            .original_notes
+                            .iter()
+                            .enumerate()
+                            .map(|(offset, note)| {
+                                let new_start =
+                                    (note.start_sample as i64 + delta_samples).max(0) as usize;
+                                let new_pitch =
+                                    (note.pitch as i16 + delta_pitch as i16).clamp(0, 127) as u8;
+                                (
+                                    insert_base + offset,
+                                    maolan_engine::message::MidiNoteData {
+                                        start_sample: new_start,
+                                        length_samples: note.length_samples,
+                                        pitch: new_pitch,
+                                        velocity: note.velocity,
+                                        channel: note.channel,
+                                    },
+                                )
+                            })
+                            .collect();
+
+                        state.piano_selected_notes.clear();
+                        drop(state);
+                        return self.send(Action::InsertMidiNotes {
+                            track_name,
+                            clip_index: clip_idx,
+                            notes,
+                        });
+                    }
+
                     if let Some(piano) = state.piano.as_mut() {
                         let track_name = piano.track_idx.clone();
                         let clip_idx = 0; // TODO: Get actual clip index
@@ -699,8 +739,10 @@ impl Maolan {
                         // Modify the notes in place
                         for &note_idx in &dragging.note_indices {
                             if let Some(note) = piano.notes.get_mut(note_idx) {
-                                let new_start = (note.start_sample as i64 + delta_samples).max(0) as usize;
-                                let new_pitch = (note.pitch as i16 + delta_pitch as i16).clamp(0, 127) as u8;
+                                let new_start =
+                                    (note.start_sample as i64 + delta_samples).max(0) as usize;
+                                let new_pitch =
+                                    (note.pitch as i16 + delta_pitch as i16).clamp(0, 127) as u8;
                                 note.start_sample = new_start;
                                 note.pitch = new_pitch;
                             }
@@ -738,6 +780,103 @@ impl Maolan {
                             note_indices: dragging.note_indices,
                             new_notes,
                             old_notes,
+                        });
+                    }
+                }
+            }
+            Message::PianoNoteResizeStart {
+                note_index,
+                position,
+                resize_start,
+            } => {
+                let mut state = self.state.blocking_write();
+                state.piano_selected_notes.clear();
+                state.piano_selected_notes.insert(note_index);
+                if let Some(piano) = state.piano.as_ref()
+                    && let Some(note) = piano.notes.get(note_index)
+                {
+                    state.piano_resizing_note = Some(crate::state::ResizingNote {
+                        note_index,
+                        resize_start,
+                        start_point: position,
+                        current_point: position,
+                        original_note: note.clone(),
+                    });
+                }
+            }
+            Message::PianoNoteResizeDrag { position } => {
+                let mut state = self.state.blocking_write();
+                if let Some(ref mut resizing) = state.piano_resizing_note {
+                    resizing.current_point = position;
+                }
+            }
+            Message::PianoNoteResizeEnd => {
+                let mut state = self.state.blocking_write();
+                if let Some(resizing) = state.piano_resizing_note.take() {
+                    let zoom_x = state.piano_zoom_x;
+                    let tracks_width = match state.tracks_width {
+                        Length::Fixed(v) => v,
+                        _ => 200.0,
+                    };
+                    let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
+                    let total_samples =
+                        (self.samples_per_bar() * self.zoom_visible_bars as f64).max(1.0);
+                    let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
+
+                    let delta_x = resizing.current_point.x - resizing.start_point.x;
+                    let delta_samples = (delta_x / pps) as i64;
+
+                    let original = &resizing.original_note;
+                    let original_end = original
+                        .start_sample
+                        .saturating_add(original.length_samples)
+                        .max(1);
+                    let (new_start, new_len) = if resizing.resize_start {
+                        let max_start = original_end.saturating_sub(1) as i64;
+                        let start =
+                            (original.start_sample as i64 + delta_samples).clamp(0, max_start);
+                        let start = start as usize;
+                        (start, original_end.saturating_sub(start).max(1))
+                    } else {
+                        let min_end = original.start_sample.saturating_add(1) as i64;
+                        let end = (original_end as i64 + delta_samples).max(min_end) as usize;
+                        (
+                            original.start_sample,
+                            end.saturating_sub(original.start_sample).max(1),
+                        )
+                    };
+
+                    if let Some(piano) = state.piano.as_mut()
+                        && let Some(note) = piano.notes.get_mut(resizing.note_index)
+                    {
+                        let track_name = piano.track_idx.clone();
+                        let clip_idx = 0; // TODO: Get actual clip index
+
+                        note.start_sample = new_start;
+                        note.length_samples = new_len;
+
+                        let new_note = maolan_engine::message::MidiNoteData {
+                            start_sample: note.start_sample,
+                            length_samples: note.length_samples,
+                            pitch: note.pitch,
+                            velocity: note.velocity,
+                            channel: note.channel,
+                        };
+                        let old_note = maolan_engine::message::MidiNoteData {
+                            start_sample: original.start_sample,
+                            length_samples: original.length_samples,
+                            pitch: original.pitch,
+                            velocity: original.velocity,
+                            channel: original.channel,
+                        };
+
+                        drop(state);
+                        return self.send(Action::ModifyMidiNotes {
+                            track_name,
+                            clip_index: clip_idx,
+                            note_indices: vec![resizing.note_index],
+                            new_notes: vec![new_note],
+                            old_notes: vec![old_note],
                         });
                     }
                 }
@@ -798,6 +937,65 @@ impl Maolan {
             Message::PianoSelectRectEnd => {
                 let mut state = self.state.blocking_write();
                 state.piano_selecting_rect = None;
+            }
+            Message::PianoCreateNoteStart { position } => {
+                let mut state = self.state.blocking_write();
+                state.piano_selected_notes.clear();
+                state.piano_creating_note = Some((position, position));
+            }
+            Message::PianoCreateNoteDrag { position } => {
+                let mut state = self.state.blocking_write();
+                if let Some((start, _)) = state.piano_creating_note {
+                    state.piano_creating_note = Some((start, position));
+                }
+            }
+            Message::PianoCreateNoteEnd => {
+                let mut state = self.state.blocking_write();
+                let Some((start, end)) = state.piano_creating_note.take() else {
+                    return Task::none();
+                };
+
+                let zoom_x = state.piano_zoom_x;
+                let zoom_y = state.piano_zoom_y;
+                let row_h = ((14.0 * 7.0 / 12.0) * zoom_y).max(1.0);
+                let tracks_width = match state.tracks_width {
+                    Length::Fixed(v) => v,
+                    _ => 200.0,
+                };
+                let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
+                let total_samples =
+                    (self.samples_per_bar() * self.zoom_visible_bars as f64).max(1.0);
+                let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
+
+                let x0 = start.x.min(end.x).max(0.0);
+                let x1 = start.x.max(end.x).max(0.0);
+                let start_sample = (x0 / pps).floor().max(0.0) as usize;
+                let end_sample = (x1 / pps).ceil().max(start_sample as f32 + 1.0) as usize;
+                let length_samples = end_sample.saturating_sub(start_sample).max(1);
+
+                let pitch_row = (start.y / row_h).floor();
+                let pitch_row = pitch_row.clamp(0.0, 119.0) as usize;
+                let pitch = 119_u8.saturating_sub(pitch_row as u8);
+
+                if let Some(piano) = state.piano.as_ref() {
+                    let track_name = piano.track_idx.clone();
+                    let clip_idx = 0; // TODO: Get actual clip index
+                    let insert_idx = piano.notes.len();
+                    let note = maolan_engine::message::MidiNoteData {
+                        start_sample,
+                        length_samples,
+                        pitch,
+                        velocity: 100,
+                        channel: 0,
+                    };
+                    state.piano_selected_notes.clear();
+                    drop(state);
+                    return self.send(Action::InsertMidiNotes {
+                        track_name,
+                        clip_index: clip_idx,
+                        notes: vec![(insert_idx, note)],
+                    });
+                }
             }
             Message::PianoDeleteSelectedNotes => {
                 let mut state = self.state.blocking_write();
@@ -1384,9 +1582,7 @@ impl Maolan {
                     }
                 }
                 Action::InsertMidiNotes {
-                    track_name,
-                    notes,
-                    ..
+                    track_name, notes, ..
                 } => {
                     let mut state = self.state.blocking_write();
                     if let Some(piano) = state.piano.as_mut()
@@ -2385,7 +2581,11 @@ impl Maolan {
                 self.track_template_save.update(message.clone());
             }
             Message::TrackTemplateSaveConfirm => {
-                let dialog = self.state.blocking_read().track_template_save_dialog.clone();
+                let dialog = self
+                    .state
+                    .blocking_read()
+                    .track_template_save_dialog
+                    .clone();
                 let Some(dialog) = dialog else {
                     return Task::none();
                 };
@@ -2402,7 +2602,8 @@ impl Maolan {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
                 let template_path = format!("{}/.config/maolan/track_templates/{}", home, name);
 
-                return self.refresh_graph_then_save_track_template(dialog.track_name, template_path);
+                return self
+                    .refresh_graph_then_save_track_template(dialog.track_name, template_path);
             }
             Message::TrackTemplateSaveCancel => {
                 self.state.blocking_write().track_template_save_dialog = None;
@@ -2503,7 +2704,8 @@ impl Maolan {
                 // Check if we're in piano view with selected notes
                 let state = self.state.blocking_read();
                 let view = state.view.clone();
-                let has_piano_notes = state.piano.is_some() && !state.piano_selected_notes.is_empty();
+                let has_piano_notes =
+                    state.piano.is_some() && !state.piano_selected_notes.is_empty();
                 drop(state);
 
                 if matches!(view, crate::state::View::Piano) && has_piano_notes {
@@ -3920,7 +4122,6 @@ impl Maolan {
                             state.piano_scroll_x = 0.0;
                             state.piano_scroll_y = 0.0;
                             state.view = View::Piano;
-                            state.message = format!("Opened piano roll for '{}'", clip_name);
                         }
                         return self.sync_piano_scrollbars();
                     }

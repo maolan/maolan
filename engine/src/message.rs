@@ -144,6 +144,9 @@ pub enum Action {
     SetClipPlaybackEnabled(bool),
     SetRecordEnabled(bool),
     SetSessionPath(String),
+    ClearHistory,
+    BeginSessionRestore,
+    EndSessionRestore,
     AddTrack {
         name: String,
         audio_ins: usize,

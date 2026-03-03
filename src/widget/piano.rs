@@ -637,6 +637,8 @@ enum DraggingMode {
     None,
     SelectingRect,
     DraggingNotes,
+    ResizingNote,
+    CreatingNote,
 }
 
 impl Program<Message> for PianoRollInteraction {
@@ -668,6 +670,36 @@ impl Program<Message> for PianoRollInteraction {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(position) = cursor.position_in(bounds) {
                     if let Some(note_idx) = self.note_at_position(position, row_h, pps, &notes) {
+                        let Some(note) = notes.get(note_idx) else {
+                            return None;
+                        };
+                        let note_x = note.start_sample as f32 * pps;
+                        let note_w = (note.length_samples as f32 * pps).max(2.0);
+                        let resize_handle_w = 6.0;
+                        if position.x <= note_x + resize_handle_w {
+                            state.drag_start = Some(position);
+                            state.dragging_mode = DraggingMode::ResizingNote;
+                            return Some(
+                                CanvasAction::publish(Message::PianoNoteResizeStart {
+                                    note_index: note_idx,
+                                    position,
+                                    resize_start: true,
+                                })
+                                .and_capture(),
+                            );
+                        }
+                        if position.x >= note_x + note_w - resize_handle_w {
+                            state.drag_start = Some(position);
+                            state.dragging_mode = DraggingMode::ResizingNote;
+                            return Some(
+                                CanvasAction::publish(Message::PianoNoteResizeStart {
+                                    note_index: note_idx,
+                                    position,
+                                    resize_start: false,
+                                })
+                                .and_capture(),
+                            );
+                        }
                         state.drag_start = Some(position);
                         state.dragging_mode = DraggingMode::DraggingNotes;
                         return Some(
@@ -688,6 +720,16 @@ impl Program<Message> for PianoRollInteraction {
                     }
                 }
             }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                if let Some(position) = cursor.position_in(bounds) {
+                    state.drag_start = Some(position);
+                    state.dragging_mode = DraggingMode::CreatingNote;
+                    return Some(
+                        CanvasAction::publish(Message::PianoCreateNoteStart { position })
+                            .and_capture(),
+                    );
+                }
+            }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(position) = cursor.position_in(bounds) {
                     if state.drag_start.is_some() {
@@ -699,6 +741,16 @@ impl Program<Message> for PianoRollInteraction {
                             }
                             DraggingMode::DraggingNotes => {
                                 return Some(CanvasAction::publish(Message::PianoNotesDrag {
+                                    position,
+                                }));
+                            }
+                            DraggingMode::ResizingNote => {
+                                return Some(CanvasAction::publish(Message::PianoNoteResizeDrag {
+                                    position,
+                                }));
+                            }
+                            DraggingMode::CreatingNote => {
+                                return Some(CanvasAction::publish(Message::PianoCreateNoteDrag {
                                     position,
                                 }));
                             }
@@ -720,7 +772,30 @@ impl Program<Message> for PianoRollInteraction {
                         DraggingMode::DraggingNotes => {
                             return Some(CanvasAction::publish(Message::PianoNotesEndDrag));
                         }
+                        DraggingMode::ResizingNote => {
+                            return Some(CanvasAction::publish(Message::PianoNoteResizeEnd));
+                        }
+                        DraggingMode::CreatingNote => {
+                            return Some(CanvasAction::publish(Message::PianoCreateNoteEnd));
+                        }
                         DraggingMode::None => {}
+                    }
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) => {
+                if state.drag_start.is_some() {
+                    let mode = state.dragging_mode;
+                    state.drag_start = None;
+                    state.dragging_mode = DraggingMode::None;
+
+                    match mode {
+                        DraggingMode::CreatingNote => {
+                            return Some(CanvasAction::publish(Message::PianoCreateNoteEnd));
+                        }
+                        DraggingMode::None => {}
+                        DraggingMode::SelectingRect
+                        | DraggingMode::DraggingNotes
+                        | DraggingMode::ResizingNote => {}
                     }
                 }
             }
@@ -747,6 +822,8 @@ impl Program<Message> for PianoRollInteraction {
         let selected_notes = &app_state.piano_selected_notes;
         let selecting_rect = app_state.piano_selecting_rect;
         let dragging_notes = app_state.piano_dragging_notes.as_ref();
+        let resizing_note = app_state.piano_resizing_note.as_ref();
+        let creating_note = app_state.piano_creating_note;
 
         let row_h = ((Piano::WHITE_KEY_HEIGHT * Piano::WHITE_KEYS_PER_OCTAVE as f32
             / Piano::NOTES_PER_OCTAVE as f32)
@@ -848,6 +925,78 @@ impl Program<Message> for PianoRollInteraction {
                 &path,
                 canvas::Stroke::default()
                     .with_color(Color::from_rgb(0.4, 0.6, 0.9))
+                    .with_width(1.5),
+            );
+        }
+
+        // Draw note-resize preview
+        if let Some(resizing) = resizing_note {
+            let delta_x = resizing.current_point.x - resizing.start_point.x;
+            let delta_samples = (delta_x / pps) as i64;
+            let original = &resizing.original_note;
+            let original_end = original
+                .start_sample
+                .saturating_add(original.length_samples)
+                .max(1);
+            let (preview_start, preview_len) = if resizing.resize_start {
+                let max_start = original_end.saturating_sub(1) as i64;
+                let new_start = (original.start_sample as i64 + delta_samples).clamp(0, max_start);
+                let new_start = new_start as usize;
+                (new_start, original_end.saturating_sub(new_start).max(1))
+            } else {
+                let min_end = original.start_sample.saturating_add(1) as i64;
+                let new_end = (original_end as i64 + delta_samples).max(min_end) as usize;
+                (original.start_sample, new_end.saturating_sub(original.start_sample).max(1))
+            };
+
+            if original.pitch <= Piano::PITCH_MAX {
+                let y_idx = usize::from(Piano::PITCH_MAX.saturating_sub(original.pitch));
+                let y = y_idx as f32 * row_h + 1.0;
+                let x = preview_start as f32 * pps;
+                let w = (preview_len as f32 * pps).max(2.0);
+                let h = (row_h - 2.0).max(2.0);
+                let path = Path::rectangle(Point::new(x, y), Size::new(w, h));
+                frame.fill(
+                    &path,
+                    Color {
+                        r: 0.95,
+                        g: 0.8,
+                        b: 0.4,
+                        a: 0.35,
+                    },
+                );
+                frame.stroke(
+                    &path,
+                    canvas::Stroke::default()
+                        .with_color(Color::from_rgb(0.95, 0.8, 0.4))
+                        .with_width(1.5),
+                );
+            }
+        }
+
+        // Draw note-creation preview from right-click drag
+        if let Some((start, end)) = creating_note {
+            let start_x = start.x.min(end.x).max(0.0);
+            let end_x = start.x.max(end.x).max(0.0);
+            let y_row = (start.y / row_h).floor().max(0.0);
+            let y = y_row * row_h + 1.0;
+            let h = (row_h - 2.0).max(2.0);
+            let w = (end_x - start_x).max(2.0);
+
+            let path = Path::rectangle(Point::new(start_x, y), Size::new(w, h));
+            frame.fill(
+                &path,
+                Color {
+                    r: 0.6,
+                    g: 0.75,
+                    b: 0.95,
+                    a: 0.35,
+                },
+            );
+            frame.stroke(
+                &path,
+                canvas::Stroke::default()
+                    .with_color(Color::from_rgb(0.7, 0.85, 1.0))
                     .with_width(1.5),
             );
         }

@@ -409,7 +409,9 @@ pub struct StateData {
     pub piano_scroll_y: f32,
     pub piano_selected_notes: HashSet<usize>,
     pub piano_dragging_notes: Option<DraggingNotes>,
+    pub piano_resizing_note: Option<ResizingNote>,
     pub piano_selecting_rect: Option<(Point, Point)>,
+    pub piano_creating_note: Option<(Point, Point)>,
     pub tempo: f32,
     pub available_templates: Vec<String>,
 }
@@ -420,6 +422,15 @@ pub struct DraggingNotes {
     pub start_point: Point,
     pub current_point: Point,
     pub original_notes: Vec<PianoNote>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResizingNote {
+    pub note_index: usize,
+    pub resize_start: bool,
+    pub start_point: Point,
+    pub current_point: Point,
+    pub original_note: PianoNote,
 }
 
 impl Default for StateData {
@@ -535,7 +546,9 @@ impl Default for StateData {
             piano_scroll_y: 0.0,
             piano_selected_notes: HashSet::new(),
             piano_dragging_notes: None,
+            piano_resizing_note: None,
             piano_selecting_rect: None,
+            piano_creating_note: None,
             tempo: 120.0,
             available_templates: vec![],
         }

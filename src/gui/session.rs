@@ -644,8 +644,8 @@ impl Maolan {
     }
 
     pub(super) fn load(&mut self, path: String) -> std::io::Result<Task<Message>> {
-        let mut tasks = vec![];
-        let mut restore_actions: Vec<Action> = vec![Action::SetSessionPath(path.clone())];
+        let mut restore_actions: Vec<Action> =
+            vec![Action::BeginSessionRestore, Action::SetSessionPath(path.clone())];
         let mut warnings: Vec<String> = Vec::new();
         let session_root = PathBuf::from(path.clone());
         self.pending_audio_peaks.clear();
@@ -657,7 +657,7 @@ impl Maolan {
             .map(|t| t.name.clone())
             .collect();
         for name in existing_tracks {
-            tasks.push(self.send(Action::RemoveTrack(name)));
+            restore_actions.push(Action::RemoveTrack(name));
         }
         {
             let mut state = self.state.blocking_write();
@@ -844,16 +844,16 @@ impl Maolan {
                         ));
                     }
                 };
-                tasks.push(self.send(Action::AddTrack {
+                restore_actions.push(Action::AddTrack {
                     name: name.clone(),
                     audio_ins,
                     audio_outs,
                     midi_ins,
                     midi_outs,
-                }));
+                });
                 if let Some(value) = track["armed"].as_bool() {
                     if value {
-                        tasks.push(self.send(Action::TrackToggleArm(name.clone())));
+                        restore_actions.push(Action::TrackToggleArm(name.clone()));
                     }
                 } else {
                     return Err(io::Error::new(
@@ -863,7 +863,7 @@ impl Maolan {
                 }
                 if let Some(value) = track["muted"].as_bool() {
                     if value {
-                        tasks.push(self.send(Action::TrackToggleMute(name.clone())));
+                        restore_actions.push(Action::TrackToggleMute(name.clone()));
                     }
                 } else {
                     return Err(io::Error::new(
@@ -873,7 +873,7 @@ impl Maolan {
                 }
                 if let Some(value) = track["soloed"].as_bool() {
                     if value {
-                        tasks.push(self.send(Action::TrackToggleSolo(name.clone())));
+                        restore_actions.push(Action::TrackToggleSolo(name.clone()));
                     }
                 } else {
                     return Err(io::Error::new(
@@ -883,7 +883,7 @@ impl Maolan {
                 }
                 if let Some(value) = track["input_monitor"].as_bool() {
                     if value {
-                        tasks.push(self.send(Action::TrackToggleInputMonitor(name.clone())));
+                        restore_actions.push(Action::TrackToggleInputMonitor(name.clone()));
                     }
                 } else {
                     return Err(io::Error::new(
@@ -893,7 +893,7 @@ impl Maolan {
                 }
                 if let Some(value) = track["disk_monitor"].as_bool() {
                     if !value {
-                        tasks.push(self.send(Action::TrackToggleDiskMonitor(name.clone())));
+                        restore_actions.push(Action::TrackToggleDiskMonitor(name.clone()));
                     }
                 } else {
                     return Err(io::Error::new(
@@ -965,7 +965,7 @@ impl Maolan {
                             }
                         }
 
-                        tasks.push(self.send(Action::AddClip {
+                        restore_actions.push(Action::AddClip {
                             name: clip_name,
                             track_name: name.clone(),
                             start,
@@ -976,7 +976,7 @@ impl Maolan {
                             fade_enabled,
                             fade_in_samples,
                             fade_out_samples,
-                        }));
+                        });
                     }
                 }
 
@@ -1022,7 +1022,7 @@ impl Maolan {
                             }
                         }
 
-                        tasks.push(self.send(Action::AddClip {
+                        restore_actions.push(Action::AddClip {
                             name: clip_name,
                             track_name: name.clone(),
                             start,
@@ -1033,7 +1033,7 @@ impl Maolan {
                             fade_enabled,
                             fade_in_samples,
                             fade_out_samples,
-                        }));
+                        });
                     }
                 }
             }
@@ -1185,10 +1185,8 @@ impl Maolan {
             }
             self.state.blocking_write().message = msg;
         }
-        if !restore_actions.is_empty() {
-            tasks.push(Self::restore_actions_task(restore_actions));
-        }
-        Ok(Task::batch(tasks))
+        restore_actions.push(Action::EndSessionRestore);
+        Ok(Self::restore_actions_task(restore_actions))
     }
 
     pub(super) fn refresh_graphs_then_save_template(&mut self, path: String) -> Task<Message> {

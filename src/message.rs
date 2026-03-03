@@ -289,6 +289,15 @@ pub enum Message {
         position: Point,
     },
     PianoNotesEndDrag,
+    PianoNoteResizeStart {
+        note_index: usize,
+        position: Point,
+        resize_start: bool,
+    },
+    PianoNoteResizeDrag {
+        position: Point,
+    },
+    PianoNoteResizeEnd,
     PianoSelectRectStart {
         position: Point,
     },
@@ -296,6 +305,13 @@ pub enum Message {
         position: Point,
     },
     PianoSelectRectEnd,
+    PianoCreateNoteStart {
+        position: Point,
+    },
+    PianoCreateNoteDrag {
+        position: Point,
+    },
+    PianoCreateNoteEnd,
     PianoDeleteSelectedNotes,
     #[cfg(all(unix, not(target_os = "macos")))]
     RefreshLv2Plugins,

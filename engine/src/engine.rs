@@ -142,6 +142,7 @@ pub struct Engine {
     last_hw_out_meter_publish: Option<Instant>,
     last_track_meter_publish: Option<Instant>,
     history: History,
+    history_suspended: bool,
 }
 
 impl Engine {
@@ -301,6 +302,7 @@ impl Engine {
             last_hw_out_meter_publish: None,
             last_track_meter_publish: None,
             history: History::default(),
+            history_suspended: false,
         }
     }
 
@@ -1217,13 +1219,15 @@ impl Engine {
 
         // Record action in history before processing (capture current state)
         // Skip recording for undo/redo actions themselves
-        let inverse_action =
-            if should_record(&action_to_process) && !matches!(&a, Action::Undo | Action::Redo) {
-                let state = self.state.lock();
-                create_inverse_action(&action_to_process, &state)
-            } else {
-                None
-            };
+        let inverse_action = if should_record(&action_to_process)
+            && !self.history_suspended
+            && !matches!(&a, Action::Undo | Action::Redo)
+        {
+            let state = self.state.lock();
+            create_inverse_action(&action_to_process, &state)
+        } else {
+            None
+        };
 
         match action_to_process {
             Action::Play => {
@@ -1307,6 +1311,17 @@ impl Engine {
                     track.lock().set_lv2_state_base_dir(lv2_dir.clone());
                     track.lock().set_session_base_dir(self.session_dir.clone());
                 }
+            }
+            Action::ClearHistory => {
+                self.history.clear();
+            }
+            Action::BeginSessionRestore => {
+                self.history_suspended = true;
+                self.history.clear();
+            }
+            Action::EndSessionRestore => {
+                self.history.clear();
+                self.history_suspended = false;
             }
             Action::Quit => {
                 self.flush_recordings().await;
@@ -3036,6 +3051,8 @@ impl Engine {
                     | Action::SetClipPlaybackEnabled(_)
                     | Action::SetRecordEnabled(_)
                     | Action::SetSessionPath(_)
+                    | Action::ClearHistory
+                    | Action::BeginSessionRestore
                     | Action::PianoKey { .. }
                     | Action::ModifyMidiNotes { .. }
                     | Action::DeleteMidiNotes { .. }
