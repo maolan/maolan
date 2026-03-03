@@ -14,13 +14,16 @@ pub struct Piano {
     state: State,
 }
 
+pub const KEYS_SCROLL_ID: &str = "piano.keys.scroll";
 pub const NOTES_SCROLL_ID: &str = "piano.notes.scroll";
 pub const CTRL_SCROLL_ID: &str = "piano.ctrl.scroll";
 pub const H_SCROLL_ID: &str = "piano.h.scroll";
 pub const V_SCROLL_ID: &str = "piano.v.scroll";
 
 impl Piano {
-    const KEYBOARD_WIDTH: f32 = 84.0;
+    pub const KEYBOARD_WIDTH: f32 = 84.0;
+    const H_ZOOM_MIN: f32 = 1.0;
+    const H_ZOOM_MAX: f32 = 127.0;
     const OCTAVES: usize = 10;
     const WHITE_KEYS_PER_OCTAVE: usize = 7;
     const NOTES_PER_OCTAVE: usize = 12;
@@ -55,6 +58,15 @@ impl Piano {
             b: 0.25 + 0.45 * (1.0 - c),
             a: 0.85,
         }
+    }
+
+    fn zoom_x_to_slider(zoom_x: f32) -> f32 {
+        (Self::H_ZOOM_MIN + Self::H_ZOOM_MAX - zoom_x).clamp(Self::H_ZOOM_MIN, Self::H_ZOOM_MAX)
+    }
+
+    fn slider_to_zoom_x(slider_value: f32) -> f32 {
+        (Self::H_ZOOM_MIN + Self::H_ZOOM_MAX - slider_value)
+            .clamp(Self::H_ZOOM_MIN, Self::H_ZOOM_MAX)
     }
 
     pub fn view(&self, pixels_per_sample: f32, samples_per_bar: f32) -> Element<'_, Message> {
@@ -249,34 +261,41 @@ impl Piano {
                 ..container::Style::default()
             });
 
+        let keyboard_scroll = scrollable(
+            container(piano_note_keys)
+                .width(Length::Fixed(Self::KEYBOARD_WIDTH))
+                .height(Length::Fixed(notes_h))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.12,
+                        g: 0.12,
+                        b: 0.12,
+                        a: 1.0,
+                    })),
+                    ..container::Style::default()
+                }),
+        )
+        .id(Id::new(KEYS_SCROLL_ID))
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::hidden(),
+        ))
+        .on_scroll(|viewport| Message::PianoScrollYChanged(viewport.relative_offset().y))
+        .width(Length::Fixed(Self::KEYBOARD_WIDTH))
+        .height(Length::Fill);
+
         let note_scroll = scrollable(
-            row![
-                container(piano_note_keys)
-                    .width(Length::Fixed(Self::KEYBOARD_WIDTH))
-                    .height(Length::Fixed(notes_h))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.12,
-                            g: 0.12,
-                            b: 0.12,
-                            a: 1.0,
-                        })),
-                        ..container::Style::default()
-                    }),
-                container(notes_content)
-                    .width(Length::Shrink)
-                    .height(Length::Fixed(notes_h))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.07,
-                            g: 0.07,
-                            b: 0.09,
-                            a: 1.0,
-                        })),
-                        ..container::Style::default()
-                    }),
-            ]
-            .height(Length::Fixed(notes_h)),
+            container(notes_content)
+                .width(Length::Shrink)
+                .height(Length::Fixed(notes_h))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.07,
+                        g: 0.07,
+                        b: 0.09,
+                        a: 1.0,
+                    })),
+                    ..container::Style::default()
+                }),
         )
         .id(Id::new(NOTES_SCROLL_ID))
         .direction(scrollable::Direction::Both {
@@ -341,7 +360,9 @@ impl Piano {
 
         container(row![
             column![
-                note_scroll,
+                row![keyboard_scroll, note_scroll]
+                    .height(Length::Fill)
+                    .width(Length::Fill),
                 row![controller_key, ctrl_scroll],
                 row![
                     container("")
@@ -349,16 +370,19 @@ impl Piano {
                         .height(Length::Fixed(16.0)),
                     row![
                         h_scroll,
-                        slider(1.0..=127.0, zoom_x, Message::PianoZoomXChanged)
-                            .step(0.1)
-                            .width(Length::Fixed(100.0)),
+                        slider(
+                            Self::H_ZOOM_MIN..=Self::H_ZOOM_MAX,
+                            Self::zoom_x_to_slider(zoom_x),
+                            |value| Message::PianoZoomXChanged(Self::slider_to_zoom_x(value)),
+                        )
+                        .step(0.1)
+                        .width(Length::Fixed(100.0)),
                     ]
                     .spacing(8)
                     .width(Length::Fill),
                 ]
             ]
-            .spacing(3)
-            .padding(10),
+            .spacing(3),
             column![
                 v_scroll,
                 vertical_slider(1.0..=8.0, zoom_y, Message::PianoZoomYChanged)

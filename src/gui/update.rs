@@ -6,8 +6,10 @@ use crate::{
     message::{ExportNormalizeMode, Message, Show},
     state::{ConnectionViewSelection, HW, PianoData, Resizing, Track, View},
     ui_timing::DOUBLE_CLICK,
-    widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
-    workspace::{EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID},
+    widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
+    workspace::{
+        EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID, PIANO_RULER_SCROLL_ID, PIANO_TEMPO_SCROLL_ID,
+    },
 };
 use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
@@ -59,7 +61,28 @@ impl Maolan {
                 },
             ),
             operation::snap_to(
+                Id::new(KEYS_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: None,
+                    y: Some(y),
+                },
+            ),
+            operation::snap_to(
                 Id::new(CTRL_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: Some(x),
+                    y: None,
+                },
+            ),
+            operation::snap_to(
+                Id::new(PIANO_TEMPO_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: Some(x),
+                    y: None,
+                },
+            ),
+            operation::snap_to(
+                Id::new(PIANO_RULER_SCROLL_ID),
                 operation::RelativeOffset {
                     x: Some(x),
                     y: None,
