@@ -75,6 +75,7 @@ pub struct HwDriver {
     output_latency_frames: usize,
     capture_buffer: Vec<u8>,
     playback_buffer: Vec<u8>,
+    playing: bool,
 }
 
 impl std::fmt::Debug for HwDriver {
@@ -238,6 +239,7 @@ impl HwDriver {
             output_latency_frames: options.output_latency_frames,
             capture_buffer,
             playback_buffer,
+            playing: false,
         })
     }
 
@@ -268,6 +270,10 @@ impl HwDriver {
     pub fn set_output_gain_balance(&mut self, gain: f32, balance: f32) {
         self.output_gain_linear = gain.max(0.0);
         self.output_balance = balance.clamp(-1.0, 1.0);
+    }
+
+    pub fn set_playing(&mut self, playing: bool) {
+        self.playing = playing;
     }
 
     pub fn output_meter_db(&self, gain: f32, balance: f32) -> Vec<f32> {
