@@ -80,6 +80,26 @@ pub enum ExportBitDepth {
     Float32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportNormalizeMode {
+    Peak,
+    Loudness,
+}
+
+impl ExportNormalizeMode {
+    pub const ALL: [ExportNormalizeMode; 2] =
+        [ExportNormalizeMode::Peak, ExportNormalizeMode::Loudness];
+}
+
+impl fmt::Display for ExportNormalizeMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExportNormalizeMode::Peak => write!(f, "Peak"),
+            ExportNormalizeMode::Loudness => write!(f, "Loudness"),
+        }
+    }
+}
+
 impl ExportBitDepth {
     pub const ALL: [ExportBitDepth; 4] = [
         ExportBitDepth::Int16,
@@ -163,6 +183,12 @@ pub enum Message {
     OpenExporter,
     ExportSampleRateSelected(u32),
     ExportBitDepthSelected(ExportBitDepth),
+    ExportNormalizeToggled(bool),
+    ExportNormalizeModeSelected(ExportNormalizeMode),
+    ExportNormalizeDbfsInput(String),
+    ExportNormalizeLufsInput(String),
+    ExportNormalizeDbtpInput(String),
+    ExportNormalizeLimiterToggled(bool),
     ExportSettingsConfirm,
     ExportFileSelected(Option<PathBuf>),
     ExportProgress {

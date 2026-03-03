@@ -8,11 +8,14 @@ mod view;
 use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
-    message::{DraggedClip, ExportBitDepth, Message, PluginFormat, Show, SnapMode},
+    message::{
+        DraggedClip, ExportBitDepth, ExportNormalizeMode, Message, PluginFormat, Show, SnapMode,
+    },
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{PianoControllerPoint, PianoNote, State, StateData},
     template_save, toolbar, track_rename, workspace,
 };
+use ebur128::{EbuR128, Mode as LoudnessMode};
 use iced::{
     Length, Size, Task,
     widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
@@ -129,6 +132,12 @@ pub struct Maolan {
     export_operation: Option<String>,
     export_sample_rate_hz: u32,
     export_bit_depth: ExportBitDepth,
+    export_normalize: bool,
+    export_normalize_mode: ExportNormalizeMode,
+    export_normalize_dbfs_input: String,
+    export_normalize_lufs_input: String,
+    export_normalize_dbtp_input: String,
+    export_normalize_tp_limiter: bool,
     clap_ui_host: GuiClapUiHost,
     #[cfg(all(unix, not(target_os = "macos")))]
     lv2_ui_host: GuiLv2UiHost,
@@ -234,6 +243,12 @@ impl Default for Maolan {
             export_operation: None,
             export_sample_rate_hz: 48_000,
             export_bit_depth: ExportBitDepth::Int24,
+            export_normalize: false,
+            export_normalize_mode: ExportNormalizeMode::Peak,
+            export_normalize_dbfs_input: "0.0".to_string(),
+            export_normalize_lufs_input: "-23.0".to_string(),
+            export_normalize_dbtp_input: "-1.0".to_string(),
+            export_normalize_tp_limiter: true,
             clap_ui_host: GuiClapUiHost::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_ui_host: GuiLv2UiHost::new(),
@@ -878,10 +893,49 @@ impl Maolan {
         })
     }
 
+    fn measure_lufs_and_true_peak(
+        samples: &[f32],
+        channels: usize,
+        sample_rate: i32,
+    ) -> io::Result<(f32, f32)> {
+        let mut meter = EbuR128::new(
+            channels as u32,
+            sample_rate as u32,
+            LoudnessMode::I | LoudnessMode::TRUE_PEAK,
+        )
+        .map_err(|e| io::Error::other(format!("Failed to initialize loudness meter: {e}")))?;
+        meter
+            .add_frames_f32(samples)
+            .map_err(|e| io::Error::other(format!("Loudness analysis failed: {e}")))?;
+        let lufs = meter
+            .loudness_global()
+            .map_err(|e| io::Error::other(format!("Failed to get integrated loudness: {e}")))?
+            as f32;
+        if !lufs.is_finite() {
+            Err(io::Error::other("Integrated loudness is not finite"))
+        } else {
+            let mut tp = 0.0_f32;
+            for ch in 0..channels as u32 {
+                let p = meter
+                    .true_peak(ch)
+                    .map_err(|e| io::Error::other(format!("Failed to get true peak: {e}")))?
+                    as f32;
+                tp = tp.max(p);
+            }
+            Ok((lufs, tp))
+        }
+    }
+
     async fn export_session<F>(
         export_path: &Path,
         sample_rate: i32,
         bit_depth: ExportBitDepth,
+        normalize: bool,
+        normalize_target_dbfs: f32,
+        normalize_mode: ExportNormalizeMode,
+        normalize_target_lufs: f32,
+        normalize_true_peak_dbtp: f32,
+        normalize_tp_limiter: bool,
         state: State,
         session_root: &Path,
         mut progress_callback: F,
@@ -1022,6 +1076,80 @@ impl Maolan {
                 Some(format!("Finished: {}", track_name)),
             );
             tokio::task::yield_now().await;
+        }
+
+        if normalize {
+            match normalize_mode {
+                ExportNormalizeMode::Peak => {
+                    progress_callback(
+                        0.85,
+                        Some(format!(
+                            "Normalizing peak to {:.1} dBFS",
+                            normalize_target_dbfs
+                        )),
+                    );
+                    tokio::task::yield_now().await;
+                    let peak = mixed_buffer
+                        .iter()
+                        .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
+                    if peak > 0.0 {
+                        let target_amp =
+                            10.0_f32.powf(normalize_target_dbfs / 20.0).clamp(0.0, 1.0);
+                        let gain = target_amp / peak;
+                        for sample in &mut mixed_buffer {
+                            *sample *= gain;
+                        }
+                    }
+                }
+                ExportNormalizeMode::Loudness => {
+                    progress_callback(
+                        0.85,
+                        Some(format!(
+                            "Normalizing loudness to {:.1} LUFS (TP {:.1} dBTP)",
+                            normalize_target_lufs, normalize_true_peak_dbtp
+                        )),
+                    );
+                    tokio::task::yield_now().await;
+                    let (measured_lufs, measured_tp_amp) = Self::measure_lufs_and_true_peak(
+                        &mixed_buffer,
+                        output_channels,
+                        sample_rate,
+                    )?;
+                    let gain_loudness_db = normalize_target_lufs - measured_lufs;
+                    let gain_loudness = 10.0_f32.powf(gain_loudness_db / 20.0);
+
+                    let ceiling_amp = 10.0_f32
+                        .powf(normalize_true_peak_dbtp / 20.0)
+                        .clamp(0.0, 1.0);
+                    let gain_tp = if measured_tp_amp > 0.0 {
+                        ceiling_amp / measured_tp_amp
+                    } else {
+                        gain_loudness
+                    };
+
+                    // Ardour-like behavior:
+                    // - limiter enabled: hit loudness target, then constrain true-peak with limiter
+                    // - limiter disabled: reduce gain so true-peak ceiling is not exceeded
+                    let applied_gain = if normalize_tp_limiter {
+                        gain_loudness
+                    } else {
+                        gain_loudness.min(gain_tp)
+                    };
+
+                    for sample in &mut mixed_buffer {
+                        *sample *= applied_gain;
+                    }
+
+                    if normalize_tp_limiter {
+                        let predicted_tp = measured_tp_amp * applied_gain;
+                        if predicted_tp > ceiling_amp && ceiling_amp > 0.0 {
+                            for sample in &mut mixed_buffer {
+                                *sample = sample.clamp(-ceiling_amp, ceiling_amp);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         progress_callback(0.9, Some(format!("Writing WAV ({bit_depth})")));
@@ -1900,6 +2028,60 @@ impl Maolan {
                 ]
                 .spacing(10)
                 .align_y(iced::Alignment::Center),
+                checkbox(self.export_normalize)
+                    .label("Normalize")
+                    .on_toggle(Message::ExportNormalizeToggled),
+                if self.export_normalize {
+                    container(
+                        column![
+                            row![
+                                text("Mode:"),
+                                pick_list(
+                                    ExportNormalizeMode::ALL.to_vec(),
+                                    Some(self.export_normalize_mode),
+                                    Message::ExportNormalizeModeSelected
+                                )
+                                .placeholder("Choose mode")
+                                .width(Length::Fixed(180.0)),
+                            ]
+                            .spacing(10)
+                            .align_y(iced::Alignment::Center),
+                            if matches!(self.export_normalize_mode, ExportNormalizeMode::Peak) {
+                                row![
+                                    text("Target (dBFS):"),
+                                    text_input("0.0", &self.export_normalize_dbfs_input)
+                                        .on_input(Message::ExportNormalizeDbfsInput)
+                                        .width(Length::Fixed(120.0)),
+                                ]
+                                .spacing(10)
+                                .align_y(iced::Alignment::Center)
+                            } else {
+                                row![
+                                    text("Target (LUFS):"),
+                                    text_input("-23.0", &self.export_normalize_lufs_input)
+                                        .on_input(Message::ExportNormalizeLufsInput)
+                                        .width(Length::Fixed(120.0)),
+                                    text("TP ceiling (dBTP):"),
+                                    text_input("-1.0", &self.export_normalize_dbtp_input)
+                                        .on_input(Message::ExportNormalizeDbtpInput)
+                                        .width(Length::Fixed(120.0)),
+                                ]
+                                .spacing(10)
+                                .align_y(iced::Alignment::Center)
+                            },
+                            if matches!(self.export_normalize_mode, ExportNormalizeMode::Loudness) {
+                                checkbox(self.export_normalize_tp_limiter)
+                                    .label("Use true-peak limiter")
+                                    .on_toggle(Message::ExportNormalizeLimiterToggled)
+                            } else {
+                                checkbox(false).label("")
+                            }
+                        ]
+                        .spacing(8),
+                    )
+                } else {
+                    container(row![text("")])
+                },
                 row![
                     button("Export").on_press(Message::ExportSettingsConfirm),
                     button("Cancel")

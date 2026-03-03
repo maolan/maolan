@@ -3,7 +3,7 @@ use super::{CLIENT, MIN_CLIP_WIDTH_PX, Maolan, platform};
 use crate::message::PluginFormat;
 use crate::{
     connections,
-    message::Message,
+    message::{ExportNormalizeMode, Message},
     state::{ConnectionViewSelection, HW, PianoData, Resizing, Track, View},
     ui_timing::DOUBLE_CLICK,
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
@@ -3230,7 +3230,72 @@ impl Maolan {
             Message::ExportBitDepthSelected(bit_depth) => {
                 self.export_bit_depth = bit_depth;
             }
+            Message::ExportNormalizeToggled(enabled) => {
+                self.export_normalize = enabled;
+            }
+            Message::ExportNormalizeModeSelected(mode) => {
+                self.export_normalize_mode = mode;
+            }
+            Message::ExportNormalizeDbfsInput(ref input) => {
+                self.export_normalize_dbfs_input = input
+                    .chars()
+                    .filter(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
+                    .collect();
+            }
+            Message::ExportNormalizeLufsInput(ref input) => {
+                self.export_normalize_lufs_input = input
+                    .chars()
+                    .filter(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
+                    .collect();
+            }
+            Message::ExportNormalizeDbtpInput(ref input) => {
+                self.export_normalize_dbtp_input = input
+                    .chars()
+                    .filter(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
+                    .collect();
+            }
+            Message::ExportNormalizeLimiterToggled(enabled) => {
+                self.export_normalize_tp_limiter = enabled;
+            }
             Message::ExportSettingsConfirm => {
+                if self.export_normalize {
+                    match self.export_normalize_mode {
+                        ExportNormalizeMode::Peak => {
+                            let target = self.export_normalize_dbfs_input.parse::<f32>().ok();
+                            let Some(target) = target else {
+                                self.state.blocking_write().message =
+                                    "Normalize target must be a number in dBFS".to_string();
+                                return Task::none();
+                            };
+                            if !(-60.0..=0.0).contains(&target) {
+                                self.state.blocking_write().message =
+                                    "Normalize target must be between -60.0 and 0.0 dBFS"
+                                        .to_string();
+                                return Task::none();
+                            }
+                        }
+                        ExportNormalizeMode::Loudness => {
+                            let lufs = self.export_normalize_lufs_input.parse::<f32>().ok();
+                            let dbtp = self.export_normalize_dbtp_input.parse::<f32>().ok();
+                            let (Some(lufs), Some(dbtp)) = (lufs, dbtp) else {
+                                self.state.blocking_write().message =
+                                    "Loudness mode requires numeric LUFS and dBTP values"
+                                        .to_string();
+                                return Task::none();
+                            };
+                            if !(-70.0..=-5.0).contains(&lufs) {
+                                self.state.blocking_write().message =
+                                    "LUFS target must be between -70.0 and -5.0".to_string();
+                                return Task::none();
+                            }
+                            if !(-20.0..=0.0).contains(&dbtp) {
+                                self.state.blocking_write().message =
+                                    "dBTP ceiling must be between -20.0 and 0.0".to_string();
+                                return Task::none();
+                            }
+                        }
+                    }
+                }
                 self.modal = None;
                 return Task::perform(
                     async {
@@ -3254,6 +3319,24 @@ impl Maolan {
 
                 let sample_rate = self.export_sample_rate_hz as i32;
                 let export_bit_depth = self.export_bit_depth;
+                let export_normalize = self.export_normalize;
+                let normalize_mode = self.export_normalize_mode;
+                let normalize_target_dbfs = self
+                    .export_normalize_dbfs_input
+                    .parse::<f32>()
+                    .ok()
+                    .unwrap_or(0.0);
+                let normalize_target_lufs = self
+                    .export_normalize_lufs_input
+                    .parse::<f32>()
+                    .ok()
+                    .unwrap_or(-23.0);
+                let normalize_true_peak_dbtp = self
+                    .export_normalize_dbtp_input
+                    .parse::<f32>()
+                    .ok()
+                    .unwrap_or(-1.0);
+                let normalize_tp_limiter = self.export_normalize_tp_limiter;
                 let export_path = Self::ensure_wav_extension(path.clone());
                 let state_clone = self.state.clone();
 
@@ -3289,6 +3372,12 @@ impl Maolan {
                                 &export_path,
                                 sample_rate,
                                 export_bit_depth,
+                                export_normalize,
+                                normalize_target_dbfs,
+                                normalize_mode,
+                                normalize_target_lufs,
+                                normalize_true_peak_dbtp,
+                                normalize_tp_limiter,
                                 state_clone,
                                 &session_root,
                                 progress_fn,
