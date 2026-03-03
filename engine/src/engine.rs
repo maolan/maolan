@@ -49,6 +49,7 @@ use crate::workers::wasapi_worker::HwWorker;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
+    history::{History, UndoEntry, create_inverse_action, should_record},
     hw::{config, traits::HwDevice},
     kind::Kind,
     message::{Action, HwMidiEvent, Message},
@@ -140,6 +141,7 @@ pub struct Engine {
     hw_out_muted: bool,
     last_hw_out_meter_publish: Option<Instant>,
     last_track_meter_publish: Option<Instant>,
+    history: History,
 }
 
 impl Engine {
@@ -298,6 +300,7 @@ impl Engine {
             hw_out_muted: false,
             last_hw_out_meter_publish: None,
             last_track_meter_publish: None,
+            history: History::default(),
         }
     }
 
@@ -1191,7 +1194,37 @@ impl Engine {
     }
 
     async fn handle_request(&mut self, a: Action) {
-        match a {
+        // Handle undo/redo specially - get the action and process it
+        let action_to_process = match &a {
+            Action::Undo => {
+                if let Some(inverse_action) = self.history.undo() {
+                    inverse_action
+                } else {
+                    // No action to undo, just return
+                    return;
+                }
+            }
+            Action::Redo => {
+                if let Some(forward_action) = self.history.redo() {
+                    forward_action
+                } else {
+                    // No action to redo, just return
+                    return;
+                }
+            }
+            _ => a.clone(),
+        };
+
+        // Record action in history before processing (capture current state)
+        // Skip recording for undo/redo actions themselves
+        let inverse_action = if should_record(&action_to_process) && !matches!(&a, Action::Undo | Action::Redo) {
+            let state = self.state.lock();
+            create_inverse_action(&action_to_process, &state)
+        } else {
+            None
+        };
+
+        match action_to_process {
             Action::Play => {
                 self.playing = true;
                 if let Some(driver) = self.hw_driver.as_mut() {
@@ -2946,8 +2979,20 @@ impl Engine {
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLv2PluginControls { .. } => {}
             Action::HWInfo { .. } => {}
+            Action::Undo => {}  // Already handled at the beginning
+            Action::Redo => {}  // Already handled at the beginning
         }
-        self.notify_clients(Ok(a.clone())).await;
+
+        // Record action in history after successful processing
+        if let Some(inverse) = inverse_action {
+            self.history.record(UndoEntry {
+                forward_action: action_to_process.clone(),
+                inverse_action: inverse,
+            });
+        }
+
+        // Notify clients with the actual action that was processed
+        self.notify_clients(Ok(action_to_process)).await;
     }
 
     pub async fn work(&mut self) {

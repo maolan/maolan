@@ -96,6 +96,12 @@ impl Maolan {
             Message::None => {
                 return Task::none();
             }
+            Message::Undo => {
+                return self.send(Action::Undo);
+            }
+            Message::Redo => {
+                return self.send(Action::Redo);
+            }
             Message::ToggleTransport => {
                 if !self.state.blocking_read().hw_loaded {
                     return Task::none();

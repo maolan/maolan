@@ -355,4 +355,7 @@ pub enum Message {
 
     NewSession,
     NewFromTemplate(String),
+
+    Undo,
+    Redo,
 }

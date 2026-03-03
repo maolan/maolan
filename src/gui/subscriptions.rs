@@ -95,6 +95,15 @@ impl Maolan {
                     if s == "t" {
                         return Message::Show(Show::AddTrack);
                     }
+                    if s == "z" {
+                        if modifiers.shift() {
+                            return Message::Redo;
+                        }
+                        return Message::Undo;
+                    }
+                    if s == "y" {
+                        return Message::Redo;
+                    }
                 }
                 match key {
                     keyboard::Key::Named(keyboard::key::Named::Space) if modifiers.shift() => {

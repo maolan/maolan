@@ -443,6 +443,8 @@ pub enum Action {
         rate: usize,
         input: bool,
     },
+    Undo,
+    Redo,
 }
 
 #[derive(Clone, Debug)]

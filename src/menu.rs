@@ -132,6 +132,12 @@ impl Menu {
                     (menu_item("Quit", Message::Request(Action::Quit))),
                 ))
             }),
+            (menu_dropdown("Edit", Message::None), {
+                menu_tpl(menu_items!(
+                    (menu_item("Undo (Ctrl+Z)", Message::Undo)),
+                    (menu_item("Redo (Ctrl+Shift+Z)", Message::Redo)),
+                ))
+            }),
             (menu_dropdown("Track", Message::None), {
                 menu_tpl(menu_items!(
                     (menu_item("New", Message::Show(Show::AddTrack))),
