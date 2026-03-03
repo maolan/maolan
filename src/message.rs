@@ -127,6 +127,7 @@ pub enum AddTrack {
     AudioOuts(usize),
     MIDIIns(usize),
     MIDIOuts(usize),
+    TemplateSelected(String),
 }
 
 #[derive(Debug, Clone)]
@@ -349,12 +350,26 @@ pub enum Message {
     TrackRenameConfirm,
     TrackRenameCancel,
 
+    TrackTemplateSaveShow(String),
+    TrackTemplateSaveInput(String),
+    TrackTemplateSaveConfirm,
+    TrackTemplateSaveCancel,
+
     TemplateSaveInput(String),
     TemplateSaveConfirm,
     TemplateSaveCancel,
 
     NewSession,
     NewFromTemplate(String),
+
+    AddTrackFromTemplate {
+        name: String,
+        template: String,
+        audio_ins: usize,
+        midi_ins: usize,
+        audio_outs: usize,
+        midi_outs: usize,
+    },
 
     Undo,
     Redo,

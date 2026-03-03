@@ -166,6 +166,292 @@ impl Maolan {
         Ok(())
     }
 
+    pub(super) fn refresh_graph_then_save_track_template(
+        &mut self,
+        track_name: String,
+        path: String,
+    ) -> Task<Message> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            self.pending_save_path = Some(path.clone());
+            self.pending_save_tracks = std::iter::once(track_name.clone()).collect();
+            self.pending_save_is_template = false; // We'll handle this differently
+
+            let tasks = vec![
+                self.send(Action::TrackGetPluginGraph {
+                    track_name: track_name.clone(),
+                }),
+                self.send(Action::TrackSnapshotAllClapStates {
+                    track_name: track_name.clone(),
+                }),
+            ];
+
+            // Store the track name for later use
+            self.state.blocking_write().message = format!("Saving track template for {}", track_name);
+
+            return Task::batch(tasks);
+        }
+
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        {
+            self.save_track_as_template(&track_name, path)
+        }
+    }
+
+    pub(super) fn load_track_template(&self, track_name: String, template_name: String) -> Task<Message> {
+        use std::fs::File;
+        use std::io::BufReader;
+        use tracing::info;
+
+        info!("Loading track template '{}' for track '{}'", template_name, track_name);
+
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let template_path = format!("{}/.config/maolan/track_templates/{}/track.json", home, template_name);
+
+        let file = match File::open(&template_path) {
+            Ok(f) => f,
+            Err(e) => {
+                return Task::done(Message::Response(Err(format!("Failed to open template: {}", e))));
+            }
+        };
+
+        let reader = BufReader::new(file);
+        let json: serde_json::Value = match serde_json::from_reader(reader) {
+            Ok(j) => j,
+            Err(e) => {
+                return Task::done(Message::Response(Err(format!("Failed to parse template: {}", e))));
+            }
+        };
+
+        let mut tasks = vec![];
+
+        // Load LV2 plugin graph
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if let Some(graph) = json.get("graph").and_then(|g| g.as_object()) {
+            let mut plugin_count = 0usize;
+
+            if let Some(plugins) = graph.get("plugins").and_then(|p| p.as_array()) {
+                for (instance_id, plugin) in plugins.iter().enumerate() {
+                    if let Some(uri) = plugin.get("uri").and_then(|u| u.as_str()) {
+                        tasks.push(self.send(Action::TrackLoadLv2Plugin {
+                            track_name: track_name.clone(),
+                            plugin_uri: uri.to_string(),
+                        }));
+
+                        // Set plugin state if available
+                        if let Some(state) = plugin.get("state").and_then(|s| Self::lv2_state_from_json(s)) {
+                            tasks.push(self.send(Action::TrackSetLv2PluginState {
+                                track_name: track_name.clone(),
+                                instance_id,
+                                state,
+                            }));
+                        }
+                        plugin_count += 1;
+                    }
+                }
+            }
+
+            // Load plugin graph connections
+            if let Some(connections) = graph.get("connections").and_then(|c| c.as_array()) {
+                for conn in connections {
+                    let Some(from_node) = Self::plugin_node_from_json(&conn["from_node"]) else {
+                        continue;
+                    };
+                    let Some(to_node) = Self::plugin_node_from_json(&conn["to_node"]) else {
+                        continue;
+                    };
+                    let Some(kind) = Self::kind_from_json(&conn["kind"]) else {
+                        continue;
+                    };
+
+                    let from_port = conn["from_port"].as_u64().unwrap_or(0) as usize;
+                    let to_port = conn["to_port"].as_u64().unwrap_or(0) as usize;
+
+                    // Validate node indices
+                    let valid_node = |n: &maolan_engine::message::PluginGraphNode| match n {
+                        maolan_engine::message::PluginGraphNode::Lv2PluginInstance(idx) => {
+                            *idx < plugin_count
+                        }
+                        _ => true,
+                    };
+
+                    if !valid_node(&from_node) || !valid_node(&to_node) {
+                        continue;
+                    }
+
+                    let action = match kind {
+                        Kind::Audio => Action::TrackConnectPluginAudio {
+                            track_name: track_name.clone(),
+                            from_node,
+                            from_port,
+                            to_node,
+                            to_port,
+                        },
+                        Kind::MIDI => Action::TrackConnectPluginMidi {
+                            track_name: track_name.clone(),
+                            from_node,
+                            from_port,
+                            to_node,
+                            to_port,
+                        },
+                    };
+                    tasks.push(self.send(action));
+                }
+            }
+        }
+
+        // Load CLAP plugins
+        if let Some(clap) = json.get("clap").and_then(|c| c.as_array()) {
+            for plugin_path in clap {
+                if let Some(path) = plugin_path.as_str() {
+                    tasks.push(self.send(Action::TrackLoadClapPlugin {
+                        track_name: track_name.clone(),
+                        plugin_path: path.to_string(),
+                    }));
+                }
+            }
+        }
+
+        // TODO: Load CLAP plugin states and connections
+
+        if tasks.is_empty() {
+            Task::done(Message::None)
+        } else {
+            Task::batch(tasks)
+        }
+    }
+
+    pub(super) fn save_track_as_template(
+        &self,
+        track_name: &str,
+        path: String,
+    ) -> Task<Message> {
+        use tracing::info;
+
+        // Do all the work synchronously before spawning the task
+        let result = (|| -> std::io::Result<()> {
+            info!("Saving track template to: {}", path);
+            let template_root = PathBuf::from(&path);
+            fs::create_dir_all(&path)?;
+            fs::create_dir_all(template_root.join("plugins"))?;
+            info!("Created track template directories in: {}", path);
+
+            let mut p = template_root.clone();
+            p.push("track.json");
+            let file = File::create(&p)?;
+
+            let state = self.state.blocking_read();
+
+            // Find the specific track
+            let track = state
+                .tracks
+                .iter()
+                .find(|t| t.name == track_name)
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::NotFound, "Track not found")
+                })?;
+
+            // Serialize the track but exclude clips
+            let mut track_json = serde_json::to_value(track).map_err(io::Error::other)?;
+            if let Some(audio) = track_json.get_mut("audio").and_then(Value::as_object_mut) {
+                audio.insert("clips".to_string(), Value::Array(vec![]));
+            }
+            if let Some(midi) = track_json.get_mut("midi").and_then(Value::as_object_mut) {
+                midi.insert("clips".to_string(), Value::Array(vec![]));
+            }
+
+            // Get plugin graph for this track
+            let graph = {
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    if let Some((plugins, connections)) =
+                        state.plugin_graphs_by_track.get(track_name)
+                    {
+                        let id_to_index: std::collections::HashMap<usize, usize> = plugins
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, p)| (p.instance_id, idx))
+                            .collect();
+                        let plugins_json: Vec<Value> = plugins
+                            .iter()
+                            .map(|p| {
+                                let state_json = p
+                                    .state
+                                    .as_ref()
+                                    .map(Self::lv2_state_to_json)
+                                    .unwrap_or(Value::Null);
+                                json!({"uri": p.uri, "state": state_json})
+                            })
+                            .collect();
+                        let conns_json: Vec<Value> = connections
+                            .iter()
+                            .filter_map(|c| {
+                                let from_node =
+                                    Self::plugin_node_to_json(&c.from_node, &id_to_index)?;
+                                let to_node = Self::plugin_node_to_json(&c.to_node, &id_to_index)?;
+                                Some(json!({
+                                    "from_node": from_node,
+                                    "from_port": c.from_port,
+                                    "to_node": to_node,
+                                    "to_port": c.to_port,
+                                    "kind": Self::kind_to_json(c.kind),
+                                }))
+                            })
+                            .collect();
+                        json!({
+                            "plugins": plugins_json,
+                            "connections": conns_json,
+                        })
+                    } else {
+                        Value::Null
+                    }
+                }
+                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                {
+                    Value::Null
+                }
+            };
+
+            // Get CLAP plugins for this track
+            let clap = state
+                .clap_plugins_by_track
+                .get(track_name)
+                .map(|plugins| json!(plugins))
+                .unwrap_or(Value::Null);
+
+            let clap_state = state
+                .clap_states_by_track
+                .get(track_name)
+                .and_then(|states| serde_json::to_value(states).ok())
+                .unwrap_or(Value::Null);
+
+            // Get connections involving this track
+            let track_connections: Vec<&crate::state::Connection> = state
+                .connections
+                .iter()
+                .filter(|c| c.from_track == track_name || c.to_track == track_name)
+                .collect();
+
+            let result = json!({
+                "track": track_json,
+                "graph": graph,
+                "clap": clap,
+                "clap_state": clap_state,
+                "connections": track_connections,
+            });
+
+            serde_json::to_writer_pretty(file, &result)?;
+            info!("Track template saved successfully to: {}", path);
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            Task::done(Message::Response(Err(format!("Failed to save track template: {}", e))))
+        } else {
+            Task::done(Message::None)
+        }
+    }
+
     pub(super) fn save(&self, path: String) -> std::io::Result<()> {
         let filename = "session.json";
         let session_root = PathBuf::from(path.clone());

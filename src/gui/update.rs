@@ -3,7 +3,7 @@ use super::{CLIENT, MIN_CLIP_WIDTH_PX, Maolan, platform};
 use crate::message::PluginFormat;
 use crate::{
     connections,
-    message::{ExportNormalizeMode, Message},
+    message::{ExportNormalizeMode, Message, Show},
     state::{ConnectionViewSelection, HW, PianoData, Resizing, Track, View},
     ui_timing::DOUBLE_CLICK,
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
@@ -222,6 +222,9 @@ impl Maolan {
                     }
                     Show::AddTrack => {
                         self.modal = Some(Show::AddTrack);
+                        // Scan and update track templates
+                        let track_templates = crate::gui::scan_track_templates();
+                        self.add_track.set_available_templates(track_templates);
                     }
                     Show::TrackPluginList => {
                         self.modal = Some(Show::TrackPluginList);
@@ -234,6 +237,29 @@ impl Maolan {
                         self.modal = Some(Show::ExportSettings);
                     }
                 }
+            }
+            Message::AddTrackFromTemplate {
+                ref name,
+                ref template,
+                audio_ins,
+                midi_ins,
+                audio_outs,
+                midi_outs,
+            } => {
+                // First create the track
+                let task = self.send(Action::AddTrack {
+                    name: name.clone(),
+                    audio_ins: audio_ins,
+                    midi_ins: midi_ins,
+                    audio_outs: audio_outs,
+                    midi_outs: midi_outs,
+                });
+
+                // Store pending template load
+                self.state.blocking_write().pending_track_template_load = Some((name.clone(), template.clone()));
+
+                self.modal = None;
+                return task;
             }
             Message::NewFromTemplate(ref template_name) => {
                 // Load template from ~/.config/maolan/session_templates/<template_name>
@@ -867,6 +893,18 @@ impl Maolan {
                     {
                         track.height = height;
                     }
+
+                    // Check if we need to load a template for this track
+                    let pending_template = state.pending_track_template_load.clone();
+                    drop(state);
+
+                    if let Some((template_track_name, template_name)) = pending_template {
+                        if template_track_name == *name {
+                            self.state.blocking_write().pending_track_template_load = None;
+                            return self.load_track_template(name.clone(), template_name);
+                        }
+                    }
+
                     self.modal = None;
                 }
                 Action::RemoveTrack(name) => {
@@ -1528,10 +1566,16 @@ impl Maolan {
                                             templates.clone();
                                         self.menu.update_templates(templates);
                                     }
-                                } else if let Err(e) = self.save(path.clone()) {
-                                    error!("{}", e);
                                 } else {
-                                    return self.send(Action::SetSessionPath(path));
+                                    // Check if this is a single-track template save
+                                    // (path contains /track_templates/)
+                                    if path.contains("/track_templates/") {
+                                        return self.save_track_as_template(track_name, path);
+                                    } else if let Err(e) = self.save(path.clone()) {
+                                        error!("{}", e);
+                                    } else {
+                                        return self.send(Action::SetSessionPath(path));
+                                    }
                                 }
                             }
                         }
@@ -2018,6 +2062,42 @@ impl Maolan {
             }
             Message::TrackRenameCancel => {
                 self.state.blocking_write().track_rename_dialog = None;
+            }
+            Message::TrackTemplateSaveShow(ref track_name) => {
+                let mut state = self.state.blocking_write();
+                state.track_template_save_dialog = Some(crate::state::TrackTemplateSaveDialog {
+                    track_name: track_name.clone(),
+                    name: String::new(),
+                });
+                drop(state);
+                self.modal = Some(Show::SaveTemplateAs);
+            }
+            Message::TrackTemplateSaveInput(_) => {
+                self.track_template_save.update(message.clone());
+            }
+            Message::TrackTemplateSaveConfirm => {
+                let dialog = self.state.blocking_read().track_template_save_dialog.clone();
+                let Some(dialog) = dialog else {
+                    return Task::none();
+                };
+
+                let name = dialog.name.trim().to_string();
+                if name.is_empty() {
+                    return Task::none();
+                }
+
+                self.state.blocking_write().track_template_save_dialog = None;
+                self.modal = None;
+
+                // Construct path: ~/.config/maolan/track_templates/<name>
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                let template_path = format!("{}/.config/maolan/track_templates/{}", home, name);
+
+                return self.refresh_graph_then_save_track_template(dialog.track_name, template_path);
+            }
+            Message::TrackTemplateSaveCancel => {
+                self.state.blocking_write().track_template_save_dialog = None;
+                self.modal = None;
             }
             Message::TemplateSaveConfirm => {
                 let dialog = self.state.blocking_read().template_save_dialog.clone();

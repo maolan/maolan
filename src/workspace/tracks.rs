@@ -174,9 +174,13 @@ impl Tracks {
                 .on_double_click(Message::OpenTrackPlugins(track.name.clone()));
 
                 let track_with_context = ContextMenu::new(track_with_mouse, move || {
-                    button("Rename")
-                        .on_press(Message::TrackRenameShow(track_name_for_menu.clone()))
-                        .into()
+                    column![
+                        button("Rename")
+                            .on_press(Message::TrackRenameShow(track_name_for_menu.clone())),
+                        button("Save as template")
+                            .on_press(Message::TrackTemplateSaveShow(track_name_for_menu.clone())),
+                    ]
+                    .into()
                 });
 
                 droppable(track_with_context)

@@ -12,6 +12,7 @@ mod style;
 mod template_save;
 mod toolbar;
 mod track_rename;
+mod track_template_save;
 mod ui_timing;
 mod widget;
 mod workspace;

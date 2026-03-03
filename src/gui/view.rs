@@ -20,6 +20,9 @@ impl Maolan {
             if state.track_rename_dialog.is_some() {
                 return self.track_rename.view();
             }
+            if state.track_template_save_dialog.is_some() {
+                return self.track_template_save.view();
+            }
             if state.template_save_dialog.is_some() {
                 return self.template_save.view();
             }

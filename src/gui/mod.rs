@@ -13,7 +13,7 @@ use crate::{
     },
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{PianoControllerPoint, PianoNote, State, StateData},
-    template_save, toolbar, track_rename, workspace,
+    template_save, toolbar, track_rename, track_template_save, workspace,
 };
 use ebur128::{EbuR128, Mode as LoudnessMode};
 use iced::{
@@ -87,6 +87,7 @@ pub struct Maolan {
     add_track: add_track::AddTrackView,
     clip_rename: clip_rename::ClipRenameView,
     track_rename: track_rename::TrackRenameView,
+    track_template_save: track_template_save::TrackTemplateSaveView,
     template_save: template_save::TemplateSaveView,
     #[cfg(all(unix, not(target_os = "macos")))]
     plugin_filter: String,
@@ -167,6 +168,27 @@ fn scan_templates() -> Vec<String> {
         .collect()
 }
 
+fn scan_track_templates() -> Vec<String> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let templates_dir = format!("{}/.config/maolan/track_templates", home);
+
+    let Ok(entries) = std::fs::read_dir(&templates_dir) else {
+        return vec![];
+    };
+
+    entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.is_dir() {
+                path.file_name()?.to_str().map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 impl Default for Maolan {
     fn default() -> Self {
         let mut state_data = StateData::default();
@@ -195,6 +217,7 @@ impl Default for Maolan {
             add_track: add_track::AddTrackView::default(),
             clip_rename: clip_rename::ClipRenameView::new(state.clone()),
             track_rename: track_rename::TrackRenameView::new(state.clone()),
+            track_template_save: track_template_save::TrackTemplateSaveView::new(state.clone()),
             template_save: template_save::TemplateSaveView::new(state.clone()),
             #[cfg(all(unix, not(target_os = "macos")))]
             plugin_filter: String::new(),
