@@ -2347,6 +2347,7 @@ version = "0.0.1"
 dependencies = [
  "alsa",
  "cpal",
+ "i24",
  "iced",
  "iced_aw",
  "iced_drop",

@@ -8,7 +8,7 @@ mod view;
 use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
-    message::{DraggedClip, Message, PluginFormat, Show, SnapMode},
+    message::{DraggedClip, ExportBitDepth, Message, PluginFormat, Show, SnapMode},
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{PianoControllerPoint, PianoNote, State, StateData},
     template_save, toolbar, track_rename, workspace,
@@ -127,6 +127,8 @@ pub struct Maolan {
     export_in_progress: bool,
     export_progress: f32,
     export_operation: Option<String>,
+    export_sample_rate_hz: u32,
+    export_bit_depth: ExportBitDepth,
     clap_ui_host: GuiClapUiHost,
     #[cfg(all(unix, not(target_os = "macos")))]
     lv2_ui_host: GuiLv2UiHost,
@@ -230,6 +232,8 @@ impl Default for Maolan {
             export_in_progress: false,
             export_progress: 0.0,
             export_operation: None,
+            export_sample_rate_hz: 48_000,
+            export_bit_depth: ExportBitDepth::Int24,
             clap_ui_host: GuiClapUiHost::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_ui_host: GuiLv2UiHost::new(),
@@ -802,9 +806,82 @@ impl Maolan {
         Ok((rel, channels.max(1), frames.max(1)))
     }
 
-    async fn export_to_wav<F>(
+    fn write_wav_with_bit_depth(
+        export_path: &Path,
+        mixed_buffer: &[f32],
+        sample_rate: i32,
+        output_channels: usize,
+        bit_depth: ExportBitDepth,
+    ) -> io::Result<()> {
+        match bit_depth {
+            ExportBitDepth::Int16 => {
+                let quantized: Vec<i16> = mixed_buffer
+                    .iter()
+                    .map(|s| {
+                        (s.clamp(-1.0, 1.0) * i16::MAX as f32)
+                            .round()
+                            .clamp(i16::MIN as f32, i16::MAX as f32) as i16
+                    })
+                    .collect();
+                wavers::write::<i16, _>(
+                    export_path,
+                    &quantized,
+                    sample_rate,
+                    output_channels as u16,
+                )
+            }
+            ExportBitDepth::Int24 => wavers::write::<i24::i24, _>(
+                export_path,
+                &mixed_buffer
+                    .iter()
+                    .map(|s| {
+                        i24::i24::from_i32(
+                            (s.clamp(-1.0, 1.0) * 8_388_607.0)
+                                .round()
+                                .clamp(-8_388_608.0, 8_388_607.0)
+                                as i32,
+                        )
+                    })
+                    .collect::<Vec<i24::i24>>(),
+                sample_rate,
+                output_channels as u16,
+            ),
+            ExportBitDepth::Int32 => {
+                let quantized: Vec<i32> = mixed_buffer
+                    .iter()
+                    .map(|s| {
+                        (s.clamp(-1.0, 1.0) * i32::MAX as f32)
+                            .round()
+                            .clamp(i32::MIN as f32, i32::MAX as f32) as i32
+                    })
+                    .collect();
+                wavers::write::<i32, _>(
+                    export_path,
+                    &quantized,
+                    sample_rate,
+                    output_channels as u16,
+                )
+            }
+            ExportBitDepth::Float32 => wavers::write::<f32, _>(
+                export_path,
+                mixed_buffer,
+                sample_rate,
+                output_channels as u16,
+            ),
+        }
+        .map_err(|e| {
+            io::Error::other(format!(
+                "Failed to write '{}': {}",
+                export_path.display(),
+                e
+            ))
+        })
+    }
+
+    async fn export_session<F>(
         export_path: &Path,
         sample_rate: i32,
+        bit_depth: ExportBitDepth,
         state: State,
         session_root: &Path,
         mut progress_callback: F,
@@ -947,22 +1024,16 @@ impl Maolan {
             tokio::task::yield_now().await;
         }
 
-        progress_callback(0.9, Some("Writing WAV file".to_string()));
+        progress_callback(0.9, Some(format!("Writing WAV ({bit_depth})")));
         tokio::task::yield_now().await;
 
-        wavers::write::<f32, _>(
+        Self::write_wav_with_bit_depth(
             export_path,
             &mixed_buffer,
             sample_rate,
-            output_channels as u16,
-        )
-        .map_err(|e| {
-            io::Error::other(format!(
-                "Failed to write '{}': {}",
-                export_path.display(),
-                e
-            ))
-        })?;
+            output_channels,
+            bit_depth,
+        )?;
 
         progress_callback(1.0, Some("Complete".to_string()));
         Ok(())
@@ -1768,6 +1839,87 @@ impl Maolan {
             },
         )
     }
+
+    const STANDARD_EXPORT_SAMPLE_RATES: [u32; 12] = [
+        8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000, 384000,
+    ];
+
+    fn export_bit_depth_options() -> Vec<ExportBitDepth> {
+        ExportBitDepth::ALL.to_vec()
+    }
+
+    fn ensure_wav_extension(path: PathBuf) -> PathBuf {
+        let has_matching_ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("wav"));
+        if has_matching_ext {
+            path
+        } else {
+            path.with_extension("wav")
+        }
+    }
+
+    fn export_settings_view(&self) -> iced::Element<'_, Message> {
+        let bit_depth_options = Self::export_bit_depth_options();
+        let selected_bit_depth = if bit_depth_options.contains(&self.export_bit_depth) {
+            self.export_bit_depth
+        } else {
+            bit_depth_options
+                .first()
+                .copied()
+                .unwrap_or(ExportBitDepth::Int24)
+        };
+
+        container(
+            column![
+                text("Export session").size(16),
+                row![text("Format: WAV"),]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                row![
+                    text("Sample rate (Hz):"),
+                    pick_list(
+                        Self::STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
+                        Some(self.export_sample_rate_hz),
+                        Message::ExportSampleRateSelected
+                    )
+                    .placeholder("Choose sample rate")
+                    .width(Length::Fixed(220.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Bit depth:"),
+                    pick_list(
+                        bit_depth_options,
+                        Some(selected_bit_depth),
+                        Message::ExportBitDepthSelected
+                    )
+                    .placeholder("Choose bit depth"),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    button("Export").on_press(Message::ExportSettingsConfirm),
+                    button("Cancel")
+                        .on_press(Message::Cancel)
+                        .style(button::secondary),
+                ]
+                .spacing(10),
+                text("Use standard sample rates for broad compatibility."),
+            ]
+            .align_x(iced::Alignment::Start)
+            .spacing(12),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
     fn update_children(&mut self, message: &Message) {
         self.menu.update(message.clone());
         self.toolbar.update(message.clone());

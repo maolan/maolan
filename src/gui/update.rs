@@ -224,6 +224,9 @@ impl Maolan {
                         self.selected_vst3_plugins.clear();
                         self.selected_clap_plugins.clear();
                     }
+                    Show::ExportSettings => {
+                        self.modal = Some(Show::ExportSettings);
+                    }
                 }
             }
             Message::NewFromTemplate(ref template_name) => {
@@ -3206,6 +3209,29 @@ impl Maolan {
             }
             Message::ImportFilesSelected(None) => {}
             Message::OpenExporter => {
+                if self.session_dir.is_none() {
+                    self.state.blocking_write().message =
+                        "Export requires an opened/saved session".to_string();
+                    return Task::none();
+                }
+                let nearest_rate = Self::STANDARD_EXPORT_SAMPLE_RATES
+                    .iter()
+                    .min_by_key(|rate| {
+                        (i64::from(**rate) - self.playback_rate_hz.round() as i64).abs()
+                    })
+                    .copied()
+                    .unwrap_or(48_000);
+                self.export_sample_rate_hz = nearest_rate;
+                self.modal = Some(crate::message::Show::ExportSettings);
+            }
+            Message::ExportSampleRateSelected(rate) => {
+                self.export_sample_rate_hz = rate;
+            }
+            Message::ExportBitDepthSelected(bit_depth) => {
+                self.export_bit_depth = bit_depth;
+            }
+            Message::ExportSettingsConfirm => {
+                self.modal = None;
                 return Task::perform(
                     async {
                         AsyncFileDialog::new()
@@ -3226,8 +3252,9 @@ impl Maolan {
                     return Task::none();
                 };
 
-                let export_path = path.clone();
-                let sample_rate = self.playback_rate_hz as i32;
+                let sample_rate = self.export_sample_rate_hz as i32;
+                let export_bit_depth = self.export_bit_depth;
+                let export_path = Self::ensure_wav_extension(path.clone());
                 let state_clone = self.state.clone();
 
                 self.export_in_progress = true;
@@ -3258,9 +3285,10 @@ impl Maolan {
                                 });
                             };
 
-                            let result = Self::export_to_wav(
+                            let result = Self::export_session(
                                 &export_path,
                                 sample_rate,
+                                export_bit_depth,
                                 state_clone,
                                 &session_root,
                                 progress_fn,
@@ -3301,7 +3329,12 @@ impl Maolan {
                 self.export_progress = progress;
                 self.export_operation = operation.clone();
 
-                if progress >= 1.0 {
+                if let Some(op) = operation
+                    && op.starts_with("Error:")
+                {
+                    self.export_in_progress = false;
+                    self.state.blocking_write().message = op.clone();
+                } else if progress >= 1.0 {
                     self.export_in_progress = false;
                     self.state.blocking_write().message = "Export complete".to_string();
                 } else if let Some(op) = operation {

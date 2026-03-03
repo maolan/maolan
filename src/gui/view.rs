@@ -25,6 +25,7 @@ impl Maolan {
             }
             match self.modal {
                 Some(Show::AddTrack) => self.add_track.view(),
+                Some(Show::ExportSettings) => self.export_settings_view(),
                 #[cfg(all(unix, not(target_os = "macos")))]
                 Some(Show::TrackPluginList) => self.track_plugin_list_view(),
                 #[cfg(any(target_os = "windows", target_os = "macos"))]

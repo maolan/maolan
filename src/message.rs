@@ -11,6 +11,7 @@ use std::fmt;
 pub enum Show {
     AddTrack,
     TrackPluginList,
+    ExportSettings,
     Save,
     SaveAs,
     SaveTemplateAs,
@@ -69,6 +70,34 @@ impl SnapMode {
         SnapMode::ThirtySecond,
         SnapMode::SixtyFourth,
     ];
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportBitDepth {
+    Int16,
+    Int24,
+    Int32,
+    Float32,
+}
+
+impl ExportBitDepth {
+    pub const ALL: [ExportBitDepth; 4] = [
+        ExportBitDepth::Int16,
+        ExportBitDepth::Int24,
+        ExportBitDepth::Int32,
+        ExportBitDepth::Float32,
+    ];
+}
+
+impl fmt::Display for ExportBitDepth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExportBitDepth::Int16 => write!(f, "16-bit PCM"),
+            ExportBitDepth::Int24 => write!(f, "24-bit PCM"),
+            ExportBitDepth::Int32 => write!(f, "32-bit PCM"),
+            ExportBitDepth::Float32 => write!(f, "32-bit float"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +161,9 @@ pub enum Message {
     SaveFolderSelected(Option<PathBuf>),
     OpenFolderSelected(Option<PathBuf>),
     OpenExporter,
+    ExportSampleRateSelected(u32),
+    ExportBitDepthSelected(ExportBitDepth),
+    ExportSettingsConfirm,
     ExportFileSelected(Option<PathBuf>),
     ExportProgress {
         progress: f32,
