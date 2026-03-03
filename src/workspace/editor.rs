@@ -391,7 +391,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 let num_points = (fade_in_width / 3.0).min(20.0) as usize;
                 for i in 0..=num_points {
                     let t = i as f32 / num_points as f32;
-                    let gain = t * t; // Ease-in curve
+                    let gain = (t * std::f32::consts::FRAC_PI_2).sin(); // Constant-power fade-in
                     let x = CLIP_RESIZE_HANDLE_WIDTH + t * fade_in_width;
                     let y = clip_height * (1.0 - gain);
 
@@ -453,8 +453,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 let num_points = (fade_out_width / 3.0).min(20.0) as usize;
                 for i in 0..=num_points {
                     let t = i as f32 / num_points as f32;
-                    let remaining = 1.0 - t;
-                    let gain = remaining * remaining; // Ease-out curve
+                    let gain = (t * std::f32::consts::FRAC_PI_2).cos(); // Constant-power fade-out
                     let x =
                         CLIP_RESIZE_HANDLE_WIDTH + clip_width - fade_out_width + t * fade_out_width;
                     let y = clip_height * (1.0 - gain);
@@ -796,7 +795,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 let num_points = (fade_in_width / 3.0).min(20.0) as usize;
                 for i in 0..=num_points {
                     let t = i as f32 / num_points as f32;
-                    let gain = t * t; // Ease-in curve
+                    let gain = (t * std::f32::consts::FRAC_PI_2).sin(); // Constant-power fade-in
                     let x = CLIP_RESIZE_HANDLE_WIDTH + t * fade_in_width;
                     let y = clip_height * (1.0 - gain);
 
@@ -858,8 +857,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 let num_points = (fade_out_width / 3.0).min(20.0) as usize;
                 for i in 0..=num_points {
                     let t = i as f32 / num_points as f32;
-                    let remaining = 1.0 - t;
-                    let gain = remaining * remaining; // Ease-out curve
+                    let gain = (t * std::f32::consts::FRAC_PI_2).cos(); // Constant-power fade-out
                     let x =
                         CLIP_RESIZE_HANDLE_WIDTH + clip_width - fade_out_width + t * fade_out_width;
                     let y = clip_height * (1.0 - gain);

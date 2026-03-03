@@ -1081,21 +1081,22 @@ impl Track {
         segments
     }
 
-    /// Ease-in curve for fade-in: starts slow, accelerates (quadratic)
+    /// Ardour-like constant-power fade-in.
+    /// gain = sin(t * pi/2)
     /// Input: t in range [0.0, 1.0] (position within fade-in region)
     /// Output: gain value in range [0.0, 1.0]
     #[inline]
     fn fade_in_curve(t: f32) -> f32 {
-        t * t
+        (t.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2).sin()
     }
 
-    /// Ease-out curve for fade-out: starts at 1.0, decelerates to 0.0 (quadratic)
+    /// Ardour-like constant-power fade-out.
+    /// gain = cos(t * pi/2)
     /// Input: t in range [0.0, 1.0] (position within fade-out region)
     /// Output: gain value in range [1.0, 0.0]
     #[inline]
     fn fade_out_curve(t: f32) -> f32 {
-        let remaining = 1.0 - t;
-        remaining * remaining
+        (t.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2).cos()
     }
 
     fn mix_clip_audio_into_inputs(&mut self) {
