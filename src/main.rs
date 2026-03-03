@@ -18,12 +18,15 @@ mod workspace;
 
 use gui::Maolan;
 use iced::{Pixels, Settings, Theme};
+use iced::window;
 use iced_fonts::LUCIDE_FONT_BYTES;
 use tracing::{Level, span};
 use tracing_subscriber::{
     fmt::{Layer as FmtLayer, writer::MakeWriterExt},
     prelude::*,
 };
+
+const ICON_BYTES: &[u8] = include_bytes!("../images/maolan.png");
 
 pub fn main() -> iced::Result {
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
@@ -54,6 +57,8 @@ fn prefer_x11_backend() {
 fn run_app() -> iced::Result {
     let config = config::Config::load().unwrap_or_default();
 
+    let icon = window::icon::from_file_data(ICON_BYTES, None).ok();
+
     let settings = Settings {
         default_text_size: Pixels(config.font_size),
         ..Default::default()
@@ -65,5 +70,9 @@ fn run_app() -> iced::Result {
         .theme(Theme::Dark)
         .font(LUCIDE_FONT_BYTES)
         .subscription(Maolan::subscription)
+        .window(window::Settings {
+            icon,
+            ..Default::default()
+        })
         .run()
 }
