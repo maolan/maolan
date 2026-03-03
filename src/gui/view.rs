@@ -55,9 +55,23 @@ impl Maolan {
                         View::Connections => self.connections.view(),
                         #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
                         View::TrackPlugins => self.track_plugins.view(),
-                        View::Piano => self
-                            .workspace
-                            .piano_view(self.pixels_per_sample(), self.samples_per_bar() as f32),
+                        View::Piano => self.workspace.piano_view(WorkspaceViewArgs {
+                            playhead_samples: Some(self.transport_samples),
+                            pixels_per_sample: self.pixels_per_sample(),
+                            beat_pixels: self.beat_pixels(),
+                            samples_per_bar: self.samples_per_bar() as f32,
+                            loop_range_samples: None,
+                            punch_range_samples: None,
+                            snap_mode: self.snap_mode,
+                            samples_per_beat: self.samples_per_beat(),
+                            zoom_visible_bars: self.zoom_visible_bars,
+                            tracks_resize_hovered: false,
+                            mixer_resize_hovered: false,
+                            active_clip_drag: None,
+                            active_clip_target_track: None,
+                            recording_preview_bounds: None,
+                            recording_preview_peaks: None,
+                        }),
                         #[cfg(target_os = "macos")]
                         View::TrackPlugins => self.connections.view(),
                     };

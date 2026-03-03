@@ -339,7 +339,71 @@ impl Workspace {
         .into()
     }
 
-    pub fn piano_view(&self, pixels_per_sample: f32, samples_per_bar: f32) -> Element<'_, Message> {
-        self.piano.view(pixels_per_sample, samples_per_bar)
+    pub fn piano_view(&self, args: WorkspaceViewArgs<'_>) -> Element<'_, Message> {
+        let WorkspaceViewArgs {
+            playhead_samples,
+            pixels_per_sample,
+            beat_pixels,
+            samples_per_bar,
+            snap_mode,
+            samples_per_beat,
+            ..
+        } = args;
+
+        let tempo = {
+            let state = self.state.blocking_read();
+            state.tempo
+        };
+
+        // Use a very large width for tempo/ruler to ensure they span the full window
+        let full_width = 100000.0_f32;
+
+        let playhead_x = playhead_samples.map(|sample| (sample as f32 * pixels_per_sample).max(0.0));
+
+        let piano_content = self.piano.view(pixels_per_sample, samples_per_bar);
+
+        let piano_with_playhead = if let Some(x) = playhead_x {
+            Stack::from_vec(vec![
+                piano_content,
+                pin(Self::playhead_line())
+                    .position(Point::new(x.max(0.0), 0.0))
+                    .into(),
+            ])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        } else {
+            piano_content
+        };
+
+        column![
+            container(self.tempo.view(TempoViewArgs {
+                bpm: tempo,
+                time_signature: (4, 4),
+                pixels_per_sample,
+                playhead_x,
+                punch_range_samples: None,
+                snap_mode,
+                samples_per_beat,
+                content_width: full_width,
+            }))
+            .width(Length::Fill)
+            .height(Length::Fixed(self.tempo.height())),
+            container(self.ruler.view(RulerViewArgs {
+                playhead_x,
+                beat_pixels,
+                pixels_per_sample,
+                loop_range_samples: None,
+                snap_mode,
+                samples_per_beat,
+                content_width: full_width,
+            }))
+            .width(Length::Fill)
+            .height(Length::Fixed(self.ruler.height())),
+            piano_with_playhead,
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 }
