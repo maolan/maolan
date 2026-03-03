@@ -1429,6 +1429,18 @@ impl Track {
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
+    pub fn get_lv2_midnam(&self) -> std::collections::HashMap<u8, String> {
+        // Get midnam from the first LV2 plugin that has it
+        for instance in &self.lv2_processors {
+            let note_names = instance.processor.midnam_note_names();
+            if !note_names.is_empty() {
+                return note_names;
+            }
+        }
+        std::collections::HashMap::new()
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub fn set_lv2_state_base_dir(&mut self, base_dir: Option<PathBuf>) {
         self.lv2_state_base_dir = base_dir.clone();
         if let Some(path) = base_dir {

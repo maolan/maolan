@@ -56,6 +56,16 @@ const LV2_WORKER_ERR_UNKNOWN: Lv2WorkerStatus = 1;
 const LV2_WORKER__SCHEDULE: &str = "http://lv2plug.in/ns/ext/worker#schedule";
 const LV2_WORKER__INTERFACE: &str = "http://lv2plug.in/ns/ext/worker#interface";
 
+// Midnam interface
+const LV2_MIDNAM__INTERFACE: &str = "http://ardour.org/lv2/midnam#interface";
+
+#[repr(C)]
+struct Lv2MidnamInterface {
+    midnam: Option<unsafe extern "C" fn(instance: Lv2Handle) -> *mut c_char>,
+    model: Option<unsafe extern "C" fn(instance: Lv2Handle) -> *mut c_char>,
+    free: Option<unsafe extern "C" fn(ptr: *mut c_char)>,
+}
+
 #[repr(C)]
 struct Lv2WorkerSchedule {
     handle: *mut c_void,
@@ -138,6 +148,7 @@ pub struct Lv2Processor {
     midi_outputs: usize,
     has_worker_interface: bool,
     control_ports: Vec<ControlPortInfo>,
+    midnam_note_names: UnsafeMutex<HashMap<u8, String>>,
 }
 
 struct LoadedPlugin {
@@ -555,8 +566,10 @@ impl Lv2Processor {
             midi_outputs,
             has_worker_interface,
             control_ports,
+            midnam_note_names: UnsafeMutex::new(HashMap::new()),
         };
         processor.connect_ports();
+        processor.query_midnam();
         Ok(processor)
     }
 
@@ -1038,6 +1051,97 @@ impl Lv2Processor {
         };
         *slot = clamped;
         Ok(())
+    }
+
+    pub fn midnam_note_names(&self) -> HashMap<u8, String> {
+        self.midnam_note_names.lock().clone()
+    }
+
+    fn query_midnam(&mut self) {
+        let Some(instance) = &self.instance else {
+            return;
+        };
+
+        if !self.has_extension_data_callback(instance.instance()) {
+            return;
+        }
+
+        let interface_ptr = unsafe {
+            instance
+                .instance()
+                .extension_data::<Lv2MidnamInterface>(LV2_MIDNAM__INTERFACE)
+        };
+        let Some(interface_ptr) = interface_ptr else {
+            return;
+        };
+        let interface = unsafe { interface_ptr.as_ref() };
+
+        // Query the midnam XML
+        let Some(midnam_fn) = interface.midnam else {
+            return;
+        };
+        let Some(free_fn) = interface.free else {
+            return;
+        };
+
+        let xml_ptr = unsafe { midnam_fn(instance.instance().handle()) };
+        if xml_ptr.is_null() {
+            return;
+        }
+
+        let xml_cstr = unsafe { CStr::from_ptr(xml_ptr) };
+        let Ok(xml_str) = xml_cstr.to_str() else {
+            unsafe { free_fn(xml_ptr) };
+            return;
+        };
+
+        // Parse the midnam XML to extract note names
+        let note_names = self.parse_midnam_xml(xml_str);
+        *self.midnam_note_names.lock() = note_names;
+
+        unsafe { free_fn(xml_ptr) };
+    }
+
+    fn parse_midnam_xml(&self, xml: &str) -> HashMap<u8, String> {
+        let mut note_names = HashMap::new();
+
+        // Simple XML parsing for <Note Number="X" Name="Y"/> elements
+        for line in xml.lines() {
+            let line = line.trim();
+            if !line.starts_with("<Note ") {
+                continue;
+            }
+
+            // Extract Number attribute
+            let number = if let Some(start) = line.find("Number=\"") {
+                let start = start + 8; // len("Number=\"")
+                if let Some(end) = line[start..].find('"') {
+                    line[start..start + end].parse::<u8>().ok()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Extract Name attribute
+            let name = if let Some(start) = line.find("Name=\"") {
+                let start = start + 6; // len("Name=\"")
+                if let Some(end) = line[start..].find('"') {
+                    Some(line[start..start + end].to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let (Some(num), Some(name_str)) = (number, name) {
+                note_names.insert(num, name_str);
+            }
+        }
+
+        note_names
     }
 
     fn write_midi_input_events(&mut self, port: usize, events: &[MidiEvent]) {

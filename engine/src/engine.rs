@@ -1614,6 +1614,25 @@ impl Engine {
                 }
             }
             #[cfg(all(unix, not(target_os = "macos")))]
+            Action::TrackGetLv2Midnam { ref track_name } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => {
+                        let note_names = track.lock().get_lv2_midnam();
+                        self.notify_clients(Ok(Action::TrackLv2Midnam {
+                            track_name: track_name.clone(),
+                            note_names,
+                        }))
+                        .await;
+                    }
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackGetLv2PluginControls {
                 ref track_name,
                 instance_id,
@@ -2997,6 +3016,8 @@ impl Engine {
             }
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLv2PluginControls { .. } => {}
+            #[cfg(all(unix, not(target_os = "macos")))]
+            Action::TrackLv2Midnam { .. } => {}
             Action::HWInfo { .. } => {}
             Action::Undo => {} // Already handled at the beginning
             Action::Redo => {} // Already handled at the beginning

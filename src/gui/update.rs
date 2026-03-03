@@ -20,7 +20,7 @@ use maolan_engine::{
     message::{Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage},
 };
 use rfd::AsyncFileDialog;
-use std::{collections::HashSet, process::exit, time::Instant};
+use std::{collections::{HashMap, HashSet}, process::exit, time::Instant};
 use tracing::error;
 
 impl Maolan {
@@ -1970,6 +1970,18 @@ impl Maolan {
                         return self.send(Action::TrackGetPluginGraph {
                             track_name: track_name.clone(),
                         });
+                    }
+                }
+                #[cfg(all(unix, not(target_os = "macos")))]
+                Action::TrackLv2Midnam {
+                    track_name,
+                    note_names,
+                } => {
+                    let mut state = self.state.blocking_write();
+                    if let Some(piano) = &mut state.piano {
+                        if piano.track_idx == *track_name {
+                            piano.midnam_note_names = note_names.clone();
+                        }
                     }
                 }
                 #[cfg(all(unix, not(target_os = "macos")))]
@@ -4118,10 +4130,17 @@ impl Maolan {
                                 clip_length_samples: parsed_len.max(clip_length),
                                 notes,
                                 controllers,
+                                midnam_note_names: HashMap::new(),
                             });
                             state.piano_scroll_x = 0.0;
                             state.piano_scroll_y = 0.0;
                             state.view = View::Piano;
+                        }
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        {
+                            let _ = self.send(Action::TrackGetLv2Midnam {
+                                track_name: track_idx.clone(),
+                            });
                         }
                         return self.sync_piano_scrollbars();
                     }

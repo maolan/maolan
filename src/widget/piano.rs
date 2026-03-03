@@ -7,7 +7,7 @@ use iced::{
         column, container, pin, row, scrollable, slider, text, vertical_slider,
     },
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
 pub struct Piano {
@@ -250,10 +250,11 @@ impl Piano {
             .height(Length::Fixed(ctrl_h));
 
         let octave_h = (notes_h / Self::OCTAVES as f32).max(1.0);
+        let midnam_note_names = roll.midnam_note_names.clone();
         let keyboard = (0..Self::OCTAVES).fold(column![], |col, octave_idx| {
             let octave = (Self::OCTAVES - 1 - octave_idx) as u8;
             col.push(
-                iced::widget::canvas(OctaveKeyboard::new(octave))
+                iced::widget::canvas(OctaveKeyboard::new(octave, midnam_note_names.clone()))
                     .width(Length::Fixed(Self::KEYBOARD_WIDTH))
                     .height(Length::Fixed(octave_h)),
             )
@@ -412,6 +413,61 @@ impl Piano {
     }
 }
 
+fn draw_octave_with_midnam(
+    renderer: &Renderer,
+    bounds: Rectangle,
+    pressed_notes: &HashSet<u8>,
+    octave: u8,
+    midnam_note_names: &HashMap<u8, String>,
+) -> Vec<canvas::Geometry> {
+    let mut frame = Frame::new(renderer, bounds.size());
+    let note_height = bounds.height / 12.0;
+
+    // Draw rectangles for each note in the octave (12 notes)
+    for i in 0..12 {
+        let note_in_octave = 11 - i; // Draw from top to bottom (high to low)
+        let midi_note = octave * 12 + note_in_octave;
+        let is_pressed = pressed_notes.contains(&note_in_octave);
+        let y_pos = i as f32 * note_height;
+
+        // Draw the rectangle
+        let rect = Path::rectangle(
+            Point::new(0.0, y_pos),
+            Size::new(bounds.width, note_height - 1.0),
+        );
+
+        frame.fill(
+            &rect,
+            if is_pressed {
+                Color::from_rgb(0.2, 0.6, 0.9)
+            } else {
+                Color::from_rgb(0.18, 0.18, 0.2)
+            },
+        );
+        frame.stroke(
+            &rect,
+            canvas::Stroke::default()
+                .with_width(1.0)
+                .with_color(Color::from_rgb(0.25, 0.25, 0.28)),
+        );
+
+        // Draw the note name if available
+        if let Some(note_name) = midnam_note_names.get(&midi_note) {
+            use iced::widget::canvas::Text;
+            let text_pos = Point::new(4.0, y_pos + note_height * 0.5 - 6.0);
+            frame.fill_text(Text {
+                content: note_name.clone(),
+                position: text_pos,
+                color: Color::from_rgb(0.85, 0.85, 0.9),
+                size: 11.0.into(),
+                ..Text::default()
+            });
+        }
+    }
+
+    vec![frame.into_geometry()]
+}
+
 fn draw_octave(
     renderer: &Renderer,
     bounds: Rectangle,
@@ -476,14 +532,15 @@ fn draw_octave(
     vec![frame.into_geometry()]
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug, Clone)]
 struct OctaveKeyboard {
     octave: u8,
+    midnam_note_names: HashMap<u8, String>,
 }
 
 impl OctaveKeyboard {
-    fn new(octave: u8) -> Self {
-        Self { octave }
+    fn new(octave: u8, midnam_note_names: HashMap<u8, String>) -> Self {
+        Self { octave, midnam_note_names }
     }
 
     fn note_class_at(&self, cursor: Point, bounds: Rectangle) -> Option<u8> {
@@ -578,7 +635,11 @@ impl Program<Message> for OctaveKeyboard {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        draw_octave(renderer, bounds, &state.pressed_notes)
+        if self.midnam_note_names.is_empty() {
+            draw_octave(renderer, bounds, &state.pressed_notes)
+        } else {
+            draw_octave_with_midnam(renderer, bounds, &state.pressed_notes, self.octave, &self.midnam_note_names)
+        }
     }
 }
 

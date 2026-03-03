@@ -315,6 +315,7 @@ pub struct PianoData {
     pub clip_length_samples: usize,
     pub notes: Vec<PianoNote>,
     pub controllers: Vec<PianoControllerPoint>,
+    pub midnam_note_names: HashMap<u8, String>,
 }
 
 #[derive(Debug)]

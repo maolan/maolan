@@ -257,6 +257,15 @@ pub enum Action {
         instance_access_handle: Option<usize>,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
+    TrackGetLv2Midnam {
+        track_name: String,
+    },
+    #[cfg(all(unix, not(target_os = "macos")))]
+    TrackLv2Midnam {
+        track_name: String,
+        note_names: std::collections::HashMap<u8, String>,
+    },
+    #[cfg(all(unix, not(target_os = "macos")))]
     TrackSetLv2ControlValue {
         track_name: String,
         instance_id: usize,
