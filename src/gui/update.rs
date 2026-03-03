@@ -151,7 +151,10 @@ impl Maolan {
             Message::Show(ref show) => {
                 use crate::message::Show;
                 if !self.state.blocking_read().hw_loaded
-                    && matches!(show, Show::Save | Show::SaveAs | Show::SaveTemplateAs | Show::Open)
+                    && matches!(
+                        show,
+                        Show::Save | Show::SaveAs | Show::SaveTemplateAs | Show::Open
+                    )
                 {
                     return Task::none();
                 }
@@ -226,13 +229,20 @@ impl Maolan {
             Message::NewFromTemplate(ref template_name) => {
                 // Load template from ~/.config/maolan/session_templates/<template_name>
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                let template_path = format!("{}/.config/maolan/session_templates/{}", home, template_name);
+                let template_path = format!(
+                    "{}/.config/maolan/session_templates/{}",
+                    home, template_name
+                );
 
                 match self.load(template_path.clone()) {
                     Ok(task) => return task,
                     Err(e) => {
-                        error!("Failed to load template '{}' from {}: {}", template_name, template_path, e);
-                        self.state.blocking_write().message = format!("Failed to load template: {}", e);
+                        error!(
+                            "Failed to load template '{}' from {}: {}",
+                            template_name, template_path, e
+                        );
+                        self.state.blocking_write().message =
+                            format!("Failed to load template: {}", e);
                     }
                 }
             }
@@ -593,7 +603,22 @@ impl Maolan {
             #[cfg(all(unix, not(target_os = "macos")))]
             Message::RefreshLv2Plugins => return self.send(Action::ListLv2Plugins),
             Message::RefreshVst3Plugins => return self.send(Action::ListVst3Plugins),
-            Message::RefreshClapPlugins => return self.send(Action::ListClapPlugins),
+            Message::RefreshClapPlugins => {
+                if self.scan_clap_capabilities {
+                    return self.send(Action::ListClapPluginsWithCapabilities);
+                } else {
+                    return self.send(Action::ListClapPlugins);
+                }
+            }
+            Message::ToggleClapCapabilityScanning(enabled) => {
+                self.scan_clap_capabilities = enabled;
+                // Refresh plugins with new setting
+                if self.scan_clap_capabilities {
+                    return self.send(Action::ListClapPluginsWithCapabilities);
+                } else {
+                    return self.send(Action::ListClapPlugins);
+                }
+            }
             #[cfg(all(unix, not(target_os = "macos")))]
             Message::FilterLv2Plugins(ref query) => {
                 self.plugin_filter = query.clone();
@@ -1305,12 +1330,15 @@ impl Maolan {
                                 if is_template {
                                     if let Err(e) = self.save_template(path.clone()) {
                                         error!("{}", e);
-                                        self.state.blocking_write().message = format!("Failed to save template: {}", e);
+                                        self.state.blocking_write().message =
+                                            format!("Failed to save template: {}", e);
                                     } else {
-                                        self.state.blocking_write().message = "Template saved".to_string();
+                                        self.state.blocking_write().message =
+                                            "Template saved".to_string();
                                         // Rescan templates and update menu
                                         let templates = crate::gui::scan_templates();
-                                        self.state.blocking_write().available_templates = templates.clone();
+                                        self.state.blocking_write().available_templates =
+                                            templates.clone();
                                         self.menu.update_templates(templates);
                                     }
                                 } else if let Err(e) = self.save(path.clone()) {
@@ -1427,11 +1455,22 @@ impl Maolan {
                     connections,
                 } => {
                     use tracing::info;
-                    info!("Received plugin graph for track '{}' with {} plugins", track_name, plugins.len());
+                    info!(
+                        "Received plugin graph for track '{}' with {} plugins",
+                        track_name,
+                        plugins.len()
+                    );
                     for (idx, plugin) in plugins.iter().enumerate() {
-                        info!("  Plugin {}: uri={}, state properties count={}",
-                              idx, plugin.uri,
-                              plugin.state.as_ref().map(|s| s.properties.len()).unwrap_or(0));
+                        info!(
+                            "  Plugin {}: uri={}, state properties count={}",
+                            idx,
+                            plugin.uri,
+                            plugin
+                                .state
+                                .as_ref()
+                                .map(|s| s.properties.len())
+                                .unwrap_or(0)
+                        );
                     }
                     let mut state = self.state.blocking_write();
                     state
@@ -1469,12 +1508,15 @@ impl Maolan {
                                 if is_template {
                                     if let Err(e) = self.save_template(path.clone()) {
                                         error!("{}", e);
-                                        self.state.blocking_write().message = format!("Failed to save template: {}", e);
+                                        self.state.blocking_write().message =
+                                            format!("Failed to save template: {}", e);
                                     } else {
-                                        self.state.blocking_write().message = "Template saved".to_string();
+                                        self.state.blocking_write().message =
+                                            "Template saved".to_string();
                                         // Rescan templates and update menu
                                         let templates = crate::gui::scan_templates();
-                                        self.state.blocking_write().available_templates = templates.clone();
+                                        self.state.blocking_write().available_templates =
+                                            templates.clone();
                                         self.menu.update_templates(templates);
                                     }
                                 } else if let Err(e) = self.save(path.clone()) {
@@ -2294,24 +2336,20 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) {
                     let initial_samples = match kind {
-                        Kind::Audio => {
-                            track.audio.clips.get(clip_idx).map(|clip| {
-                                if is_fade_out {
-                                    clip.fade_out_samples
-                                } else {
-                                    clip.fade_in_samples
-                                }
-                            })
-                        }
-                        Kind::MIDI => {
-                            track.midi.clips.get(clip_idx).map(|clip| {
-                                if is_fade_out {
-                                    clip.fade_out_samples
-                                } else {
-                                    clip.fade_in_samples
-                                }
-                            })
-                        }
+                        Kind::Audio => track.audio.clips.get(clip_idx).map(|clip| {
+                            if is_fade_out {
+                                clip.fade_out_samples
+                            } else {
+                                clip.fade_in_samples
+                            }
+                        }),
+                        Kind::MIDI => track.midi.clips.get(clip_idx).map(|clip| {
+                            if is_fade_out {
+                                clip.fade_out_samples
+                            } else {
+                                clip.fade_in_samples
+                            }
+                        }),
                     };
 
                     if let Some(initial_samples) = initial_samples {
@@ -2452,7 +2490,8 @@ impl Maolan {
                                 (position.x - initial_mouse_x) / pixels_per_sample
                             };
                             let new_fade_samples =
-                                ((initial_samples as f32 + delta_samples).max(0.0) as usize).min(96000); // Max 2 seconds at 48kHz
+                                ((initial_samples as f32 + delta_samples).max(0.0) as usize)
+                                    .min(96000); // Max 2 seconds at 48kHz
 
                             match kind {
                                 Kind::Audio => {
@@ -2558,14 +2597,22 @@ impl Maolan {
                         let (fade_enabled, fade_in_samples, fade_out_samples) = match kind {
                             Kind::Audio => {
                                 if let Some(clip) = track.audio.clips.get(index) {
-                                    (clip.fade_enabled, clip.fade_in_samples, clip.fade_out_samples)
+                                    (
+                                        clip.fade_enabled,
+                                        clip.fade_in_samples,
+                                        clip.fade_out_samples,
+                                    )
                                 } else {
                                     return Task::none();
                                 }
                             }
                             Kind::MIDI => {
                                 if let Some(clip) = track.midi.clips.get(index) {
-                                    (clip.fade_enabled, clip.fade_in_samples, clip.fade_out_samples)
+                                    (
+                                        clip.fade_enabled,
+                                        clip.fade_in_samples,
+                                        clip.fade_out_samples,
+                                    )
                                 } else {
                                     return Task::none();
                                 }

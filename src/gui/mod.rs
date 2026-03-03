@@ -15,7 +15,7 @@ use crate::{
 };
 use iced::{
     Length, Size, Task,
-    widget::{button, column, container, pick_list, row, scrollable, text, text_input},
+    widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
 };
 #[cfg(unix)]
 use maolan_engine::kind::Kind;
@@ -132,6 +132,7 @@ pub struct Maolan {
     lv2_ui_host: GuiLv2UiHost,
     vst3_ui_host: GuiVst3UiHost,
     pending_vst3_ui_open: Option<PendingVst3UiOpen>,
+    scan_clap_capabilities: bool,
 }
 
 fn scan_templates() -> Vec<String> {
@@ -234,6 +235,7 @@ impl Default for Maolan {
             lv2_ui_host: GuiLv2UiHost::new(),
             vst3_ui_host: GuiVst3UiHost::new(),
             pending_vst3_ui_open: None,
+            scan_clap_capabilities: false,
         }
     }
 }
@@ -1385,9 +1387,25 @@ impl Maolan {
                 }
             }
             let is_selected = self.selected_clap_plugins.contains(&plugin.path);
+
+            // Build capability indicators
+            let mut capability_icons = String::new();
+            if let Some(caps) = &plugin.capabilities {
+                if caps.has_gui {
+                    capability_icons.push_str("\u{1F5BC} "); // 🖼 Frame with Picture
+                }
+                if caps.has_params {
+                    capability_icons.push_str("\u{2699} "); // ⚙ Gear
+                }
+                if caps.has_state {
+                    capability_icons.push_str("\u{1F4BE} "); // 💾 Floppy Disk
+                }
+            }
+
             let row_content: iced::Element<'_, Message> = row![
                 text(if is_selected { "[x]" } else { "[ ]" }),
                 text(plugin.name.clone()).width(Length::Fill),
+                text(capability_icons),
             ]
             .spacing(8)
             .width(Length::Fill)
@@ -1498,6 +1516,9 @@ impl Maolan {
                     text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
                         .on_input(Message::FilterClapPlugin)
                         .width(Length::Fill),
+                    checkbox(self.scan_clap_capabilities)
+                        .label("Scan capabilities (GUI, params, etc.)")
+                        .on_toggle(Message::ToggleClapCapabilityScanning),
                     scrollable(clap_list).height(Length::Fill),
                     row![
                         load,
@@ -1607,9 +1628,25 @@ impl Maolan {
                 }
             }
             let is_selected = self.selected_clap_plugins.contains(&plugin.path);
+
+            // Build capability indicators
+            let mut capability_icons = String::new();
+            if let Some(caps) = &plugin.capabilities {
+                if caps.has_gui {
+                    capability_icons.push_str("\u{1F5BC} "); // 🖼 Frame with Picture
+                }
+                if caps.has_params {
+                    capability_icons.push_str("\u{2699} "); // ⚙ Gear
+                }
+                if caps.has_state {
+                    capability_icons.push_str("\u{1F4BE} "); // 💾 Floppy Disk
+                }
+            }
+
             let row_content: iced::Element<'_, Message> = row![
                 text(if is_selected { "[x]" } else { "[ ]" }),
                 text(plugin.name.clone()).width(Length::Fill),
+                text(capability_icons),
             ]
             .spacing(8)
             .width(Length::Fill)
@@ -1639,6 +1676,9 @@ impl Maolan {
                 text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
                     .on_input(Message::FilterClapPlugin)
                     .width(Length::Fill),
+                checkbox(self.scan_clap_capabilities)
+                    .label("Scan capabilities (GUI, params, etc.)")
+                    .on_toggle(Message::ToggleClapCapabilityScanning),
                 scrollable(clap_list).height(Length::Fill),
                 row![
                     load,

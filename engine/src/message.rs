@@ -282,6 +282,7 @@ pub enum Action {
     ListVst3Plugins,
     Vst3Plugins(Vec<Vst3PluginInfo>),
     ListClapPlugins,
+    ListClapPluginsWithCapabilities,
     ClapPlugins(Vec<ClapPluginInfo>),
     TrackLoadClapPlugin {
         track_name: String,

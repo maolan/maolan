@@ -1163,7 +1163,8 @@ impl Track {
                             // Apply fade-out
                             if clip_sample_pos >= clip_len.saturating_sub(clip.fade_out_samples) {
                                 let fade_out_start = clip_len.saturating_sub(clip.fade_out_samples);
-                                let t = (clip_sample_pos - fade_out_start) as f32 / clip.fade_out_samples.max(1) as f32;
+                                let t = (clip_sample_pos - fade_out_start) as f32
+                                    / clip.fade_out_samples.max(1) as f32;
                                 sample *= Self::fade_out_curve(t);
                             }
                         }

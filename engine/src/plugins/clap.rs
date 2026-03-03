@@ -69,6 +69,19 @@ enum PendingParamEvent {
 pub struct ClapPluginInfo {
     pub name: String,
     pub path: String,
+    pub capabilities: Option<ClapPluginCapabilities>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClapPluginCapabilities {
+    pub has_gui: bool,
+    pub gui_apis: Vec<String>,
+    pub supports_embedded: bool,
+    pub supports_floating: bool,
+    pub has_params: bool,
+    pub has_state: bool,
+    pub has_audio_ports: bool,
+    pub has_note_ports: bool,
 }
 
 #[derive(Clone)]
@@ -601,6 +614,26 @@ struct ClapPluginNotePorts {
     get: Option<
         unsafe extern "C" fn(*const ClapPlugin, u32, bool, *mut ClapNotePortInfoRaw) -> bool,
     >,
+}
+
+#[repr(C)]
+struct ClapPluginGui {
+    is_api_supported: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char, bool) -> bool>,
+    get_preferred_api:
+        Option<unsafe extern "C" fn(*const ClapPlugin, *mut *const c_char, *mut bool) -> bool>,
+    create: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char, bool) -> bool>,
+    destroy: Option<unsafe extern "C" fn(*const ClapPlugin)>,
+    set_scale: Option<unsafe extern "C" fn(*const ClapPlugin, f64) -> bool>,
+    get_size: Option<unsafe extern "C" fn(*const ClapPlugin, *mut u32, *mut u32) -> bool>,
+    can_resize: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
+    get_resize_hints: Option<unsafe extern "C" fn(*const ClapPlugin, *mut c_void) -> bool>,
+    adjust_size: Option<unsafe extern "C" fn(*const ClapPlugin, *mut u32, *mut u32) -> bool>,
+    set_size: Option<unsafe extern "C" fn(*const ClapPlugin, u32, u32) -> bool>,
+    set_parent: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_void) -> bool>,
+    set_transient: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_void) -> bool>,
+    suggest_title: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char)>,
+    show: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
+    hide: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
 }
 
 #[repr(C)]
@@ -1561,6 +1594,10 @@ unsafe extern "C" fn clap_istream_read(
 }
 
 pub fn list_plugins() -> Vec<ClapPluginInfo> {
+    list_plugins_with_capabilities(false)
+}
+
+pub fn list_plugins_with_capabilities(scan_capabilities: bool) -> Vec<ClapPluginInfo> {
     let mut roots = default_clap_search_roots();
 
     if let Ok(extra) = std::env::var("CLAP_PATH") {
@@ -1573,7 +1610,7 @@ pub fn list_plugins() -> Vec<ClapPluginInfo> {
 
     let mut out = Vec::new();
     for root in roots {
-        collect_clap_plugins(&root, &mut out);
+        collect_clap_plugins(&root, &mut out, scan_capabilities);
     }
 
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -1581,7 +1618,7 @@ pub fn list_plugins() -> Vec<ClapPluginInfo> {
     out
 }
 
-fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>) {
+fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>, scan_capabilities: bool) {
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -1595,7 +1632,7 @@ fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>) {
         }
 
         if ft.is_dir() {
-            collect_clap_plugins(&path, out);
+            collect_clap_plugins(&path, out, scan_capabilities);
             continue;
         }
 
@@ -1603,7 +1640,7 @@ fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>) {
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("clap"))
         {
-            let infos = scan_bundle_descriptors(&path);
+            let infos = scan_bundle_descriptors(&path, scan_capabilities);
             if infos.is_empty() {
                 let name = path
                     .file_stem()
@@ -1612,6 +1649,7 @@ fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>) {
                 out.push(ClapPluginInfo {
                     name,
                     path: path.to_string_lossy().to_string(),
+                    capabilities: None,
                 });
             } else {
                 out.extend(infos);
@@ -1620,7 +1658,7 @@ fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>) {
     }
 }
 
-fn scan_bundle_descriptors(path: &Path) -> Vec<ClapPluginInfo> {
+fn scan_bundle_descriptors(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo> {
     let path_str = path.to_string_lossy().to_string();
     let factory_id = c"clap.plugin-factory";
     let host_runtime = match HostRuntime::new() {
@@ -1684,9 +1722,17 @@ fn scan_bundle_descriptors(path: &Path) -> Vec<ClapPluginInfo> {
                     let name = unsafe { CStr::from_ptr(desc.name) }
                         .to_string_lossy()
                         .to_string();
+
+                    let capabilities = if scan_capabilities {
+                        scan_plugin_capabilities(factory_ref, factory, &host_runtime.host, &id)
+                    } else {
+                        None
+                    };
+
                     out.push(ClapPluginInfo {
                         name,
                         path: format!("{path_str}::{id}"),
+                        capabilities,
                     });
                 }
             }
@@ -1697,6 +1743,113 @@ fn scan_bundle_descriptors(path: &Path) -> Vec<ClapPluginInfo> {
         unsafe { deinit() };
     }
     out
+}
+
+fn scan_plugin_capabilities(
+    factory: &ClapPluginFactory,
+    factory_ptr: *const ClapPluginFactory,
+    host: &ClapHost,
+    plugin_id: &str,
+) -> Option<ClapPluginCapabilities> {
+    let Some(create) = factory.create_plugin else {
+        return None;
+    };
+
+    let id_cstring = CString::new(plugin_id).ok()?;
+    // SAFETY: valid factory, host, and id pointers.
+    let plugin = unsafe { create(factory_ptr, host, id_cstring.as_ptr()) };
+    if plugin.is_null() {
+        return None;
+    }
+
+    // SAFETY: plugin pointer validated above.
+    let plugin_ref = unsafe { &*plugin };
+    let Some(plugin_init) = plugin_ref.init else {
+        return None;
+    };
+
+    // SAFETY: plugin pointer and function pointer follow CLAP ABI.
+    if unsafe { !plugin_init(plugin) } {
+        return None;
+    }
+
+    let mut capabilities = ClapPluginCapabilities {
+        has_gui: false,
+        gui_apis: Vec::new(),
+        supports_embedded: false,
+        supports_floating: false,
+        has_params: false,
+        has_state: false,
+        has_audio_ports: false,
+        has_note_ports: false,
+    };
+
+    // Check for extensions
+    if let Some(get_extension) = plugin_ref.get_extension {
+        // Check GUI extension
+        let gui_ext_id = c"clap.gui";
+        // SAFETY: extension id is valid static C string.
+        let gui_ptr = unsafe { get_extension(plugin, gui_ext_id.as_ptr()) };
+        if !gui_ptr.is_null() {
+            capabilities.has_gui = true;
+            // SAFETY: CLAP guarantees extension pointer layout for requested extension id.
+            let gui = unsafe { &*(gui_ptr as *const ClapPluginGui) };
+
+            // Check which GUI APIs are supported
+            if let Some(is_api_supported) = gui.is_api_supported {
+                for api in ["x11", "cocoa", "win32"] {
+                    if let Ok(api_cstr) = CString::new(api) {
+                        // Check embedded mode
+                        // SAFETY: valid plugin and API string pointers.
+                        if unsafe { is_api_supported(plugin, api_cstr.as_ptr(), false) } {
+                            capabilities.gui_apis.push(format!("{} (embedded)", api));
+                            capabilities.supports_embedded = true;
+                        }
+                        // Check floating mode
+                        // SAFETY: valid plugin and API string pointers.
+                        if unsafe { is_api_supported(plugin, api_cstr.as_ptr(), true) } {
+                            if !capabilities.supports_embedded {
+                                capabilities.gui_apis.push(format!("{} (floating)", api));
+                            }
+                            capabilities.supports_floating = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check params extension
+        let params_ext_id = c"clap.params";
+        // SAFETY: extension id is valid static C string.
+        let params_ptr = unsafe { get_extension(plugin, params_ext_id.as_ptr()) };
+        capabilities.has_params = !params_ptr.is_null();
+
+        // Check state extension
+        let state_ext_id = c"clap.state";
+        // SAFETY: extension id is valid static C string.
+        let state_ptr = unsafe { get_extension(plugin, state_ext_id.as_ptr()) };
+        capabilities.has_state = !state_ptr.is_null();
+
+        // Check audio-ports extension
+        let audio_ports_ext_id = c"clap.audio-ports";
+        // SAFETY: extension id is valid static C string.
+        let audio_ports_ptr = unsafe { get_extension(plugin, audio_ports_ext_id.as_ptr()) };
+        capabilities.has_audio_ports = !audio_ports_ptr.is_null();
+
+        // Check note-ports extension
+        let note_ports_ext_id = c"clap.note-ports";
+        // SAFETY: extension id is valid static C string.
+        let note_ports_ptr = unsafe { get_extension(plugin, note_ports_ext_id.as_ptr()) };
+        capabilities.has_note_ports = !note_ports_ptr.is_null();
+    }
+
+    // Clean up plugin instance
+    if let Some(destroy) = plugin_ref.destroy {
+        // SAFETY: plugin pointer is valid.
+        unsafe { destroy(plugin) };
+    }
+
+    Some(capabilities)
 }
 
 fn default_clap_search_roots() -> Vec<PathBuf> {

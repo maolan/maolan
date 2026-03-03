@@ -9,11 +9,11 @@ use crate::{
     state::State,
     widget::piano,
 };
+use editor::EditorViewArgs;
 use iced::{
     Background, Color, Element, Length, Point,
     widget::{Id, Stack, column, container, mouse_area, pin, row, scrollable, slider},
 };
-use editor::EditorViewArgs;
 use ruler::RulerViewArgs;
 use std::collections::HashMap;
 use tempo::TempoViewArgs;

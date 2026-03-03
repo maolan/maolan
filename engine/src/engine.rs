@@ -1782,6 +1782,13 @@ impl Engine {
                     .await;
                 return;
             }
+            Action::ListClapPluginsWithCapabilities => {
+                self.notify_clients(Ok(Action::ClapPlugins(
+                    crate::clap::list_plugins_with_capabilities(true),
+                )))
+                .await;
+                return;
+            }
             Action::ClapPlugins(_) => {}
             Action::TrackLoadClapPlugin {
                 ref track_name,
@@ -2995,6 +3002,9 @@ impl Engine {
                         self.handle_request(a).await;
                     }
                     Action::ListClapPlugins => {
+                        self.handle_request(a).await;
+                    }
+                    Action::ListClapPluginsWithCapabilities => {
                         self.handle_request(a).await;
                     }
                     _ => {

@@ -455,7 +455,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     let t = i as f32 / num_points as f32;
                     let remaining = 1.0 - t;
                     let gain = remaining * remaining; // Ease-out curve
-                    let x = CLIP_RESIZE_HANDLE_WIDTH + clip_width - fade_out_width + t * fade_out_width;
+                    let x =
+                        CLIP_RESIZE_HANDLE_WIDTH + clip_width - fade_out_width + t * fade_out_width;
                     let y = clip_height * (1.0 - gain);
 
                     let point = container("")
@@ -859,7 +860,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     let t = i as f32 / num_points as f32;
                     let remaining = 1.0 - t;
                     let gain = remaining * remaining; // Ease-out curve
-                    let x = CLIP_RESIZE_HANDLE_WIDTH + clip_width - fade_out_width + t * fade_out_width;
+                    let x =
+                        CLIP_RESIZE_HANDLE_WIDTH + clip_width - fade_out_width + t * fade_out_width;
                     let y = clip_height * (1.0 - gain);
 
                     let point = container("")

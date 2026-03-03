@@ -242,6 +242,7 @@ pub enum Message {
     SelectVst3Plugin(String),
     LoadSelectedVst3Plugins,
     RefreshClapPlugins,
+    ToggleClapCapabilityScanning(bool),
     FilterClapPlugin(String),
     SelectClapPlugin(String),
     LoadSelectedClapPlugins,

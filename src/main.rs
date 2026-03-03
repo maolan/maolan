@@ -1,7 +1,6 @@
 mod add_track;
 mod clip_rename;
 mod config;
-mod template_save;
 mod connections;
 mod gui;
 mod hw;
@@ -10,6 +9,7 @@ mod message;
 mod plugins;
 mod state;
 mod style;
+mod template_save;
 mod toolbar;
 mod track_rename;
 mod ui_timing;
