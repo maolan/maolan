@@ -369,8 +369,8 @@ impl Workspace {
         let horizontal_beat_pixels = (beat_pixels * horizontal_zoom).max(0.0001);
         let timeline_content_width =
             (clip_length_samples.max(1) as f32 * horizontal_pixels_per_sample).max(1.0);
-        let playhead_x = playhead_samples
-            .map(|sample| (sample as f32 * horizontal_pixels_per_sample).max(0.0));
+        let playhead_x =
+            playhead_samples.map(|sample| (sample as f32 * horizontal_pixels_per_sample).max(0.0));
 
         let piano_content = self.piano.view(pixels_per_sample, samples_per_bar);
 

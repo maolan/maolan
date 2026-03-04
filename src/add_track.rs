@@ -27,7 +27,10 @@ impl AddTrackView {
         use std::io::BufReader;
 
         let home = std::env::var("HOME").ok()?;
-        let template_path = format!("{}/.config/maolan/track_templates/{}/track.json", home, template_name);
+        let template_path = format!(
+            "{}/.config/maolan/track_templates/{}/track.json",
+            home, template_name
+        );
 
         let file = File::open(template_path).ok()?;
         let reader = BufReader::new(file);
@@ -89,7 +92,10 @@ impl AddTrackView {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let template_name = self.selected_template.clone().unwrap_or_else(|| "empty".to_string());
+        let template_name = self
+            .selected_template
+            .clone()
+            .unwrap_or_else(|| "empty".to_string());
 
         let create = if self.name.trim().is_empty() {
             button("Create")
@@ -119,7 +125,11 @@ impl AddTrackView {
         let mut template_options = vec!["empty".to_string()];
         template_options.extend(self.available_templates.clone());
 
-        let selected_display = self.selected_template.as_ref().map(|s| s.as_str()).unwrap_or("empty");
+        let selected_display = self
+            .selected_template
+            .as_ref()
+            .map(|s| s.as_str())
+            .unwrap_or("empty");
         let is_empty_template = selected_display == "empty";
 
         let mut col = column![
@@ -183,12 +193,10 @@ impl AddTrackView {
         } else {
             // Show read-only information when a template is selected
             col = col.push(
-                row![
-                    text(format!(
-                        "Audio: {} in / {} out, MIDI: {} in / {} out",
-                        self.audio_ins, self.audio_outs, self.midi_ins, self.midi_outs
-                    )),
-                ]
+                row![text(format!(
+                    "Audio: {} in / {} out, MIDI: {} in / {} out",
+                    self.audio_ins, self.audio_outs, self.midi_ins, self.midi_outs
+                )),]
                 .spacing(10),
             );
         }
@@ -204,12 +212,12 @@ impl AddTrackView {
         );
 
         container(col.align_x(Alignment::End).spacing(10))
-        .padding(20)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center)
-        .into()
+            .padding(20)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .into()
     }
 }
 

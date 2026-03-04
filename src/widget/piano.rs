@@ -230,14 +230,12 @@ impl Piano {
 
         // Add interactive canvas overlay for note selection and dragging
         note_layers.push(
-            pin(
-                iced::widget::canvas(PianoRollInteraction::new(
-                    self.state.clone(),
-                    pixels_per_sample,
-                ))
-                .width(Length::Fixed(notes_w))
-                .height(Length::Fixed(notes_h)),
-            )
+            pin(iced::widget::canvas(PianoRollInteraction::new(
+                self.state.clone(),
+                pixels_per_sample,
+            ))
+            .width(Length::Fixed(notes_w))
+            .height(Length::Fixed(notes_h)))
             .position(Point::new(0.0, 0.0))
             .into(),
         );
@@ -540,7 +538,10 @@ struct OctaveKeyboard {
 
 impl OctaveKeyboard {
     fn new(octave: u8, midnam_note_names: HashMap<u8, String>) -> Self {
-        Self { octave, midnam_note_names }
+        Self {
+            octave,
+            midnam_note_names,
+        }
     }
 
     fn note_class_at(&self, cursor: Point, bounds: Rectangle) -> Option<u8> {
@@ -638,7 +639,13 @@ impl Program<Message> for OctaveKeyboard {
         if self.midnam_note_names.is_empty() {
             draw_octave(renderer, bounds, &state.pressed_notes)
         } else {
-            draw_octave_with_midnam(renderer, bounds, &state.pressed_notes, self.octave, &self.midnam_note_names)
+            draw_octave_with_midnam(
+                renderer,
+                bounds,
+                &state.pressed_notes,
+                self.octave,
+                &self.midnam_note_names,
+            )
         }
     }
 }
@@ -674,11 +681,7 @@ impl PianoRollInteraction {
             let w = (note.length_samples as f32 * pps).max(2.0);
             let h = (row_h - 2.0).max(2.0);
 
-            if position.x >= x
-                && position.x <= x + w
-                && position.y >= y
-                && position.y <= y + h
-            {
+            if position.x >= x && position.x <= x + w && position.y >= y && position.y <= y + h {
                 return Some(idx);
             }
         }
@@ -913,7 +916,10 @@ impl Program<Message> for PianoRollInteraction {
                     height: h + 2.0,
                 };
 
-                let path = Path::rectangle(Point::new(selection_rect.x, selection_rect.y), Size::new(selection_rect.width, selection_rect.height));
+                let path = Path::rectangle(
+                    Point::new(selection_rect.x, selection_rect.y),
+                    Size::new(selection_rect.width, selection_rect.height),
+                );
                 frame.stroke(
                     &path,
                     canvas::Stroke::default()
@@ -945,7 +951,10 @@ impl Program<Message> for PianoRollInteraction {
                     height: h,
                 };
 
-                let path = Path::rectangle(Point::new(note_rect.x, note_rect.y), Size::new(note_rect.width, note_rect.height));
+                let path = Path::rectangle(
+                    Point::new(note_rect.x, note_rect.y),
+                    Size::new(note_rect.width, note_rect.height),
+                );
                 frame.fill(
                     &path,
                     Color {
@@ -972,7 +981,10 @@ impl Program<Message> for PianoRollInteraction {
                 height: max_y - min_y,
             };
 
-            let path = Path::rectangle(Point::new(selection_rect.x, selection_rect.y), Size::new(selection_rect.width, selection_rect.height));
+            let path = Path::rectangle(
+                Point::new(selection_rect.x, selection_rect.y),
+                Size::new(selection_rect.width, selection_rect.height),
+            );
             frame.fill(
                 &path,
                 Color {
@@ -1007,7 +1019,10 @@ impl Program<Message> for PianoRollInteraction {
             } else {
                 let min_end = original.start_sample.saturating_add(1) as i64;
                 let new_end = (original_end as i64 + delta_samples).max(min_end) as usize;
-                (original.start_sample, new_end.saturating_sub(original.start_sample).max(1))
+                (
+                    original.start_sample,
+                    new_end.saturating_sub(original.start_sample).max(1),
+                )
             };
 
             if original.pitch <= Piano::PITCH_MAX {

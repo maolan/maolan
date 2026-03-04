@@ -18,8 +18,8 @@ mod widget;
 mod workspace;
 
 use gui::Maolan;
-use iced::{Pixels, Settings, Theme};
 use iced::window;
+use iced::{Pixels, Settings, Theme};
 use iced_fonts::LUCIDE_FONT_BYTES;
 use tracing::{Level, span};
 use tracing_subscriber::{

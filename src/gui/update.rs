@@ -20,7 +20,11 @@ use maolan_engine::{
     message::{Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage},
 };
 use rfd::AsyncFileDialog;
-use std::{collections::{HashMap, HashSet}, process::exit, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    process::exit,
+    time::Instant,
+};
 use tracing::error;
 
 impl Maolan {
@@ -694,9 +698,7 @@ impl Maolan {
                     let delta_samples = (delta_x / pps) as i64;
                     let delta_pitch = -(delta_y / row_h).round() as i8;
 
-                    if copy
-                        && let Some(piano) = state.piano.as_ref()
-                    {
+                    if copy && let Some(piano) = state.piano.as_ref() {
                         let track_name = piano.track_idx.clone();
                         let clip_idx = 0; // TODO: Get actual clip index
                         let insert_base = piano.notes.len();

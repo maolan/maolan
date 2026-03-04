@@ -3099,7 +3099,23 @@ impl Engine {
                     }
                     _ => {
                         self.pending_requests.push_back(a);
-                        self.request_hw_cycle().await;
+                        let can_schedule_hw_cycle = {
+                            #[cfg(unix)]
+                            {
+                                self.hw_worker.is_some() || self.jack_runtime.is_some()
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                self.hw_worker.is_some()
+                            }
+                        };
+                        if can_schedule_hw_cycle {
+                            self.request_hw_cycle().await;
+                        } else {
+                            while let Some(next) = self.pending_requests.pop_front() {
+                                self.handle_request(next).await;
+                            }
+                        }
                     }
                 },
                 Message::HWFinished => {

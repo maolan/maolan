@@ -187,7 +187,8 @@ impl Maolan {
             ];
 
             // Store the track name for later use
-            self.state.blocking_write().message = format!("Saving track template for {}", track_name);
+            self.state.blocking_write().message =
+                format!("Saving track template for {}", track_name);
 
             return Task::batch(tasks);
         }
@@ -198,20 +199,33 @@ impl Maolan {
         }
     }
 
-    pub(super) fn load_track_template(&self, track_name: String, template_name: String) -> Task<Message> {
+    pub(super) fn load_track_template(
+        &self,
+        track_name: String,
+        template_name: String,
+    ) -> Task<Message> {
         use std::fs::File;
         use std::io::BufReader;
         use tracing::info;
 
-        info!("Loading track template '{}' for track '{}'", template_name, track_name);
+        info!(
+            "Loading track template '{}' for track '{}'",
+            template_name, track_name
+        );
 
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let template_path = format!("{}/.config/maolan/track_templates/{}/track.json", home, template_name);
+        let template_path = format!(
+            "{}/.config/maolan/track_templates/{}/track.json",
+            home, template_name
+        );
 
         let file = match File::open(&template_path) {
             Ok(f) => f,
             Err(e) => {
-                return Task::done(Message::Response(Err(format!("Failed to open template: {}", e))));
+                return Task::done(Message::Response(Err(format!(
+                    "Failed to open template: {}",
+                    e
+                ))));
             }
         };
 
@@ -219,7 +233,10 @@ impl Maolan {
         let json: serde_json::Value = match serde_json::from_reader(reader) {
             Ok(j) => j,
             Err(e) => {
-                return Task::done(Message::Response(Err(format!("Failed to parse template: {}", e))));
+                return Task::done(Message::Response(Err(format!(
+                    "Failed to parse template: {}",
+                    e
+                ))));
             }
         };
 
@@ -239,7 +256,10 @@ impl Maolan {
                         }));
 
                         // Set plugin state if available
-                        if let Some(state) = plugin.get("state").and_then(|s| Self::lv2_state_from_json(s)) {
+                        if let Some(state) = plugin
+                            .get("state")
+                            .and_then(|s| Self::lv2_state_from_json(s))
+                        {
                             tasks.push(self.send(Action::TrackSetLv2PluginState {
                                 track_name: track_name.clone(),
                                 instance_id,
@@ -321,11 +341,7 @@ impl Maolan {
         }
     }
 
-    pub(super) fn save_track_as_template(
-        &self,
-        track_name: &str,
-        path: String,
-    ) -> Task<Message> {
+    pub(super) fn save_track_as_template(&self, track_name: &str, path: String) -> Task<Message> {
         use tracing::info;
 
         // Do all the work synchronously before spawning the task
@@ -347,9 +363,7 @@ impl Maolan {
                 .tracks
                 .iter()
                 .find(|t| t.name == track_name)
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::NotFound, "Track not found")
-                })?;
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Track not found"))?;
 
             // Serialize the track but exclude clips
             let mut track_json = serde_json::to_value(track).map_err(io::Error::other)?;
@@ -446,7 +460,10 @@ impl Maolan {
         })();
 
         if let Err(e) = result {
-            Task::done(Message::Response(Err(format!("Failed to save track template: {}", e))))
+            Task::done(Message::Response(Err(format!(
+                "Failed to save track template: {}",
+                e
+            ))))
         } else {
             Task::done(Message::None)
         }
@@ -644,8 +661,10 @@ impl Maolan {
     }
 
     pub(super) fn load(&mut self, path: String) -> std::io::Result<Task<Message>> {
-        let mut restore_actions: Vec<Action> =
-            vec![Action::BeginSessionRestore, Action::SetSessionPath(path.clone())];
+        let mut restore_actions: Vec<Action> = vec![
+            Action::BeginSessionRestore,
+            Action::SetSessionPath(path.clone()),
+        ];
         let mut warnings: Vec<String> = Vec::new();
         let session_root = PathBuf::from(path.clone());
         self.pending_audio_peaks.clear();
