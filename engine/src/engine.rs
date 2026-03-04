@@ -1293,6 +1293,11 @@ impl Engine {
             Action::SetRecordEnabled(enabled) => {
                 self.record_enabled = enabled;
                 if !enabled {
+                    // If a HW cycle is currently in-flight, capture its recorded taps
+                    // before flushing recordings to disk.
+                    if self.awaiting_hwfinished {
+                        self.append_recorded_cycle();
+                    }
                     self.flush_recordings().await;
                 } else if self.session_dir.is_none() {
                     self.notify_clients(Err(

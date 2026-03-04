@@ -354,7 +354,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         let clip_widget = container(row![left_handle, clip_content, right_handle])
             .width(Length::Fixed(clip_width))
-            .height(Length::Fill)
+            .height(Length::Fixed(clip_height))
             .style(move |_theme| container::Style {
                 background: None,
                 border: Border {
@@ -610,7 +610,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     .height(Length::Fill)
             ])
             .width(Length::Fixed(clip_width))
-            .height(Length::Fill)
+            .height(Length::Fixed(clip_height))
             .style(|_theme| container::Style {
                 background: None,
                 border: Border {
@@ -758,7 +758,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         let clip_widget = container(row![left_handle, clip_content, right_handle])
             .width(Length::Fixed(clip_width))
-            .height(Length::Fill)
+            .height(Length::Fixed(clip_height))
             .style(move |_theme| container::Style {
                 background: None,
                 border: Border {
@@ -1005,7 +1005,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     .height(Length::Fill)
             ])
             .width(Length::Fixed(clip_width))
-            .height(Length::Fill)
+            .height(Length::Fixed(clip_height))
             .style(|_theme| container::Style {
                 background: None,
                 border: Border {
@@ -1104,7 +1104,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                 .height(Length::Fill)
                         ])
                         .width(Length::Fixed(clip_width))
-                        .height(Length::Fill)
+                        .height(Length::Fixed(clip_height))
                         .style(|_theme| container::Style {
                             background: None,
                             border: Border {
@@ -1182,7 +1182,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                 .height(Length::Fill)
                         ])
                         .width(Length::Fixed(clip_width))
-                        .height(Length::Fill)
+                        .height(Length::Fixed(lane_clip_height))
                         .style(|_theme| container::Style {
                             background: None,
                             border: Border {
