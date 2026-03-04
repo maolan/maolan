@@ -125,13 +125,9 @@ impl Toolbar {
         };
         row![
             row![
-                if view_state.has_session_end {
-                    button(rewind())
-                        .style(Self::button_style(true, false, Color::TRANSPARENT))
-                        .on_press(Message::JumpToStart)
-                } else {
-                    button(rewind()).style(Self::button_style(false, false, Color::TRANSPARENT))
-                },
+                button(rewind())
+                    .style(Self::button_style(true, false, Color::TRANSPARENT))
+                    .on_press(Message::JumpToStart),
                 button(play())
                     .style(Self::button_style(
                         true,
