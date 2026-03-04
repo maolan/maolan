@@ -118,6 +118,78 @@ impl Maolan {
         }
     }
 
+    fn midi_lane_at_position(&self, position: Point) -> Option<(String, usize)> {
+        let state = self.state.blocking_read();
+        let mut y_offset = 0.0f32;
+        for track in &state.tracks {
+            let track_top = y_offset;
+            let track_bottom = y_offset + track.height;
+            if position.y < track_top || position.y > track_bottom {
+                y_offset += track.height;
+                continue;
+            }
+            if track.midi.ins == 0 {
+                return None;
+            }
+            let local_y = (position.y - y_offset).max(0.0);
+            let layout = track.lane_layout();
+            let midi_top = track.lane_top(Kind::MIDI, 0);
+            let midi_bottom =
+                track.lane_top(Kind::MIDI, track.midi.ins.saturating_sub(1)) + layout.lane_height;
+            if local_y < midi_top || local_y > midi_bottom {
+                return None;
+            }
+            let lane = track
+                .lane_index_at_y(Kind::MIDI, local_y)
+                .min(track.midi.ins.saturating_sub(1));
+            return Some((track.name.clone(), lane));
+        }
+        None
+    }
+
+    fn create_empty_midi_clip_from_drag(&mut self, start: Point, end: Point) -> Task<Message> {
+        let Some((track_name, input_channel)) = self.midi_lane_at_position(start) else {
+            return Task::none();
+        };
+        let Some(session_root) = self.session_dir.clone() else {
+            self.state.blocking_write().message =
+                "Creating MIDI clips requires an opened/saved session".to_string();
+            return Task::none();
+        };
+
+        let pps = self.pixels_per_sample().max(1.0e-6);
+        let x0 = start.x.min(end.x).max(0.0);
+        let x1 = start.x.max(end.x).max(0.0);
+        let start_sample = self.snap_sample_to_bar(x0 / pps);
+        let mut end_sample = self.snap_sample_to_bar(x1 / pps);
+        let min_len = self.snap_interval_samples().max(1);
+        if end_sample <= start_sample {
+            end_sample = start_sample.saturating_add(min_len);
+        }
+        let length = end_sample.saturating_sub(start_sample).max(min_len);
+
+        let clip_name = match self.create_empty_midi_clip_file(&track_name, &session_root) {
+            Ok(name) => name,
+            Err(e) => {
+                self.state.blocking_write().message = format!("Failed to create MIDI clip: {e}");
+                return Task::none();
+            }
+        };
+
+        self.send(Action::AddClip {
+            name: clip_name,
+            track_name,
+            start: start_sample,
+            length,
+            offset: 0,
+            input_channel,
+            kind: Kind::MIDI,
+            fade_enabled: true,
+            fade_in_samples: 240,
+            fade_out_samples: 240,
+        })
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::None => {
@@ -2320,9 +2392,12 @@ impl Maolan {
                     }
                 }
                 state.mouse_left_down = true;
+                state.mouse_right_down = false;
                 state.clip_click_consumed = true;
                 state.clip_marquee_start = None;
                 state.clip_marquee_end = None;
+                state.midi_clip_create_start = None;
+                state.midi_clip_create_end = None;
                 let mut dragged =
                     crate::message::DraggedClip::new(kind, clip_idx, track_idx.clone());
                 dragged.start = state.cursor;
@@ -2663,19 +2738,31 @@ impl Maolan {
                 if self.modal.is_none() && matches!(state.view, View::Workspace) {
                     state.mouse_left_down = true;
                 }
+                state.mouse_right_down = false;
                 state.clip_marquee_start = None;
                 state.clip_marquee_end = None;
+                state.midi_clip_create_start = None;
+                state.midi_clip_create_end = None;
                 state.selected_clips.clear();
             }
             Message::MousePressed(button) => {
                 if self.modal.is_none()
                     && matches!(self.state.blocking_read().view, View::Workspace)
-                    && button == mouse::Button::Left
                 {
                     let mut state = self.state.blocking_write();
-                    state.mouse_left_down = true;
-                    state.clip_marquee_start = None;
-                    state.clip_marquee_end = None;
+                    match button {
+                        mouse::Button::Left => {
+                            state.mouse_left_down = true;
+                            state.clip_marquee_start = None;
+                            state.clip_marquee_end = None;
+                        }
+                        mouse::Button::Right => {
+                            state.mouse_right_down = true;
+                            state.midi_clip_create_start = None;
+                            state.midi_clip_create_end = None;
+                        }
+                        _ => {}
+                    }
                 }
             }
             Message::ConnectionViewSelectConnection(idx) => {
@@ -3168,9 +3255,30 @@ impl Maolan {
                             Some(Point::new((end.x + dx).max(0.0), (end.y + dy).max(0.0)));
                     }
                 }
+                let mouse_right_down = self.state.blocking_read().mouse_right_down;
+                if mouse_right_down
+                    && !matches!(resizing, Some(Resizing::Clip { .. }))
+                    && self.clip.is_none()
+                    && matches!(self.state.blocking_read().view, View::Workspace)
+                    && self.modal.is_none()
+                {
+                    let can_start = self.midi_lane_at_position(position).is_some();
+                    let mut state = self.state.blocking_write();
+                    if state.midi_clip_create_start.is_none() && can_start {
+                        state.midi_clip_create_start = Some(position);
+                        state.midi_clip_create_end = Some(position);
+                    } else if state.midi_clip_create_start.is_some() {
+                        let end = state.midi_clip_create_end.unwrap_or(position);
+                        let dx = position.x - previous_cursor.x;
+                        let dy = position.y - previous_cursor.y;
+                        state.midi_clip_create_end =
+                            Some(Point::new((end.x + dx).max(0.0), (end.y + dy).max(0.0)));
+                    }
+                }
             }
             Message::EditorMouseMoved(position) => {
                 let resizing = self.state.blocking_read().resizing.clone();
+                let can_start_midi_drag = self.midi_lane_at_position(position).is_some();
                 let mut state = self.state.blocking_write();
                 if state.mouse_left_down
                     && !matches!(resizing, Some(Resizing::Clip { .. }))
@@ -3183,27 +3291,50 @@ impl Maolan {
                     state.clip_marquee_start = Some(position);
                     state.clip_marquee_end = Some(position);
                 }
+                if state.mouse_right_down
+                    && !matches!(resizing, Some(Resizing::Clip { .. }))
+                    && self.clip.is_none()
+                    && matches!(state.view, View::Workspace)
+                    && self.modal.is_none()
+                    && state.midi_clip_create_start.is_none()
+                    && can_start_midi_drag
+                {
+                    state.midi_clip_create_start = Some(position);
+                    state.midi_clip_create_end = Some(position);
+                }
             }
             Message::MouseReleased => {
                 if self.modal.is_some() {
                     let mut state = self.state.blocking_write();
                     state.mouse_left_down = false;
+                    state.mouse_right_down = false;
                     state.clip_click_consumed = false;
                     state.clip_marquee_start = None;
                     state.clip_marquee_end = None;
+                    state.midi_clip_create_start = None;
+                    state.midi_clip_create_end = None;
                     self.clip = None;
                     return Task::none();
                 }
-                let (resizing, marquee_start, marquee_end) = {
+                let (resizing, marquee_start, marquee_end, create_start, create_end) = {
                     let mut state = self.state.blocking_write();
                     state.mouse_left_down = false;
+                    state.mouse_right_down = false;
                     state.clip_click_consumed = false;
                     let resizing = state.resizing.clone();
                     let marquee_start = state.clip_marquee_start.take();
                     let marquee_end = state.clip_marquee_end.take();
+                    let create_start = state.midi_clip_create_start.take();
+                    let create_end = state.midi_clip_create_end.take();
                     state.resizing = None;
                     state.ctrl = false;
-                    (resizing, marquee_start, marquee_end)
+                    (
+                        resizing,
+                        marquee_start,
+                        marquee_end,
+                        create_start,
+                        create_end,
+                    )
                 };
                 if matches!(resizing, Some(Resizing::Clip { .. })) {
                     return Task::none();
@@ -3252,6 +3383,13 @@ impl Maolan {
                         });
                     }
                     return Task::none();
+                }
+                if let (Some(start), Some(end)) = (create_start, create_end) {
+                    let w = (start.x - end.x).abs();
+                    let h = (start.y - end.y).abs();
+                    if w > 2.0 || h > 2.0 {
+                        return self.create_empty_midi_clip_from_drag(start, end);
+                    }
                 }
                 if let (Some(start), Some(end)) = (marquee_start, marquee_end) {
                     let mut x = start.x.min(end.x);

@@ -1394,6 +1394,39 @@ impl Editor {
                 );
             }
         }
+        if let (Some(start), Some(end)) = (state.midi_clip_create_start, state.midi_clip_create_end)
+        {
+            let x = start.x.min(end.x).max(0.0);
+            let y = start.y.min(end.y).max(0.0);
+            let w = (start.x - end.x).abs().max(2.0);
+            let h = (start.y - end.y).abs().max(2.0);
+            layers.push(
+                pin(container("")
+                    .width(Length::Fixed(w))
+                    .height(Length::Fixed(h))
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.5,
+                            g: 0.9,
+                            b: 0.55,
+                            a: 0.18,
+                        })),
+                        border: Border {
+                            color: Color {
+                                r: 0.7,
+                                g: 1.0,
+                                b: 0.72,
+                                a: 0.95,
+                            },
+                            width: 1.0,
+                            radius: 0.0.into(),
+                        },
+                        ..container::Style::default()
+                    }))
+                .position(Point::new(x, y))
+                .into(),
+            );
+        }
         mouse_area(
             Stack::from_vec(layers)
                 .width(Length::Fill)

@@ -26,7 +26,10 @@ use maolan_engine::{
     self as engine,
     message::{Action, Message as EngineMessage},
 };
-use midly::{MetaMessage, Smf, Timing, TrackEventKind};
+use midly::{
+    Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
+    num::{u15, u24, u28},
+};
 use serde_json::Value;
 #[cfg(unix)]
 use serde_json::json;
@@ -342,6 +345,47 @@ impl Maolan {
                 ((sample.max(0.0) as f64 / interval).round() * interval) as usize
             }
         }
+    }
+
+    fn snap_interval_samples(&self) -> usize {
+        match self.snap_mode {
+            SnapMode::NoSnap => 1,
+            SnapMode::Bar => self.samples_per_bar().max(1.0) as usize,
+            SnapMode::Beat => self.samples_per_beat().max(1.0) as usize,
+            SnapMode::Eighth => (self.samples_per_beat() / 2.0).max(1.0) as usize,
+            SnapMode::Sixteenth => (self.samples_per_beat() / 4.0).max(1.0) as usize,
+            SnapMode::ThirtySecond => (self.samples_per_beat() / 8.0).max(1.0) as usize,
+            SnapMode::SixtyFourth => (self.samples_per_beat() / 16.0).max(1.0) as usize,
+        }
+    }
+
+    fn create_empty_midi_clip_file(
+        &self,
+        track_name: &str,
+        session_root: &Path,
+    ) -> std::io::Result<String> {
+        fs::create_dir_all(session_root.join("midi"))?;
+        let stem = format!("{}_clip", Self::sanitize_peak_file_component(track_name));
+        let rel = Self::unique_import_rel_path(session_root, "midi", &stem, "mid")?;
+        let path = session_root.join(&rel);
+        let events = vec![
+            TrackEvent {
+                delta: u28::new(0),
+                kind: TrackEventKind::Meta(MetaMessage::Tempo(u24::new(500_000))),
+            },
+            TrackEvent {
+                delta: u28::new(0),
+                kind: TrackEventKind::Meta(MetaMessage::EndOfTrack),
+            },
+        ];
+        let smf = Smf {
+            header: Header::new(Format::SingleTrack, Timing::Metrical(u15::new(480))),
+            tracks: vec![events],
+        };
+        let mut file = File::create(&path)?;
+        smf.write_std(&mut file)
+            .map_err(|e| io::Error::other(format!("Failed to write '{}': {e}", path.display())))?;
+        Ok(rel)
     }
 
     fn tracks_width_px(&self) -> f32 {
