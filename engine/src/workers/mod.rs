@@ -5,6 +5,8 @@ pub mod coreaudio_worker;
 pub mod hw_worker;
 #[cfg(target_os = "freebsd")]
 pub mod oss_worker;
+#[cfg(target_os = "netbsd")]
+pub mod netbsd_audio_worker;
 #[cfg(target_os = "openbsd")]
 pub mod sndio_worker;
 #[cfg(target_os = "windows")]

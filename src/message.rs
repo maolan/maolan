@@ -3,7 +3,12 @@ use maolan_engine::{kind::Kind, message::Action};
 use std::path::PathBuf;
 
 use crate::state::AudioBackendOption;
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
 use crate::state::AudioDeviceOption;
 use std::fmt;
 
@@ -350,9 +355,19 @@ pub enum Message {
         audio_outputs: usize,
     },
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
     HWSelected(AudioDeviceOption),
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    )))]
     HWSelected(String),
     HWBackendSelected(AudioBackendOption),
     HWExclusiveToggled(bool),

@@ -30,7 +30,12 @@ use tracing_subscriber::{
 const ICON_BYTES: &[u8] = include_bytes!("../images/maolan.png");
 
 pub fn main() -> iced::Result {
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
     prefer_x11_backend();
 
     let debug_logging = std::env::args().any(|arg| arg == "--debug");
@@ -46,7 +51,12 @@ pub fn main() -> iced::Result {
     run_app()
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
 fn prefer_x11_backend() {
     // winit picks Wayland whenever WAYLAND_DISPLAY exists and does not fallback to X11.
     unsafe {

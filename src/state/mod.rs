@@ -45,6 +45,8 @@ pub enum AudioBackendOption {
     Jack,
     #[cfg(target_os = "freebsd")]
     Oss,
+    #[cfg(target_os = "netbsd")]
+    Audio4,
     #[cfg(target_os = "openbsd")]
     Sndio,
     #[cfg(target_os = "linux")]
@@ -64,6 +66,8 @@ impl std::fmt::Display for AudioBackendOption {
             Self::Jack => "JACK",
             #[cfg(target_os = "freebsd")]
             Self::Oss => "OSS",
+            #[cfg(target_os = "netbsd")]
+            Self::Audio4 => "audio(4)",
             #[cfg(target_os = "openbsd")]
             Self::Sndio => "sndio",
             #[cfg(target_os = "linux")]
@@ -79,7 +83,12 @@ impl std::fmt::Display for AudioBackendOption {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
 #[derive(Clone, Debug)]
 pub struct AudioDeviceOption {
     pub id: String,
@@ -87,7 +96,12 @@ pub struct AudioDeviceOption {
     pub supported_bits: Vec<usize>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
 impl AudioDeviceOption {
     #[cfg(target_os = "linux")]
     pub fn with_supported_bits(
@@ -105,6 +119,21 @@ impl AudioDeviceOption {
     }
 
     #[cfg(target_os = "freebsd")]
+    pub fn with_supported_bits(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        mut supported_bits: Vec<usize>,
+    ) -> Self {
+        supported_bits.sort_by(|a, b| b.cmp(a));
+        supported_bits.dedup();
+        Self {
+            id: id.into(),
+            label: label.into(),
+            supported_bits,
+        }
+    }
+
+    #[cfg(target_os = "netbsd")]
     pub fn with_supported_bits(
         id: impl Into<String>,
         label: impl Into<String>,
@@ -139,7 +168,12 @@ impl AudioDeviceOption {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
 impl std::fmt::Display for AudioDeviceOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.supported_bits.is_empty() {
@@ -155,17 +189,32 @@ impl std::fmt::Display for AudioDeviceOption {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
 impl PartialEq for AudioDeviceOption {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
 impl Eq for AudioDeviceOption {}
 
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
 impl std::hash::Hash for AudioDeviceOption {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
@@ -346,13 +395,33 @@ pub struct StateData {
     pub hw_loaded: bool,
     pub available_backends: Vec<AudioBackendOption>,
     pub selected_backend: AudioBackendOption,
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
     pub available_hw: Vec<AudioDeviceOption>,
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
     pub selected_hw: Option<AudioDeviceOption>,
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    )))]
     pub available_hw: Vec<String>,
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    )))]
     pub selected_hw: Option<String>,
     pub oss_exclusive: bool,
     #[cfg(unix)]
@@ -441,6 +510,8 @@ impl Default for StateData {
         let selected_backend = default_audio_backend();
         #[cfg(target_os = "freebsd")]
         let hw: Vec<AudioDeviceOption> = discover_freebsd_audio_devices();
+        #[cfg(target_os = "netbsd")]
+        let hw: Vec<AudioDeviceOption> = discover_netbsd_audio_devices();
         #[cfg(target_os = "openbsd")]
         let hw: Vec<AudioDeviceOption> = discover_openbsd_audio_devices();
         #[cfg(target_os = "linux")]
@@ -452,6 +523,7 @@ impl Default for StateData {
         #[cfg(not(any(
             target_os = "linux",
             target_os = "freebsd",
+            target_os = "netbsd",
             target_os = "openbsd",
             target_os = "windows",
             target_os = "macos"
@@ -459,9 +531,16 @@ impl Default for StateData {
         let hw: Vec<String> = vec![];
         #[cfg(target_os = "freebsd")]
         let selected_hw = hw.first().cloned();
+        #[cfg(target_os = "netbsd")]
+        let selected_hw = hw.first().cloned();
         #[cfg(any(target_os = "linux", target_os = "openbsd"))]
         let selected_hw: Option<AudioDeviceOption> = None;
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        )))]
         let selected_hw: Option<String> = None;
         Self {
             shift: false,
@@ -564,6 +643,8 @@ fn supported_audio_backends() -> Vec<AudioBackendOption> {
         Some(AudioBackendOption::Jack),
         #[cfg(target_os = "freebsd")]
         Some(AudioBackendOption::Oss),
+        #[cfg(target_os = "netbsd")]
+        Some(AudioBackendOption::Audio4),
         #[cfg(target_os = "openbsd")]
         Some(AudioBackendOption::Sndio),
         #[cfg(target_os = "linux")]
@@ -585,6 +666,10 @@ fn default_audio_backend() -> AudioBackendOption {
     {
         AudioBackendOption::Oss
     }
+    #[cfg(target_os = "netbsd")]
+    {
+        AudioBackendOption::Audio4
+    }
     #[cfg(target_os = "openbsd")]
     {
         AudioBackendOption::Sndio
@@ -605,6 +690,7 @@ fn default_audio_backend() -> AudioBackendOption {
         unix,
         not(any(
             target_os = "freebsd",
+            target_os = "netbsd",
             target_os = "linux",
             target_os = "openbsd",
             target_os = "macos"
@@ -682,6 +768,48 @@ pub(crate) fn discover_openbsd_audio_devices() -> Vec<AudioDeviceOption> {
         ));
     }
 
+    out
+}
+
+#[cfg(target_os = "netbsd")]
+pub(crate) fn discover_netbsd_audio_devices() -> Vec<AudioDeviceOption> {
+    let mut out = vec![AudioDeviceOption::with_supported_bits(
+        "/dev/audio",
+        "Default (/dev/audio)",
+        vec![32, 24, 16, 8],
+    )];
+
+    let mut paths: Vec<String> = std::fs::read_dir("/dev")
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter_map(|path| {
+                    let name = path.file_name()?.to_str()?;
+                    if !name.starts_with("audio") || name.starts_with("audioctl") {
+                        return None;
+                    }
+                    if name == "audio" || name[5..].chars().all(|c| c.is_ascii_digit()) {
+                        Some(path.to_string_lossy().into_owned())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    paths.sort();
+    paths.dedup();
+
+    for dev in paths {
+        out.push(AudioDeviceOption::with_supported_bits(
+            dev.clone(),
+            format!("{dev} (audio4)"),
+            vec![32, 24, 16, 8],
+        ));
+    }
+
+    out.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    out.dedup_by(|a, b| a.id == b.id);
     out
 }
 

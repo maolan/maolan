@@ -4175,7 +4175,12 @@ impl Maolan {
                 });
             }
             Message::HWSelected(ref hw) => {
-                #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+                #[cfg(any(
+                    target_os = "linux",
+                    target_os = "freebsd",
+                    target_os = "netbsd",
+                    target_os = "openbsd"
+                ))]
                 {
                     let mut state = self.state.blocking_write();
                     #[cfg(target_os = "freebsd")]
@@ -4217,10 +4222,27 @@ impl Maolan {
                         }
                         state.selected_hw = Some(selected);
                     }
+                    #[cfg(target_os = "netbsd")]
+                    {
+                        let refreshed = crate::state::discover_netbsd_audio_devices();
+                        let selected = refreshed
+                            .iter()
+                            .find(|candidate| candidate.id == hw.id)
+                            .cloned()
+                            .unwrap_or_else(|| hw.clone());
+                        if !refreshed.is_empty() {
+                            state.available_hw = refreshed;
+                        }
+                        if let Some(bits) = selected.preferred_bits() {
+                            state.oss_bits = bits;
+                        }
+                        state.selected_hw = Some(selected);
+                    }
                 }
                 #[cfg(not(any(
                     target_os = "linux",
                     target_os = "freebsd",
+                    target_os = "netbsd",
                     target_os = "openbsd"
                 )))]
                 {
@@ -4231,12 +4253,30 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.selected_backend = backend.clone();
                 state.selected_hw = None;
-                #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+                #[cfg(any(
+                    target_os = "linux",
+                    target_os = "freebsd",
+                    target_os = "netbsd",
+                    target_os = "openbsd"
+                ))]
                 {
                     state.oss_bits = 32;
                     #[cfg(target_os = "freebsd")]
                     if matches!(backend, crate::state::AudioBackendOption::Oss) {
                         let refreshed = crate::state::discover_freebsd_audio_devices();
+                        if !refreshed.is_empty() {
+                            state.available_hw = refreshed.clone();
+                        }
+                        if let Some(selected) = refreshed.first().cloned() {
+                            if let Some(bits) = selected.preferred_bits() {
+                                state.oss_bits = bits;
+                            }
+                            state.selected_hw = Some(selected);
+                        }
+                    }
+                    #[cfg(target_os = "netbsd")]
+                    if matches!(backend, crate::state::AudioBackendOption::Audio4) {
+                        let refreshed = crate::state::discover_netbsd_audio_devices();
                         if !refreshed.is_empty() {
                             state.available_hw = refreshed.clone();
                         }

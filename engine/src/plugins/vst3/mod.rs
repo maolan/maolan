@@ -38,7 +38,7 @@ pub fn default_vst3_search_roots() -> Vec<PathBuf> {
         )));
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
     {
         roots.push(PathBuf::from("/usr/lib/vst3"));
         roots.push(PathBuf::from("/usr/lib64/vst3"));
@@ -51,7 +51,7 @@ pub fn default_vst3_search_roots() -> Vec<PathBuf> {
     roots
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
 fn home_dir() -> String {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))

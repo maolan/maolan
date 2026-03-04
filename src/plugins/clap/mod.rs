@@ -1,4 +1,4 @@
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
 use crate::plugins::x11::{
     XBlackPixel, XCloseDisplay, XCreateSimpleWindow, XDefaultScreen, XDestroyWindow, XEvent,
     XFlush, XInternAtom, XMapRaised, XNextEvent, XOpenDisplay, XPending, XResizeWindow,
@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 #[cfg(target_os = "windows")]
 use std::ffi::c_int;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
 use std::ffi::{c_int, c_long, c_uint};
 
 #[cfg(target_os = "windows")]
@@ -54,11 +54,11 @@ unsafe extern "system" {
     fn DispatchMessageW(lpMsg: *const MSG) -> isize;
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
 const DESTROY_NOTIFY: c_int = 17;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
 const CLIENT_MESSAGE: c_int = 33;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
 const STRUCTURE_NOTIFY_MASK: c_long = 1 << 17;
 
 // Platform-specific event handling for macOS
@@ -376,7 +376,7 @@ fn split_plugin_spec(spec: &str) -> (&str, Option<&str>) {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
 fn create_x11_window_for_clap(
     gui: &ClapPluginGui,
     plugin: *const ClapPlugin,
@@ -547,7 +547,7 @@ fn create_x11_window_for_clap(
     Ok((display, window, embed_window, wm_delete, wm_protocols))
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
 fn get_all_windows(display: *mut c_void, parent: c_ulong, windows: &mut Vec<c_ulong>) {
     #[link(name = "X11")]
     unsafe extern "C" {
@@ -588,7 +588,7 @@ fn get_all_windows(display: *mut c_void, parent: c_ulong, windows: &mut Vec<c_ul
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
 fn create_x11_wrapper_for_floating_clap(
     gui: &ClapPluginGui,
     plugin: *const ClapPlugin,
@@ -685,7 +685,7 @@ fn pump_platform_events() -> bool {
     false // Continue running
 }
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
 fn pump_platform_events_x11(
     display: *mut c_void,
     window: c_ulong,
@@ -897,7 +897,7 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
     };
 
     // Platform-specific window creation
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
     let (x11_display, x11_window, x11_embed_window, wm_delete, wm_protocols) =
         if api.to_str().map(|s| s == "x11").unwrap_or(false) && supports_embedded {
             eprintln!("[clap-ui] Creating embedded X11 window");
@@ -909,7 +909,7 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
             (std::ptr::null_mut(), 0, 0, 0, 0)
         };
 
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd")))]
     {
         let create = gui
             .create
@@ -939,7 +939,7 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
             break;
         }
 
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
         if !x11_display.is_null()
             && x11_window != 0
             && pump_platform_events_x11(x11_display, x11_window, wm_delete, wm_protocols)
@@ -1010,7 +1010,7 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
     }
 
     // Clean up platform-specific resources
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
     if !x11_display.is_null() {
         unsafe {
             if x11_embed_window != 0 {

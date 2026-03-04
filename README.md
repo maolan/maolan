@@ -24,6 +24,7 @@ The plugin graph supports drag-connect routing with connection validation and cy
 
 - Linux: ALSA (JACK optional)
 - FreeBSD: OSS (JACK optional)
+- NetBSD: audio(4) (JACK optional)
 - OpenBSD: sndio (JACK optional)
 - macOS: CoreAudio
 - Windows: WASAPI (ASIO via backend support)

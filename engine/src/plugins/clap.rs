@@ -1870,7 +1870,7 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
         )));
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
     {
         roots.push(PathBuf::from("/usr/lib/clap"));
         roots.push(PathBuf::from("/usr/lib64/clap"));
@@ -1887,6 +1887,7 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
     target_os = "macos",
     target_os = "linux",
     target_os = "freebsd",
+    target_os = "netbsd",
     target_os = "openbsd"
 ))]
 fn home_dir() -> String {

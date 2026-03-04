@@ -696,12 +696,12 @@ unsafe extern "system" fn host_query_interface(
         .iter()
         .zip(FUnknown::IID.iter())
         .all(|(a, b)| (*a as u8) == *b);
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
     let requested_run_loop = iid_bytes
         .iter()
         .zip(Linux::IRunLoop::IID.iter())
         .all(|(a, b)| (*a as u8) == *b);
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd")))]
     let requested_run_loop = false;
     if !(requested_host || requested_unknown || requested_run_loop) {
         if !obj.is_null() {
@@ -1314,7 +1314,7 @@ fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
     {
         // Linux/FreeBSD: .vst3/Contents/x86_64-linux/plugin.so
         let module = bundle_path
@@ -1338,7 +1338,8 @@ fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
         target_os = "windows",
         target_os = "macos",
         target_os = "linux",
-        target_os = "freebsd"
+        target_os = "freebsd",
+        target_os = "netbsd"
     )))]
     {
         Err("Unsupported platform".to_string())

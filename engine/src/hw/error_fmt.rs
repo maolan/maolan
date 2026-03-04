@@ -1,4 +1,4 @@
-#[cfg(any(target_os = "linux", target_os = "openbsd"))]
+#[cfg(any(target_os = "linux", target_os = "netbsd", target_os = "openbsd"))]
 pub fn backend_open_error(
     backend: &str,
     direction: &str,
@@ -8,7 +8,7 @@ pub fn backend_open_error(
     format!("Failed to open {backend} {direction} '{device}': {err}")
 }
 
-#[cfg(any(target_os = "linux", target_os = "openbsd"))]
+#[cfg(any(target_os = "linux", target_os = "netbsd", target_os = "openbsd"))]
 pub fn backend_io_error(backend: &str, direction: &str, err: impl std::fmt::Display) -> String {
     format!("{backend} {direction} io error: {err}")
 }

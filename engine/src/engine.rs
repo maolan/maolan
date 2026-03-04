@@ -3,7 +3,12 @@ use midly::{
     live::LiveEvent,
     num::{u15, u24, u28},
 };
-#[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "freebsd",
+    target_os = "linux",
+    target_os = "netbsd",
+    target_os = "openbsd"
+))]
 use std::fs::read_dir;
 use std::{
     collections::{HashMap, VecDeque},
@@ -26,6 +31,8 @@ use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
 use crate::hw::coreaudio::{HwDriver, HwOptions, MidiHub};
 #[cfg(unix)]
 use crate::hw::jack::JackRuntime;
+#[cfg(target_os = "netbsd")]
+use crate::hw::netbsd_audio::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "windows")]
 use crate::hw::options::HwOptions;
 #[cfg(target_os = "freebsd")]
@@ -40,6 +47,8 @@ use crate::hw::wasapi::{self, HwDriver, MidiHub};
 use crate::workers::alsa_worker::HwWorker;
 #[cfg(target_os = "macos")]
 use crate::workers::coreaudio_worker::HwWorker;
+#[cfg(target_os = "netbsd")]
+use crate::workers::netbsd_audio_worker::HwWorker;
 #[cfg(target_os = "freebsd")]
 use crate::workers::oss_worker::HwWorker;
 #[cfg(target_os = "openbsd")]
@@ -214,6 +223,28 @@ impl Engine {
     }
 
     #[cfg(target_os = "openbsd")]
+    fn discover_midi_hw_devices() -> Vec<String> {
+        let mut devices: Vec<String> = read_dir("/dev")
+            .map(|rd| {
+                rd.filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter_map(|path| {
+                        let name = path.file_name()?.to_str()?;
+                        if name.starts_with("rmidi") || name.starts_with("midi") {
+                            Some(path.to_string_lossy().into_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        devices.sort();
+        devices.dedup();
+        devices
+    }
+
+    #[cfg(target_os = "netbsd")]
     fn discover_midi_hw_devices() -> Vec<String> {
         let mut devices: Vec<String> = read_dir("/dev")
             .map(|rd| {
@@ -2918,6 +2949,8 @@ impl Engine {
                                 "ALSA"
                             } else if cfg!(target_os = "freebsd") {
                                 "OSS"
+                            } else if cfg!(target_os = "netbsd") {
+                                "audio(4)"
                             } else if cfg!(target_os = "windows") {
                                 if device.to_ascii_lowercase().starts_with("asio:") {
                                     "ASIO"
