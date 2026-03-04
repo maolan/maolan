@@ -1,3 +1,5 @@
+![Maolan](images/maolan.png)
+
 # Maolan
 
 Maolan is a Rust DAW focused on recording, editing, routing, and plugin hosting.
