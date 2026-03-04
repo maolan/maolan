@@ -3518,11 +3518,14 @@ impl Maolan {
                     if let (Some(from_track), Some(to_track)) = (from_track_option, to_track_option)
                     {
                         let kind_matches = match clip.kind {
-                            Kind::Audio => to_track.audio.ins > 0,
+                            Kind::Audio => {
+                                to_track.audio.ins > 0 && from_track.audio.ins == to_track.audio.ins
+                            }
                             Kind::MIDI => to_track.midi.ins > 0,
                         };
                         if !kind_matches {
                             self.clip = None;
+                            self.clip_preview_target_track = None;
                             return Task::none();
                         }
                         let local_y = (clip.end.y - to_track_rect.y).max(0.0);
@@ -3670,6 +3673,7 @@ impl Maolan {
             Message::HandleClipPreviewZones(ref zones) => {
                 if let Some(clip) = &self.clip {
                     let state = self.state.blocking_read();
+                    let from_track = state.tracks.iter().find(|t| t.name == clip.track_index);
                     let to_track_id = zones.iter().map(|(id, _)| id).find(|id| {
                         state
                             .tracks
@@ -3686,7 +3690,14 @@ impl Maolan {
                         .find(|t| Id::from(t.name.clone()) == *to_track_id);
                     if let Some(to_track) = to_track {
                         let kind_matches = match clip.kind {
-                            Kind::Audio => to_track.audio.ins > 0,
+                            Kind::Audio => {
+                                if let Some(from_track) = from_track {
+                                    to_track.audio.ins > 0
+                                        && from_track.audio.ins == to_track.audio.ins
+                                } else {
+                                    false
+                                }
+                            }
                             Kind::MIDI => to_track.midi.ins > 0,
                         };
                         if kind_matches {

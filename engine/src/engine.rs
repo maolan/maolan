@@ -2396,6 +2396,17 @@ impl Engine {
                                 .await;
                                 return;
                             }
+                            if from_track.audio.ins.len() != to_track.audio.ins.len() {
+                                self.notify_clients(Err(format!(
+                                    "Cannot move/copy audio clip from '{}' ({} inputs) to '{}' ({} inputs)",
+                                    from_track.name,
+                                    from_track.audio.ins.len(),
+                                    to_track.name,
+                                    to_track.audio.ins.len()
+                                )))
+                                .await;
+                                return;
+                            }
                             let clip_copy = from_track.audio.clips[from.clip_index].clone();
                             if !copy {
                                 from_track.audio.clips.remove(from.clip_index);
