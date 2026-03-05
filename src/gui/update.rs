@@ -1523,6 +1523,284 @@ impl Maolan {
         None
     }
 
+    fn clip_at_position(&self, position: Point) -> Option<(String, Kind, usize)> {
+        let pps = self.pixels_per_sample().max(1.0e-6);
+        let state = self.state.blocking_read();
+        let mut y_offset = 0.0f32;
+        for track in &state.tracks {
+            let track_top = y_offset;
+            let track_bottom = y_offset + track.height;
+            if position.y < track_top || position.y > track_bottom {
+                y_offset += track.height;
+                continue;
+            }
+            let local_y = (position.y - y_offset).max(0.0);
+            let local_x = position.x.max(0.0);
+            let layout = track.lane_layout();
+            let lane_clip_h = (layout.lane_height - 6.0).max(12.0);
+
+            if track.audio.ins > 0 {
+                let audio_top = track.lane_top(Kind::Audio, 0) + 3.0;
+                let audio_bottom = audio_top + lane_clip_h;
+                if local_y >= audio_top && local_y <= audio_bottom {
+                    let (take_idx, take_count) = Self::assign_take_lanes(
+                        &track.audio.clips,
+                        |_| 0,
+                        |clip| clip.start,
+                        |clip| clip.length,
+                        |clip| clip.take_lane_override,
+                    );
+                    let overlap = track
+                        .audio
+                        .clips
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, clip)| {
+                            let cx = clip.start as f32 * pps;
+                            let cw = (clip.length as f32 * pps).max(MIN_CLIP_WIDTH_PX);
+                            local_x >= cx && local_x <= cx + cw
+                        })
+                        .map(|(idx, _)| idx)
+                        .collect::<Vec<_>>();
+                    if overlap.is_empty() {
+                        return None;
+                    }
+                    let max_takes = overlap
+                        .iter()
+                        .filter_map(|idx| take_count.get(*idx).copied())
+                        .max()
+                        .unwrap_or(1)
+                        .max(1);
+                    let rel_y = (local_y - audio_top).max(0.0);
+                    let slot_h = (lane_clip_h / max_takes as f32).max(1.0);
+                    let desired_take = (rel_y / slot_h).floor() as usize;
+                    if let Some(idx) = overlap
+                        .iter()
+                        .find(|idx| take_idx.get(**idx).copied().unwrap_or(0) == desired_take)
+                        .copied()
+                    {
+                        return Some((track.name.clone(), Kind::Audio, idx));
+                    }
+                    return overlap
+                        .iter()
+                        .find_map(|idx| take_idx.get(*idx).is_some().then_some(*idx))
+                        .map(|idx| (track.name.clone(), Kind::Audio, idx));
+                }
+            }
+
+            if track.midi.ins > 0 {
+                let midi_lane = track
+                    .lane_index_at_y(Kind::MIDI, local_y)
+                    .min(track.midi.ins.saturating_sub(1));
+                let midi_top = track.lane_top(Kind::MIDI, midi_lane) + 3.0;
+                let midi_bottom = midi_top + lane_clip_h;
+                if local_y >= midi_top && local_y <= midi_bottom {
+                    let (take_idx, take_count) = Self::assign_take_lanes(
+                        &track.midi.clips,
+                        |clip| clip.input_channel.min(track.midi.ins.saturating_sub(1)),
+                        |clip| clip.start,
+                        |clip| clip.length,
+                        |clip| clip.take_lane_override,
+                    );
+                    let overlap = track
+                        .midi
+                        .clips
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, clip)| {
+                            let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
+                            if lane != midi_lane {
+                                return false;
+                            }
+                            let cx = clip.start as f32 * pps;
+                            let cw = (clip.length as f32 * pps).max(MIN_CLIP_WIDTH_PX);
+                            local_x >= cx && local_x <= cx + cw
+                        })
+                        .map(|(idx, _)| idx)
+                        .collect::<Vec<_>>();
+                    if overlap.is_empty() {
+                        return None;
+                    }
+                    let max_takes = overlap
+                        .iter()
+                        .filter_map(|idx| take_count.get(*idx).copied())
+                        .max()
+                        .unwrap_or(1)
+                        .max(1);
+                    let rel_y = (local_y - midi_top).max(0.0);
+                    let slot_h = (lane_clip_h / max_takes as f32).max(1.0);
+                    let desired_take = (rel_y / slot_h).floor() as usize;
+                    if let Some(idx) = overlap
+                        .iter()
+                        .find(|idx| take_idx.get(**idx).copied().unwrap_or(0) == desired_take)
+                        .copied()
+                    {
+                        return Some((track.name.clone(), Kind::MIDI, idx));
+                    }
+                    return overlap
+                        .iter()
+                        .find_map(|idx| take_idx.get(*idx).is_some().then_some(*idx))
+                        .map(|idx| (track.name.clone(), Kind::MIDI, idx));
+                }
+            }
+
+            return None;
+        }
+        None
+    }
+
+    fn split_clip_at_position(&mut self, position: Point) -> Task<Message> {
+        let Some((track_name, kind, clip_idx)) = self.clip_at_position(position) else {
+            return Task::none();
+        };
+        let pps = self.pixels_per_sample().max(1.0e-6);
+        let split_sample = self.snap_sample_to_bar(position.x.max(0.0) / pps);
+
+        match kind {
+            Kind::Audio => {
+                let Some(clip) = self
+                    .state
+                    .blocking_read()
+                    .tracks
+                    .iter()
+                    .find(|t| t.name == track_name)
+                    .and_then(|t| t.audio.clips.get(clip_idx))
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                let clip_end = clip.start.saturating_add(clip.length);
+                if clip.take_lane_locked {
+                    self.state.blocking_write().message =
+                        "Cannot split a take-lane locked clip".to_string();
+                    return Task::none();
+                }
+                if !clip.warp_markers.is_empty() {
+                    self.state.blocking_write().message =
+                        "Split for warped audio clips is not supported yet".to_string();
+                    return Task::none();
+                }
+                if split_sample <= clip.start || split_sample >= clip_end {
+                    return Task::none();
+                }
+                let left_len = split_sample.saturating_sub(clip.start);
+                let right_len = clip_end.saturating_sub(split_sample);
+                if left_len == 0 || right_len == 0 {
+                    return Task::none();
+                }
+                let left_fade_in = clip.fade_in_samples.min(left_len / 2);
+                let left_fade_out = clip.fade_out_samples.min(left_len / 2);
+                let right_fade_in = clip.fade_in_samples.min(right_len / 2);
+                let right_fade_out = clip.fade_out_samples.min(right_len / 2);
+                self.state.blocking_write().message = format!("Split audio clip '{}'", clip.name);
+                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+                tasks.push(self.send(Action::RemoveClip {
+                    track_name: track_name.clone(),
+                    kind: Kind::Audio,
+                    clip_indices: vec![clip_idx],
+                }));
+                tasks.push(self.send(Action::AddClip {
+                    name: clip.name.clone(),
+                    track_name: track_name.clone(),
+                    start: clip.start,
+                    length: left_len,
+                    offset: clip.offset,
+                    input_channel: clip.input_channel,
+                    muted: clip.muted,
+                    kind: Kind::Audio,
+                    fade_enabled: clip.fade_enabled,
+                    fade_in_samples: left_fade_in,
+                    fade_out_samples: left_fade_out,
+                    warp_markers: vec![],
+                }));
+                tasks.push(self.send(Action::AddClip {
+                    name: clip.name,
+                    track_name,
+                    start: split_sample,
+                    length: right_len,
+                    offset: clip.offset.saturating_add(left_len),
+                    input_channel: clip.input_channel,
+                    muted: clip.muted,
+                    kind: Kind::Audio,
+                    fade_enabled: clip.fade_enabled,
+                    fade_in_samples: right_fade_in,
+                    fade_out_samples: right_fade_out,
+                    warp_markers: vec![],
+                }));
+                tasks.push(self.send(Action::EndHistoryGroup));
+                Task::batch(tasks)
+            }
+            Kind::MIDI => {
+                let Some(clip) = self
+                    .state
+                    .blocking_read()
+                    .tracks
+                    .iter()
+                    .find(|t| t.name == track_name)
+                    .and_then(|t| t.midi.clips.get(clip_idx))
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                let clip_end = clip.start.saturating_add(clip.length);
+                if clip.take_lane_locked {
+                    self.state.blocking_write().message =
+                        "Cannot split a take-lane locked clip".to_string();
+                    return Task::none();
+                }
+                if split_sample <= clip.start || split_sample >= clip_end {
+                    return Task::none();
+                }
+                let left_len = split_sample.saturating_sub(clip.start);
+                let right_len = clip_end.saturating_sub(split_sample);
+                if left_len == 0 || right_len == 0 {
+                    return Task::none();
+                }
+                let left_fade_in = clip.fade_in_samples.min(left_len / 2);
+                let left_fade_out = clip.fade_out_samples.min(left_len / 2);
+                let right_fade_in = clip.fade_in_samples.min(right_len / 2);
+                let right_fade_out = clip.fade_out_samples.min(right_len / 2);
+                self.state.blocking_write().message = format!("Split MIDI clip '{}'", clip.name);
+                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+                tasks.push(self.send(Action::RemoveClip {
+                    track_name: track_name.clone(),
+                    kind: Kind::MIDI,
+                    clip_indices: vec![clip_idx],
+                }));
+                tasks.push(self.send(Action::AddClip {
+                    name: clip.name.clone(),
+                    track_name: track_name.clone(),
+                    start: clip.start,
+                    length: left_len,
+                    offset: clip.offset,
+                    input_channel: clip.input_channel,
+                    muted: clip.muted,
+                    kind: Kind::MIDI,
+                    fade_enabled: clip.fade_enabled,
+                    fade_in_samples: left_fade_in,
+                    fade_out_samples: left_fade_out,
+                    warp_markers: vec![],
+                }));
+                tasks.push(self.send(Action::AddClip {
+                    name: clip.name,
+                    track_name,
+                    start: split_sample,
+                    length: right_len,
+                    offset: clip.offset.saturating_add(left_len),
+                    input_channel: clip.input_channel,
+                    muted: clip.muted,
+                    kind: Kind::MIDI,
+                    fade_enabled: clip.fade_enabled,
+                    fade_in_samples: right_fade_in,
+                    fade_out_samples: right_fade_out,
+                    warp_markers: vec![],
+                }));
+                tasks.push(self.send(Action::EndHistoryGroup));
+                Task::batch(tasks)
+            }
+        }
+    }
+
     fn comp_target_at_position(&self, position: Point) -> Option<(String, Kind, usize, usize)> {
         let pps = self.pixels_per_sample().max(1.0e-6);
         let sample = (position.x.max(0.0) / pps) as usize;
@@ -7959,6 +8237,10 @@ impl Maolan {
                 if self.modal.is_none()
                     && matches!(self.state.blocking_read().view, View::Workspace)
                 {
+                    if button == mouse::Button::Middle {
+                        let cursor = self.state.blocking_read().cursor;
+                        return self.split_clip_at_position(cursor);
+                    }
                     let mut state = self.state.blocking_write();
                     match button {
                         mouse::Button::Left => {
