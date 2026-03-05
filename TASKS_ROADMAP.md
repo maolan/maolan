@@ -59,7 +59,10 @@ Last updated: 2026-03-05
   - [x] Flatten frozen track workflow (keep rendered audio, discard backups, unfreeze)
   - [x] Commit/freeze rendering including plugin-processed track offline bounce
   - [x] Freeze bounce automation bake + progress reporting + in-flight cancel
-- [ ] Folder/Group/VCA-like controls
+- [x] Folder/Group/VCA-like controls
+  - [x] Per-track VCA master assignment/unassignment in track context menu
+  - [x] VCA master propagates level/mute/solo changes to assigned tracks
+  - [x] VCA assignments persist through rename/remove and session restore
 - [x] MIDI power tools (scale, chord, legato, velocity shaping)
   - [x] Scale snap selected notes (root + major/minor)
   - [x] Chord generation from selected notes (triad/7th presets)

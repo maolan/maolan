@@ -706,6 +706,7 @@ impl Maolan {
             Action::SetSessionPath(path.clone()),
         ];
         let mut frozen_tracks: Vec<String> = Vec::new();
+        let mut pending_vca_assignments: Vec<(String, String)> = Vec::new();
         let mut warnings: Vec<String> = Vec::new();
         let session_root = PathBuf::from(path.clone());
         self.pending_audio_peaks.clear();
@@ -1079,6 +1080,9 @@ impl Maolan {
                 if track["frozen"].as_bool().unwrap_or(false) {
                     frozen_tracks.push(name.clone());
                 }
+                if let Some(master_name) = track["vca_master"].as_str() {
+                    pending_vca_assignments.push((name.clone(), master_name.to_string()));
+                }
                 let frozen_audio_backup: Vec<crate::state::AudioClip> =
                     serde_json::from_value(track["frozen_audio_backup"].clone())
                         .unwrap_or_default();
@@ -1387,6 +1391,12 @@ impl Maolan {
             restore_actions.push(Action::TrackSetFrozen {
                 track_name,
                 frozen: true,
+            });
+        }
+        for (track_name, master_track) in pending_vca_assignments {
+            restore_actions.push(Action::TrackSetVcaMaster {
+                track_name,
+                master_track: Some(master_track),
             });
         }
         restore_actions.push(Action::EndSessionRestore);

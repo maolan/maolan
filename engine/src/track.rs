@@ -61,6 +61,7 @@ pub struct Track {
     pub soloed: bool,
     pub input_monitor: bool,
     pub disk_monitor: bool,
+    pub vca_master: Option<String>,
     pub frozen: bool,
     pub audio: AudioTrack,
     pub midi: MIDITrack,
@@ -119,6 +120,7 @@ impl Track {
             soloed: false,
             input_monitor: false,
             disk_monitor: true,
+            vca_master: None,
             frozen: false,
             audio: AudioTrack::new(audio_ins, audio_outs, buffer_size),
             midi: MIDITrack::new(midi_ins, midi_outs),
@@ -887,6 +889,12 @@ impl Track {
     }
     pub fn toggle_disk_monitor(&mut self) {
         self.disk_monitor = !self.disk_monitor;
+    }
+    pub fn set_vca_master(&mut self, master: Option<String>) {
+        self.vca_master = master;
+    }
+    pub fn vca_master(&self) -> Option<String> {
+        self.vca_master.clone()
     }
     pub fn set_session_base_dir(&mut self, base_dir: Option<PathBuf>) {
         self.session_base_dir = base_dir;

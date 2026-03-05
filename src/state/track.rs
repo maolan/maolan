@@ -84,6 +84,8 @@ pub struct Track {
     pub input_monitor: bool,
     pub disk_monitor: bool,
     #[serde(default)]
+    pub vca_master: Option<String>,
+    #[serde(default)]
     pub frozen: bool,
     pub height: f32,
     pub audio: AudioData,
@@ -126,6 +128,7 @@ impl Track {
             soloed: false,
             input_monitor: false,
             disk_monitor: true,
+            vca_master: None,
             frozen: false,
             audio: AudioData::new(audio_ins, audio_outs),
             midi: MIDIData::new(midi_ins, midi_outs),
@@ -190,6 +193,14 @@ impl Track {
                 Action::TrackSetFrozen { track_name, frozen } => {
                     if track_name == self.name {
                         self.frozen = frozen;
+                    }
+                }
+                Action::TrackSetVcaMaster {
+                    track_name,
+                    master_track,
+                } => {
+                    if track_name == self.name {
+                        self.vca_master = master_track;
                     }
                 }
                 _ => {}

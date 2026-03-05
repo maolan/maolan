@@ -83,6 +83,7 @@ pub fn should_record(action: &Action) -> bool {
             | Action::TrackToggleSolo(_)
             | Action::TrackToggleInputMonitor(_)
             | Action::TrackToggleDiskMonitor(_)
+            | Action::TrackSetVcaMaster { .. }
             | Action::TrackSetFrozen { .. }
             | Action::AddClip { .. }
             | Action::RemoveClip { .. }
@@ -159,6 +160,14 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             Some(Action::TrackToggleInputMonitor(name.clone()))
         }
         Action::TrackToggleDiskMonitor(name) => Some(Action::TrackToggleDiskMonitor(name.clone())),
+        Action::TrackSetVcaMaster { track_name, .. } => {
+            let track = state.tracks.get(track_name)?;
+            let track_lock = track.lock();
+            Some(Action::TrackSetVcaMaster {
+                track_name: track_name.clone(),
+                master_track: track_lock.vca_master(),
+            })
+        }
         Action::TrackSetFrozen { track_name, .. } => {
             let track = state.tracks.get(track_name)?;
             let track_lock = track.lock();
@@ -690,6 +699,24 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
             }
             if !track.disk_monitor {
                 actions.push(Action::TrackToggleDiskMonitor(track.name.clone()));
+            }
+            if track.vca_master.is_some() {
+                actions.push(Action::TrackSetVcaMaster {
+                    track_name: track.name.clone(),
+                    master_track: track.vca_master(),
+                });
+            }
+            for (other_name, other_track_handle) in &state.tracks {
+                if other_name == track_name {
+                    continue;
+                }
+                let other_track = other_track_handle.lock();
+                if other_track.vca_master.as_deref() == Some(track_name.as_str()) {
+                    actions.push(Action::TrackSetVcaMaster {
+                        track_name: other_name.clone(),
+                        master_track: Some(track_name.clone()),
+                    });
+                }
             }
 
             for clip in &track.audio.clips {

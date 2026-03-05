@@ -282,6 +282,10 @@ pub enum Action {
     TrackToggleSolo(String),
     TrackToggleInputMonitor(String),
     TrackToggleDiskMonitor(String),
+    TrackSetVcaMaster {
+        track_name: String,
+        master_track: Option<String>,
+    },
     TrackSetFrozen {
         track_name: String,
         frozen: bool,

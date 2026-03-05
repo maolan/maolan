@@ -3968,6 +3968,11 @@ impl Maolan {
                         }
                         state.clap_plugins_by_track.remove(name);
                         state.clap_states_by_track.remove(name);
+                        for track in &mut state.tracks {
+                            if track.vca_master.as_deref() == Some(name.as_str()) {
+                                track.vca_master = None;
+                            }
+                        }
                     }
                 }
                 Action::ClipMove {
@@ -4445,13 +4450,19 @@ impl Maolan {
                     }
                 }
                 Action::TrackLevel(name, level) => {
+                    let mut state = self.state.blocking_write();
                     if name == "hw:out" {
-                        self.state.blocking_write().hw_out_level = *level;
+                        state.hw_out_level = *level;
+                    } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
+                        track.level = *level;
                     }
                 }
                 Action::TrackBalance(name, balance) => {
+                    let mut state = self.state.blocking_write();
                     if name == "hw:out" {
-                        self.state.blocking_write().hw_out_balance = *balance;
+                        state.hw_out_balance = *balance;
+                    } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
+                        track.balance = *balance;
                     }
                 }
                 Action::TrackAutomationLevel(name, level) => {
@@ -4488,9 +4499,69 @@ impl Maolan {
                     }
                 }
                 Action::TrackToggleMute(name) => {
+                    let mut state = self.state.blocking_write();
                     if name == "hw:out" {
-                        let mut state = self.state.blocking_write();
                         state.hw_out_muted = !state.hw_out_muted;
+                    } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
+                        track.muted = !track.muted;
+                    }
+                }
+                Action::TrackToggleSolo(name) => {
+                    if let Some(track) = self
+                        .state
+                        .blocking_write()
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == *name)
+                    {
+                        track.soloed = !track.soloed;
+                    }
+                }
+                Action::TrackToggleArm(name) => {
+                    if let Some(track) = self
+                        .state
+                        .blocking_write()
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == *name)
+                    {
+                        track.armed = !track.armed;
+                    }
+                }
+                Action::TrackToggleInputMonitor(name) => {
+                    if let Some(track) = self
+                        .state
+                        .blocking_write()
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == *name)
+                    {
+                        track.input_monitor = !track.input_monitor;
+                    }
+                }
+                Action::TrackToggleDiskMonitor(name) => {
+                    if let Some(track) = self
+                        .state
+                        .blocking_write()
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == *name)
+                    {
+                        track.disk_monitor = !track.disk_monitor;
+                    }
+                }
+                Action::TrackSetVcaMaster {
+                    track_name,
+                    master_track,
+                } => {
+                    if let Some(track) = self
+                        .state
+                        .blocking_write()
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == *track_name)
+                    {
+                        track.vca_master = master_track.clone();
                     }
                 }
                 Action::TrackSetFrozen { track_name, frozen } => {
@@ -5250,6 +5321,11 @@ impl Maolan {
                             .clap_states_by_track
                             .insert(new_name.clone(), clap_states);
                     }
+                    for track in &mut state.tracks {
+                        if track.vca_master.as_deref() == Some(old_name.as_str()) {
+                            track.vca_master = Some(new_name.clone());
+                        }
+                    }
                     state.message = format!("Renamed track to '{}'", new_name);
                 }
                 _ => {}
@@ -5374,6 +5450,20 @@ impl Maolan {
                     set.insert(name.clone());
                     state.connection_view_selection = ConnectionViewSelection::Tracks(set);
                 }
+            }
+            Message::TrackSetVcaMaster {
+                ref track_name,
+                ref master_track,
+            } => {
+                if master_track.as_deref() == Some(track_name.as_str()) {
+                    self.state.blocking_write().message =
+                        "Track cannot be its own VCA master".to_string();
+                    return Task::none();
+                }
+                return self.send(Action::TrackSetVcaMaster {
+                    track_name: track_name.clone(),
+                    master_track: master_track.clone(),
+                });
             }
             Message::TrackFreezeToggle { ref track_name } => {
                 if self.freeze_in_progress {

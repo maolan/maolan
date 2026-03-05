@@ -461,6 +461,10 @@ pub enum Message {
     TrackFreezeFlatten {
         track_name: String,
     },
+    TrackSetVcaMaster {
+        track_name: String,
+        master_track: Option<String>,
+    },
     TrackAutomationCycleMode {
         track_name: String,
     },

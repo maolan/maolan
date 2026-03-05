@@ -11,6 +11,7 @@ use iced_aw::ContextMenu;
 use iced_drop::droppable;
 use iced_fonts::lucide::{audio_waveform, disc};
 use maolan_engine::message::Action;
+use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 pub struct Tracks {
@@ -32,11 +33,25 @@ impl Tracks {
                 state.hovered_track_resize_handle.clone(),
             )
         };
+        let track_names: Vec<String> = tracks.iter().map(|t| t.name.clone()).collect();
+        let mut vca_follower_counts: HashMap<String, usize> = HashMap::new();
+        for track in &tracks {
+            if let Some(master) = track.vca_master.as_ref() {
+                *vca_follower_counts.entry(master.clone()).or_default() += 1;
+            }
+        }
 
         let result = Column::with_children(tracks.into_iter().enumerate().map(|(index, track)| {
             let selected = selected.contains(&track.name);
             let height = track.height;
             let is_resize_hovered = hovered_resize_track.as_deref() == Some(track.name.as_str());
+            let vca_follower_count = vca_follower_counts.get(&track.name).copied().unwrap_or(0);
+            let vca_master_label = track.vca_master.clone();
+            let vca_candidates: Vec<String> = track_names
+                .iter()
+                .filter(|candidate| **candidate != track.name)
+                .cloned()
+                .collect();
             let layout = track.lane_layout();
             let lane_h = layout.lane_height.max(12.0);
             let has_visible_automation = track.automation_lanes.iter().any(|lane| lane.visible);
@@ -93,13 +108,21 @@ impl Tracks {
                 );
             }
 
+            let mut title = format!(
+                "▾ {}{}",
+                track.name.clone(),
+                if track.frozen { " [FRZ]" } else { "" }
+            );
+            if let Some(master) = vca_master_label.as_ref() {
+                title.push_str(&format!(" [VCA<-{}]", master));
+            }
+            if vca_follower_count > 0 {
+                title.push_str(&format!(" [VCA x{}]", vca_follower_count));
+            }
+
             let track_ui: Column<'_, Message> = column![
                 row![
-                    text(format!(
-                        "▾ {}{}",
-                        track.name.clone(),
-                        if track.frozen { " [FRZ]" } else { "" }
-                    )),
+                    text(title),
                     Space::new().width(Length::Fill),
                     button("FZ")
                         .padding(3)
@@ -177,6 +200,8 @@ impl Tracks {
             {
                 let track_name_for_menu = track.name.clone();
                 let track_is_frozen = track.frozen;
+                let track_vca_master = track.vca_master.clone();
+                let track_vca_candidates = vca_candidates.clone();
                 let track_with_mouse = mouse_area(
                     container(track_ui)
                         .id(track.name.clone())
@@ -216,7 +241,7 @@ impl Tracks {
                 .on_double_click(Message::OpenTrackPlugins(track.name.clone()));
 
                 let track_with_context = ContextMenu::new(track_with_mouse, move || {
-                    column![
+                    let mut menu = column![
                         button("Automation: Volume").on_press(Message::TrackAutomationAddLane {
                             track_name: track_name_for_menu.clone(),
                             target: TrackAutomationTarget::Volume,
@@ -248,8 +273,28 @@ impl Tracks {
                         },
                         button("Save as template")
                             .on_press(Message::TrackTemplateSaveShow(track_name_for_menu.clone())),
-                    ]
-                    .into()
+                    ];
+                    if let Some(master) = track_vca_master.as_ref() {
+                        menu = menu.push(
+                            button(text(format!("VCA: Unassign ({master})"))).on_press(
+                                Message::TrackSetVcaMaster {
+                                    track_name: track_name_for_menu.clone(),
+                                    master_track: None,
+                                },
+                            ),
+                        );
+                    }
+                    for master in &track_vca_candidates {
+                        menu = menu.push(
+                            button(text(format!("VCA -> {master}"))).on_press(
+                                Message::TrackSetVcaMaster {
+                                    track_name: track_name_for_menu.clone(),
+                                    master_track: Some(master.clone()),
+                                },
+                            ),
+                        );
+                    }
+                    menu.into()
                 });
 
                 droppable(track_with_context)
