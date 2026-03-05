@@ -465,6 +465,14 @@ pub enum Message {
         track_name: String,
         master_track: Option<String>,
     },
+    TrackMidiLearnArm {
+        track_name: String,
+        target: maolan_engine::message::TrackMidiLearnTarget,
+    },
+    TrackMidiLearnClear {
+        track_name: String,
+        target: maolan_engine::message::TrackMidiLearnTarget,
+    },
     TrackAutomationCycleMode {
         track_name: String,
     },

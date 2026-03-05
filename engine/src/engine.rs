@@ -165,6 +165,8 @@ pub struct Engine {
     history_group: Option<UndoEntry>,
     history_suspended: bool,
     offline_bounce_job: Option<OfflineBounceJob>,
+    pending_midi_learn:
+        Option<(String, crate::message::TrackMidiLearnTarget, Option<String>)>,
 }
 
 type MidiEditParseResult = (
@@ -736,6 +738,7 @@ impl Engine {
             history_group: None,
             history_suspended: false,
             offline_bounce_job: None,
+            pending_midi_learn: None,
         }
     }
 
@@ -922,6 +925,82 @@ impl Engine {
 
     fn midi_hw_out_device(track: &str) -> Option<&str> {
         track.strip_prefix("midi:hw:out:")
+    }
+
+    async fn handle_incoming_hw_cc(&mut self, device: &str, channel: u8, cc: u8, value: u8) {
+        if let Some((track_name, target, armed_device)) = self.pending_midi_learn.clone() {
+            let binding = crate::message::MidiLearnBinding {
+                device: armed_device.or(Some(device.to_string())),
+                channel,
+                cc,
+            };
+            if let Some(track) = self.state.lock().tracks.get(&track_name) {
+                match target {
+                    crate::message::TrackMidiLearnTarget::Volume => {
+                        track.lock().midi_learn_volume = Some(binding.clone());
+                    }
+                    crate::message::TrackMidiLearnTarget::Balance => {
+                        track.lock().midi_learn_balance = Some(binding.clone());
+                    }
+                }
+                self.pending_midi_learn = None;
+                self.notify_clients(Ok(Action::TrackSetMidiLearnBinding {
+                    track_name: track_name.clone(),
+                    target,
+                    binding: Some(binding),
+                }))
+                .await;
+            } else {
+                self.pending_midi_learn = None;
+            }
+        }
+
+        let mut mapped_actions = Vec::<Action>::new();
+        for (track_name, track) in self.state.lock().tracks.iter() {
+            let t = track.lock();
+            if let Some(binding) = t.midi_learn_volume.as_ref() {
+                let device_matches = binding
+                    .device
+                    .as_ref()
+                    .is_none_or(|d| d.as_str() == device);
+                if device_matches && binding.channel == channel && binding.cc == cc {
+                    let level = -90.0 + (value as f32 / 127.0) * 110.0;
+                    mapped_actions.push(Action::TrackLevel(track_name.clone(), level));
+                }
+            }
+            if let Some(binding) = t.midi_learn_balance.as_ref() {
+                let device_matches = binding
+                    .device
+                    .as_ref()
+                    .is_none_or(|d| d.as_str() == device);
+                if device_matches && binding.channel == channel && binding.cc == cc {
+                    let balance = (value as f32 / 127.0) * 2.0 - 1.0;
+                    mapped_actions.push(Action::TrackBalance(track_name.clone(), balance));
+                }
+            }
+        }
+        for action in mapped_actions {
+            match action {
+                Action::TrackLevel(ref track_name, level) => {
+                    if let Some(track) = self.state.lock().tracks.get(track_name) {
+                        track.lock().set_level(level);
+                        self.notify_clients(Ok(Action::TrackLevel(track_name.clone(), level)))
+                            .await;
+                    }
+                }
+                Action::TrackBalance(ref track_name, balance) => {
+                    if let Some(track) = self.state.lock().tracks.get(track_name) {
+                        track.lock().set_balance(balance);
+                        self.notify_clients(Ok(Action::TrackBalance(
+                            track_name.clone(),
+                            balance,
+                        )))
+                        .await;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     fn vca_followers(&self, master_name: &str) -> Vec<String> {
@@ -2033,6 +2112,11 @@ impl Engine {
                         route.from_track = new_name.clone();
                     }
                 }
+                if let Some((armed_track, target, device)) = self.pending_midi_learn.clone()
+                    && armed_track == *old_name
+                {
+                    self.pending_midi_learn = Some((new_name.clone(), target, device));
+                }
 
                 self.notify_clients(Ok(Action::RenameTrack {
                     old_name: old_name.clone(),
@@ -2046,6 +2130,13 @@ impl Engine {
                 self.midi_recordings.remove(name);
                 self.midi_hw_in_routes.retain(|r| r.to_track != *name);
                 self.midi_hw_out_routes.retain(|r| r.from_track != *name);
+                if self
+                    .pending_midi_learn
+                    .as_ref()
+                    .is_some_and(|(track_name, _, _)| track_name == name)
+                {
+                    self.pending_midi_learn = None;
+                }
                 for track in self.state.lock().tracks.values() {
                     let track = track.lock();
                     if track.vca_master.as_deref() == Some(name.as_str()) {
@@ -2181,6 +2272,37 @@ impl Engine {
             Action::TrackToggleDiskMonitor(ref name) => {
                 if let Some(track) = self.state.lock().tracks.get(name) {
                     track.lock().toggle_disk_monitor();
+                }
+            }
+            Action::TrackArmMidiLearn {
+                ref track_name,
+                target,
+            } => {
+                if !self.state.lock().tracks.contains_key(track_name) {
+                    self.notify_clients(Err(format!("Track not found: {track_name}")))
+                        .await;
+                    return;
+                }
+                self.pending_midi_learn = Some((track_name.clone(), target, None));
+            }
+            Action::TrackSetMidiLearnBinding {
+                ref track_name,
+                target,
+                ref binding,
+            } => {
+                if let Some(track) = self.state.lock().tracks.get(track_name) {
+                    match target {
+                        crate::message::TrackMidiLearnTarget::Volume => {
+                            track.lock().midi_learn_volume = binding.clone();
+                        }
+                        crate::message::TrackMidiLearnTarget::Balance => {
+                            track.lock().midi_learn_balance = binding.clone();
+                        }
+                    }
+                } else {
+                    self.notify_clients(Err(format!("Track not found: {track_name}")))
+                        .await;
+                    return;
                 }
             }
             Action::TrackSetVcaMaster {
@@ -4210,6 +4332,16 @@ impl Engine {
                 }
                 Message::HWMidiEvents(events) => {
                     for hw_event in events {
+                        if hw_event.event.data.len() >= 3 {
+                            let status = hw_event.event.data[0];
+                            if status & 0xF0 == 0xB0 {
+                                let channel = status & 0x0F;
+                                let cc = hw_event.event.data[1];
+                                let value = hw_event.event.data[2];
+                                self.handle_incoming_hw_cc(&hw_event.device, channel, cc, value)
+                                    .await;
+                            }
+                        }
                         self.pending_hw_midi_events_by_device
                             .entry(hw_event.device)
                             .or_default()

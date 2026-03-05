@@ -84,6 +84,10 @@ pub struct Track {
     pub input_monitor: bool,
     pub disk_monitor: bool,
     #[serde(default)]
+    pub midi_learn_volume: Option<maolan_engine::message::MidiLearnBinding>,
+    #[serde(default)]
+    pub midi_learn_balance: Option<maolan_engine::message::MidiLearnBinding>,
+    #[serde(default)]
     pub vca_master: Option<String>,
     #[serde(default)]
     pub frozen: bool,
@@ -128,6 +132,8 @@ impl Track {
             soloed: false,
             input_monitor: false,
             disk_monitor: true,
+            midi_learn_volume: None,
+            midi_learn_balance: None,
             vca_master: None,
             frozen: false,
             audio: AudioData::new(audio_ins, audio_outs),
@@ -201,6 +207,22 @@ impl Track {
                 } => {
                     if track_name == self.name {
                         self.vca_master = master_track;
+                    }
+                }
+                Action::TrackSetMidiLearnBinding {
+                    track_name,
+                    target,
+                    binding,
+                } => {
+                    if track_name == self.name {
+                        match target {
+                            maolan_engine::message::TrackMidiLearnTarget::Volume => {
+                                self.midi_learn_volume = binding;
+                            }
+                            maolan_engine::message::TrackMidiLearnTarget::Balance => {
+                                self.midi_learn_balance = binding;
+                            }
+                        }
                     }
                 }
                 _ => {}

@@ -201,6 +201,19 @@ pub struct AudioWarpMarker {
     pub source_sample: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MidiLearnBinding {
+    pub device: Option<String>,
+    pub channel: u8,
+    pub cc: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TrackMidiLearnTarget {
+    Volume,
+    Balance,
+}
+
 #[derive(Clone, Debug)]
 pub enum Action {
     Quit,
@@ -294,6 +307,15 @@ pub enum Action {
     TrackToggleSolo(String),
     TrackToggleInputMonitor(String),
     TrackToggleDiskMonitor(String),
+    TrackArmMidiLearn {
+        track_name: String,
+        target: TrackMidiLearnTarget,
+    },
+    TrackSetMidiLearnBinding {
+        track_name: String,
+        target: TrackMidiLearnTarget,
+        binding: Option<MidiLearnBinding>,
+    },
     TrackSetVcaMaster {
         track_name: String,
         master_track: Option<String>,

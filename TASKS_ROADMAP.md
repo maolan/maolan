@@ -75,7 +75,10 @@ Last updated: 2026-03-05
 
 ## Phase 3 - Control and Integration
 
-- [ ] Control surface support and MIDI learn expansion
+- [x] Control surface support and MIDI learn expansion
+  - [x] First-pass MIDI CC learn for track volume/balance from hardware input
+  - [x] Per-track learn arm/clear controls in track context menu
+  - [x] Session persistence + restore for learned mappings
 - [ ] Session diagnostics/performance tooling
 - [ ] Optional MIDI 2.0 investigation track (separate from core roadmap)
 

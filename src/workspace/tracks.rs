@@ -10,7 +10,7 @@ use iced::{
 use iced_aw::ContextMenu;
 use iced_drop::droppable;
 use iced_fonts::lucide::{audio_waveform, disc};
-use maolan_engine::message::Action;
+use maolan_engine::message::{Action, TrackMidiLearnTarget};
 use std::collections::HashMap;
 
 #[derive(Debug, Default)]
@@ -47,6 +47,8 @@ impl Tracks {
             let is_resize_hovered = hovered_resize_track.as_deref() == Some(track.name.as_str());
             let vca_follower_count = vca_follower_counts.get(&track.name).copied().unwrap_or(0);
             let vca_master_label = track.vca_master.clone();
+            let midi_learn_vol = track.midi_learn_volume.clone();
+            let midi_learn_bal = track.midi_learn_balance.clone();
             let vca_candidates: Vec<String> = track_names
                 .iter()
                 .filter(|candidate| **candidate != track.name)
@@ -118,6 +120,12 @@ impl Tracks {
             }
             if vca_follower_count > 0 {
                 title.push_str(&format!(" [VCA x{}]", vca_follower_count));
+            }
+            if let Some(binding) = midi_learn_vol.as_ref() {
+                title.push_str(&format!(" [CC{}:{}->Vol]", binding.channel + 1, binding.cc));
+            }
+            if let Some(binding) = midi_learn_bal.as_ref() {
+                title.push_str(&format!(" [CC{}:{}->Bal]", binding.channel + 1, binding.cc));
             }
 
             let track_ui: Column<'_, Message> = column![
@@ -202,6 +210,8 @@ impl Tracks {
                 let track_is_frozen = track.frozen;
                 let track_vca_master = track.vca_master.clone();
                 let track_vca_candidates = vca_candidates.clone();
+                let track_midi_learn_vol = track.midi_learn_volume.clone();
+                let track_midi_learn_bal = track.midi_learn_balance.clone();
                 let track_with_mouse = mouse_area(
                     container(track_ui)
                         .id(track.name.clone())
@@ -280,6 +290,38 @@ impl Tracks {
                                 Message::TrackSetVcaMaster {
                                     track_name: track_name_for_menu.clone(),
                                     master_track: None,
+                                },
+                            ),
+                        );
+                    }
+                    menu = menu.push(
+                        button("MIDI Learn Volume").on_press(Message::TrackMidiLearnArm {
+                            track_name: track_name_for_menu.clone(),
+                            target: TrackMidiLearnTarget::Volume,
+                        }),
+                    );
+                    menu = menu.push(
+                        button("MIDI Learn Balance").on_press(Message::TrackMidiLearnArm {
+                            track_name: track_name_for_menu.clone(),
+                            target: TrackMidiLearnTarget::Balance,
+                        }),
+                    );
+                    if track_midi_learn_vol.is_some() {
+                        menu = menu.push(
+                            button("Clear MIDI Learn Volume").on_press(
+                                Message::TrackMidiLearnClear {
+                                    track_name: track_name_for_menu.clone(),
+                                    target: TrackMidiLearnTarget::Volume,
+                                },
+                            ),
+                        );
+                    }
+                    if track_midi_learn_bal.is_some() {
+                        menu = menu.push(
+                            button("Clear MIDI Learn Balance").on_press(
+                                Message::TrackMidiLearnClear {
+                                    track_name: track_name_for_menu.clone(),
+                                    target: TrackMidiLearnTarget::Balance,
                                 },
                             ),
                         );

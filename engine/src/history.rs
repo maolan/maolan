@@ -83,6 +83,7 @@ pub fn should_record(action: &Action) -> bool {
             | Action::TrackToggleSolo(_)
             | Action::TrackToggleInputMonitor(_)
             | Action::TrackToggleDiskMonitor(_)
+            | Action::TrackSetMidiLearnBinding { .. }
             | Action::TrackSetVcaMaster { .. }
             | Action::TrackSetFrozen { .. }
             | Action::AddClip { .. }
@@ -161,6 +162,21 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             Some(Action::TrackToggleInputMonitor(name.clone()))
         }
         Action::TrackToggleDiskMonitor(name) => Some(Action::TrackToggleDiskMonitor(name.clone())),
+        Action::TrackSetMidiLearnBinding {
+            track_name, target, ..
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track_lock = track.lock();
+            let binding = match target {
+                crate::message::TrackMidiLearnTarget::Volume => track_lock.midi_learn_volume.clone(),
+                crate::message::TrackMidiLearnTarget::Balance => track_lock.midi_learn_balance.clone(),
+            };
+            Some(Action::TrackSetMidiLearnBinding {
+                track_name: track_name.clone(),
+                target: *target,
+                binding,
+            })
+        }
         Action::TrackSetVcaMaster { track_name, .. } => {
             let track = state.tracks.get(track_name)?;
             let track_lock = track.lock();
@@ -716,6 +732,20 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
             }
             if !track.disk_monitor {
                 actions.push(Action::TrackToggleDiskMonitor(track.name.clone()));
+            }
+            if track.midi_learn_volume.is_some() {
+                actions.push(Action::TrackSetMidiLearnBinding {
+                    track_name: track.name.clone(),
+                    target: crate::message::TrackMidiLearnTarget::Volume,
+                    binding: track.midi_learn_volume.clone(),
+                });
+            }
+            if track.midi_learn_balance.is_some() {
+                actions.push(Action::TrackSetMidiLearnBinding {
+                    track_name: track.name.clone(),
+                    target: crate::message::TrackMidiLearnTarget::Balance,
+                    binding: track.midi_learn_balance.clone(),
+                });
             }
             if track.vca_master.is_some() {
                 actions.push(Action::TrackSetVcaMaster {

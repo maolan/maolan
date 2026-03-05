@@ -4637,6 +4637,46 @@ impl Maolan {
                         track.vca_master = master_track.clone();
                     }
                 }
+                Action::TrackArmMidiLearn { track_name, target } => {
+                    self.state.blocking_write().message = format!(
+                        "MIDI learn armed for '{}' ({:?}). Move a hardware MIDI CC control.",
+                        track_name, target
+                    );
+                }
+                Action::TrackSetMidiLearnBinding {
+                    track_name,
+                    target,
+                    binding,
+                } => {
+                    if let Some(track) = self
+                        .state
+                        .blocking_write()
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == *track_name)
+                    {
+                        match target {
+                            maolan_engine::message::TrackMidiLearnTarget::Volume => {
+                                track.midi_learn_volume = binding.clone();
+                            }
+                            maolan_engine::message::TrackMidiLearnTarget::Balance => {
+                                track.midi_learn_balance = binding.clone();
+                            }
+                        }
+                    }
+                    let message = if let Some(binding) = binding {
+                        format!(
+                            "MIDI learn mapped '{}' {:?} to CH{} CC{}",
+                            track_name,
+                            target,
+                            binding.channel + 1,
+                            binding.cc
+                        )
+                    } else {
+                        format!("MIDI learn cleared for '{}' {:?}", track_name, target)
+                    };
+                    self.state.blocking_write().message = message;
+                }
                 Action::TrackSetFrozen { track_name, frozen } => {
                     self.state.blocking_write().message = if *frozen {
                         format!("Track '{track_name}' frozen")
@@ -5537,6 +5577,29 @@ impl Maolan {
                 return self.send(Action::TrackSetVcaMaster {
                     track_name: track_name.clone(),
                     master_track: master_track.clone(),
+                });
+            }
+            Message::TrackMidiLearnArm {
+                ref track_name,
+                target,
+            } => {
+                self.state.blocking_write().message = format!(
+                    "MIDI learn armed for '{}' ({:?}). Move a hardware MIDI CC control.",
+                    track_name, target
+                );
+                return self.send(Action::TrackArmMidiLearn {
+                    track_name: track_name.clone(),
+                    target,
+                });
+            }
+            Message::TrackMidiLearnClear {
+                ref track_name,
+                target,
+            } => {
+                return self.send(Action::TrackSetMidiLearnBinding {
+                    track_name: track_name.clone(),
+                    target,
+                    binding: None,
                 });
             }
             Message::TrackFreezeToggle { ref track_name } => {

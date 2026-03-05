@@ -1083,6 +1083,28 @@ impl Maolan {
                 if let Some(master_name) = track["vca_master"].as_str() {
                     pending_vca_assignments.push((name.clone(), master_name.to_string()));
                 }
+                if let Ok(binding) = serde_json::from_value::<
+                    Option<maolan_engine::message::MidiLearnBinding>,
+                >(track["midi_learn_volume"].clone())
+                    && binding.is_some()
+                {
+                    restore_actions.push(Action::TrackSetMidiLearnBinding {
+                        track_name: name.clone(),
+                        target: maolan_engine::message::TrackMidiLearnTarget::Volume,
+                        binding,
+                    });
+                }
+                if let Ok(binding) = serde_json::from_value::<
+                    Option<maolan_engine::message::MidiLearnBinding>,
+                >(track["midi_learn_balance"].clone())
+                    && binding.is_some()
+                {
+                    restore_actions.push(Action::TrackSetMidiLearnBinding {
+                        track_name: name.clone(),
+                        target: maolan_engine::message::TrackMidiLearnTarget::Balance,
+                        binding,
+                    });
+                }
                 let frozen_audio_backup: Vec<crate::state::AudioClip> =
                     serde_json::from_value(track["frozen_audio_backup"].clone())
                         .unwrap_or_default();
