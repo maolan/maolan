@@ -1,4 +1,4 @@
-use super::{CLIENT, MIN_CLIP_WIDTH_PX, Maolan, platform};
+use super::{AutomationWriteKey, CLIENT, MIN_CLIP_WIDTH_PX, Maolan, TouchAutomationOverride, platform};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use crate::message::PluginFormat;
 use crate::{
@@ -26,11 +26,37 @@ use rfd::AsyncFileDialog;
 use std::{
     collections::{HashMap, HashSet},
     process::exit,
-    time::Instant,
+    time::{Duration, Instant},
 };
 use tracing::error;
 
 impl Maolan {
+    fn automation_key(target: TrackAutomationTarget) -> AutomationWriteKey {
+        match target {
+            TrackAutomationTarget::Volume => AutomationWriteKey::Volume,
+            TrackAutomationTarget::Balance => AutomationWriteKey::Balance,
+            TrackAutomationTarget::Mute => AutomationWriteKey::Mute,
+            TrackAutomationTarget::Lv2Parameter {
+                instance_id, index, ..
+            } => AutomationWriteKey::Lv2 { instance_id, index },
+            TrackAutomationTarget::Vst3Parameter {
+                instance_id,
+                param_id,
+            } => AutomationWriteKey::Vst3 {
+                instance_id,
+                param_id,
+            },
+            TrackAutomationTarget::ClapParameter {
+                instance_id,
+                param_id,
+                ..
+            } => AutomationWriteKey::Clap {
+                instance_id,
+                param_id,
+            },
+        }
+    }
+
     fn record_automation_point(
         &mut self,
         track_name: &str,
@@ -74,6 +100,88 @@ impl Maolan {
             });
         }
         track.height = track.min_height_for_layout().max(60.0);
+    }
+
+    fn record_manual_override(
+        &mut self,
+        track_name: &str,
+        target: TrackAutomationTarget,
+        value: f32,
+    ) {
+        let mode = {
+            let state = self.state.blocking_read();
+            state
+                .tracks
+                .iter()
+                .find(|t| t.name == track_name)
+                .map(|t| t.automation_mode)
+        };
+        let Some(mode) = mode else {
+            return;
+        };
+        let key = Self::automation_key(target);
+        let value = value.clamp(0.0, 1.0);
+        match mode {
+            TrackAutomationMode::Read | TrackAutomationMode::Write => {}
+            TrackAutomationMode::Touch => {
+                let key = Self::automation_key(target);
+                self.touch_automation_overrides
+                    .entry(track_name.to_string())
+                    .or_default()
+                    .insert(
+                        key,
+                        TouchAutomationOverride {
+                            value,
+                            updated_at: Instant::now(),
+                        },
+                    );
+                let mouse_left_down = self.state.blocking_read().mouse_left_down;
+                if mouse_left_down {
+                    self.touch_active_keys
+                        .entry(track_name.to_string())
+                        .or_default()
+                        .insert(key);
+                }
+            }
+            TrackAutomationMode::Latch => {
+                self.latch_automation_overrides
+                    .entry(track_name.to_string())
+                    .or_default()
+                    .insert(key, value);
+            }
+        }
+    }
+
+    fn begin_touch_gesture(&mut self, track_name: &str, key: AutomationWriteKey) {
+        let mode = {
+            let state = self.state.blocking_read();
+            state
+                .tracks
+                .iter()
+                .find(|t| t.name == track_name)
+                .map(|t| t.automation_mode)
+        };
+        if mode == Some(TrackAutomationMode::Touch) {
+            self.touch_active_keys
+                .entry(track_name.to_string())
+                .or_default()
+                .insert(key);
+        }
+    }
+
+    fn end_touch_gesture(&mut self, track_name: &str, key: AutomationWriteKey) {
+        if let Some(active) = self.touch_active_keys.get_mut(track_name) {
+            active.remove(&key);
+            if active.is_empty() {
+                self.touch_active_keys.remove(track_name);
+            }
+        }
+        if let Some(values) = self.touch_automation_overrides.get_mut(track_name) {
+            values.remove(&key);
+            if values.is_empty() {
+                self.touch_automation_overrides.remove(track_name);
+            }
+        }
     }
 
     fn find_clap_target(
@@ -129,10 +237,12 @@ impl Maolan {
             Action::TrackLevel(track_name, level) if track_name != "hw:out" => {
                 let normalized = ((*level + 90.0) / 110.0).clamp(0.0, 1.0);
                 self.record_automation_point(track_name, TrackAutomationTarget::Volume, normalized);
+                self.record_manual_override(track_name, TrackAutomationTarget::Volume, normalized);
             }
             Action::TrackBalance(track_name, balance) if track_name != "hw:out" => {
                 let normalized = ((*balance + 1.0) * 0.5).clamp(0.0, 1.0);
                 self.record_automation_point(track_name, TrackAutomationTarget::Balance, normalized);
+                self.record_manual_override(track_name, TrackAutomationTarget::Balance, normalized);
             }
             Action::TrackToggleMute(track_name) if track_name != "hw:out" => {
                 let next = {
@@ -149,6 +259,11 @@ impl Maolan {
                         TrackAutomationTarget::Mute,
                         if next { 1.0 } else { 0.0 },
                     );
+                    self.record_manual_override(
+                        track_name,
+                        TrackAutomationTarget::Mute,
+                        if next { 1.0 } else { 0.0 },
+                    );
                 }
             }
             Action::TrackSetVst3Parameter {
@@ -158,6 +273,14 @@ impl Maolan {
                 value,
             } => {
                 self.record_automation_point(
+                    track_name,
+                    TrackAutomationTarget::Vst3Parameter {
+                        instance_id: *instance_id,
+                        param_id: *param_id,
+                    },
+                    (*value).clamp(0.0, 1.0),
+                );
+                self.record_manual_override(
                     track_name,
                     TrackAutomationTarget::Vst3Parameter {
                         instance_id: *instance_id,
@@ -198,7 +321,45 @@ impl Maolan {
                         },
                         normalized,
                     );
+                    self.record_manual_override(
+                        track_name,
+                        TrackAutomationTarget::ClapParameter {
+                            instance_id: *instance_id,
+                            param_id: *param_id,
+                            min,
+                            max,
+                        },
+                        normalized,
+                    );
                 }
+            }
+            Action::TrackBeginClapParameterEdit {
+                track_name,
+                instance_id,
+                param_id,
+                ..
+            } => {
+                self.begin_touch_gesture(
+                    track_name,
+                    AutomationWriteKey::Clap {
+                        instance_id: *instance_id,
+                        param_id: *param_id,
+                    },
+                );
+            }
+            Action::TrackEndClapParameterEdit {
+                track_name,
+                instance_id,
+                param_id,
+                ..
+            } => {
+                self.end_touch_gesture(
+                    track_name,
+                    AutomationWriteKey::Clap {
+                        instance_id: *instance_id,
+                        param_id: *param_id,
+                    },
+                );
             }
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackSetLv2ControlValue {
@@ -217,6 +378,16 @@ impl Maolan {
                         ((*value - min) / (max - min)).clamp(0.0, 1.0)
                     };
                     self.record_automation_point(
+                        track_name,
+                        TrackAutomationTarget::Lv2Parameter {
+                            instance_id: *instance_id,
+                            index: *index,
+                            min,
+                            max,
+                        },
+                        normalized,
+                    );
+                    self.record_manual_override(
                         track_name,
                         TrackAutomationTarget::Lv2Parameter {
                             instance_id: *instance_id,
@@ -267,6 +438,16 @@ impl Maolan {
         sample: usize,
         tracks: &[Track],
     ) -> Vec<Action> {
+        let now = Instant::now();
+        for (track_name, values) in self.touch_automation_overrides.iter_mut() {
+            let active = self.touch_active_keys.get(track_name);
+            values.retain(|key, entry| {
+                active.is_some_and(|set| set.contains(key))
+                    || now.duration_since(entry.updated_at) <= Duration::from_millis(220)
+            });
+        }
+        self.touch_automation_overrides.retain(|_, values| !values.is_empty());
+
         let mut actions = Vec::new();
         for track in tracks {
             if track.automation_mode == TrackAutomationMode::Write {
@@ -280,7 +461,30 @@ impl Maolan {
                 .entry(track.name.clone())
                 .or_default();
             for lane in &track.automation_lanes {
-                let value = Self::automation_lane_value_at(&lane.points, sample);
+                let key = Self::automation_key(lane.target);
+                let override_value = match track.automation_mode {
+                    TrackAutomationMode::Touch => self
+                        .touch_automation_overrides
+                        .get(&track.name)
+                        .and_then(|values| values.get(&key))
+                        .and_then(|entry| {
+                            let active = self
+                                .touch_active_keys
+                                .get(&track.name)
+                                .is_some_and(|set| set.contains(&key));
+                            let fresh =
+                                now.duration_since(entry.updated_at) <= Duration::from_millis(220);
+                            (active || fresh).then_some(entry.value)
+                        }),
+                    TrackAutomationMode::Latch => self
+                        .latch_automation_overrides
+                        .get(&track.name)
+                        .and_then(|values| values.get(&key))
+                        .copied(),
+                    _ => None,
+                };
+                let value =
+                    override_value.or_else(|| Self::automation_lane_value_at(&lane.points, sample));
                 match lane.target {
                     TrackAutomationTarget::Volume => vol = value,
                     TrackAutomationTarget::Balance => bal = value,
@@ -619,6 +823,9 @@ impl Maolan {
                     self.paused = false;
                     self.last_playback_tick = None;
                     self.track_automation_runtime.clear();
+                    self.touch_automation_overrides.clear();
+                    self.touch_active_keys.clear();
+                    self.latch_automation_overrides.clear();
                     self.stop_recording_preview();
                     return Task::batch(vec![
                         self.send(Action::SetClipPlaybackEnabled(true)),
@@ -798,6 +1005,9 @@ impl Maolan {
                 self.paused = false;
                 self.transport_samples = 0.0;
                 self.track_automation_runtime.clear();
+                self.touch_automation_overrides.clear();
+                self.touch_active_keys.clear();
+                self.latch_automation_overrides.clear();
                 self.loop_enabled = false;
                 self.loop_range_samples = None;
                 self.punch_enabled = false;
@@ -886,6 +1096,9 @@ impl Maolan {
                 self.paused = false;
                 self.last_playback_tick = None;
                 self.track_automation_runtime.clear();
+                self.touch_automation_overrides.clear();
+                self.touch_active_keys.clear();
+                self.latch_automation_overrides.clear();
                 self.stop_recording_preview();
                 return Task::batch(vec![
                     self.send(Action::SetClipPlaybackEnabled(true)),
@@ -895,6 +1108,9 @@ impl Maolan {
             Message::JumpToStart => {
                 self.transport_samples = 0.0;
                 self.track_automation_runtime.clear();
+                self.touch_automation_overrides.clear();
+                self.touch_active_keys.clear();
+                self.latch_automation_overrides.clear();
                 return self.send(Action::TransportPosition(0));
             }
             Message::JumpToEnd => {
@@ -3606,16 +3822,41 @@ impl Maolan {
                     .iter_mut()
                     .find(|track| track.name == track_name.as_str())
                 {
-                    track.automation_mode = match track.automation_mode {
+                    let next_mode = match track.automation_mode {
                         TrackAutomationMode::Read => TrackAutomationMode::Touch,
                         TrackAutomationMode::Touch => TrackAutomationMode::Latch,
                         TrackAutomationMode::Latch => TrackAutomationMode::Write,
                         TrackAutomationMode::Write => TrackAutomationMode::Read,
                     };
+                    track.automation_mode = next_mode;
                     state.message = format!(
                         "Track '{}' automation mode: {}",
                         track.name, track.automation_mode
                     );
+                }
+                drop(state);
+                let key = track_name.clone();
+                let mode = self
+                    .state
+                    .blocking_read()
+                    .tracks
+                    .iter()
+                    .find(|track| track.name == key)
+                    .map(|track| track.automation_mode);
+                match mode {
+                    Some(TrackAutomationMode::Read) => {
+                        self.touch_active_keys.remove(&key);
+                        self.touch_automation_overrides.remove(&key);
+                        self.latch_automation_overrides.remove(&key);
+                    }
+                    Some(TrackAutomationMode::Touch) => {
+                        self.latch_automation_overrides.remove(&key);
+                    }
+                    Some(TrackAutomationMode::Write) => {
+                        self.touch_active_keys.remove(&key);
+                        self.touch_automation_overrides.remove(&key);
+                    }
+                    _ => {}
                 }
             }
             Message::TrackAutomationAddLane {
@@ -4824,6 +5065,17 @@ impl Maolan {
                 }
             }
             Message::MouseReleased => {
+                let active = std::mem::take(&mut self.touch_active_keys);
+                for (track_name, keys) in active {
+                    if let Some(values) = self.touch_automation_overrides.get_mut(&track_name) {
+                        for key in keys {
+                            values.remove(&key);
+                        }
+                        if values.is_empty() {
+                            self.touch_automation_overrides.remove(&track_name);
+                        }
+                    }
+                }
                 if self.modal.is_some() {
                     let mut state = self.state.blocking_write();
                     state.mouse_left_down = false;

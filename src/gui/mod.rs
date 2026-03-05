@@ -88,6 +88,31 @@ struct PendingVst3UiOpen {
     audio_outputs: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum AutomationWriteKey {
+    Volume,
+    Balance,
+    Mute,
+    Lv2 {
+        instance_id: usize,
+        index: u32,
+    },
+    Vst3 {
+        instance_id: usize,
+        param_id: u32,
+    },
+    Clap {
+        instance_id: usize,
+        param_id: u32,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct TouchAutomationOverride {
+    value: f32,
+    updated_at: Instant,
+}
+
 #[derive(Debug, Clone, Default)]
 struct TrackAutomationRuntime {
     level_db: Option<f32>,
@@ -132,6 +157,9 @@ pub struct Maolan {
     pending_save_is_template: bool,
     pending_audio_peaks: HashMap<AudioClipKey, Vec<Vec<f32>>>,
     track_automation_runtime: HashMap<String, TrackAutomationRuntime>,
+    touch_automation_overrides: HashMap<String, HashMap<AutomationWriteKey, TouchAutomationOverride>>,
+    touch_active_keys: HashMap<String, HashSet<AutomationWriteKey>>,
+    latch_automation_overrides: HashMap<String, HashMap<AutomationWriteKey, f32>>,
     pending_add_lv2_automation_uris: HashSet<(String, String)>,
     pending_add_lv2_automation_instances: HashSet<(String, usize)>,
     pending_add_vst3_automation_paths: HashSet<(String, String)>,
@@ -274,6 +302,9 @@ impl Default for Maolan {
             pending_save_is_template: false,
             pending_audio_peaks: HashMap::new(),
             track_automation_runtime: HashMap::new(),
+            touch_automation_overrides: HashMap::new(),
+            touch_active_keys: HashMap::new(),
+            latch_automation_overrides: HashMap::new(),
             pending_add_lv2_automation_uris: HashSet::new(),
             pending_add_lv2_automation_instances: HashSet::new(),
             pending_add_vst3_automation_paths: HashSet::new(),

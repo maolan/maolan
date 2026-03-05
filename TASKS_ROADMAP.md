@@ -28,6 +28,9 @@ Last updated: 2026-03-05
     - [x] Track automation mode field + UI cycle button
     - [x] Playback honors `Write` mode by skipping readback
     - [x] Manual control changes write automation points in Touch/Latch/Write
+    - [x] Touch: temporary manual override over lane readback
+    - [x] Touch: per-target gesture lifecycle (begin/end + targeted release clear)
+    - [x] Latch: sticky manual override until stop/mode change
 - [ ] Quantize/Humanize/Groove
 - [ ] Tempo/Time Signature track editor
 - [ ] Comping/Take lanes (MIDI + audio)
