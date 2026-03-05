@@ -344,6 +344,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     for (index, clip) in track.audio.clips.iter().enumerate() {
         let clip_name = clip.name.clone();
         let clip_peaks = clip.peaks.clone();
+        let clip_muted = clip.muted;
         let clip_id = crate::state::ClipId {
             track_idx: track_name_cloned.clone(),
             clip_idx: index,
@@ -466,14 +467,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         r: 0.72,
                         g: 0.86,
                         b: 1.0,
-                        a: 1.0,
+                        a: if clip_muted { 0.45 } else { 1.0 },
                     }
                 } else {
                     Color {
                         r: 0.27,
                         g: 0.45,
                         b: 0.62,
-                        a: 0.8,
+                        a: if clip_muted { 0.35 } else { 0.8 },
                     }
                 })),
                 ..Style::default()
@@ -667,12 +668,29 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let track_idx_for_menu = track_name_cloned.clone();
             let index_for_menu = index;
             let fade_enabled = clip.fade_enabled;
+            let muted_for_menu = clip_muted;
             let clip_with_context = ContextMenu::new(clip_with_mouse, move || {
                 column![
                     button("Rename").on_press(Message::ClipRenameShow {
                         track_idx: track_idx_for_menu.clone(),
                         clip_idx: index_for_menu,
                         kind: Kind::Audio,
+                    }),
+                    button("Set Active Take").on_press(Message::ClipSetActiveTake {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::Audio,
+                    }),
+                    button(if muted_for_menu {
+                        "Unmute Take"
+                    } else {
+                        "Mute Take"
+                    })
+                    .on_press(Message::ClipSetMuted {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::Audio,
+                        muted: !muted_for_menu,
                     }),
                     button(if fade_enabled {
                         "Disable Fade"
@@ -762,6 +780,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     }
     for (index, clip) in track.midi.clips.iter().enumerate() {
         let clip_name = clip.name.clone();
+        let clip_muted = clip.muted;
         let clip_id = crate::state::ClipId {
             track_idx: track_name_cloned.clone(),
             clip_idx: index,
@@ -870,14 +889,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                 r: 0.82,
                                 g: 1.0,
                                 b: 0.84,
-                                a: 1.0,
+                                a: if clip_muted { 0.45 } else { 1.0 },
                             }
                         } else {
                             Color {
                                 r: 0.24,
                                 g: 0.5,
                                 b: 0.26,
-                                a: 0.82,
+                                a: if clip_muted { 0.35 } else { 0.82 },
                             }
                         })),
                         ..Style::default()
@@ -1075,12 +1094,29 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let track_idx_for_menu = track_name_cloned.clone();
             let index_for_menu = index;
             let fade_enabled = clip.fade_enabled;
+            let muted_for_menu = clip_muted;
             let clip_with_context = ContextMenu::new(clip_with_mouse, move || {
                 column![
                     button("Rename").on_press(Message::ClipRenameShow {
                         track_idx: track_idx_for_menu.clone(),
                         clip_idx: index_for_menu,
                         kind: Kind::MIDI,
+                    }),
+                    button("Set Active Take").on_press(Message::ClipSetActiveTake {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::MIDI,
+                    }),
+                    button(if muted_for_menu {
+                        "Unmute Take"
+                    } else {
+                        "Mute Take"
+                    })
+                    .on_press(Message::ClipSetMuted {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::MIDI,
+                        muted: !muted_for_menu,
                     }),
                     button(if fade_enabled {
                         "Disable Fade"

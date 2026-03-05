@@ -177,6 +177,7 @@ pub enum Action {
         length: usize,
         offset: usize,
         input_channel: usize,
+        muted: bool,
         kind: Kind,
         fade_enabled: bool,
         fade_in_samples: usize,
@@ -194,6 +195,12 @@ pub enum Action {
         fade_enabled: bool,
         fade_in_samples: usize,
         fade_out_samples: usize,
+    },
+    SetClipMuted {
+        track_name: String,
+        clip_index: usize,
+        kind: Kind,
+        muted: bool,
     },
     RenameClip {
         track_name: String,

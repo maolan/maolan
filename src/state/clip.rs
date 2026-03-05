@@ -8,6 +8,8 @@ pub struct AudioClip {
     pub offset: usize,
     #[serde(default)]
     pub input_channel: usize,
+    #[serde(default)]
+    pub muted: bool,
     #[serde(skip)]
     pub max_length_samples: usize,
     pub peaks_file: Option<String>,
@@ -38,6 +40,8 @@ pub struct MIDIClip {
     pub offset: usize,
     #[serde(default)]
     pub input_channel: usize,
+    #[serde(default)]
+    pub muted: bool,
     #[serde(skip)]
     pub max_length_samples: usize,
     #[serde(default = "default_fade_enabled")]

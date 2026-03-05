@@ -896,6 +896,7 @@ impl Maolan {
             length,
             offset: 0,
             input_channel,
+            muted: false,
             kind: Kind::MIDI,
             fade_enabled: true,
             fade_in_samples: 240,
@@ -2823,6 +2824,7 @@ impl Maolan {
                     length,
                     offset,
                     input_channel,
+                    muted,
                     kind,
                     fade_enabled,
                     fade_in_samples,
@@ -2869,6 +2871,7 @@ impl Maolan {
                                     length: *length,
                                     offset: *offset,
                                     input_channel: *input_channel,
+                                    muted: *muted,
                                     max_length_samples,
                                     peaks_file: None,
                                     peaks: audio_peaks,
@@ -2884,11 +2887,34 @@ impl Maolan {
                                     length: *length,
                                     offset: *offset,
                                     input_channel: *input_channel,
+                                    muted: *muted,
                                     max_length_samples,
                                     fade_enabled: *fade_enabled,
                                     fade_in_samples: *fade_in_samples,
                                     fade_out_samples: *fade_out_samples,
                                 });
+                            }
+                        }
+                    }
+                }
+                Action::SetClipMuted {
+                    track_name,
+                    clip_index,
+                    kind,
+                    muted,
+                } => {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name) {
+                        match kind {
+                            Kind::Audio => {
+                                if let Some(clip) = track.audio.clips.get_mut(*clip_index) {
+                                    clip.muted = *muted;
+                                }
+                            }
+                            Kind::MIDI => {
+                                if let Some(clip) = track.midi.clips.get_mut(*clip_index) {
+                                    clip.muted = *muted;
+                                }
                             }
                         }
                     }
@@ -4566,6 +4592,81 @@ impl Maolan {
                     });
                 }
             }
+            Message::ClipSetMuted {
+                ref track_idx,
+                clip_idx,
+                kind,
+                muted,
+            } => {
+                return self.send(Action::SetClipMuted {
+                    track_name: track_idx.clone(),
+                    clip_index: clip_idx,
+                    kind,
+                    muted,
+                });
+            }
+            Message::ClipSetActiveTake {
+                ref track_idx,
+                clip_idx,
+                kind,
+            } => {
+                let updates = {
+                    let state = self.state.blocking_read();
+                    let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) else {
+                        return Task::none();
+                    };
+                    match kind {
+                        Kind::Audio => {
+                            let Some(selected) = track.audio.clips.get(clip_idx) else {
+                                return Task::none();
+                            };
+                            let selected_end = selected.start.saturating_add(selected.length);
+                            track
+                                .audio
+                                .clips
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(idx, clip)| {
+                                    let end = clip.start.saturating_add(clip.length);
+                                    (selected.start < end && clip.start < selected_end)
+                                        .then_some((idx, idx != clip_idx))
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                        Kind::MIDI => {
+                            let Some(selected) = track.midi.clips.get(clip_idx) else {
+                                return Task::none();
+                            };
+                            let selected_end = selected.start.saturating_add(selected.length);
+                            track
+                                .midi
+                                .clips
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(idx, clip)| {
+                                    let end = clip.start.saturating_add(clip.length);
+                                    (selected.start < end && clip.start < selected_end)
+                                        .then_some((idx, idx != clip_idx))
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                    }
+                };
+                if updates.is_empty() {
+                    return Task::none();
+                }
+                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+                for (idx, should_mute) in updates {
+                    tasks.push(self.send(Action::SetClipMuted {
+                        track_name: track_idx.clone(),
+                        clip_index: idx,
+                        kind,
+                        muted: should_mute,
+                    }));
+                }
+                tasks.push(self.send(Action::EndHistoryGroup));
+                return Task::batch(tasks);
+            }
             Message::TrackRenameShow(ref track_name) => {
                 let mut state = self.state.blocking_write();
                 state.track_rename_dialog = Some(crate::state::TrackRenameDialog {
@@ -5835,6 +5936,7 @@ impl Maolan {
                                                     length,
                                                     offset: 0,
                                                     input_channel: 0,
+                                                    muted: false,
                                                     kind: Kind::Audio,
                                                     fade_enabled: true,
                                                     fade_in_samples: 240,
@@ -5890,6 +5992,7 @@ impl Maolan {
                                                     length,
                                                     offset: 0,
                                                     input_channel: 0,
+                                                    muted: false,
                                                     kind: Kind::MIDI,
                                                     fade_enabled: true,
                                                     fade_in_samples: 240,

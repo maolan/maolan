@@ -1143,6 +1143,9 @@ impl Track {
 
         let segments = self.cycle_segments(frames);
         for clip in &self.audio.clips {
+            if clip.muted {
+                continue;
+            }
             let clip_start = clip.start;
             let clip_len = clip.end;
             if clip_len == 0 {
@@ -1214,6 +1217,9 @@ impl Track {
         }
         let segments = self.cycle_segments(frames);
         for clip in &self.midi.clips {
+            if clip.muted {
+                continue;
+            }
             let clip_start = clip.start;
             let clip_len = clip.end;
             if clip_len == 0 {

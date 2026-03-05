@@ -629,6 +629,17 @@ pub enum Message {
         clip_idx: usize,
         kind: Kind,
     },
+    ClipSetMuted {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+        muted: bool,
+    },
+    ClipSetActiveTake {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+    },
 
     TrackRenameShow(String),
     TrackRenameInput(String),

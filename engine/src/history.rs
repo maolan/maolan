@@ -86,6 +86,7 @@ pub fn should_record(action: &Action) -> bool {
             | Action::RenameClip { .. }
             | Action::ClipMove { .. }
             | Action::SetClipFade { .. }
+            | Action::SetClipMuted { .. }
             | Action::Connect { .. }
             | Action::Disconnect { .. }
             | Action::TrackConnectVst3Audio { .. }
@@ -199,6 +200,7 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         length,
                         offset: clip.offset,
                         input_channel: clip.input_channel,
+                        muted: clip.muted,
                         kind: Kind::Audio,
                         fade_enabled: clip.fade_enabled,
                         fade_in_samples: clip.fade_in_samples,
@@ -215,6 +217,7 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         length,
                         offset: clip.offset,
                         input_channel: clip.input_channel,
+                        muted: clip.muted,
                         kind: Kind::MIDI,
                         fade_enabled: true,    // Default value for MIDI clips
                         fade_in_samples: 240,  // Default value
@@ -351,6 +354,25 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                     })
                 }
             }
+        }
+        Action::SetClipMuted {
+            track_name,
+            clip_index,
+            kind,
+            ..
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track_lock = track.lock();
+            let muted = match kind {
+                Kind::Audio => track_lock.audio.clips.get(*clip_index)?.muted,
+                Kind::MIDI => track_lock.midi.clips.get(*clip_index)?.muted,
+            };
+            Some(Action::SetClipMuted {
+                track_name: track_name.clone(),
+                clip_index: *clip_index,
+                kind: *kind,
+                muted,
+            })
         }
 
         Action::Connect {
@@ -668,6 +690,7 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     length,
                     offset: clip.offset,
                     input_channel: clip.input_channel,
+                    muted: clip.muted,
                     kind: Kind::Audio,
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: clip.fade_in_samples,
@@ -683,6 +706,7 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     length,
                     offset: clip.offset,
                     input_channel: clip.input_channel,
+                    muted: clip.muted,
                     kind: Kind::MIDI,
                     fade_enabled: true,
                     fade_in_samples: 240,

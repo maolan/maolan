@@ -5,6 +5,7 @@ pub struct MIDIClip {
     pub end: usize,
     pub offset: usize,
     pub input_channel: usize,
+    pub muted: bool,
 }
 
 impl MIDIClip {
@@ -15,6 +16,7 @@ impl MIDIClip {
             end,
             offset: 0,
             input_channel: 0,
+            muted: false,
         }
     }
 }

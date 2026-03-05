@@ -9,7 +9,7 @@ Last updated: 2026-03-05
   - [x] Step 1: Track automation lane data model in UI state
   - [x] Step 2: Add UI action to create first lane (Volume) per track
     - [x] Track context menu adds Volume/Balance/Mute automation lanes
-  - [ ] Step 3: Draw automation points/curves in editor timeline and edit points
+  - [x] Step 3: Draw automation points/curves in editor timeline and edit points
     - [x] Render visible automation lanes and point markers in timeline
     - [x] `A+` toggle to show/hide automation lanes per track
     - [x] Click lane to insert/update automation point
@@ -41,6 +41,7 @@ Last updated: 2026-03-05
   - [x] Second pass: bidirectional edits (increment/decrement via click + scroll hints)
   - [x] Session/template persistence for time signature
 - [ ] Comping/Take lanes (MIDI + audio)
+  - [x] First pass: clip mute state in engine/UI + "Set Active Take" overlap comping action
 
 ## Phase 2 - Production Workflow
 

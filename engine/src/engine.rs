@@ -1166,6 +1166,7 @@ impl Engine {
             length,
             offset: 0,
             input_channel: 0,
+            muted: false,
             kind: Kind::Audio,
             fade_enabled: clip.fade_enabled,
             fade_in_samples: clip.fade_in_samples,
@@ -1283,6 +1284,7 @@ impl Engine {
             length: clip_len_samples,
             offset: 0,
             input_channel: 0,
+            muted: false,
             kind: Kind::MIDI,
             fade_enabled: true,
             fade_in_samples: 240,
@@ -2899,6 +2901,7 @@ impl Engine {
                 length,
                 offset,
                 input_channel,
+                muted,
                 kind,
                 fade_enabled,
                 fade_in_samples,
@@ -2912,6 +2915,7 @@ impl Engine {
                             clip.offset = offset;
                             let max_lane = track.audio.ins.len().saturating_sub(1);
                             clip.input_channel = input_channel.min(max_lane);
+                            clip.muted = muted;
                             clip.fade_enabled = fade_enabled;
                             clip.fade_in_samples = fade_in_samples;
                             clip.fade_out_samples = fade_out_samples;
@@ -2922,6 +2926,7 @@ impl Engine {
                             clip.offset = offset;
                             let max_lane = track.midi.ins.len().saturating_sub(1);
                             clip.input_channel = input_channel.min(max_lane);
+                            clip.muted = muted;
                             track.midi.clips.push(clip);
                         }
                     }
@@ -3042,6 +3047,29 @@ impl Engine {
                     }
                     Kind::MIDI => {
                         // MIDI clips don't have fade implemented in engine yet
+                    }
+                }
+            }
+            Action::SetClipMuted {
+                ref track_name,
+                clip_index,
+                kind,
+                muted,
+            } => {
+                let Some(track) = self.state.lock().tracks.get(track_name) else {
+                    return;
+                };
+                let track = track.lock();
+                match kind {
+                    Kind::Audio => {
+                        if let Some(clip) = track.audio.clips.get_mut(clip_index) {
+                            clip.muted = muted;
+                        }
+                    }
+                    Kind::MIDI => {
+                        if let Some(clip) = track.midi.clips.get_mut(clip_index) {
+                            clip.muted = muted;
+                        }
                     }
                 }
             }
