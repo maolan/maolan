@@ -340,54 +340,12 @@ pub struct Maolan {
     last_autosave_snapshot: Option<Instant>,
     pending_recovery_session_dir: Option<PathBuf>,
     pending_autosave_recovery: Option<PendingAutosaveRecovery>,
+    pending_open_session_dir: Option<PathBuf>,
     pending_diagnostics_bundle_export: bool,
     diagnostics_bundle_wait_session_report: bool,
     diagnostics_bundle_wait_midi_report: bool,
     prefs_export_sample_rate_hz: u32,
     prefs_snap_mode: SnapMode,
-}
-
-fn last_session_hint_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".config/maolan/last_session_path")
-}
-
-fn read_last_session_hint() -> Option<PathBuf> {
-    let hint_path = last_session_hint_path();
-    let value = fs::read_to_string(hint_path).ok()?;
-    let path = PathBuf::from(value.trim());
-    if path.join("session.json").exists() {
-        Some(path)
-    } else {
-        None
-    }
-}
-
-fn newest_autosave_snapshot_for(session_dir: &Path) -> Option<PathBuf> {
-    let snapshots_dir = session_dir.join(".maolan_autosave/snapshots");
-    let mut dirs = fs::read_dir(snapshots_dir)
-        .ok()?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| path.is_dir() && path.join("session.json").exists())
-        .collect::<Vec<_>>();
-    dirs.sort();
-    dirs.pop()
-}
-
-fn detect_startup_recovery_session() -> Option<PathBuf> {
-    let session_dir = read_last_session_hint()?;
-    let snapshot = newest_autosave_snapshot_for(&session_dir)?;
-    let autosave_mtime = fs::metadata(snapshot.join("session.json"))
-        .and_then(|m| m.modified())
-        .ok()?;
-    let session_mtime = fs::metadata(session_dir.join("session.json"))
-        .and_then(|m| m.modified())
-        .ok()?;
-    if autosave_mtime > session_mtime {
-        Some(session_dir)
-    } else {
-        None
-    }
 }
 
 fn preferences_path() -> PathBuf {
@@ -455,7 +413,7 @@ impl Default for Maolan {
         let mut menu = menu::Menu::default();
         menu.update_templates(scan_templates());
         let prefs = load_preferences();
-        let mut app = Self {
+        Self {
             clip: None,
             clip_preview_target_track: None,
             menu,
@@ -581,21 +539,13 @@ impl Default for Maolan {
             last_autosave_snapshot: None,
             pending_recovery_session_dir: None,
             pending_autosave_recovery: None,
+            pending_open_session_dir: None,
             pending_diagnostics_bundle_export: false,
             diagnostics_bundle_wait_session_report: false,
             diagnostics_bundle_wait_midi_report: false,
             prefs_export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             prefs_snap_mode: prefs.default_snap_mode,
-        };
-        if let Some(recovery_session) = detect_startup_recovery_session() {
-            app.pending_recovery_session_dir = Some(recovery_session.clone());
-            app.modal = Some(Show::AutosaveRecovery);
-            app.state.blocking_write().message = format!(
-                "Autosave recovery available for '{}'. Use File -> Recover Autosave Snapshot.",
-                recovery_session.display()
-            );
         }
-        app
     }
 }
 
@@ -3352,24 +3302,5 @@ impl Maolan {
         self.add_track.update(message.clone());
         self.clip_rename.update(message.clone());
         self.track_rename.update(message.clone());
-        let track_needs_update = matches!(
-            message,
-            Message::Response(Ok(Action::TrackLevel(_, _)
-                | Action::TrackBalance(_, _)
-                | Action::TrackMeters { .. }
-                | Action::TrackToggleArm(_)
-                | Action::TrackToggleMute(_)
-                | Action::TrackToggleSolo(_)
-                | Action::TrackToggleInputMonitor(_)
-                | Action::TrackToggleDiskMonitor(_)
-                | Action::TrackSetFrozen { .. }
-                | Action::TrackSetVcaMaster { .. }
-                | Action::TrackSetMidiLearnBinding { .. }))
-        );
-        if track_needs_update {
-            for track in &mut self.state.blocking_write().tracks {
-                track.update(message.clone());
-            }
-        }
     }
 }

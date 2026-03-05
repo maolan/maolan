@@ -1,7 +1,6 @@
 use super::{AudioClip, MIDIClip};
-use crate::message::{Message, TrackAutomationMode, TrackAutomationTarget};
+use crate::message::{TrackAutomationMode, TrackAutomationTarget};
 use iced::Point;
-use maolan_engine::message::Action;
 use serde::{Deserialize, Serialize};
 
 pub const TRACK_FOLDER_HEADER_HEIGHT: f32 = 24.0;
@@ -174,101 +173,6 @@ impl Track {
         };
         track.height = track.min_height_for_layout().max(60.0);
         track
-    }
-
-    pub fn update(&mut self, message: Message) {
-        if let Message::Response(Ok(a)) = message {
-            match a {
-                Action::TrackLevel(name, level) => {
-                    if name == self.name {
-                        self.level = level;
-                    }
-                }
-                Action::TrackBalance(name, balance) => {
-                    if name == self.name {
-                        self.balance = balance;
-                    }
-                }
-                Action::TrackMeters {
-                    track_name,
-                    output_db,
-                } => {
-                    if track_name == self.name {
-                        self.meter_out_db = output_db;
-                    }
-                }
-                Action::TrackToggleArm(name) => {
-                    if name == self.name {
-                        self.armed = !self.armed;
-                    }
-                }
-                Action::TrackToggleMute(name) => {
-                    if name == self.name {
-                        self.muted = !self.muted;
-                    }
-                }
-                Action::TrackToggleSolo(name) => {
-                    if name == self.name {
-                        self.soloed = !self.soloed;
-                    }
-                }
-                Action::TrackToggleInputMonitor(name) => {
-                    if name == self.name {
-                        self.input_monitor = !self.input_monitor;
-                    }
-                }
-                Action::TrackToggleDiskMonitor(name) => {
-                    if name == self.name {
-                        self.disk_monitor = !self.disk_monitor;
-                    }
-                }
-                Action::TrackSetFrozen { track_name, frozen } => {
-                    if track_name == self.name {
-                        self.frozen = frozen;
-                    }
-                }
-                Action::TrackSetVcaMaster {
-                    track_name,
-                    master_track,
-                } => {
-                    if track_name == self.name {
-                        self.vca_master = master_track;
-                    }
-                }
-                Action::TrackSetMidiLearnBinding {
-                    track_name,
-                    target,
-                    binding,
-                } => {
-                    if track_name == self.name {
-                        match target {
-                            maolan_engine::message::TrackMidiLearnTarget::Volume => {
-                                self.midi_learn_volume = binding;
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::Balance => {
-                                self.midi_learn_balance = binding;
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::Mute => {
-                                self.midi_learn_mute = binding;
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::Solo => {
-                                self.midi_learn_solo = binding;
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::Arm => {
-                                self.midi_learn_arm = binding;
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::InputMonitor => {
-                                self.midi_learn_input_monitor = binding;
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::DiskMonitor => {
-                                self.midi_learn_disk_monitor = binding;
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
     }
 
     pub fn audio_lane_count(&self) -> usize {

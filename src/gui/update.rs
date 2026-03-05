@@ -264,6 +264,7 @@ impl Maolan {
                 Ok(task) => {
                     self.pending_recovery_session_dir = None;
                     self.pending_autosave_recovery = None;
+                    self.pending_open_session_dir = None;
                     self.has_unsaved_changes = true;
                     self.state.blocking_write().message =
                         format!("Recovered autosave snapshot '{}'", snapshot.display());
@@ -275,6 +276,7 @@ impl Maolan {
             }
         }
         self.pending_autosave_recovery = None;
+        self.pending_open_session_dir = None;
         self.state.blocking_write().message = format!(
             "Autosave recovery failed for all available snapshots: {}",
             errors.join(" | ")
@@ -2383,6 +2385,7 @@ impl Maolan {
                 self.last_autosave_snapshot = None;
                 self.pending_recovery_session_dir = None;
                 self.pending_autosave_recovery = None;
+                self.pending_open_session_dir = None;
                 self.pending_diagnostics_bundle_export = false;
                 self.diagnostics_bundle_wait_session_report = false;
                 self.diagnostics_bundle_wait_midi_report = false;
@@ -4861,7 +4864,9 @@ impl Maolan {
                             return self.load_track_template(name.clone(), template_name);
                         }
 
-                        self.modal = None;
+                        if !matches!(self.modal, Some(Show::AutosaveRecovery)) {
+                            self.modal = None;
+                        }
                     }
                     Action::RemoveTrack(name) => {
                         let mut state = self.state.blocking_write();
@@ -5845,6 +5850,7 @@ impl Maolan {
                         self.has_unsaved_changes = false;
                         self.last_autosave_snapshot = None;
                         self.pending_autosave_recovery = None;
+                        self.pending_open_session_dir = None;
                         if let Some(path) = &self.session_dir {
                             Self::write_last_session_hint(&path.to_string_lossy());
                         }
@@ -5863,12 +5869,14 @@ impl Maolan {
                         self.has_unsaved_changes = false;
                         self.last_autosave_snapshot = None;
                         self.pending_autosave_recovery = None;
+                        self.pending_open_session_dir = None;
                     }
                     Action::EndSessionRestore => {
                         self.session_restore_in_progress = false;
                         self.has_unsaved_changes = false;
                         self.last_autosave_snapshot = None;
                         self.pending_autosave_recovery = None;
+                        self.pending_open_session_dir = None;
                     }
                     Action::TransportPosition(sample) => {
                         self.transport_samples = *sample as f64;
@@ -6559,18 +6567,22 @@ impl Maolan {
                     state.ctrl = false;
                     state.shift = false;
                 }
-                if self
+                if Self::has_newer_autosave_snapshot(&path) {
+                    self.pending_recovery_session_dir = Some(path.clone());
+                    self.pending_autosave_recovery = None;
+                    self.pending_open_session_dir = Some(path.clone());
+                    self.modal = Some(Show::AutosaveRecovery);
+                    self.state.blocking_write().message =
+                        "Found newer autosave snapshot for opened session.".to_string();
+                    return Task::none();
+                } else if self
                     .pending_recovery_session_dir
                     .as_ref()
                     .is_some_and(|pending| pending == &path)
                 {
                     self.pending_recovery_session_dir = None;
-                } else if Self::has_newer_autosave_snapshot(&path) {
-                    self.pending_recovery_session_dir = Some(path.clone());
-                    self.pending_autosave_recovery = None;
-                    self.state.blocking_write().message = "Found newer autosave snapshot. Use File -> Recover Autosave Snapshot to preview and restore it, or open the same session again to ignore.".to_string();
-                    return Task::none();
                 }
+                self.pending_open_session_dir = None;
                 self.session_dir = Some(path.clone());
                 self.pending_autosave_recovery = None;
                 self.stop_recording_preview();
@@ -6639,11 +6651,25 @@ impl Maolan {
                 return Task::none();
             }
             Message::RecoverAutosaveIgnore => {
+                let deferred_open = self.pending_open_session_dir.clone();
                 self.pending_recovery_session_dir = None;
                 self.pending_autosave_recovery = None;
+                self.pending_open_session_dir = None;
                 self.modal = None;
-                self.state.blocking_write().message = "Autosave recovery ignored".to_string();
-                return Task::none();
+                if let Some(path) = deferred_open {
+                    self.session_dir = Some(path.clone());
+                    self.stop_recording_preview();
+                    match self.load(path.to_string_lossy().to_string()) {
+                        Ok(task) => return task,
+                        Err(e) => {
+                            error!("{}", e);
+                            return Task::none();
+                        }
+                    }
+                } else {
+                    self.state.blocking_write().message = "Autosave recovery ignored".to_string();
+                    return Task::none();
+                }
             }
             Message::ShiftPressed => {
                 if !self.state.blocking_read().hw_loaded {
