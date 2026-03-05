@@ -788,30 +788,35 @@ impl Maolan {
         let reader = BufReader::new(file);
         let session: Value = serde_json::from_reader(reader)?;
         if let Some(global_ml) = session.get("midi_learn_global").and_then(Value::as_object) {
-            if let Ok(binding) = serde_json::from_value::<Option<maolan_engine::message::MidiLearnBinding>>(
-                global_ml.get("play_pause").cloned().unwrap_or(Value::Null),
-            ) && binding.is_some()
+            if let Ok(binding) =
+                serde_json::from_value::<Option<maolan_engine::message::MidiLearnBinding>>(
+                    global_ml.get("play_pause").cloned().unwrap_or(Value::Null),
+                )
+                && binding.is_some()
             {
                 restore_actions.push(Action::SetGlobalMidiLearnBinding {
                     target: GlobalMidiLearnTarget::PlayPause,
                     binding,
                 });
             }
-            if let Ok(binding) = serde_json::from_value::<Option<maolan_engine::message::MidiLearnBinding>>(
-                global_ml.get("stop").cloned().unwrap_or(Value::Null),
-            ) && binding.is_some()
+            if let Ok(binding) = serde_json::from_value::<
+                Option<maolan_engine::message::MidiLearnBinding>,
+            >(global_ml.get("stop").cloned().unwrap_or(Value::Null))
+                && binding.is_some()
             {
                 restore_actions.push(Action::SetGlobalMidiLearnBinding {
                     target: GlobalMidiLearnTarget::Stop,
                     binding,
                 });
             }
-            if let Ok(binding) = serde_json::from_value::<Option<maolan_engine::message::MidiLearnBinding>>(
-                global_ml
-                    .get("record_toggle")
-                    .cloned()
-                    .unwrap_or(Value::Null),
-            ) && binding.is_some()
+            if let Ok(binding) =
+                serde_json::from_value::<Option<maolan_engine::message::MidiLearnBinding>>(
+                    global_ml
+                        .get("record_toggle")
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                )
+                && binding.is_some()
             {
                 restore_actions.push(Action::SetGlobalMidiLearnBinding {
                     target: GlobalMidiLearnTarget::RecordToggle,

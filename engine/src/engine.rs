@@ -171,8 +171,7 @@ pub struct Engine {
     history_group: Option<UndoEntry>,
     history_suspended: bool,
     offline_bounce_job: Option<OfflineBounceJob>,
-    pending_midi_learn:
-        Option<(String, crate::message::TrackMidiLearnTarget, Option<String>)>,
+    pending_midi_learn: Option<(String, crate::message::TrackMidiLearnTarget, Option<String>)>,
     pending_global_midi_learn: Option<crate::message::GlobalMidiLearnTarget>,
     global_midi_learn_play_pause: Option<crate::message::MidiLearnBinding>,
     global_midi_learn_stop: Option<crate::message::MidiLearnBinding>,
@@ -1000,19 +999,18 @@ impl Engine {
         );
         for (track_name, track) in state.tracks.iter() {
             let t = track.lock();
-            let mut check_track =
-                |current: &Option<crate::message::MidiLearnBinding>,
-                 target: crate::message::TrackMidiLearnTarget,
-                 label: &str| {
-                    if let Some(existing) = current
-                        && Self::midi_binding_matches(binding, existing)
-                    {
-                        push_conflict(
-                            MidiLearnSlot::Track(track_name.clone(), target),
-                            format!("{track_name} {label}"),
-                        );
-                    }
-                };
+            let mut check_track = |current: &Option<crate::message::MidiLearnBinding>,
+                                   target: crate::message::TrackMidiLearnTarget,
+                                   label: &str| {
+                if let Some(existing) = current
+                    && Self::midi_binding_matches(binding, existing)
+                {
+                    push_conflict(
+                        MidiLearnSlot::Track(track_name.clone(), target),
+                        format!("{track_name} {label}"),
+                    );
+                }
+            };
             check_track(
                 &t.midi_learn_volume,
                 crate::message::TrackMidiLearnTarget::Volume,
@@ -1154,30 +1152,21 @@ impl Engine {
         for (track_name, track) in self.state.lock().tracks.iter() {
             let t = track.lock();
             if let Some(binding) = t.midi_learn_volume.as_ref() {
-                let device_matches = binding
-                    .device
-                    .as_ref()
-                    .is_none_or(|d| d.as_str() == device);
+                let device_matches = binding.device.as_ref().is_none_or(|d| d.as_str() == device);
                 if device_matches && binding.channel == channel && binding.cc == cc {
                     let level = -90.0 + (value as f32 / 127.0) * 110.0;
                     mapped_actions.push(Action::TrackLevel(track_name.clone(), level));
                 }
             }
             if let Some(binding) = t.midi_learn_balance.as_ref() {
-                let device_matches = binding
-                    .device
-                    .as_ref()
-                    .is_none_or(|d| d.as_str() == device);
+                let device_matches = binding.device.as_ref().is_none_or(|d| d.as_str() == device);
                 if device_matches && binding.channel == channel && binding.cc == cc {
                     let balance = (value as f32 / 127.0) * 2.0 - 1.0;
                     mapped_actions.push(Action::TrackBalance(track_name.clone(), balance));
                 }
             }
             if let Some(binding) = t.midi_learn_mute.as_ref() {
-                let device_matches = binding
-                    .device
-                    .as_ref()
-                    .is_none_or(|d| d.as_str() == device);
+                let device_matches = binding.device.as_ref().is_none_or(|d| d.as_str() == device);
                 if device_matches && binding.channel == channel && binding.cc == cc {
                     let wanted = value >= 64;
                     if t.muted != wanted {
@@ -1186,10 +1175,7 @@ impl Engine {
                 }
             }
             if let Some(binding) = t.midi_learn_solo.as_ref() {
-                let device_matches = binding
-                    .device
-                    .as_ref()
-                    .is_none_or(|d| d.as_str() == device);
+                let device_matches = binding.device.as_ref().is_none_or(|d| d.as_str() == device);
                 if device_matches && binding.channel == channel && binding.cc == cc {
                     let wanted = value >= 64;
                     if t.soloed != wanted {
@@ -1198,10 +1184,7 @@ impl Engine {
                 }
             }
             if let Some(binding) = t.midi_learn_arm.as_ref() {
-                let device_matches = binding
-                    .device
-                    .as_ref()
-                    .is_none_or(|d| d.as_str() == device);
+                let device_matches = binding.device.as_ref().is_none_or(|d| d.as_str() == device);
                 if device_matches && binding.channel == channel && binding.cc == cc {
                     let wanted = value >= 64;
                     if t.armed != wanted {
@@ -1210,10 +1193,7 @@ impl Engine {
                 }
             }
             if let Some(binding) = t.midi_learn_input_monitor.as_ref() {
-                let device_matches = binding
-                    .device
-                    .as_ref()
-                    .is_none_or(|d| d.as_str() == device);
+                let device_matches = binding.device.as_ref().is_none_or(|d| d.as_str() == device);
                 if device_matches && binding.channel == channel && binding.cc == cc {
                     let wanted = value >= 64;
                     if t.input_monitor != wanted {
@@ -1222,10 +1202,7 @@ impl Engine {
                 }
             }
             if let Some(binding) = t.midi_learn_disk_monitor.as_ref() {
-                let device_matches = binding
-                    .device
-                    .as_ref()
-                    .is_none_or(|d| d.as_str() == device);
+                let device_matches = binding.device.as_ref().is_none_or(|d| d.as_str() == device);
                 if device_matches && binding.channel == channel && binding.cc == cc {
                     let wanted = value >= 64;
                     if t.disk_monitor != wanted {
@@ -1278,11 +1255,8 @@ impl Engine {
                 Action::TrackBalance(ref track_name, balance) => {
                     if let Some(track) = self.state.lock().tracks.get(track_name) {
                         track.lock().set_balance(balance);
-                        self.notify_clients(Ok(Action::TrackBalance(
-                            track_name.clone(),
-                            balance,
-                        )))
-                        .await;
+                        self.notify_clients(Ok(Action::TrackBalance(track_name.clone(), balance)))
+                            .await;
                     }
                 }
                 Action::TrackToggleMute(ref track_name) => {
@@ -1318,10 +1292,8 @@ impl Engine {
                 Action::TrackToggleDiskMonitor(ref track_name) => {
                     if let Some(track) = self.state.lock().tracks.get(track_name) {
                         track.lock().toggle_disk_monitor();
-                        self.notify_clients(Ok(Action::TrackToggleDiskMonitor(
-                            track_name.clone(),
-                        )))
-                        .await;
+                        self.notify_clients(Ok(Action::TrackToggleDiskMonitor(track_name.clone())))
+                            .await;
                     }
                 }
                 _ => {}
@@ -2605,10 +2577,8 @@ impl Engine {
                             && follower.lock().muted != muted
                         {
                             follower.lock().set_muted(muted);
-                            self.notify_clients(Ok(Action::TrackToggleMute(
-                                follower_name.clone(),
-                            )))
-                            .await;
+                            self.notify_clients(Ok(Action::TrackToggleMute(follower_name.clone())))
+                                .await;
                         }
                     }
                 }
@@ -2625,10 +2595,8 @@ impl Engine {
                             && follower.lock().soloed != soloed
                         {
                             follower.lock().solo();
-                            self.notify_clients(Ok(Action::TrackToggleSolo(
-                                follower_name.clone(),
-                            )))
-                            .await;
+                            self.notify_clients(Ok(Action::TrackToggleSolo(follower_name.clone())))
+                                .await;
                         }
                     }
                 }
@@ -2708,10 +2676,13 @@ impl Engine {
                     return;
                 }
             }
-            Action::SetGlobalMidiLearnBinding { target, ref binding } => {
+            Action::SetGlobalMidiLearnBinding {
+                target,
+                ref binding,
+            } => {
                 if let Some(binding) = binding.as_ref() {
-                    let conflicts =
-                        self.midi_learn_slot_conflicts(binding, Some(MidiLearnSlot::Global(target)));
+                    let conflicts = self
+                        .midi_learn_slot_conflicts(binding, Some(MidiLearnSlot::Global(target)));
                     if !conflicts.is_empty() {
                         self.notify_clients(Err(format!(
                             "Global MIDI learn conflict for {:?}: {}",
@@ -2755,10 +2726,8 @@ impl Engine {
                         return;
                     }
                     if self.vca_would_create_cycle(track_name, master_name) {
-                        self.notify_clients(Err(
-                            "VCA assignment would create a cycle".to_string(),
-                        ))
-                        .await;
+                        self.notify_clients(Err("VCA assignment would create a cycle".to_string()))
+                            .await;
                         return;
                     }
                 }
@@ -4598,7 +4567,7 @@ impl Engine {
                     {
                         self.jack_runtime
                             .as_ref()
-                            .map(|j| j.lock().sample_rate as usize)
+                            .map(|j| j.lock().sample_rate)
                             .unwrap_or(0)
                     }
                     #[cfg(not(unix))]

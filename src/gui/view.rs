@@ -142,78 +142,79 @@ impl Maolan {
                         || !self.selected_time_signature_points.is_empty();
                     let mut view: iced::Element<'_, Message> =
                         if matches!(state.view, View::Workspace | View::Piano)
-                        && has_timing_selection
-                    {
-                        let lane_label = match self.timing_selection_lane {
-                            Some(super::TimingSelectionLane::Tempo) => "Tempo Points",
-                            Some(super::TimingSelectionLane::TimeSignature) => {
-                                "Time Signature Points"
-                            }
-                            None => "Timing Points",
-                        };
-                        let selected_count = if !self.selected_tempo_points.is_empty() {
-                            self.selected_tempo_points.len()
+                            && has_timing_selection
+                        {
+                            let lane_label = match self.timing_selection_lane {
+                                Some(super::TimingSelectionLane::Tempo) => "Tempo Points",
+                                Some(super::TimingSelectionLane::TimeSignature) => {
+                                    "Time Signature Points"
+                                }
+                                None => "Timing Points",
+                            };
+                            let selected_count = if !self.selected_tempo_points.is_empty() {
+                                self.selected_tempo_points.len()
+                            } else {
+                                self.selected_time_signature_points.len()
+                            };
+                            let editor_panel = container(
+                                column![
+                                    text(lane_label),
+                                    text(format!("{selected_count} selected")).size(11),
+                                    text_input("BPM", &self.tempo_input)
+                                        .on_input(Message::TempoInputChanged)
+                                        .on_submit(Message::TempoInputCommit),
+                                    row![
+                                        text_input("Num", &self.time_signature_num_input)
+                                            .on_input(Message::TimeSignatureNumeratorInputChanged)
+                                            .on_submit(Message::TimeSignatureInputCommit)
+                                            .width(Length::Fill),
+                                        text_input("Den", &self.time_signature_denom_input)
+                                            .on_input(Message::TimeSignatureDenominatorInputChanged)
+                                            .on_submit(Message::TimeSignatureInputCommit)
+                                            .width(Length::Fill),
+                                    ]
+                                    .spacing(6),
+                                    row![
+                                        button("Duplicate").on_press(
+                                            if !self.selected_tempo_points.is_empty() {
+                                                Message::TempoSelectionDuplicate
+                                            } else {
+                                                Message::TimeSignatureSelectionDuplicate
+                                            }
+                                        ),
+                                        button("Reset").on_press(
+                                            if !self.selected_tempo_points.is_empty() {
+                                                Message::TempoSelectionResetToPrevious
+                                            } else {
+                                                Message::TimeSignatureSelectionResetToPrevious
+                                            }
+                                        ),
+                                    ]
+                                    .spacing(6),
+                                    row![
+                                        button("Delete").on_press(
+                                            if !self.selected_tempo_points.is_empty() {
+                                                Message::TempoSelectionDelete
+                                            } else {
+                                                Message::TimeSignatureSelectionDelete
+                                            }
+                                        ),
+                                        button("Clear")
+                                            .on_press(Message::ClearTimingPointSelection),
+                                    ]
+                                    .spacing(6),
+                                ]
+                                .spacing(8),
+                            )
+                            .width(Length::Fixed(220.0))
+                            .padding(8);
+                            row![container(view).width(Length::Fill), editor_panel]
+                                .width(Length::Fill)
+                                .height(Length::Fill)
+                                .into()
                         } else {
-                            self.selected_time_signature_points.len()
+                            view
                         };
-                        let editor_panel = container(
-                            column![
-                                text(lane_label),
-                                text(format!("{selected_count} selected")).size(11),
-                                text_input("BPM", &self.tempo_input)
-                                    .on_input(Message::TempoInputChanged)
-                                    .on_submit(Message::TempoInputCommit),
-                                row![
-                                    text_input("Num", &self.time_signature_num_input)
-                                        .on_input(Message::TimeSignatureNumeratorInputChanged)
-                                        .on_submit(Message::TimeSignatureInputCommit)
-                                        .width(Length::Fill),
-                                    text_input("Den", &self.time_signature_denom_input)
-                                        .on_input(Message::TimeSignatureDenominatorInputChanged)
-                                        .on_submit(Message::TimeSignatureInputCommit)
-                                        .width(Length::Fill),
-                                ]
-                                .spacing(6),
-                                row![
-                                    button("Duplicate").on_press(
-                                        if !self.selected_tempo_points.is_empty() {
-                                            Message::TempoSelectionDuplicate
-                                        } else {
-                                            Message::TimeSignatureSelectionDuplicate
-                                        }
-                                    ),
-                                    button("Reset").on_press(
-                                        if !self.selected_tempo_points.is_empty() {
-                                            Message::TempoSelectionResetToPrevious
-                                        } else {
-                                            Message::TimeSignatureSelectionResetToPrevious
-                                        }
-                                    ),
-                                ]
-                                .spacing(6),
-                                row![
-                                    button("Delete").on_press(
-                                        if !self.selected_tempo_points.is_empty() {
-                                            Message::TempoSelectionDelete
-                                        } else {
-                                            Message::TimeSignatureSelectionDelete
-                                        }
-                                    ),
-                                    button("Clear").on_press(Message::ClearTimingPointSelection),
-                                ]
-                                .spacing(6),
-                            ]
-                            .spacing(8),
-                        )
-                        .width(Length::Fixed(220.0))
-                        .padding(8);
-                        row![container(view).width(Length::Fill), editor_panel]
-                            .width(Length::Fill)
-                            .height(Length::Fill)
-                            .into()
-                    } else {
-                        view
-                    };
                     if self.midi_mappings_panel_open {
                         let mappings_list = if self.midi_mappings_report_lines.is_empty() {
                             column![text("No MIDI mappings loaded").size(11)]
@@ -228,8 +229,10 @@ impl Maolan {
                             column![
                                 row![
                                     text("MIDI Mappings"),
-                                    button("Refresh").on_press(Message::MidiLearnMappingsReportRequest),
-                                    button("Clear All").on_press(Message::MidiLearnMappingsClearAllRequest),
+                                    button("Refresh")
+                                        .on_press(Message::MidiLearnMappingsReportRequest),
+                                    button("Clear All")
+                                        .on_press(Message::MidiLearnMappingsClearAllRequest),
                                     button("Hide").on_press(Message::MidiLearnMappingsPanelToggle),
                                 ]
                                 .spacing(6),

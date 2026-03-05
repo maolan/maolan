@@ -32,6 +32,7 @@ use maolan_engine::{
     },
 };
 use rfd::AsyncFileDialog;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -39,7 +40,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tracing::error;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct MidiMappingsGlobalFile {
@@ -85,14 +85,17 @@ impl Maolan {
             .into_iter()
             .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
             .map(|entry| entry.path())
-            .filter(|snapshot_dir| snapshot_dir.is_dir() && snapshot_dir.join("session.json").exists())
+            .filter(|snapshot_dir| {
+                snapshot_dir.is_dir() && snapshot_dir.join("session.json").exists()
+            })
             .collect::<Vec<_>>();
         snapshots.sort_by(|a, b| b.cmp(a));
         snapshots
     }
 
     fn has_newer_autosave_snapshot(path: &std::path::Path) -> bool {
-        let Some(autosave_session) = Self::list_autosave_snapshots_for(path).first().cloned() else {
+        let Some(autosave_session) = Self::list_autosave_snapshots_for(path).first().cloned()
+        else {
             return false;
         };
         let autosave_mtime = fs::metadata(autosave_session.join("session.json"))
@@ -282,13 +285,14 @@ impl Maolan {
     fn rebuild_midi_mappings_report_lines_from_state(&mut self) {
         let state = self.state.blocking_read();
         let mut lines = Vec::<String>::new();
-        let mut push_binding = |scope: String, label: &str, binding: &maolan_engine::message::MidiLearnBinding| {
-            lines.push(format!(
-                "{scope} {label}: CH{} CC{}",
-                binding.channel + 1,
-                binding.cc
-            ));
-        };
+        let mut push_binding =
+            |scope: String, label: &str, binding: &maolan_engine::message::MidiLearnBinding| {
+                lines.push(format!(
+                    "{scope} {label}: CH{} CC{}",
+                    binding.channel + 1,
+                    binding.cc
+                ));
+            };
 
         if let Some(binding) = state.global_midi_learn_play_pause.as_ref() {
             push_binding("Global".to_string(), "Play/Pause", binding);
@@ -917,7 +921,10 @@ impl Maolan {
         ]
     }
 
-    fn add_warp_marker_between(markers: &[AudioWarpMarker], clip_length: usize) -> Vec<AudioWarpMarker> {
+    fn add_warp_marker_between(
+        markers: &[AudioWarpMarker],
+        clip_length: usize,
+    ) -> Vec<AudioWarpMarker> {
         let mut out = markers.to_vec();
         let timeline_mid = clip_length / 2;
         if out.iter().any(|m| m.timeline_sample == timeline_mid) {
@@ -2529,9 +2536,10 @@ impl Maolan {
                     return Task::none();
                 };
                 let now = Instant::now();
-                if self.last_autosave_snapshot.is_some_and(|last| {
-                    now.duration_since(last) < AUTOSAVE_SNAPSHOT_INTERVAL
-                }) {
+                if self
+                    .last_autosave_snapshot
+                    .is_some_and(|last| now.duration_since(last) < AUTOSAVE_SNAPSHOT_INTERVAL)
+                {
                     return Task::none();
                 }
                 let stamp = SystemTime::now()
@@ -3464,7 +3472,8 @@ impl Maolan {
                         _ => 200.0,
                     };
                     let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
-                    let samples_per_beat = (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+                    let samples_per_beat =
+                        (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
                     let samples_per_bar = samples_per_beat * tsig_num;
                     let total_samples = (samples_per_bar * self.zoom_visible_bars as f64).max(1.0);
                     let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
@@ -3601,7 +3610,8 @@ impl Maolan {
                         _ => 200.0,
                     };
                     let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
-                    let samples_per_beat = (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+                    let samples_per_beat =
+                        (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
                     let samples_per_bar = samples_per_beat * tsig_num;
                     let total_samples = (samples_per_bar * self.zoom_visible_bars as f64).max(1.0);
                     let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
@@ -4139,7 +4149,8 @@ impl Maolan {
                         _ => 200.0,
                     };
                     let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
-                    let samples_per_beat = (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+                    let samples_per_beat =
+                        (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
                     let samples_per_bar = samples_per_beat * tsig_num;
                     let total_samples = (samples_per_bar * self.zoom_visible_bars as f64).max(1.0);
                     let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
@@ -4800,1622 +4811,1323 @@ impl Maolan {
                     self.has_unsaved_changes = true;
                 }
                 match a {
-                Action::Quit => {
-                    exit(0);
-                }
-                Action::AddTrack {
-                    name,
-                    audio_ins,
-                    audio_outs,
-                    midi_ins,
-                    midi_outs,
-                } => {
-                    let mut state = self.state.blocking_write();
-                    state.tracks.push(Track::new(
-                        name.clone(),
-                        0.0,
-                        *audio_ins,
-                        *audio_outs,
-                        *midi_ins,
-                        *midi_outs,
-                    ));
-
-                    if let Some(position) = state.pending_track_positions.remove(name)
-                        && let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name)
-                    {
-                        track.position = position;
+                    Action::Quit => {
+                        exit(0);
                     }
-                    if let Some(height) = state.pending_track_heights.remove(name)
-                        && let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name)
-                    {
-                        track.height = height;
-                    }
-                    if let Some((audio_backup, midi_backup, render_clip)) =
-                        self.pending_track_freeze_restore.remove(name)
-                        && let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name)
-                    {
-                        track.frozen_audio_backup = audio_backup;
-                        track.frozen_midi_backup = midi_backup;
-                        track.frozen_render_clip = render_clip;
-                    }
+                    Action::AddTrack {
+                        name,
+                        audio_ins,
+                        audio_outs,
+                        midi_ins,
+                        midi_outs,
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        state.tracks.push(Track::new(
+                            name.clone(),
+                            0.0,
+                            *audio_ins,
+                            *audio_outs,
+                            *midi_ins,
+                            *midi_outs,
+                        ));
 
-                    // Check if we need to load a template for this track
-                    let pending_template = state.pending_track_template_load.clone();
-                    drop(state);
-
-                    if let Some((template_track_name, template_name)) = pending_template
-                        && template_track_name == *name
-                    {
-                        self.state.blocking_write().pending_track_template_load = None;
-                        return self.load_track_template(name.clone(), template_name);
-                    }
-
-                    self.modal = None;
-                }
-                Action::RemoveTrack(name) => {
-                    let mut state = self.state.blocking_write();
-
-                    if let Some(removed_idx) = state.tracks.iter().position(|t| t.name == *name) {
-                        state
-                            .connections
-                            .retain(|conn| conn.from_track != *name && conn.to_track != *name);
-                        state.tracks.remove(removed_idx);
-
-                        state.selected.remove(name);
-                        if let ConnectionViewSelection::Tracks(set) =
-                            &mut state.connection_view_selection
+                        if let Some(position) = state.pending_track_positions.remove(name)
+                            && let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name)
                         {
-                            set.remove(name);
+                            track.position = position;
                         }
-                        state.clap_plugins_by_track.remove(name);
-                        state.clap_states_by_track.remove(name);
-                        for track in &mut state.tracks {
-                            if track.vca_master.as_deref() == Some(name.as_str()) {
-                                track.vca_master = None;
+                        if let Some(height) = state.pending_track_heights.remove(name)
+                            && let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name)
+                        {
+                            track.height = height;
+                        }
+                        if let Some((audio_backup, midi_backup, render_clip)) =
+                            self.pending_track_freeze_restore.remove(name)
+                            && let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name)
+                        {
+                            track.frozen_audio_backup = audio_backup;
+                            track.frozen_midi_backup = midi_backup;
+                            track.frozen_render_clip = render_clip;
+                        }
+
+                        // Check if we need to load a template for this track
+                        let pending_template = state.pending_track_template_load.clone();
+                        drop(state);
+
+                        if let Some((template_track_name, template_name)) = pending_template
+                            && template_track_name == *name
+                        {
+                            self.state.blocking_write().pending_track_template_load = None;
+                            return self.load_track_template(name.clone(), template_name);
+                        }
+
+                        self.modal = None;
+                    }
+                    Action::RemoveTrack(name) => {
+                        let mut state = self.state.blocking_write();
+
+                        if let Some(removed_idx) = state.tracks.iter().position(|t| t.name == *name)
+                        {
+                            state
+                                .connections
+                                .retain(|conn| conn.from_track != *name && conn.to_track != *name);
+                            state.tracks.remove(removed_idx);
+
+                            state.selected.remove(name);
+                            if let ConnectionViewSelection::Tracks(set) =
+                                &mut state.connection_view_selection
+                            {
+                                set.remove(name);
                             }
-                            track.aux_sends.retain(|send| send.aux_track != *name);
+                            state.clap_plugins_by_track.remove(name);
+                            state.clap_states_by_track.remove(name);
+                            for track in &mut state.tracks {
+                                if track.vca_master.as_deref() == Some(name.as_str()) {
+                                    track.vca_master = None;
+                                }
+                                track.aux_sends.retain(|send| send.aux_track != *name);
+                            }
                         }
                     }
-                }
-                Action::ClipMove {
-                    kind,
-                    from,
-                    to,
-                    copy,
-                } => {
-                    let mut state = self.state.blocking_write();
+                    Action::ClipMove {
+                        kind,
+                        from,
+                        to,
+                        copy,
+                    } => {
+                        let mut state = self.state.blocking_write();
 
-                    let from_track_idx_option: Option<usize> = state
-                        .tracks
-                        .iter()
-                        .position(|track| track.name == from.track_name);
-
-                    if let Some(f_idx) = from_track_idx_option {
-                        let from_track = &mut state.tracks[f_idx];
-
-                        let mut clip_to_move: Option<crate::state::AudioClip> = None;
-                        let mut midi_clip_to_move: Option<crate::state::MIDIClip> = None;
-
-                        match kind {
-                            Kind::Audio => {
-                                if from.clip_index < from_track.audio.clips.len() {
-                                    if !copy {
-                                        clip_to_move =
-                                            Some(from_track.audio.clips.remove(from.clip_index));
-                                    } else {
-                                        clip_to_move =
-                                            Some(from_track.audio.clips[from.clip_index].clone());
-                                    }
-                                }
-                            }
-                            Kind::MIDI => {
-                                if from.clip_index < from_track.midi.clips.len() {
-                                    if !copy {
-                                        midi_clip_to_move =
-                                            Some(from_track.midi.clips.remove(from.clip_index));
-                                    } else {
-                                        midi_clip_to_move =
-                                            Some(from_track.midi.clips[from.clip_index].clone());
-                                    }
-                                }
-                            }
-                        }
-
-                        if let Some(to_track) = state
+                        let from_track_idx_option: Option<usize> = state
                             .tracks
-                            .iter_mut()
-                            .find(|track| track.name == to.track_name)
-                        {
-                            if let Some(mut clip_data) = clip_to_move {
-                                clip_data.start = to.sample_offset;
-                                clip_data.input_channel = to.input_channel;
-                                to_track.audio.clips.push(clip_data);
-                            } else if let Some(mut midi_clip_data) = midi_clip_to_move {
-                                midi_clip_data.start = to.sample_offset;
-                                midi_clip_data.input_channel = to.input_channel;
-                                to_track.midi.clips.push(midi_clip_data);
-                            }
-                        }
-                    }
-                }
-                Action::AddClip {
-                    name,
-                    track_name,
-                    start,
-                    length,
-                    offset,
-                    input_channel,
-                    muted,
-                    kind,
-                    fade_enabled,
-                    fade_in_samples,
-                    fade_out_samples,
-                    warp_markers,
-                } => {
-                    let mut audio_peaks = vec![];
-                    let mut max_length_samples = offset.saturating_add(*length);
-                    if *kind == Kind::Audio {
-                        let key = Self::audio_clip_key(track_name, name, *start, *length, *offset);
-                        audio_peaks = self.pending_audio_peaks.remove(&key).unwrap_or_default();
-                        if name.to_ascii_lowercase().ends_with(".wav") {
-                            let wav_path = if std::path::Path::new(name).is_absolute() {
-                                Some(std::path::PathBuf::from(name))
-                            } else {
-                                self.session_dir
-                                    .as_ref()
-                                    .map(|session_root| session_root.join(name))
-                            };
-                            if let Some(wav_path) = wav_path {
-                                if audio_peaks.is_empty()
-                                    && wav_path.exists()
-                                    && let Ok(computed) =
-                                        Self::compute_audio_clip_peaks(&wav_path, 512)
-                                {
-                                    audio_peaks = computed;
-                                }
-                                if wav_path.exists()
-                                    && let Ok(total_samples) =
-                                        Self::audio_clip_source_length(&wav_path)
-                                {
-                                    max_length_samples =
-                                        total_samples.saturating_sub(*offset).max(1);
-                                }
-                            }
-                        }
-                    }
-                    let mut state = self.state.blocking_write();
-                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name) {
-                        match kind {
-                            Kind::Audio => {
-                                track.audio.clips.push(crate::state::AudioClip {
-                                    name: name.clone(),
-                                    start: *start,
-                                    length: *length,
-                                    offset: *offset,
-                                    input_channel: *input_channel,
-                                    muted: *muted,
-                                    max_length_samples,
-                                    peaks_file: None,
-                                    peaks: audio_peaks,
-                                    fade_enabled: *fade_enabled,
-                                    fade_in_samples: *fade_in_samples,
-                                    fade_out_samples: *fade_out_samples,
-                                    warp_markers: warp_markers.clone(),
-                                    take_lane_override: None,
-                                    take_lane_pinned: false,
-                                    take_lane_locked: false,
-                                });
-                            }
-                            Kind::MIDI => {
-                                track.midi.clips.push(crate::state::MIDIClip {
-                                    name: name.clone(),
-                                    start: *start,
-                                    length: *length,
-                                    offset: *offset,
-                                    input_channel: *input_channel,
-                                    muted: *muted,
-                                    max_length_samples,
-                                    fade_enabled: *fade_enabled,
-                                    fade_in_samples: *fade_in_samples,
-                                    fade_out_samples: *fade_out_samples,
-                                    take_lane_override: None,
-                                    take_lane_pinned: false,
-                                    take_lane_locked: false,
-                                });
-                            }
-                        }
-                    }
-                }
-                Action::SetClipMuted {
-                    track_name,
-                    clip_index,
-                    kind,
-                    muted,
-                } => {
-                    let mut state = self.state.blocking_write();
-                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name) {
-                        match kind {
-                            Kind::Audio => {
-                                if let Some(clip) = track.audio.clips.get_mut(*clip_index) {
-                                    clip.muted = *muted;
-                                }
-                            }
-                            Kind::MIDI => {
-                                if let Some(clip) = track.midi.clips.get_mut(*clip_index) {
-                                    clip.muted = *muted;
-                                }
-                            }
-                        }
-                    }
-                }
-                Action::SetAudioClipWarpMarkers {
-                    track_name,
-                    clip_index,
-                    warp_markers,
-                } => {
-                    let mut state = self.state.blocking_write();
-                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name)
-                        && let Some(clip) = track.audio.clips.get_mut(*clip_index)
-                    {
-                        clip.warp_markers = warp_markers.clone();
-                    }
-                }
-                Action::RemoveClip {
-                    track_name,
-                    kind,
-                    clip_indices,
-                } => {
-                    let mut state = self.state.blocking_write();
-                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name) {
-                        match kind {
-                            Kind::Audio => {
-                                let mut indices = clip_indices.clone();
-                                indices.sort_unstable();
-                                indices.dedup();
-                                for idx in indices.into_iter().rev() {
-                                    if idx < track.audio.clips.len() {
-                                        track.audio.clips.remove(idx);
-                                    }
-                                }
-                            }
-                            Kind::MIDI => {
-                                let mut indices = clip_indices.clone();
-                                indices.sort_unstable();
-                                indices.dedup();
-                                for idx in indices.into_iter().rev() {
-                                    if idx < track.midi.clips.len() {
-                                        track.midi.clips.remove(idx);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    state.selected_clips.retain(|clip| {
-                        if clip.track_idx != *track_name || clip.kind != *kind {
-                            return true;
-                        }
-                        !clip_indices.contains(&clip.clip_idx)
-                    });
-                }
-                Action::ModifyMidiNotes {
-                    track_name,
-                    note_indices,
-                    new_notes,
-                    ..
-                } => {
-                    let mut state = self.state.blocking_write();
-                    if let Some(piano) = state.piano.as_mut()
-                        && piano.track_idx == *track_name
-                    {
-                        for (note_idx, new_note) in note_indices.iter().zip(new_notes.iter()) {
-                            if let Some(note) = piano.notes.get_mut(*note_idx) {
-                                note.start_sample = new_note.start_sample;
-                                note.length_samples = new_note.length_samples;
-                                note.pitch = new_note.pitch;
-                                note.velocity = new_note.velocity;
-                                note.channel = new_note.channel;
-                            }
-                        }
-                    }
-                }
-                Action::ModifyMidiControllers {
-                    track_name,
-                    controller_indices,
-                    new_controllers,
-                    ..
-                } => {
-                    let mut state = self.state.blocking_write();
-                    if let Some(piano) = state.piano.as_mut()
-                        && piano.track_idx == *track_name
-                    {
-                        for (ctrl_idx, new_ctrl) in
-                            controller_indices.iter().zip(new_controllers.iter())
-                        {
-                            if let Some(ctrl) = piano.controllers.get_mut(*ctrl_idx) {
-                                ctrl.sample = new_ctrl.sample;
-                                ctrl.controller = new_ctrl.controller;
-                                ctrl.value = new_ctrl.value;
-                                ctrl.channel = new_ctrl.channel;
-                            }
-                        }
-                    }
-                }
-                Action::DeleteMidiControllers {
-                    track_name,
-                    controller_indices,
-                    ..
-                } => {
-                    let mut state = self.state.blocking_write();
-                    if let Some(piano) = state.piano.as_mut()
-                        && piano.track_idx == *track_name
-                    {
-                        let mut indices = controller_indices.clone();
-                        indices.sort_unstable();
-                        indices.dedup();
-                        for idx in indices.into_iter().rev() {
-                            if idx < piano.controllers.len() {
-                                piano.controllers.remove(idx);
-                            }
-                        }
-                    }
-                }
-                Action::InsertMidiControllers {
-                    track_name,
-                    controllers,
-                    ..
-                } => {
-                    let mut state = self.state.blocking_write();
-                    if let Some(piano) = state.piano.as_mut()
-                        && piano.track_idx == *track_name
-                    {
-                        let mut sorted = controllers.clone();
-                        sorted.sort_unstable_by_key(|(idx, _)| *idx);
-                        for (idx, ctrl) in sorted {
-                            let insert_at = idx.min(piano.controllers.len());
-                            piano.controllers.insert(
-                                insert_at,
-                                crate::state::PianoControllerPoint {
-                                    sample: ctrl.sample,
-                                    controller: ctrl.controller,
-                                    value: ctrl.value,
-                                    channel: ctrl.channel,
-                                },
-                            );
-                        }
-                    }
-                }
-                Action::SetMidiSysExEvents {
-                    track_name,
-                    new_sysex_events,
-                    ..
-                } => {
-                    let mut state = self.state.blocking_write();
-                    let current_sel = state.piano_selected_sysex;
-                    if let Some(piano) = state.piano.as_mut()
-                        && piano.track_idx == *track_name
-                    {
-                        piano.sysexes = new_sysex_events
                             .iter()
-                            .map(|ev| PianoSysExPoint {
-                                sample: ev.sample,
-                                data: ev.data.clone(),
-                            })
-                            .collect();
-                        piano.sysexes.sort_by_key(|s| s.sample);
-                        let new_sel = match current_sel {
-                            Some(sel) if sel < piano.sysexes.len() => Some(sel),
-                            Some(_) => piano.sysexes.len().checked_sub(1),
-                            None => None,
-                        };
-                        let new_hex = new_sel
-                            .and_then(|idx| piano.sysexes.get(idx))
-                            .map(|ev| Self::format_sysex_hex(&ev.data))
-                            .unwrap_or_default();
-                        state.piano_selected_sysex = new_sel;
-                        state.piano_sysex_hex_input = new_hex;
-                    }
-                }
-                Action::DeleteMidiNotes {
-                    track_name,
-                    note_indices,
-                    ..
-                } => {
-                    let mut state = self.state.blocking_write();
-                    if let Some(piano) = state.piano.as_mut()
-                        && piano.track_idx == *track_name
-                    {
-                        let mut indices = note_indices.clone();
-                        indices.sort_unstable();
-                        indices.dedup();
-                        for idx in indices.into_iter().rev() {
-                            if idx < piano.notes.len() {
-                                piano.notes.remove(idx);
+                            .position(|track| track.name == from.track_name);
+
+                        if let Some(f_idx) = from_track_idx_option {
+                            let from_track = &mut state.tracks[f_idx];
+
+                            let mut clip_to_move: Option<crate::state::AudioClip> = None;
+                            let mut midi_clip_to_move: Option<crate::state::MIDIClip> = None;
+
+                            match kind {
+                                Kind::Audio => {
+                                    if from.clip_index < from_track.audio.clips.len() {
+                                        if !copy {
+                                            clip_to_move = Some(
+                                                from_track.audio.clips.remove(from.clip_index),
+                                            );
+                                        } else {
+                                            clip_to_move = Some(
+                                                from_track.audio.clips[from.clip_index].clone(),
+                                            );
+                                        }
+                                    }
+                                }
+                                Kind::MIDI => {
+                                    if from.clip_index < from_track.midi.clips.len() {
+                                        if !copy {
+                                            midi_clip_to_move =
+                                                Some(from_track.midi.clips.remove(from.clip_index));
+                                        } else {
+                                            midi_clip_to_move = Some(
+                                                from_track.midi.clips[from.clip_index].clone(),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            if let Some(to_track) = state
+                                .tracks
+                                .iter_mut()
+                                .find(|track| track.name == to.track_name)
+                            {
+                                if let Some(mut clip_data) = clip_to_move {
+                                    clip_data.start = to.sample_offset;
+                                    clip_data.input_channel = to.input_channel;
+                                    to_track.audio.clips.push(clip_data);
+                                } else if let Some(mut midi_clip_data) = midi_clip_to_move {
+                                    midi_clip_data.start = to.sample_offset;
+                                    midi_clip_data.input_channel = to.input_channel;
+                                    to_track.midi.clips.push(midi_clip_data);
+                                }
                             }
                         }
-                        state.piano_selected_notes.clear();
                     }
-                }
-                Action::InsertMidiNotes {
-                    track_name, notes, ..
-                } => {
-                    let mut state = self.state.blocking_write();
-                    if let Some(piano) = state.piano.as_mut()
-                        && piano.track_idx == *track_name
-                    {
-                        let mut sorted_notes = notes.clone();
-                        sorted_notes.sort_unstable_by_key(|(idx, _)| *idx);
-                        for (idx, note) in sorted_notes {
-                            let insert_at = idx.min(piano.notes.len());
-                            piano.notes.insert(
-                                insert_at,
-                                crate::state::PianoNote {
-                                    start_sample: note.start_sample,
-                                    length_samples: note.length_samples,
-                                    pitch: note.pitch,
-                                    velocity: note.velocity,
-                                    channel: note.channel,
-                                },
-                            );
+                    Action::AddClip {
+                        name,
+                        track_name,
+                        start,
+                        length,
+                        offset,
+                        input_channel,
+                        muted,
+                        kind,
+                        fade_enabled,
+                        fade_in_samples,
+                        fade_out_samples,
+                        warp_markers,
+                    } => {
+                        let mut audio_peaks = vec![];
+                        let mut max_length_samples = offset.saturating_add(*length);
+                        if *kind == Kind::Audio {
+                            let key =
+                                Self::audio_clip_key(track_name, name, *start, *length, *offset);
+                            audio_peaks = self.pending_audio_peaks.remove(&key).unwrap_or_default();
+                            if name.to_ascii_lowercase().ends_with(".wav") {
+                                let wav_path = if std::path::Path::new(name).is_absolute() {
+                                    Some(std::path::PathBuf::from(name))
+                                } else {
+                                    self.session_dir
+                                        .as_ref()
+                                        .map(|session_root| session_root.join(name))
+                                };
+                                if let Some(wav_path) = wav_path {
+                                    if audio_peaks.is_empty()
+                                        && wav_path.exists()
+                                        && let Ok(computed) =
+                                            Self::compute_audio_clip_peaks(&wav_path, 512)
+                                    {
+                                        audio_peaks = computed;
+                                    }
+                                    if wav_path.exists()
+                                        && let Ok(total_samples) =
+                                            Self::audio_clip_source_length(&wav_path)
+                                    {
+                                        max_length_samples =
+                                            total_samples.saturating_sub(*offset).max(1);
+                                    }
+                                }
+                            }
                         }
-                        state.piano_selected_notes.clear();
-                    }
-                }
-                Action::Connect {
-                    from_track,
-                    from_port,
-                    to_track,
-                    to_port,
-                    kind,
-                } => {
-                    let mut state = self.state.blocking_write();
-
-                    state.connections.push(crate::state::Connection {
-                        from_track: from_track.clone(),
-                        from_port: *from_port,
-                        to_track: to_track.clone(),
-                        to_port: *to_port,
-                        kind: *kind,
-                    });
-                }
-                Action::Disconnect {
-                    from_track,
-                    from_port,
-                    to_track,
-                    to_port,
-                    kind,
-                } => {
-                    let mut state = self.state.blocking_write();
-                    let original_len = state.connections.len();
-
-                    state.connections.retain(|conn| {
-                        !(conn.from_track == from_track.as_str()
-                            && conn.from_port == *from_port
-                            && conn.to_track == to_track.as_str()
-                            && conn.to_port == *to_port
-                            && conn.kind == *kind)
-                    });
-                    if state.connections.len() < original_len {
-                        state.message = format!("Disconnected {} from {}", from_track, to_track);
-                    }
-                }
-
-                Action::OpenAudioDevice {
-                    device,
-                    bits,
-                    exclusive,
-                    period_frames,
-                    nperiods,
-                    sync_mode,
-                } => {
-                    let mut state = self.state.blocking_write();
-                    state.message = format!(
-                        "Opened device {} (bits={}, exclusive={}, period={}, nperiods={}, sync_mode={})",
-                        device, bits, exclusive, period_frames, nperiods, sync_mode
-                    );
-                    state.hw_loaded = true;
-                    state.oss_period_frames = (*period_frames).max(1);
-                    state.oss_nperiods = (*nperiods).max(1);
-                }
-                Action::OpenMidiInputDevice(s) => {
-                    let mut state = self.state.blocking_write();
-                    if !state.opened_midi_in_hw.iter().any(|name| name == s) {
-                        state.opened_midi_in_hw.push(s.clone());
-                    }
-                    state
-                        .midi_hw_labels
-                        .entry(s.clone())
-                        .or_insert_with(|| platform::kernel_midi_label(s));
-                    state.message = format!("Opened MIDI input {s}");
-                }
-                Action::OpenMidiOutputDevice(s) => {
-                    let mut state = self.state.blocking_write();
-                    if !state.opened_midi_out_hw.iter().any(|name| name == s) {
-                        state.opened_midi_out_hw.push(s.clone());
-                    }
-                    state
-                        .midi_hw_labels
-                        .entry(s.clone())
-                        .or_insert_with(|| platform::kernel_midi_label(s));
-                    state.message = format!("Opened MIDI output {s}");
-                }
-                Action::HWInfo {
-                    channels,
-                    rate,
-                    input,
-                } => {
-                    if *rate > 0 {
-                        self.playback_rate_hz = *rate as f64;
-                    }
-                    let mut state = self.state.blocking_write();
-                    if !state.hw_loaded {
-                        state.hw_loaded = true;
-                    }
-                    let direction = if *input { "input" } else { "output" };
-                    state.message = format!("HW {direction} channels: {channels} @ {rate} Hz");
-                    if *input {
-                        state.hw_in = Some(HW {
-                            channels: *channels,
-                        });
-                    } else {
-                        state.hw_out = Some(HW {
-                            channels: *channels,
-                        });
-                        if state.hw_out_meter_db.len() != *channels {
-                            state.hw_out_meter_db = vec![-90.0; *channels];
-                        }
-                    }
-                }
-                Action::SessionDiagnosticsReport {
-                    track_count,
-                    frozen_track_count,
-                    audio_clip_count,
-                    midi_clip_count,
-                    #[cfg(all(unix, not(target_os = "macos")))]
-                    lv2_instance_count,
-                    vst3_instance_count,
-                    clap_instance_count,
-                    pending_requests,
-                    workers_total,
-                    workers_ready,
-                    pending_hw_midi_events,
-                    playing,
-                    transport_sample,
-                    tempo_bpm,
-                    sample_rate_hz,
-                    cycle_samples,
-                } => {
-                    let plugin_summary = format!(
-                        "VST3={} CLAP={}{}",
-                        vst3_instance_count,
-                        clap_instance_count,
+                        let mut state = self.state.blocking_write();
+                        if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name)
                         {
-                            #[cfg(all(unix, not(target_os = "macos")))]
-                            {
-                                format!(" LV2={}", lv2_instance_count)
-                            }
-                            #[cfg(not(all(unix, not(target_os = "macos"))))]
-                            {
-                                String::new()
+                            match kind {
+                                Kind::Audio => {
+                                    track.audio.clips.push(crate::state::AudioClip {
+                                        name: name.clone(),
+                                        start: *start,
+                                        length: *length,
+                                        offset: *offset,
+                                        input_channel: *input_channel,
+                                        muted: *muted,
+                                        max_length_samples,
+                                        peaks_file: None,
+                                        peaks: audio_peaks,
+                                        fade_enabled: *fade_enabled,
+                                        fade_in_samples: *fade_in_samples,
+                                        fade_out_samples: *fade_out_samples,
+                                        warp_markers: warp_markers.clone(),
+                                        take_lane_override: None,
+                                        take_lane_pinned: false,
+                                        take_lane_locked: false,
+                                    });
+                                }
+                                Kind::MIDI => {
+                                    track.midi.clips.push(crate::state::MIDIClip {
+                                        name: name.clone(),
+                                        start: *start,
+                                        length: *length,
+                                        offset: *offset,
+                                        input_channel: *input_channel,
+                                        muted: *muted,
+                                        max_length_samples,
+                                        fade_enabled: *fade_enabled,
+                                        fade_in_samples: *fade_in_samples,
+                                        fade_out_samples: *fade_out_samples,
+                                        take_lane_override: None,
+                                        take_lane_pinned: false,
+                                        take_lane_locked: false,
+                                    });
+                                }
                             }
                         }
-                    );
-                    let report = format!(
-                        "Session Diagnostics: tracks={} frozen={} audio_clips={} midi_clips={} | plugins: {} | engine: playing={} transport={} tempo={:.2} BPM | audio: rate={}Hz cycle={} | workers: ready={}/{} pending_req={} pending_midi_ev={}",
+                    }
+                    Action::SetClipMuted {
+                        track_name,
+                        clip_index,
+                        kind,
+                        muted,
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name)
+                        {
+                            match kind {
+                                Kind::Audio => {
+                                    if let Some(clip) = track.audio.clips.get_mut(*clip_index) {
+                                        clip.muted = *muted;
+                                    }
+                                }
+                                Kind::MIDI => {
+                                    if let Some(clip) = track.midi.clips.get_mut(*clip_index) {
+                                        clip.muted = *muted;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Action::SetAudioClipWarpMarkers {
+                        track_name,
+                        clip_index,
+                        warp_markers,
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name)
+                            && let Some(clip) = track.audio.clips.get_mut(*clip_index)
+                        {
+                            clip.warp_markers = warp_markers.clone();
+                        }
+                    }
+                    Action::RemoveClip {
+                        track_name,
+                        kind,
+                        clip_indices,
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name)
+                        {
+                            match kind {
+                                Kind::Audio => {
+                                    let mut indices = clip_indices.clone();
+                                    indices.sort_unstable();
+                                    indices.dedup();
+                                    for idx in indices.into_iter().rev() {
+                                        if idx < track.audio.clips.len() {
+                                            track.audio.clips.remove(idx);
+                                        }
+                                    }
+                                }
+                                Kind::MIDI => {
+                                    let mut indices = clip_indices.clone();
+                                    indices.sort_unstable();
+                                    indices.dedup();
+                                    for idx in indices.into_iter().rev() {
+                                        if idx < track.midi.clips.len() {
+                                            track.midi.clips.remove(idx);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        state.selected_clips.retain(|clip| {
+                            if clip.track_idx != *track_name || clip.kind != *kind {
+                                return true;
+                            }
+                            !clip_indices.contains(&clip.clip_idx)
+                        });
+                    }
+                    Action::ModifyMidiNotes {
+                        track_name,
+                        note_indices,
+                        new_notes,
+                        ..
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        if let Some(piano) = state.piano.as_mut()
+                            && piano.track_idx == *track_name
+                        {
+                            for (note_idx, new_note) in note_indices.iter().zip(new_notes.iter()) {
+                                if let Some(note) = piano.notes.get_mut(*note_idx) {
+                                    note.start_sample = new_note.start_sample;
+                                    note.length_samples = new_note.length_samples;
+                                    note.pitch = new_note.pitch;
+                                    note.velocity = new_note.velocity;
+                                    note.channel = new_note.channel;
+                                }
+                            }
+                        }
+                    }
+                    Action::ModifyMidiControllers {
+                        track_name,
+                        controller_indices,
+                        new_controllers,
+                        ..
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        if let Some(piano) = state.piano.as_mut()
+                            && piano.track_idx == *track_name
+                        {
+                            for (ctrl_idx, new_ctrl) in
+                                controller_indices.iter().zip(new_controllers.iter())
+                            {
+                                if let Some(ctrl) = piano.controllers.get_mut(*ctrl_idx) {
+                                    ctrl.sample = new_ctrl.sample;
+                                    ctrl.controller = new_ctrl.controller;
+                                    ctrl.value = new_ctrl.value;
+                                    ctrl.channel = new_ctrl.channel;
+                                }
+                            }
+                        }
+                    }
+                    Action::DeleteMidiControllers {
+                        track_name,
+                        controller_indices,
+                        ..
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        if let Some(piano) = state.piano.as_mut()
+                            && piano.track_idx == *track_name
+                        {
+                            let mut indices = controller_indices.clone();
+                            indices.sort_unstable();
+                            indices.dedup();
+                            for idx in indices.into_iter().rev() {
+                                if idx < piano.controllers.len() {
+                                    piano.controllers.remove(idx);
+                                }
+                            }
+                        }
+                    }
+                    Action::InsertMidiControllers {
+                        track_name,
+                        controllers,
+                        ..
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        if let Some(piano) = state.piano.as_mut()
+                            && piano.track_idx == *track_name
+                        {
+                            let mut sorted = controllers.clone();
+                            sorted.sort_unstable_by_key(|(idx, _)| *idx);
+                            for (idx, ctrl) in sorted {
+                                let insert_at = idx.min(piano.controllers.len());
+                                piano.controllers.insert(
+                                    insert_at,
+                                    crate::state::PianoControllerPoint {
+                                        sample: ctrl.sample,
+                                        controller: ctrl.controller,
+                                        value: ctrl.value,
+                                        channel: ctrl.channel,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    Action::SetMidiSysExEvents {
+                        track_name,
+                        new_sysex_events,
+                        ..
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        let current_sel = state.piano_selected_sysex;
+                        if let Some(piano) = state.piano.as_mut()
+                            && piano.track_idx == *track_name
+                        {
+                            piano.sysexes = new_sysex_events
+                                .iter()
+                                .map(|ev| PianoSysExPoint {
+                                    sample: ev.sample,
+                                    data: ev.data.clone(),
+                                })
+                                .collect();
+                            piano.sysexes.sort_by_key(|s| s.sample);
+                            let new_sel = match current_sel {
+                                Some(sel) if sel < piano.sysexes.len() => Some(sel),
+                                Some(_) => piano.sysexes.len().checked_sub(1),
+                                None => None,
+                            };
+                            let new_hex = new_sel
+                                .and_then(|idx| piano.sysexes.get(idx))
+                                .map(|ev| Self::format_sysex_hex(&ev.data))
+                                .unwrap_or_default();
+                            state.piano_selected_sysex = new_sel;
+                            state.piano_sysex_hex_input = new_hex;
+                        }
+                    }
+                    Action::DeleteMidiNotes {
+                        track_name,
+                        note_indices,
+                        ..
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        if let Some(piano) = state.piano.as_mut()
+                            && piano.track_idx == *track_name
+                        {
+                            let mut indices = note_indices.clone();
+                            indices.sort_unstable();
+                            indices.dedup();
+                            for idx in indices.into_iter().rev() {
+                                if idx < piano.notes.len() {
+                                    piano.notes.remove(idx);
+                                }
+                            }
+                            state.piano_selected_notes.clear();
+                        }
+                    }
+                    Action::InsertMidiNotes {
+                        track_name, notes, ..
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        if let Some(piano) = state.piano.as_mut()
+                            && piano.track_idx == *track_name
+                        {
+                            let mut sorted_notes = notes.clone();
+                            sorted_notes.sort_unstable_by_key(|(idx, _)| *idx);
+                            for (idx, note) in sorted_notes {
+                                let insert_at = idx.min(piano.notes.len());
+                                piano.notes.insert(
+                                    insert_at,
+                                    crate::state::PianoNote {
+                                        start_sample: note.start_sample,
+                                        length_samples: note.length_samples,
+                                        pitch: note.pitch,
+                                        velocity: note.velocity,
+                                        channel: note.channel,
+                                    },
+                                );
+                            }
+                            state.piano_selected_notes.clear();
+                        }
+                    }
+                    Action::Connect {
+                        from_track,
+                        from_port,
+                        to_track,
+                        to_port,
+                        kind,
+                    } => {
+                        let mut state = self.state.blocking_write();
+
+                        state.connections.push(crate::state::Connection {
+                            from_track: from_track.clone(),
+                            from_port: *from_port,
+                            to_track: to_track.clone(),
+                            to_port: *to_port,
+                            kind: *kind,
+                        });
+                    }
+                    Action::Disconnect {
+                        from_track,
+                        from_port,
+                        to_track,
+                        to_port,
+                        kind,
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        let original_len = state.connections.len();
+
+                        state.connections.retain(|conn| {
+                            !(conn.from_track == from_track.as_str()
+                                && conn.from_port == *from_port
+                                && conn.to_track == to_track.as_str()
+                                && conn.to_port == *to_port
+                                && conn.kind == *kind)
+                        });
+                        if state.connections.len() < original_len {
+                            state.message =
+                                format!("Disconnected {} from {}", from_track, to_track);
+                        }
+                    }
+
+                    Action::OpenAudioDevice {
+                        device,
+                        bits,
+                        exclusive,
+                        period_frames,
+                        nperiods,
+                        sync_mode,
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        state.message = format!(
+                            "Opened device {} (bits={}, exclusive={}, period={}, nperiods={}, sync_mode={})",
+                            device, bits, exclusive, period_frames, nperiods, sync_mode
+                        );
+                        state.hw_loaded = true;
+                        state.oss_period_frames = (*period_frames).max(1);
+                        state.oss_nperiods = (*nperiods).max(1);
+                    }
+                    Action::OpenMidiInputDevice(s) => {
+                        let mut state = self.state.blocking_write();
+                        if !state.opened_midi_in_hw.iter().any(|name| name == s) {
+                            state.opened_midi_in_hw.push(s.clone());
+                        }
+                        state
+                            .midi_hw_labels
+                            .entry(s.clone())
+                            .or_insert_with(|| platform::kernel_midi_label(s));
+                        state.message = format!("Opened MIDI input {s}");
+                    }
+                    Action::OpenMidiOutputDevice(s) => {
+                        let mut state = self.state.blocking_write();
+                        if !state.opened_midi_out_hw.iter().any(|name| name == s) {
+                            state.opened_midi_out_hw.push(s.clone());
+                        }
+                        state
+                            .midi_hw_labels
+                            .entry(s.clone())
+                            .or_insert_with(|| platform::kernel_midi_label(s));
+                        state.message = format!("Opened MIDI output {s}");
+                    }
+                    Action::HWInfo {
+                        channels,
+                        rate,
+                        input,
+                    } => {
+                        if *rate > 0 {
+                            self.playback_rate_hz = *rate as f64;
+                        }
+                        let mut state = self.state.blocking_write();
+                        if !state.hw_loaded {
+                            state.hw_loaded = true;
+                        }
+                        let direction = if *input { "input" } else { "output" };
+                        state.message = format!("HW {direction} channels: {channels} @ {rate} Hz");
+                        if *input {
+                            state.hw_in = Some(HW {
+                                channels: *channels,
+                            });
+                        } else {
+                            state.hw_out = Some(HW {
+                                channels: *channels,
+                            });
+                            if state.hw_out_meter_db.len() != *channels {
+                                state.hw_out_meter_db = vec![-90.0; *channels];
+                            }
+                        }
+                    }
+                    Action::SessionDiagnosticsReport {
                         track_count,
                         frozen_track_count,
                         audio_clip_count,
                         midi_clip_count,
-                        plugin_summary,
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        lv2_instance_count,
+                        vst3_instance_count,
+                        clap_instance_count,
+                        pending_requests,
+                        workers_total,
+                        workers_ready,
+                        pending_hw_midi_events,
                         playing,
                         transport_sample,
                         tempo_bpm,
                         sample_rate_hz,
                         cycle_samples,
-                        workers_ready,
-                        workers_total,
-                        pending_requests,
-                        pending_hw_midi_events
-                    );
-                    let mut state = self.state.blocking_write();
-                    state.message = report.clone();
-                    state.diagnostics_report = Some(report);
-                    if self.pending_diagnostics_bundle_export {
-                        self.diagnostics_bundle_wait_session_report = false;
-                        if !self.diagnostics_bundle_wait_session_report
-                            && !self.diagnostics_bundle_wait_midi_report
-                        {
-                            self.pending_diagnostics_bundle_export = false;
-                            match self.export_diagnostics_bundle() {
-                                Ok(path) => {
-                                    state.message = format!(
-                                        "Diagnostics bundle exported: {}",
-                                        path.display()
-                                    );
+                    } => {
+                        let plugin_summary = format!(
+                            "VST3={} CLAP={}{}",
+                            vst3_instance_count,
+                            clap_instance_count,
+                            {
+                                #[cfg(all(unix, not(target_os = "macos")))]
+                                {
+                                    format!(" LV2={}", lv2_instance_count)
                                 }
-                                Err(e) => {
-                                    state.message = format!(
-                                        "Diagnostics bundle export failed: {e}"
-                                    );
+                                #[cfg(not(all(unix, not(target_os = "macos"))))]
+                                {
+                                    String::new()
                                 }
                             }
-                        }
-                    }
-                }
-                Action::MidiLearnMappingsReport { lines } => {
-                    let report = lines.join(" | ");
-                    self.midi_mappings_report_lines = lines.clone();
-                    let mut state = self.state.blocking_write();
-                    state.message = format!("MIDI mappings: {}", report);
-                    state.diagnostics_report = Some(format!("MIDI mappings: {}", report));
-                    if self.pending_diagnostics_bundle_export {
-                        self.diagnostics_bundle_wait_midi_report = false;
-                        if !self.diagnostics_bundle_wait_session_report
-                            && !self.diagnostics_bundle_wait_midi_report
-                        {
-                            self.pending_diagnostics_bundle_export = false;
-                            match self.export_diagnostics_bundle() {
-                                Ok(path) => {
-                                    state.message = format!(
-                                        "Diagnostics bundle exported: {}",
-                                        path.display()
-                                    );
-                                }
-                                Err(e) => {
-                                    state.message = format!(
-                                        "Diagnostics bundle export failed: {e}"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                Action::ClearAllMidiLearnBindings => {
-                    self.midi_mappings_report_lines.clear();
-                    let mut state = self.state.blocking_write();
-                    state.global_midi_learn_play_pause = None;
-                    state.global_midi_learn_stop = None;
-                    state.global_midi_learn_record_toggle = None;
-                    for track in &mut state.tracks {
-                        track.midi_learn_volume = None;
-                        track.midi_learn_balance = None;
-                        track.midi_learn_mute = None;
-                        track.midi_learn_solo = None;
-                        track.midi_learn_arm = None;
-                        track.midi_learn_input_monitor = None;
-                        track.midi_learn_disk_monitor = None;
-                    }
-                    state.message = "Cleared all MIDI mappings".to_string();
-                }
-                Action::TrackLevel(name, level) => {
-                    let mut state = self.state.blocking_write();
-                    if name == "hw:out" {
-                        state.hw_out_level = *level;
-                    } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
-                        track.level = *level;
-                    }
-                }
-                Action::TrackBalance(name, balance) => {
-                    let mut state = self.state.blocking_write();
-                    if name == "hw:out" {
-                        state.hw_out_balance = *balance;
-                    } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
-                        track.balance = *balance;
-                    }
-                }
-                Action::TrackAutomationLevel(name, level) => {
-                    if let Some(track) = self
-                        .state
-                        .blocking_write()
-                        .tracks
-                        .iter_mut()
-                        .find(|t| t.name == *name)
-                    {
-                        track.level = *level;
-                    }
-                }
-                Action::TrackAutomationBalance(name, balance) => {
-                    if let Some(track) = self
-                        .state
-                        .blocking_write()
-                        .tracks
-                        .iter_mut()
-                        .find(|t| t.name == *name)
-                    {
-                        track.balance = *balance;
-                    }
-                }
-                Action::TrackAutomationMute(name, muted) => {
-                    if let Some(track) = self
-                        .state
-                        .blocking_write()
-                        .tracks
-                        .iter_mut()
-                        .find(|t| t.name == *name)
-                    {
-                        track.muted = *muted;
-                    }
-                }
-                Action::TrackToggleMute(name) => {
-                    let mut state = self.state.blocking_write();
-                    if name == "hw:out" {
-                        state.hw_out_muted = !state.hw_out_muted;
-                    } else if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
-                        track.muted = !track.muted;
-                    }
-                }
-                Action::TrackToggleSolo(name) => {
-                    if let Some(track) = self
-                        .state
-                        .blocking_write()
-                        .tracks
-                        .iter_mut()
-                        .find(|t| t.name == *name)
-                    {
-                        track.soloed = !track.soloed;
-                    }
-                }
-                Action::TrackToggleArm(name) => {
-                    if let Some(track) = self
-                        .state
-                        .blocking_write()
-                        .tracks
-                        .iter_mut()
-                        .find(|t| t.name == *name)
-                    {
-                        track.armed = !track.armed;
-                    }
-                }
-                Action::TrackToggleInputMonitor(name) => {
-                    if let Some(track) = self
-                        .state
-                        .blocking_write()
-                        .tracks
-                        .iter_mut()
-                        .find(|t| t.name == *name)
-                    {
-                        track.input_monitor = !track.input_monitor;
-                    }
-                }
-                Action::TrackToggleDiskMonitor(name) => {
-                    if let Some(track) = self
-                        .state
-                        .blocking_write()
-                        .tracks
-                        .iter_mut()
-                        .find(|t| t.name == *name)
-                    {
-                        track.disk_monitor = !track.disk_monitor;
-                    }
-                }
-                Action::TrackSetVcaMaster {
-                    track_name,
-                    master_track,
-                } => {
-                    if let Some(track) = self
-                        .state
-                        .blocking_write()
-                        .tracks
-                        .iter_mut()
-                        .find(|t| t.name == *track_name)
-                    {
-                        track.vca_master = master_track.clone();
-                    }
-                }
-                Action::TrackArmMidiLearn { track_name, target } => {
-                    self.state.blocking_write().message = format!(
-                        "MIDI learn armed for '{}' ({:?}). Move a hardware MIDI CC control.",
-                        track_name, target
-                    );
-                }
-                Action::TrackSetMidiLearnBinding {
-                    track_name,
-                    target,
-                    binding,
-                } => {
-                    if let Some(track) = self
-                        .state
-                        .blocking_write()
-                        .tracks
-                        .iter_mut()
-                        .find(|t| t.name == *track_name)
-                    {
-                        match target {
-                            maolan_engine::message::TrackMidiLearnTarget::Volume => {
-                                track.midi_learn_volume = binding.clone();
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::Balance => {
-                                track.midi_learn_balance = binding.clone();
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::Mute => {
-                                track.midi_learn_mute = binding.clone();
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::Solo => {
-                                track.midi_learn_solo = binding.clone();
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::Arm => {
-                                track.midi_learn_arm = binding.clone();
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::InputMonitor => {
-                                track.midi_learn_input_monitor = binding.clone();
-                            }
-                            maolan_engine::message::TrackMidiLearnTarget::DiskMonitor => {
-                                track.midi_learn_disk_monitor = binding.clone();
-                            }
-                        }
-                    }
-                    let message = if let Some(binding) = binding {
-                        format!(
-                            "MIDI learn mapped '{}' {:?} to CH{} CC{}",
-                            track_name,
-                            target,
-                            binding.channel + 1,
-                            binding.cc
-                        )
-                    } else {
-                        format!("MIDI learn cleared for '{}' {:?}", track_name, target)
-                    };
-                    self.state.blocking_write().message = message;
-                    if self.midi_mappings_panel_open {
-                        self.rebuild_midi_mappings_report_lines_from_state();
-                    }
-                }
-                Action::SetGlobalMidiLearnBinding { target, binding } => {
-                    {
+                        );
+                        let report = format!(
+                            "Session Diagnostics: tracks={} frozen={} audio_clips={} midi_clips={} | plugins: {} | engine: playing={} transport={} tempo={:.2} BPM | audio: rate={}Hz cycle={} | workers: ready={}/{} pending_req={} pending_midi_ev={}",
+                            track_count,
+                            frozen_track_count,
+                            audio_clip_count,
+                            midi_clip_count,
+                            plugin_summary,
+                            playing,
+                            transport_sample,
+                            tempo_bpm,
+                            sample_rate_hz,
+                            cycle_samples,
+                            workers_ready,
+                            workers_total,
+                            pending_requests,
+                            pending_hw_midi_events
+                        );
                         let mut state = self.state.blocking_write();
-                        match target {
-                            maolan_engine::message::GlobalMidiLearnTarget::PlayPause => {
-                                state.global_midi_learn_play_pause = binding.clone();
-                            }
-                            maolan_engine::message::GlobalMidiLearnTarget::Stop => {
-                                state.global_midi_learn_stop = binding.clone();
-                            }
-                            maolan_engine::message::GlobalMidiLearnTarget::RecordToggle => {
-                                state.global_midi_learn_record_toggle = binding.clone();
+                        state.message = report.clone();
+                        state.diagnostics_report = Some(report);
+                        if self.pending_diagnostics_bundle_export {
+                            self.diagnostics_bundle_wait_session_report = false;
+                            if !self.diagnostics_bundle_wait_session_report
+                                && !self.diagnostics_bundle_wait_midi_report
+                            {
+                                self.pending_diagnostics_bundle_export = false;
+                                match self.export_diagnostics_bundle() {
+                                    Ok(path) => {
+                                        state.message = format!(
+                                            "Diagnostics bundle exported: {}",
+                                            path.display()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        state.message =
+                                            format!("Diagnostics bundle export failed: {e}");
+                                    }
+                                }
                             }
                         }
                     }
-                    self.state.blocking_write().message = if let Some(binding) = binding {
-                        format!(
-                            "Global MIDI learn mapped {:?} to CH{} CC{}",
-                            target,
-                            binding.channel + 1,
-                            binding.cc
-                        )
-                    } else {
-                        format!("Global MIDI learn cleared for {:?}", target)
-                    };
-                    if self.midi_mappings_panel_open {
-                        self.rebuild_midi_mappings_report_lines_from_state();
-                    }
-                }
-                Action::TrackSetFrozen { track_name, frozen } => {
-                    self.state.blocking_write().message = if *frozen {
-                        format!("Track '{track_name}' frozen")
-                    } else {
-                        format!("Track '{track_name}' unfrozen")
-                    };
-                }
-                Action::TrackOfflineBounce {
-                    track_name,
-                    output_path,
-                    ..
-                } => {
-                    self.freeze_in_progress = false;
-                    self.freeze_track_name = None;
-                    if let Some(pending) = self.pending_track_freeze_bounce.remove(track_name) {
-                        if self.freeze_cancel_requested {
-                            self.freeze_cancel_requested = false;
-                            let _ = std::fs::remove_file(output_path);
-                            self.state.blocking_write().message =
-                                format!("Freeze canceled for '{}'", track_name);
-                            return Task::none();
+                    Action::MidiLearnMappingsReport { lines } => {
+                        let report = lines.join(" | ");
+                        self.midi_mappings_report_lines = lines.clone();
+                        let mut state = self.state.blocking_write();
+                        state.message = format!("MIDI mappings: {}", report);
+                        state.diagnostics_report = Some(format!("MIDI mappings: {}", report));
+                        if self.pending_diagnostics_bundle_export {
+                            self.diagnostics_bundle_wait_midi_report = false;
+                            if !self.diagnostics_bundle_wait_session_report
+                                && !self.diagnostics_bundle_wait_midi_report
+                            {
+                                self.pending_diagnostics_bundle_export = false;
+                                match self.export_diagnostics_bundle() {
+                                    Ok(path) => {
+                                        state.message = format!(
+                                            "Diagnostics bundle exported: {}",
+                                            path.display()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        state.message =
+                                            format!("Diagnostics bundle export failed: {e}");
+                                    }
+                                }
+                            }
                         }
-                        let render_path = std::path::PathBuf::from(output_path);
-                        let render_peaks =
-                            Self::compute_audio_clip_peaks(&render_path, 512).unwrap_or_default();
+                    }
+                    Action::ClearAllMidiLearnBindings => {
+                        self.midi_mappings_report_lines.clear();
+                        let mut state = self.state.blocking_write();
+                        state.global_midi_learn_play_pause = None;
+                        state.global_midi_learn_stop = None;
+                        state.global_midi_learn_record_toggle = None;
+                        for track in &mut state.tracks {
+                            track.midi_learn_volume = None;
+                            track.midi_learn_balance = None;
+                            track.midi_learn_mute = None;
+                            track.midi_learn_solo = None;
+                            track.midi_learn_arm = None;
+                            track.midi_learn_input_monitor = None;
+                            track.midi_learn_disk_monitor = None;
+                        }
+                        state.message = "Cleared all MIDI mappings".to_string();
+                    }
+                    Action::TrackLevel(name, level) => {
+                        let mut state = self.state.blocking_write();
+                        if name == "hw:out" {
+                            state.hw_out_level = *level;
+                        } else if let Some(track) =
+                            state.tracks.iter_mut().find(|t| t.name == *name)
+                        {
+                            track.level = *level;
+                        }
+                    }
+                    Action::TrackBalance(name, balance) => {
+                        let mut state = self.state.blocking_write();
+                        if name == "hw:out" {
+                            state.hw_out_balance = *balance;
+                        } else if let Some(track) =
+                            state.tracks.iter_mut().find(|t| t.name == *name)
+                        {
+                            track.balance = *balance;
+                        }
+                    }
+                    Action::TrackAutomationLevel(name, level) => {
+                        if let Some(track) = self
+                            .state
+                            .blocking_write()
+                            .tracks
+                            .iter_mut()
+                            .find(|t| t.name == *name)
+                        {
+                            track.level = *level;
+                        }
+                    }
+                    Action::TrackAutomationBalance(name, balance) => {
+                        if let Some(track) = self
+                            .state
+                            .blocking_write()
+                            .tracks
+                            .iter_mut()
+                            .find(|t| t.name == *name)
+                        {
+                            track.balance = *balance;
+                        }
+                    }
+                    Action::TrackAutomationMute(name, muted) => {
+                        if let Some(track) = self
+                            .state
+                            .blocking_write()
+                            .tracks
+                            .iter_mut()
+                            .find(|t| t.name == *name)
+                        {
+                            track.muted = *muted;
+                        }
+                    }
+                    Action::TrackToggleMute(name) => {
+                        let mut state = self.state.blocking_write();
+                        if name == "hw:out" {
+                            state.hw_out_muted = !state.hw_out_muted;
+                        } else if let Some(track) =
+                            state.tracks.iter_mut().find(|t| t.name == *name)
+                        {
+                            track.muted = !track.muted;
+                        }
+                    }
+                    Action::TrackToggleSolo(name) => {
+                        if let Some(track) = self
+                            .state
+                            .blocking_write()
+                            .tracks
+                            .iter_mut()
+                            .find(|t| t.name == *name)
+                        {
+                            track.soloed = !track.soloed;
+                        }
+                    }
+                    Action::TrackToggleArm(name) => {
+                        if let Some(track) = self
+                            .state
+                            .blocking_write()
+                            .tracks
+                            .iter_mut()
+                            .find(|t| t.name == *name)
+                        {
+                            track.armed = !track.armed;
+                        }
+                    }
+                    Action::TrackToggleInputMonitor(name) => {
+                        if let Some(track) = self
+                            .state
+                            .blocking_write()
+                            .tracks
+                            .iter_mut()
+                            .find(|t| t.name == *name)
+                        {
+                            track.input_monitor = !track.input_monitor;
+                        }
+                    }
+                    Action::TrackToggleDiskMonitor(name) => {
+                        if let Some(track) = self
+                            .state
+                            .blocking_write()
+                            .tracks
+                            .iter_mut()
+                            .find(|t| t.name == *name)
+                        {
+                            track.disk_monitor = !track.disk_monitor;
+                        }
+                    }
+                    Action::TrackSetVcaMaster {
+                        track_name,
+                        master_track,
+                    } => {
+                        if let Some(track) = self
+                            .state
+                            .blocking_write()
+                            .tracks
+                            .iter_mut()
+                            .find(|t| t.name == *track_name)
+                        {
+                            track.vca_master = master_track.clone();
+                        }
+                    }
+                    Action::TrackArmMidiLearn { track_name, target } => {
+                        self.state.blocking_write().message = format!(
+                            "MIDI learn armed for '{}' ({:?}). Move a hardware MIDI CC control.",
+                            track_name, target
+                        );
+                    }
+                    Action::TrackSetMidiLearnBinding {
+                        track_name,
+                        target,
+                        binding,
+                    } => {
+                        if let Some(track) = self
+                            .state
+                            .blocking_write()
+                            .tracks
+                            .iter_mut()
+                            .find(|t| t.name == *track_name)
+                        {
+                            match target {
+                                maolan_engine::message::TrackMidiLearnTarget::Volume => {
+                                    track.midi_learn_volume = binding.clone();
+                                }
+                                maolan_engine::message::TrackMidiLearnTarget::Balance => {
+                                    track.midi_learn_balance = binding.clone();
+                                }
+                                maolan_engine::message::TrackMidiLearnTarget::Mute => {
+                                    track.midi_learn_mute = binding.clone();
+                                }
+                                maolan_engine::message::TrackMidiLearnTarget::Solo => {
+                                    track.midi_learn_solo = binding.clone();
+                                }
+                                maolan_engine::message::TrackMidiLearnTarget::Arm => {
+                                    track.midi_learn_arm = binding.clone();
+                                }
+                                maolan_engine::message::TrackMidiLearnTarget::InputMonitor => {
+                                    track.midi_learn_input_monitor = binding.clone();
+                                }
+                                maolan_engine::message::TrackMidiLearnTarget::DiskMonitor => {
+                                    track.midi_learn_disk_monitor = binding.clone();
+                                }
+                            }
+                        }
+                        let message = if let Some(binding) = binding {
+                            format!(
+                                "MIDI learn mapped '{}' {:?} to CH{} CC{}",
+                                track_name,
+                                target,
+                                binding.channel + 1,
+                                binding.cc
+                            )
+                        } else {
+                            format!("MIDI learn cleared for '{}' {:?}", track_name, target)
+                        };
+                        self.state.blocking_write().message = message;
+                        if self.midi_mappings_panel_open {
+                            self.rebuild_midi_mappings_report_lines_from_state();
+                        }
+                    }
+                    Action::SetGlobalMidiLearnBinding { target, binding } => {
                         {
                             let mut state = self.state.blocking_write();
-                            if let Some(track_mut) =
+                            match target {
+                                maolan_engine::message::GlobalMidiLearnTarget::PlayPause => {
+                                    state.global_midi_learn_play_pause = binding.clone();
+                                }
+                                maolan_engine::message::GlobalMidiLearnTarget::Stop => {
+                                    state.global_midi_learn_stop = binding.clone();
+                                }
+                                maolan_engine::message::GlobalMidiLearnTarget::RecordToggle => {
+                                    state.global_midi_learn_record_toggle = binding.clone();
+                                }
+                            }
+                        }
+                        self.state.blocking_write().message = if let Some(binding) = binding {
+                            format!(
+                                "Global MIDI learn mapped {:?} to CH{} CC{}",
+                                target,
+                                binding.channel + 1,
+                                binding.cc
+                            )
+                        } else {
+                            format!("Global MIDI learn cleared for {:?}", target)
+                        };
+                        if self.midi_mappings_panel_open {
+                            self.rebuild_midi_mappings_report_lines_from_state();
+                        }
+                    }
+                    Action::TrackSetFrozen { track_name, frozen } => {
+                        self.state.blocking_write().message = if *frozen {
+                            format!("Track '{track_name}' frozen")
+                        } else {
+                            format!("Track '{track_name}' unfrozen")
+                        };
+                    }
+                    Action::TrackOfflineBounce {
+                        track_name,
+                        output_path,
+                        ..
+                    } => {
+                        self.freeze_in_progress = false;
+                        self.freeze_track_name = None;
+                        if let Some(pending) = self.pending_track_freeze_bounce.remove(track_name) {
+                            if self.freeze_cancel_requested {
+                                self.freeze_cancel_requested = false;
+                                let _ = std::fs::remove_file(output_path);
+                                self.state.blocking_write().message =
+                                    format!("Freeze canceled for '{}'", track_name);
+                                return Task::none();
+                            }
+                            let render_path = std::path::PathBuf::from(output_path);
+                            let render_peaks = Self::compute_audio_clip_peaks(&render_path, 512)
+                                .unwrap_or_default();
+                            {
+                                let mut state = self.state.blocking_write();
+                                if let Some(track_mut) =
+                                    state.tracks.iter_mut().find(|t| t.name == *track_name)
+                                {
+                                    track_mut.frozen_audio_backup = pending.backup_audio.clone();
+                                    track_mut.frozen_midi_backup = pending.backup_midi.clone();
+                                    track_mut.frozen_render_clip =
+                                        Some(pending.rendered_clip_rel.clone());
+                                    state.message = format!("Frozen track '{}'", track_name);
+                                }
+                            }
+                            let key = Self::audio_clip_key(
+                                track_name,
+                                &pending.rendered_clip_rel,
+                                0,
+                                pending.rendered_length,
+                                0,
+                            );
+                            self.pending_audio_peaks.insert(key, render_peaks);
+                            let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+                            if !pending.backup_audio.is_empty() {
+                                tasks.push(self.send(Action::RemoveClip {
+                                    track_name: track_name.clone(),
+                                    kind: Kind::Audio,
+                                    clip_indices: (0..pending.backup_audio.len()).collect(),
+                                }));
+                            }
+                            if !pending.backup_midi.is_empty() {
+                                tasks.push(self.send(Action::RemoveClip {
+                                    track_name: track_name.clone(),
+                                    kind: Kind::MIDI,
+                                    clip_indices: (0..pending.backup_midi.len()).collect(),
+                                }));
+                            }
+                            tasks.push(self.send(Action::AddClip {
+                                name: pending.rendered_clip_rel,
+                                track_name: track_name.clone(),
+                                start: 0,
+                                length: pending.rendered_length.max(1),
+                                offset: 0,
+                                input_channel: 0,
+                                muted: false,
+                                kind: Kind::Audio,
+                                fade_enabled: true,
+                                fade_in_samples: 240,
+                                fade_out_samples: 240,
+                                warp_markers: vec![],
+                            }));
+                            tasks.push(self.send(Action::TrackSetFrozen {
+                                track_name: track_name.clone(),
+                                frozen: true,
+                            }));
+                            tasks.push(self.send(Action::EndHistoryGroup));
+                            return Task::batch(tasks);
+                        }
+                    }
+                    Action::TrackOfflineBounceProgress {
+                        track_name,
+                        progress,
+                        operation,
+                    } => {
+                        self.freeze_in_progress = true;
+                        self.freeze_track_name = Some(track_name.clone());
+                        self.freeze_progress = *progress;
+                        let percent = (progress * 100.0).round().clamp(0.0, 100.0) as u32;
+                        self.state.blocking_write().message = if self.freeze_cancel_requested {
+                            format!("Canceling freeze ({percent}%)...")
+                        } else if let Some(op) = operation {
+                            format!("{} ({percent}%)", op)
+                        } else {
+                            format!("Rendering freeze ({percent}%)")
+                        };
+                        return Task::none();
+                    }
+                    Action::TrackOfflineBounceCanceled { track_name } => {
+                        self.freeze_in_progress = false;
+                        self.freeze_track_name = None;
+                        self.freeze_progress = 0.0;
+                        self.freeze_cancel_requested = false;
+                        self.pending_track_freeze_bounce.remove(track_name);
+                        self.state.blocking_write().message =
+                            format!("Freeze canceled for '{}'", track_name);
+                        return Task::none();
+                    }
+                    Action::TrackMeters {
+                        track_name,
+                        output_db,
+                    } => {
+                        if track_name == "hw:out" {
+                            let mut state = self.state.blocking_write();
+                            if state.hw_out_meter_db != *output_db {
+                                state.hw_out_meter_db = output_db.clone();
+                            }
+                            return Task::none();
+                        }
+                        let mut state = self.state.blocking_write();
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                            && track.meter_out_db != *output_db
+                        {
+                            track.meter_out_db = output_db.clone();
+                        }
+                        return Task::none();
+                    }
+                    Action::SetSessionPath(_) => {
+                        self.has_unsaved_changes = false;
+                        self.last_autosave_snapshot = None;
+                        self.pending_autosave_recovery = None;
+                        if let Some(path) = &self.session_dir {
+                            Self::write_last_session_hint(&path.to_string_lossy());
+                        }
+                        if let Some(autosave_root) = self.autosave_snapshot_root()
+                            && autosave_root.exists()
+                        {
+                            let _ = fs::remove_dir_all(&autosave_root);
+                        }
+                        if self.pending_record_after_save {
+                            self.pending_record_after_save = false;
+                            return self.send(Action::SetRecordEnabled(true));
+                        }
+                    }
+                    Action::BeginSessionRestore => {
+                        self.session_restore_in_progress = true;
+                        self.has_unsaved_changes = false;
+                        self.last_autosave_snapshot = None;
+                        self.pending_autosave_recovery = None;
+                    }
+                    Action::EndSessionRestore => {
+                        self.session_restore_in_progress = false;
+                        self.has_unsaved_changes = false;
+                        self.last_autosave_snapshot = None;
+                        self.pending_autosave_recovery = None;
+                    }
+                    Action::TransportPosition(sample) => {
+                        self.transport_samples = *sample as f64;
+                        if self.playing && !self.paused {
+                            self.last_playback_tick = Some(Instant::now());
+                        }
+                    }
+                    Action::SetLoopEnabled(enabled) => {
+                        self.loop_enabled = *enabled && self.loop_range_samples.is_some();
+                    }
+                    Action::SetLoopRange(range) => {
+                        self.loop_range_samples = *range;
+                        self.loop_enabled = range.is_some();
+                    }
+                    Action::SetPunchEnabled(enabled) => {
+                        self.punch_enabled = *enabled && self.punch_range_samples.is_some();
+                    }
+                    Action::SetPunchRange(range) => {
+                        self.punch_range_samples = *range;
+                        self.punch_enabled = range.is_some();
+                    }
+                    Action::SetTempo(bpm) => {
+                        let bpm = (*bpm as f32).clamp(20.0, 300.0);
+                        self.state.blocking_write().tempo = bpm;
+                        self.tempo_input = format!("{:.2}", bpm);
+                        self.last_sent_tempo_bpm = Some(bpm as f64);
+                    }
+                    Action::SetTimeSignature {
+                        numerator,
+                        denominator,
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        state.time_signature_num = (*numerator).clamp(1, 16) as u8;
+                        state.time_signature_denom = match *denominator {
+                            2 => 2,
+                            4 => 4,
+                            8 => 8,
+                            16 => 16,
+                            _ => 4,
+                        };
+                        self.time_signature_num_input = state.time_signature_num.to_string();
+                        self.time_signature_denom_input = state.time_signature_denom.to_string();
+                        self.last_sent_time_signature = Some((
+                            state.time_signature_num as u16,
+                            state.time_signature_denom as u16,
+                        ));
+                    }
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    Action::Lv2Plugins(plugins) => {
+                        let mut state = self.state.blocking_write();
+                        state.lv2_plugins = plugins.clone();
+                        state.lv2_plugins_loaded = true;
+                        state.message = format!("Loaded {} LV2 plugins", state.lv2_plugins.len());
+                    }
+                    Action::Vst3Plugins(plugins) => {
+                        let mut state = self.state.blocking_write();
+                        state.vst3_plugins = plugins.clone();
+                        state.vst3_plugins_loaded = true;
+                        state.message = format!("Loaded {} VST3 plugins", state.vst3_plugins.len());
+                    }
+                    Action::ClapPlugins(plugins) => {
+                        let mut state = self.state.blocking_write();
+                        state.clap_plugins = plugins.clone();
+                        state.clap_plugins_loaded = true;
+                        state.message = format!("Loaded {} CLAP plugins", state.clap_plugins.len());
+                    }
+                    Action::TrackLoadClapPlugin {
+                        track_name,
+                        plugin_path,
+                    } => {
+                        let plugin_name = std::path::Path::new(plugin_path)
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| plugin_path.clone());
+                        {
+                            let mut state = self.state.blocking_write();
+                            let entry = state
+                                .clap_plugins_by_track
+                                .entry(track_name.clone())
+                                .or_default();
+                            if !entry
+                                .iter()
+                                .any(|existing| existing.eq_ignore_ascii_case(plugin_path))
+                            {
+                                entry.push(plugin_path.clone());
+                            }
+                        }
+                        self.state.blocking_write().message =
+                            format!("Loaded CLAP plugin '{plugin_name}' on track '{track_name}'");
+                        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+                        {
+                            let plugin_track =
+                                self.state.blocking_read().plugin_graph_track.clone();
+                            if plugin_track.as_deref() == Some(track_name.as_str()) {
+                                return self.send(Action::TrackGetPluginGraph {
+                                    track_name: track_name.clone(),
+                                });
+                            }
+                        }
+                    }
+                    Action::TrackUnloadClapPlugin {
+                        track_name,
+                        plugin_path,
+                    } => {
+                        {
+                            let mut state = self.state.blocking_write();
+                            if let Some(entry) = state.clap_plugins_by_track.get_mut(track_name)
+                                && let Some(pos) = entry
+                                    .iter()
+                                    .position(|existing| existing.eq_ignore_ascii_case(plugin_path))
+                            {
+                                entry.remove(pos);
+                            }
+                            if let Some(states) = state.clap_states_by_track.get_mut(track_name) {
+                                states.remove(plugin_path);
+                            }
+                        }
+                        let plugin_name = std::path::Path::new(plugin_path)
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| plugin_path.clone());
+                        self.state.blocking_write().message = format!(
+                            "Unloaded CLAP plugin '{plugin_name}' from track '{track_name}'"
+                        );
+                        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+                        {
+                            let plugin_track =
+                                self.state.blocking_read().plugin_graph_track.clone();
+                            if plugin_track.as_deref() == Some(track_name.as_str()) {
+                                return self.send(Action::TrackGetPluginGraph {
+                                    track_name: track_name.clone(),
+                                });
+                            }
+                        }
+                    }
+                    Action::TrackClapStateSnapshot {
+                        track_name,
+                        plugin_path,
+                        state: clap_state,
+                        ..
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        state
+                            .clap_states_by_track
+                            .entry(track_name.clone())
+                            .or_default()
+                            .insert(plugin_path.clone(), clap_state.clone());
+                    }
+                    Action::TrackClapParameters {
+                        track_name,
+                        instance_id,
+                        parameters,
+                    } => {
+                        if self
+                            .pending_add_clap_automation_instances
+                            .remove(&(track_name.clone(), *instance_id))
+                        {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
                                 state.tracks.iter_mut().find(|t| t.name == *track_name)
                             {
-                                track_mut.frozen_audio_backup = pending.backup_audio.clone();
-                                track_mut.frozen_midi_backup = pending.backup_midi.clone();
-                                track_mut.frozen_render_clip =
-                                    Some(pending.rendered_clip_rel.clone());
-                                state.message = format!("Frozen track '{}'", track_name);
-                            }
-                        }
-                        let key = Self::audio_clip_key(
-                            track_name,
-                            &pending.rendered_clip_rel,
-                            0,
-                            pending.rendered_length,
-                            0,
-                        );
-                        self.pending_audio_peaks.insert(key, render_peaks);
-                        let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
-                        if !pending.backup_audio.is_empty() {
-                            tasks.push(self.send(Action::RemoveClip {
-                                track_name: track_name.clone(),
-                                kind: Kind::Audio,
-                                clip_indices: (0..pending.backup_audio.len()).collect(),
-                            }));
-                        }
-                        if !pending.backup_midi.is_empty() {
-                            tasks.push(self.send(Action::RemoveClip {
-                                track_name: track_name.clone(),
-                                kind: Kind::MIDI,
-                                clip_indices: (0..pending.backup_midi.len()).collect(),
-                            }));
-                        }
-                        tasks.push(self.send(Action::AddClip {
-                            name: pending.rendered_clip_rel,
-                            track_name: track_name.clone(),
-                            start: 0,
-                            length: pending.rendered_length.max(1),
-                            offset: 0,
-                            input_channel: 0,
-                            muted: false,
-                            kind: Kind::Audio,
-                            fade_enabled: true,
-                            fade_in_samples: 240,
-                            fade_out_samples: 240,
-                            warp_markers: vec![],
-                        }));
-                        tasks.push(self.send(Action::TrackSetFrozen {
-                            track_name: track_name.clone(),
-                            frozen: true,
-                        }));
-                        tasks.push(self.send(Action::EndHistoryGroup));
-                        return Task::batch(tasks);
-                    }
-                }
-                Action::TrackOfflineBounceProgress {
-                    track_name,
-                    progress,
-                    operation,
-                } => {
-                    self.freeze_in_progress = true;
-                    self.freeze_track_name = Some(track_name.clone());
-                    self.freeze_progress = *progress;
-                    let percent = (progress * 100.0).round().clamp(0.0, 100.0) as u32;
-                    self.state.blocking_write().message = if self.freeze_cancel_requested {
-                        format!("Canceling freeze ({percent}%)...")
-                    } else if let Some(op) = operation {
-                        format!("{} ({percent}%)", op)
-                    } else {
-                        format!("Rendering freeze ({percent}%)")
-                    };
-                    return Task::none();
-                }
-                Action::TrackOfflineBounceCanceled { track_name } => {
-                    self.freeze_in_progress = false;
-                    self.freeze_track_name = None;
-                    self.freeze_progress = 0.0;
-                    self.freeze_cancel_requested = false;
-                    self.pending_track_freeze_bounce.remove(track_name);
-                    self.state.blocking_write().message =
-                        format!("Freeze canceled for '{}'", track_name);
-                    return Task::none();
-                }
-                Action::TrackMeters {
-                    track_name,
-                    output_db,
-                } => {
-                    if track_name == "hw:out" {
-                        let mut state = self.state.blocking_write();
-                        if state.hw_out_meter_db != *output_db {
-                            state.hw_out_meter_db = output_db.clone();
-                        }
-                        return Task::none();
-                    }
-                    let mut state = self.state.blocking_write();
-                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                        && track.meter_out_db != *output_db
-                    {
-                        track.meter_out_db = output_db.clone();
-                    }
-                    return Task::none();
-                }
-                Action::SetSessionPath(_) => {
-                    self.has_unsaved_changes = false;
-                    self.last_autosave_snapshot = None;
-                    self.pending_autosave_recovery = None;
-                    if let Some(path) = &self.session_dir {
-                        Self::write_last_session_hint(&path.to_string_lossy());
-                    }
-                    if let Some(autosave_root) = self.autosave_snapshot_root()
-                        && autosave_root.exists()
-                    {
-                        let _ = fs::remove_dir_all(&autosave_root);
-                    }
-                    if self.pending_record_after_save {
-                        self.pending_record_after_save = false;
-                        return self.send(Action::SetRecordEnabled(true));
-                    }
-                }
-                Action::BeginSessionRestore => {
-                    self.session_restore_in_progress = true;
-                    self.has_unsaved_changes = false;
-                    self.last_autosave_snapshot = None;
-                    self.pending_autosave_recovery = None;
-                }
-                Action::EndSessionRestore => {
-                    self.session_restore_in_progress = false;
-                    self.has_unsaved_changes = false;
-                    self.last_autosave_snapshot = None;
-                    self.pending_autosave_recovery = None;
-                }
-                Action::TransportPosition(sample) => {
-                    self.transport_samples = *sample as f64;
-                    if self.playing && !self.paused {
-                        self.last_playback_tick = Some(Instant::now());
-                    }
-                }
-                Action::SetLoopEnabled(enabled) => {
-                    self.loop_enabled = *enabled && self.loop_range_samples.is_some();
-                }
-                Action::SetLoopRange(range) => {
-                    self.loop_range_samples = *range;
-                    self.loop_enabled = range.is_some();
-                }
-                Action::SetPunchEnabled(enabled) => {
-                    self.punch_enabled = *enabled && self.punch_range_samples.is_some();
-                }
-                Action::SetPunchRange(range) => {
-                    self.punch_range_samples = *range;
-                    self.punch_enabled = range.is_some();
-                }
-                Action::SetTempo(bpm) => {
-                    let bpm = (*bpm as f32).clamp(20.0, 300.0);
-                    self.state.blocking_write().tempo = bpm;
-                    self.tempo_input = format!("{:.2}", bpm);
-                    self.last_sent_tempo_bpm = Some(bpm as f64);
-                }
-                Action::SetTimeSignature {
-                    numerator,
-                    denominator,
-                } => {
-                    let mut state = self.state.blocking_write();
-                    state.time_signature_num = (*numerator).clamp(1, 16) as u8;
-                    state.time_signature_denom = match *denominator {
-                        2 => 2,
-                        4 => 4,
-                        8 => 8,
-                        16 => 16,
-                        _ => 4,
-                    };
-                    self.time_signature_num_input = state.time_signature_num.to_string();
-                    self.time_signature_denom_input = state.time_signature_denom.to_string();
-                    self.last_sent_time_signature = Some((
-                        state.time_signature_num as u16,
-                        state.time_signature_denom as u16,
-                    ));
-                }
-                #[cfg(all(unix, not(target_os = "macos")))]
-                Action::Lv2Plugins(plugins) => {
-                    let mut state = self.state.blocking_write();
-                    state.lv2_plugins = plugins.clone();
-                    state.lv2_plugins_loaded = true;
-                    state.message = format!("Loaded {} LV2 plugins", state.lv2_plugins.len());
-                }
-                Action::Vst3Plugins(plugins) => {
-                    let mut state = self.state.blocking_write();
-                    state.vst3_plugins = plugins.clone();
-                    state.vst3_plugins_loaded = true;
-                    state.message = format!("Loaded {} VST3 plugins", state.vst3_plugins.len());
-                }
-                Action::ClapPlugins(plugins) => {
-                    let mut state = self.state.blocking_write();
-                    state.clap_plugins = plugins.clone();
-                    state.clap_plugins_loaded = true;
-                    state.message = format!("Loaded {} CLAP plugins", state.clap_plugins.len());
-                }
-                Action::TrackLoadClapPlugin {
-                    track_name,
-                    plugin_path,
-                } => {
-                    let plugin_name = std::path::Path::new(plugin_path)
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| plugin_path.clone());
-                    {
-                        let mut state = self.state.blocking_write();
-                        let entry = state
-                            .clap_plugins_by_track
-                            .entry(track_name.clone())
-                            .or_default();
-                        if !entry
-                            .iter()
-                            .any(|existing| existing.eq_ignore_ascii_case(plugin_path))
-                        {
-                            entry.push(plugin_path.clone());
-                        }
-                    }
-                    self.state.blocking_write().message =
-                        format!("Loaded CLAP plugin '{plugin_name}' on track '{track_name}'");
-                    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-                    {
-                        let plugin_track = self.state.blocking_read().plugin_graph_track.clone();
-                        if plugin_track.as_deref() == Some(track_name.as_str()) {
-                            return self.send(Action::TrackGetPluginGraph {
-                                track_name: track_name.clone(),
-                            });
-                        }
-                    }
-                }
-                Action::TrackUnloadClapPlugin {
-                    track_name,
-                    plugin_path,
-                } => {
-                    {
-                        let mut state = self.state.blocking_write();
-                        if let Some(entry) = state.clap_plugins_by_track.get_mut(track_name)
-                            && let Some(pos) = entry
-                                .iter()
-                                .position(|existing| existing.eq_ignore_ascii_case(plugin_path))
-                        {
-                            entry.remove(pos);
-                        }
-                        if let Some(states) = state.clap_states_by_track.get_mut(track_name) {
-                            states.remove(plugin_path);
-                        }
-                    }
-                    let plugin_name = std::path::Path::new(plugin_path)
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| plugin_path.clone());
-                    self.state.blocking_write().message =
-                        format!("Unloaded CLAP plugin '{plugin_name}' from track '{track_name}'");
-                    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-                    {
-                        let plugin_track = self.state.blocking_read().plugin_graph_track.clone();
-                        if plugin_track.as_deref() == Some(track_name.as_str()) {
-                            return self.send(Action::TrackGetPluginGraph {
-                                track_name: track_name.clone(),
-                            });
-                        }
-                    }
-                }
-                Action::TrackClapStateSnapshot {
-                    track_name,
-                    plugin_path,
-                    state: clap_state,
-                    ..
-                } => {
-                    let mut state = self.state.blocking_write();
-                    state
-                        .clap_states_by_track
-                        .entry(track_name.clone())
-                        .or_default()
-                        .insert(plugin_path.clone(), clap_state.clone());
-                }
-                Action::TrackClapParameters {
-                    track_name,
-                    instance_id,
-                    parameters,
-                } => {
-                    if self
-                        .pending_add_clap_automation_instances
-                        .remove(&(track_name.clone(), *instance_id))
-                    {
-                        let mut state = self.state.blocking_write();
-                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                        {
-                            for param in parameters {
-                                let target = TrackAutomationTarget::ClapParameter {
-                                    instance_id: *instance_id,
-                                    param_id: param.id,
-                                    min: param.min_value,
-                                    max: param.max_value,
-                                };
-                                if let Some(existing) = track
-                                    .automation_lanes
-                                    .iter_mut()
-                                    .find(|lane| lane.target == target)
-                                {
-                                    existing.visible = true;
-                                } else {
-                                    track.automation_lanes.push(
-                                        crate::state::TrackAutomationLane {
-                                            target,
-                                            visible: true,
-                                            points: vec![],
-                                        },
-                                    );
-                                }
-                            }
-                            track.height = track.min_height_for_layout().max(60.0);
-                            state.message = format!(
-                                "Added {} CLAP automation lanes on '{}'",
-                                parameters.len(),
-                                track_name
-                            );
-                        }
-                    }
-                }
-                Action::TrackVst3Parameters {
-                    track_name,
-                    instance_id,
-                    parameters,
-                } => {
-                    if self
-                        .pending_add_vst3_automation_instances
-                        .remove(&(track_name.clone(), *instance_id))
-                    {
-                        let mut state = self.state.blocking_write();
-                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                        {
-                            for param in parameters {
-                                let target = TrackAutomationTarget::Vst3Parameter {
-                                    instance_id: *instance_id,
-                                    param_id: param.id,
-                                };
-                                if let Some(existing) = track
-                                    .automation_lanes
-                                    .iter_mut()
-                                    .find(|lane| lane.target == target)
-                                {
-                                    existing.visible = true;
-                                } else {
-                                    track.automation_lanes.push(
-                                        crate::state::TrackAutomationLane {
-                                            target,
-                                            visible: true,
-                                            points: vec![],
-                                        },
-                                    );
-                                }
-                            }
-                            track.height = track.min_height_for_layout().max(60.0);
-                            state.message = format!(
-                                "Added {} VST3 automation lanes on '{}'",
-                                parameters.len(),
-                                track_name
-                            );
-                        }
-                    }
-                }
-                #[cfg(any(target_os = "windows", target_os = "macos"))]
-                Action::TrackSnapshotAllClapStates { track_name } => {
-                    if self.pending_save_path.is_some() {
-                        self.pending_save_tracks.remove(track_name);
-                        if self.pending_save_tracks.is_empty() {
-                            let path = self.pending_save_path.take().unwrap_or_default();
-                            let is_template = self.pending_save_is_template;
-                            self.pending_save_is_template = false;
-                            if !path.is_empty() {
-                                if is_template {
-                                    if let Err(e) = self.save_template(path.clone()) {
-                                        error!("{}", e);
-                                        self.state.blocking_write().message =
-                                            format!("Failed to save template: {}", e);
+                                for param in parameters {
+                                    let target = TrackAutomationTarget::ClapParameter {
+                                        instance_id: *instance_id,
+                                        param_id: param.id,
+                                        min: param.min_value,
+                                        max: param.max_value,
+                                    };
+                                    if let Some(existing) = track
+                                        .automation_lanes
+                                        .iter_mut()
+                                        .find(|lane| lane.target == target)
+                                    {
+                                        existing.visible = true;
                                     } else {
-                                        self.state.blocking_write().message =
-                                            "Template saved".to_string();
-                                        // Rescan templates and update menu
-                                        let templates = crate::gui::scan_templates();
-                                        self.state.blocking_write().available_templates =
-                                            templates.clone();
-                                        self.menu.update_templates(templates);
+                                        track.automation_lanes.push(
+                                            crate::state::TrackAutomationLane {
+                                                target,
+                                                visible: true,
+                                                points: vec![],
+                                            },
+                                        );
                                     }
-                                } else if let Err(e) = self.save(path.clone()) {
-                                    error!("{}", e);
-                                } else {
-                                    return self.send(Action::SetSessionPath(path));
                                 }
+                                track.height = track.min_height_for_layout().max(60.0);
+                                state.message = format!(
+                                    "Added {} CLAP automation lanes on '{}'",
+                                    parameters.len(),
+                                    track_name
+                                );
                             }
                         }
                     }
-                }
-                Action::TrackClearDefaultPassthrough { track_name } => {
-                    let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
-                    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-                    if lv2_track.as_deref() == Some(track_name.as_str()) {
-                        return self.send(Action::TrackGetPluginGraph {
-                            track_name: track_name.clone(),
-                        });
-                    }
-                    let _ = (track_name, lv2_track);
-                }
-                #[cfg(all(unix, not(target_os = "macos")))]
-                Action::TrackLoadLv2Plugin { track_name, .. }
-                | Action::TrackSetLv2PluginState { track_name, .. }
-                | Action::TrackUnloadLv2PluginInstance { track_name, .. }
-                | Action::TrackSetLv2ControlValue { track_name, .. }
-                | Action::TrackLoadVst3Plugin { track_name, .. }
-                | Action::TrackUnloadVst3PluginInstance { track_name, .. }
-                | Action::TrackConnectPluginAudio { track_name, .. }
-                | Action::TrackDisconnectPluginAudio { track_name, .. }
-                | Action::TrackConnectPluginMidi { track_name, .. }
-                | Action::TrackDisconnectPluginMidi { track_name, .. } => {
-                    let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
-                    if lv2_track.as_deref() == Some(track_name.as_str()) {
-                        return self.send(Action::TrackGetPluginGraph {
-                            track_name: track_name.clone(),
-                        });
-                    }
-                }
-                Action::TrackVst3StateSnapshot {
-                    track_name,
-                    instance_id,
-                    state,
-                } => {
-                    if let Some(pending) = self.pending_vst3_ui_open.clone()
-                        && &pending.track_name == track_name
-                        && pending.instance_id == *instance_id
-                    {
-                        let (sample_rate_hz, block_size) = {
-                            let st = self.state.blocking_read();
-                            (self.playback_rate_hz.max(1.0), st.oss_period_frames.max(1))
-                        };
-                        if let Err(e) = self.vst3_ui_host.open_editor(
-                            &pending.plugin_path,
-                            &pending.plugin_name,
-                            &pending.plugin_id,
-                            sample_rate_hz,
-                            block_size,
-                            pending.audio_inputs,
-                            pending.audio_outputs,
-                            Some(state.clone()),
-                        ) {
-                            self.state.blocking_write().message = e;
-                        }
-                        self.pending_vst3_ui_open = None;
-                    }
-                }
-                #[cfg(target_os = "windows")]
-                Action::TrackLoadVst3Plugin { track_name, .. }
-                | Action::TrackUnloadVst3PluginInstance { track_name, .. }
-                | Action::TrackConnectPluginAudio { track_name, .. }
-                | Action::TrackDisconnectPluginAudio { track_name, .. }
-                | Action::TrackConnectPluginMidi { track_name, .. }
-                | Action::TrackDisconnectPluginMidi { track_name, .. } => {
-                    let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
-                    if lv2_track.as_deref() == Some(track_name.as_str()) {
-                        return self.send(Action::TrackGetPluginGraph {
-                            track_name: track_name.clone(),
-                        });
-                    }
-                }
-                #[cfg(all(unix, not(target_os = "macos")))]
-                Action::TrackLv2Midnam {
-                    track_name,
-                    note_names,
-                } => {
-                    let mut state = self.state.blocking_write();
-                    if let Some(piano) = &mut state.piano
-                        && piano.track_idx == *track_name
-                    {
-                        piano.midnam_note_names = note_names.clone();
-                    }
-                }
-                #[cfg(all(unix, not(target_os = "macos")))]
-                Action::TrackLv2PluginControls {
-                    track_name,
-                    instance_id,
-                    controls,
-                    instance_access_handle,
-                } => {
-                    if self
-                        .pending_add_lv2_automation_instances
-                        .remove(&(track_name.clone(), *instance_id))
-                    {
-                        let mut state = self.state.blocking_write();
-                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                        {
-                            for control in controls {
-                                let target = TrackAutomationTarget::Lv2Parameter {
-                                    instance_id: *instance_id,
-                                    index: control.index,
-                                    min: control.min,
-                                    max: control.max,
-                                };
-                                if let Some(existing) = track
-                                    .automation_lanes
-                                    .iter_mut()
-                                    .find(|lane| lane.target == target)
-                                {
-                                    existing.visible = true;
-                                } else {
-                                    track.automation_lanes.push(
-                                        crate::state::TrackAutomationLane {
-                                            target,
-                                            visible: true,
-                                            points: vec![],
-                                        },
-                                    );
-                                }
-                            }
-                            track.height = track.min_height_for_layout().max(60.0);
-                            state.message = format!(
-                                "Added {} LV2 automation lanes on '{}'",
-                                controls.len(),
-                                track_name
-                            );
-                        }
-                        return Task::none();
-                    }
-                    let (plugin_name, plugin_uri) = {
-                        let state = self.state.blocking_read();
-                        state
-                            .plugin_graph_plugins
-                            .iter()
-                            .find(|plugin| plugin.instance_id == *instance_id)
-                            .map(|plugin| (plugin.name.clone(), plugin.uri.clone()))
-                            .unwrap_or_else(|| (format!("LV2 #{instance_id}"), String::new()))
-                    };
-                    if let Err(err) = self.lv2_ui_host.open_editor(
-                        track_name.clone(),
-                        *instance_id,
-                        plugin_name,
-                        plugin_uri,
-                        controls.clone(),
-                        *instance_access_handle,
-                        CLIENT.clone(),
-                    ) {
-                        self.state.blocking_write().message = err;
-                    }
-                }
-                #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-                Action::TrackPluginGraph {
-                    track_name,
-                    plugins,
-                    connections,
-                } => {
-                    use tracing::info;
-                    info!(
-                        "Received plugin graph for track '{}' with {} plugins",
+                    Action::TrackVst3Parameters {
                         track_name,
-                        plugins.len()
-                    );
-                    for (idx, plugin) in plugins.iter().enumerate() {
-                        info!(
-                            "  Plugin {}: uri={}, state properties count={}",
-                            idx,
-                            plugin.uri,
-                            plugin
-                                .state
-                                .as_ref()
-                                .map(|s| s.properties.len())
-                                .unwrap_or(0)
-                        );
-                    }
-                    let mut state = self.state.blocking_write();
-                    state
-                        .plugin_graphs_by_track
-                        .insert(track_name.clone(), (plugins.clone(), connections.clone()));
-                    if state.plugin_graph_track.as_deref() == Some(track_name.as_str()) {
-                        state.plugin_graph_track = Some(track_name.clone());
-                        state.plugin_graph_plugins = plugins.clone();
-                        state.plugin_graph_connections = connections.clone();
-                        state.plugin_graph_selected_connections.clear();
-                        state.plugin_graph_selected_plugin = state
-                            .plugin_graph_selected_plugin
-                            .filter(|id| plugins.iter().any(|p| p.instance_id == *id));
-                        let mut new_positions = std::collections::HashMap::new();
-                        for (idx, plugin) in plugins.iter().enumerate() {
-                            let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
-                            let pos = state
-                                .plugin_graph_plugin_positions
-                                .get(&plugin.instance_id)
-                                .copied()
-                                .unwrap_or(fallback);
-                            new_positions.insert(plugin.instance_id, pos);
-                        }
-                        state.plugin_graph_plugin_positions = new_positions;
-                    }
-                    drop(state);
-
-                    let mut pending_queries: Vec<Task<Message>> = vec![];
-                    let pending_lv2_uris: Vec<(String, String)> = self
-                        .pending_add_lv2_automation_uris
-                        .iter()
-                        .filter(|(name, _)| name == track_name)
-                        .cloned()
-                        .collect();
-                    for (pending_track, pending_uri) in pending_lv2_uris {
-                        if let Some(instance_id) = plugins
-                            .iter()
-                            .find(|plugin| {
-                                plugin.format.eq_ignore_ascii_case("LV2")
-                                    && (plugin.uri == pending_uri
-                                        || plugin.plugin_id == pending_uri)
-                            })
-                            .map(|plugin| plugin.instance_id)
+                        instance_id,
+                        parameters,
+                    } => {
+                        if self
+                            .pending_add_vst3_automation_instances
+                            .remove(&(track_name.clone(), *instance_id))
                         {
-                            self.pending_add_lv2_automation_uris
-                                .remove(&(pending_track.clone(), pending_uri));
-                            self.pending_add_lv2_automation_instances
-                                .insert((pending_track.clone(), instance_id));
-                            pending_queries.push(self.send(Action::TrackGetLv2PluginControls {
-                                track_name: pending_track,
-                                instance_id,
-                            }));
-                        }
-                    }
-                    let pending_vst3_paths: Vec<(String, String)> = self
-                        .pending_add_vst3_automation_paths
-                        .iter()
-                        .filter(|(name, _)| name == track_name)
-                        .cloned()
-                        .collect();
-                    for (pending_track, pending_path) in pending_vst3_paths {
-                        if let Some(instance_id) = plugins
-                            .iter()
-                            .find(|plugin| {
-                                plugin.format.eq_ignore_ascii_case("VST3")
-                                    && (plugin.uri == pending_path
-                                        || plugin.plugin_id == pending_path)
-                            })
-                            .map(|plugin| plugin.instance_id)
-                        {
-                            self.pending_add_vst3_automation_paths
-                                .remove(&(pending_track.clone(), pending_path));
-                            self.pending_add_vst3_automation_instances
-                                .insert((pending_track.clone(), instance_id));
-                            pending_queries.push(self.send(Action::TrackGetVst3Parameters {
-                                track_name: pending_track,
-                                instance_id,
-                            }));
-                        }
-                    }
-                    let pending_paths: Vec<(String, String)> = self
-                        .pending_add_clap_automation_paths
-                        .iter()
-                        .filter(|(name, _)| name == track_name)
-                        .cloned()
-                        .collect();
-                    for (pending_track, pending_path) in pending_paths {
-                        if let Some(instance_id) = plugins
-                            .iter()
-                            .find(|plugin| {
-                                plugin.format.eq_ignore_ascii_case("CLAP")
-                                    && (plugin.uri == pending_path
-                                        || plugin.plugin_id == pending_path)
-                            })
-                            .map(|plugin| plugin.instance_id)
-                        {
-                            self.pending_add_clap_automation_paths
-                                .remove(&(pending_track.clone(), pending_path));
-                            self.pending_add_clap_automation_instances
-                                .insert((pending_track.clone(), instance_id));
-                            pending_queries.push(self.send(Action::TrackGetClapParameters {
-                                track_name: pending_track,
-                                instance_id,
-                            }));
-                        }
-                    }
-                    if !pending_queries.is_empty() {
-                        return Task::batch(pending_queries);
-                    }
-
-                    if self.pending_save_path.is_some() {
-                        self.pending_save_tracks.remove(track_name);
-                        if self.pending_save_tracks.is_empty() {
-                            let path = self.pending_save_path.take().unwrap_or_default();
-                            let is_template = self.pending_save_is_template;
-                            self.pending_save_is_template = false;
-                            if !path.is_empty() {
-                                if is_template {
-                                    if let Err(e) = self.save_template(path.clone()) {
-                                        error!("{}", e);
-                                        self.state.blocking_write().message =
-                                            format!("Failed to save template: {}", e);
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| t.name == *track_name)
+                            {
+                                for param in parameters {
+                                    let target = TrackAutomationTarget::Vst3Parameter {
+                                        instance_id: *instance_id,
+                                        param_id: param.id,
+                                    };
+                                    if let Some(existing) = track
+                                        .automation_lanes
+                                        .iter_mut()
+                                        .find(|lane| lane.target == target)
+                                    {
+                                        existing.visible = true;
                                     } else {
-                                        self.state.blocking_write().message =
-                                            "Template saved".to_string();
-                                        // Rescan templates and update menu
-                                        let templates = crate::gui::scan_templates();
-                                        self.state.blocking_write().available_templates =
-                                            templates.clone();
-                                        self.menu.update_templates(templates);
+                                        track.automation_lanes.push(
+                                            crate::state::TrackAutomationLane {
+                                                target,
+                                                visible: true,
+                                                points: vec![],
+                                            },
+                                        );
                                     }
-                                } else {
-                                    // Check if this is a single-track template save
-                                    // (path contains /track_templates/)
-                                    if path.contains("/track_templates/") {
-                                        return self.save_track_as_template(track_name, path);
+                                }
+                                track.height = track.min_height_for_layout().max(60.0);
+                                state.message = format!(
+                                    "Added {} VST3 automation lanes on '{}'",
+                                    parameters.len(),
+                                    track_name
+                                );
+                            }
+                        }
+                    }
+                    #[cfg(any(target_os = "windows", target_os = "macos"))]
+                    Action::TrackSnapshotAllClapStates { track_name } => {
+                        if self.pending_save_path.is_some() {
+                            self.pending_save_tracks.remove(track_name);
+                            if self.pending_save_tracks.is_empty() {
+                                let path = self.pending_save_path.take().unwrap_or_default();
+                                let is_template = self.pending_save_is_template;
+                                self.pending_save_is_template = false;
+                                if !path.is_empty() {
+                                    if is_template {
+                                        if let Err(e) = self.save_template(path.clone()) {
+                                            error!("{}", e);
+                                            self.state.blocking_write().message =
+                                                format!("Failed to save template: {}", e);
+                                        } else {
+                                            self.state.blocking_write().message =
+                                                "Template saved".to_string();
+                                            // Rescan templates and update menu
+                                            let templates = crate::gui::scan_templates();
+                                            self.state.blocking_write().available_templates =
+                                                templates.clone();
+                                            self.menu.update_templates(templates);
+                                        }
                                     } else if let Err(e) = self.save(path.clone()) {
                                         error!("{}", e);
                                     } else {
@@ -6425,58 +6137,378 @@ impl Maolan {
                             }
                         }
                     }
-                }
-                Action::RenameTrack { old_name, new_name } => {
-                    let mut state = self.state.blocking_write();
-                    // Update track name in GUI state
-                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *old_name) {
-                        track.name = new_name.clone();
-                    }
-                    // Update selected tracks
-                    if state.selected.remove(old_name) {
-                        state.selected.insert(new_name.clone());
-                    }
-                    // Update connection view selection
-                    if let crate::state::ConnectionViewSelection::Tracks(tracks) =
-                        &mut state.connection_view_selection
-                        && tracks.remove(old_name)
-                    {
-                        tracks.insert(new_name.clone());
-                    }
-                    // Update connections
-                    for conn in &mut state.connections {
-                        if conn.from_track == *old_name {
-                            conn.from_track = new_name.clone();
+                    Action::TrackClearDefaultPassthrough { track_name } => {
+                        let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
+                        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+                        if lv2_track.as_deref() == Some(track_name.as_str()) {
+                            return self.send(Action::TrackGetPluginGraph {
+                                track_name: track_name.clone(),
+                            });
                         }
-                        if conn.to_track == *old_name {
-                            conn.to_track = new_name.clone();
-                        }
+                        let _ = (track_name, lv2_track);
                     }
-                    // Update LV2 graph track reference
-                    if state.plugin_graph_track.as_deref() == Some(old_name) {
-                        state.plugin_graph_track = Some(new_name.clone());
-                    }
-                    // Update LV2 graphs by track
                     #[cfg(all(unix, not(target_os = "macos")))]
-                    if let Some(graph) = state.plugin_graphs_by_track.remove(old_name) {
-                        state.plugin_graphs_by_track.insert(new_name.clone(), graph);
-                    }
-                    if let Some(clap) = state.clap_plugins_by_track.remove(old_name) {
-                        state.clap_plugins_by_track.insert(new_name.clone(), clap);
-                    }
-                    if let Some(clap_states) = state.clap_states_by_track.remove(old_name) {
-                        state
-                            .clap_states_by_track
-                            .insert(new_name.clone(), clap_states);
-                    }
-                    for track in &mut state.tracks {
-                        if track.vca_master.as_deref() == Some(old_name.as_str()) {
-                            track.vca_master = Some(new_name.clone());
+                    Action::TrackLoadLv2Plugin { track_name, .. }
+                    | Action::TrackSetLv2PluginState { track_name, .. }
+                    | Action::TrackUnloadLv2PluginInstance { track_name, .. }
+                    | Action::TrackSetLv2ControlValue { track_name, .. }
+                    | Action::TrackLoadVst3Plugin { track_name, .. }
+                    | Action::TrackUnloadVst3PluginInstance { track_name, .. }
+                    | Action::TrackConnectPluginAudio { track_name, .. }
+                    | Action::TrackDisconnectPluginAudio { track_name, .. }
+                    | Action::TrackConnectPluginMidi { track_name, .. }
+                    | Action::TrackDisconnectPluginMidi { track_name, .. } => {
+                        let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
+                        if lv2_track.as_deref() == Some(track_name.as_str()) {
+                            return self.send(Action::TrackGetPluginGraph {
+                                track_name: track_name.clone(),
+                            });
                         }
                     }
-                    state.message = format!("Renamed track to '{}'", new_name);
-                }
-                _ => {}
+                    Action::TrackVst3StateSnapshot {
+                        track_name,
+                        instance_id,
+                        state,
+                    } => {
+                        if let Some(pending) = self.pending_vst3_ui_open.clone()
+                            && &pending.track_name == track_name
+                            && pending.instance_id == *instance_id
+                        {
+                            let (sample_rate_hz, block_size) = {
+                                let st = self.state.blocking_read();
+                                (self.playback_rate_hz.max(1.0), st.oss_period_frames.max(1))
+                            };
+                            if let Err(e) = self.vst3_ui_host.open_editor(
+                                &pending.plugin_path,
+                                &pending.plugin_name,
+                                &pending.plugin_id,
+                                sample_rate_hz,
+                                block_size,
+                                pending.audio_inputs,
+                                pending.audio_outputs,
+                                Some(state.clone()),
+                            ) {
+                                self.state.blocking_write().message = e;
+                            }
+                            self.pending_vst3_ui_open = None;
+                        }
+                    }
+                    #[cfg(target_os = "windows")]
+                    Action::TrackLoadVst3Plugin { track_name, .. }
+                    | Action::TrackUnloadVst3PluginInstance { track_name, .. }
+                    | Action::TrackConnectPluginAudio { track_name, .. }
+                    | Action::TrackDisconnectPluginAudio { track_name, .. }
+                    | Action::TrackConnectPluginMidi { track_name, .. }
+                    | Action::TrackDisconnectPluginMidi { track_name, .. } => {
+                        let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
+                        if lv2_track.as_deref() == Some(track_name.as_str()) {
+                            return self.send(Action::TrackGetPluginGraph {
+                                track_name: track_name.clone(),
+                            });
+                        }
+                    }
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    Action::TrackLv2Midnam {
+                        track_name,
+                        note_names,
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        if let Some(piano) = &mut state.piano
+                            && piano.track_idx == *track_name
+                        {
+                            piano.midnam_note_names = note_names.clone();
+                        }
+                    }
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    Action::TrackLv2PluginControls {
+                        track_name,
+                        instance_id,
+                        controls,
+                        instance_access_handle,
+                    } => {
+                        if self
+                            .pending_add_lv2_automation_instances
+                            .remove(&(track_name.clone(), *instance_id))
+                        {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| t.name == *track_name)
+                            {
+                                for control in controls {
+                                    let target = TrackAutomationTarget::Lv2Parameter {
+                                        instance_id: *instance_id,
+                                        index: control.index,
+                                        min: control.min,
+                                        max: control.max,
+                                    };
+                                    if let Some(existing) = track
+                                        .automation_lanes
+                                        .iter_mut()
+                                        .find(|lane| lane.target == target)
+                                    {
+                                        existing.visible = true;
+                                    } else {
+                                        track.automation_lanes.push(
+                                            crate::state::TrackAutomationLane {
+                                                target,
+                                                visible: true,
+                                                points: vec![],
+                                            },
+                                        );
+                                    }
+                                }
+                                track.height = track.min_height_for_layout().max(60.0);
+                                state.message = format!(
+                                    "Added {} LV2 automation lanes on '{}'",
+                                    controls.len(),
+                                    track_name
+                                );
+                            }
+                            return Task::none();
+                        }
+                        let (plugin_name, plugin_uri) = {
+                            let state = self.state.blocking_read();
+                            state
+                                .plugin_graph_plugins
+                                .iter()
+                                .find(|plugin| plugin.instance_id == *instance_id)
+                                .map(|plugin| (plugin.name.clone(), plugin.uri.clone()))
+                                .unwrap_or_else(|| (format!("LV2 #{instance_id}"), String::new()))
+                        };
+                        if let Err(err) = self.lv2_ui_host.open_editor(
+                            track_name.clone(),
+                            *instance_id,
+                            plugin_name,
+                            plugin_uri,
+                            controls.clone(),
+                            *instance_access_handle,
+                            CLIENT.clone(),
+                        ) {
+                            self.state.blocking_write().message = err;
+                        }
+                    }
+                    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+                    Action::TrackPluginGraph {
+                        track_name,
+                        plugins,
+                        connections,
+                    } => {
+                        use tracing::info;
+                        info!(
+                            "Received plugin graph for track '{}' with {} plugins",
+                            track_name,
+                            plugins.len()
+                        );
+                        for (idx, plugin) in plugins.iter().enumerate() {
+                            info!(
+                                "  Plugin {}: uri={}, state properties count={}",
+                                idx,
+                                plugin.uri,
+                                plugin
+                                    .state
+                                    .as_ref()
+                                    .map(|s| s.properties.len())
+                                    .unwrap_or(0)
+                            );
+                        }
+                        let mut state = self.state.blocking_write();
+                        state
+                            .plugin_graphs_by_track
+                            .insert(track_name.clone(), (plugins.clone(), connections.clone()));
+                        if state.plugin_graph_track.as_deref() == Some(track_name.as_str()) {
+                            state.plugin_graph_track = Some(track_name.clone());
+                            state.plugin_graph_plugins = plugins.clone();
+                            state.plugin_graph_connections = connections.clone();
+                            state.plugin_graph_selected_connections.clear();
+                            state.plugin_graph_selected_plugin = state
+                                .plugin_graph_selected_plugin
+                                .filter(|id| plugins.iter().any(|p| p.instance_id == *id));
+                            let mut new_positions = std::collections::HashMap::new();
+                            for (idx, plugin) in plugins.iter().enumerate() {
+                                let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
+                                let pos = state
+                                    .plugin_graph_plugin_positions
+                                    .get(&plugin.instance_id)
+                                    .copied()
+                                    .unwrap_or(fallback);
+                                new_positions.insert(plugin.instance_id, pos);
+                            }
+                            state.plugin_graph_plugin_positions = new_positions;
+                        }
+                        drop(state);
+
+                        let mut pending_queries: Vec<Task<Message>> = vec![];
+                        let pending_lv2_uris: Vec<(String, String)> = self
+                            .pending_add_lv2_automation_uris
+                            .iter()
+                            .filter(|(name, _)| name == track_name)
+                            .cloned()
+                            .collect();
+                        for (pending_track, pending_uri) in pending_lv2_uris {
+                            if let Some(instance_id) = plugins
+                                .iter()
+                                .find(|plugin| {
+                                    plugin.format.eq_ignore_ascii_case("LV2")
+                                        && (plugin.uri == pending_uri
+                                            || plugin.plugin_id == pending_uri)
+                                })
+                                .map(|plugin| plugin.instance_id)
+                            {
+                                self.pending_add_lv2_automation_uris
+                                    .remove(&(pending_track.clone(), pending_uri));
+                                self.pending_add_lv2_automation_instances
+                                    .insert((pending_track.clone(), instance_id));
+                                pending_queries.push(self.send(
+                                    Action::TrackGetLv2PluginControls {
+                                        track_name: pending_track,
+                                        instance_id,
+                                    },
+                                ));
+                            }
+                        }
+                        let pending_vst3_paths: Vec<(String, String)> = self
+                            .pending_add_vst3_automation_paths
+                            .iter()
+                            .filter(|(name, _)| name == track_name)
+                            .cloned()
+                            .collect();
+                        for (pending_track, pending_path) in pending_vst3_paths {
+                            if let Some(instance_id) = plugins
+                                .iter()
+                                .find(|plugin| {
+                                    plugin.format.eq_ignore_ascii_case("VST3")
+                                        && (plugin.uri == pending_path
+                                            || plugin.plugin_id == pending_path)
+                                })
+                                .map(|plugin| plugin.instance_id)
+                            {
+                                self.pending_add_vst3_automation_paths
+                                    .remove(&(pending_track.clone(), pending_path));
+                                self.pending_add_vst3_automation_instances
+                                    .insert((pending_track.clone(), instance_id));
+                                pending_queries.push(self.send(Action::TrackGetVst3Parameters {
+                                    track_name: pending_track,
+                                    instance_id,
+                                }));
+                            }
+                        }
+                        let pending_paths: Vec<(String, String)> = self
+                            .pending_add_clap_automation_paths
+                            .iter()
+                            .filter(|(name, _)| name == track_name)
+                            .cloned()
+                            .collect();
+                        for (pending_track, pending_path) in pending_paths {
+                            if let Some(instance_id) = plugins
+                                .iter()
+                                .find(|plugin| {
+                                    plugin.format.eq_ignore_ascii_case("CLAP")
+                                        && (plugin.uri == pending_path
+                                            || plugin.plugin_id == pending_path)
+                                })
+                                .map(|plugin| plugin.instance_id)
+                            {
+                                self.pending_add_clap_automation_paths
+                                    .remove(&(pending_track.clone(), pending_path));
+                                self.pending_add_clap_automation_instances
+                                    .insert((pending_track.clone(), instance_id));
+                                pending_queries.push(self.send(Action::TrackGetClapParameters {
+                                    track_name: pending_track,
+                                    instance_id,
+                                }));
+                            }
+                        }
+                        if !pending_queries.is_empty() {
+                            return Task::batch(pending_queries);
+                        }
+
+                        if self.pending_save_path.is_some() {
+                            self.pending_save_tracks.remove(track_name);
+                            if self.pending_save_tracks.is_empty() {
+                                let path = self.pending_save_path.take().unwrap_or_default();
+                                let is_template = self.pending_save_is_template;
+                                self.pending_save_is_template = false;
+                                if !path.is_empty() {
+                                    if is_template {
+                                        if let Err(e) = self.save_template(path.clone()) {
+                                            error!("{}", e);
+                                            self.state.blocking_write().message =
+                                                format!("Failed to save template: {}", e);
+                                        } else {
+                                            self.state.blocking_write().message =
+                                                "Template saved".to_string();
+                                            // Rescan templates and update menu
+                                            let templates = crate::gui::scan_templates();
+                                            self.state.blocking_write().available_templates =
+                                                templates.clone();
+                                            self.menu.update_templates(templates);
+                                        }
+                                    } else {
+                                        // Check if this is a single-track template save
+                                        // (path contains /track_templates/)
+                                        if path.contains("/track_templates/") {
+                                            return self.save_track_as_template(track_name, path);
+                                        } else if let Err(e) = self.save(path.clone()) {
+                                            error!("{}", e);
+                                        } else {
+                                            return self.send(Action::SetSessionPath(path));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Action::RenameTrack { old_name, new_name } => {
+                        let mut state = self.state.blocking_write();
+                        // Update track name in GUI state
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *old_name) {
+                            track.name = new_name.clone();
+                        }
+                        // Update selected tracks
+                        if state.selected.remove(old_name) {
+                            state.selected.insert(new_name.clone());
+                        }
+                        // Update connection view selection
+                        if let crate::state::ConnectionViewSelection::Tracks(tracks) =
+                            &mut state.connection_view_selection
+                            && tracks.remove(old_name)
+                        {
+                            tracks.insert(new_name.clone());
+                        }
+                        // Update connections
+                        for conn in &mut state.connections {
+                            if conn.from_track == *old_name {
+                                conn.from_track = new_name.clone();
+                            }
+                            if conn.to_track == *old_name {
+                                conn.to_track = new_name.clone();
+                            }
+                        }
+                        // Update LV2 graph track reference
+                        if state.plugin_graph_track.as_deref() == Some(old_name) {
+                            state.plugin_graph_track = Some(new_name.clone());
+                        }
+                        // Update LV2 graphs by track
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        if let Some(graph) = state.plugin_graphs_by_track.remove(old_name) {
+                            state.plugin_graphs_by_track.insert(new_name.clone(), graph);
+                        }
+                        if let Some(clap) = state.clap_plugins_by_track.remove(old_name) {
+                            state.clap_plugins_by_track.insert(new_name.clone(), clap);
+                        }
+                        if let Some(clap_states) = state.clap_states_by_track.remove(old_name) {
+                            state
+                                .clap_states_by_track
+                                .insert(new_name.clone(), clap_states);
+                        }
+                        for track in &mut state.tracks {
+                            if track.vca_master.as_deref() == Some(old_name.as_str()) {
+                                track.vca_master = Some(new_name.clone());
+                            }
+                        }
+                        state.message = format!("Renamed track to '{}'", new_name);
+                    }
+                    _ => {}
                 }
             }
             Message::Response(Err(ref e)) => {
@@ -6600,8 +6632,9 @@ impl Maolan {
                         &pending.session_dir,
                         &selected_snapshot,
                     );
-                    self.state.blocking_write().message =
-                        format!("{preview}. Run Recover Autosave Snapshot to apply this selection.");
+                    self.state.blocking_write().message = format!(
+                        "{preview}. Run Recover Autosave Snapshot to apply this selection."
+                    );
                 }
                 return Task::none();
             }
@@ -6781,7 +6814,10 @@ impl Maolan {
             } => {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                    && let Some(send) = track.aux_sends.iter_mut().find(|s| s.aux_track == *aux_track)
+                    && let Some(send) = track
+                        .aux_sends
+                        .iter_mut()
+                        .find(|s| s.aux_track == *aux_track)
                 {
                     send.level_db = (send.level_db + delta_db).clamp(-60.0, 12.0);
                     state.message = format!(
@@ -6798,7 +6834,10 @@ impl Maolan {
             } => {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                    && let Some(send) = track.aux_sends.iter_mut().find(|s| s.aux_track == *aux_track)
+                    && let Some(send) = track
+                        .aux_sends
+                        .iter_mut()
+                        .find(|s| s.aux_track == *aux_track)
                 {
                     send.pan = (send.pan + delta).clamp(-1.0, 1.0);
                     state.message = format!(
@@ -6814,14 +6853,21 @@ impl Maolan {
             } => {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                    && let Some(send) = track.aux_sends.iter_mut().find(|s| s.aux_track == *aux_track)
+                    && let Some(send) = track
+                        .aux_sends
+                        .iter_mut()
+                        .find(|s| s.aux_track == *aux_track)
                 {
                     send.pre_fader = !send.pre_fader;
                     state.message = format!(
                         "Aux send {} -> {} mode {}",
                         track_name,
                         aux_track,
-                        if send.pre_fader { "Pre-Fader" } else { "Post-Fader" }
+                        if send.pre_fader {
+                            "Pre-Fader"
+                        } else {
+                            "Post-Fader"
+                        }
                     );
                 }
                 return Task::none();
@@ -6850,8 +6896,10 @@ impl Maolan {
                 });
             }
             Message::GlobalMidiLearnArm { target } => {
-                self.state.blocking_write().message =
-                    format!("Global MIDI learn armed for {:?}. Move a hardware MIDI CC control.", target);
+                self.state.blocking_write().message = format!(
+                    "Global MIDI learn armed for {:?}. Move a hardware MIDI CC control.",
+                    target
+                );
                 return self.send(Action::GlobalArmMidiLearn { target });
             }
             Message::GlobalMidiLearnClear { target } => {
@@ -9625,34 +9673,30 @@ impl Maolan {
             Message::MidiLearnMappingsReportRequest => {
                 return self.send(Action::RequestMidiLearnMappingsReport);
             }
-            Message::MidiLearnMappingsExportRequest => {
-                match self.export_midi_mappings_file() {
-                    Ok(path) => {
-                        self.state.blocking_write().message =
-                            format!("Exported MIDI mappings: {}", path.display());
-                    }
-                    Err(e) => {
-                        self.state.blocking_write().message = e;
-                    }
+            Message::MidiLearnMappingsExportRequest => match self.export_midi_mappings_file() {
+                Ok(path) => {
+                    self.state.blocking_write().message =
+                        format!("Exported MIDI mappings: {}", path.display());
                 }
-            }
-            Message::MidiLearnMappingsImportRequest => {
-                match self.import_midi_mappings_actions() {
-                    Ok(actions) => {
-                        let mut tasks = Vec::with_capacity(actions.len() + 2);
-                        tasks.push(self.send(Action::BeginHistoryGroup));
-                        for action in actions {
-                            tasks.push(self.send(action));
-                        }
-                        tasks.push(self.send(Action::EndHistoryGroup));
-                        self.state.blocking_write().message = "Imported MIDI mappings".to_string();
-                        return Task::batch(tasks);
-                    }
-                    Err(e) => {
-                        self.state.blocking_write().message = e;
-                    }
+                Err(e) => {
+                    self.state.blocking_write().message = e;
                 }
-            }
+            },
+            Message::MidiLearnMappingsImportRequest => match self.import_midi_mappings_actions() {
+                Ok(actions) => {
+                    let mut tasks = Vec::with_capacity(actions.len() + 2);
+                    tasks.push(self.send(Action::BeginHistoryGroup));
+                    for action in actions {
+                        tasks.push(self.send(action));
+                    }
+                    tasks.push(self.send(Action::EndHistoryGroup));
+                    self.state.blocking_write().message = "Imported MIDI mappings".to_string();
+                    return Task::batch(tasks);
+                }
+                Err(e) => {
+                    self.state.blocking_write().message = e;
+                }
+            },
             Message::MidiLearnMappingsClearAllRequest => {
                 return self.send(Action::ClearAllMidiLearnBindings);
             }
@@ -9760,10 +9804,7 @@ impl Maolan {
                     .collect();
             }
             Message::ExportSettingsConfirm => {
-                let master_ceiling = self
-                    .export_master_limiter_ceiling_input
-                    .parse::<f32>()
-                    .ok();
+                let master_ceiling = self.export_master_limiter_ceiling_input.parse::<f32>().ok();
                 let Some(master_ceiling) = master_ceiling else {
                     self.state.blocking_write().message =
                         "Master limiter ceiling must be a number in dBTP".to_string();
@@ -9888,8 +9929,11 @@ impl Maolan {
                 let export_path = Self::export_base_path(path.clone());
                 let export_mp3_mode = self.export_mp3_mode;
                 let export_mp3_bitrate_kbps = self.export_mp3_bitrate_kbps;
-                let export_ogg_quality =
-                    self.export_ogg_quality_input.parse::<f32>().ok().unwrap_or(0.6);
+                let export_ogg_quality = self
+                    .export_ogg_quality_input
+                    .parse::<f32>()
+                    .ok()
+                    .unwrap_or(0.6);
                 let state_clone = self.state.clone();
                 let render_mode = self.export_render_mode;
                 let (
@@ -10006,8 +10050,9 @@ impl Maolan {
                     self.state.blocking_write().message = op.clone();
                 } else if progress >= 1.0 {
                     self.export_in_progress = false;
-                    self.state.blocking_write().message =
-                        operation.clone().unwrap_or_else(|| "Export complete".to_string());
+                    self.state.blocking_write().message = operation
+                        .clone()
+                        .unwrap_or_else(|| "Export complete".to_string());
                 } else if let Some(op) = operation {
                     let percent = (progress * 100.0) as usize;
                     self.state.blocking_write().message = format!("Exporting ({percent}%): {}", op);
@@ -10033,8 +10078,9 @@ impl Maolan {
                 }
                 match fs::File::create(&path)
                     .map_err(|e| e.to_string())
-                    .and_then(|f| serde_json::to_writer_pretty(f, &prefs).map_err(|e| e.to_string()))
-                {
+                    .and_then(|f| {
+                        serde_json::to_writer_pretty(f, &prefs).map_err(|e| e.to_string())
+                    }) {
                     Ok(()) => {
                         self.export_sample_rate_hz = self.prefs_export_sample_rate_hz;
                         self.snap_mode = self.prefs_snap_mode;

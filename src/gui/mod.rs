@@ -35,29 +35,28 @@ use midly::{
     Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
     num::{u15, u24, u28},
 };
+use mp3lame_encoder::{
+    Bitrate as Mp3Bitrate, Builder as Mp3Builder, FlushNoGap, InterleavedPcm, Quality as Mp3Quality,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(unix)]
 use serde_json::json;
-use serde::{Deserialize, Serialize};
-use mp3lame_encoder::{
-    Bitrate as Mp3Bitrate, Builder as Mp3Builder, FlushNoGap, InterleavedPcm,
-    Quality as Mp3Quality,
-};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
     io::{self, BufReader},
-    num::{NonZeroU32, NonZeroU8},
+    num::{NonZeroU8, NonZeroU32},
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
-use vorbis_rs::{VorbisBitrateManagementStrategy, VorbisEncoderBuilder};
 use symphonia::core::{
     audio::SampleBuffer, codecs::DecoderOptions, errors::Error as SymphoniaError,
     formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
 };
 use tokio::sync::RwLock;
+use vorbis_rs::{VorbisBitrateManagementStrategy, VorbisEncoderBuilder};
 use wavers::Wav;
 
 static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
@@ -1284,7 +1283,10 @@ impl Maolan {
         })
     }
 
-    fn quantize_samples_for_bit_depth(mixed_buffer: &[f32], bit_depth: ExportBitDepth) -> (Vec<i32>, u8) {
+    fn quantize_samples_for_bit_depth(
+        mixed_buffer: &[f32],
+        bit_depth: ExportBitDepth,
+    ) -> (Vec<i32>, u8) {
         let (scale, min, max, bps) = match bit_depth {
             ExportBitDepth::Int16 => (i16::MAX as f32, i16::MIN as f32, i16::MAX as f32, 16),
             ExportBitDepth::Int24 => (8_388_607.0_f32, -8_388_608.0_f32, 8_388_607.0_f32, 24),
@@ -1305,7 +1307,8 @@ impl Maolan {
         output_channels: usize,
         bit_depth: ExportBitDepth,
     ) -> io::Result<()> {
-        let (quantized, bits_per_sample) = Self::quantize_samples_for_bit_depth(mixed_buffer, bit_depth);
+        let (quantized, bits_per_sample) =
+            Self::quantize_samples_for_bit_depth(mixed_buffer, bit_depth);
         let config = flacenc::config::Encoder::default()
             .into_verified()
             .map_err(|e| io::Error::other(format!("Invalid FLAC encoder config: {e:?}")))?;
@@ -1574,9 +1577,7 @@ impl Maolan {
                     .iter()
                     .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
                 if peak > 0.0 {
-                    let target_amp = 10.0_f32
-                        .powf(params.target_dbfs / 20.0)
-                        .clamp(0.0, 1.0);
+                    let target_amp = 10.0_f32.powf(params.target_dbfs / 20.0).clamp(0.0, 1.0);
                     let gain = target_amp / peak;
                     for sample in mixed_buffer {
                         *sample *= gain;
@@ -1584,18 +1585,15 @@ impl Maolan {
                 }
             }
             ExportNormalizeMode::Loudness => {
-                let (measured_lufs, measured_tp_amp) =
-                    Self::measure_lufs_and_true_peak(
-                        mixed_buffer,
-                        params.output_channels,
-                        params.sample_rate,
-                    )?;
+                let (measured_lufs, measured_tp_amp) = Self::measure_lufs_and_true_peak(
+                    mixed_buffer,
+                    params.output_channels,
+                    params.sample_rate,
+                )?;
                 let gain_loudness_db = params.target_lufs - measured_lufs;
                 let gain_loudness = 10.0_f32.powf(gain_loudness_db / 20.0);
 
-                let ceiling_amp = 10.0_f32
-                    .powf(params.true_peak_dbtp / 20.0)
-                    .clamp(0.0, 1.0);
+                let ceiling_amp = 10.0_f32.powf(params.true_peak_dbtp / 20.0).clamp(0.0, 1.0);
                 let gain_tp = if measured_tp_amp > 0.0 {
                     ceiling_amp / measured_tp_amp
                 } else {
@@ -1659,7 +1657,11 @@ impl Maolan {
                 session_root.join(&clip.name)
             };
             let mut wav = Wav::<f32>::from_path(&clip_path).map_err(|e| {
-                io::Error::other(format!("Failed to open WAV '{}': {}", clip_path.display(), e))
+                io::Error::other(format!(
+                    "Failed to open WAV '{}': {}",
+                    clip_path.display(),
+                    e
+                ))
             })?;
             let clip_channels = wav.n_channels().max(1) as usize;
             let samples: wavers::Samples<f32> = wav.read().map_err(|e| {
@@ -1843,10 +1845,7 @@ impl Maolan {
             }
 
             if normalize {
-                Self::apply_export_normalization(
-                    &mut mixed_buffer,
-                    normalize_params,
-                )?;
+                Self::apply_export_normalization(&mut mixed_buffer, normalize_params)?;
             }
             if master_limiter {
                 let ceiling_amp = 10.0_f32
@@ -1919,10 +1918,7 @@ impl Maolan {
                 matches!(render_mode, ExportRenderMode::StemsPostFader),
             )?;
             if normalize {
-                Self::apply_export_normalization(
-                    &mut stem_buffer,
-                    normalize_params,
-                )?;
+                Self::apply_export_normalization(&mut stem_buffer, normalize_params)?;
             }
             if master_limiter {
                 let ceiling_amp = 10.0_f32
@@ -1957,7 +1953,10 @@ impl Maolan {
         }
         progress_callback(
             1.0,
-            Some(format!("Complete (stems written to {})", stem_dir.display())),
+            Some(format!(
+                "Complete (stems written to {})",
+                stem_dir.display()
+            )),
         );
         Ok(())
     }
@@ -3305,19 +3304,17 @@ impl Maolan {
         self.track_rename.update(message.clone());
         let track_needs_update = matches!(
             message,
-            Message::Response(Ok(
-                Action::TrackLevel(_, _)
-                    | Action::TrackBalance(_, _)
-                    | Action::TrackMeters { .. }
-                    | Action::TrackToggleArm(_)
-                    | Action::TrackToggleMute(_)
-                    | Action::TrackToggleSolo(_)
-                    | Action::TrackToggleInputMonitor(_)
-                    | Action::TrackToggleDiskMonitor(_)
-                    | Action::TrackSetFrozen { .. }
-                    | Action::TrackSetVcaMaster { .. }
-                    | Action::TrackSetMidiLearnBinding { .. }
-            ))
+            Message::Response(Ok(Action::TrackLevel(_, _)
+                | Action::TrackBalance(_, _)
+                | Action::TrackMeters { .. }
+                | Action::TrackToggleArm(_)
+                | Action::TrackToggleMute(_)
+                | Action::TrackToggleSolo(_)
+                | Action::TrackToggleInputMonitor(_)
+                | Action::TrackToggleDiskMonitor(_)
+                | Action::TrackSetFrozen { .. }
+                | Action::TrackSetVcaMaster { .. }
+                | Action::TrackSetMidiLearnBinding { .. }))
         );
         if track_needs_update {
             for track in &mut self.state.blocking_write().tracks {

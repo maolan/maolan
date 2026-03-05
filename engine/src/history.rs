@@ -170,8 +170,12 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             let track = state.tracks.get(track_name)?;
             let track_lock = track.lock();
             let binding = match target {
-                crate::message::TrackMidiLearnTarget::Volume => track_lock.midi_learn_volume.clone(),
-                crate::message::TrackMidiLearnTarget::Balance => track_lock.midi_learn_balance.clone(),
+                crate::message::TrackMidiLearnTarget::Volume => {
+                    track_lock.midi_learn_volume.clone()
+                }
+                crate::message::TrackMidiLearnTarget::Balance => {
+                    track_lock.midi_learn_balance.clone()
+                }
                 crate::message::TrackMidiLearnTarget::Mute => track_lock.midi_learn_mute.clone(),
                 crate::message::TrackMidiLearnTarget::Solo => track_lock.midi_learn_solo.clone(),
                 crate::message::TrackMidiLearnTarget::Arm => track_lock.midi_learn_arm.clone(),

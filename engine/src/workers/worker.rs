@@ -152,14 +152,14 @@ impl Worker {
             while remaining > 0 {
                 let mut progressed = false;
                 for handle in &tracks {
-                    let mut t = handle.lock();
+                    let t = handle.lock();
                     if t.audio.finished || t.audio.processing {
                         continue;
                     }
                     if t.audio.ready() {
                         if t.name == job.track_name {
                             Self::apply_offline_automation_at_sample(
-                                &mut t,
+                                t,
                                 job.start_sample.saturating_add(cursor),
                                 &job.automation_lanes,
                             );
@@ -173,13 +173,13 @@ impl Worker {
                 }
                 if !progressed {
                     for handle in &tracks {
-                        let mut t = handle.lock();
+                        let t = handle.lock();
                         if t.audio.finished {
                             continue;
                         }
                         if t.name == job.track_name {
                             Self::apply_offline_automation_at_sample(
-                                &mut t,
+                                t,
                                 job.start_sample.saturating_add(cursor),
                                 &job.automation_lanes,
                             );
