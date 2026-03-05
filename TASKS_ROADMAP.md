@@ -42,6 +42,7 @@ Last updated: 2026-03-05
   - [x] Session/template persistence for time signature
 - [ ] Comping/Take lanes (MIDI + audio)
   - [x] First pass: clip mute state in engine/UI + "Set Active Take" overlap comping action
+  - [x] Second pass: visual take-lane stacking for overlapping clips in timeline
 
 ## Phase 2 - Production Workflow
 
