@@ -106,6 +106,18 @@ impl Maolan {
                     }
                 }
                 match key {
+                    keyboard::Key::Character(ch) if !modifiers.control() => {
+                        let s = ch.to_ascii_lowercase();
+                        if s == "q" {
+                            Message::PianoQuantizeSelectedNotes
+                        } else if s == "h" {
+                            Message::PianoHumanizeSelectedNotes
+                        } else if s == "g" {
+                            Message::PianoGrooveSelectedNotes
+                        } else {
+                            Message::None
+                        }
+                    }
                     keyboard::Key::Named(keyboard::key::Named::Space) if modifiers.shift() => {
                         Message::TransportPause
                     }

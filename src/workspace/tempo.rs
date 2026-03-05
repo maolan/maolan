@@ -9,6 +9,9 @@ use iced::{
 use maolan_engine::message::Action as EngineAction;
 
 const TEMPO_HEIGHT: f32 = 28.0;
+const TEMPO_HIT_HEIGHT: f32 = 14.0;
+const TIME_SIG_HIT_X_SPLIT: f32 = 36.0;
+const LEFT_HIT_WIDTH: f32 = 84.0;
 
 #[derive(Debug, Default)]
 pub struct Tempo;
@@ -86,6 +89,23 @@ impl canvas::Program<Message> for TempoCanvas {
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(pos) = cursor_position {
+                    if pos.x <= LEFT_HIT_WIDTH {
+                        if pos.y <= TEMPO_HIT_HEIGHT {
+                            return Some(
+                                CanvasAction::publish(Message::TempoAdjust(1.0)).and_capture()
+                            );
+                        }
+                        if pos.x <= TIME_SIG_HIT_X_SPLIT {
+                            return Some(
+                                CanvasAction::publish(Message::TimeSignatureNumeratorCycle)
+                                    .and_capture(),
+                            );
+                        }
+                        return Some(
+                            CanvasAction::publish(Message::TimeSignatureDenominatorCycle)
+                                .and_capture(),
+                        );
+                    }
                     state.dragging = true;
                     let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
                     state.drag_start_x = x;
@@ -157,6 +177,42 @@ impl canvas::Program<Message> for TempoCanvas {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 if cursor_position.is_some() {
                     return Some(CanvasAction::publish(Message::SetPunchRange(None)).and_capture());
+                }
+            }
+            Event::Mouse(mouse::Event::WheelScrolled {
+                delta,
+            }) => {
+                if let Some(pos) = cursor_position {
+                    let scroll_y = match delta {
+                        mouse::ScrollDelta::Lines {
+                            y, ..
+                        } => *y,
+                        mouse::ScrollDelta::Pixels {
+                            y, ..
+                        } => *y / 40.0,
+                    };
+                    if scroll_y.abs() < f32::EPSILON {
+                        return Some(CanvasAction::capture());
+                    }
+                    if pos.x <= LEFT_HIT_WIDTH {
+                        if pos.y <= TEMPO_HIT_HEIGHT {
+                            return Some(
+                                CanvasAction::publish(Message::TempoAdjust(scroll_y.signum()))
+                                    .and_capture(),
+                            );
+                        }
+                        if pos.x <= TIME_SIG_HIT_X_SPLIT {
+                            return Some(
+                                CanvasAction::publish(Message::TimeSignatureNumeratorCycle)
+                                    .and_capture(),
+                            );
+                        }
+                        return Some(
+                            CanvasAction::publish(Message::TimeSignatureDenominatorCycle)
+                                .and_capture(),
+                        );
+                    }
+                    return Some(CanvasAction::capture());
                 }
             }
             _ => {}

@@ -504,7 +504,13 @@ pub struct StateData {
     pub piano_selected_sysex: Option<usize>,
     pub piano_sysex_hex_input: String,
     pub piano_sysex_panel_open: bool,
+    pub piano_quantize_strength: f32,
+    pub piano_humanize_time_amount: f32,
+    pub piano_humanize_velocity_amount: f32,
+    pub piano_groove_amount: f32,
     pub tempo: f32,
+    pub time_signature_num: u8,
+    pub time_signature_denom: u8,
     pub available_templates: Vec<String>,
 }
 
@@ -663,7 +669,13 @@ impl Default for StateData {
             piano_selected_sysex: None,
             piano_sysex_hex_input: String::new(),
             piano_sysex_panel_open: false,
+            piano_quantize_strength: 1.0,
+            piano_humanize_time_amount: 1.0,
+            piano_humanize_velocity_amount: 1.0,
+            piano_groove_amount: 1.0,
             tempo: 120.0,
+            time_signature_num: 4,
+            time_signature_denom: 4,
             available_templates: vec![],
         }
     }

@@ -102,7 +102,7 @@ impl Workspace {
             recording_preview_bounds,
             recording_preview_peaks,
         } = args;
-        let (tracks_width, max_end_samples, tempo) = {
+        let (tracks_width, max_end_samples, tempo, time_signature) = {
             let state = self.state.blocking_read();
             let max_end_samples = state
                 .tracks
@@ -126,7 +126,12 @@ impl Workspace {
                 })
                 .max()
                 .unwrap_or(0);
-            (state.tracks_width, max_end_samples, state.tempo)
+            (
+                state.tracks_width,
+                max_end_samples,
+                state.tempo,
+                (state.time_signature_num, state.time_signature_denom),
+            )
         };
         let min_visible_samples = (samples_per_bar * zoom_visible_bars).max(1.0) as usize;
         let min_timeline_samples = (samples_per_bar * Self::MIN_TIMELINE_BARS).max(1.0) as usize;
@@ -173,7 +178,7 @@ impl Workspace {
             column![
                 container(self.tempo.view(TempoViewArgs {
                     bpm: tempo,
-                    time_signature: (4, 4),
+                    time_signature,
                     pixels_per_sample,
                     playhead_x,
                     punch_range_samples,
@@ -352,10 +357,11 @@ impl Workspace {
             ..
         } = args;
 
-        let (tempo, clip_length_samples, zoom_x) = {
+        let (tempo, time_signature, clip_length_samples, zoom_x) = {
             let state = self.state.blocking_read();
             (
                 state.tempo,
+                (state.time_signature_num, state.time_signature_denom),
                 state
                     .piano
                     .as_ref()
@@ -395,7 +401,7 @@ impl Workspace {
                     .height(Length::Fill),
                 scrollable(container(self.tempo.view(TempoViewArgs {
                     bpm: tempo,
-                    time_signature: (4, 4),
+                    time_signature,
                     pixels_per_sample: horizontal_pixels_per_sample,
                     playhead_x,
                     punch_range_samples: None,

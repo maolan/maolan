@@ -5,7 +5,7 @@ Last updated: 2026-03-05
 ## Phase 1 - Core Editing and Automation
 
 - [x] SysEx editing baseline (single-point edit, move, undo, wire pass-through)
-- [ ] Automation lanes (track + plugin parameters)
+- [x] Automation lanes (track + plugin parameters)
   - [x] Step 1: Track automation lane data model in UI state
   - [x] Step 2: Add UI action to create first lane (Volume) per track
     - [x] Track context menu adds Volume/Balance/Mute automation lanes
@@ -24,15 +24,21 @@ Last updated: 2026-03-05
     - [x] CLAP: playback applies parameter lanes via `TrackSetClapParameterAt`
     - [x] VST3: parameter lane creation + playback path
     - [x] LV2: parameter lane creation + playback path
-  - [ ] Step 6: Automation write modes (Read/Touch/Latch/Write)
+  - [x] Step 6: Automation write modes (Read/Touch/Latch/Write)
     - [x] Track automation mode field + UI cycle button
     - [x] Playback honors `Write` mode by skipping readback
     - [x] Manual control changes write automation points in Touch/Latch/Write
     - [x] Touch: temporary manual override over lane readback
     - [x] Touch: per-target gesture lifecycle (begin/end + targeted release clear)
     - [x] Latch: sticky manual override until stop/mode change
-- [ ] Quantize/Humanize/Groove
+- [x] Quantize/Humanize/Groove
+  - [x] Quantize selected MIDI notes in piano roll
+  - [x] Humanize selected MIDI notes (time + velocity)
+  - [x] Groove selected MIDI notes (swing)
+  - [x] Piano UI controls (buttons + amount sliders + Q/H/G shortcuts)
 - [ ] Tempo/Time Signature track editor
+  - [x] First pass: interactive tempo/time-signature edit from timeline header
+  - [x] Session/template persistence for time signature
 - [ ] Comping/Take lanes (MIDI + audio)
 
 ## Phase 2 - Production Workflow

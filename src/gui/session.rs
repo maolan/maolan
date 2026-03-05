@@ -155,6 +155,8 @@ impl Maolan {
                 "punch_range_samples": self.punch_range_samples.map(|(start, end)| vec![start, end]),
                 "punch_enabled": self.punch_enabled,
                 "tempo": state.tempo,
+                "time_signature_num": state.time_signature_num,
+                "time_signature_denom": state.time_signature_denom,
             },
             "ui": {
                 "tracks_width": tracks_width,
@@ -650,6 +652,8 @@ impl Maolan {
                 "punch_range_samples": self.punch_range_samples.map(|(start, end)| vec![start, end]),
                 "punch_enabled": self.punch_enabled,
                 "tempo": state.tempo,
+                "time_signature_num": state.time_signature_num,
+                "time_signature_denom": state.time_signature_denom,
             },
             "ui": {
                 "tracks_width": tracks_width,
@@ -765,12 +769,33 @@ impl Maolan {
         restore_actions.push(Action::SetPunchRange(loaded_punch_range));
         restore_actions.push(Action::SetPunchEnabled(loaded_punch_enabled));
 
-        // Load tempo if present, default to 120.0
+        // Load transport timing fields if present, with sensible defaults.
         let loaded_tempo = transport
             .get("tempo")
             .and_then(Value::as_f64)
             .unwrap_or(120.0) as f32;
-        self.state.blocking_write().tempo = loaded_tempo;
+        let loaded_num = transport
+            .get("time_signature_num")
+            .and_then(Value::as_u64)
+            .map(|n| n.clamp(1, 16) as u8)
+            .unwrap_or(4);
+        let loaded_denom = match transport
+            .get("time_signature_denom")
+            .and_then(Value::as_u64)
+            .unwrap_or(4)
+        {
+            2 => 2,
+            4 => 4,
+            8 => 8,
+            16 => 16,
+            _ => 4,
+        };
+        {
+            let mut state = self.state.blocking_write();
+            state.tempo = loaded_tempo;
+            state.time_signature_num = loaded_num;
+            state.time_signature_denom = loaded_denom;
+        }
 
         {
             let mut state = self.state.blocking_write();

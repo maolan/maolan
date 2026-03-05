@@ -31,6 +31,91 @@ use std::{
 use tracing::error;
 
 impl Maolan {
+    fn selected_piano_notes_edit<F>(&mut self, mut edit: F) -> Task<Message>
+    where
+        F: FnMut(usize, &maolan_engine::message::MidiNoteData) -> maolan_engine::message::MidiNoteData,
+    {
+        let mut state = self.state.blocking_write();
+        if !matches!(state.view, View::Piano) {
+            return Task::none();
+        }
+        let mut selected_indices: Vec<usize> = state.piano_selected_notes.iter().copied().collect();
+        selected_indices.sort_unstable();
+        selected_indices.dedup();
+        if selected_indices.is_empty() {
+            return Task::none();
+        }
+        let Some(piano) = state.piano.as_mut() else {
+            return Task::none();
+        };
+        let track_name = piano.track_idx.clone();
+        let clip_idx = 0;
+
+        let mut changed_indices = Vec::new();
+        let mut new_notes = Vec::new();
+        let mut old_notes = Vec::new();
+        for idx in selected_indices {
+            let Some(note) = piano.notes.get_mut(idx) else {
+                continue;
+            };
+            let old_note = maolan_engine::message::MidiNoteData {
+                start_sample: note.start_sample,
+                length_samples: note.length_samples,
+                pitch: note.pitch,
+                velocity: note.velocity,
+                channel: note.channel,
+            };
+            let mut new_note = edit(idx, &old_note);
+            if new_note.length_samples == 0 {
+                new_note.length_samples = 1;
+            }
+            if new_note.start_sample == old_note.start_sample
+                && new_note.length_samples == old_note.length_samples
+                && new_note.pitch == old_note.pitch
+                && new_note.velocity == old_note.velocity
+                && new_note.channel == old_note.channel
+            {
+                continue;
+            }
+            note.start_sample = new_note.start_sample;
+            note.length_samples = new_note.length_samples;
+            note.pitch = new_note.pitch;
+            note.velocity = new_note.velocity;
+            note.channel = new_note.channel;
+            changed_indices.push(idx);
+            new_notes.push(new_note);
+            old_notes.push(old_note);
+        }
+        if changed_indices.is_empty() {
+            return Task::none();
+        }
+        drop(state);
+        self.send(Action::ModifyMidiNotes {
+            track_name,
+            clip_index: clip_idx,
+            note_indices: changed_indices,
+            new_notes,
+            old_notes,
+        })
+    }
+
+    fn deterministic_note_jitter(seed_a: usize, seed_b: usize, amplitude: i64) -> i64 {
+        if amplitude <= 0 {
+            return 0;
+        }
+        let mut x = (seed_a as u64)
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add((seed_b as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9))
+            .wrapping_add(0x94D0_49BB_1331_11EB);
+        x ^= x >> 30;
+        x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        x ^= x >> 27;
+        x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
+        x ^= x >> 31;
+        let range = (amplitude as u64).saturating_mul(2).saturating_add(1);
+        (x % range) as i64 - amplitude
+    }
+
     fn automation_key(target: TrackAutomationTarget) -> AutomationWriteKey {
         match target {
             TrackAutomationTarget::Volume => AutomationWriteKey::Volume,
@@ -1199,6 +1284,24 @@ impl Maolan {
                 self.punch_range_samples = normalized;
                 return self.send(Action::SetPunchRange(normalized));
             }
+            Message::TempoAdjust(delta) => {
+                let mut state = self.state.blocking_write();
+                state.tempo = (state.tempo + delta).clamp(20.0, 300.0);
+            }
+            Message::TimeSignatureNumeratorCycle => {
+                let mut state = self.state.blocking_write();
+                let next = state.time_signature_num.saturating_add(1);
+                state.time_signature_num = if next > 16 { 1 } else { next.max(1) };
+            }
+            Message::TimeSignatureDenominatorCycle => {
+                let mut state = self.state.blocking_write();
+                state.time_signature_denom = match state.time_signature_denom {
+                    2 => 4,
+                    4 => 8,
+                    8 => 16,
+                    _ => 2,
+                };
+            }
             Message::SetSnapMode(mode) => {
                 self.snap_mode = mode;
             }
@@ -2252,6 +2355,80 @@ impl Maolan {
                         deleted_notes,
                     });
                 }
+            }
+            Message::PianoQuantizeSelectedNotes => {
+                let interval = self.snap_interval_samples().max(1);
+                let strength = self.state.blocking_read().piano_quantize_strength.clamp(0.0, 1.0);
+                return self.selected_piano_notes_edit(move |_idx, note| {
+                    let snapped =
+                        ((note.start_sample.saturating_add(interval / 2)) / interval) * interval;
+                    let mut out = note.clone();
+                    if strength >= 0.999 {
+                        out.start_sample = snapped;
+                    } else {
+                        let cur = note.start_sample as f32;
+                        let dst = snapped as f32;
+                        out.start_sample =
+                            (cur + (dst - cur) * strength).round().max(0.0) as usize;
+                    }
+                    out
+                });
+            }
+            Message::PianoHumanizeSelectedNotes => {
+                let interval = self.snap_interval_samples().max(1) as i64;
+                let (time_amount, vel_amount) = {
+                    let state = self.state.blocking_read();
+                    (
+                        state.piano_humanize_time_amount.clamp(0.0, 1.0),
+                        state.piano_humanize_velocity_amount.clamp(0.0, 1.0),
+                    )
+                };
+                let max_time_jitter = (((interval / 8).max(1)) as f32 * time_amount).round() as i64;
+                let max_vel_jitter = (6.0_f32 * vel_amount).round() as i64;
+                return self.selected_piano_notes_edit(move |idx, note| {
+                    let mut out = note.clone();
+                    let dt = Self::deterministic_note_jitter(idx, note.start_sample, max_time_jitter);
+                    let new_start = (note.start_sample as i64 + dt).max(0) as usize;
+                    let dv = Self::deterministic_note_jitter(
+                        idx ^ 0xA5A5,
+                        note.length_samples,
+                        max_vel_jitter,
+                    ) as i16;
+                    let new_vel = (i16::from(note.velocity) + dv).clamp(1, 127) as u8;
+                    out.start_sample = new_start;
+                    out.velocity = new_vel;
+                    out
+                });
+            }
+            Message::PianoGrooveSelectedNotes => {
+                let interval = self.snap_interval_samples().max(1);
+                let amount = self.state.blocking_read().piano_groove_amount.clamp(0.0, 1.0);
+                let swing = (((interval as f32) * 0.22) * amount).round().max(0.0) as usize;
+                return self.selected_piano_notes_edit(move |_idx, note| {
+                    let straight =
+                        ((note.start_sample.saturating_add(interval / 2)) / interval) * interval;
+                    let grid = straight / interval;
+                    let mut out = note.clone();
+                    out.start_sample = if grid % 2 == 1 {
+                        straight.saturating_add(swing)
+                    } else {
+                        straight
+                    };
+                    out
+                });
+            }
+            Message::PianoQuantizeStrengthChanged(value) => {
+                self.state.blocking_write().piano_quantize_strength = value.clamp(0.0, 1.0);
+            }
+            Message::PianoHumanizeTimeAmountChanged(value) => {
+                self.state.blocking_write().piano_humanize_time_amount = value.clamp(0.0, 1.0);
+            }
+            Message::PianoHumanizeVelocityAmountChanged(value) => {
+                self.state.blocking_write().piano_humanize_velocity_amount =
+                    value.clamp(0.0, 1.0);
+            }
+            Message::PianoGrooveAmountChanged(value) => {
+                self.state.blocking_write().piano_groove_amount = value.clamp(0.0, 1.0);
             }
             Message::TracksResizeHover(hovered) => {
                 self.tracks_resize_hovered = hovered;

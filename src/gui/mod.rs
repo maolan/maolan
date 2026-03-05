@@ -382,11 +382,20 @@ impl Maolan {
     }
 
     fn samples_per_beat(&self) -> f64 {
-        self.playback_rate_hz * 0.5
+        let (tempo, denom) = {
+            let state = self.state.blocking_read();
+            (
+                state.tempo.max(1.0) as f64,
+                state.time_signature_denom.max(1) as f64,
+            )
+        };
+        let quarter = self.playback_rate_hz * 60.0 / tempo;
+        quarter * (4.0 / denom)
     }
 
     fn samples_per_bar(&self) -> f64 {
-        self.samples_per_beat() * 4.0
+        let beats_per_bar = self.state.blocking_read().time_signature_num.max(1) as f64;
+        self.samples_per_beat() * beats_per_bar
     }
 
     fn snap_sample_to_bar(&self, sample: f32) -> usize {

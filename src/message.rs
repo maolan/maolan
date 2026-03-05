@@ -465,6 +465,9 @@ pub enum Message {
     SetLoopRange(Option<(usize, usize)>),
     TogglePunch,
     SetPunchRange(Option<(usize, usize)>),
+    TempoAdjust(f32),
+    TimeSignatureNumeratorCycle,
+    TimeSignatureDenominatorCycle,
     SetSnapMode(SnapMode),
     RecordFolderSelected(Option<PathBuf>),
 
@@ -545,6 +548,13 @@ pub enum Message {
     PianoVelocityKindSelected(PianoVelocityKind),
     PianoRpnKindSelected(PianoRpnKind),
     PianoNrpnKindSelected(PianoNrpnKind),
+    PianoQuantizeSelectedNotes,
+    PianoHumanizeSelectedNotes,
+    PianoGrooveSelectedNotes,
+    PianoQuantizeStrengthChanged(f32),
+    PianoHumanizeTimeAmountChanged(f32),
+    PianoHumanizeVelocityAmountChanged(f32),
+    PianoGrooveAmountChanged(f32),
     PianoDeleteSelectedNotes,
     #[cfg(all(unix, not(target_os = "macos")))]
     RefreshLv2Plugins,

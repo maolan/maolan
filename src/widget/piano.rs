@@ -321,6 +321,10 @@ impl Piano {
         let state = self.state.blocking_read();
         let zoom_x = state.piano_zoom_x;
         let zoom_y = state.piano_zoom_y;
+        let quantize_strength = state.piano_quantize_strength.clamp(0.0, 1.0);
+        let humanize_time_amount = state.piano_humanize_time_amount.clamp(0.0, 1.0);
+        let humanize_velocity_amount = state.piano_humanize_velocity_amount.clamp(0.0, 1.0);
+        let groove_amount = state.piano_groove_amount.clamp(0.0, 1.0);
         let controller_lane = state.piano_controller_lane;
 
         let Some(roll) = state.piano.as_ref() else {
@@ -961,6 +965,32 @@ impl Piano {
                         )
                         .step(0.1)
                         .width(Length::Fixed(100.0)),
+                        button(text("Quantize").size(11))
+                            .on_press(Message::PianoQuantizeSelectedNotes),
+                        slider(0.0..=1.0, quantize_strength, Message::PianoQuantizeStrengthChanged)
+                            .step(0.01)
+                            .width(Length::Fixed(72.0)),
+                        button(text("Humanize").size(11))
+                            .on_press(Message::PianoHumanizeSelectedNotes),
+                        slider(
+                            0.0..=1.0,
+                            humanize_time_amount,
+                            Message::PianoHumanizeTimeAmountChanged,
+                        )
+                        .step(0.01)
+                        .width(Length::Fixed(58.0)),
+                        slider(
+                            0.0..=1.0,
+                            humanize_velocity_amount,
+                            Message::PianoHumanizeVelocityAmountChanged,
+                        )
+                        .step(0.01)
+                        .width(Length::Fixed(58.0)),
+                        button(text("Groove").size(11))
+                            .on_press(Message::PianoGrooveSelectedNotes),
+                        slider(0.0..=1.0, groove_amount, Message::PianoGrooveAmountChanged)
+                            .step(0.01)
+                            .width(Length::Fixed(72.0)),
                     ]
                     .spacing(8)
                     .width(Length::Fill),
