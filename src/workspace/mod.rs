@@ -6,7 +6,7 @@ mod tracks;
 
 use crate::{
     message::{DraggedClip, EditTool, Message, SnapMode},
-    state::State,
+    state::{ClipPeaks, State},
     widget::piano,
 };
 use editor::EditorViewArgs;
@@ -49,7 +49,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub active_clip_drag: Option<&'a DraggedClip>,
     pub active_clip_target_track: Option<&'a str>,
     pub recording_preview_bounds: Option<(usize, usize)>,
-    pub recording_preview_peaks: Option<HashMap<String, Vec<Vec<f32>>>>,
+    pub recording_preview_peaks: Option<HashMap<String, ClipPeaks>>,
     pub shift_pressed: bool,
     pub selected_tempo_points: Vec<usize>,
     pub selected_time_signature_points: Vec<usize>,

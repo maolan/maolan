@@ -3279,7 +3279,7 @@ impl Maolan {
                             } else {
                                 10.0_f32.powf(db / 20.0).clamp(0.0, 1.0)
                             };
-                            channel_entry.push(amp);
+                            channel_entry.push([-amp, amp]);
                         }
                     }
                 }

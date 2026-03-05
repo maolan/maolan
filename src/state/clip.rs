@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+pub type PeakPair = [f32; 2];
+pub type ClipPeaks = Vec<Vec<PeakPair>>;
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AudioClip {
     pub name: String,
@@ -14,7 +17,7 @@ pub struct AudioClip {
     pub max_length_samples: usize,
     pub peaks_file: Option<String>,
     #[serde(skip, default)]
-    pub peaks: Vec<Vec<f32>>,
+    pub peaks: ClipPeaks,
     #[serde(default = "default_fade_enabled")]
     pub fade_enabled: bool,
     #[serde(default = "default_fade_samples")]

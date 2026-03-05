@@ -13,7 +13,7 @@ use alsa::{
     Direction,
     pcm::{Access, Format, HwParams, PCM},
 };
-pub use clip::{AudioClip, MIDIClip};
+pub use clip::{AudioClip, ClipPeaks, MIDIClip};
 pub use connection::Connection;
 #[cfg(target_os = "windows")]
 use cpal::traits::{DeviceTrait, HostTrait};

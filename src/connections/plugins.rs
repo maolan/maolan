@@ -106,6 +106,14 @@ impl Graph {
         )
     }
 
+    fn trim_label_to_width(label: &str, width_px: f32) -> String {
+        let max_chars = ((width_px - 12.0) / 7.2).floor() as i32;
+        if max_chars <= 0 {
+            return String::new();
+        }
+        label.chars().take(max_chars as usize).collect()
+    }
+
     fn edge_port_y(
         y: f32,
         h: f32,
@@ -663,8 +671,9 @@ impl canvas::Program<Message> for Graph {
             };
             let active_connecting = data.plugin_graph_connecting.as_ref();
 
+            let track_header = format!("Track: {}", track.name);
             frame.fill_text(Text {
-                content: format!("Track: {}", track.name),
+                content: Self::trim_label_to_width(&track_header, bounds.width),
                 position: Point::new(bounds.width / 2.0, 16.0),
                 color: Color::WHITE,
                 size: 16.0.into(),

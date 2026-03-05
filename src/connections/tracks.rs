@@ -94,6 +94,24 @@ impl Graph {
         width.clamp(90.0, 360.0)
     }
 
+    fn trim_label_to_width(label: &str, width_px: f32) -> String {
+        let max_chars = ((width_px - 10.0) / 7.2).floor() as i32;
+        if max_chars <= 0 {
+            return String::new();
+        }
+        label.chars().take(max_chars as usize).collect()
+    }
+
+    fn track_box_size(track: &crate::state::Track) -> iced::Size {
+        let total_ins = track.audio.ins + track.midi.ins;
+        let total_outs = track.audio.outs + track.midi.outs;
+        let max_ports = total_ins.max(total_outs).max(1);
+        let port_pitch = 8.0_f32;
+        // +1 keeps a small top/bottom margin with the existing (n+1) spacing formula.
+        let adaptive_h = (max_ports as f32 + 1.0) * port_pitch;
+        iced::Size::new(140.0, adaptive_h.max(80.0))
+    }
+
     fn default_midi_in_rect(index: usize, label: &str, box_h: f32, gap: f32) -> Rectangle {
         let box_w = Self::midi_box_width(label);
         Rectangle::new(
@@ -171,7 +189,6 @@ impl canvas::Program<Message> for Graph {
         cursor: mouse::Cursor,
     ) -> Option<Action<Message>> {
         let cursor_position = cursor.position_in(bounds)?;
-        let size = iced::Size::new(140.0, 80.0);
         let hw_width = 70.0;
         let midi_hw_box_h = 24.0;
         let midi_hw_box_gap = 6.0;
@@ -313,6 +330,7 @@ impl canvas::Program<Message> for Graph {
                     for track in data.tracks.iter().rev() {
                         let track_name = track.name.clone();
                         let track_pos = track.position;
+                        let track_size = Self::track_box_size(track);
                         let track_audio_ins = track.audio.ins;
                         let track_audio_outs = track.audio.outs;
                         let track_midi_ins = track.midi.ins;
@@ -320,7 +338,7 @@ impl canvas::Program<Message> for Graph {
                         let t_ins = track_audio_ins + track_midi_ins;
                         for j in 0..t_ins {
                             let py =
-                                track_pos.y + (size.height / (t_ins + 1) as f32) * (j + 1) as f32;
+                                track_pos.y + (track_size.height / (t_ins + 1) as f32) * (j + 1) as f32;
                             if cursor_position.distance(Point::new(track_pos.x, py)) < 10.0 {
                                 data.connecting = Some(Connecting {
                                     from_track: track_name.clone(),
@@ -340,8 +358,8 @@ impl canvas::Program<Message> for Graph {
                         let t_outs = track_audio_outs + track_midi_outs;
                         for j in 0..t_outs {
                             let py =
-                                track_pos.y + (size.height / (t_outs + 1) as f32) * (j + 1) as f32;
-                            if cursor_position.distance(Point::new(track_pos.x + size.width, py))
+                                track_pos.y + (track_size.height / (t_outs + 1) as f32) * (j + 1) as f32;
+                            if cursor_position.distance(Point::new(track_pos.x + track_size.width, py))
                                 < 10.0
                             {
                                 data.connecting = Some(Connecting {
@@ -359,7 +377,7 @@ impl canvas::Program<Message> for Graph {
                             }
                         }
 
-                        if Rectangle::new(track_pos, size).contains(cursor_position) {
+                        if Rectangle::new(track_pos, track_size).contains(cursor_position) {
                             let now = Instant::now();
                             if let Some((last_track, last_time)) =
                                 &data.connections_last_track_click
@@ -423,6 +441,7 @@ impl canvas::Program<Message> for Graph {
                                 })
                         } else {
                             start_track_option.map(|t| {
+                                let track_size = Self::track_box_size(t);
                                 let total_outs = t.audio.outs + t.midi.outs;
                                 let port_idx = Self::connection_port_index(
                                     t,
@@ -431,9 +450,9 @@ impl canvas::Program<Message> for Graph {
                                     false,
                                 );
                                 let py = t.position.y
-                                    + (size.height / (total_outs + 1) as f32)
+                                    + (track_size.height / (total_outs + 1) as f32)
                                         * (port_idx + 1) as f32;
-                                Point::new(t.position.x + size.width, py)
+                                Point::new(t.position.x + track_size.width, py)
                             })
                         };
 
@@ -463,11 +482,12 @@ impl canvas::Program<Message> for Graph {
                                 })
                         } else {
                             end_track_option.map(|t| {
+                                let track_size = Self::track_box_size(t);
                                 let total_ins = t.audio.ins + t.midi.ins;
                                 let port_idx =
                                     Self::connection_port_index(t, conn.kind, conn.to_port, true);
                                 let py = t.position.y
-                                    + (size.height / (total_ins + 1) as f32)
+                                    + (track_size.height / (total_ins + 1) as f32)
                                         * (port_idx + 1) as f32;
                                 Point::new(t.position.x, py)
                             })
@@ -504,11 +524,14 @@ impl canvas::Program<Message> for Graph {
 
                         if is_input {
                             for track in data.tracks.iter() {
+                                let track_size = Self::track_box_size(track);
                                 let total_outs = track.audio.outs + track.midi.outs;
                                 for j in 0..total_outs {
                                     let py = track.position.y
-                                        + (size.height / (total_outs + 1) as f32) * (j + 1) as f32;
-                                    let port_pos = Point::new(track.position.x + size.width, py);
+                                        + (track_size.height / (total_outs + 1) as f32)
+                                            * (j + 1) as f32;
+                                    let port_pos =
+                                        Point::new(track.position.x + track_size.width, py);
                                     if cursor_position.distance(port_pos) < 10.0 {
                                         target_port = Some((track.name.clone(), j));
                                         break;
@@ -552,10 +575,12 @@ impl canvas::Program<Message> for Graph {
                             }
                         } else {
                             for track in data.tracks.iter() {
+                                let track_size = Self::track_box_size(track);
                                 let total_ins = track.audio.ins + track.midi.ins;
                                 for j in 0..total_ins {
                                     let py = track.position.y
-                                        + (size.height / (total_ins + 1) as f32) * (j + 1) as f32;
+                                        + (track_size.height / (total_ins + 1) as f32)
+                                            * (j + 1) as f32;
                                     let port_pos = Point::new(track.position.x, py);
                                     if cursor_position.distance(port_pos) < 10.0 {
                                         target_port = Some((track.name.clone(), j));
@@ -769,10 +794,11 @@ impl canvas::Program<Message> for Graph {
 
                     if new_h.is_none() {
                         for track in data.tracks.iter().rev() {
+                            let track_size = Self::track_box_size(track);
                             let t_ins = track.audio.ins + track.midi.ins;
                             for j in 0..t_ins {
                                 let py = track.position.y
-                                    + (size.height / (t_ins + 1) as f32) * (j + 1) as f32;
+                                    + (track_size.height / (t_ins + 1) as f32) * (j + 1) as f32;
                                 if cursor_position.distance(Point::new(track.position.x, py)) < 10.0
                                 {
                                     new_h = Some(Hovering::Port {
@@ -790,9 +816,9 @@ impl canvas::Program<Message> for Graph {
                             let t_outs = track.audio.outs + track.midi.outs;
                             for j in 0..t_outs {
                                 let py = track.position.y
-                                    + (size.height / (t_outs + 1) as f32) * (j + 1) as f32;
+                                    + (track_size.height / (t_outs + 1) as f32) * (j + 1) as f32;
                                 if cursor_position
-                                    .distance(Point::new(track.position.x + size.width, py))
+                                    .distance(Point::new(track.position.x + track_size.width, py))
                                     < 10.0
                                 {
                                     new_h = Some(Hovering::Port {
@@ -807,7 +833,7 @@ impl canvas::Program<Message> for Graph {
                                 break;
                             }
 
-                            if Rectangle::new(track.position, size).contains(cursor_position) {
+                            if Rectangle::new(track.position, track_size).contains(cursor_position) {
                                 new_h = Some(Hovering::Track(track.name.clone()));
                                 break;
                             }
@@ -874,7 +900,6 @@ impl canvas::Program<Message> for Graph {
         cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
-        let size = iced::Size::new(140.0, 80.0);
         let hw_width = 70.0;
         let midi_hw_box_h = 24.0;
         let midi_hw_box_gap = 6.0;
@@ -911,12 +936,13 @@ impl canvas::Program<Message> for Graph {
                         })
                 } else {
                     start_track_option.map(|t| {
+                        let track_size = Self::track_box_size(t);
                         let port_idx =
                             Self::connection_port_index(t, conn.kind, conn.from_port, false);
                         let total_outs = t.audio.outs + t.midi.outs;
                         let py = t.position.y
-                            + (size.height / (total_outs + 1) as f32) * (port_idx + 1) as f32;
-                        Point::new(t.position.x + size.width, py)
+                            + (track_size.height / (total_outs + 1) as f32) * (port_idx + 1) as f32;
+                        Point::new(t.position.x + track_size.width, py)
                     })
                 };
 
@@ -946,11 +972,12 @@ impl canvas::Program<Message> for Graph {
                         })
                 } else {
                     end_track_option.map(|t| {
+                        let track_size = Self::track_box_size(t);
                         let port_idx =
                             Self::connection_port_index(t, conn.kind, conn.to_port, true);
                         let total_ins = t.audio.ins + t.midi.ins;
                         let py = t.position.y
-                            + (size.height / (total_ins + 1) as f32) * (port_idx + 1) as f32;
+                            + (track_size.height / (total_ins + 1) as f32) * (port_idx + 1) as f32;
                         Point::new(t.position.x, py)
                     })
                 };
@@ -1044,16 +1071,17 @@ impl canvas::Program<Message> for Graph {
                         })
                 } else {
                     start_track_option.map(|t| {
+                        let track_size = Self::track_box_size(t);
                         if conn.is_input {
                             let py = t.position.y
-                                + (size.height / (t.audio.ins + t.midi.ins + 1) as f32)
+                                + (track_size.height / (t.audio.ins + t.midi.ins + 1) as f32)
                                     * (conn.from_port + 1) as f32;
                             Point::new(t.position.x, py)
                         } else {
                             let py = t.position.y
-                                + (size.height / (t.audio.outs + t.midi.outs + 1) as f32)
+                                + (track_size.height / (t.audio.outs + t.midi.outs + 1) as f32)
                                     * (conn.from_port + 1) as f32;
-                            Point::new(t.position.x + size.width, py)
+                            Point::new(t.position.x + track_size.width, py)
                         }
                     })
                 };
@@ -1334,6 +1362,7 @@ impl canvas::Program<Message> for Graph {
 
             for track in data.tracks.iter() {
                 let pos = track.position;
+                let size = Self::track_box_size(track);
                 let path = Path::rectangle(pos, size);
                 frame.fill(&path, Color::from_rgb8(45, 45, 45));
 
@@ -1409,7 +1438,7 @@ impl canvas::Program<Message> for Graph {
                 }
 
                 frame.fill_text(Text {
-                    content: track.name.clone(),
+                    content: Self::trim_label_to_width(&track.name, size.width),
                     position: Point::new(pos.x + size.width / 2.0, pos.y + size.height / 2.0),
                     color: Color::WHITE,
                     size: 14.0.into(),

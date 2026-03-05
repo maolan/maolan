@@ -27,11 +27,7 @@ impl Tracks {
         if value.chars().count() <= max_chars {
             return value.to_string();
         }
-        if max_chars <= 3 {
-            return "...".to_string();
-        }
-        let trimmed: String = value.chars().take(max_chars - 3).collect();
-        format!("{trimmed}...")
+        value.chars().take(max_chars).collect()
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -179,13 +175,14 @@ impl Tracks {
             ]
             .spacing(4.0);
 
+            lane_rows = lane_rows.push(track_controls);
+
             let track_ui: Column<'_, Message> = column![
                 row![
                     text(title),
                     Space::new().width(Length::Fill),
                 ]
                 .height(Length::Fixed(layout.header_height)),
-                track_controls,
                 lane_rows.height(Length::Fill),
                 mouse_area(
                     container("")

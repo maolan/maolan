@@ -1,6 +1,6 @@
 use crate::{
     message::{DraggedClip, EditTool, Message, SnapMode},
-    state::{State, StateData, Track},
+    state::{ClipPeaks, State, StateData, Track},
 };
 use iced::{
     Background, Border, Color, Element, Length, Point,
@@ -23,7 +23,7 @@ struct TrackElementViewArgs<'a> {
     active_clip_drag: Option<&'a DraggedClip>,
     active_target_track: Option<&'a str>,
     recording_preview_bounds: Option<(usize, usize)>,
-    recording_preview_peaks: Option<&'a HashMap<String, Vec<Vec<f32>>>>,
+    recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
 }
 
 fn clean_clip_name(name: &str) -> String {
@@ -155,7 +155,7 @@ fn automation_point_color(target: crate::message::TrackAutomationTarget) -> Colo
 }
 
 fn audio_waveform_overlay(
-    peaks: &[Vec<f32>],
+    peaks: &[Vec<[f32; 2]>],
     clip_width: f32,
     clip_height: f32,
     clip_offset: usize,
@@ -168,51 +168,179 @@ fn audio_waveform_overlay(
             .height(Length::Fill)
             .into();
     }
-    let inner_w = (clip_width - 10.0).max(2.0);
-    let inner_h = (clip_height - 8.0).max(6.0);
+    let inner_w = (clip_width - 2.0).max(2.0);
+    let inner_h = (clip_height - 2.0).max(4.0);
     let channel_count = peaks.len().max(1);
     let channel_h = inner_h / channel_count as f32;
-    let mut bars: Vec<Element<'static, Message>> = vec![];
+    let mut bars: Vec<Element<'static, Message>> = Vec::new();
+    let clip_level = 0.98853_f32;
+
     for (channel_idx, channel_peaks) in peaks.iter().enumerate() {
         if channel_peaks.is_empty() {
             continue;
         }
-        let display_bins =
-            ((inner_w / 2.0) as usize).clamp(1, clip_length.min(channel_peaks.len()));
+        let raw_bins = (inner_w.ceil() as usize).max(1);
+        // Iced widget composition gets expensive with too many tiny elements.
+        // Cap draw bins to keep high-zoom rendering responsive.
+        let display_bins = raw_bins.min(1400);
         let x_step = inner_w / display_bins as f32;
-        let center_y = channel_h * (channel_idx as f32 + 0.5);
+        let channel_top = channel_h * channel_idx as f32;
+        let center_y = channel_top + channel_h * 0.5;
+        let half_span = (channel_h * 0.48).max(1.0);
+        let draw_outlines = display_bins <= 700;
+        let draw_clip_markers = display_bins <= 900;
 
-        // Calculate the range of peaks to display based on clip offset and length
+        // Draw zero/center line per channel for better shape readability.
+        bars.push(
+            pin(container("")
+                .width(Length::Fixed(inner_w))
+                .height(Length::Fixed(1.0))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.95,
+                        g: 0.97,
+                        b: 1.0,
+                        a: 0.2,
+                    })),
+                    ..container::Style::default()
+                }))
+            .position(Point::new(0.0, center_y))
+            .into(),
+        );
+
         let total_peaks = channel_peaks.len();
         let max_len = max_length.max(1);
+        let peaks_per_pixel = (total_peaks as f32 / display_bins as f32).max(1.0);
+        let src_window = peaks_per_pixel.ceil() as usize;
 
         for i in 0..display_bins {
-            // Map display bin to position within the clip (0 to clip_length)
             let clip_sample_pos = (i * clip_length) / display_bins;
-            // Add offset to get absolute position in the audio file
             let absolute_sample_pos = clip_offset + clip_sample_pos;
-            // Map absolute sample position to peak index
-            let src_idx =
-                ((absolute_sample_pos * total_peaks) / max_len).min(total_peaks.saturating_sub(1));
+            let src_pos = (absolute_sample_pos as f32 / max_len as f32)
+                * (total_peaks.saturating_sub(1) as f32);
+            let mut min_val = 0.0_f32;
+            let mut max_val = 0.0_f32;
+            if src_window <= 1 {
+                let idx0 = src_pos.floor() as usize;
+                let idx1 = (idx0 + 1).min(total_peaks.saturating_sub(1));
+                let frac = (src_pos - idx0 as f32).clamp(0.0, 1.0);
+                let p0 = channel_peaks[idx0];
+                let p1 = channel_peaks[idx1];
+                min_val = p0[0] + (p1[0] - p0[0]) * frac;
+                max_val = p0[1] + (p1[1] - p0[1]) * frac;
+            } else {
+                let src_idx =
+                    ((absolute_sample_pos * total_peaks) / max_len).min(total_peaks.saturating_sub(1));
+                let start = src_idx.saturating_sub(src_window / 2);
+                let end = (src_idx + src_window / 2 + 1).min(total_peaks);
+                for pair in &channel_peaks[start..end] {
+                    min_val = min_val.min(pair[0]);
+                    max_val = max_val.max(pair[1]);
+                }
+            }
+            min_val = min_val.clamp(-1.0, 1.0);
+            max_val = max_val.clamp(-1.0, 1.0);
+            if (max_val - min_val) < 0.003 {
+                continue;
+            }
 
-            let amp = channel_peaks[src_idx].clamp(0.0, 1.0);
-            let bar_h = (amp * channel_h).max(1.0);
+            let top = (center_y - (max_val * half_span)).clamp(channel_top, channel_top + channel_h);
+            let bottom =
+                (center_y - (min_val * half_span)).clamp(channel_top, channel_top + channel_h);
+            let x = i as f32 * x_step;
+            let w = x_step.max(1.0).ceil();
+            let y = top.min(bottom);
+            let total_h = (bottom - top).abs().max(1.0);
+
+            // Main waveform fill (mirrored around center line).
             bars.push(
                 pin(container("")
-                    .width(Length::Fixed(1.0))
-                    .height(Length::Fixed(bar_h))
+                    .width(Length::Fixed(w))
+                    .height(Length::Fixed(total_h))
                     .style(|_theme| container::Style {
                         background: Some(Background::Color(Color {
                             r: 0.8,
                             g: 0.9,
                             b: 1.0,
-                            a: 0.45,
+                            a: 0.34,
                         })),
                         ..container::Style::default()
                     }))
-                .position(Point::new(i as f32 * x_step, center_y - bar_h * 0.5))
+                .position(Point::new(x, y))
                 .into(),
             );
+
+            // Edge highlights similar to Ardour's outline feel.
+            if draw_outlines {
+                bars.push(
+                    pin(container("")
+                        .width(Length::Fixed(w))
+                        .height(Length::Fixed(1.0))
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.92,
+                                g: 0.97,
+                                b: 1.0,
+                                a: 0.55,
+                            })),
+                            ..container::Style::default()
+                        }))
+                    .position(Point::new(x, y))
+                    .into(),
+                );
+                bars.push(
+                    pin(container("")
+                        .width(Length::Fixed(w))
+                        .height(Length::Fixed(1.0))
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.92,
+                                g: 0.97,
+                                b: 1.0,
+                                a: 0.55,
+                            })),
+                            ..container::Style::default()
+                        }))
+                    .position(Point::new(x, y + total_h - 1.0))
+                    .into(),
+                );
+            }
+
+            if draw_clip_markers && max_val.abs().max(min_val.abs()) >= clip_level {
+                let clip_marker_h = (channel_h * 0.12).max(1.5);
+                bars.push(
+                    pin(container("")
+                        .width(Length::Fixed(w))
+                        .height(Length::Fixed(clip_marker_h))
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 1.0,
+                                g: 0.33,
+                                b: 0.28,
+                                a: 0.85,
+                            })),
+                            ..container::Style::default()
+                        }))
+                    .position(Point::new(x, channel_top))
+                    .into(),
+                );
+                bars.push(
+                    pin(container("")
+                        .width(Length::Fixed(w))
+                        .height(Length::Fixed(clip_marker_h))
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 1.0,
+                                g: 0.33,
+                                b: 0.28,
+                                a: 0.85,
+                            })),
+                            ..container::Style::default()
+                        }))
+                    .position(Point::new(x, channel_top + channel_h - clip_marker_h))
+                    .into(),
+                );
+            }
         }
     }
     Stack::from_vec(bars)
@@ -290,21 +418,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     );
 
     clips.push(
-        pin(container(text(track.name.clone()).size(11))
-            .width(Length::Fill)
-            .height(Length::Fixed(layout.header_height))
-            .padding(4)
-            .style(|_theme| container::Style {
-                background: Some(Background::Color(Color {
-                    r: 0.08,
-                    g: 0.08,
-                    b: 0.1,
-                    a: 0.5,
-                })),
-                ..container::Style::default()
-            }))
-        .position(Point::new(0.0, 0.0))
-        .into(),
+        pin(container(""))
+            .position(Point::new(0.0, 0.0))
+            .into(),
     );
 
     for lane in 0..track.audio.ins {
@@ -1729,7 +1845,7 @@ pub struct EditorViewArgs<'a> {
     pub active_clip_drag: Option<&'a DraggedClip>,
     pub active_target_track: Option<&'a str>,
     pub recording_preview_bounds: Option<(usize, usize)>,
-    pub recording_preview_peaks: Option<&'a HashMap<String, Vec<Vec<f32>>>>,
+    pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
 }
 
 impl Editor {

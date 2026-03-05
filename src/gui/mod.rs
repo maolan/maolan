@@ -14,7 +14,8 @@ use crate::{
     },
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{
-        AudioClip, MIDIClip, PianoControllerPoint, PianoNote, PianoSysExPoint, State, StateData,
+        AudioClip, ClipPeaks, MIDIClip, PianoControllerPoint, PianoNote, PianoSysExPoint, State,
+        StateData,
     },
     template_save, toolbar, track_rename, track_template_save, workspace,
 };
@@ -251,7 +252,7 @@ pub struct Maolan {
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
     pending_save_is_template: bool,
-    pending_audio_peaks: HashMap<AudioClipKey, Vec<Vec<f32>>>,
+    pending_audio_peaks: HashMap<AudioClipKey, ClipPeaks>,
     pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
     pending_track_freeze_bounce: HashMap<String, PendingTrackFreezeBounce>,
     track_automation_runtime: HashMap<String, TrackAutomationRuntime>,
@@ -288,7 +289,7 @@ pub struct Maolan {
     pending_record_after_save: bool,
     recording_preview_start_sample: Option<usize>,
     recording_preview_sample: Option<usize>,
-    recording_preview_peaks: HashMap<String, Vec<Vec<f32>>>,
+    recording_preview_peaks: HashMap<String, ClipPeaks>,
     import_in_progress: bool,
     import_current_file: usize,
     import_total_files: usize,
@@ -807,50 +808,92 @@ impl Maolan {
         format!("peaks/{}_{:04}_{}.json", track, clip_idx, clip)
     }
 
-    fn read_clip_peaks_file(path: &Path) -> std::io::Result<Vec<Vec<f32>>> {
+    fn read_clip_peaks_file(path: &Path) -> std::io::Result<ClipPeaks> {
         let file = File::open(path)?;
         let json: Value = serde_json::from_reader(BufReader::new(file))?;
         let peaks_val = &json["peaks"];
 
-        if peaks_val
-            .as_array()
-            .is_some_and(|arr| arr.first().is_some_and(|first| first.is_number()))
-        {
-            let mono = peaks_val
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(Value::as_f64)
-                        .map(|v| v as f32)
-                        .collect::<Vec<f32>>()
+        let Some(root) = peaks_val.as_array() else {
+            return Ok(vec![]);
+        };
+
+        if root.first().is_some_and(Value::is_number) {
+            let mono = root
+                .iter()
+                .filter_map(Value::as_f64)
+                .map(|v| {
+                    let a = (v as f32).abs().clamp(0.0, 1.0);
+                    [-a, a]
                 })
-                .unwrap_or_default();
+                .collect::<Vec<_>>();
             return Ok(if mono.is_empty() { vec![] } else { vec![mono] });
         }
 
-        let per_channel = peaks_val
-            .as_array()
-            .map(|channels| {
-                channels
+        let first = root.first();
+        if first.is_some_and(|v| {
+            v.as_array()
+                .is_some_and(|a| a.len() == 2 && a[0].is_number() && a[1].is_number())
+        }) {
+            let mono = root
+                .iter()
+                .filter_map(Value::as_array)
+                .filter_map(|pair| {
+                    let min = pair.first()?.as_f64()? as f32;
+                    let max = pair.get(1)?.as_f64()? as f32;
+                    Some([min.min(max).clamp(-1.0, 1.0), min.max(max).clamp(-1.0, 1.0)])
+                })
+                .collect::<Vec<_>>();
+            return Ok(if mono.is_empty() { vec![] } else { vec![mono] });
+        }
+
+        let mut per_channel: ClipPeaks = Vec::with_capacity(root.len());
+        for channel in root {
+            let Some(arr) = channel.as_array() else {
+                continue;
+            };
+            if arr.first().is_some_and(Value::is_number) {
+                let ch = arr
                     .iter()
-                    .map(|channel| {
-                        channel
-                            .as_array()
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(Value::as_f64)
-                                    .map(|v| v as f32)
-                                    .collect::<Vec<f32>>()
-                            })
-                            .unwrap_or_default()
+                    .filter_map(Value::as_f64)
+                    .map(|v| {
+                        let a = (v as f32).abs().clamp(0.0, 1.0);
+                        [-a, a]
                     })
-                    .collect::<Vec<Vec<f32>>>()
-            })
-            .unwrap_or_default();
+                    .collect::<Vec<_>>();
+                per_channel.push(ch);
+                continue;
+            }
+            let mut ch = Vec::with_capacity(arr.len());
+            for peak in arr {
+                if let Some(pair) = peak.as_array()
+                    && pair.len() == 2
+                    && let (Some(min), Some(max)) = (
+                        pair.first().and_then(Value::as_f64),
+                        pair.get(1).and_then(Value::as_f64),
+                    )
+                {
+                    let min = min as f32;
+                    let max = max as f32;
+                    ch.push([min.min(max).clamp(-1.0, 1.0), min.max(max).clamp(-1.0, 1.0)]);
+                    continue;
+                }
+                if let Some(obj) = peak.as_object()
+                    && let (Some(min), Some(max)) = (
+                        obj.get("min").and_then(Value::as_f64),
+                        obj.get("max").and_then(Value::as_f64),
+                    )
+                {
+                    let min = min as f32;
+                    let max = max as f32;
+                    ch.push([min.min(max).clamp(-1.0, 1.0), min.max(max).clamp(-1.0, 1.0)]);
+                }
+            }
+            per_channel.push(ch);
+        }
         Ok(per_channel)
     }
 
-    fn compute_audio_clip_peaks(path: &Path, bins: usize) -> std::io::Result<Vec<Vec<f32>>> {
+    fn compute_audio_clip_peaks(path: &Path, bins: usize) -> std::io::Result<ClipPeaks> {
         let mut wav = Wav::<f32>::from_path(path).map_err(|e| {
             io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
         })?;
@@ -858,27 +901,34 @@ impl Maolan {
         let samples: wavers::Samples<f32> = wav
             .read()
             .map_err(|e| io::Error::other(format!("WAV read error '{}': {e}", path.display())))?;
-        let mut per_channel_abs = vec![Vec::with_capacity(samples.len() / channels + 1); channels];
+        let mut per_channel = vec![Vec::with_capacity(samples.len() / channels + 1); channels];
         for frame in samples.chunks(channels) {
             for (channel_idx, sample) in frame.iter().enumerate() {
-                per_channel_abs[channel_idx].push(sample.abs());
+                per_channel[channel_idx].push(sample.clamp(-1.0, 1.0));
             }
         }
 
-        if per_channel_abs.iter().all(|ch| ch.is_empty()) {
+        if per_channel.iter().all(|ch| ch.is_empty()) {
             return Ok(vec![]);
         }
         let target_bins = bins.max(16);
-        let mut peaks = vec![vec![0.0_f32; target_bins]; channels];
+        let mut peaks = vec![vec![[0.0_f32, 0.0_f32]; target_bins]; channels];
         for channel_idx in 0..channels {
-            let samples = &per_channel_abs[channel_idx];
+            let samples = &per_channel[channel_idx];
             if samples.is_empty() {
                 continue;
             }
-            for (i, peak) in samples.iter().enumerate() {
+            let mut touched = vec![false; target_bins];
+            for (i, sample) in samples.iter().enumerate() {
                 let bin = (i * target_bins) / samples.len();
                 let idx = bin.min(target_bins - 1);
-                peaks[channel_idx][idx] = peaks[channel_idx][idx].max(*peak);
+                if !touched[idx] {
+                    peaks[channel_idx][idx] = [*sample, *sample];
+                    touched[idx] = true;
+                } else {
+                    peaks[channel_idx][idx][0] = peaks[channel_idx][idx][0].min(*sample);
+                    peaks[channel_idx][idx][1] = peaks[channel_idx][idx][1].max(*sample);
+                }
             }
         }
         Ok(peaks)
