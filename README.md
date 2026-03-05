@@ -66,6 +66,7 @@ The script creates a `dist/maolan-<timestamp>-<target>.tar.gz` bundle with the r
 ```
 
 Prints mutating `engine::message::Action` candidates not currently included in history `should_record`.
+See [docs/HISTORY_AUDIT.md](docs/HISTORY_AUDIT.md) for the latest audit notes and decisions.
 
 ## Quick Start
 

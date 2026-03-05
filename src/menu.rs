@@ -165,6 +165,7 @@ impl Menu {
             (menu_dropdown("Track", Message::None), {
                 menu_tpl(menu_items!(
                     (menu_item("New", Message::Show(Show::AddTrack))),
+                    (menu_item("Create Aux Return From Selection", Message::TrackCreateAuxReturnFromSelection)),
                 ))
             }),
         )

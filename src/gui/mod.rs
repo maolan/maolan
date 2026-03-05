@@ -43,7 +43,7 @@ use std::{
     io::{self, BufReader},
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 use symphonia::core::{
     audio::SampleBuffer, codecs::DecoderOptions, errors::Error as SymphoniaError,
@@ -84,6 +84,7 @@ struct ExportSessionOptions {
     export_path: PathBuf,
     sample_rate: i32,
     render_mode: ExportRenderMode,
+    realtime_fallback: bool,
     bit_depth: ExportBitDepth,
     normalize: bool,
     normalize_target_dbfs: f32,
@@ -91,6 +92,8 @@ struct ExportSessionOptions {
     normalize_target_lufs: f32,
     normalize_true_peak_dbtp: f32,
     normalize_tp_limiter: bool,
+    master_limiter: bool,
+    master_limiter_ceiling_dbtp: f32,
     state: State,
     session_root: PathBuf,
 }
@@ -255,12 +258,15 @@ pub struct Maolan {
     export_sample_rate_hz: u32,
     export_bit_depth: ExportBitDepth,
     export_render_mode: ExportRenderMode,
+    export_realtime_fallback: bool,
     export_normalize: bool,
     export_normalize_mode: ExportNormalizeMode,
     export_normalize_dbfs_input: String,
     export_normalize_lufs_input: String,
     export_normalize_dbtp_input: String,
     export_normalize_tp_limiter: bool,
+    export_master_limiter: bool,
+    export_master_limiter_ceiling_input: String,
     clap_ui_host: GuiClapUiHost,
     #[cfg(all(unix, not(target_os = "macos")))]
     lv2_ui_host: GuiLv2UiHost,
@@ -486,12 +492,15 @@ impl Default for Maolan {
             export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             export_bit_depth: ExportBitDepth::Int24,
             export_render_mode: ExportRenderMode::Mixdown,
+            export_realtime_fallback: false,
             export_normalize: false,
             export_normalize_mode: ExportNormalizeMode::Peak,
             export_normalize_dbfs_input: "0.0".to_string(),
             export_normalize_lufs_input: "-23.0".to_string(),
             export_normalize_dbtp_input: "-1.0".to_string(),
             export_normalize_tp_limiter: true,
+            export_master_limiter: true,
+            export_master_limiter_ceiling_input: "-1.0".to_string(),
             clap_ui_host: GuiClapUiHost::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_ui_host: GuiLv2UiHost::new(),
@@ -1395,12 +1404,15 @@ impl Maolan {
         let export_path = options.export_path.as_path();
         let sample_rate = options.sample_rate;
         let bit_depth = options.bit_depth;
+        let realtime_fallback = options.realtime_fallback;
         let normalize = options.normalize;
         let normalize_target_dbfs = options.normalize_target_dbfs;
         let normalize_mode = options.normalize_mode;
         let normalize_target_lufs = options.normalize_target_lufs;
         let normalize_true_peak_dbtp = options.normalize_true_peak_dbtp;
         let normalize_tp_limiter = options.normalize_tp_limiter;
+        let master_limiter = options.master_limiter;
+        let master_limiter_ceiling_dbtp = options.master_limiter_ceiling_dbtp;
         let render_mode = options.render_mode;
         let state = options.state.clone();
         let session_root = options.session_root.as_path();
@@ -1494,12 +1506,25 @@ impl Maolan {
                 );
                 tokio::task::yield_now().await;
             }
+            if realtime_fallback {
+                progress_callback(0.82, Some("Real-time fallback pacing".to_string()));
+                let seconds = (total_length as f64 / sample_rate.max(1) as f64).max(0.0);
+                tokio::time::sleep(Duration::from_secs_f64(seconds)).await;
+            }
 
             if normalize {
                 Self::apply_export_normalization(
                     &mut mixed_buffer,
                     normalize_params,
                 )?;
+            }
+            if master_limiter {
+                let ceiling_amp = 10.0_f32
+                    .powf(master_limiter_ceiling_dbtp / 20.0)
+                    .clamp(0.0, 1.0);
+                for sample in &mut mixed_buffer {
+                    *sample = sample.clamp(-ceiling_amp, ceiling_amp);
+                }
             }
             progress_callback(0.9, Some(format!("Writing WAV ({bit_depth})")));
             tokio::task::yield_now().await;
@@ -1557,6 +1582,14 @@ impl Maolan {
                     normalize_params,
                 )?;
             }
+            if master_limiter {
+                let ceiling_amp = 10.0_f32
+                    .powf(master_limiter_ceiling_dbtp / 20.0)
+                    .clamp(0.0, 1.0);
+                for sample in &mut stem_buffer {
+                    *sample = sample.clamp(-ceiling_amp, ceiling_amp);
+                }
+            }
             let stem_file = stem_dir.join(format!(
                 "{}_{}.wav",
                 Self::sanitize_export_component(track_name),
@@ -1569,6 +1602,10 @@ impl Maolan {
                 output_channels,
                 bit_depth,
             )?;
+            if realtime_fallback {
+                let seconds = (total_length as f64 / sample_rate.max(1) as f64).max(0.0);
+                tokio::time::sleep(Duration::from_secs_f64(seconds)).await;
+            }
         }
         progress_callback(
             1.0,
@@ -2585,6 +2622,20 @@ impl Maolan {
                     )
                     .placeholder("Choose render mode")
                     .width(Length::Fixed(220.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                checkbox(self.export_realtime_fallback)
+                    .label("Real-time fallback render")
+                    .on_toggle(Message::ExportRealtimeFallbackToggled),
+                row![
+                    checkbox(self.export_master_limiter)
+                        .label("Master limiter")
+                        .on_toggle(Message::ExportMasterLimiterToggled),
+                    text("Ceiling (dBTP):"),
+                    text_input("-1.0", &self.export_master_limiter_ceiling_input)
+                        .on_input(Message::ExportMasterLimiterCeilingInput)
+                        .width(Length::Fixed(110.0)),
                 ]
                 .spacing(10)
                 .align_y(iced::Alignment::Center),

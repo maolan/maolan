@@ -6354,6 +6354,73 @@ impl Maolan {
                     master_track: master_track.clone(),
                 });
             }
+            Message::TrackCreateAuxReturnFromSelection => {
+                let (selected_tracks, max_outs, max_midi_outs, existing_names) = {
+                    let state = self.state.blocking_read();
+                    let selected = state.selected.iter().cloned().collect::<Vec<_>>();
+                    let mut audio_outs = 2usize;
+                    let mut midi_outs = 0usize;
+                    for track in &state.tracks {
+                        if state.selected.contains(&track.name) {
+                            audio_outs = audio_outs.max(track.audio.outs.max(1));
+                            midi_outs = midi_outs.max(track.midi.outs);
+                        }
+                    }
+                    (
+                        selected,
+                        audio_outs.max(1),
+                        midi_outs,
+                        state
+                            .tracks
+                            .iter()
+                            .map(|t| t.name.clone())
+                            .collect::<std::collections::HashSet<_>>(),
+                    )
+                };
+                if selected_tracks.is_empty() {
+                    self.state.blocking_write().message =
+                        "Select one or more tracks first".to_string();
+                    return Task::none();
+                }
+                let mut idx = 1usize;
+                let aux_name = loop {
+                    let candidate = format!("Aux Return {idx}");
+                    if !existing_names.contains(&candidate) {
+                        break candidate;
+                    }
+                    idx = idx.saturating_add(1);
+                };
+                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+                tasks.push(self.send(Action::AddTrack {
+                    name: aux_name.clone(),
+                    audio_ins: max_outs,
+                    midi_ins: 0,
+                    audio_outs: max_outs,
+                    midi_outs: max_midi_outs,
+                }));
+                for track_name in selected_tracks {
+                    tasks.push(self.send(Action::Connect {
+                        from_track: track_name,
+                        from_port: 0,
+                        to_track: aux_name.clone(),
+                        to_port: 0,
+                        kind: Kind::Audio,
+                    }));
+                }
+                tasks.push(self.send(Action::Connect {
+                    from_track: aux_name.clone(),
+                    from_port: 0,
+                    to_track: "hw:out".to_string(),
+                    to_port: 0,
+                    kind: Kind::Audio,
+                }));
+                tasks.push(self.send(Action::EndHistoryGroup));
+                self.state.blocking_write().message = format!(
+                    "Created '{}' and connected selected tracks as sends",
+                    aux_name
+                );
+                return Task::batch(tasks);
+            }
             Message::TrackMidiLearnArm {
                 ref track_name,
                 target,
@@ -9190,6 +9257,9 @@ impl Maolan {
                     self.export_normalize = false;
                 }
             }
+            Message::ExportRealtimeFallbackToggled(enabled) => {
+                self.export_realtime_fallback = enabled;
+            }
             Message::ExportNormalizeToggled(enabled) => {
                 self.export_normalize = enabled;
             }
@@ -9217,7 +9287,30 @@ impl Maolan {
             Message::ExportNormalizeLimiterToggled(enabled) => {
                 self.export_normalize_tp_limiter = enabled;
             }
+            Message::ExportMasterLimiterToggled(enabled) => {
+                self.export_master_limiter = enabled;
+            }
+            Message::ExportMasterLimiterCeilingInput(ref input) => {
+                self.export_master_limiter_ceiling_input = input
+                    .chars()
+                    .filter(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
+                    .collect();
+            }
             Message::ExportSettingsConfirm => {
+                let master_ceiling = self
+                    .export_master_limiter_ceiling_input
+                    .parse::<f32>()
+                    .ok();
+                let Some(master_ceiling) = master_ceiling else {
+                    self.state.blocking_write().message =
+                        "Master limiter ceiling must be a number in dBTP".to_string();
+                    return Task::none();
+                };
+                if !(-20.0..=0.0).contains(&master_ceiling) {
+                    self.state.blocking_write().message =
+                        "Master limiter ceiling must be between -20.0 and 0.0 dBTP".to_string();
+                    return Task::none();
+                }
                 if self.export_normalize {
                     match self.export_normalize_mode {
                         ExportNormalizeMode::Peak => {
@@ -9297,6 +9390,13 @@ impl Maolan {
                     .ok()
                     .unwrap_or(-1.0);
                 let normalize_tp_limiter = self.export_normalize_tp_limiter;
+                let export_master_limiter = self.export_master_limiter;
+                let export_master_limiter_ceiling_dbtp = self
+                    .export_master_limiter_ceiling_input
+                    .parse::<f32>()
+                    .ok()
+                    .unwrap_or(-1.0);
+                let export_realtime_fallback = self.export_realtime_fallback;
                 let export_path = Self::ensure_wav_extension(path.clone());
                 let state_clone = self.state.clone();
                 let render_mode = self.export_render_mode;
@@ -9333,6 +9433,7 @@ impl Maolan {
                                 export_path: export_path.clone(),
                                 sample_rate,
                                 render_mode,
+                                realtime_fallback: export_realtime_fallback,
                                 bit_depth: export_bit_depth,
                                 normalize: export_normalize,
                                 normalize_target_dbfs,
@@ -9340,6 +9441,8 @@ impl Maolan {
                                 normalize_target_lufs,
                                 normalize_true_peak_dbtp,
                                 normalize_tp_limiter,
+                                master_limiter: export_master_limiter,
+                                master_limiter_ceiling_dbtp: export_master_limiter_ceiling_dbtp,
                                 state: state_clone,
                                 session_root: session_root.clone(),
                             };

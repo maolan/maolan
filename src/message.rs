@@ -491,6 +491,7 @@ pub enum Message {
         track_name: String,
         master_track: Option<String>,
     },
+    TrackCreateAuxReturnFromSelection,
     TrackMidiLearnArm {
         track_name: String,
         target: maolan_engine::message::TrackMidiLearnTarget,
@@ -566,6 +567,7 @@ pub enum Message {
     MidiLearnMappingsClearAllRequest,
     ExportSampleRateSelected(u32),
     ExportRenderModeSelected(ExportRenderMode),
+    ExportRealtimeFallbackToggled(bool),
     ExportBitDepthSelected(ExportBitDepth),
     ExportNormalizeToggled(bool),
     ExportNormalizeModeSelected(ExportNormalizeMode),
@@ -573,6 +575,8 @@ pub enum Message {
     ExportNormalizeLufsInput(String),
     ExportNormalizeDbtpInput(String),
     ExportNormalizeLimiterToggled(bool),
+    ExportMasterLimiterToggled(bool),
+    ExportMasterLimiterCeilingInput(String),
     ExportSettingsConfirm,
     ExportFileSelected(Option<PathBuf>),
     ExportProgress {

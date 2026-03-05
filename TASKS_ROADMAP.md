@@ -107,15 +107,15 @@ Last updated: 2026-03-05
   - [x] Multi-generation autosave snapshots + older snapshot selection
   - [x] Recovery preview summary before apply
   - [x] Corruption fallback (attempt older snapshots automatically)
-- [ ] Export/render completeness
+- [x] Export/render completeness
   - [x] Stem export (selected tracks, pre/post-fader)
-  - [ ] Real-time export fallback for offline-incompatible plugins
-- [ ] Routing/mix completeness
-  - [ ] Aux sends/returns workflow
-  - [ ] Master chain metering/limiter slot polish
-- [ ] Undo/redo audit completion
-  - [ ] Full action coverage audit for recent features
-  - [ ] Deterministic grouping for complex multi-step actions
+  - [x] Real-time export fallback for offline-incompatible plugins
+- [x] Routing/mix completeness
+  - [x] Aux sends/returns workflow (first-pass helper: create aux return from selected tracks)
+  - [x] Master chain metering/limiter slot polish (export master limiter + dBTP ceiling control)
+- [x] Undo/redo audit completion
+  - [x] Full action coverage audit for recent features
+  - [x] Deterministic grouping for complex multi-step actions
     - [x] Grouped MIDI mappings import into a single undo/redo history step
     - [x] New Session now runs as a restore transaction (no history spam)
   - [x] Added automated history coverage audit script (`scripts/audit-history-coverage.sh`)
