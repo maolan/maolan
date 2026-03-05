@@ -669,6 +669,21 @@ impl Maolan {
                     return self.sync_piano_scrollbars();
                 }
             }
+            Message::PianoControllerLaneSelected(lane) => {
+                self.state.blocking_write().piano_controller_lane = lane;
+            }
+            Message::PianoControllerKindSelected(kind) => {
+                self.state.blocking_write().piano_controller_kind = kind;
+            }
+            Message::PianoVelocityKindSelected(kind) => {
+                self.state.blocking_write().piano_velocity_kind = kind;
+            }
+            Message::PianoRpnKindSelected(kind) => {
+                self.state.blocking_write().piano_rpn_kind = kind;
+            }
+            Message::PianoNrpnKindSelected(kind) => {
+                self.state.blocking_write().piano_nrpn_kind = kind;
+            }
             Message::PianoKeyPressed(note) => {
                 let track_name = self
                     .state

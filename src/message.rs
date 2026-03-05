@@ -78,6 +78,97 @@ impl SnapMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PianoControllerLane {
+    Controller,
+    Velocity,
+    Rpn,
+    Nrpn,
+}
+
+impl fmt::Display for PianoControllerLane {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Controller => write!(f, "Controller"),
+            Self::Velocity => write!(f, "Velocity"),
+            Self::Rpn => write!(f, "RPN"),
+            Self::Nrpn => write!(f, "NRPN"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PianoVelocityKind {
+    NoteVelocity,
+    ReleaseVelocity,
+}
+
+impl PianoVelocityKind {
+    pub const ALL: [PianoVelocityKind; 2] = [
+        PianoVelocityKind::NoteVelocity,
+        PianoVelocityKind::ReleaseVelocity,
+    ];
+}
+
+impl fmt::Display for PianoVelocityKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoteVelocity => write!(f, "Note Velocity"),
+            Self::ReleaseVelocity => write!(f, "Release Velocity"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PianoRpnKind {
+    PitchBendSensitivity,
+    FineTuning,
+    CoarseTuning,
+}
+
+impl PianoRpnKind {
+    pub const ALL: [PianoRpnKind; 3] = [
+        PianoRpnKind::PitchBendSensitivity,
+        PianoRpnKind::FineTuning,
+        PianoRpnKind::CoarseTuning,
+    ];
+}
+
+impl fmt::Display for PianoRpnKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PitchBendSensitivity => write!(f, "Pitch Bend Sensitivity"),
+            Self::FineTuning => write!(f, "Fine Tuning"),
+            Self::CoarseTuning => write!(f, "Coarse Tuning"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PianoNrpnKind {
+    Brightness,
+    VibratoRate,
+    VibratoDepth,
+}
+
+impl PianoNrpnKind {
+    pub const ALL: [PianoNrpnKind; 3] = [
+        PianoNrpnKind::Brightness,
+        PianoNrpnKind::VibratoRate,
+        PianoNrpnKind::VibratoDepth,
+    ];
+}
+
+impl fmt::Display for PianoNrpnKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Brightness => write!(f, "Brightness"),
+            Self::VibratoRate => write!(f, "Vibrato Rate"),
+            Self::VibratoDepth => write!(f, "Vibrato Depth"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportBitDepth {
     Int16,
     Int24,
@@ -321,6 +412,11 @@ pub enum Message {
         note_index: usize,
         delta: i8,
     },
+    PianoControllerLaneSelected(PianoControllerLane),
+    PianoControllerKindSelected(u8),
+    PianoVelocityKindSelected(PianoVelocityKind),
+    PianoRpnKindSelected(PianoRpnKind),
+    PianoNrpnKindSelected(PianoNrpnKind),
     PianoDeleteSelectedNotes,
     #[cfg(all(unix, not(target_os = "macos")))]
     RefreshLv2Plugins,

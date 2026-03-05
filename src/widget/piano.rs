@@ -1,4 +1,8 @@
-use crate::{message::Message, state::State};
+use crate::{
+    menu::{menu_dropdown, menu_item, submenu},
+    message::{Message, PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoVelocityKind},
+    state::State,
+};
 use iced::{
     Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::{
@@ -6,6 +10,10 @@ use iced::{
         canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
         column, container, pin, row, scrollable, slider, text, vertical_slider,
     },
+};
+use iced_aw::{
+    menu::{DrawPath, Item, Menu as IcedMenu},
+    menu_bar, menu_items,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -67,6 +75,88 @@ impl Piano {
     fn slider_to_zoom_x(slider_value: f32) -> f32 {
         (Self::H_ZOOM_MIN + Self::H_ZOOM_MAX - slider_value)
             .clamp(Self::H_ZOOM_MIN, Self::H_ZOOM_MAX)
+    }
+
+    fn cc_name(cc: u8) -> &'static str {
+        match cc {
+            0 => "Bank Select",
+            1 => "Modulation Wheel",
+            2 => "Breath Controller",
+            4 => "Foot Controller",
+            5 => "Portamento Time",
+            6 => "Data Entry MSB",
+            7 => "Channel Volume",
+            8 => "Balance",
+            10 => "Pan",
+            11 => "Expression Controller",
+            12 => "Effect Control 1",
+            13 => "Effect Control 2",
+            16 => "General Purpose Controller 1",
+            17 => "General Purpose Controller 2",
+            18 => "General Purpose Controller 3",
+            19 => "General Purpose Controller 4",
+            32 => "Bank Select LSB",
+            33 => "Modulation Wheel LSB",
+            34 => "Breath Controller LSB",
+            36 => "Foot Controller LSB",
+            37 => "Portamento Time LSB",
+            38 => "Data Entry LSB",
+            39 => "Channel Volume LSB",
+            40 => "Balance LSB",
+            42 => "Pan LSB",
+            43 => "Expression Controller LSB",
+            44 => "Effect Control 1 LSB",
+            45 => "Effect Control 2 LSB",
+            48 => "General Purpose Controller 1 LSB",
+            49 => "General Purpose Controller 2 LSB",
+            50 => "General Purpose Controller 3 LSB",
+            51 => "General Purpose Controller 4 LSB",
+            64 => "Sustain Pedal",
+            65 => "Portamento",
+            66 => "Sostenuto",
+            67 => "Soft Pedal",
+            68 => "Legato Footswitch",
+            69 => "Hold 2",
+            70 => "Sound Controller 1",
+            71 => "Sound Controller 2",
+            72 => "Sound Controller 3",
+            73 => "Sound Controller 4",
+            74 => "Sound Controller 5",
+            75 => "Sound Controller 6",
+            76 => "Sound Controller 7",
+            77 => "Sound Controller 8",
+            78 => "Sound Controller 9",
+            79 => "Sound Controller 10",
+            80 => "General Purpose Controller 5",
+            81 => "General Purpose Controller 6",
+            82 => "General Purpose Controller 7",
+            83 => "General Purpose Controller 8",
+            84 => "Portamento Control",
+            91 => "Effects 1 Depth",
+            92 => "Effects 2 Depth",
+            93 => "Effects 3 Depth",
+            94 => "Effects 4 Depth",
+            95 => "Effects 5 Depth",
+            96 => "Data Increment",
+            97 => "Data Decrement",
+            98 => "NRPN LSB",
+            99 => "NRPN MSB",
+            100 => "RPN LSB",
+            101 => "RPN MSB",
+            120 => "All Sound Off",
+            121 => "Reset All Controllers",
+            122 => "Local Control",
+            123 => "All Notes Off",
+            124 => "Omni Mode Off",
+            125 => "Omni Mode On",
+            126 => "Mono Mode On",
+            127 => "Poly Mode On",
+            _ => "Undefined",
+        }
+    }
+
+    fn cc_label(cc: u8) -> String {
+        format!("CC{cc:03} {}", Self::cc_name(cc))
     }
 
     pub fn view(&self, pixels_per_sample: f32, samples_per_bar: f32) -> Element<'_, Message> {
@@ -260,10 +350,82 @@ impl Piano {
         let piano_note_keys = keyboard
             .width(Length::Fixed(Self::KEYBOARD_WIDTH))
             .height(Length::Fill);
-        let controller_key = container(text("Controllers").size(11))
+        let lane_label = state.piano_controller_lane.to_string();
+        let menu_tpl = |items| IcedMenu::new(items).width(220.0).offset(15.0).spacing(5.0);
+        let controller_submenu = IcedMenu::new(
+            (0u8..=127)
+                .into_iter()
+                .map(|cc| {
+                    Item::new(menu_item(
+                        Self::cc_label(cc),
+                        Message::PianoControllerKindSelected(cc),
+                    ))
+                })
+                .collect::<Vec<_>>(),
+        )
+        .width(240.0)
+        .offset(15.0)
+        .spacing(5.0);
+        let velocity_submenu = IcedMenu::new(
+            PianoVelocityKind::ALL
+                .into_iter()
+                .map(|kind| {
+                    Item::new(menu_item(
+                        kind.to_string(),
+                        Message::PianoVelocityKindSelected(kind),
+                    ))
+                })
+                .collect::<Vec<_>>(),
+        )
+        .width(240.0)
+        .offset(15.0)
+        .spacing(5.0);
+        let rpn_submenu = IcedMenu::new(
+            PianoRpnKind::ALL
+                .into_iter()
+                .map(|kind| {
+                    Item::new(menu_item(
+                        kind.to_string(),
+                        Message::PianoRpnKindSelected(kind),
+                    ))
+                })
+                .collect::<Vec<_>>(),
+        )
+        .width(240.0)
+        .offset(15.0)
+        .spacing(5.0);
+        let nrpn_submenu = IcedMenu::new(
+            PianoNrpnKind::ALL
+                .into_iter()
+                .map(|kind| {
+                    Item::new(menu_item(
+                        kind.to_string(),
+                        Message::PianoNrpnKindSelected(kind),
+                    ))
+                })
+                .collect::<Vec<_>>(),
+        )
+        .width(240.0)
+        .offset(15.0)
+        .spacing(5.0);
+        #[rustfmt::skip]
+        let controller_picker = menu_bar!(
+            (menu_dropdown(lane_label, Message::None), {
+                menu_tpl(menu_items!(
+                    (submenu("Controller", Message::PianoControllerLaneSelected(PianoControllerLane::Controller)), controller_submenu),
+                    (submenu("Velocity", Message::PianoControllerLaneSelected(PianoControllerLane::Velocity)), velocity_submenu),
+                    (submenu("RPN", Message::PianoControllerLaneSelected(PianoControllerLane::Rpn)), rpn_submenu),
+                    (submenu("NRPN", Message::PianoControllerLaneSelected(PianoControllerLane::Nrpn)), nrpn_submenu),
+                ))
+            })
+        )
+        .draw_path(DrawPath::Backdrop)
+        .close_on_item_click_global(true)
+        .width(Length::Fill);
+        let controller_key = container(controller_picker)
             .width(Length::Fixed(Self::KEYBOARD_WIDTH))
             .height(Length::Fixed(ctrl_h))
-            .padding([4, 6])
+            .padding([4, 3])
             .style(|_theme| container::Style {
                 background: Some(Background::Color(Color {
                     r: 0.15,

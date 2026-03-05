@@ -3,6 +3,7 @@ mod connection;
 mod track;
 
 use crate::config;
+use crate::message::{PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoVelocityKind};
 
 #[cfg(target_os = "linux")]
 use alsa::{
@@ -485,6 +486,11 @@ pub struct StateData {
     pub piano_resizing_note: Option<ResizingNote>,
     pub piano_selecting_rect: Option<(Point, Point)>,
     pub piano_creating_note: Option<(Point, Point)>,
+    pub piano_controller_lane: PianoControllerLane,
+    pub piano_controller_kind: u8,
+    pub piano_velocity_kind: PianoVelocityKind,
+    pub piano_rpn_kind: PianoRpnKind,
+    pub piano_nrpn_kind: PianoNrpnKind,
     pub tempo: f32,
     pub available_templates: Vec<String>,
 }
@@ -635,6 +641,11 @@ impl Default for StateData {
             piano_resizing_note: None,
             piano_selecting_rect: None,
             piano_creating_note: None,
+            piano_controller_lane: PianoControllerLane::Controller,
+            piano_controller_kind: 1,
+            piano_velocity_kind: PianoVelocityKind::NoteVelocity,
+            piano_rpn_kind: PianoRpnKind::PitchBendSensitivity,
+            piano_nrpn_kind: PianoNrpnKind::Brightness,
             tempo: 120.0,
             available_templates: vec![],
         }

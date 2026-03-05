@@ -11,7 +11,7 @@ use iced_aw::{
 use iced_fonts::lucide::chevron_right;
 use maolan_engine as engine;
 
-fn base_button<'a>(
+pub(crate) fn base_button<'a>(
     content: impl Into<Element<'a, Message>>,
     msg: Message,
 ) -> button::Button<'a, Message> {
@@ -40,12 +40,13 @@ fn base_button<'a>(
         .on_press(msg)
 }
 
-fn menu_button(
-    label: &str,
+pub(crate) fn menu_button(
+    label: impl Into<String>,
     width: Option<Length>,
     height: Option<Length>,
     msg: Message,
-) -> Element<'_, Message, iced::Theme, iced::Renderer> {
+) -> Element<'static, Message, iced::Theme, iced::Renderer> {
+    let label = label.into();
     base_button(
         text(label)
             .height(height.unwrap_or(Length::Shrink))
@@ -57,19 +58,25 @@ fn menu_button(
     .into()
 }
 
-fn menu_dropdown(
-    label: &str,
+pub(crate) fn menu_dropdown(
+    label: impl Into<String>,
     message: Message,
-) -> Element<'_, Message, iced::Theme, iced::Renderer> {
+) -> Element<'static, Message, iced::Theme, iced::Renderer> {
     menu_button(label, Some(Length::Shrink), Some(Length::Shrink), message)
 }
 
-fn menu_item(label: &str, message: Message) -> Element<'_, Message, iced::Theme, iced::Renderer> {
+pub(crate) fn menu_item(
+    label: impl Into<String>,
+    message: Message,
+) -> Element<'static, Message, iced::Theme, iced::Renderer> {
     menu_button(label, Some(Length::Fill), Some(Length::Shrink), message)
 }
 
-#[allow(dead_code)]
-fn submenu(label: &str, msg: Message) -> Element<'_, Message, iced::Theme, iced::Renderer> {
+pub(crate) fn submenu(
+    label: impl Into<String>,
+    msg: Message,
+) -> Element<'static, Message, iced::Theme, iced::Renderer> {
+    let label = label.into();
     base_button(
         row![
             text(label)
