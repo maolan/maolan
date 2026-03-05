@@ -57,6 +57,10 @@ impl Maolan {
         }
     }
 
+    fn key_has_explicit_gesture_lifecycle(key: AutomationWriteKey) -> bool {
+        matches!(key, AutomationWriteKey::Clap { .. })
+    }
+
     fn record_automation_point(
         &mut self,
         track_name: &str,
@@ -135,13 +139,10 @@ impl Maolan {
                             updated_at: Instant::now(),
                         },
                     );
-                let mouse_left_down = self.state.blocking_read().mouse_left_down;
-                if mouse_left_down {
-                    self.touch_active_keys
-                        .entry(track_name.to_string())
-                        .or_default()
-                        .insert(key);
-                }
+                self.touch_active_keys
+                    .entry(track_name.to_string())
+                    .or_default()
+                    .insert(key);
             }
             TrackAutomationMode::Latch => {
                 self.latch_automation_overrides
@@ -439,6 +440,21 @@ impl Maolan {
         tracks: &[Track],
     ) -> Vec<Action> {
         let now = Instant::now();
+        for (track_name, active_keys) in self.touch_active_keys.iter_mut() {
+            let values = self.touch_automation_overrides.get(track_name);
+            active_keys.retain(|key| {
+                if Self::key_has_explicit_gesture_lifecycle(*key) {
+                    true
+                } else {
+                    values
+                        .and_then(|map| map.get(key))
+                        .is_some_and(|entry| {
+                            now.duration_since(entry.updated_at) <= Duration::from_millis(220)
+                        })
+                }
+            });
+        }
+        self.touch_active_keys.retain(|_, keys| !keys.is_empty());
         for (track_name, values) in self.touch_automation_overrides.iter_mut() {
             let active = self.touch_active_keys.get(track_name);
             values.retain(|key, entry| {
