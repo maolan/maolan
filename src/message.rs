@@ -523,6 +523,7 @@ pub enum Message {
     SaveFolderSelected(Option<PathBuf>),
     OpenFolderSelected(Option<PathBuf>),
     OpenExporter,
+    SessionDiagnosticsRequest,
     ExportSampleRateSelected(u32),
     ExportBitDepthSelected(ExportBitDepth),
     ExportNormalizeToggled(bool),

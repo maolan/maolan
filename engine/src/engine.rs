@@ -4111,10 +4111,99 @@ impl Engine {
                     return;
                 }
             }
+            Action::RequestSessionDiagnostics => {
+                let (
+                    track_count,
+                    frozen_track_count,
+                    audio_clip_count,
+                    midi_clip_count,
+                    lv2_instance_count,
+                    vst3_instance_count,
+                    clap_instance_count,
+                ) = {
+                    let tracks = &self.state.lock().tracks;
+                    let mut track_count = 0usize;
+                    let mut frozen_track_count = 0usize;
+                    let mut audio_clip_count = 0usize;
+                    let mut midi_clip_count = 0usize;
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    let mut lv2_instance_count = 0usize;
+                    let mut vst3_instance_count = 0usize;
+                    let mut clap_instance_count = 0usize;
+                    for track in tracks.values() {
+                        let t = track.lock();
+                        track_count += 1;
+                        if t.frozen {
+                            frozen_track_count += 1;
+                        }
+                        audio_clip_count += t.audio.clips.len();
+                        midi_clip_count += t.midi.clips.len();
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        {
+                            lv2_instance_count += t.lv2_processors.len();
+                        }
+                        vst3_instance_count += t.vst3_processors.len();
+                        clap_instance_count += t.clap_plugins.len();
+                    }
+                    (
+                        track_count,
+                        frozen_track_count,
+                        audio_clip_count,
+                        midi_clip_count,
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        lv2_instance_count,
+                        vst3_instance_count,
+                        clap_instance_count,
+                    )
+                };
+                let pending_hw_midi_events = self.pending_hw_midi_events.len()
+                    + self
+                        .pending_hw_midi_events_by_device
+                        .values()
+                        .map(std::vec::Vec::len)
+                        .sum::<usize>();
+                let sample_rate_hz = if let Some(hw) = &self.hw_driver {
+                    hw.lock().sample_rate() as usize
+                } else {
+                    #[cfg(unix)]
+                    {
+                        self.jack_runtime
+                            .as_ref()
+                            .map(|j| j.lock().sample_rate as usize)
+                            .unwrap_or(0)
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        0
+                    }
+                };
+                let cycle_samples = self.current_cycle_samples();
+                self.notify_clients(Ok(Action::SessionDiagnosticsReport {
+                    track_count,
+                    frozen_track_count,
+                    audio_clip_count,
+                    midi_clip_count,
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    lv2_instance_count,
+                    vst3_instance_count,
+                    clap_instance_count,
+                    pending_requests: self.pending_requests.len(),
+                    workers_total: self.workers.len(),
+                    workers_ready: self.ready_workers.len(),
+                    pending_hw_midi_events,
+                    playing: self.playing,
+                    transport_sample: self.transport_sample,
+                    tempo_bpm: self.tempo_bpm,
+                    sample_rate_hz,
+                    cycle_samples,
+                }))
+                .await;
+            }
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLv2PluginControls { .. } => {}
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLv2Midnam { .. } => {}
+            Action::SessionDiagnosticsReport { .. } => {}
             Action::HWInfo { .. } => {}
             Action::Undo => {} // Already handled at the beginning
             Action::Redo => {} // Already handled at the beginning

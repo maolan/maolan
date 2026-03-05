@@ -143,6 +143,7 @@ impl Menu {
                 menu_tpl(menu_items!(
                     (menu_item("Undo (Ctrl+Z)", Message::Undo)),
                     (menu_item("Redo (Ctrl+Shift+Z)", Message::Redo)),
+                    (menu_item("Session Diagnostics", Message::SessionDiagnosticsRequest)),
                 ))
             }),
             (menu_dropdown("Track", Message::None), {

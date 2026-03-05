@@ -4522,6 +4522,61 @@ impl Maolan {
                         }
                     }
                 }
+                Action::SessionDiagnosticsReport {
+                    track_count,
+                    frozen_track_count,
+                    audio_clip_count,
+                    midi_clip_count,
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    lv2_instance_count,
+                    vst3_instance_count,
+                    clap_instance_count,
+                    pending_requests,
+                    workers_total,
+                    workers_ready,
+                    pending_hw_midi_events,
+                    playing,
+                    transport_sample,
+                    tempo_bpm,
+                    sample_rate_hz,
+                    cycle_samples,
+                } => {
+                    let plugin_summary = format!(
+                        "VST3={} CLAP={}{}",
+                        vst3_instance_count,
+                        clap_instance_count,
+                        {
+                            #[cfg(all(unix, not(target_os = "macos")))]
+                            {
+                                format!(" LV2={}", lv2_instance_count)
+                            }
+                            #[cfg(not(all(unix, not(target_os = "macos"))))]
+                            {
+                                String::new()
+                            }
+                        }
+                    );
+                    let report = format!(
+                        "Session Diagnostics: tracks={} frozen={} audio_clips={} midi_clips={} | plugins: {} | engine: playing={} transport={} tempo={:.2} BPM | audio: rate={}Hz cycle={} | workers: ready={}/{} pending_req={} pending_midi_ev={}",
+                        track_count,
+                        frozen_track_count,
+                        audio_clip_count,
+                        midi_clip_count,
+                        plugin_summary,
+                        playing,
+                        transport_sample,
+                        tempo_bpm,
+                        sample_rate_hz,
+                        cycle_samples,
+                        workers_ready,
+                        workers_total,
+                        pending_requests,
+                        pending_hw_midi_events
+                    );
+                    let mut state = self.state.blocking_write();
+                    state.message = report.clone();
+                    state.diagnostics_report = Some(report);
+                }
                 Action::TrackLevel(name, level) => {
                     let mut state = self.state.blocking_write();
                     if name == "hw:out" {
@@ -8339,6 +8394,9 @@ impl Maolan {
                     .unwrap_or(48_000);
                 self.export_sample_rate_hz = nearest_rate;
                 self.modal = Some(crate::message::Show::ExportSettings);
+            }
+            Message::SessionDiagnosticsRequest => {
+                return self.send(Action::RequestSessionDiagnostics);
             }
             Message::ExportSampleRateSelected(rate) => {
                 self.export_sample_rate_hz = rate;

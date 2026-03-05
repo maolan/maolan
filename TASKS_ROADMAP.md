@@ -79,7 +79,10 @@ Last updated: 2026-03-05
   - [x] First-pass MIDI CC learn for track volume/balance from hardware input
   - [x] Per-track learn arm/clear controls in track context menu
   - [x] Session persistence + restore for learned mappings
-- [ ] Session diagnostics/performance tooling
+- [x] Session diagnostics/performance tooling
+  - [x] Engine diagnostics snapshot action (tracks/clips/plugins/workers/MIDI queue/transport/audio cycle)
+  - [x] UI trigger via menu (`Edit -> Session Diagnostics`)
+  - [x] Diagnostics report surfaced in status area
 - [ ] Optional MIDI 2.0 investigation track (separate from core roadmap)
 
 ## Notes

@@ -261,6 +261,9 @@ impl Maolan {
                             .padding(8),
                         );
                     }
+                    if let Some(diag) = state.diagnostics_report.as_ref() {
+                        content = content.push(text(format!("Diagnostics: {}", diag)));
+                    }
                     content = content.push(text(format!("Last message: {}", state.message)));
                     container(content)
                         .width(Length::Fill)
