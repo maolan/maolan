@@ -58,7 +58,7 @@ use crate::workers::wasapi_worker::HwWorker;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
-    history::{History, UndoEntry, create_inverse_action, should_record},
+    history::{History, UndoEntry, create_inverse_actions, should_record},
     hw::{config, traits::HwDevice},
     kind::Kind,
     message::{Action, HwMidiEvent, Message},
@@ -151,6 +151,7 @@ pub struct Engine {
     last_hw_out_meter_publish: Option<Instant>,
     last_track_meter_publish: Option<Instant>,
     history: History,
+    history_group: Option<UndoEntry>,
     history_suspended: bool,
 }
 
@@ -333,6 +334,7 @@ impl Engine {
             last_hw_out_meter_publish: None,
             last_track_meter_publish: None,
             history: History::default(),
+            history_group: None,
             history_suspended: false,
         }
     }
@@ -1227,35 +1229,78 @@ impl Engine {
     }
 
     async fn handle_request(&mut self, a: Action) {
-        // Handle undo/redo specially - get the action and process it
-        let action_to_process = match &a {
+        match a {
             Action::Undo => {
-                if let Some(inverse_action) = self.history.undo() {
-                    inverse_action
-                } else {
-                    // No action to undo, just return
+                let Some(actions) = self.history.undo() else {
                     return;
+                };
+                let was_suspended = self.history_suspended;
+                self.history_suspended = true;
+                for action in actions {
+                    self.handle_request_inner(action, false).await;
                 }
+                self.history_suspended = was_suspended;
             }
             Action::Redo => {
-                if let Some(forward_action) = self.history.redo() {
-                    forward_action
-                } else {
-                    // No action to redo, just return
+                let Some(actions) = self.history.redo() else {
                     return;
+                };
+                let was_suspended = self.history_suspended;
+                self.history_suspended = true;
+                for action in actions {
+                    self.handle_request_inner(action, false).await;
                 }
+                self.history_suspended = was_suspended;
             }
-            _ => a.clone(),
-        };
+            other => {
+                self.handle_request_inner(other, true).await;
+            }
+        }
+    }
 
-        // Record action in history before processing (capture current state)
-        // Skip recording for undo/redo actions themselves
-        let inverse_action = if should_record(&action_to_process)
+    async fn handle_request_inner(&mut self, action_to_process: Action, record_history: bool) {
+        let a = action_to_process.clone();
+        let mut extra_inverse_actions: Vec<Action> = Vec::new();
+        if record_history
             && !self.history_suspended
-            && !matches!(&a, Action::Undo | Action::Redo)
+            && let Action::RemoveTrack(ref track_name) = action_to_process
+        {
+            for route in self
+                .midi_hw_in_routes
+                .iter()
+                .filter(|route| &route.to_track == track_name)
+            {
+                extra_inverse_actions.push(Action::Connect {
+                    from_track: format!("midi:hw:in:{}", route.device),
+                    from_port: 0,
+                    to_track: route.to_track.clone(),
+                    to_port: route.to_port,
+                    kind: Kind::MIDI,
+                });
+            }
+            for route in self
+                .midi_hw_out_routes
+                .iter()
+                .filter(|route| &route.from_track == track_name)
+            {
+                extra_inverse_actions.push(Action::Connect {
+                    from_track: route.from_track.clone(),
+                    from_port: route.from_port,
+                    to_track: format!("midi:hw:out:{}", route.device),
+                    to_port: 0,
+                    kind: Kind::MIDI,
+                });
+            }
+        }
+        let inverse_actions = if record_history
+            && should_record(&action_to_process)
+            && !self.history_suspended
         {
             let state = self.state.lock();
-            create_inverse_action(&action_to_process, &state)
+            create_inverse_actions(&action_to_process, &state).map(|mut actions| {
+                actions.extend(extra_inverse_actions);
+                actions
+            })
         } else {
             None
         };
@@ -1335,6 +1380,22 @@ impl Engine {
                         "Recording enabled but session path is not set".to_string()
                     ))
                     .await;
+                }
+            }
+            Action::BeginHistoryGroup => {
+                if self.history_group.is_none() {
+                    self.history_group = Some(UndoEntry {
+                        forward_actions: vec![],
+                        inverse_actions: vec![],
+                    });
+                }
+            }
+            Action::EndHistoryGroup => {
+                if let Some(group) = self.history_group.take()
+                    && !group.forward_actions.is_empty()
+                    && !group.inverse_actions.is_empty()
+                {
+                    self.history.record(group);
                 }
             }
             Action::SetSessionPath(ref path) => {
@@ -3073,11 +3134,16 @@ impl Engine {
         }
 
         // Record action in history after successful processing
-        if let Some(inverse) = inverse_action {
-            self.history.record(UndoEntry {
-                forward_action: action_to_process.clone(),
-                inverse_action: inverse,
-            });
+        if let Some(inverse) = inverse_actions {
+            if let Some(group) = self.history_group.as_mut() {
+                group.forward_actions.push(action_to_process.clone());
+                group.inverse_actions.splice(0..0, inverse);
+            } else {
+                self.history.record(UndoEntry {
+                    forward_actions: vec![action_to_process.clone()],
+                    inverse_actions: inverse,
+                });
+            }
         }
 
         // Notify clients with the actual action that was processed
@@ -3120,6 +3186,8 @@ impl Engine {
                     | Action::SetPunchRange(_)
                     | Action::SetClipPlaybackEnabled(_)
                     | Action::SetRecordEnabled(_)
+                    | Action::BeginHistoryGroup
+                    | Action::EndHistoryGroup
                     | Action::SetSessionPath(_)
                     | Action::ClearHistory
                     | Action::BeginSessionRestore

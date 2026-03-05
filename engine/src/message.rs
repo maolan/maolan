@@ -144,6 +144,8 @@ pub enum Action {
     SetClipPlaybackEnabled(bool),
     SetRecordEnabled(bool),
     SetSessionPath(String),
+    BeginHistoryGroup,
+    EndHistoryGroup,
     ClearHistory,
     BeginSessionRestore,
     EndSessionRestore,

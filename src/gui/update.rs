@@ -2335,11 +2335,12 @@ impl Maolan {
                 }
             }
             Message::RemoveSelectedTracks => {
-                let mut tasks = vec![];
+                let mut actions = vec![Action::BeginHistoryGroup];
                 for name in &self.state.blocking_read().selected {
-                    tasks.push(self.send(Action::RemoveTrack(name.clone())));
+                    actions.push(Action::RemoveTrack(name.clone()));
                 }
-                return Task::batch(tasks);
+                actions.push(Action::EndHistoryGroup);
+                return Self::restore_actions_task(actions);
             }
             Message::ConnectionViewSelectTrack(ref idx) => {
                 let ctrl = self.state.blocking_read().ctrl;
@@ -2774,14 +2775,15 @@ impl Maolan {
                 let state = self.state.blocking_read();
                 match &state.connection_view_selection {
                     ConnectionViewSelection::Tracks(set) => {
-                        let mut tasks = vec![];
+                        let mut actions = vec![Action::BeginHistoryGroup];
                         for name in set {
-                            tasks.push(self.send(Action::RemoveTrack(name.clone())));
+                            actions.push(Action::RemoveTrack(name.clone()));
                         }
                         drop(state);
                         self.state.blocking_write().connection_view_selection =
                             ConnectionViewSelection::None;
-                        return Task::batch(tasks);
+                        actions.push(Action::EndHistoryGroup);
+                        return Self::restore_actions_task(actions);
                     }
                     ConnectionViewSelection::Connections(set) => {
                         let actions = connections::selection::track_disconnect_actions(&state, set);
@@ -2840,22 +2842,31 @@ impl Maolan {
 
                     self.state.blocking_write().selected_clips.clear();
 
-                    let mut tasks = Vec::new();
-                    for (track_name, clip_indices) in audio_by_track {
-                        tasks.push(self.send(Action::RemoveClip {
-                            track_name,
-                            kind: Kind::Audio,
-                            clip_indices,
-                        }));
+                    let mut actions = vec![Action::BeginHistoryGroup];
+                    for (track_name, mut clip_indices) in audio_by_track {
+                        clip_indices.sort_unstable_by(|a, b| b.cmp(a));
+                        clip_indices.dedup();
+                        for clip_index in clip_indices {
+                            actions.push(Action::RemoveClip {
+                                track_name: track_name.clone(),
+                                kind: Kind::Audio,
+                                clip_indices: vec![clip_index],
+                            });
+                        }
                     }
-                    for (track_name, clip_indices) in midi_by_track {
-                        tasks.push(self.send(Action::RemoveClip {
-                            track_name,
-                            kind: Kind::MIDI,
-                            clip_indices,
-                        }));
+                    for (track_name, mut clip_indices) in midi_by_track {
+                        clip_indices.sort_unstable_by(|a, b| b.cmp(a));
+                        clip_indices.dedup();
+                        for clip_index in clip_indices {
+                            actions.push(Action::RemoveClip {
+                                track_name: track_name.clone(),
+                                kind: Kind::MIDI,
+                                clip_indices: vec![clip_index],
+                            });
+                        }
                     }
-                    return Task::batch(tasks);
+                    actions.push(Action::EndHistoryGroup);
+                    return Self::restore_actions_task(actions);
                 }
                 let view = self.state.blocking_read().view.clone();
                 match view {

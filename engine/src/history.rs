@@ -1,14 +1,17 @@
 use crate::{
+    audio::io::AudioIO,
     kind::Kind,
     message::{Action, ClipMoveFrom, ClipMoveTo},
+    midi::io::MIDIIO,
     state::State,
 };
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct UndoEntry {
-    pub forward_action: Action,
-    pub inverse_action: Action,
+    pub forward_actions: Vec<Action>,
+    pub inverse_actions: Vec<Action>,
 }
 
 pub struct History {
@@ -36,17 +39,17 @@ impl History {
         }
     }
 
-    pub fn undo(&mut self) -> Option<Action> {
+    pub fn undo(&mut self) -> Option<Vec<Action>> {
         self.undo_stack.pop_back().map(|entry| {
-            let inverse = entry.inverse_action.clone();
+            let inverse = entry.inverse_actions.clone();
             self.redo_stack.push_back(entry);
             inverse
         })
     }
 
-    pub fn redo(&mut self) -> Option<Action> {
+    pub fn redo(&mut self) -> Option<Vec<Action>> {
         self.redo_stack.pop_back().map(|entry| {
-            let forward = entry.forward_action.clone();
+            let forward = entry.forward_actions.clone();
             self.undo_stack.push_back(entry);
             forward
         })
@@ -85,13 +88,18 @@ pub fn should_record(action: &Action) -> bool {
             | Action::SetClipFade { .. }
             | Action::Connect { .. }
             | Action::Disconnect { .. }
+            | Action::TrackConnectVst3Audio { .. }
+            | Action::TrackDisconnectVst3Audio { .. }
+            | Action::TrackConnectPluginAudio { .. }
+            | Action::TrackDisconnectPluginAudio { .. }
+            | Action::TrackConnectPluginMidi { .. }
+            | Action::TrackDisconnectPluginMidi { .. }
             | Action::TrackLoadClapPlugin { .. }
             | Action::TrackUnloadClapPlugin { .. }
             | Action::TrackLoadVst3Plugin { .. }
             | Action::TrackUnloadVst3PluginInstance { .. }
             | Action::TrackSetClapParameter { .. }
             | Action::TrackSetVst3Parameter { .. }
-            | Action::TrackClearDefaultPassthrough { .. }
             | Action::ModifyMidiNotes { .. }
             | Action::DeleteMidiNotes { .. }
             | Action::InsertMidiNotes { .. }
@@ -232,6 +240,21 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
         }
 
         Action::ClipMove { kind, from, to, copy } => {
+            let (original_start, original_input_channel) = {
+                let source_track = state.tracks.get(&from.track_name)?;
+                let source_lock = source_track.lock();
+                match kind {
+                    Kind::Audio => {
+                        let clip = source_lock.audio.clips.get(from.clip_index)?;
+                        (clip.start, clip.input_channel)
+                    }
+                    Kind::MIDI => {
+                        let clip = source_lock.midi.clips.get(from.clip_index)?;
+                        (clip.start, clip.input_channel)
+                    }
+                }
+            };
+
             if *copy {
                 // If it was a copy, we need to remove the newly created clip
                 let dest_track = state.tracks.get(&to.track_name)?;
@@ -246,24 +269,33 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                     clip_indices: vec![clip_idx],
                 })
             } else {
-                // If it was a move, reverse the move
-                let track = state.tracks.get(&from.track_name)?;
-                let track_lock = track.lock();
-                let (original_start, original_input_channel) = match kind {
+                // If it was a move, reverse the move from the destination track.
+                let dest_track = state.tracks.get(&to.track_name)?;
+                let dest_lock = dest_track.lock();
+                let dest_len = match kind {
                     Kind::Audio => {
-                        let clip = track_lock.audio.clips.get(from.clip_index)?;
-                        (clip.start, clip.input_channel)
+                        if dest_lock.audio.clips.is_empty() {
+                            return None;
+                        }
+                        dest_lock.audio.clips.len()
                     }
                     Kind::MIDI => {
-                        let clip = track_lock.midi.clips.get(from.clip_index)?;
-                        (clip.start, clip.input_channel)
+                        if dest_lock.midi.clips.is_empty() {
+                            return None;
+                        }
+                        dest_lock.midi.clips.len()
                     }
+                };
+                let moved_clip_index = if from.track_name == to.track_name {
+                    dest_len.saturating_sub(1)
+                } else {
+                    dest_len
                 };
                 Some(Action::ClipMove {
                     kind: *kind,
                     from: ClipMoveFrom {
                         track_name: to.track_name.clone(),
-                        clip_index: 0, // Will need to be adjusted
+                        clip_index: moved_clip_index,
                     },
                     to: ClipMoveTo {
                         track_name: from.track_name.clone(),
@@ -337,6 +369,84 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             to_port: *to_port,
             kind: *kind,
         }),
+        Action::TrackConnectVst3Audio {
+            track_name,
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+        } => Some(Action::TrackDisconnectVst3Audio {
+            track_name: track_name.clone(),
+            from_node: from_node.clone(),
+            from_port: *from_port,
+            to_node: to_node.clone(),
+            to_port: *to_port,
+        }),
+        Action::TrackDisconnectVst3Audio {
+            track_name,
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+        } => Some(Action::TrackConnectVst3Audio {
+            track_name: track_name.clone(),
+            from_node: from_node.clone(),
+            from_port: *from_port,
+            to_node: to_node.clone(),
+            to_port: *to_port,
+        }),
+        Action::TrackConnectPluginAudio {
+            track_name,
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+        } => Some(Action::TrackDisconnectPluginAudio {
+            track_name: track_name.clone(),
+            from_node: from_node.clone(),
+            from_port: *from_port,
+            to_node: to_node.clone(),
+            to_port: *to_port,
+        }),
+        Action::TrackDisconnectPluginAudio {
+            track_name,
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+        } => Some(Action::TrackConnectPluginAudio {
+            track_name: track_name.clone(),
+            from_node: from_node.clone(),
+            from_port: *from_port,
+            to_node: to_node.clone(),
+            to_port: *to_port,
+        }),
+        Action::TrackConnectPluginMidi {
+            track_name,
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+        } => Some(Action::TrackDisconnectPluginMidi {
+            track_name: track_name.clone(),
+            from_node: from_node.clone(),
+            from_port: *from_port,
+            to_node: to_node.clone(),
+            to_port: *to_port,
+        }),
+        Action::TrackDisconnectPluginMidi {
+            track_name,
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+        } => Some(Action::TrackConnectPluginMidi {
+            track_name: track_name.clone(),
+            from_node: from_node.clone(),
+            from_port: *from_port,
+            to_node: to_node.clone(),
+            to_port: *to_port,
+        }),
 
         Action::TrackLoadClapPlugin {
             track_name,
@@ -353,7 +463,61 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             track_name: track_name.clone(),
             plugin_path: plugin_path.clone(),
         }),
-
+        Action::TrackLoadVst3Plugin {
+            track_name,
+            plugin_path: _,
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track = track.lock();
+            Some(Action::TrackUnloadVst3PluginInstance {
+                track_name: track_name.clone(),
+                instance_id: track.next_plugin_instance_id,
+            })
+        }
+        Action::TrackUnloadVst3PluginInstance {
+            track_name,
+            instance_id,
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track = track.lock();
+            let plugin_path = track
+                .loaded_vst3_instances()
+                .into_iter()
+                .find(|(id, _, _)| *id == *instance_id)
+                .map(|(_, path, _)| path)?;
+            Some(Action::TrackLoadVst3Plugin {
+                track_name: track_name.clone(),
+                plugin_path,
+            })
+        }
+        Action::TrackSetClapParameter {
+            track_name,
+            instance_id,
+            ..
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track = track.lock();
+            let snapshot = track.clap_snapshot_state(*instance_id).ok()?;
+            Some(Action::TrackClapRestoreState {
+                track_name: track_name.clone(),
+                instance_id: *instance_id,
+                state: snapshot,
+            })
+        }
+        Action::TrackSetVst3Parameter {
+            track_name,
+            instance_id,
+            ..
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track = track.lock();
+            let snapshot = track.vst3_snapshot_state(*instance_id).ok()?;
+            Some(Action::TrackVst3RestoreState {
+                track_name: track_name.clone(),
+                instance_id: *instance_id,
+                state: snapshot,
+            })
+        }
         Action::ModifyMidiNotes {
             track_name,
             clip_index,
@@ -395,11 +559,191 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
         }
 
         // These are more complex and would need additional state tracking
-        Action::TrackLoadVst3Plugin { .. } => None,
-        Action::TrackUnloadVst3PluginInstance { .. } => None,
-        Action::TrackSetClapParameter { .. } => None,
-        Action::TrackSetVst3Parameter { .. } => None,
-
         _ => None,
     }
+}
+
+pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Action>> {
+    if let Action::RemoveTrack(track_name) = action {
+        let mut actions = Vec::new();
+        {
+            let track = state.tracks.get(track_name)?;
+            let track = track.lock();
+            actions.push(Action::AddTrack {
+                name: track.name.clone(),
+                audio_ins: track.audio.ins.len(),
+                midi_ins: track.midi.ins.len(),
+                audio_outs: track.audio.outs.len(),
+                midi_outs: track.midi.outs.len(),
+            });
+
+            if track.level != 0.0 {
+                actions.push(Action::TrackLevel(track.name.clone(), track.level));
+            }
+            if track.balance != 0.0 {
+                actions.push(Action::TrackBalance(track.name.clone(), track.balance));
+            }
+            if track.armed {
+                actions.push(Action::TrackToggleArm(track.name.clone()));
+            }
+            if track.muted {
+                actions.push(Action::TrackToggleMute(track.name.clone()));
+            }
+            if track.soloed {
+                actions.push(Action::TrackToggleSolo(track.name.clone()));
+            }
+            if track.input_monitor {
+                actions.push(Action::TrackToggleInputMonitor(track.name.clone()));
+            }
+            if !track.disk_monitor {
+                actions.push(Action::TrackToggleDiskMonitor(track.name.clone()));
+            }
+
+            for clip in &track.audio.clips {
+                let length = clip.end.saturating_sub(clip.start).max(1);
+                actions.push(Action::AddClip {
+                    name: clip.name.clone(),
+                    track_name: track.name.clone(),
+                    start: clip.start,
+                    length,
+                    offset: clip.offset,
+                    input_channel: clip.input_channel,
+                    kind: Kind::Audio,
+                    fade_enabled: clip.fade_enabled,
+                    fade_in_samples: clip.fade_in_samples,
+                    fade_out_samples: clip.fade_out_samples,
+                });
+            }
+            for clip in &track.midi.clips {
+                let length = clip.end.saturating_sub(clip.start).max(1);
+                actions.push(Action::AddClip {
+                    name: clip.name.clone(),
+                    track_name: track.name.clone(),
+                    start: clip.start,
+                    length,
+                    offset: clip.offset,
+                    input_channel: clip.input_channel,
+                    kind: Kind::MIDI,
+                    fade_enabled: true,
+                    fade_in_samples: 240,
+                    fade_out_samples: 240,
+                });
+            }
+        }
+
+        let mut seen_audio = std::collections::HashSet::<(String, usize, String, usize)>::new();
+        let mut seen_midi = std::collections::HashSet::<(String, usize, String, usize)>::new();
+
+        for (from_name, from_track_handle) in &state.tracks {
+            let from_track = from_track_handle.lock();
+            for (from_port, out) in from_track.audio.outs.iter().enumerate() {
+                let conns: Vec<Arc<AudioIO>> = out.connections.lock().iter().cloned().collect();
+                for conn in conns {
+                    for (to_name, to_track_handle) in &state.tracks {
+                        let to_track = to_track_handle.lock();
+                        for (to_port, to_in) in to_track.audio.ins.iter().enumerate() {
+                            if Arc::ptr_eq(&conn, to_in)
+                                && (from_name == track_name || to_name == track_name)
+                                && seen_audio.insert((
+                                    from_name.clone(),
+                                    from_port,
+                                    to_name.clone(),
+                                    to_port,
+                                ))
+                            {
+                                actions.push(Action::Connect {
+                                    from_track: from_name.clone(),
+                                    from_port,
+                                    to_track: to_name.clone(),
+                                    to_port,
+                                    kind: Kind::Audio,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            for (from_port, out) in from_track.midi.outs.iter().enumerate() {
+                let conns: Vec<Arc<crate::mutex::UnsafeMutex<Box<MIDIIO>>>> =
+                    out.lock().connections.iter().cloned().collect();
+                for conn in conns {
+                    for (to_name, to_track_handle) in &state.tracks {
+                        let to_track = to_track_handle.lock();
+                        for (to_port, to_in) in to_track.midi.ins.iter().enumerate() {
+                            if Arc::ptr_eq(&conn, to_in)
+                                && (from_name == track_name || to_name == track_name)
+                                && seen_midi.insert((
+                                    from_name.clone(),
+                                    from_port,
+                                    to_name.clone(),
+                                    to_port,
+                                ))
+                            {
+                                actions.push(Action::Connect {
+                                    from_track: from_name.clone(),
+                                    from_port,
+                                    to_track: to_name.clone(),
+                                    to_port,
+                                    kind: Kind::MIDI,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        for (to_name, to_track_handle) in &state.tracks {
+            if to_name != track_name {
+                continue;
+            }
+            let to_track = to_track_handle.lock();
+            for (to_port, to_in) in to_track.audio.ins.iter().enumerate() {
+                for (from_name, from_track_handle) in &state.tracks {
+                    let from_track = from_track_handle.lock();
+                    for (from_port, out) in from_track.audio.outs.iter().enumerate() {
+                        let conns: Vec<Arc<AudioIO>> = out.connections.lock().iter().cloned().collect();
+                        if conns.iter().any(|conn| Arc::ptr_eq(conn, to_in))
+                            && seen_audio
+                                .insert((from_name.clone(), from_port, to_name.clone(), to_port))
+                        {
+                            actions.push(Action::Connect {
+                                from_track: from_name.clone(),
+                                from_port,
+                                to_track: to_name.clone(),
+                                to_port,
+                                kind: Kind::Audio,
+                            });
+                        }
+                    }
+                }
+            }
+            for (to_port, to_in) in to_track.midi.ins.iter().enumerate() {
+                for (from_name, from_track_handle) in &state.tracks {
+                    let from_track = from_track_handle.lock();
+                    for (from_port, out) in from_track.midi.outs.iter().enumerate() {
+                        let conns: Vec<Arc<crate::mutex::UnsafeMutex<Box<MIDIIO>>>> =
+                            out.lock().connections.iter().cloned().collect();
+                        if conns.iter().any(|conn| Arc::ptr_eq(conn, to_in))
+                            && seen_midi
+                                .insert((from_name.clone(), from_port, to_name.clone(), to_port))
+                        {
+                            actions.push(Action::Connect {
+                                from_track: from_name.clone(),
+                                from_port,
+                                to_track: to_name.clone(),
+                                to_port,
+                                kind: Kind::MIDI,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        return Some(actions);
+    }
+
+    create_inverse_action(action, state).map(|a| vec![a])
 }
