@@ -368,6 +368,19 @@ pub struct PianoSysExPoint {
 }
 
 #[derive(Debug, Clone)]
+pub struct TempoPoint {
+    pub sample: usize,
+    pub bpm: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct TimeSignaturePoint {
+    pub sample: usize,
+    pub numerator: u8,
+    pub denominator: u8,
+}
+
+#[derive(Debug, Clone)]
 pub struct PianoData {
     pub track_idx: String,
     pub clip_length_samples: usize,
@@ -511,6 +524,8 @@ pub struct StateData {
     pub tempo: f32,
     pub time_signature_num: u8,
     pub time_signature_denom: u8,
+    pub tempo_points: Vec<TempoPoint>,
+    pub time_signature_points: Vec<TimeSignaturePoint>,
     pub available_templates: Vec<String>,
 }
 
@@ -676,6 +691,15 @@ impl Default for StateData {
             tempo: 120.0,
             time_signature_num: 4,
             time_signature_denom: 4,
+            tempo_points: vec![TempoPoint {
+                sample: 0,
+                bpm: 120.0,
+            }],
+            time_signature_points: vec![TimeSignaturePoint {
+                sample: 0,
+                numerator: 4,
+                denominator: 4,
+            }],
             available_templates: vec![],
         }
     }

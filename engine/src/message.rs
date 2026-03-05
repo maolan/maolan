@@ -155,6 +155,11 @@ pub enum Action {
     SetLoopRange(Option<(usize, usize)>),
     SetPunchEnabled(bool),
     SetPunchRange(Option<(usize, usize)>),
+    SetTempo(f64),
+    SetTimeSignature {
+        numerator: u16,
+        denominator: u16,
+    },
     SetClipPlaybackEnabled(bool),
     SetRecordEnabled(bool),
     SetSessionPath(String),

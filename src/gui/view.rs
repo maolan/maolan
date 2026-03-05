@@ -7,7 +7,7 @@ use crate::{
 };
 use iced::{
     Length,
-    widget::{button, column, container, progress_bar, row, text},
+    widget::{button, column, container, progress_bar, row, text, text_input},
 };
 
 impl Maolan {
@@ -51,6 +51,13 @@ impl Maolan {
                             active_clip_target_track: self.clip_preview_target_track.as_deref(),
                             recording_preview_bounds: self.recording_preview_bounds(),
                             recording_preview_peaks: Some(self.recording_preview_peaks.clone()),
+                            shift_pressed: state.shift,
+                            selected_tempo_points: self.selected_tempo_points.iter().copied().collect(),
+                            selected_time_signature_points: self
+                                .selected_time_signature_points
+                                .iter()
+                                .copied()
+                                .collect(),
                         }),
                         View::Connections => self.connections.view(),
                         #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
@@ -71,6 +78,13 @@ impl Maolan {
                             active_clip_target_track: None,
                             recording_preview_bounds: None,
                             recording_preview_peaks: None,
+                            shift_pressed: state.shift,
+                            selected_tempo_points: self.selected_tempo_points.iter().copied().collect(),
+                            selected_time_signature_points: self
+                                .selected_time_signature_points
+                                .iter()
+                                .copied()
+                                .collect(),
                         }),
                         #[cfg(target_os = "macos")]
                         View::TrackPlugins => self.connections.view(),
@@ -93,6 +107,9 @@ impl Maolan {
                             has_punch_range: self.punch_range_samples.is_some(),
                             punch_enabled: self.punch_enabled,
                             snap_mode: self.snap_mode,
+                            tempo_input: self.tempo_input.clone(),
+                            tsig_num_input: self.time_signature_num_input.clone(),
+                            tsig_denom_input: self.time_signature_denom_input.clone(),
                         })
                     ];
                     if matches!(state.view, View::TrackPlugins) {
@@ -107,6 +124,73 @@ impl Maolan {
                             .padding(8),
                         );
                     }
+                    let has_timing_selection = !self.selected_tempo_points.is_empty()
+                        || !self.selected_time_signature_points.is_empty();
+                    let view = if matches!(state.view, View::Workspace | View::Piano) && has_timing_selection {
+                        let lane_label = match self.timing_selection_lane {
+                            Some(super::TimingSelectionLane::Tempo) => "Tempo Points",
+                            Some(super::TimingSelectionLane::TimeSignature) => {
+                                "Time Signature Points"
+                            }
+                            None => "Timing Points",
+                        };
+                        let selected_count = if !self.selected_tempo_points.is_empty() {
+                            self.selected_tempo_points.len()
+                        } else {
+                            self.selected_time_signature_points.len()
+                        };
+                        let editor_panel = container(
+                            column![
+                                text(lane_label),
+                                text(format!("{selected_count} selected")).size(11),
+                                text_input("BPM", &self.tempo_input)
+                                    .on_input(Message::TempoInputChanged)
+                                    .on_submit(Message::TempoInputCommit),
+                                row![
+                                    text_input("Num", &self.time_signature_num_input)
+                                        .on_input(Message::TimeSignatureNumeratorInputChanged)
+                                        .on_submit(Message::TimeSignatureInputCommit)
+                                        .width(Length::Fill),
+                                    text_input("Den", &self.time_signature_denom_input)
+                                        .on_input(Message::TimeSignatureDenominatorInputChanged)
+                                        .on_submit(Message::TimeSignatureInputCommit)
+                                        .width(Length::Fill),
+                                ]
+                                .spacing(6),
+                                row![
+                                    button("Duplicate").on_press(if !self.selected_tempo_points.is_empty() {
+                                        Message::TempoSelectionDuplicate
+                                    } else {
+                                        Message::TimeSignatureSelectionDuplicate
+                                    }),
+                                    button("Reset").on_press(if !self.selected_tempo_points.is_empty() {
+                                        Message::TempoSelectionResetToPrevious
+                                    } else {
+                                        Message::TimeSignatureSelectionResetToPrevious
+                                    }),
+                                ]
+                                .spacing(6),
+                                row![
+                                    button("Delete").on_press(if !self.selected_tempo_points.is_empty() {
+                                        Message::TempoSelectionDelete
+                                    } else {
+                                        Message::TimeSignatureSelectionDelete
+                                    }),
+                                    button("Clear").on_press(Message::ClearTimingPointSelection),
+                                ]
+                                .spacing(6),
+                            ]
+                            .spacing(8),
+                        )
+                        .width(Length::Fixed(220.0))
+                        .padding(8);
+                        row![container(view).width(Length::Fill), editor_panel]
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .into()
+                    } else {
+                        view
+                    };
                     content = content.push(view);
                     if self.import_in_progress {
                         let overall_progress = if self.import_total_files > 0 {

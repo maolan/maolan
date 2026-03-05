@@ -49,6 +49,9 @@ pub struct WorkspaceViewArgs<'a> {
     pub active_clip_target_track: Option<&'a str>,
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<HashMap<String, Vec<Vec<f32>>>>,
+    pub shift_pressed: bool,
+    pub selected_tempo_points: Vec<usize>,
+    pub selected_time_signature_points: Vec<usize>,
 }
 
 impl Workspace {
@@ -101,8 +104,11 @@ impl Workspace {
             active_clip_target_track,
             recording_preview_bounds,
             recording_preview_peaks,
+            shift_pressed,
+            selected_tempo_points,
+            selected_time_signature_points,
         } = args;
-        let (tracks_width, max_end_samples, tempo, time_signature) = {
+        let (tracks_width, max_end_samples, tempo, time_signature, tempo_points, time_signature_points) = {
             let state = self.state.blocking_read();
             let max_end_samples = state
                 .tracks
@@ -131,6 +137,16 @@ impl Workspace {
                 max_end_samples,
                 state.tempo,
                 (state.time_signature_num, state.time_signature_denom),
+                state
+                    .tempo_points
+                    .iter()
+                    .map(|p| (p.sample, p.bpm))
+                    .collect::<Vec<_>>(),
+                state
+                    .time_signature_points
+                    .iter()
+                    .map(|p| (p.sample, p.numerator, p.denominator))
+                    .collect::<Vec<_>>(),
             )
         };
         let min_visible_samples = (samples_per_bar * zoom_visible_bars).max(1.0) as usize;
@@ -184,7 +200,13 @@ impl Workspace {
                     punch_range_samples,
                     snap_mode,
                     samples_per_beat,
+                    samples_per_bar: samples_per_bar as f64,
                     content_width: editor_content_width,
+                    tempo_points: tempo_points.clone(),
+                    time_signature_points: time_signature_points.clone(),
+                    shift_pressed,
+                    selected_tempo_points: selected_tempo_points.clone(),
+                    selected_time_signature_points: selected_time_signature_points.clone(),
                 }))
                 .height(Length::Fixed(self.tempo.height())),
                 container(self.ruler.view(RulerViewArgs {
@@ -347,21 +369,34 @@ impl Workspace {
     }
 
     pub fn piano_view(&self, args: WorkspaceViewArgs<'_>) -> Element<'_, Message> {
-        let WorkspaceViewArgs {
-            playhead_samples,
-            pixels_per_sample,
-            beat_pixels,
-            samples_per_bar,
-            snap_mode,
-            samples_per_beat,
-            ..
-        } = args;
+                let WorkspaceViewArgs {
+                    playhead_samples,
+                    pixels_per_sample,
+                    beat_pixels,
+                    samples_per_bar,
+                    snap_mode,
+                    samples_per_beat,
+                    shift_pressed,
+                    selected_tempo_points,
+                    selected_time_signature_points,
+                    ..
+                } = args;
 
-        let (tempo, time_signature, clip_length_samples, zoom_x) = {
+        let (tempo, time_signature, tempo_points, time_signature_points, clip_length_samples, zoom_x) = {
             let state = self.state.blocking_read();
             (
                 state.tempo,
                 (state.time_signature_num, state.time_signature_denom),
+                state
+                    .tempo_points
+                    .iter()
+                    .map(|p| (p.sample, p.bpm))
+                    .collect::<Vec<_>>(),
+                state
+                    .time_signature_points
+                    .iter()
+                    .map(|p| (p.sample, p.numerator, p.denominator))
+                    .collect::<Vec<_>>(),
                 state
                     .piano
                     .as_ref()
@@ -407,7 +442,13 @@ impl Workspace {
                     punch_range_samples: None,
                     snap_mode,
                     samples_per_beat,
+                    samples_per_bar: samples_per_bar as f64,
                     content_width: timeline_content_width,
+                    tempo_points,
+                    time_signature_points,
+                    shift_pressed,
+                    selected_tempo_points,
+                    selected_time_signature_points,
                 })))
                 .id(Id::new(PIANO_TEMPO_SCROLL_ID))
                 .direction(scrollable::Direction::Horizontal(

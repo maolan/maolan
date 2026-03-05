@@ -107,6 +107,12 @@ enum AutomationWriteKey {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TimingSelectionLane {
+    Tempo,
+    TimeSignature,
+}
+
 #[derive(Debug, Clone)]
 struct TouchAutomationOverride {
     value: f32,
@@ -208,6 +214,14 @@ pub struct Maolan {
     vst3_ui_host: GuiVst3UiHost,
     pending_vst3_ui_open: Option<PendingVst3UiOpen>,
     scan_clap_capabilities: bool,
+    tempo_input: String,
+    time_signature_num_input: String,
+    time_signature_denom_input: String,
+    last_sent_tempo_bpm: Option<f64>,
+    last_sent_time_signature: Option<(u16, u16)>,
+    selected_tempo_points: BTreeSet<usize>,
+    selected_time_signature_points: BTreeSet<usize>,
+    timing_selection_lane: Option<TimingSelectionLane>,
 }
 
 fn scan_templates() -> Vec<String> {
@@ -353,6 +367,14 @@ impl Default for Maolan {
             vst3_ui_host: GuiVst3UiHost::new(),
             pending_vst3_ui_open: None,
             scan_clap_capabilities: false,
+            tempo_input: "120".to_string(),
+            time_signature_num_input: "4".to_string(),
+            time_signature_denom_input: "4".to_string(),
+            last_sent_tempo_bpm: Some(120.0),
+            last_sent_time_signature: Some((4, 4)),
+            selected_tempo_points: BTreeSet::new(),
+            selected_time_signature_points: BTreeSet::new(),
+            timing_selection_lane: None,
         }
     }
 }

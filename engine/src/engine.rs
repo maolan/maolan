@@ -135,6 +135,9 @@ pub struct Engine {
     transport_sample: usize,
     loop_enabled: bool,
     loop_range_samples: Option<(usize, usize)>,
+    tempo_bpm: f64,
+    tsig_num: u16,
+    tsig_denom: u16,
     punch_enabled: bool,
     punch_range_samples: Option<(usize, usize)>,
     audio_recordings: std::collections::HashMap<String, RecordingSession>,
@@ -681,6 +684,9 @@ impl Engine {
             transport_sample: 0,
             loop_enabled: false,
             loop_range_samples: None,
+            tempo_bpm: 120.0,
+            tsig_num: 4,
+            tsig_denom: 4,
             punch_enabled: false,
             punch_range_samples: None,
             audio_recordings: std::collections::HashMap::new(),
@@ -1493,6 +1499,7 @@ impl Engine {
                 let worker_index = self.ready_workers.remove(0);
                 t.set_transport_sample(self.transport_sample);
                 t.set_loop_config(self.loop_enabled, self.loop_range_samples);
+                t.set_transport_timing(self.tempo_bpm, self.tsig_num, self.tsig_denom);
                 // Avoid continuously mixing clip audio/MIDI while transport is stopped.
                 t.set_clip_playback_enabled(self.clip_playback_enabled && self.playing);
                 // Tap buffers are only needed while actively recording.
@@ -1625,6 +1632,14 @@ impl Engine {
 
     async fn handle_request_inner(&mut self, action_to_process: Action, record_history: bool) {
         let a = action_to_process.clone();
+        let suppress_timing_history = self.playing
+            && matches!(
+                &action_to_process,
+                Action::SetTempo(_)
+                    | Action::SetTimeSignature {
+                        ..
+                    }
+            );
         let mut extra_inverse_actions: Vec<Action> = Vec::new();
         if record_history
             && !self.history_suspended
@@ -1657,8 +1672,11 @@ impl Engine {
                 });
             }
         }
-        let inverse_actions =
-            if record_history && should_record(&action_to_process) && !self.history_suspended {
+        let mut inverse_actions = if record_history
+            && !suppress_timing_history
+            && should_record(&action_to_process)
+            && !self.history_suspended
+        {
                 let state = self.state.lock();
                 create_inverse_actions(&action_to_process, state).map(|mut actions| {
                     actions.extend(extra_inverse_actions);
@@ -1667,6 +1685,22 @@ impl Engine {
             } else {
                 None
             };
+        if record_history && !suppress_timing_history && !self.history_suspended {
+            match &action_to_process {
+                Action::SetTempo(_) => {
+                    inverse_actions = Some(vec![Action::SetTempo(self.tempo_bpm)]);
+                }
+                Action::SetTimeSignature {
+                    ..
+                } => {
+                    inverse_actions = Some(vec![Action::SetTimeSignature {
+                        numerator: self.tsig_num,
+                        denominator: self.tsig_denom,
+                    }]);
+                }
+                _ => {}
+            }
+        }
 
         match action_to_process {
             Action::Play => {
@@ -1728,6 +1762,16 @@ impl Engine {
                     }
                 });
                 self.punch_enabled = self.punch_range_samples.is_some();
+            }
+            Action::SetTempo(bpm) => {
+                self.tempo_bpm = bpm.max(1.0);
+            }
+            Action::SetTimeSignature {
+                numerator,
+                denominator,
+            } => {
+                self.tsig_num = numerator.max(1);
+                self.tsig_denom = denominator.max(1);
             }
             Action::SetRecordEnabled(enabled) => {
                 self.record_enabled = enabled;
@@ -1865,6 +1909,11 @@ impl Engine {
                         track
                             .lock()
                             .set_clip_playback_enabled(self.clip_playback_enabled);
+                        track.lock().set_transport_timing(
+                            self.tempo_bpm,
+                            self.tsig_num,
+                            self.tsig_denom,
+                        );
                         #[cfg(all(unix, not(target_os = "macos")))]
                         {
                             let lv2_dir = self.session_plugins_dir();
@@ -3602,6 +3651,8 @@ impl Engine {
                     | Action::SetLoopRange(_)
                     | Action::SetPunchEnabled(_)
                     | Action::SetPunchRange(_)
+                    | Action::SetTempo(_)
+                    | Action::SetTimeSignature { .. }
                     | Action::SetClipPlaybackEnabled(_)
                     | Action::SetRecordEnabled(_)
                     | Action::BeginHistoryGroup

@@ -1,7 +1,7 @@
 use crate::message::{Message, SnapMode};
 use iced::{
     Background, Color, Length, Theme,
-    widget::{button, pick_list, row},
+    widget::{button, pick_list, row, text_input},
 };
 use iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind, square,
@@ -20,7 +20,7 @@ pub struct Toolbar {
     latch: TransportLatch,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ToolbarViewState {
     pub playing: bool,
     pub paused: bool,
@@ -31,6 +31,9 @@ pub struct ToolbarViewState {
     pub has_punch_range: bool,
     pub punch_enabled: bool,
     pub snap_mode: SnapMode,
+    pub tempo_input: String,
+    pub tsig_num_input: String,
+    pub tsig_denom_input: String,
 }
 
 impl Toolbar {
@@ -173,7 +176,22 @@ impl Toolbar {
                     &SnapMode::ALL[..],
                     Some(view_state.snap_mode),
                     Message::SetSnapMode
-                )
+                ),
+                text_input("BPM", &view_state.tempo_input)
+                    .on_input(Message::TempoInputChanged)
+                    .on_submit(Message::TempoInputCommit)
+                    .width(Length::Fixed(72.0)),
+                text_input("Num", &view_state.tsig_num_input)
+                    .on_input(Message::TimeSignatureNumeratorInputChanged)
+                    .on_submit(Message::TimeSignatureInputCommit)
+                    .width(Length::Fixed(44.0)),
+                text_input("Den", &view_state.tsig_denom_input)
+                    .on_input(Message::TimeSignatureDenominatorInputChanged)
+                    .on_submit(Message::TimeSignatureInputCommit)
+                    .width(Length::Fixed(44.0)),
+                button("TS")
+                    .style(Self::button_style(true, false, Color::TRANSPARENT))
+                    .on_press(Message::TimeSignatureInputCommit)
             ]
             .spacing(3)
             .width(Length::Fill),

@@ -80,6 +80,9 @@ pub struct Track {
     pub transport_sample: usize,
     pub loop_enabled: bool,
     pub loop_range_samples: Option<(usize, usize)>,
+    pub tempo_bpm: f64,
+    pub tsig_num: u16,
+    pub tsig_denom: u16,
     pub clip_playback_enabled: bool,
     pub record_tap_outs: Vec<Vec<f32>>,
     pub record_tap_midi_in: Vec<MidiEvent>,
@@ -134,6 +137,9 @@ impl Track {
             transport_sample: 0,
             loop_enabled: false,
             loop_range_samples: None,
+            tempo_bpm: 120.0,
+            tsig_num: 4,
+            tsig_denom: 4,
             clip_playback_enabled: true,
             record_tap_outs: vec![vec![0.0; buffer_size]; audio_outs],
             record_tap_midi_in: vec![],
@@ -394,9 +400,9 @@ impl Track {
                         Lv2TransportInfo {
                             transport_sample: self.transport_sample,
                             playing: self.disk_monitor && self.clip_playback_enabled,
-                            bpm: 120.0,
-                            tsig_num: 4,
-                            tsig_denom: 4,
+                            bpm: self.tempo_bpm,
+                            tsig_num: u32::from(self.tsig_num),
+                            tsig_denom: u32::from(self.tsig_denom),
                         },
                     );
                     for (port, events) in midi_outputs.into_iter().enumerate() {
@@ -476,9 +482,9 @@ impl Track {
                             playing: self.disk_monitor && self.clip_playback_enabled,
                             loop_enabled: self.loop_enabled,
                             loop_range_samples: self.loop_range_samples,
-                            bpm: 120.0,
-                            tsig_num: 4,
-                            tsig_denom: 4,
+                            bpm: self.tempo_bpm,
+                            tsig_num: self.tsig_num,
+                            tsig_denom: self.tsig_denom,
                         },
                     );
                     for evt in outputs {
@@ -519,9 +525,9 @@ impl Track {
                     Lv2TransportInfo {
                         transport_sample: self.transport_sample,
                         playing: self.disk_monitor && self.clip_playback_enabled,
-                        bpm: 120.0,
-                        tsig_num: 4,
-                        tsig_denom: 4,
+                        bpm: self.tempo_bpm,
+                        tsig_num: u32::from(self.tsig_num),
+                        tsig_denom: u32::from(self.tsig_denom),
                     },
                 );
                 for (port, events) in midi_outputs.into_iter().enumerate() {
@@ -569,9 +575,9 @@ impl Track {
                         playing: self.disk_monitor && self.clip_playback_enabled,
                         loop_enabled: self.loop_enabled,
                         loop_range_samples: self.loop_range_samples,
-                        bpm: 120.0,
-                        tsig_num: 4,
-                        tsig_denom: 4,
+                        bpm: self.tempo_bpm,
+                        tsig_num: self.tsig_num,
+                        tsig_denom: self.tsig_denom,
                     },
                 );
                 for evt in outputs {
@@ -621,9 +627,9 @@ impl Track {
                                 playing: self.disk_monitor && self.clip_playback_enabled,
                                 loop_enabled: self.loop_enabled,
                                 loop_range_samples: self.loop_range_samples,
-                                bpm: 120.0,
-                                tsig_num: 4,
-                                tsig_denom: 4,
+                                bpm: self.tempo_bpm,
+                                tsig_num: self.tsig_num,
+                                tsig_denom: self.tsig_denom,
                             },
                         );
                         clap_midi_events = last_clap_output
@@ -853,6 +859,11 @@ impl Track {
     pub fn set_loop_config(&mut self, enabled: bool, range: Option<(usize, usize)>) {
         self.loop_enabled = enabled;
         self.loop_range_samples = range;
+    }
+    pub fn set_transport_timing(&mut self, tempo_bpm: f64, tsig_num: u16, tsig_denom: u16) {
+        self.tempo_bpm = tempo_bpm.max(1.0);
+        self.tsig_num = tsig_num.max(1);
+        self.tsig_denom = tsig_denom.max(1);
     }
     pub fn set_clip_playback_enabled(&mut self, enabled: bool) {
         self.clip_playback_enabled = enabled;

@@ -157,6 +157,22 @@ impl Maolan {
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
+                "tempo_points": state
+                    .tempo_points
+                    .iter()
+                    .map(|p| json!({ "sample": p.sample, "bpm": p.bpm }))
+                    .collect::<Vec<_>>(),
+                "time_signature_points": state
+                    .time_signature_points
+                    .iter()
+                    .map(|p| {
+                        json!({
+                            "sample": p.sample,
+                            "numerator": p.numerator,
+                            "denominator": p.denominator
+                        })
+                    })
+                    .collect::<Vec<_>>(),
             },
             "ui": {
                 "tracks_width": tracks_width,
@@ -654,6 +670,22 @@ impl Maolan {
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
+                "tempo_points": state
+                    .tempo_points
+                    .iter()
+                    .map(|p| json!({ "sample": p.sample, "bpm": p.bpm }))
+                    .collect::<Vec<_>>(),
+                "time_signature_points": state
+                    .time_signature_points
+                    .iter()
+                    .map(|p| {
+                        json!({
+                            "sample": p.sample,
+                            "numerator": p.numerator,
+                            "denominator": p.denominator
+                        })
+                    })
+                    .collect::<Vec<_>>(),
             },
             "ui": {
                 "tracks_width": tracks_width,
@@ -790,12 +822,101 @@ impl Maolan {
             16 => 16,
             _ => 4,
         };
+        let mut loaded_tempo_points = transport
+            .get("tempo_points")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|entry| {
+                        let sample = entry.get("sample")?.as_u64()? as usize;
+                        let bpm = entry.get("bpm")?.as_f64()? as f32;
+                        Some(crate::state::TempoPoint {
+                            sample,
+                            bpm: bpm.clamp(20.0, 300.0),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut loaded_time_signature_points = transport
+            .get("time_signature_points")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|entry| {
+                        let sample = entry.get("sample")?.as_u64()? as usize;
+                        let numerator = entry.get("numerator")?.as_u64()?.clamp(1, 16) as u8;
+                        let denominator = match entry.get("denominator")?.as_u64()? {
+                            2 => 2,
+                            4 => 4,
+                            8 => 8,
+                            16 => 16,
+                            _ => return None,
+                        };
+                        Some(crate::state::TimeSignaturePoint {
+                            sample,
+                            numerator,
+                            denominator,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if loaded_tempo_points.is_empty() {
+            loaded_tempo_points.push(crate::state::TempoPoint {
+                sample: 0,
+                bpm: loaded_tempo,
+            });
+        }
+        if loaded_time_signature_points.is_empty() {
+            loaded_time_signature_points.push(crate::state::TimeSignaturePoint {
+                sample: 0,
+                numerator: loaded_num,
+                denominator: loaded_denom,
+            });
+        }
+        loaded_tempo_points.sort_unstable_by_key(|p| p.sample);
+        loaded_time_signature_points.sort_unstable_by_key(|p| p.sample);
+        if loaded_tempo_points.first().is_some_and(|first| first.sample != 0) {
+            loaded_tempo_points.insert(
+                0,
+                crate::state::TempoPoint {
+                    sample: 0,
+                    bpm: loaded_tempo,
+                },
+            );
+        }
+        if loaded_time_signature_points
+            .first()
+            .is_some_and(|first| first.sample != 0)
+        {
+            loaded_time_signature_points.insert(
+                0,
+                crate::state::TimeSignaturePoint {
+                    sample: 0,
+                    numerator: loaded_num,
+                    denominator: loaded_denom,
+                },
+            );
+        }
         {
             let mut state = self.state.blocking_write();
             state.tempo = loaded_tempo;
             state.time_signature_num = loaded_num;
             state.time_signature_denom = loaded_denom;
+            state.tempo_points = loaded_tempo_points;
+            state.time_signature_points = loaded_time_signature_points;
         }
+        self.tempo_input = format!("{:.2}", loaded_tempo);
+        self.time_signature_num_input = loaded_num.to_string();
+        self.time_signature_denom_input = loaded_denom.to_string();
+        self.last_sent_tempo_bpm = Some(loaded_tempo as f64);
+        self.last_sent_time_signature = Some((loaded_num as u16, loaded_denom as u16));
+        restore_actions.push(Action::SetTempo(loaded_tempo as f64));
+        restore_actions.push(Action::SetTimeSignature {
+            numerator: loaded_num as u16,
+            denominator: loaded_denom as u16,
+        });
 
         {
             let mut state = self.state.blocking_write();

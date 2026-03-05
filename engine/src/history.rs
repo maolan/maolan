@@ -71,7 +71,11 @@ impl Default for History {
 pub fn should_record(action: &Action) -> bool {
     matches!(
         action,
-        Action::AddTrack { .. }
+        Action::SetTempo(_)
+            | Action::SetTimeSignature {
+                ..
+            }
+            | Action::AddTrack { .. }
             | Action::RemoveTrack(_)
             | Action::RenameTrack { .. }
             | Action::TrackLevel(_, _)
