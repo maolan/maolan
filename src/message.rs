@@ -280,9 +280,22 @@ pub enum Message {
 
     AddTrack(AddTrack),
     SelectTrack(String),
-    TrackAutomationAddLane {
+    TrackAutomationToggle {
+        track_name: String,
+    },
+    TrackAutomationLaneHover {
         track_name: String,
         target: TrackAutomationTarget,
+        position: Point,
+    },
+    TrackAutomationLaneInsertPoint {
+        track_name: String,
+        target: TrackAutomationTarget,
+    },
+    TrackAutomationLaneDeletePoint {
+        track_name: String,
+        target: TrackAutomationTarget,
+        sample: usize,
     },
     SelectClip {
         track_idx: String,

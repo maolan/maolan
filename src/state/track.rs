@@ -251,4 +251,10 @@ impl Track {
             }
         }
     }
+
+    pub fn automation_lane_top(&self, lane: usize) -> f32 {
+        let layout = self.lane_layout();
+        let lane_span = layout.lane_height + TRACK_SUBTRACK_GAP;
+        layout.header_height + (layout.audio_lanes + layout.midi_lanes + lane) as f32 * lane_span
+    }
 }

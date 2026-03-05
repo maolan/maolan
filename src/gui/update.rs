@@ -2958,31 +2958,103 @@ impl Maolan {
                     state.connection_view_selection = ConnectionViewSelection::Tracks(set);
                 }
             }
-            Message::TrackAutomationAddLane {
-                ref track_name,
-                target,
-            } => {
+            Message::TrackAutomationToggle { ref track_name } => {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state
                     .tracks
                     .iter_mut()
                     .find(|track| track.name == track_name.as_str())
                 {
+                    let any_visible = track.automation_lanes.iter().any(|lane| lane.visible);
+                    if any_visible {
+                        for lane in &mut track.automation_lanes {
+                            lane.visible = false;
+                        }
+                    } else if track.automation_lanes.is_empty() {
+                        track.automation_lanes.push(crate::state::TrackAutomationLane {
+                            target: crate::message::TrackAutomationTarget::Volume,
+                            visible: true,
+                            points: vec![],
+                        });
+                    } else {
+                        for lane in &mut track.automation_lanes {
+                            lane.visible = true;
+                        }
+                    }
+                    track.height = track.min_height_for_layout().max(60.0);
+                }
+            }
+            Message::TrackAutomationLaneHover {
+                ref track_name,
+                target,
+                position,
+            } => {
+                let mut state = self.state.blocking_write();
+                state.automation_lane_hover = Some((track_name.clone(), target, position));
+            }
+            Message::TrackAutomationLaneInsertPoint {
+                ref track_name,
+                target,
+            } => {
+                let pixels_per_sample = self.pixels_per_sample().max(1.0e-6);
+                let mut state = self.state.blocking_write();
+                let Some((hover_track, hover_target, hover_position)) = state
+                    .automation_lane_hover
+                    .as_ref()
+                    .map(|(name, target, position)| (name.as_str(), *target, *position))
+                else {
+                    return Task::none();
+                };
+                if hover_track != track_name.as_str() || hover_target != target {
+                    return Task::none();
+                }
+                if let Some(track) = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.name == track_name.as_str())
+                {
+                    let lane_height = track.lane_layout().lane_height.max(12.0);
+                    let lane_value_h = (lane_height - 6.0).max(1.0);
+                    let value = (1.0 - ((hover_position.y - 3.0) / lane_value_h)).clamp(0.0, 1.0);
+                    let sample = ((hover_position.x / pixels_per_sample).round().max(0.0)) as usize;
+
                     if let Some(lane) = track
                         .automation_lanes
-                        .iter()
-                        .position(|lane| lane.target == target)
-                        .and_then(|idx| track.automation_lanes.get_mut(idx))
+                        .iter_mut()
+                        .find(|lane| lane.target == target)
                     {
-                        lane.visible = !lane.visible;
+                        if let Some(existing) = lane.points.iter_mut().find(|p| p.sample == sample) {
+                            existing.value = value;
+                        } else {
+                            lane.points.push(crate::state::TrackAutomationPoint { sample, value });
+                            lane.points.sort_unstable_by_key(|p| p.sample);
+                        }
+                        lane.visible = true;
                     } else {
                         track.automation_lanes.push(crate::state::TrackAutomationLane {
                             target,
                             visible: true,
-                            points: vec![],
+                            points: vec![crate::state::TrackAutomationPoint { sample, value }],
                         });
                     }
-                    track.height = track.min_height_for_layout().max(60.0);
+                }
+            }
+            Message::TrackAutomationLaneDeletePoint {
+                ref track_name,
+                target,
+                sample,
+            } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.name == track_name.as_str())
+                    && let Some(lane) = track
+                        .automation_lanes
+                        .iter_mut()
+                        .find(|lane| lane.target == target)
+                {
+                    lane.points.retain(|point| point.sample != sample);
                 }
             }
             Message::RemoveSelectedTracks => {

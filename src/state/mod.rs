@@ -3,7 +3,9 @@ mod connection;
 mod track;
 
 use crate::config;
-use crate::message::{PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoVelocityKind};
+use crate::message::{
+    PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoVelocityKind, TrackAutomationTarget,
+};
 
 #[cfg(target_os = "linux")]
 use alsa::{
@@ -33,7 +35,7 @@ use std::{
 #[cfg(target_os = "freebsd")]
 use std::{ffi::c_void, fs::File, os::fd::AsRawFd};
 use tokio::sync::RwLock;
-pub use track::{Track, TrackAutomationLane};
+pub use track::{Track, TrackAutomationLane, TrackAutomationPoint};
 
 pub const HW_IN_ID: &str = "hw:in";
 pub const HW_OUT_ID: &str = "hw:out";
@@ -397,6 +399,7 @@ pub struct StateData {
     pub clip_marquee_end: Option<Point>,
     pub midi_clip_create_start: Option<Point>,
     pub midi_clip_create_end: Option<Point>,
+    pub automation_lane_hover: Option<(String, TrackAutomationTarget, Point)>,
     pub mixer_height: Length,
     pub tracks_width: Length,
     pub view: View,
@@ -582,6 +585,7 @@ impl Default for StateData {
             clip_marquee_end: None,
             midi_clip_create_start: None,
             midi_clip_create_end: None,
+            automation_lane_hover: None,
             mixer_height: Length::Fixed(cfg.mixer_height),
             tracks_width: Length::Fixed(cfg.track_width),
             view: View::Workspace,

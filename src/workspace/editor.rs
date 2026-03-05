@@ -36,6 +36,14 @@ fn clean_clip_name(name: &str) -> String {
     cleaned
 }
 
+fn automation_point_color(target: crate::message::TrackAutomationTarget) -> Color {
+    match target {
+        crate::message::TrackAutomationTarget::Volume => Color::from_rgba(0.98, 0.78, 0.22, 0.95),
+        crate::message::TrackAutomationTarget::Balance => Color::from_rgba(0.88, 0.62, 0.24, 0.95),
+        crate::message::TrackAutomationTarget::Mute => Color::from_rgba(0.95, 0.45, 0.22, 0.95),
+    }
+}
+
 fn audio_waveform_overlay(
     peaks: &[Vec<f32>],
     clip_width: f32,
@@ -211,6 +219,117 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .position(Point::new(0.0, y))
             .into(),
         );
+    }
+    let visible_automation_lanes: Vec<_> = track
+        .automation_lanes
+        .iter()
+        .filter(|lane| lane.visible)
+        .collect();
+    for (lane_index, lane) in visible_automation_lanes.iter().enumerate() {
+        let lane_top = track.automation_lane_top(lane_index);
+        let lane_track_name = track_name_cloned.clone();
+        let lane_target = lane.target;
+        clips.push(
+            pin(mouse_area(
+                container("")
+                    .width(Length::Fill)
+                    .height(Length::Fixed(lane_height))
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.26,
+                            g: 0.18,
+                            b: 0.1,
+                            a: 0.22,
+                        })),
+                        ..container::Style::default()
+                    }),
+            )
+            .on_move(move |position| Message::TrackAutomationLaneHover {
+                track_name: lane_track_name.clone(),
+                target: lane_target,
+                position,
+            })
+            .on_press(Message::TrackAutomationLaneInsertPoint {
+                track_name: track_name_cloned.clone(),
+                target: lane.target,
+            }))
+            .position(Point::new(0.0, lane_top))
+            .into(),
+        );
+        clips.push(
+            pin(container(text(format!("Automation {}", lane.target)).size(10))
+                .width(Length::Shrink)
+                .height(Length::Fixed(12.0))
+                .padding([1, 4])
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.35,
+                        g: 0.24,
+                        b: 0.12,
+                        a: 0.45,
+                    })),
+                    ..container::Style::default()
+                }))
+            .position(Point::new(4.0, lane_top + 2.0))
+            .into(),
+        );
+
+        let point_color = automation_point_color(lane.target);
+        let mut sorted_points = lane.points.clone();
+        sorted_points.sort_unstable_by_key(|p| p.sample);
+        for segment in sorted_points.windows(2) {
+            let left = &segment[0];
+            let right = &segment[1];
+            let left_x = left.sample as f32 * pixels_per_sample;
+            let right_x = right.sample as f32 * pixels_per_sample;
+            let left_y = lane_top + 3.0 + (lane_clip_height - 2.0) * (1.0 - left.value.clamp(0.0, 1.0));
+            let right_y =
+                lane_top + 3.0 + (lane_clip_height - 2.0) * (1.0 - right.value.clamp(0.0, 1.0));
+            let width = (right_x - left_x).abs().max(1.0);
+            let min_y = left_y.min(right_y);
+            clips.push(
+                pin(container("")
+                    .width(Length::Fixed(width))
+                    .height(Length::Fixed(1.0))
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(point_color)),
+                        ..container::Style::default()
+                    }))
+                .position(Point::new(left_x.min(right_x), min_y))
+                .into(),
+            );
+        }
+        for point in &lane.points {
+            let clamped_value = point.value.clamp(0.0, 1.0);
+            let x = point.sample as f32 * pixels_per_sample;
+            let y = lane_top + 3.0 + (lane_clip_height - 2.0) * (1.0 - clamped_value);
+            let point_track_name = track_name_cloned.clone();
+            let point_target = lane.target;
+            let point_sample = point.sample;
+            clips.push(
+                pin(mouse_area(
+                    container("")
+                        .width(Length::Fixed(5.0))
+                        .height(Length::Fixed(5.0))
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(point_color)),
+                            border: Border {
+                                color: Color::from_rgba(0.1, 0.1, 0.1, 0.9),
+                                width: 1.0,
+                                radius: 2.5.into(),
+                            },
+                            ..container::Style::default()
+                        }),
+                )
+                .on_right_press(Message::TrackAutomationLaneDeletePoint {
+                    track_name: point_track_name,
+                    target: point_target,
+                    sample: point_sample,
+                }))
+                .position(Point::new((x - 2.0).max(0.0), y.max(lane_top + 2.0)))
+                .into(),
+            );
+        }
     }
 
     for (index, clip) in track.audio.clips.iter().enumerate() {

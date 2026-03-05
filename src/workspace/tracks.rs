@@ -1,5 +1,5 @@
 use crate::{
-    message::{Message, TrackAutomationTarget},
+    message::Message,
     state::State,
     style,
 };
@@ -39,6 +39,7 @@ impl Tracks {
             let is_resize_hovered = hovered_resize_track.as_deref() == Some(track.name.as_str());
             let layout = track.lane_layout();
             let lane_h = layout.lane_height.max(12.0);
+            let has_visible_automation = track.automation_lanes.iter().any(|lane| lane.visible);
             let mut lane_rows: Column<'_, Message> = column![];
             for lane in 0..track.audio.ins {
                 lane_rows = lane_rows.push(
@@ -128,10 +129,11 @@ impl Tracks {
                         .on_press(Message::Request(Action::TrackToggleDiskMonitor(
                             track.name.clone()
                         ))),
-                    button("A+").padding(3).on_press(Message::TrackAutomationAddLane {
-                        track_name: track.name.clone(),
-                        target: TrackAutomationTarget::Volume,
-                    }),
+                    button(if has_visible_automation { "A-" } else { "A+" })
+                        .padding(3)
+                        .on_press(Message::TrackAutomationToggle {
+                            track_name: track.name.clone(),
+                        }),
                 ]
                 .height(Length::Fixed(layout.header_height)),
                 lane_rows.height(Length::Fill),
