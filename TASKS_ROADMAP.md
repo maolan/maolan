@@ -27,6 +27,7 @@ Last updated: 2026-03-05
   - [ ] Step 6: Automation write modes (Read/Touch/Latch/Write)
     - [x] Track automation mode field + UI cycle button
     - [x] Playback honors `Write` mode by skipping readback
+    - [x] Manual control changes write automation points in Touch/Latch/Write
 - [ ] Quantize/Humanize/Groove
 - [ ] Tempo/Time Signature track editor
 - [ ] Comping/Take lanes (MIDI + audio)

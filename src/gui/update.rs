@@ -31,6 +31,207 @@ use std::{
 use tracing::error;
 
 impl Maolan {
+    fn record_automation_point(
+        &mut self,
+        track_name: &str,
+        target: TrackAutomationTarget,
+        value: f32,
+    ) {
+        if !self.playing || self.paused {
+            return;
+        }
+        let sample = self.transport_samples.max(0.0) as usize;
+        let mut state = self.state.blocking_write();
+        let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name) else {
+            return;
+        };
+        if track.automation_mode == TrackAutomationMode::Read {
+            return;
+        }
+        if let Some(lane) = track
+            .automation_lanes
+            .iter_mut()
+            .find(|lane| lane.target == target)
+        {
+            if let Some(existing) = lane.points.iter_mut().find(|p| p.sample == sample) {
+                existing.value = value.clamp(0.0, 1.0);
+            } else {
+                lane.points.push(TrackAutomationPoint {
+                    sample,
+                    value: value.clamp(0.0, 1.0),
+                });
+                lane.points.sort_unstable_by_key(|p| p.sample);
+            }
+            lane.visible = true;
+        } else {
+            track.automation_lanes.push(crate::state::TrackAutomationLane {
+                target,
+                visible: true,
+                points: vec![TrackAutomationPoint {
+                    sample,
+                    value: value.clamp(0.0, 1.0),
+                }],
+            });
+        }
+        track.height = track.min_height_for_layout().max(60.0);
+    }
+
+    fn find_clap_target(
+        &self,
+        track_name: &str,
+        instance_id: usize,
+        param_id: u32,
+    ) -> Option<TrackAutomationTarget> {
+        let state = self.state.blocking_read();
+        let track = state.tracks.iter().find(|t| t.name == track_name)?;
+        track.automation_lanes.iter().find_map(|lane| match lane.target {
+            TrackAutomationTarget::ClapParameter {
+                instance_id: i,
+                param_id: p,
+                min,
+                max,
+            } if i == instance_id && p == param_id => Some(TrackAutomationTarget::ClapParameter {
+                instance_id: i,
+                param_id: p,
+                min,
+                max,
+            }),
+            _ => None,
+        })
+    }
+
+    fn find_lv2_target(
+        &self,
+        track_name: &str,
+        instance_id: usize,
+        index: u32,
+    ) -> Option<TrackAutomationTarget> {
+        let state = self.state.blocking_read();
+        let track = state.tracks.iter().find(|t| t.name == track_name)?;
+        track.automation_lanes.iter().find_map(|lane| match lane.target {
+            TrackAutomationTarget::Lv2Parameter {
+                instance_id: i,
+                index: c,
+                min,
+                max,
+            } if i == instance_id && c == index => Some(TrackAutomationTarget::Lv2Parameter {
+                instance_id: i,
+                index: c,
+                min,
+                max,
+            }),
+            _ => None,
+        })
+    }
+
+    fn maybe_record_automation_from_request(&mut self, action: &Action) {
+        match action {
+            Action::TrackLevel(track_name, level) if track_name != "hw:out" => {
+                let normalized = ((*level + 90.0) / 110.0).clamp(0.0, 1.0);
+                self.record_automation_point(track_name, TrackAutomationTarget::Volume, normalized);
+            }
+            Action::TrackBalance(track_name, balance) if track_name != "hw:out" => {
+                let normalized = ((*balance + 1.0) * 0.5).clamp(0.0, 1.0);
+                self.record_automation_point(track_name, TrackAutomationTarget::Balance, normalized);
+            }
+            Action::TrackToggleMute(track_name) if track_name != "hw:out" => {
+                let next = {
+                    let state = self.state.blocking_read();
+                    state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *track_name)
+                        .map(|t| !t.muted)
+                };
+                if let Some(next) = next {
+                    self.record_automation_point(
+                        track_name,
+                        TrackAutomationTarget::Mute,
+                        if next { 1.0 } else { 0.0 },
+                    );
+                }
+            }
+            Action::TrackSetVst3Parameter {
+                track_name,
+                instance_id,
+                param_id,
+                value,
+            } => {
+                self.record_automation_point(
+                    track_name,
+                    TrackAutomationTarget::Vst3Parameter {
+                        instance_id: *instance_id,
+                        param_id: *param_id,
+                    },
+                    (*value).clamp(0.0, 1.0),
+                );
+            }
+            Action::TrackSetClapParameter {
+                track_name,
+                instance_id,
+                param_id,
+                value,
+            }
+            | Action::TrackSetClapParameterAt {
+                track_name,
+                instance_id,
+                param_id,
+                value,
+                ..
+            } => {
+                if let Some(TrackAutomationTarget::ClapParameter { min, max, .. }) =
+                    self.find_clap_target(track_name, *instance_id, *param_id)
+                {
+                    let span = (max - min).abs();
+                    let normalized = if span <= f64::EPSILON {
+                        0.0
+                    } else {
+                        ((*value - min) / (max - min)).clamp(0.0, 1.0)
+                    } as f32;
+                    self.record_automation_point(
+                        track_name,
+                        TrackAutomationTarget::ClapParameter {
+                            instance_id: *instance_id,
+                            param_id: *param_id,
+                            min,
+                            max,
+                        },
+                        normalized,
+                    );
+                }
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            Action::TrackSetLv2ControlValue {
+                track_name,
+                instance_id,
+                index,
+                value,
+            } => {
+                if let Some(TrackAutomationTarget::Lv2Parameter { min, max, .. }) =
+                    self.find_lv2_target(track_name, *instance_id, *index)
+                {
+                    let span = (max - min).abs();
+                    let normalized = if span <= f32::EPSILON {
+                        0.0
+                    } else {
+                        ((*value - min) / (max - min)).clamp(0.0, 1.0)
+                    };
+                    self.record_automation_point(
+                        track_name,
+                        TrackAutomationTarget::Lv2Parameter {
+                            instance_id: *instance_id,
+                            index: *index,
+                            min,
+                            max,
+                        },
+                        normalized,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn automation_lane_value_at(points: &[TrackAutomationPoint], sample: usize) -> Option<f32> {
         if points.is_empty() {
             return None;
@@ -647,7 +848,10 @@ impl Maolan {
                 return Task::batch(tasks);
             }
             Message::Cancel => self.modal = None,
-            Message::Request(ref a) => return self.send(a.clone()),
+            Message::Request(ref a) => {
+                self.maybe_record_automation_from_request(a);
+                return self.send(a.clone());
+            }
             Message::TransportPlay => {
                 self.toolbar.update(message.clone());
                 let was_playing = self.playing;
