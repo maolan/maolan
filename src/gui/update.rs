@@ -1112,9 +1112,15 @@ impl Maolan {
 
                 let x0 = start.x.min(end.x).max(0.0);
                 let x1 = start.x.max(end.x).max(0.0);
-                let start_sample = (x0 / pps).floor().max(0.0) as usize;
-                let end_sample = (x1 / pps).ceil().max(start_sample as f32 + 1.0) as usize;
-                let length_samples = end_sample.saturating_sub(start_sample).max(1);
+                let raw_start = (x0 / pps).floor().max(0.0) as usize;
+                let raw_end = (x1 / pps).ceil().max(raw_start as f32 + 1.0) as usize;
+                let start_sample = self.snap_sample_to_bar(raw_start as f32);
+                let mut end_sample = self.snap_sample_to_bar(raw_end as f32);
+                let min_len = self.snap_interval_samples().max(1);
+                if end_sample <= start_sample {
+                    end_sample = start_sample.saturating_add(min_len);
+                }
+                let length_samples = end_sample.saturating_sub(start_sample).max(min_len);
 
                 let pitch_row = (start.y / row_h).floor();
                 let pitch_row = pitch_row.clamp(0.0, 119.0) as usize;
