@@ -1,5 +1,5 @@
 use crate::{
-    message::Message,
+    message::{Message, TrackAutomationTarget},
     state::State,
     style,
 };
@@ -202,6 +202,18 @@ impl Tracks {
 
                 let track_with_context = ContextMenu::new(track_with_mouse, move || {
                     column![
+                        button("Automation: Volume").on_press(Message::TrackAutomationAddLane {
+                            track_name: track_name_for_menu.clone(),
+                            target: TrackAutomationTarget::Volume,
+                        }),
+                        button("Automation: Balance").on_press(Message::TrackAutomationAddLane {
+                            track_name: track_name_for_menu.clone(),
+                            target: TrackAutomationTarget::Balance,
+                        }),
+                        button("Automation: Mute").on_press(Message::TrackAutomationAddLane {
+                            track_name: track_name_for_menu.clone(),
+                            target: TrackAutomationTarget::Mute,
+                        }),
                         button("Rename")
                             .on_press(Message::TrackRenameShow(track_name_for_menu.clone())),
                         button("Save as template")

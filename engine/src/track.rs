@@ -863,6 +863,9 @@ impl Track {
     pub fn mute(&mut self) {
         self.muted = !self.muted;
     }
+    pub fn set_muted(&mut self, muted: bool) {
+        self.muted = muted;
+    }
     pub fn solo(&mut self) {
         self.soloed = !self.soloed;
     }

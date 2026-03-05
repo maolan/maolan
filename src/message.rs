@@ -283,6 +283,10 @@ pub enum Message {
     TrackAutomationToggle {
         track_name: String,
     },
+    TrackAutomationAddLane {
+        track_name: String,
+        target: TrackAutomationTarget,
+    },
     TrackAutomationLaneHover {
         track_name: String,
         target: TrackAutomationTarget,

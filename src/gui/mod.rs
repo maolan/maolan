@@ -88,6 +88,13 @@ struct PendingVst3UiOpen {
     audio_outputs: usize,
 }
 
+#[derive(Debug, Clone, Default)]
+struct TrackAutomationRuntime {
+    level_db: Option<f32>,
+    balance: Option<f32>,
+    muted: Option<bool>,
+}
+
 pub struct Maolan {
     clip: Option<DraggedClip>,
     clip_preview_target_track: Option<String>,
@@ -121,6 +128,7 @@ pub struct Maolan {
     pending_save_tracks: std::collections::HashSet<String>,
     pending_save_is_template: bool,
     pending_audio_peaks: HashMap<AudioClipKey, Vec<Vec<f32>>>,
+    track_automation_runtime: HashMap<String, TrackAutomationRuntime>,
     playing: bool,
     paused: bool,
     transport_samples: f64,
@@ -256,6 +264,7 @@ impl Default for Maolan {
             pending_save_tracks: std::collections::HashSet::new(),
             pending_save_is_template: false,
             pending_audio_peaks: HashMap::new(),
+            track_automation_runtime: HashMap::new(),
             playing: false,
             paused: false,
             transport_samples: 0.0,

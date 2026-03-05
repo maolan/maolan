@@ -3,8 +3,11 @@ use super::{CLIENT, MIN_CLIP_WIDTH_PX, Maolan, platform};
 use crate::message::PluginFormat;
 use crate::{
     connections,
-    message::{ExportNormalizeMode, Message, Show},
-    state::{ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, Track, View},
+    message::{ExportNormalizeMode, Message, Show, TrackAutomationTarget},
+    state::{
+        ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, Track,
+        TrackAutomationPoint, View,
+    },
     ui_timing::DOUBLE_CLICK,
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
     workspace::{
@@ -28,6 +31,86 @@ use std::{
 use tracing::error;
 
 impl Maolan {
+    fn automation_lane_value_at(points: &[TrackAutomationPoint], sample: usize) -> Option<f32> {
+        if points.is_empty() {
+            return None;
+        }
+        let mut sorted: Vec<&TrackAutomationPoint> = points.iter().collect();
+        sorted.sort_unstable_by_key(|p| p.sample);
+        if sample <= sorted[0].sample {
+            return Some(sorted[0].value.clamp(0.0, 1.0));
+        }
+        if sample >= sorted[sorted.len().saturating_sub(1)].sample {
+            return Some(
+                sorted[sorted.len().saturating_sub(1)]
+                    .value
+                    .clamp(0.0, 1.0),
+            );
+        }
+        for segment in sorted.windows(2) {
+            let left = segment[0];
+            let right = segment[1];
+            if sample < left.sample || sample > right.sample {
+                continue;
+            }
+            let span = right.sample.saturating_sub(left.sample).max(1) as f32;
+            let t = (sample.saturating_sub(left.sample) as f32 / span).clamp(0.0, 1.0);
+            let value = left.value + (right.value - left.value) * t;
+            return Some(value.clamp(0.0, 1.0));
+        }
+        None
+    }
+
+    fn collect_track_automation_actions(
+        &mut self,
+        sample: usize,
+        tracks: &[Track],
+    ) -> Vec<Action> {
+        let mut actions = Vec::new();
+        for track in tracks {
+            let mut vol = None;
+            let mut bal = None;
+            let mut muted = None;
+            for lane in &track.automation_lanes {
+                let value = Self::automation_lane_value_at(&lane.points, sample);
+                match lane.target {
+                    TrackAutomationTarget::Volume => vol = value,
+                    TrackAutomationTarget::Balance => bal = value,
+                    TrackAutomationTarget::Mute => muted = value.map(|v| v >= 0.5),
+                }
+            }
+            let runtime = self
+                .track_automation_runtime
+                .entry(track.name.clone())
+                .or_default();
+            if let Some(v) = vol {
+                let level_db = (-90.0 + v * 110.0).clamp(-90.0, 20.0);
+                if runtime
+                    .level_db
+                    .is_none_or(|current| (current - level_db).abs() >= 0.1)
+                {
+                    runtime.level_db = Some(level_db);
+                    actions.push(Action::TrackAutomationLevel(track.name.clone(), level_db));
+                }
+            }
+            if let Some(v) = bal {
+                let balance = (v * 2.0 - 1.0).clamp(-1.0, 1.0);
+                if runtime
+                    .balance
+                    .is_none_or(|current| (current - balance).abs() >= 0.01)
+                {
+                    runtime.balance = Some(balance);
+                    actions.push(Action::TrackAutomationBalance(track.name.clone(), balance));
+                }
+            }
+            if let Some(v) = muted && runtime.muted != Some(v) {
+                runtime.muted = Some(v);
+                actions.push(Action::TrackAutomationMute(track.name.clone(), v));
+            }
+        }
+        actions
+    }
+
     fn format_sysex_hex(data: &[u8]) -> String {
         data.iter()
             .map(|b| format!("{b:02X}"))
@@ -255,6 +338,7 @@ impl Maolan {
                     self.playing = false;
                     self.paused = false;
                     self.last_playback_tick = None;
+                    self.track_automation_runtime.clear();
                     self.stop_recording_preview();
                     return Task::batch(vec![
                         self.send(Action::SetClipPlaybackEnabled(true)),
@@ -433,6 +517,7 @@ impl Maolan {
                 self.playing = false;
                 self.paused = false;
                 self.transport_samples = 0.0;
+                self.track_automation_runtime.clear();
                 self.loop_enabled = false;
                 self.loop_range_samples = None;
                 self.punch_enabled = false;
@@ -517,6 +602,7 @@ impl Maolan {
                 self.playing = false;
                 self.paused = false;
                 self.last_playback_tick = None;
+                self.track_automation_runtime.clear();
                 self.stop_recording_preview();
                 return Task::batch(vec![
                     self.send(Action::SetClipPlaybackEnabled(true)),
@@ -525,6 +611,7 @@ impl Maolan {
             }
             Message::JumpToStart => {
                 self.transport_samples = 0.0;
+                self.track_automation_runtime.clear();
                 return self.send(Action::TransportPosition(0));
             }
             Message::JumpToEnd => {
@@ -553,6 +640,7 @@ impl Maolan {
                 return self.send(Action::TransportPosition(end_sample));
             }
             Message::PlaybackTick => {
+                let mut now_sample = self.transport_samples.max(0.0) as usize;
                 if self.playing
                     && !self.paused
                     && let Some(last) = self.last_playback_tick
@@ -561,6 +649,15 @@ impl Maolan {
                     let delta_s = now.duration_since(last).as_secs_f64();
                     self.last_playback_tick = Some(now);
                     self.transport_samples += delta_s * self.playback_rate_hz;
+                    now_sample = self.transport_samples.max(0.0) as usize;
+                }
+                if self.playing && !self.paused {
+                    let tracks = self.state.blocking_read().tracks.clone();
+                    let actions = self.collect_track_automation_actions(now_sample, &tracks);
+                    if !actions.is_empty() {
+                        let tasks = actions.into_iter().map(|a| self.send(a)).collect::<Vec<_>>();
+                        return Task::batch(tasks);
+                    }
                 }
             }
             Message::SetLoopRange(range) => {
@@ -2419,6 +2516,39 @@ impl Maolan {
                         self.state.blocking_write().hw_out_balance = *balance;
                     }
                 }
+                Action::TrackAutomationLevel(name, level) => {
+                    if let Some(track) = self
+                        .state
+                        .blocking_write()
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == *name)
+                    {
+                        track.level = *level;
+                    }
+                }
+                Action::TrackAutomationBalance(name, balance) => {
+                    if let Some(track) = self
+                        .state
+                        .blocking_write()
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == *name)
+                    {
+                        track.balance = *balance;
+                    }
+                }
+                Action::TrackAutomationMute(name, muted) => {
+                    if let Some(track) = self
+                        .state
+                        .blocking_write()
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == *name)
+                    {
+                        track.muted = *muted;
+                    }
+                }
                 Action::TrackToggleMute(name) => {
                     if name == "hw:out" {
                         let mut state = self.state.blocking_write();
@@ -2980,6 +3110,32 @@ impl Maolan {
                         for lane in &mut track.automation_lanes {
                             lane.visible = true;
                         }
+                    }
+                    track.height = track.min_height_for_layout().max(60.0);
+                }
+            }
+            Message::TrackAutomationAddLane {
+                ref track_name,
+                target,
+            } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.name == track_name.as_str())
+                {
+                    if let Some(lane) = track
+                        .automation_lanes
+                        .iter_mut()
+                        .find(|lane| lane.target == target)
+                    {
+                        lane.visible = true;
+                    } else {
+                        track.automation_lanes.push(crate::state::TrackAutomationLane {
+                            target,
+                            visible: true,
+                            points: vec![],
+                        });
                     }
                     track.height = track.min_height_for_layout().max(60.0);
                 }

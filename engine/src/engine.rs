@@ -1945,6 +1945,21 @@ impl Engine {
                     track.lock().set_balance(balance);
                 }
             }
+            Action::TrackAutomationLevel(ref name, level) => {
+                if let Some(track) = self.state.lock().tracks.get(name) {
+                    track.lock().set_level(level);
+                }
+            }
+            Action::TrackAutomationBalance(ref name, balance) => {
+                if let Some(track) = self.state.lock().tracks.get(name) {
+                    track.lock().set_balance(balance);
+                }
+            }
+            Action::TrackAutomationMute(ref name, muted) => {
+                if let Some(track) = self.state.lock().tracks.get(name) {
+                    track.lock().set_muted(muted);
+                }
+            }
             Action::TrackMeters { .. } => {}
             Action::TrackToggleArm(ref name) => {
                 if let Some(track) = self.state.lock().tracks.get(name).cloned() {

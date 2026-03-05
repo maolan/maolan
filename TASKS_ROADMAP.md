@@ -8,13 +8,17 @@ Last updated: 2026-03-05
 - [ ] Automation lanes (track + plugin parameters)
   - [x] Step 1: Track automation lane data model in UI state
   - [x] Step 2: Add UI action to create first lane (Volume) per track
+    - [x] Track context menu adds Volume/Balance/Mute automation lanes
   - [ ] Step 3: Draw automation points/curves in editor timeline and edit points
     - [x] Render visible automation lanes and point markers in timeline
     - [x] `A+` toggle to show/hide automation lanes per track
     - [x] Click lane to insert/update automation point
     - [x] Right-click point to delete
     - [x] Draw connecting ramp segments between adjacent points
-  - [ ] Step 4: Engine playback application for track automation
+  - [x] Step 4: Engine playback application for track automation
+    - [x] Playback tick evaluates automation value at transport sample
+    - [x] Sends non-history engine actions for Volume/Balance/Mute automation
+    - [x] Runtime smoothing/thresholds to avoid excessive action spam
   - [ ] Step 5: Plugin parameter automation targets + playback
   - [ ] Step 6: Automation write modes (Read/Touch/Latch/Write)
 - [ ] Quantize/Humanize/Groove
