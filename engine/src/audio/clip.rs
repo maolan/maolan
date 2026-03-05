@@ -1,3 +1,5 @@
+use crate::message::AudioWarpMarker;
+
 #[derive(Default, Clone, Debug)]
 pub struct AudioClip {
     pub name: String,
@@ -9,6 +11,7 @@ pub struct AudioClip {
     pub fade_enabled: bool,
     pub fade_in_samples: usize,
     pub fade_out_samples: usize,
+    pub warp_markers: Vec<AudioWarpMarker>,
 }
 
 impl AudioClip {
@@ -23,6 +26,7 @@ impl AudioClip {
             fade_enabled: true,
             fade_in_samples: 240, // 5ms at 48kHz
             fade_out_samples: 240,
+            warp_markers: vec![],
         }
     }
 }

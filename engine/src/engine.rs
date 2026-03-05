@@ -1239,6 +1239,7 @@ impl Engine {
             fade_enabled: clip.fade_enabled,
             fade_in_samples: clip.fade_in_samples,
             fade_out_samples: clip.fade_out_samples,
+            warp_markers: vec![],
         }))
         .await;
     }
@@ -1357,6 +1358,7 @@ impl Engine {
             fade_enabled: true,
             fade_in_samples: 240,
             fade_out_samples: 240,
+            warp_markers: vec![],
         }))
         .await;
     }
@@ -3328,6 +3330,7 @@ impl Engine {
                 fade_enabled,
                 fade_in_samples,
                 fade_out_samples,
+                ref warp_markers,
             } => {
                 if let Some(track) = self.state.lock().tracks.get(track_name) {
                     let track = track.lock();
@@ -3341,6 +3344,7 @@ impl Engine {
                             clip.fade_enabled = fade_enabled;
                             clip.fade_in_samples = fade_in_samples;
                             clip.fade_out_samples = fade_out_samples;
+                            clip.warp_markers = warp_markers.clone();
                             track.audio.clips.push(clip);
                         }
                         Kind::MIDI => {
@@ -3494,6 +3498,27 @@ impl Engine {
                         }
                     }
                 }
+            }
+            Action::SetAudioClipWarpMarkers {
+                ref track_name,
+                clip_index,
+                ref warp_markers,
+            } => {
+                let Some(track) = self.state.lock().tracks.get(track_name) else {
+                    self.notify_clients(Err(format!("Track not found: {track_name}")))
+                        .await;
+                    return;
+                };
+                let track = track.lock();
+                let Some(clip) = track.audio.clips.get_mut(clip_index) else {
+                    self.notify_clients(Err(format!(
+                        "Audio clip index {} not found on track '{}'",
+                        clip_index, track_name
+                    )))
+                    .await;
+                    return;
+                };
+                clip.warp_markers = warp_markers.clone();
             }
             Action::Connect {
                 ref from_track,

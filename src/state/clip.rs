@@ -22,6 +22,8 @@ pub struct AudioClip {
     #[serde(default = "default_fade_samples")]
     pub fade_out_samples: usize,
     #[serde(default)]
+    pub warp_markers: Vec<maolan_engine::message::AudioWarpMarker>,
+    #[serde(default)]
     pub take_lane_override: Option<usize>,
     #[serde(default = "default_take_lane_flag")]
     pub take_lane_pinned: bool,

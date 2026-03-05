@@ -23,8 +23,8 @@ use maolan_engine::message::PluginGraphNode;
 use maolan_engine::{
     kind::Kind,
     message::{
-        Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage, OfflineAutomationLane,
-        OfflineAutomationPoint, OfflineAutomationTarget,
+        Action, AudioWarpMarker, ClipMoveFrom, ClipMoveTo, Message as EngineMessage,
+        OfflineAutomationLane, OfflineAutomationPoint, OfflineAutomationTarget,
     },
 };
 use rfd::AsyncFileDialog;
@@ -464,6 +464,64 @@ impl Maolan {
             .iter()
             .find(|t| t.name == track_name)
             .is_some_and(|t| t.frozen)
+    }
+
+    fn warp_markers_for_speed(clip_length: usize, speed: f32) -> Vec<AudioWarpMarker> {
+        let speed = speed.max(0.01);
+        let source_end = ((clip_length as f64) * speed as f64).round().max(1.0) as usize;
+        vec![
+            AudioWarpMarker {
+                timeline_sample: 0,
+                source_sample: 0,
+            },
+            AudioWarpMarker {
+                timeline_sample: clip_length,
+                source_sample: source_end,
+            },
+        ]
+    }
+
+    fn add_warp_marker_between(markers: &[AudioWarpMarker], clip_length: usize) -> Vec<AudioWarpMarker> {
+        let mut out = markers.to_vec();
+        let timeline_mid = clip_length / 2;
+        if out.iter().any(|m| m.timeline_sample == timeline_mid) {
+            return out;
+        }
+        let source_mid = if out.is_empty() {
+            timeline_mid
+        } else {
+            let mut points = out
+                .iter()
+                .map(|m| (m.timeline_sample.min(clip_length), m.source_sample))
+                .collect::<Vec<_>>();
+            points.push((0, 0));
+            points.push((clip_length, clip_length));
+            points.sort_unstable_by_key(|(t, _)| *t);
+            points.dedup_by_key(|(t, _)| *t);
+            let mut mapped = timeline_mid;
+            for window in points.windows(2) {
+                let (x0, y0) = window[0];
+                let (x1, y1) = window[1];
+                if timeline_mid < x0 || timeline_mid > x1 {
+                    continue;
+                }
+                if x1 == x0 {
+                    mapped = y0;
+                } else {
+                    let t = (timeline_mid - x0) as f64 / (x1 - x0) as f64;
+                    mapped = (y0 as f64 + (y1 as f64 - y0 as f64) * t).round() as usize;
+                }
+                break;
+            }
+            mapped
+        };
+        out.push(AudioWarpMarker {
+            timeline_sample: timeline_mid,
+            source_sample: source_mid,
+        });
+        out.sort_unstable_by_key(|m| m.timeline_sample);
+        out.dedup_by_key(|m| m.timeline_sample);
+        out
     }
 
     fn maybe_record_automation_from_request(&mut self, action: &Action) {
@@ -1295,6 +1353,7 @@ impl Maolan {
             fade_enabled: true,
             fade_in_samples: 240,
             fade_out_samples: 240,
+            warp_markers: vec![],
         })
     }
 
@@ -4048,6 +4107,7 @@ impl Maolan {
                     fade_enabled,
                     fade_in_samples,
                     fade_out_samples,
+                    warp_markers,
                 } => {
                     let mut audio_peaks = vec![];
                     let mut max_length_samples = offset.saturating_add(*length);
@@ -4097,6 +4157,7 @@ impl Maolan {
                                     fade_enabled: *fade_enabled,
                                     fade_in_samples: *fade_in_samples,
                                     fade_out_samples: *fade_out_samples,
+                                    warp_markers: warp_markers.clone(),
                                     take_lane_override: None,
                                     take_lane_pinned: false,
                                     take_lane_locked: false,
@@ -4142,6 +4203,18 @@ impl Maolan {
                                 }
                             }
                         }
+                    }
+                }
+                Action::SetAudioClipWarpMarkers {
+                    track_name,
+                    clip_index,
+                    warp_markers,
+                } => {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| &t.name == track_name)
+                        && let Some(clip) = track.audio.clips.get_mut(*clip_index)
+                    {
+                        clip.warp_markers = warp_markers.clone();
                     }
                 }
                 Action::RemoveClip {
@@ -4636,6 +4709,7 @@ impl Maolan {
                             fade_enabled: true,
                             fade_in_samples: 240,
                             fade_out_samples: 240,
+                            warp_markers: vec![],
                         }));
                         tasks.push(self.send(Action::TrackSetFrozen {
                             track_name: track_name.clone(),
@@ -5540,6 +5614,7 @@ impl Maolan {
                             fade_enabled: clip.fade_enabled,
                             fade_in_samples: clip.fade_in_samples,
                             fade_out_samples: clip.fade_out_samples,
+                            warp_markers: clip.warp_markers,
                         }));
                     }
                     for clip in restore_midi {
@@ -5555,6 +5630,7 @@ impl Maolan {
                             fade_enabled: clip.fade_enabled,
                             fade_in_samples: clip.fade_in_samples,
                             fade_out_samples: clip.fade_out_samples,
+                            warp_markers: vec![],
                         }));
                     }
                     tasks.push(self.send(Action::TrackSetFrozen {
@@ -6316,6 +6392,79 @@ impl Maolan {
                     kind,
                     muted,
                 });
+            }
+            Message::ClipWarpReset {
+                ref track_idx,
+                clip_idx,
+            } => {
+                return self.send(Action::SetAudioClipWarpMarkers {
+                    track_name: track_idx.clone(),
+                    clip_index: clip_idx,
+                    warp_markers: vec![],
+                });
+            }
+            Message::ClipWarpHalfSpeed {
+                ref track_idx,
+                clip_idx,
+            } => {
+                let clip_len = {
+                    let state = self.state.blocking_read();
+                    state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *track_idx)
+                        .and_then(|t| t.audio.clips.get(clip_idx))
+                        .map(|c| c.length)
+                };
+                if let Some(clip_len) = clip_len {
+                    return self.send(Action::SetAudioClipWarpMarkers {
+                        track_name: track_idx.clone(),
+                        clip_index: clip_idx,
+                        warp_markers: Self::warp_markers_for_speed(clip_len, 0.5),
+                    });
+                }
+            }
+            Message::ClipWarpDoubleSpeed {
+                ref track_idx,
+                clip_idx,
+            } => {
+                let clip_len = {
+                    let state = self.state.blocking_read();
+                    state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *track_idx)
+                        .and_then(|t| t.audio.clips.get(clip_idx))
+                        .map(|c| c.length)
+                };
+                if let Some(clip_len) = clip_len {
+                    return self.send(Action::SetAudioClipWarpMarkers {
+                        track_name: track_idx.clone(),
+                        clip_index: clip_idx,
+                        warp_markers: Self::warp_markers_for_speed(clip_len, 2.0),
+                    });
+                }
+            }
+            Message::ClipWarpAddMarker {
+                ref track_idx,
+                clip_idx,
+            } => {
+                let marker_state = {
+                    let state = self.state.blocking_read();
+                    state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *track_idx)
+                        .and_then(|t| t.audio.clips.get(clip_idx))
+                        .map(|c| (c.length, c.warp_markers.clone()))
+                };
+                if let Some((clip_len, markers)) = marker_state {
+                    return self.send(Action::SetAudioClipWarpMarkers {
+                        track_name: track_idx.clone(),
+                        clip_index: clip_idx,
+                        warp_markers: Self::add_warp_marker_between(&markers, clip_len),
+                    });
+                }
             }
             Message::ClipSetActiveTake {
                 ref track_idx,
@@ -8005,6 +8154,7 @@ impl Maolan {
                                                     fade_enabled: true,
                                                     fade_in_samples: 240,
                                                     fade_out_samples: 240,
+                                                    warp_markers: vec![],
                                                 }))
                                                 .await
                                             {
@@ -8061,6 +8211,7 @@ impl Maolan {
                                                     fade_enabled: true,
                                                     fade_in_samples: 240,
                                                     fade_out_samples: 240,
+                                                    warp_markers: vec![],
                                                 }))
                                                 .await
                                             {

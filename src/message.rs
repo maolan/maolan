@@ -809,6 +809,22 @@ pub enum Message {
         kind: Kind,
         muted: bool,
     },
+    ClipWarpReset {
+        track_idx: String,
+        clip_idx: usize,
+    },
+    ClipWarpHalfSpeed {
+        track_idx: String,
+        clip_idx: usize,
+    },
+    ClipWarpDoubleSpeed {
+        track_idx: String,
+        clip_idx: usize,
+    },
+    ClipWarpAddMarker {
+        track_idx: String,
+        clip_idx: usize,
+    },
     ClipSetActiveTake {
         track_idx: String,
         clip_idx: usize,

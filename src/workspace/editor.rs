@@ -424,10 +424,15 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     for (index, clip) in track.audio.clips.iter().enumerate() {
         let clip_name = clip.name.clone();
         let clip_label = format!(
-            "{}{}{}",
+            "{}{}{}{}",
             clean_clip_name(&clip_name),
             if clip.take_lane_pinned { " [P]" } else { "" },
-            if clip.take_lane_locked { " [L]" } else { "" }
+            if clip.take_lane_locked { " [L]" } else { "" },
+            if clip.warp_markers.is_empty() {
+                ""
+            } else {
+                " [WRP]"
+            }
         );
         let clip_peaks = clip.peaks.clone();
         let clip_muted = clip.muted;
@@ -828,6 +833,22 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         clip_idx: index_for_menu,
                         kind: Kind::Audio,
                         muted: !muted_for_menu,
+                    }),
+                    button("Warp Reset").on_press(Message::ClipWarpReset {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                    }),
+                    button("Warp 0.5x").on_press(Message::ClipWarpHalfSpeed {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                    }),
+                    button("Warp 2.0x").on_press(Message::ClipWarpDoubleSpeed {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                    }),
+                    button("Warp Add Marker").on_press(Message::ClipWarpAddMarker {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
                     }),
                     button(if fade_enabled {
                         "Disable Fade"

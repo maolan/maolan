@@ -68,7 +68,10 @@ Last updated: 2026-03-05
   - [x] Chord generation from selected notes (triad/7th presets)
   - [x] Legato selected notes to next note start
   - [x] Velocity shaping over selected note range
-- [ ] Audio warp/time-stretch with markers
+- [x] Audio warp/time-stretch with markers
+  - [x] Per-audio-clip warp marker data model + session persistence
+  - [x] Engine playback applies piecewise warp mapping for time-stretched clip reads
+  - [x] First-pass clip context actions (reset, half-speed, double-speed, add marker)
 
 ## Phase 3 - Control and Integration
 
