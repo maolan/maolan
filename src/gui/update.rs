@@ -1177,13 +1177,47 @@ impl Maolan {
                 };
                 let track_name = piano.track_idx.clone();
                 let clip_idx = 0; // TODO: Get actual clip index
-                let insert_base = piano.controllers.len();
+                let min_sample = controllers.iter().map(|c| c.sample).min().unwrap_or(0);
+                let max_sample = controllers
+                    .iter()
+                    .map(|c| c.sample)
+                    .max()
+                    .unwrap_or(min_sample);
+                let drawn_controllers: HashSet<u8> = controllers.iter().map(|c| c.controller).collect();
+                let drawn_channels: HashSet<u8> = controllers.iter().map(|c| c.channel).collect();
+
+                let mut delete_indices: Vec<usize> = Vec::new();
+                let mut deleted_payload: Vec<(usize, maolan_engine::message::MidiControllerData)> =
+                    Vec::new();
+                for (idx, ctrl) in piano.controllers.iter().enumerate() {
+                    if ctrl.sample < min_sample || ctrl.sample > max_sample {
+                        continue;
+                    }
+                    if !drawn_controllers.contains(&ctrl.controller) {
+                        continue;
+                    }
+                    if !drawn_channels.contains(&ctrl.channel) {
+                        continue;
+                    }
+                    delete_indices.push(idx);
+                    deleted_payload.push((
+                        idx,
+                        maolan_engine::message::MidiControllerData {
+                            sample: ctrl.sample,
+                            controller: ctrl.controller,
+                            value: ctrl.value,
+                            channel: ctrl.channel,
+                        },
+                    ));
+                }
+
+                let controllers_len = piano.controllers.len();
                 let payload: Vec<(usize, maolan_engine::message::MidiControllerData)> = controllers
                     .into_iter()
                     .enumerate()
                     .map(|(offset, ctrl)| {
                         (
-                            insert_base + offset,
+                            controllers_len + offset,
                             maolan_engine::message::MidiControllerData {
                                 sample: ctrl.sample,
                                 controller: ctrl.controller,
@@ -1194,11 +1228,43 @@ impl Maolan {
                     })
                     .collect();
                 drop(state);
-                return self.send(Action::InsertMidiControllers {
+                let mut tasks = Vec::new();
+                tasks.push(self.send(Action::BeginHistoryGroup));
+                if !delete_indices.is_empty() {
+                    delete_indices.sort_unstable();
+                    delete_indices.dedup();
+                    let mut delete_indices_desc = delete_indices.clone();
+                    delete_indices_desc.sort_unstable_by(|a, b| b.cmp(a));
+
+                    tasks.push(self.send(Action::DeleteMidiControllers {
+                        track_name: track_name.clone(),
+                        clip_index: clip_idx,
+                        controller_indices: delete_indices_desc,
+                        deleted_controllers: deleted_payload,
+                    }));
+                }
+                let insert_adjusted: Vec<(usize, maolan_engine::message::MidiControllerData)> =
+                    if delete_indices.is_empty() {
+                        payload
+                    } else {
+                        payload
+                            .into_iter()
+                            .enumerate()
+                            .map(|(offset, (_, ctrl))| {
+                                let shifted_index = controllers_len
+                                    .saturating_sub(delete_indices.len())
+                                    .saturating_add(offset);
+                                (shifted_index, ctrl)
+                            })
+                            .collect()
+                    };
+                tasks.push(self.send(Action::InsertMidiControllers {
                     track_name,
                     clip_index: clip_idx,
-                    controllers: payload,
-                });
+                    controllers: insert_adjusted,
+                }));
+                tasks.push(self.send(Action::EndHistoryGroup));
+                return Task::batch(tasks);
             }
             Message::PianoSelectRectStart { position } => {
                 let mut state = self.state.blocking_write();

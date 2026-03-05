@@ -1250,7 +1250,7 @@ impl Program<Message> for ControllerRollInteraction {
                         start_y: position.y,
                         start_value,
                     };
-                    return Some(CanvasAction::capture());
+                    return Some(CanvasAction::request_redraw().and_capture());
                 }
                 None
             }
@@ -1291,7 +1291,7 @@ impl Program<Message> for ControllerRollInteraction {
                         start,
                         current: position,
                     };
-                    return Some(CanvasAction::capture());
+                    return Some(CanvasAction::request_redraw().and_capture());
                 }
                 None
             }
@@ -1333,7 +1333,7 @@ impl Program<Message> for ControllerRollInteraction {
                         start: position,
                         current: position,
                     };
-                    return Some(CanvasAction::capture());
+                    return Some(CanvasAction::request_redraw().and_capture());
                 }
                 None
             }
@@ -1358,7 +1358,7 @@ impl Program<Message> for ControllerRollInteraction {
                         start, current, bounds, pps, clip_len, lane_cfg,
                     );
                     if new_controllers.is_empty() {
-                        return Some(CanvasAction::capture());
+                        return Some(CanvasAction::request_redraw().and_capture());
                     }
                     return Some(
                         CanvasAction::publish(Message::PianoInsertControllers {
@@ -1375,13 +1375,53 @@ impl Program<Message> for ControllerRollInteraction {
 
     fn draw(
         &self,
-        _state: &Self::State,
-        _renderer: &Renderer,
+        state: &Self::State,
+        renderer: &Renderer,
         _theme: &Theme,
-        _bounds: Rectangle,
+        bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        vec![]
+        let ControllerDragMode::Drawing { start, current } = state.mode else {
+            return vec![];
+        };
+
+        let mut frame = Frame::new(renderer, bounds.size());
+        let line = Path::line(start, current);
+        frame.stroke(
+            &line,
+            canvas::Stroke::default()
+                .with_width(2.0)
+                .with_color(Color::from_rgba(0.98, 0.94, 0.2, 0.95)),
+        );
+
+        let value_from_y = |y: f32| -> u8 {
+            if bounds.height <= f32::EPSILON {
+                return 64;
+            }
+            let t = (1.0 - (y / bounds.height)).clamp(0.0, 1.0);
+            (t * 127.0).round().clamp(0.0, 127.0) as u8
+        };
+        let start_value = value_from_y(start.y);
+        let current_value = value_from_y(current.y);
+        let drag_right = current.x >= start.x;
+        let x_offset = if drag_right { -24.0 } else { 8.0 };
+
+        use iced::widget::canvas::Text;
+        frame.fill_text(Text {
+            content: start_value.to_string(),
+            position: Point::new(start.x + x_offset, (start.y - 6.0).max(0.0)),
+            color: Color::from_rgba(1.0, 0.96, 0.45, 0.95),
+            size: 11.0.into(),
+            ..Text::default()
+        });
+        frame.fill_text(Text {
+            content: current_value.to_string(),
+            position: Point::new(current.x + x_offset, (current.y - 6.0).max(0.0)),
+            color: Color::from_rgba(1.0, 0.96, 0.45, 0.95),
+            size: 11.0.into(),
+            ..Text::default()
+        });
+        vec![frame.into_geometry()]
     }
 }
 
