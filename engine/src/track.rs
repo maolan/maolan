@@ -876,7 +876,7 @@ impl Track {
         self.session_base_dir = base_dir;
     }
 
-    fn resolve_clip_path(&self, clip_name: &str) -> PathBuf {
+    pub(crate) fn resolve_clip_path(&self, clip_name: &str) -> PathBuf {
         let clip_path = Path::new(clip_name);
         if clip_path.is_absolute() {
             clip_path.to_path_buf()
@@ -885,6 +885,10 @@ impl Track {
         } else {
             clip_path.to_path_buf()
         }
+    }
+
+    pub(crate) fn invalidate_midi_clip_cache(&mut self, clip_name: &str) {
+        self.midi_clip_cache.remove(clip_name);
     }
 
     fn load_audio_clip_buffer(path: &Path) -> Option<AudioClipBuffer> {

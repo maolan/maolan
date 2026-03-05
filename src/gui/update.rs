@@ -1183,7 +1183,8 @@ impl Maolan {
                     .map(|c| c.sample)
                     .max()
                     .unwrap_or(min_sample);
-                let drawn_controllers: HashSet<u8> = controllers.iter().map(|c| c.controller).collect();
+                let drawn_controllers: HashSet<u8> =
+                    controllers.iter().map(|c| c.controller).collect();
                 let drawn_channels: HashSet<u8> = controllers.iter().map(|c| c.channel).collect();
 
                 let mut delete_indices: Vec<usize> = Vec::new();

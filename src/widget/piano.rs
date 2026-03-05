@@ -217,6 +217,21 @@ impl Piano {
             .position(|kind| Self::nrpn_param(*kind) == (msb, lsb))
     }
 
+    fn selected_lane_number(state: &crate::state::StateData) -> Option<u16> {
+        match state.piano_controller_lane {
+            PianoControllerLane::Controller => Some(u16::from(state.piano_controller_kind)),
+            PianoControllerLane::Rpn => {
+                let (msb, lsb) = Self::rpn_param(state.piano_rpn_kind);
+                Some(u16::from(msb) * 128 + u16::from(lsb))
+            }
+            PianoControllerLane::Nrpn => {
+                let (msb, lsb) = Self::nrpn_param(state.piano_nrpn_kind);
+                Some(u16::from(msb) * 128 + u16::from(lsb))
+            }
+            PianoControllerLane::Velocity => None,
+        }
+    }
+
     fn lane_controller_events(
         lane: PianoControllerLane,
         controllers: &[crate::state::PianoControllerPoint],
@@ -622,6 +637,7 @@ impl Piano {
             .width(Length::Fixed(Self::KEYBOARD_WIDTH))
             .height(Length::Fill);
         let lane_label = state.piano_controller_lane.to_string();
+        let selected_number = Self::selected_lane_number(&state);
         let menu_tpl = |items| IcedMenu::new(items).width(220.0).offset(15.0).spacing(5.0);
         let controller_submenu = IcedMenu::new(
             (0u8..=127)
@@ -693,7 +709,20 @@ impl Piano {
         .draw_path(DrawPath::Backdrop)
         .close_on_item_click_global(true)
         .width(Length::Fill);
-        let controller_key = container(controller_picker)
+        let controller_header = if let Some(number) = selected_number {
+            column![
+                controller_picker,
+                text(number.to_string()).size(10).style(|_theme| {
+                    iced::widget::text::Style {
+                        color: Some(Color::from_rgb(0.86, 0.86, 0.9)),
+                    }
+                }),
+            ]
+            .spacing(2)
+        } else {
+            column![controller_picker]
+        };
+        let controller_key = container(controller_header)
             .width(Length::Fixed(Self::KEYBOARD_WIDTH))
             .height(Length::Fixed(ctrl_h))
             .padding([4, 3])
@@ -1457,10 +1486,9 @@ impl Program<Message> for ControllerRollInteraction {
                 let delta = ((start_y - current_y) / 4.0).round() as i16;
                 let preview_value = (i16::from(start_value) + delta).clamp(0, 127) as u8;
                 let x = match target {
-                    ControllerAdjustTarget::Controller(idx) => roll
-                        .controllers
-                        .get(idx)
-                        .map(|c| c.sample as f32 * pps),
+                    ControllerAdjustTarget::Controller(idx) => {
+                        roll.controllers.get(idx).map(|c| c.sample as f32 * pps)
+                    }
                     ControllerAdjustTarget::Velocity(idx) => {
                         roll.notes.get(idx).map(|n| n.start_sample as f32 * pps)
                     }
@@ -1470,8 +1498,10 @@ impl Program<Message> for ControllerRollInteraction {
                 };
                 let old_stem_h = (bounds.height * (start_value as f32 / 127.0)).max(1.0);
                 let old_stem_y = bounds.height - old_stem_h;
-                let erase_rect =
-                    Path::rectangle(Point::new((x - 1.0).max(0.0), old_stem_y), Size::new(5.0, old_stem_h));
+                let erase_rect = Path::rectangle(
+                    Point::new((x - 1.0).max(0.0), old_stem_y),
+                    Size::new(5.0, old_stem_h),
+                );
                 frame.fill(&erase_rect, Color::from_rgba(0.16, 0.16, 0.18, 1.0));
 
                 let stem_h = (bounds.height * (preview_value as f32 / 127.0)).max(1.0);
