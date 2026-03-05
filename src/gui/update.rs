@@ -1588,6 +1588,18 @@ impl Maolan {
                     self.send(Action::SetRecordEnabled(false)),
                     self.send(Action::SetLoopRange(None)),
                     self.send(Action::SetPunchRange(None)),
+                    self.send(Action::SetGlobalMidiLearnBinding {
+                        target: maolan_engine::message::GlobalMidiLearnTarget::PlayPause,
+                        binding: None,
+                    }),
+                    self.send(Action::SetGlobalMidiLearnBinding {
+                        target: maolan_engine::message::GlobalMidiLearnTarget::Stop,
+                        binding: None,
+                    }),
+                    self.send(Action::SetGlobalMidiLearnBinding {
+                        target: maolan_engine::message::GlobalMidiLearnTarget::RecordToggle,
+                        binding: None,
+                    }),
                 ];
                 for name in existing_tracks {
                     tasks.push(self.send(Action::RemoveTrack(name)));
@@ -1607,6 +1619,9 @@ impl Maolan {
                     }
                     state.clap_plugins_by_track.clear();
                     state.clap_states_by_track.clear();
+                    state.global_midi_learn_play_pause = None;
+                    state.global_midi_learn_stop = None;
+                    state.global_midi_learn_record_toggle = None;
                     state.message = "New session".to_string();
                     state.piano = None;
                 }
@@ -4577,6 +4592,12 @@ impl Maolan {
                     state.message = report.clone();
                     state.diagnostics_report = Some(report);
                 }
+                Action::MidiLearnMappingsReport { lines } => {
+                    let report = lines.join(" | ");
+                    let mut state = self.state.blocking_write();
+                    state.message = format!("MIDI mappings: {}", report);
+                    state.diagnostics_report = Some(format!("MIDI mappings: {}", report));
+                }
                 Action::TrackLevel(name, level) => {
                     let mut state = self.state.blocking_write();
                     if name == "hw:out" {
@@ -4717,6 +4738,21 @@ impl Maolan {
                             maolan_engine::message::TrackMidiLearnTarget::Balance => {
                                 track.midi_learn_balance = binding.clone();
                             }
+                            maolan_engine::message::TrackMidiLearnTarget::Mute => {
+                                track.midi_learn_mute = binding.clone();
+                            }
+                            maolan_engine::message::TrackMidiLearnTarget::Solo => {
+                                track.midi_learn_solo = binding.clone();
+                            }
+                            maolan_engine::message::TrackMidiLearnTarget::Arm => {
+                                track.midi_learn_arm = binding.clone();
+                            }
+                            maolan_engine::message::TrackMidiLearnTarget::InputMonitor => {
+                                track.midi_learn_input_monitor = binding.clone();
+                            }
+                            maolan_engine::message::TrackMidiLearnTarget::DiskMonitor => {
+                                track.midi_learn_disk_monitor = binding.clone();
+                            }
                         }
                     }
                     let message = if let Some(binding) = binding {
@@ -4731,6 +4767,32 @@ impl Maolan {
                         format!("MIDI learn cleared for '{}' {:?}", track_name, target)
                     };
                     self.state.blocking_write().message = message;
+                }
+                Action::SetGlobalMidiLearnBinding { target, binding } => {
+                    {
+                        let mut state = self.state.blocking_write();
+                        match target {
+                            maolan_engine::message::GlobalMidiLearnTarget::PlayPause => {
+                                state.global_midi_learn_play_pause = binding.clone();
+                            }
+                            maolan_engine::message::GlobalMidiLearnTarget::Stop => {
+                                state.global_midi_learn_stop = binding.clone();
+                            }
+                            maolan_engine::message::GlobalMidiLearnTarget::RecordToggle => {
+                                state.global_midi_learn_record_toggle = binding.clone();
+                            }
+                        }
+                    }
+                    self.state.blocking_write().message = if let Some(binding) = binding {
+                        format!(
+                            "Global MIDI learn mapped {:?} to CH{} CC{}",
+                            target,
+                            binding.channel + 1,
+                            binding.cc
+                        )
+                    } else {
+                        format!("Global MIDI learn cleared for {:?}", target)
+                    };
                 }
                 Action::TrackSetFrozen { track_name, frozen } => {
                     self.state.blocking_write().message = if *frozen {
@@ -5653,6 +5715,17 @@ impl Maolan {
             } => {
                 return self.send(Action::TrackSetMidiLearnBinding {
                     track_name: track_name.clone(),
+                    target,
+                    binding: None,
+                });
+            }
+            Message::GlobalMidiLearnArm { target } => {
+                self.state.blocking_write().message =
+                    format!("Global MIDI learn armed for {:?}. Move a hardware MIDI CC control.", target);
+                return self.send(Action::GlobalArmMidiLearn { target });
+            }
+            Message::GlobalMidiLearnClear { target } => {
+                return self.send(Action::SetGlobalMidiLearnBinding {
                     target,
                     binding: None,
                 });
@@ -8397,6 +8470,9 @@ impl Maolan {
             }
             Message::SessionDiagnosticsRequest => {
                 return self.send(Action::RequestSessionDiagnostics);
+            }
+            Message::MidiLearnMappingsReportRequest => {
+                return self.send(Action::RequestMidiLearnMappingsReport);
             }
             Message::ExportSampleRateSelected(rate) => {
                 self.export_sample_rate_hz = rate;

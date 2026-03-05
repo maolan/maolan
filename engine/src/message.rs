@@ -212,6 +212,18 @@ pub struct MidiLearnBinding {
 pub enum TrackMidiLearnTarget {
     Volume,
     Balance,
+    Mute,
+    Solo,
+    Arm,
+    InputMonitor,
+    DiskMonitor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum GlobalMidiLearnTarget {
+    PlayPause,
+    Stop,
+    RecordToggle,
 }
 
 #[derive(Clone, Debug)]
@@ -311,9 +323,16 @@ pub enum Action {
         track_name: String,
         target: TrackMidiLearnTarget,
     },
+    GlobalArmMidiLearn {
+        target: GlobalMidiLearnTarget,
+    },
     TrackSetMidiLearnBinding {
         track_name: String,
         target: TrackMidiLearnTarget,
+        binding: Option<MidiLearnBinding>,
+    },
+    SetGlobalMidiLearnBinding {
+        target: GlobalMidiLearnTarget,
         binding: Option<MidiLearnBinding>,
     },
     TrackSetVcaMaster {
@@ -643,6 +662,7 @@ pub enum Action {
     OpenMidiInputDevice(String),
     OpenMidiOutputDevice(String),
     RequestSessionDiagnostics,
+    RequestMidiLearnMappingsReport,
     SessionDiagnosticsReport {
         track_count: usize,
         frozen_track_count: usize,
@@ -661,6 +681,9 @@ pub enum Action {
         tempo_bpm: f64,
         sample_rate_hz: usize,
         cycle_samples: usize,
+    },
+    MidiLearnMappingsReport {
+        lines: Vec<String>,
     },
     HWInfo {
         channels: usize,

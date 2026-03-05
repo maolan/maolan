@@ -6,7 +6,7 @@ use crate::{
 use iced::{Length, Point, Task};
 use maolan_engine::{
     kind::Kind,
-    message::{Action, Message as EngineMessage},
+    message::{Action, GlobalMidiLearnTarget, Message as EngineMessage},
 };
 use serde_json::{Value, json};
 use std::{
@@ -183,6 +183,11 @@ impl Maolan {
             "ui": {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
+            },
+            "midi_learn_global": {
+                "play_pause": state.global_midi_learn_play_pause,
+                "stop": state.global_midi_learn_stop,
+                "record_toggle": state.global_midi_learn_record_toggle,
             }
         });
         serde_json::to_writer_pretty(file, &result)?;
@@ -694,6 +699,11 @@ impl Maolan {
             "ui": {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
+            },
+            "midi_learn_global": {
+                "play_pause": state.global_midi_learn_play_pause,
+                "stop": state.global_midi_learn_stop,
+                "record_toggle": state.global_midi_learn_record_toggle,
             }
         });
         serde_json::to_writer_pretty(file, &result)?;
@@ -704,6 +714,18 @@ impl Maolan {
         let mut restore_actions: Vec<Action> = vec![
             Action::BeginSessionRestore,
             Action::SetSessionPath(path.clone()),
+            Action::SetGlobalMidiLearnBinding {
+                target: GlobalMidiLearnTarget::PlayPause,
+                binding: None,
+            },
+            Action::SetGlobalMidiLearnBinding {
+                target: GlobalMidiLearnTarget::Stop,
+                binding: None,
+            },
+            Action::SetGlobalMidiLearnBinding {
+                target: GlobalMidiLearnTarget::RecordToggle,
+                binding: None,
+            },
         ];
         let mut frozen_tracks: Vec<String> = Vec::new();
         let mut pending_vca_assignments: Vec<(String, String)> = Vec::new();
@@ -730,6 +752,9 @@ impl Maolan {
             state.connection_view_selection = ConnectionViewSelection::None;
             state.clap_plugins_by_track.clear();
             state.clap_states_by_track.clear();
+            state.global_midi_learn_play_pause = None;
+            state.global_midi_learn_stop = None;
+            state.global_midi_learn_record_toggle = None;
             #[cfg(all(unix, not(target_os = "macos")))]
             state.plugin_graphs_by_track.clear();
         }
@@ -739,6 +764,38 @@ impl Maolan {
         let file = File::open(&p)?;
         let reader = BufReader::new(file);
         let session: Value = serde_json::from_reader(reader)?;
+        if let Some(global_ml) = session.get("midi_learn_global").and_then(Value::as_object) {
+            if let Ok(binding) = serde_json::from_value::<Option<maolan_engine::message::MidiLearnBinding>>(
+                global_ml.get("play_pause").cloned().unwrap_or(Value::Null),
+            ) && binding.is_some()
+            {
+                restore_actions.push(Action::SetGlobalMidiLearnBinding {
+                    target: GlobalMidiLearnTarget::PlayPause,
+                    binding,
+                });
+            }
+            if let Ok(binding) = serde_json::from_value::<Option<maolan_engine::message::MidiLearnBinding>>(
+                global_ml.get("stop").cloned().unwrap_or(Value::Null),
+            ) && binding.is_some()
+            {
+                restore_actions.push(Action::SetGlobalMidiLearnBinding {
+                    target: GlobalMidiLearnTarget::Stop,
+                    binding,
+                });
+            }
+            if let Ok(binding) = serde_json::from_value::<Option<maolan_engine::message::MidiLearnBinding>>(
+                global_ml
+                    .get("record_toggle")
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            ) && binding.is_some()
+            {
+                restore_actions.push(Action::SetGlobalMidiLearnBinding {
+                    target: GlobalMidiLearnTarget::RecordToggle,
+                    binding,
+                });
+            }
+        }
 
         let transport = session.get("transport").ok_or_else(|| {
             io::Error::new(io::ErrorKind::InvalidInput, "No 'transport' in session")
@@ -1102,6 +1159,61 @@ impl Maolan {
                     restore_actions.push(Action::TrackSetMidiLearnBinding {
                         track_name: name.clone(),
                         target: maolan_engine::message::TrackMidiLearnTarget::Balance,
+                        binding,
+                    });
+                }
+                if let Ok(binding) = serde_json::from_value::<
+                    Option<maolan_engine::message::MidiLearnBinding>,
+                >(track["midi_learn_mute"].clone())
+                    && binding.is_some()
+                {
+                    restore_actions.push(Action::TrackSetMidiLearnBinding {
+                        track_name: name.clone(),
+                        target: maolan_engine::message::TrackMidiLearnTarget::Mute,
+                        binding,
+                    });
+                }
+                if let Ok(binding) = serde_json::from_value::<
+                    Option<maolan_engine::message::MidiLearnBinding>,
+                >(track["midi_learn_solo"].clone())
+                    && binding.is_some()
+                {
+                    restore_actions.push(Action::TrackSetMidiLearnBinding {
+                        track_name: name.clone(),
+                        target: maolan_engine::message::TrackMidiLearnTarget::Solo,
+                        binding,
+                    });
+                }
+                if let Ok(binding) = serde_json::from_value::<
+                    Option<maolan_engine::message::MidiLearnBinding>,
+                >(track["midi_learn_arm"].clone())
+                    && binding.is_some()
+                {
+                    restore_actions.push(Action::TrackSetMidiLearnBinding {
+                        track_name: name.clone(),
+                        target: maolan_engine::message::TrackMidiLearnTarget::Arm,
+                        binding,
+                    });
+                }
+                if let Ok(binding) = serde_json::from_value::<
+                    Option<maolan_engine::message::MidiLearnBinding>,
+                >(track["midi_learn_input_monitor"].clone())
+                    && binding.is_some()
+                {
+                    restore_actions.push(Action::TrackSetMidiLearnBinding {
+                        track_name: name.clone(),
+                        target: maolan_engine::message::TrackMidiLearnTarget::InputMonitor,
+                        binding,
+                    });
+                }
+                if let Ok(binding) = serde_json::from_value::<
+                    Option<maolan_engine::message::MidiLearnBinding>,
+                >(track["midi_learn_disk_monitor"].clone())
+                    && binding.is_some()
+                {
+                    restore_actions.push(Action::TrackSetMidiLearnBinding {
+                        track_name: name.clone(),
+                        target: maolan_engine::message::TrackMidiLearnTarget::DiskMonitor,
                         binding,
                     });
                 }

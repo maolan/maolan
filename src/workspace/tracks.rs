@@ -49,6 +49,11 @@ impl Tracks {
             let vca_master_label = track.vca_master.clone();
             let midi_learn_vol = track.midi_learn_volume.clone();
             let midi_learn_bal = track.midi_learn_balance.clone();
+            let midi_learn_mute = track.midi_learn_mute.clone();
+            let midi_learn_solo = track.midi_learn_solo.clone();
+            let midi_learn_arm = track.midi_learn_arm.clone();
+            let midi_learn_input_monitor = track.midi_learn_input_monitor.clone();
+            let midi_learn_disk_monitor = track.midi_learn_disk_monitor.clone();
             let vca_candidates: Vec<String> = track_names
                 .iter()
                 .filter(|candidate| **candidate != track.name)
@@ -126,6 +131,21 @@ impl Tracks {
             }
             if let Some(binding) = midi_learn_bal.as_ref() {
                 title.push_str(&format!(" [CC{}:{}->Bal]", binding.channel + 1, binding.cc));
+            }
+            if let Some(binding) = midi_learn_mute.as_ref() {
+                title.push_str(&format!(" [CC{}:{}->Mute]", binding.channel + 1, binding.cc));
+            }
+            if let Some(binding) = midi_learn_solo.as_ref() {
+                title.push_str(&format!(" [CC{}:{}->Solo]", binding.channel + 1, binding.cc));
+            }
+            if let Some(binding) = midi_learn_arm.as_ref() {
+                title.push_str(&format!(" [CC{}:{}->Arm]", binding.channel + 1, binding.cc));
+            }
+            if let Some(binding) = midi_learn_input_monitor.as_ref() {
+                title.push_str(&format!(" [CC{}:{}->InMon]", binding.channel + 1, binding.cc));
+            }
+            if let Some(binding) = midi_learn_disk_monitor.as_ref() {
+                title.push_str(&format!(" [CC{}:{}->Disk]", binding.channel + 1, binding.cc));
             }
 
             let track_ui: Column<'_, Message> = column![
@@ -212,6 +232,11 @@ impl Tracks {
                 let track_vca_candidates = vca_candidates.clone();
                 let track_midi_learn_vol = track.midi_learn_volume.clone();
                 let track_midi_learn_bal = track.midi_learn_balance.clone();
+                let track_midi_learn_mute = track.midi_learn_mute.clone();
+                let track_midi_learn_solo = track.midi_learn_solo.clone();
+                let track_midi_learn_arm = track.midi_learn_arm.clone();
+                let track_midi_learn_input_monitor = track.midi_learn_input_monitor.clone();
+                let track_midi_learn_disk_monitor = track.midi_learn_disk_monitor.clone();
                 let track_with_mouse = mouse_area(
                     container(track_ui)
                         .id(track.name.clone())
@@ -306,6 +331,36 @@ impl Tracks {
                             target: TrackMidiLearnTarget::Balance,
                         }),
                     );
+                    menu = menu.push(
+                        button("MIDI Learn Mute").on_press(Message::TrackMidiLearnArm {
+                            track_name: track_name_for_menu.clone(),
+                            target: TrackMidiLearnTarget::Mute,
+                        }),
+                    );
+                    menu = menu.push(
+                        button("MIDI Learn Solo").on_press(Message::TrackMidiLearnArm {
+                            track_name: track_name_for_menu.clone(),
+                            target: TrackMidiLearnTarget::Solo,
+                        }),
+                    );
+                    menu = menu.push(
+                        button("MIDI Learn Arm").on_press(Message::TrackMidiLearnArm {
+                            track_name: track_name_for_menu.clone(),
+                            target: TrackMidiLearnTarget::Arm,
+                        }),
+                    );
+                    menu = menu.push(
+                        button("MIDI Learn Input Monitor").on_press(Message::TrackMidiLearnArm {
+                            track_name: track_name_for_menu.clone(),
+                            target: TrackMidiLearnTarget::InputMonitor,
+                        }),
+                    );
+                    menu = menu.push(
+                        button("MIDI Learn Disk Monitor").on_press(Message::TrackMidiLearnArm {
+                            track_name: track_name_for_menu.clone(),
+                            target: TrackMidiLearnTarget::DiskMonitor,
+                        }),
+                    );
                     if track_midi_learn_vol.is_some() {
                         menu = menu.push(
                             button("Clear MIDI Learn Volume").on_press(
@@ -322,6 +377,50 @@ impl Tracks {
                                 Message::TrackMidiLearnClear {
                                     track_name: track_name_for_menu.clone(),
                                     target: TrackMidiLearnTarget::Balance,
+                                },
+                            ),
+                        );
+                    }
+                    if track_midi_learn_mute.is_some() {
+                        menu = menu.push(
+                            button("Clear MIDI Learn Mute").on_press(Message::TrackMidiLearnClear {
+                                track_name: track_name_for_menu.clone(),
+                                target: TrackMidiLearnTarget::Mute,
+                            }),
+                        );
+                    }
+                    if track_midi_learn_solo.is_some() {
+                        menu = menu.push(
+                            button("Clear MIDI Learn Solo").on_press(Message::TrackMidiLearnClear {
+                                track_name: track_name_for_menu.clone(),
+                                target: TrackMidiLearnTarget::Solo,
+                            }),
+                        );
+                    }
+                    if track_midi_learn_arm.is_some() {
+                        menu = menu.push(
+                            button("Clear MIDI Learn Arm").on_press(Message::TrackMidiLearnClear {
+                                track_name: track_name_for_menu.clone(),
+                                target: TrackMidiLearnTarget::Arm,
+                            }),
+                        );
+                    }
+                    if track_midi_learn_input_monitor.is_some() {
+                        menu = menu.push(
+                            button("Clear MIDI Learn Input Monitor").on_press(
+                                Message::TrackMidiLearnClear {
+                                    track_name: track_name_for_menu.clone(),
+                                    target: TrackMidiLearnTarget::InputMonitor,
+                                },
+                            ),
+                        );
+                    }
+                    if track_midi_learn_disk_monitor.is_some() {
+                        menu = menu.push(
+                            button("Clear MIDI Learn Disk Monitor").on_press(
+                                Message::TrackMidiLearnClear {
+                                    track_name: track_name_for_menu.clone(),
+                                    target: TrackMidiLearnTarget::DiskMonitor,
                                 },
                             ),
                         );

@@ -473,6 +473,12 @@ pub enum Message {
         track_name: String,
         target: maolan_engine::message::TrackMidiLearnTarget,
     },
+    GlobalMidiLearnArm {
+        target: maolan_engine::message::GlobalMidiLearnTarget,
+    },
+    GlobalMidiLearnClear {
+        target: maolan_engine::message::GlobalMidiLearnTarget,
+    },
     TrackAutomationCycleMode {
         track_name: String,
     },
@@ -524,6 +530,7 @@ pub enum Message {
     OpenFolderSelected(Option<PathBuf>),
     OpenExporter,
     SessionDiagnosticsRequest,
+    MidiLearnMappingsReportRequest,
     ExportSampleRateSelected(u32),
     ExportBitDepthSelected(ExportBitDepth),
     ExportNormalizeToggled(bool),

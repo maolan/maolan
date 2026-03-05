@@ -88,6 +88,16 @@ pub struct Track {
     #[serde(default)]
     pub midi_learn_balance: Option<maolan_engine::message::MidiLearnBinding>,
     #[serde(default)]
+    pub midi_learn_mute: Option<maolan_engine::message::MidiLearnBinding>,
+    #[serde(default)]
+    pub midi_learn_solo: Option<maolan_engine::message::MidiLearnBinding>,
+    #[serde(default)]
+    pub midi_learn_arm: Option<maolan_engine::message::MidiLearnBinding>,
+    #[serde(default)]
+    pub midi_learn_input_monitor: Option<maolan_engine::message::MidiLearnBinding>,
+    #[serde(default)]
+    pub midi_learn_disk_monitor: Option<maolan_engine::message::MidiLearnBinding>,
+    #[serde(default)]
     pub vca_master: Option<String>,
     #[serde(default)]
     pub frozen: bool,
@@ -134,6 +144,11 @@ impl Track {
             disk_monitor: true,
             midi_learn_volume: None,
             midi_learn_balance: None,
+            midi_learn_mute: None,
+            midi_learn_solo: None,
+            midi_learn_arm: None,
+            midi_learn_input_monitor: None,
+            midi_learn_disk_monitor: None,
             vca_master: None,
             frozen: false,
             audio: AudioData::new(audio_ins, audio_outs),
@@ -221,6 +236,21 @@ impl Track {
                             }
                             maolan_engine::message::TrackMidiLearnTarget::Balance => {
                                 self.midi_learn_balance = binding;
+                            }
+                            maolan_engine::message::TrackMidiLearnTarget::Mute => {
+                                self.midi_learn_mute = binding;
+                            }
+                            maolan_engine::message::TrackMidiLearnTarget::Solo => {
+                                self.midi_learn_solo = binding;
+                            }
+                            maolan_engine::message::TrackMidiLearnTarget::Arm => {
+                                self.midi_learn_arm = binding;
+                            }
+                            maolan_engine::message::TrackMidiLearnTarget::InputMonitor => {
+                                self.midi_learn_input_monitor = binding;
+                            }
+                            maolan_engine::message::TrackMidiLearnTarget::DiskMonitor => {
+                                self.midi_learn_disk_monitor = binding;
                             }
                         }
                     }

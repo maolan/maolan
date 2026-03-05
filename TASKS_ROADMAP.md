@@ -77,13 +77,17 @@ Last updated: 2026-03-05
 
 - [x] Control surface support and MIDI learn expansion
   - [x] First-pass MIDI CC learn for track volume/balance from hardware input
+  - [x] Expanded MIDI CC learn targets for track mute/solo/arm
+  - [x] Expanded MIDI CC learn targets for input monitor/disk monitor
+  - [x] Global MIDI CC learn for transport play/pause/stop/record-toggle
+  - [x] MIDI mappings report command to inspect active learned bindings
   - [x] Per-track learn arm/clear controls in track context menu
   - [x] Session persistence + restore for learned mappings
 - [x] Session diagnostics/performance tooling
   - [x] Engine diagnostics snapshot action (tracks/clips/plugins/workers/MIDI queue/transport/audio cycle)
   - [x] UI trigger via menu (`Edit -> Session Diagnostics`)
   - [x] Diagnostics report surfaced in status area
-- [ ] Optional MIDI 2.0 investigation track (separate from core roadmap)
+- [x] Optional MIDI 2.0 investigation track (separate from core roadmap) - N/A on FreeBSD (platform support unavailable)
 
 ## Notes
 

@@ -170,6 +170,15 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             let binding = match target {
                 crate::message::TrackMidiLearnTarget::Volume => track_lock.midi_learn_volume.clone(),
                 crate::message::TrackMidiLearnTarget::Balance => track_lock.midi_learn_balance.clone(),
+                crate::message::TrackMidiLearnTarget::Mute => track_lock.midi_learn_mute.clone(),
+                crate::message::TrackMidiLearnTarget::Solo => track_lock.midi_learn_solo.clone(),
+                crate::message::TrackMidiLearnTarget::Arm => track_lock.midi_learn_arm.clone(),
+                crate::message::TrackMidiLearnTarget::InputMonitor => {
+                    track_lock.midi_learn_input_monitor.clone()
+                }
+                crate::message::TrackMidiLearnTarget::DiskMonitor => {
+                    track_lock.midi_learn_disk_monitor.clone()
+                }
             };
             Some(Action::TrackSetMidiLearnBinding {
                 track_name: track_name.clone(),
@@ -745,6 +754,41 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     track_name: track.name.clone(),
                     target: crate::message::TrackMidiLearnTarget::Balance,
                     binding: track.midi_learn_balance.clone(),
+                });
+            }
+            if track.midi_learn_mute.is_some() {
+                actions.push(Action::TrackSetMidiLearnBinding {
+                    track_name: track.name.clone(),
+                    target: crate::message::TrackMidiLearnTarget::Mute,
+                    binding: track.midi_learn_mute.clone(),
+                });
+            }
+            if track.midi_learn_solo.is_some() {
+                actions.push(Action::TrackSetMidiLearnBinding {
+                    track_name: track.name.clone(),
+                    target: crate::message::TrackMidiLearnTarget::Solo,
+                    binding: track.midi_learn_solo.clone(),
+                });
+            }
+            if track.midi_learn_arm.is_some() {
+                actions.push(Action::TrackSetMidiLearnBinding {
+                    track_name: track.name.clone(),
+                    target: crate::message::TrackMidiLearnTarget::Arm,
+                    binding: track.midi_learn_arm.clone(),
+                });
+            }
+            if track.midi_learn_input_monitor.is_some() {
+                actions.push(Action::TrackSetMidiLearnBinding {
+                    track_name: track.name.clone(),
+                    target: crate::message::TrackMidiLearnTarget::InputMonitor,
+                    binding: track.midi_learn_input_monitor.clone(),
+                });
+            }
+            if track.midi_learn_disk_monitor.is_some() {
+                actions.push(Action::TrackSetMidiLearnBinding {
+                    track_name: track.name.clone(),
+                    target: crate::message::TrackMidiLearnTarget::DiskMonitor,
+                    binding: track.midi_learn_disk_monitor.clone(),
                 });
             }
             if track.vca_master.is_some() {
