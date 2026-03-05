@@ -992,14 +992,38 @@ impl Track {
             let mut tick = 0_u64;
             for event in track {
                 tick = tick.saturating_add(event.delta.as_int() as u64);
-                if let TrackEventKind::Midi { channel, message } = event.kind {
-                    let mut data = Vec::with_capacity(3);
-                    if (LiveEvent::Midi { channel, message })
-                        .write(&mut data)
-                        .is_ok()
-                    {
-                        out.push((ticks_to_samples(tick), data));
+                let data = match event.kind {
+                    TrackEventKind::Midi { channel, message } => {
+                        let mut data = Vec::with_capacity(3);
+                        if (LiveEvent::Midi { channel, message })
+                            .write(&mut data)
+                            .is_ok()
+                        {
+                            Some(data)
+                        } else {
+                            None
+                        }
                     }
+                    TrackEventKind::SysEx(payload) => {
+                        let mut data = Vec::with_capacity(payload.len() + 2);
+                        data.push(0xF0);
+                        data.extend_from_slice(payload);
+                        if data.last().copied() != Some(0xF7) {
+                            data.push(0xF7);
+                        }
+                        Some(data)
+                    }
+                    // "Escape" packets are already prefixed with 0xF7 in SMF stream form.
+                    TrackEventKind::Escape(payload) => {
+                        let mut data = Vec::with_capacity(payload.len() + 1);
+                        data.push(0xF7);
+                        data.extend_from_slice(payload);
+                        Some(data)
+                    }
+                    _ => None,
+                };
+                if let Some(data) = data {
+                    out.push((ticks_to_samples(tick), data));
                 }
             }
         }

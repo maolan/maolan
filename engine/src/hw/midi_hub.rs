@@ -147,13 +147,38 @@ struct MidiParser {
     needed: usize,
     data: [u8; 2],
     len: usize,
+    in_sysex: bool,
+    sysex: Vec<u8>,
 }
 
 impl MidiParser {
     fn feed(&mut self, byte: u8) -> Option<Vec<u8>> {
         if byte & 0x80 != 0 {
+            if self.in_sysex {
+                if byte == 0xF7 {
+                    self.sysex.push(byte);
+                    self.in_sysex = false;
+                    return Some(std::mem::take(&mut self.sysex));
+                }
+                // Realtime can be interleaved in SysEx without ending it.
+                if byte >= 0xF8 {
+                    return Some(vec![byte]);
+                }
+                // Any other status interrupts an unterminated SysEx.
+                self.in_sysex = false;
+                self.sysex.clear();
+            }
             if byte >= 0xF8 {
                 return Some(vec![byte]);
+            }
+            if byte == 0xF0 {
+                self.in_sysex = true;
+                self.sysex.clear();
+                self.sysex.push(byte);
+                self.status = None;
+                self.needed = 0;
+                self.len = 0;
+                return None;
             }
             self.status = Some(byte);
             self.len = 0;
@@ -161,6 +186,11 @@ impl MidiParser {
             if self.needed == 0 {
                 return Some(vec![byte]);
             }
+            return None;
+        }
+
+        if self.in_sysex {
+            self.sysex.push(byte);
             return None;
         }
 
@@ -192,5 +222,36 @@ fn status_data_len(status: u8) -> usize {
         0xF1 | 0xF3 => 1,
         0xF2 => 2,
         _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MidiParser;
+
+    #[test]
+    fn parser_collects_sysex_message() {
+        let mut parser = MidiParser::default();
+        let bytes = [0xF0, 0x7D, 0x01, 0x02, 0xF7];
+        let mut out = Vec::new();
+        for b in bytes {
+            if let Some(msg) = parser.feed(b) {
+                out.push(msg);
+            }
+        }
+        assert_eq!(out, vec![vec![0xF0, 0x7D, 0x01, 0x02, 0xF7]]);
+    }
+
+    #[test]
+    fn parser_keeps_realtime_while_in_sysex() {
+        let mut parser = MidiParser::default();
+        let bytes = [0xF0, 0x7D, 0xF8, 0x01, 0xF7];
+        let mut out = Vec::new();
+        for b in bytes {
+            if let Some(msg) = parser.feed(b) {
+                out.push(msg);
+            }
+        }
+        assert_eq!(out, vec![vec![0xF8], vec![0xF0, 0x7D, 0x01, 0xF7]]);
     }
 }

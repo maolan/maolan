@@ -159,11 +159,11 @@ impl Engine {
     fn parse_midi_clip_for_edit(
         path: &Path,
         sample_rate: f64,
-    ) -> Result<(Vec<MidiNoteData>, Vec<MidiControllerData>), String> {
+    ) -> Result<(Vec<MidiNoteData>, Vec<MidiControllerData>, Vec<(u64, Vec<u8>)>), String> {
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
         let smf = Smf::parse(&bytes).map_err(|e| e.to_string())?;
         let Timing::Metrical(ppq) = smf.header.timing else {
-            return Ok((vec![], vec![]));
+            return Ok((vec![], vec![], vec![]));
         };
         let ppq = u64::from(ppq.as_int().max(1));
 
@@ -215,65 +215,97 @@ impl Engine {
 
         let mut notes = Vec::<MidiNoteData>::new();
         let mut controllers = Vec::<MidiControllerData>::new();
+        let mut passthrough_events = Vec::<(u64, Vec<u8>)>::new();
         let mut active_notes: HashMap<(u8, u8), Vec<(u64, u8)>> = HashMap::new();
 
         for track in &smf.tracks {
             let mut tick = 0_u64;
             for event in track {
                 tick = tick.saturating_add(event.delta.as_int() as u64);
-                if let TrackEventKind::Midi { channel, message } = event.kind {
-                    let channel = channel.as_int();
-                    match message {
-                        midly::MidiMessage::NoteOn { key, vel } => {
-                            let pitch = key.as_int();
-                            let velocity = vel.as_int();
-                            if velocity == 0 {
-                                if let Some(starts) = active_notes.get_mut(&(channel, pitch))
+                match event.kind {
+                    TrackEventKind::Midi { channel, message } => {
+                        let channel_u8 = channel.as_int();
+                        match message {
+                            midly::MidiMessage::NoteOn { key, vel } => {
+                                let pitch = key.as_int();
+                                let velocity = vel.as_int();
+                                if velocity == 0 {
+                                    if let Some(starts) =
+                                        active_notes.get_mut(&(channel_u8, pitch))
+                                        && let Some((start_tick, start_vel)) = starts.pop()
+                                    {
+                                        let start_sample = ticks_to_samples(start_tick);
+                                        let end_sample = ticks_to_samples(tick);
+                                        notes.push(MidiNoteData {
+                                            start_sample,
+                                            length_samples: end_sample
+                                                .saturating_sub(start_sample)
+                                                .max(1),
+                                            pitch,
+                                            velocity: start_vel,
+                                            channel: channel_u8,
+                                        });
+                                    }
+                                } else {
+                                    active_notes
+                                        .entry((channel_u8, pitch))
+                                        .or_default()
+                                        .push((tick, velocity));
+                                }
+                            }
+                            midly::MidiMessage::NoteOff { key, .. } => {
+                                let pitch = key.as_int();
+                                if let Some(starts) = active_notes.get_mut(&(channel_u8, pitch))
                                     && let Some((start_tick, start_vel)) = starts.pop()
                                 {
                                     let start_sample = ticks_to_samples(start_tick);
                                     let end_sample = ticks_to_samples(tick);
                                     notes.push(MidiNoteData {
                                         start_sample,
-                                        length_samples: end_sample.saturating_sub(start_sample).max(1),
+                                            length_samples: end_sample
+                                                .saturating_sub(start_sample)
+                                                .max(1),
                                         pitch,
                                         velocity: start_vel,
-                                        channel,
+                                        channel: channel_u8,
                                     });
                                 }
-                            } else {
-                                active_notes
-                                    .entry((channel, pitch))
-                                    .or_default()
-                                    .push((tick, velocity));
                             }
-                        }
-                        midly::MidiMessage::NoteOff { key, .. } => {
-                            let pitch = key.as_int();
-                            if let Some(starts) = active_notes.get_mut(&(channel, pitch))
-                                && let Some((start_tick, start_vel)) = starts.pop()
-                            {
-                                let start_sample = ticks_to_samples(start_tick);
-                                let end_sample = ticks_to_samples(tick);
-                                notes.push(MidiNoteData {
-                                    start_sample,
-                                    length_samples: end_sample.saturating_sub(start_sample).max(1),
-                                    pitch,
-                                    velocity: start_vel,
-                                    channel,
+                            midly::MidiMessage::Controller { controller, value } => {
+                                controllers.push(MidiControllerData {
+                                    sample: ticks_to_samples(tick),
+                                    controller: controller.as_int(),
+                                    value: value.as_int(),
+                                    channel: channel_u8,
                                 });
                             }
+                            _ => {
+                                let mut data = Vec::with_capacity(3);
+                                if (LiveEvent::Midi { channel, message })
+                                    .write(&mut data)
+                                    .is_ok()
+                                {
+                                    passthrough_events.push((ticks_to_samples(tick) as u64, data));
+                                }
+                            }
                         }
-                        midly::MidiMessage::Controller { controller, value } => {
-                            controllers.push(MidiControllerData {
-                                sample: ticks_to_samples(tick),
-                                controller: controller.as_int(),
-                                value: value.as_int(),
-                                channel,
-                            });
-                        }
-                        _ => {}
                     }
+                    TrackEventKind::SysEx(payload) => {
+                        let mut data = Vec::with_capacity(payload.len() + 2);
+                        data.push(0xF0);
+                        data.extend_from_slice(payload);
+                        if data.last().copied() != Some(0xF7) {
+                            data.push(0xF7);
+                        }
+                        passthrough_events.push((ticks_to_samples(tick) as u64, data));
+                    }
+                    TrackEventKind::Escape(payload) => {
+                        let mut data = Vec::with_capacity(payload.len() + 1);
+                        data.push(0xF7);
+                        data.extend_from_slice(payload);
+                        passthrough_events.push((ticks_to_samples(tick) as u64, data));
+                    }
+                    _ => {}
                 }
             }
         }
@@ -294,7 +326,8 @@ impl Engine {
 
         notes.sort_by_key(|n| (n.start_sample, n.pitch));
         controllers.sort_by_key(|c| (c.sample, c.controller));
-        Ok((notes, controllers))
+        passthrough_events.sort_by_key(|(sample, _)| *sample);
+        Ok((notes, controllers, passthrough_events))
     }
 
     fn midi_events_from_notes_and_controllers(
@@ -352,6 +385,11 @@ impl Engine {
                 track_name,
                 clip_index,
                 ..
+            }
+            | Action::SetMidiSysExEvents {
+                track_name,
+                clip_index,
+                ..
             } => (track_name, *clip_index),
             _ => return Ok(()),
         };
@@ -373,7 +411,8 @@ impl Engine {
             (clip_name, clip_path, track.sample_rate)
         };
 
-        let (mut notes, mut controllers) = Self::parse_midi_clip_for_edit(&clip_path, sample_rate)?;
+        let (mut notes, mut controllers, mut passthrough_events) =
+            Self::parse_midi_clip_for_edit(&clip_path, sample_rate)?;
 
         match action {
             Action::ModifyMidiNotes {
@@ -439,12 +478,27 @@ impl Engine {
                     controllers.insert(at, ctrl);
                 }
             }
+            Action::SetMidiSysExEvents {
+                new_sysex_events, ..
+            } => {
+                passthrough_events.retain(|(_, data)| {
+                    !matches!(data.first(), Some(0xF0) | Some(0xF7))
+                });
+                passthrough_events.extend(
+                    new_sysex_events
+                        .iter()
+                        .map(|ev| (ev.sample as u64, ev.data.clone())),
+                );
+            }
             _ => {}
         }
 
         notes.sort_by_key(|n| (n.start_sample, n.pitch));
         controllers.sort_by_key(|c| (c.sample, c.controller));
-        let events = Self::midi_events_from_notes_and_controllers(&notes, &controllers);
+        passthrough_events.sort_by_key(|(sample, _)| *sample);
+        let mut events = Self::midi_events_from_notes_and_controllers(&notes, &controllers);
+        events.extend(passthrough_events);
+        events.sort_by_key(|(sample, _)| *sample);
         Self::write_midi_file(&clip_path, sample_rate.max(1.0) as u32, &events)?;
         track_handle.lock().invalidate_midi_clip_cache(&clip_name);
         Ok(())
@@ -1930,6 +1984,12 @@ impl Engine {
             | Action::InsertMidiControllers { .. }
             | Action::DeleteMidiNotes { .. }
             | Action::InsertMidiNotes { .. } => {
+                if let Err(e) = self.apply_midi_edit_action(&action_to_process) {
+                    self.notify_clients(Err(e)).await;
+                    return;
+                }
+            }
+            Action::SetMidiSysExEvents { .. } => {
                 if let Err(e) = self.apply_midi_edit_action(&action_to_process) {
                     self.notify_clients(Err(e)).await;
                     return;
@@ -3499,7 +3559,8 @@ impl Engine {
                     | Action::DeleteMidiControllers { .. }
                     | Action::InsertMidiControllers { .. }
                     | Action::DeleteMidiNotes { .. }
-                    | Action::InsertMidiNotes { .. } => {
+                    | Action::InsertMidiNotes { .. }
+                    | Action::SetMidiSysExEvents { .. } => {
                         self.handle_request(a).await;
                     }
                     #[cfg(target_os = "windows")]

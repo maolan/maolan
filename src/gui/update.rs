@@ -4,7 +4,7 @@ use crate::message::PluginFormat;
 use crate::{
     connections,
     message::{ExportNormalizeMode, Message, Show},
-    state::{ConnectionViewSelection, HW, PianoData, Resizing, Track, View},
+    state::{ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, Track, View},
     ui_timing::DOUBLE_CLICK,
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
     workspace::{
@@ -28,6 +28,49 @@ use std::{
 use tracing::error;
 
 impl Maolan {
+    fn format_sysex_hex(data: &[u8]) -> String {
+        data.iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    fn parse_sysex_hex(raw: &str) -> Result<Vec<u8>, String> {
+        let mut out = Vec::new();
+        for token in raw
+            .split(|c: char| c.is_whitespace() || c == ',')
+            .filter(|s| !s.is_empty())
+        {
+            let normalized = token
+                .strip_prefix("0x")
+                .or_else(|| token.strip_prefix("0X"))
+                .unwrap_or(token);
+            let byte = u8::from_str_radix(normalized, 16)
+                .map_err(|_| format!("Invalid hex byte '{token}'"))?;
+            out.push(byte);
+        }
+        if out.is_empty() {
+            return Err("SysEx payload is empty".to_string());
+        }
+        if !matches!(out.first(), Some(0xF0) | Some(0xF7)) {
+            out.insert(0, 0xF0);
+        }
+        if out.first() == Some(&0xF0) && out.last() != Some(&0xF7) {
+            out.push(0xF7);
+        }
+        Ok(out)
+    }
+
+    fn sysex_to_engine(points: &[PianoSysExPoint]) -> Vec<maolan_engine::message::MidiRawEventData> {
+        points
+            .iter()
+            .map(|p| maolan_engine::message::MidiRawEventData {
+                sample: p.sample,
+                data: p.data.clone(),
+            })
+            .collect()
+    }
+
     fn sync_editor_scrollbars(&self) -> Task<Message> {
         let x = self.editor_scroll_x.clamp(0.0, 1.0);
         Task::batch(vec![
@@ -670,27 +713,37 @@ impl Maolan {
                 }
             }
             Message::PianoControllerLaneSelected(lane) => {
-                self.state.blocking_write().piano_controller_lane = lane;
+                let mut state = self.state.blocking_write();
+                state.piano_controller_lane = lane;
+                if matches!(lane, crate::message::PianoControllerLane::SysEx) {
+                    state.piano_sysex_panel_open = true;
+                } else {
+                    state.piano_sysex_panel_open = false;
+                }
             }
             Message::PianoControllerKindSelected(kind) => {
                 let mut state = self.state.blocking_write();
                 state.piano_controller_lane = crate::message::PianoControllerLane::Controller;
                 state.piano_controller_kind = kind;
+                state.piano_sysex_panel_open = false;
             }
             Message::PianoVelocityKindSelected(kind) => {
                 let mut state = self.state.blocking_write();
                 state.piano_controller_lane = crate::message::PianoControllerLane::Velocity;
                 state.piano_velocity_kind = kind;
+                state.piano_sysex_panel_open = false;
             }
             Message::PianoRpnKindSelected(kind) => {
                 let mut state = self.state.blocking_write();
                 state.piano_controller_lane = crate::message::PianoControllerLane::Rpn;
                 state.piano_rpn_kind = kind;
+                state.piano_sysex_panel_open = false;
             }
             Message::PianoNrpnKindSelected(kind) => {
                 let mut state = self.state.blocking_write();
                 state.piano_controller_lane = crate::message::PianoControllerLane::Nrpn;
                 state.piano_nrpn_kind = kind;
+                state.piano_sysex_panel_open = false;
             }
             Message::PianoKeyPressed(note) => {
                 let track_name = self
@@ -1266,6 +1319,164 @@ impl Maolan {
                 }));
                 tasks.push(self.send(Action::EndHistoryGroup));
                 return Task::batch(tasks);
+            }
+            Message::PianoSysExSelect(index) => {
+                let mut state = self.state.blocking_write();
+                state.piano_selected_sysex = index;
+                state.piano_sysex_hex_input = index
+                    .and_then(|idx| state.piano.as_ref()?.sysexes.get(idx).cloned())
+                    .map(|ev| Self::format_sysex_hex(&ev.data))
+                    .unwrap_or_default();
+            }
+            Message::PianoSysExOpenEditor(index) => {
+                let mut state = self.state.blocking_write();
+                state.piano_controller_lane = crate::message::PianoControllerLane::SysEx;
+                state.piano_selected_sysex = index;
+                state.piano_sysex_hex_input = index
+                    .and_then(|idx| state.piano.as_ref()?.sysexes.get(idx).cloned())
+                    .map(|ev| Self::format_sysex_hex(&ev.data))
+                    .unwrap_or_default();
+                state.piano_sysex_panel_open = true;
+            }
+            Message::PianoSysExCloseEditor => {
+                self.state.blocking_write().piano_sysex_panel_open = false;
+            }
+            Message::PianoSysExHexInput(ref input) => {
+                self.state.blocking_write().piano_sysex_hex_input = input.clone();
+            }
+            Message::PianoSysExAdd => {
+                let mut state = self.state.blocking_write();
+                state.piano_sysex_panel_open = false;
+                let input = state.piano_sysex_hex_input.clone();
+                let payload = match Self::parse_sysex_hex(&input) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        state.message = e;
+                        return Task::none();
+                    }
+                };
+                let selected_hint = state.piano_selected_sysex;
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+                let old_sysexes = piano.sysexes.clone();
+                let sample = selected_hint
+                    .and_then(|idx| piano.sysexes.get(idx).map(|s| s.sample))
+                    .unwrap_or(0);
+                piano.sysexes.push(PianoSysExPoint {
+                    sample,
+                    data: payload,
+                });
+                piano.sysexes.sort_by_key(|s| s.sample);
+                let new_index = piano.sysexes.len().saturating_sub(1);
+                let track_name = piano.track_idx.clone();
+                let new_sysexes = piano.sysexes.clone();
+                let new_hex = Self::format_sysex_hex(&piano.sysexes[new_index].data);
+                state.piano_selected_sysex = Some(new_index);
+                state.piano_sysex_hex_input = new_hex;
+                drop(state);
+                return self.send(Action::SetMidiSysExEvents {
+                    track_name,
+                    clip_index: 0,
+                    new_sysex_events: Self::sysex_to_engine(&new_sysexes),
+                    old_sysex_events: Self::sysex_to_engine(&old_sysexes),
+                });
+            }
+            Message::PianoSysExUpdate => {
+                let mut state = self.state.blocking_write();
+                state.piano_sysex_panel_open = false;
+                let input = state.piano_sysex_hex_input.clone();
+                let payload = match Self::parse_sysex_hex(&input) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        state.message = e;
+                        return Task::none();
+                    }
+                };
+                let Some(selected_idx) = state.piano_selected_sysex else {
+                    return Task::none();
+                };
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+                if selected_idx >= piano.sysexes.len() {
+                    return Task::none();
+                }
+                let old_sysexes = piano.sysexes.clone();
+                piano.sysexes[selected_idx].data = payload;
+                let new_hex = Self::format_sysex_hex(&piano.sysexes[selected_idx].data);
+                let track_name = piano.track_idx.clone();
+                let new_sysexes = piano.sysexes.clone();
+                state.piano_sysex_hex_input = new_hex;
+                drop(state);
+                return self.send(Action::SetMidiSysExEvents {
+                    track_name,
+                    clip_index: 0,
+                    new_sysex_events: Self::sysex_to_engine(&new_sysexes),
+                    old_sysex_events: Self::sysex_to_engine(&old_sysexes),
+                });
+            }
+            Message::PianoSysExDelete => {
+                let mut state = self.state.blocking_write();
+                state.piano_sysex_panel_open = false;
+                let Some(selected_idx) = state.piano_selected_sysex else {
+                    return Task::none();
+                };
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+                if selected_idx >= piano.sysexes.len() {
+                    return Task::none();
+                }
+                let old_sysexes = piano.sysexes.clone();
+                piano.sysexes.remove(selected_idx);
+                let (new_sel, new_hex) = if piano.sysexes.is_empty() {
+                    (None, String::new())
+                } else {
+                    let idx = selected_idx.min(piano.sysexes.len().saturating_sub(1));
+                    (Some(idx), Self::format_sysex_hex(&piano.sysexes[idx].data))
+                };
+                let track_name = piano.track_idx.clone();
+                let new_sysexes = piano.sysexes.clone();
+                state.piano_selected_sysex = new_sel;
+                state.piano_sysex_hex_input = new_hex;
+                drop(state);
+                return self.send(Action::SetMidiSysExEvents {
+                    track_name,
+                    clip_index: 0,
+                    new_sysex_events: Self::sysex_to_engine(&new_sysexes),
+                    old_sysex_events: Self::sysex_to_engine(&old_sysexes),
+                });
+            }
+            Message::PianoSysExMove { index, sample } => {
+                let mut state = self.state.blocking_write();
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+                if index >= piano.sysexes.len() {
+                    return Task::none();
+                }
+                let old_sysexes = piano.sysexes.clone();
+                let moved_data = piano.sysexes[index].data.clone();
+                let new_sample = sample.min(piano.clip_length_samples.saturating_sub(1));
+                piano.sysexes[index].sample = new_sample;
+                piano.sysexes.sort_by_key(|s| s.sample);
+                let new_sel = piano.sysexes.iter().position(|s| s.data == moved_data);
+                let new_hex = new_sel
+                    .and_then(|sel| piano.sysexes.get(sel))
+                    .map(|ev| Self::format_sysex_hex(&ev.data))
+                    .unwrap_or_default();
+                let track_name = piano.track_idx.clone();
+                let new_sysexes = piano.sysexes.clone();
+                state.piano_selected_sysex = new_sel;
+                state.piano_sysex_hex_input = new_hex;
+                drop(state);
+                return self.send(Action::SetMidiSysExEvents {
+                    track_name,
+                    clip_index: 0,
+                    new_sysex_events: Self::sysex_to_engine(&new_sysexes),
+                    old_sysex_events: Self::sysex_to_engine(&old_sysexes),
+                });
             }
             Message::PianoSelectRectStart { position } => {
                 let mut state = self.state.blocking_write();
@@ -2017,6 +2228,37 @@ impl Maolan {
                                 },
                             );
                         }
+                    }
+                }
+                Action::SetMidiSysExEvents {
+                    track_name,
+                    new_sysex_events,
+                    ..
+                } => {
+                    let mut state = self.state.blocking_write();
+                    let current_sel = state.piano_selected_sysex;
+                    if let Some(piano) = state.piano.as_mut()
+                        && piano.track_idx == *track_name
+                    {
+                        piano.sysexes = new_sysex_events
+                            .iter()
+                            .map(|ev| PianoSysExPoint {
+                                sample: ev.sample,
+                                data: ev.data.clone(),
+                            })
+                            .collect();
+                        piano.sysexes.sort_by_key(|s| s.sample);
+                        let new_sel = match current_sel {
+                            Some(sel) if sel < piano.sysexes.len() => Some(sel),
+                            Some(_) => piano.sysexes.len().checked_sub(1),
+                            None => None,
+                        };
+                        let new_hex = new_sel
+                            .and_then(|idx| piano.sysexes.get(idx))
+                            .map(|ev| Self::format_sysex_hex(&ev.data))
+                            .unwrap_or_default();
+                        state.piano_selected_sysex = new_sel;
+                        state.piano_sysex_hex_input = new_hex;
                     }
                 }
                 Action::DeleteMidiNotes {
@@ -4668,7 +4910,7 @@ impl Maolan {
                     }
                 };
                 match Self::parse_midi_clip_for_piano(&path, self.playback_rate_hz) {
-                    Ok((notes, controllers, parsed_len)) => {
+                    Ok((notes, controllers, sysexes, parsed_len)) => {
                         {
                             let mut state = self.state.blocking_write();
                             state.piano = Some(PianoData {
@@ -4676,8 +4918,12 @@ impl Maolan {
                                 clip_length_samples: parsed_len.max(clip_length),
                                 notes,
                                 controllers,
+                                sysexes,
                                 midnam_note_names: HashMap::new(),
                             });
+                            state.piano_selected_sysex = None;
+                            state.piano_sysex_hex_input.clear();
+                            state.piano_sysex_panel_open = false;
                             state.piano_scroll_x = 0.0;
                             state.piano_scroll_y = 0.0;
                             state.view = View::Piano;

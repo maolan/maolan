@@ -83,6 +83,7 @@ pub enum PianoControllerLane {
     Velocity,
     Rpn,
     Nrpn,
+    SysEx,
 }
 
 impl fmt::Display for PianoControllerLane {
@@ -92,6 +93,7 @@ impl fmt::Display for PianoControllerLane {
             Self::Velocity => write!(f, "Velocity"),
             Self::Rpn => write!(f, "RPN"),
             Self::Nrpn => write!(f, "NRPN"),
+            Self::SysEx => write!(f, "SysEx"),
         }
     }
 }
@@ -426,6 +428,17 @@ pub enum Message {
     },
     PianoInsertControllers {
         controllers: Vec<PianoControllerEditData>,
+    },
+    PianoSysExSelect(Option<usize>),
+    PianoSysExOpenEditor(Option<usize>),
+    PianoSysExCloseEditor,
+    PianoSysExHexInput(String),
+    PianoSysExAdd,
+    PianoSysExUpdate,
+    PianoSysExDelete,
+    PianoSysExMove {
+        index: usize,
+        sample: usize,
     },
     PianoControllerLaneSelected(PianoControllerLane),
     PianoControllerKindSelected(u8),

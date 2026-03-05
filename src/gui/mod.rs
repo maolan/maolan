@@ -12,7 +12,7 @@ use crate::{
         DraggedClip, ExportBitDepth, ExportNormalizeMode, Message, PluginFormat, Show, SnapMode,
     },
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
-    state::{PianoControllerPoint, PianoNote, State, StateData},
+    state::{PianoControllerPoint, PianoNote, PianoSysExPoint, State, StateData},
     template_save, toolbar, track_rename, track_template_save, workspace,
 };
 use ebur128::{EbuR128, Mode as LoudnessMode};
@@ -1350,7 +1350,7 @@ impl Maolan {
     fn parse_midi_clip_for_piano(
         path: &Path,
         sample_rate: f64,
-    ) -> std::io::Result<(Vec<PianoNote>, Vec<PianoControllerPoint>, usize)> {
+    ) -> std::io::Result<(Vec<PianoNote>, Vec<PianoControllerPoint>, Vec<PianoSysExPoint>, usize)> {
         let bytes = fs::read(path)?;
         let smf = Smf::parse(&bytes).map_err(|e| {
             io::Error::other(format!("Failed to parse MIDI '{}': {e}", path.display()))
@@ -1358,24 +1358,50 @@ impl Maolan {
         let Some((ticks_to_samples, ppq, max_tick)) =
             Self::midi_ticks_to_samples(&smf, sample_rate)
         else {
-            return Ok((vec![], vec![], sample_rate.max(1.0) as usize));
+            return Ok((vec![], vec![], vec![], sample_rate.max(1.0) as usize));
         };
 
         let mut notes = Vec::<PianoNote>::new();
         let mut controllers = Vec::<PianoControllerPoint>::new();
+        let mut sysexes = Vec::<PianoSysExPoint>::new();
         let mut active_notes: HashMap<(u8, u8), Vec<(u64, u8)>> = HashMap::new();
 
         for track in &smf.tracks {
             let mut tick = 0_u64;
             for event in track {
                 tick = tick.saturating_add(event.delta.as_int() as u64);
-                if let TrackEventKind::Midi { channel, message } = event.kind {
-                    let channel = channel.as_int();
-                    match message {
-                        midly::MidiMessage::NoteOn { key, vel } => {
-                            let pitch = key.as_int();
-                            let velocity = vel.as_int();
-                            if velocity == 0 {
+                match event.kind {
+                    TrackEventKind::Midi { channel, message } => {
+                        let channel = channel.as_int();
+                        match message {
+                            midly::MidiMessage::NoteOn { key, vel } => {
+                                let pitch = key.as_int();
+                                let velocity = vel.as_int();
+                                if velocity == 0 {
+                                    if let Some(starts) = active_notes.get_mut(&(channel, pitch))
+                                        && let Some((start_tick, start_vel)) = starts.pop()
+                                    {
+                                        let start_sample = ticks_to_samples(start_tick);
+                                        let end_sample = ticks_to_samples(tick);
+                                        let length_samples =
+                                            end_sample.saturating_sub(start_sample).max(1);
+                                        notes.push(PianoNote {
+                                            start_sample,
+                                            length_samples,
+                                            pitch,
+                                            velocity: start_vel,
+                                            channel,
+                                        });
+                                    }
+                                } else {
+                                    active_notes
+                                        .entry((channel, pitch))
+                                        .or_default()
+                                        .push((tick, velocity));
+                                }
+                            }
+                            midly::MidiMessage::NoteOff { key, .. } => {
+                                let pitch = key.as_int();
                                 if let Some(starts) = active_notes.get_mut(&(channel, pitch))
                                     && let Some((start_tick, start_vel)) = starts.pop()
                                 {
@@ -1391,40 +1417,40 @@ impl Maolan {
                                         channel,
                                     });
                                 }
-                            } else {
-                                active_notes
-                                    .entry((channel, pitch))
-                                    .or_default()
-                                    .push((tick, velocity));
                             }
-                        }
-                        midly::MidiMessage::NoteOff { key, .. } => {
-                            let pitch = key.as_int();
-                            if let Some(starts) = active_notes.get_mut(&(channel, pitch))
-                                && let Some((start_tick, start_vel)) = starts.pop()
-                            {
-                                let start_sample = ticks_to_samples(start_tick);
-                                let end_sample = ticks_to_samples(tick);
-                                let length_samples = end_sample.saturating_sub(start_sample).max(1);
-                                notes.push(PianoNote {
-                                    start_sample,
-                                    length_samples,
-                                    pitch,
-                                    velocity: start_vel,
+                            midly::MidiMessage::Controller { controller, value } => {
+                                controllers.push(PianoControllerPoint {
+                                    sample: ticks_to_samples(tick),
+                                    controller: controller.as_int(),
+                                    value: value.as_int(),
                                     channel,
                                 });
                             }
+                            _ => {}
                         }
-                        midly::MidiMessage::Controller { controller, value } => {
-                            controllers.push(PianoControllerPoint {
-                                sample: ticks_to_samples(tick),
-                                controller: controller.as_int(),
-                                value: value.as_int(),
-                                channel,
-                            });
-                        }
-                        _ => {}
                     }
+                    TrackEventKind::SysEx(payload) => {
+                        let mut data = Vec::with_capacity(payload.len() + 2);
+                        data.push(0xF0);
+                        data.extend_from_slice(payload);
+                        if data.last().copied() != Some(0xF7) {
+                            data.push(0xF7);
+                        }
+                        sysexes.push(PianoSysExPoint {
+                            sample: ticks_to_samples(tick),
+                            data,
+                        });
+                    }
+                    TrackEventKind::Escape(payload) => {
+                        let mut data = Vec::with_capacity(payload.len() + 1);
+                        data.push(0xF7);
+                        data.extend_from_slice(payload);
+                        sysexes.push(PianoSysExPoint {
+                            sample: ticks_to_samples(tick),
+                            data,
+                        });
+                    }
+                    _ => {}
                 }
             }
         }
@@ -1446,14 +1472,16 @@ impl Maolan {
 
         notes.sort_by_key(|n| (n.start_sample, n.pitch));
         controllers.sort_by_key(|c| (c.sample, c.controller));
+        sysexes.sort_by_key(|s| s.sample);
         let clip_len = notes
             .iter()
             .map(|n| n.start_sample.saturating_add(n.length_samples))
             .chain(controllers.iter().map(|c| c.sample))
+            .chain(sysexes.iter().map(|s| s.sample))
             .max()
             .unwrap_or_else(|| ticks_to_samples(max_tick))
             .max(1);
-        Ok((notes, controllers, clip_len))
+        Ok((notes, controllers, sysexes, clip_len))
     }
 
     fn import_midi_to_session(

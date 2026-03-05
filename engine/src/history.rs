@@ -106,6 +106,7 @@ pub fn should_record(action: &Action) -> bool {
             | Action::InsertMidiControllers { .. }
             | Action::DeleteMidiNotes { .. }
             | Action::InsertMidiNotes { .. }
+            | Action::SetMidiSysExEvents { .. }
     )
 }
 
@@ -598,6 +599,17 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                 deleted_notes: notes.clone(),
             })
         }
+        Action::SetMidiSysExEvents {
+            track_name,
+            clip_index,
+            new_sysex_events,
+            old_sysex_events,
+        } => Some(Action::SetMidiSysExEvents {
+            track_name: track_name.clone(),
+            clip_index: *clip_index,
+            new_sysex_events: old_sysex_events.clone(),
+            old_sysex_events: new_sysex_events.clone(),
+        }),
 
         // These are more complex and would need additional state tracking
         _ => None,

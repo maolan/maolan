@@ -24,6 +24,12 @@ pub struct MidiControllerData {
     pub channel: u8,
 }
 
+#[derive(Debug, Clone)]
+pub struct MidiRawEventData {
+    pub sample: usize,
+    pub data: Vec<u8>,
+}
+
 #[derive(Clone, Debug)]
 pub struct HwMidiEvent {
     pub device: String,
@@ -252,6 +258,12 @@ pub enum Action {
         track_name: String,
         clip_index: usize,
         notes: Vec<(usize, MidiNoteData)>,
+    },
+    SetMidiSysExEvents {
+        track_name: String,
+        clip_index: usize,
+        new_sysex_events: Vec<MidiRawEventData>,
+        old_sysex_events: Vec<MidiRawEventData>,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
     TrackLoadLv2Plugin {

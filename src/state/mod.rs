@@ -360,11 +360,18 @@ pub struct PianoControllerPoint {
 }
 
 #[derive(Debug, Clone)]
+pub struct PianoSysExPoint {
+    pub sample: usize,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
 pub struct PianoData {
     pub track_idx: String,
     pub clip_length_samples: usize,
     pub notes: Vec<PianoNote>,
     pub controllers: Vec<PianoControllerPoint>,
+    pub sysexes: Vec<PianoSysExPoint>,
     pub midnam_note_names: HashMap<u8, String>,
 }
 
@@ -491,6 +498,9 @@ pub struct StateData {
     pub piano_velocity_kind: PianoVelocityKind,
     pub piano_rpn_kind: PianoRpnKind,
     pub piano_nrpn_kind: PianoNrpnKind,
+    pub piano_selected_sysex: Option<usize>,
+    pub piano_sysex_hex_input: String,
+    pub piano_sysex_panel_open: bool,
     pub tempo: f32,
     pub available_templates: Vec<String>,
 }
@@ -646,6 +656,9 @@ impl Default for StateData {
             piano_velocity_kind: PianoVelocityKind::NoteVelocity,
             piano_rpn_kind: PianoRpnKind::PitchBendSensitivity,
             piano_nrpn_kind: PianoNrpnKind::Brightness,
+            piano_selected_sysex: None,
+            piano_sysex_hex_input: String::new(),
+            piano_sysex_panel_open: false,
             tempo: 120.0,
             available_templates: vec![],
         }

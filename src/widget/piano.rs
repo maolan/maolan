@@ -8,14 +8,17 @@ use iced::{
     widget::{
         Id, Stack,
         canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
-        column, container, pin, row, scrollable, slider, text, vertical_slider,
+        button, column, container, pin, row, scrollable, slider, text, text_input, vertical_slider,
     },
 };
 use iced_aw::{
     menu::{DrawPath, Item, Menu as IcedMenu},
     menu_bar, menu_items,
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant},
+};
 
 const MIDI_CHANNELS: usize = 16;
 
@@ -167,6 +170,7 @@ impl Piano {
             PianoControllerLane::Velocity => 128,
             PianoControllerLane::Rpn => PianoRpnKind::ALL.len(),
             PianoControllerLane::Nrpn => PianoNrpnKind::ALL.len(),
+            PianoControllerLane::SysEx => 1,
         }
     }
 
@@ -186,6 +190,7 @@ impl Piano {
                 6 | 38 | 96 | 97 => Some(2),
                 _ => None,
             },
+            PianoControllerLane::SysEx => None,
         }
     }
 
@@ -229,7 +234,16 @@ impl Piano {
                 Some(u16::from(msb) * 128 + u16::from(lsb))
             }
             PianoControllerLane::Velocity => None,
+            PianoControllerLane::SysEx => None,
         }
+    }
+
+    fn sysex_preview(data: &[u8]) -> String {
+        let mut parts = data.iter().take(6).map(|b| format!("{b:02X}")).collect::<Vec<_>>();
+        if data.len() > 6 {
+            parts.push("...".to_string());
+        }
+        parts.join(" ")
     }
 
     fn lane_controller_events(
@@ -245,6 +259,7 @@ impl Piano {
                 })
                 .collect(),
             PianoControllerLane::Velocity => vec![],
+            PianoControllerLane::SysEx => vec![],
             PianoControllerLane::Rpn => {
                 let mut ordered: Vec<usize> = (0..controllers.len()).collect();
                 ordered.sort_unstable_by_key(|idx| (controllers[*idx].sample, *idx));
@@ -591,6 +606,39 @@ impl Piano {
                     );
                 }
             }
+            PianoControllerLane::SysEx => {
+                for (idx, sysex) in roll.sysexes.iter().enumerate() {
+                    let x = sysex.sample as f32 * pps_ctrl;
+                    let selected = state.piano_selected_sysex == Some(idx);
+                    let color = if selected {
+                        Color::from_rgba(1.0, 0.55, 0.2, 0.95)
+                    } else {
+                        Color::from_rgba(0.95, 0.35, 0.2, 0.75)
+                    };
+                    ctrl_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(2.0))
+                            .height(Length::Fixed(ctrl_h))
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(color)),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new(x, 0.0))
+                        .into(),
+                    );
+                    ctrl_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(6.0))
+                            .height(Length::Fixed(6.0))
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(color)),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new((x - 2.0).max(0.0), 0.0))
+                        .into(),
+                    );
+                }
+            }
         }
 
         ctrl_layers.push(
@@ -705,6 +753,7 @@ impl Piano {
                     (submenu("Velocity", Message::PianoControllerLaneSelected(PianoControllerLane::Velocity)), velocity_submenu),
                     (submenu("RPN", Message::PianoControllerLaneSelected(PianoControllerLane::Rpn)), rpn_submenu),
                     (submenu("NRPN", Message::PianoControllerLaneSelected(PianoControllerLane::Nrpn)), nrpn_submenu),
+                    (menu_item("SysEx", Message::PianoControllerLaneSelected(PianoControllerLane::SysEx))),
                 ))
             })
         )
@@ -835,7 +884,66 @@ impl Piano {
         .width(Length::Fixed(16.0))
         .height(Length::Fill);
 
-        container(row![
+        let selected_sysex = state.piano_selected_sysex;
+        let sysex_rows = roll
+            .sysexes
+            .iter()
+            .enumerate()
+            .fold(column![], |col, (idx, ev)| {
+                let is_selected = selected_sysex == Some(idx);
+                let label = format!(
+                    "{:>8}  {}",
+                    ev.sample,
+                    Self::sysex_preview(&ev.data)
+                );
+                col.push(
+                    button(text(label).size(11))
+                        .on_press(Message::PianoSysExSelect(Some(idx)))
+                        .style(move |_theme, _status| iced::widget::button::Style {
+                            background: Some(Background::Color(if is_selected {
+                                Color::from_rgba(0.38, 0.28, 0.18, 1.0)
+                            } else {
+                                Color::from_rgba(0.17, 0.17, 0.19, 1.0)
+                            })),
+                            text_color: if is_selected {
+                                Color::from_rgb(1.0, 0.86, 0.6)
+                            } else {
+                                Color::from_rgb(0.82, 0.82, 0.86)
+                            },
+                            ..Default::default()
+                        })
+                        .width(Length::Fill),
+                )
+            });
+        let sysex_panel = container(
+            column![
+                text("SysEx").size(12),
+                text_input("F0 ... F7", &state.piano_sysex_hex_input)
+                    .on_input(Message::PianoSysExHexInput)
+                    .size(12)
+                    .padding(6),
+                row![
+                    button(text("Add").size(11)).on_press(Message::PianoSysExAdd),
+                    button(text("Update").size(11)).on_press(Message::PianoSysExUpdate),
+                    button(text("Delete").size(11)).on_press(Message::PianoSysExDelete),
+                    button(text("Cancel").size(11)).on_press(Message::PianoSysExCloseEditor),
+                ]
+                .spacing(4),
+                scrollable(sysex_rows.spacing(2).width(Length::Fill))
+                    .height(Length::Fill)
+                    .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::new())),
+            ]
+            .spacing(6)
+            .height(Length::Fill),
+        )
+        .width(Length::Fixed(280.0))
+        .height(Length::Fill)
+        .padding([6, 6])
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.11, 0.11, 0.13, 1.0))),
+            ..container::Style::default()
+        });
+        let mut layout = row![
             column![
                 row![keyboard_scroll, note_scroll]
                     .height(Length::Fill)
@@ -868,10 +976,13 @@ impl Piano {
             ]
             .spacing(8)
             .height(Length::Fill),
-        ])
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        ];
+        if state.piano_sysex_panel_open
+            && matches!(state.piano_controller_lane, PianoControllerLane::SysEx)
+        {
+            layout = layout.push(sysex_panel);
+        }
+        container(layout).width(Length::Fill).height(Length::Fill).into()
     }
 }
 
@@ -1131,6 +1242,7 @@ enum ControllerAdjustTarget {
 #[derive(Default, Debug)]
 pub struct ControllerRollInteractionState {
     mode: ControllerDragMode,
+    last_sysex_click: Option<(usize, Instant)>,
 }
 
 #[derive(Default, Debug, Clone, Copy)]
@@ -1146,6 +1258,12 @@ enum ControllerDragMode {
     Drawing {
         start: Point,
         current: Point,
+    },
+    DraggingSysEx {
+        index: usize,
+        original_sample: usize,
+        start_x: f32,
+        current_x: f32,
     },
 }
 
@@ -1227,6 +1345,27 @@ impl ControllerRollInteraction {
         }
         best.map(|(idx, _)| idx)
     }
+
+    fn sysex_at_position(
+        &self,
+        position: Point,
+        pps: f32,
+        sysexes: &[crate::state::PianoSysExPoint],
+    ) -> Option<usize> {
+        let mut best: Option<(usize, f32)> = None;
+        for (idx, ev) in sysexes.iter().enumerate() {
+            let x = ev.sample as f32 * pps;
+            let dx = (position.x - x).abs();
+            if dx > 5.0 {
+                continue;
+            }
+            match best {
+                Some((_, best_dx)) if dx >= best_dx => {}
+                _ => best = Some((idx, dx)),
+            }
+        }
+        best.map(|(idx, _)| idx)
+    }
 }
 
 impl Program<Message> for ControllerRollInteraction {
@@ -1255,8 +1394,10 @@ impl Program<Message> for ControllerRollInteraction {
                 .iter()
                 .position(|kind| *kind == app_state.piano_nrpn_kind),
             PianoControllerLane::Velocity => None,
+            PianoControllerLane::SysEx => None,
         };
         let controllers = roll.controllers.clone();
+        let sysexes = roll.sysexes.clone();
         let notes = roll.notes.clone();
         let clip_len = roll.clip_length_samples;
         let zoom_x = app_state.piano_zoom_x;
@@ -1270,6 +1411,38 @@ impl Program<Message> for ControllerRollInteraction {
                 let Some(position) = cursor.position_in(bounds) else {
                     return None;
                 };
+                if matches!(lane, PianoControllerLane::SysEx) {
+                    if let Some(index) = self.sysex_at_position(position, pps, &sysexes) {
+                        let now = Instant::now();
+                        let double_click = state
+                            .last_sysex_click
+                            .map(|(last_idx, last_time)| {
+                                last_idx == index
+                                    && now.duration_since(last_time) <= Duration::from_millis(350)
+                            })
+                            .unwrap_or(false);
+                        state.last_sysex_click = Some((index, now));
+                        if double_click {
+                            state.mode = ControllerDragMode::None;
+                            return Some(
+                                CanvasAction::publish(Message::PianoSysExOpenEditor(Some(index)))
+                                    .and_capture(),
+                            );
+                        }
+                        let original_sample = sysexes.get(index).map(|s| s.sample).unwrap_or(0);
+                        state.mode = ControllerDragMode::DraggingSysEx {
+                            index,
+                            original_sample,
+                            start_x: position.x,
+                            current_x: position.x,
+                        };
+                        return Some(
+                            CanvasAction::publish(Message::PianoSysExSelect(Some(index)))
+                                .and_capture(),
+                        );
+                    }
+                    state.last_sysex_click = None;
+                }
                 let target = if matches!(lane, PianoControllerLane::Velocity) {
                     self.velocity_note_at_position(position, row_h, pps, &notes)
                         .and_then(|idx| notes.get(idx).map(|n| (idx, n.velocity)))
@@ -1354,6 +1527,22 @@ impl Program<Message> for ControllerRollInteraction {
                     };
                     return Some(CanvasAction::request_redraw().and_capture());
                 }
+                if let Some(position) = cursor.position_in(bounds)
+                    && let ControllerDragMode::DraggingSysEx {
+                        index,
+                        original_sample,
+                        start_x,
+                        ..
+                    } = state.mode
+                {
+                    state.mode = ControllerDragMode::DraggingSysEx {
+                        index,
+                        original_sample,
+                        start_x,
+                        current_x: position.x,
+                    };
+                    return Some(CanvasAction::request_redraw().and_capture());
+                }
                 None
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
@@ -1384,10 +1573,32 @@ impl Program<Message> for ControllerRollInteraction {
                     };
                     return Some(CanvasAction::publish(msg).and_capture());
                 }
+                if let ControllerDragMode::DraggingSysEx {
+                    index,
+                    original_sample,
+                    start_x,
+                    mut current_x,
+                } = state.mode
+                {
+                    state.mode = ControllerDragMode::None;
+                    if let Some(position) = cursor.position_in(bounds) {
+                        current_x = position.x;
+                    }
+                    let delta_samples =
+                        ((current_x - start_x) / pps).round().max(-(original_sample as f32)) as isize;
+                    let new_sample = (original_sample as isize + delta_samples).max(0) as usize;
+                    return Some(
+                        CanvasAction::publish(Message::PianoSysExMove {
+                            index,
+                            sample: new_sample.min(clip_len.saturating_sub(1)),
+                        })
+                        .and_capture(),
+                    );
+                }
                 None
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
-                if matches!(lane, PianoControllerLane::Velocity) {
+                if matches!(lane, PianoControllerLane::Velocity | PianoControllerLane::SysEx) {
                     return None;
                 }
                 if let Some(position) = cursor.position_in(bounds) {
@@ -1414,7 +1625,9 @@ impl Program<Message> for ControllerRollInteraction {
                         PianoControllerLane::Nrpn => {
                             controllers_lane::LaneConfig::Nrpn(selected_row.unwrap_or(0))
                         }
-                        PianoControllerLane::Velocity => return Some(CanvasAction::capture()),
+                        PianoControllerLane::Velocity | PianoControllerLane::SysEx => {
+                            return Some(CanvasAction::capture());
+                        }
                     };
                     let new_controllers = controllers_lane::build_drawn_controllers(
                         start,
@@ -1462,14 +1675,13 @@ impl Program<Message> for ControllerRollInteraction {
                         .with_color(Color::from_rgba(0.98, 0.94, 0.2, 0.95)),
                 );
 
-                let lane = self
-                    .state
-                    .blocking_read()
-                    .piano_controller_lane;
+                let lane = self.state.blocking_read().piano_controller_lane;
                 let value_from_y = |y: f32| -> u16 {
                     if bounds.height <= f32::EPSILON {
-                        return if matches!(lane, PianoControllerLane::Rpn | PianoControllerLane::Nrpn)
-                        {
+                        return if matches!(
+                            lane,
+                            PianoControllerLane::Rpn | PianoControllerLane::Nrpn
+                        ) {
                             8192
                         } else {
                             64
@@ -1548,6 +1760,18 @@ impl Program<Message> for ControllerRollInteraction {
                     size: 11.0.into(),
                     ..Text::default()
                 });
+            }
+            ControllerDragMode::DraggingSysEx { current_x, .. } => {
+                let line = Path::line(
+                    Point::new(current_x.max(0.0), 0.0),
+                    Point::new(current_x.max(0.0), bounds.height),
+                );
+                frame.stroke(
+                    &line,
+                    canvas::Stroke::default()
+                        .with_width(2.0)
+                        .with_color(Color::from_rgba(1.0, 0.5, 0.2, 0.95)),
+                );
             }
         }
         vec![frame.into_geometry()]
@@ -1657,8 +1881,12 @@ mod controllers_lane {
                 let value_steps = delta.unsigned_abs() as usize;
                 let points_by_rate =
                     max_points_for_rate(start_sample, end_sample, sample_rate_hz, 3.0, 0.0);
-                let points_by_snap = max_points_for_1_128(start_sample, end_sample, samples_per_bar);
-                let points = (value_steps + 1).min(points_by_rate).min(points_by_snap).max(2);
+                let points_by_snap =
+                    max_points_for_1_128(start_sample, end_sample, samples_per_bar);
+                let points = (value_steps + 1)
+                    .min(points_by_rate)
+                    .min(points_by_snap)
+                    .max(2);
                 for i in 0..points {
                     let t = if points <= 1 {
                         0.0
@@ -1685,7 +1913,10 @@ mod controllers_lane {
                 let delta = end_value - start_value;
                 let value_steps = delta.unsigned_abs() as usize;
                 let mut points = value_steps + 1;
-                let max_by_span = end_sample.saturating_sub(start_sample).saturating_add(1).max(2);
+                let max_by_span = end_sample
+                    .saturating_sub(start_sample)
+                    .saturating_add(1)
+                    .max(2);
                 let max_by_rate =
                     max_points_for_rate(start_sample, end_sample, sample_rate_hz, 6.0, 6.0);
                 let max_by_snap = max_points_for_1_128(start_sample, end_sample, samples_per_bar);
@@ -1739,7 +1970,10 @@ mod controllers_lane {
                 let delta = end_value - start_value;
                 let value_steps = delta.unsigned_abs() as usize;
                 let mut points = value_steps + 1;
-                let max_by_span = end_sample.saturating_sub(start_sample).saturating_add(1).max(2);
+                let max_by_span = end_sample
+                    .saturating_sub(start_sample)
+                    .saturating_add(1)
+                    .max(2);
                 let max_by_rate =
                     max_points_for_rate(start_sample, end_sample, sample_rate_hz, 6.0, 6.0);
                 let max_by_snap = max_points_for_1_128(start_sample, end_sample, samples_per_bar);
