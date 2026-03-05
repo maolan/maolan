@@ -81,6 +81,28 @@ impl Maolan {
                     TrackAutomationTarget::Volume => vol = value,
                     TrackAutomationTarget::Balance => bal = value,
                     TrackAutomationTarget::Mute => muted = value.map(|v| v >= 0.5),
+                    TrackAutomationTarget::Vst3Parameter {
+                        instance_id,
+                        param_id,
+                    } => {
+                        if let Some(v) = value {
+                            let param_value = v.clamp(0.0, 1.0);
+                            let key = (instance_id, param_id);
+                            if runtime
+                                .vst3_params
+                                .get(&key)
+                                .is_none_or(|current| (current - param_value).abs() >= 0.0005)
+                            {
+                                runtime.vst3_params.insert(key, param_value);
+                                actions.push(Action::TrackSetVst3Parameter {
+                                    track_name: track.name.clone(),
+                                    instance_id,
+                                    param_id,
+                                    value: param_value,
+                                });
+                            }
+                        }
+                    }
                     TrackAutomationTarget::ClapParameter {
                         instance_id,
                         param_id,
@@ -2767,6 +2789,46 @@ impl Maolan {
                         }
                     }
                 }
+                Action::TrackVst3Parameters {
+                    track_name,
+                    instance_id,
+                    parameters,
+                } => {
+                    if self
+                        .pending_add_vst3_automation_instances
+                        .remove(&(track_name.clone(), *instance_id))
+                    {
+                        let mut state = self.state.blocking_write();
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        {
+                            for param in parameters {
+                                let target = TrackAutomationTarget::Vst3Parameter {
+                                    instance_id: *instance_id,
+                                    param_id: param.id,
+                                };
+                                if let Some(existing) = track
+                                    .automation_lanes
+                                    .iter_mut()
+                                    .find(|lane| lane.target == target)
+                                {
+                                    existing.visible = true;
+                                } else {
+                                    track.automation_lanes.push(crate::state::TrackAutomationLane {
+                                        target,
+                                        visible: true,
+                                        points: vec![],
+                                    });
+                                }
+                            }
+                            track.height = track.min_height_for_layout().max(60.0);
+                            state.message = format!(
+                                "Added {} VST3 automation lanes on '{}'",
+                                parameters.len(),
+                                track_name
+                            );
+                        }
+                    }
+                }
                 #[cfg(any(target_os = "windows", target_os = "macos"))]
                 Action::TrackSnapshotAllClapStates { track_name } => {
                     if self.pending_save_path.is_some() {
@@ -2960,6 +3022,32 @@ impl Maolan {
                     drop(state);
 
                     let mut pending_queries: Vec<Task<Message>> = vec![];
+                    let pending_vst3_paths: Vec<(String, String)> = self
+                        .pending_add_vst3_automation_paths
+                        .iter()
+                        .filter(|(name, _)| name == track_name)
+                        .cloned()
+                        .collect();
+                    for (pending_track, pending_path) in pending_vst3_paths {
+                        if let Some(instance_id) = plugins
+                            .iter()
+                            .find(|plugin| {
+                                plugin.format.eq_ignore_ascii_case("VST3")
+                                    && (plugin.uri == pending_path
+                                        || plugin.plugin_id == pending_path)
+                            })
+                            .map(|plugin| plugin.instance_id)
+                        {
+                            self.pending_add_vst3_automation_paths
+                                .remove(&(pending_track.clone(), pending_path));
+                            self.pending_add_vst3_automation_instances
+                                .insert((pending_track.clone(), instance_id));
+                            pending_queries.push(self.send(Action::TrackGetVst3Parameters {
+                                track_name: pending_track,
+                                instance_id,
+                            }));
+                        }
+                    }
                     let pending_paths: Vec<(String, String)> = self
                         .pending_add_clap_automation_paths
                         .iter()
@@ -3280,6 +3368,48 @@ impl Maolan {
                 {
                     self.state.blocking_write().message =
                         "CLAP automation lanes are unavailable on this platform".to_string();
+                }
+            }
+            Message::TrackAutomationAddVst3Lanes {
+                ref track_name,
+                ref plugin_path,
+            } => {
+                #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+                {
+                    let instance_id = {
+                        let state = self.state.blocking_read();
+                        state
+                            .plugin_graphs_by_track
+                            .get(track_name)
+                            .and_then(|(plugins, _)| {
+                                plugins
+                                    .iter()
+                                    .find(|plugin| {
+                                        plugin.format.eq_ignore_ascii_case("VST3")
+                                            && (plugin.uri == *plugin_path
+                                                || plugin.plugin_id == *plugin_path)
+                                    })
+                                    .map(|plugin| plugin.instance_id)
+                            })
+                    };
+                    if let Some(instance_id) = instance_id {
+                        self.pending_add_vst3_automation_instances
+                            .insert((track_name.clone(), instance_id));
+                        return self.send(Action::TrackGetVst3Parameters {
+                            track_name: track_name.clone(),
+                            instance_id,
+                        });
+                    }
+                    self.pending_add_vst3_automation_paths
+                        .insert((track_name.clone(), plugin_path.clone()));
+                    return self.send(Action::TrackGetPluginGraph {
+                        track_name: track_name.clone(),
+                    });
+                }
+                #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]
+                {
+                    self.state.blocking_write().message =
+                        "VST3 automation lanes are unavailable on this platform".to_string();
                 }
             }
             Message::TrackAutomationLaneHover {

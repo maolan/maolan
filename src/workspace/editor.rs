@@ -41,6 +41,9 @@ fn automation_point_color(target: crate::message::TrackAutomationTarget) -> Colo
         crate::message::TrackAutomationTarget::Volume => Color::from_rgba(0.98, 0.78, 0.22, 0.95),
         crate::message::TrackAutomationTarget::Balance => Color::from_rgba(0.88, 0.62, 0.24, 0.95),
         crate::message::TrackAutomationTarget::Mute => Color::from_rgba(0.95, 0.45, 0.22, 0.95),
+        crate::message::TrackAutomationTarget::Vst3Parameter { .. } => {
+            Color::from_rgba(0.28, 0.82, 0.78, 0.95)
+        }
         crate::message::TrackAutomationTarget::ClapParameter { .. } => {
             Color::from_rgba(0.4, 0.72, 0.98, 0.95)
         }

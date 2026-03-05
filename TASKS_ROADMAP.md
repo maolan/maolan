@@ -22,7 +22,8 @@ Last updated: 2026-03-05
   - [ ] Step 5: Plugin parameter automation targets + playback
     - [x] CLAP: add parameter automation lanes from loaded plugin (`Auto` button)
     - [x] CLAP: playback applies parameter lanes via `TrackSetClapParameterAt`
-    - [ ] VST3: parameter lane creation + playback path
+    - [x] VST3: parameter lane creation + playback path
+    - [ ] LV2: parameter lane creation + playback path
   - [ ] Step 6: Automation write modes (Read/Touch/Latch/Write)
 - [ ] Quantize/Humanize/Groove
 - [ ] Tempo/Time Signature track editor

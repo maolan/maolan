@@ -91,6 +91,10 @@ pub enum TrackAutomationTarget {
     Volume,
     Balance,
     Mute,
+    Vst3Parameter {
+        instance_id: usize,
+        param_id: u32,
+    },
     ClapParameter {
         instance_id: usize,
         param_id: u32,
@@ -105,6 +109,10 @@ impl fmt::Display for TrackAutomationTarget {
             Self::Volume => write!(f, "Volume"),
             Self::Balance => write!(f, "Balance"),
             Self::Mute => write!(f, "Mute"),
+            Self::Vst3Parameter {
+                instance_id,
+                param_id,
+            } => write!(f, "VST3 {}:{}", instance_id, param_id),
             Self::ClapParameter {
                 instance_id,
                 param_id,
@@ -299,6 +307,10 @@ pub enum Message {
         target: TrackAutomationTarget,
     },
     TrackAutomationAddClapLanes {
+        track_name: String,
+        plugin_path: String,
+    },
+    TrackAutomationAddVst3Lanes {
         track_name: String,
         plugin_path: String,
     },
