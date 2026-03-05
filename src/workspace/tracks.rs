@@ -23,6 +23,17 @@ impl Tracks {
         Self { state }
     }
 
+    fn trim_with_ellipsis(value: &str, max_chars: usize) -> String {
+        if value.chars().count() <= max_chars {
+            return value.to_string();
+        }
+        if max_chars <= 3 {
+            return "...".to_string();
+        }
+        let trimmed: String = value.chars().take(max_chars - 3).collect();
+        format!("{trimmed}...")
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
         let (tracks, selected, width, hovered_resize_track) = {
             let state = self.state.blocking_read();
@@ -32,6 +43,10 @@ impl Tracks {
                 state.tracks_width,
                 state.hovered_track_resize_handle.clone(),
             )
+        };
+        let track_width_px = match width {
+            Length::Fixed(v) => v,
+            _ => 200.0,
         };
         let track_names: Vec<String> = tracks.iter().map(|t| t.name.clone()).collect();
         let mut vca_follower_counts: HashMap<String, usize> = HashMap::new();
@@ -64,40 +79,6 @@ impl Tracks {
             let lane_h = layout.lane_height.max(12.0);
             let has_visible_automation = track.automation_lanes.iter().any(|lane| lane.visible);
             let mut lane_rows: Column<'_, Message> = column![];
-            for lane in 0..track.audio.ins {
-                lane_rows = lane_rows.push(
-                    container(text(format!("Audio {:02}", lane + 1)).size(11))
-                        .width(Length::Fill)
-                        .height(Length::Fixed(lane_h))
-                        .padding(4)
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.16,
-                                g: 0.23,
-                                b: 0.3,
-                                a: 0.5,
-                            })),
-                            ..container::Style::default()
-                        }),
-                );
-            }
-            for lane in 0..track.midi.ins {
-                lane_rows = lane_rows.push(
-                    container(text(format!("MIDI {:02}", lane + 1)).size(11))
-                        .width(Length::Fill)
-                        .height(Length::Fixed(lane_h))
-                        .padding(4)
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.14,
-                                g: 0.28,
-                                b: 0.17,
-                                a: 0.55,
-                            })),
-                            ..container::Style::default()
-                        }),
-                );
-            }
             for lane in track.automation_lanes.iter().filter(|lane| lane.visible) {
                 lane_rows = lane_rows.push(
                     container(text(format!("Auto {}", lane.target)).size(11))
@@ -116,9 +97,10 @@ impl Tracks {
                 );
             }
 
+            let max_name_chars = (((track_width_px - 90.0) / 7.0).floor() as i32).clamp(8, 64);
             let mut title = format!(
                 "▾ {}{}",
-                track.name.clone(),
+                Self::trim_with_ellipsis(&track.name, max_name_chars as usize),
                 if track.frozen { " [FRZ]" } else { "" }
             );
             if let Some(master) = vca_master_label.as_ref() {
@@ -165,59 +147,45 @@ impl Tracks {
                 ));
             }
 
+            let track_controls = row![
+                button("R")
+                    .padding(3)
+                    .style(move |theme, _state| { style::arm::style(theme, track.armed) })
+                    .on_press(Message::Request(Action::TrackToggleArm(track.name.clone()))),
+                button("M")
+                    .padding(3)
+                    .style(move |theme, _state| { style::mute::style(theme, track.muted) })
+                    .on_press(Message::Request(Action::TrackToggleMute(
+                        track.name.clone()
+                    ))),
+                button("S")
+                    .padding(3)
+                    .style(move |theme, _state| { style::solo::style(theme, track.soloed) })
+                    .on_press(Message::Request(Action::TrackToggleSolo(
+                        track.name.clone()
+                    ))),
+                button(audio_waveform())
+                    .padding(3)
+                    .style(move |theme, _state| { style::input::style(theme, track.input_monitor) })
+                    .on_press(Message::Request(Action::TrackToggleInputMonitor(
+                        track.name.clone()
+                    ))),
+                button(disc())
+                    .padding(3)
+                    .style(move |theme, _state| { style::disk::style(theme, track.disk_monitor) })
+                    .on_press(Message::Request(Action::TrackToggleDiskMonitor(
+                        track.name.clone()
+                    ))),
+            ]
+            .spacing(4.0);
+
             let track_ui: Column<'_, Message> = column![
                 row![
                     text(title),
                     Space::new().width(Length::Fill),
-                    button("FZ")
-                        .padding(3)
-                        .on_press(Message::TrackFreezeToggle {
-                            track_name: track.name.clone(),
-                        }),
-                    button("R")
-                        .padding(3)
-                        .style(move |theme, _state| { style::arm::style(theme, track.armed) })
-                        .on_press(Message::Request(Action::TrackToggleArm(track.name.clone()))),
-                    button("M")
-                        .padding(3)
-                        .style(move |theme, _state| { style::mute::style(theme, track.muted) })
-                        .on_press(Message::Request(Action::TrackToggleMute(
-                            track.name.clone()
-                        ))),
-                    button("S")
-                        .padding(3)
-                        .style(move |theme, _state| { style::solo::style(theme, track.soloed) })
-                        .on_press(Message::Request(Action::TrackToggleSolo(
-                            track.name.clone()
-                        ))),
-                    button(audio_waveform())
-                        .padding(3)
-                        .style(move |theme, _state| {
-                            style::input::style(theme, track.input_monitor)
-                        })
-                        .on_press(Message::Request(Action::TrackToggleInputMonitor(
-                            track.name.clone()
-                        ))),
-                    button(disc())
-                        .padding(3)
-                        .style(move |theme, _state| {
-                            style::disk::style(theme, track.disk_monitor)
-                        })
-                        .on_press(Message::Request(Action::TrackToggleDiskMonitor(
-                            track.name.clone()
-                        ))),
-                    button(if has_visible_automation { "A-" } else { "A+" })
-                        .padding(3)
-                        .on_press(Message::TrackAutomationToggle {
-                            track_name: track.name.clone(),
-                        }),
-                    button(text(format!("A:{}", track.automation_mode)))
-                        .padding(3)
-                        .on_press(Message::TrackAutomationCycleMode {
-                            track_name: track.name.clone(),
-                        }),
                 ]
                 .height(Length::Fixed(layout.header_height)),
+                track_controls,
                 lane_rows.height(Length::Fill),
                 mouse_area(
                     container("")
@@ -245,6 +213,8 @@ impl Tracks {
             {
                 let track_name_for_menu = track.name.clone();
                 let track_is_frozen = track.frozen;
+                let track_has_visible_automation = has_visible_automation;
+                let track_automation_mode = track.automation_mode;
                 let track_vca_master = track.vca_master.clone();
                 let track_vca_candidates = vca_candidates.clone();
                 let track_midi_learn_vol = track.midi_learn_volume.clone();
@@ -308,6 +278,21 @@ impl Tracks {
                         }),
                         button("Rename")
                             .on_press(Message::TrackRenameShow(track_name_for_menu.clone())),
+                        button(if track_has_visible_automation {
+                            "Hide Automation (A-)"
+                        } else {
+                            "Show Automation (A+)"
+                        })
+                        .on_press(Message::TrackAutomationToggle {
+                            track_name: track_name_for_menu.clone(),
+                        }),
+                        button(text(format!(
+                            "Automation Mode: {}",
+                            track_automation_mode
+                        )))
+                        .on_press(Message::TrackAutomationCycleMode {
+                            track_name: track_name_for_menu.clone(),
+                        }),
                         button(if track_is_frozen {
                             "Unfreeze"
                         } else {

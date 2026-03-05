@@ -4,7 +4,7 @@ use crate::{
 };
 use iced::{
     Background, Border, Color, Element, Length, Point,
-    widget::{Stack, button, column, container, mouse_area, pin, row, text},
+    widget::{Space, Stack, button, column, container, mouse_area, pin, row, text},
 };
 use iced_aw::ContextMenu;
 use maolan_engine::kind::Kind;
@@ -31,10 +31,49 @@ fn clean_clip_name(name: &str) -> String {
     if let Some(stripped) = cleaned.strip_prefix("audio/") {
         cleaned = stripped.to_string();
     }
+    if let Some(stripped) = cleaned.strip_prefix("midi/") {
+        cleaned = stripped.to_string();
+    }
     if let Some(stripped) = cleaned.strip_suffix(".wav") {
         cleaned = stripped.to_string();
     }
+    if let Some(stripped) = cleaned.strip_suffix(".midi") {
+        cleaned = stripped.to_string();
+    } else if let Some(stripped) = cleaned.strip_suffix(".mid") {
+        cleaned = stripped.to_string();
+    }
     cleaned
+}
+
+fn trim_label_to_width(label: &str, width_px: f32) -> String {
+    let max_chars = ((width_px - 10.0) / 7.0).floor() as i32;
+    if max_chars <= 0 {
+        return String::new();
+    }
+    let max_chars = max_chars as usize;
+    if label.chars().count() <= max_chars {
+        return label.to_string();
+    }
+    label.chars().take(max_chars).collect()
+}
+
+fn clip_label_overlay(label: String) -> Element<'static, Message> {
+    container(
+        column![
+            Space::new().height(Length::FillPortion(1)),
+            text(label)
+                .size(12)
+                .width(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Left),
+            Space::new().height(Length::FillPortion(1)),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .padding([0, 5])
+    .into()
 }
 
 fn assign_take_lanes<T, FBase, FStart, FLen, FPreferred>(
@@ -487,6 +526,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let clip_width =
             ((clip.length as f32 * pixels_per_sample) - CLIP_RESIZE_HANDLE_WIDTH * 2.0).max(12.0);
         let clip_height = (take_slot_height - 2.0).max(8.0);
+        let display_clip_label = trim_label_to_width(&clip_label, clip_width);
 
         let left_handle = mouse_area(
             container("")
@@ -545,11 +585,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 clip.length,
                 clip.max_length_samples,
             ),
-            container(text(clip_label.clone()).size(12))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(5)
-                .into(),
+            clip_label_overlay(display_clip_label.clone()),
         ]))
         .width(Length::Fill)
         .height(Length::Fill)
@@ -880,14 +916,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     clip_width,
                     clip_height,
                     clip.offset,
-                    clip.length,
-                    clip.max_length_samples,
-                ),
-                container(text(clip_label).size(12))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .padding(5)
-                    .into(),
+                clip.length,
+                clip.max_length_samples,
+            ),
+                clip_label_overlay(display_clip_label.clone()),
             ]))
             .width(Length::Fill)
             .height(Length::Fill)
@@ -995,6 +1027,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let clip_width =
             ((clip.length as f32 * pixels_per_sample) - CLIP_RESIZE_HANDLE_WIDTH * 2.0).max(12.0);
         let clip_height = (take_slot_height - 2.0).max(8.0);
+        let display_clip_label = trim_label_to_width(&clip_label, clip_width);
 
         let left_handle = mouse_area(
             container("")
@@ -1044,7 +1077,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             true,
         ));
 
-        let clip_content = container(container(text(clip_label.clone()).size(12)).padding(5))
+        let clip_content = container(clip_label_overlay(display_clip_label.clone()))
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(0)
@@ -1357,7 +1390,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = snap_sample(clip.start as f32 + delta_samples);
-            let preview_content = container(container(text(clip_label).size(12)).padding(5))
+            let preview_content = container(clip_label_overlay(display_clip_label.clone()))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .padding(0)
@@ -1442,6 +1475,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let lane = 0;
                         let lane_top = track.lane_top(Kind::Audio, lane) + 3.0;
                         let preview_start = snap_sample(source_clip.start as f32 + delta_samples);
+                        let display_clip_label =
+                            trim_label_to_width(&clean_clip_name(&source_clip.name), clip_width);
                         let preview_content = container(Stack::with_children(vec![
                             audio_waveform_overlay(
                                 &source_clip.peaks,
@@ -1451,11 +1486,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                 source_clip.length,
                                 source_clip.max_length_samples,
                             ),
-                            container(text(clean_clip_name(&source_clip.name)).size(12))
-                                .width(Length::Fill)
-                                .height(Length::Fill)
-                                .padding(5)
-                                .into(),
+                            clip_label_overlay(display_clip_label),
                         ]))
                         .width(Length::Fill)
                         .height(Length::Fill)
@@ -1532,9 +1563,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             .min(track.midi.ins.saturating_sub(1));
                         let lane_top = track.lane_top(Kind::MIDI, lane) + 3.0;
                         let preview_start = snap_sample(source_clip.start as f32 + delta_samples);
-                        let preview_content = container(
-                            container(text(clean_clip_name(&source_clip.name)).size(12)).padding(5),
-                        )
+                        let display_clip_label =
+                            trim_label_to_width(&clean_clip_name(&source_clip.name), clip_width);
+                        let preview_content = container(clip_label_overlay(display_clip_label))
                         .width(Length::Fill)
                         .height(Length::Fill)
                         .padding(0)
