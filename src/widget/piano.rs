@@ -257,7 +257,7 @@ impl Piano {
                     match ctrl.controller {
                         101 => current_msb[channel] = Some(ctrl.value),
                         100 => current_lsb[channel] = Some(ctrl.value),
-                        6 | 38 | 96 | 97 => {
+                        6 => {
                             if let (Some(msb), Some(lsb)) =
                                 (current_msb[channel], current_lsb[channel])
                                 && let Some(row) = Self::rpn_row_for_param(msb, lsb)
@@ -282,7 +282,7 @@ impl Piano {
                     match ctrl.controller {
                         99 => current_msb[channel] = Some(ctrl.value),
                         98 => current_lsb[channel] = Some(ctrl.value),
-                        6 | 38 | 96 | 97 => {
+                        6 => {
                             if let (Some(msb), Some(lsb)) =
                                 (current_msb[channel], current_lsb[channel])
                                 && let Some(row) = Self::nrpn_row_for_param(msb, lsb)
@@ -597,6 +597,8 @@ impl Piano {
             pin(iced::widget::canvas(ControllerRollInteraction::new(
                 self.state.clone(),
                 pixels_per_sample,
+                (samples_per_bar as f64 * state.tempo as f64 / 240.0).max(1.0),
+                samples_per_bar,
             ))
             .width(Length::Fixed(ctrl_w))
             .height(Length::Fixed(ctrl_h)))
@@ -1116,6 +1118,8 @@ impl Program<Message> for OctaveKeyboard {
 pub struct ControllerRollInteraction {
     pub state: State,
     pub pixels_per_sample: f32,
+    pub sample_rate_hz: f64,
+    pub samples_per_bar: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1146,10 +1150,17 @@ enum ControllerDragMode {
 }
 
 impl ControllerRollInteraction {
-    pub fn new(state: State, pixels_per_sample: f32) -> Self {
+    pub fn new(
+        state: State,
+        pixels_per_sample: f32,
+        sample_rate_hz: f64,
+        samples_per_bar: f32,
+    ) -> Self {
         Self {
             state,
             pixels_per_sample,
+            sample_rate_hz,
+            samples_per_bar,
         }
     }
 
@@ -1406,7 +1417,14 @@ impl Program<Message> for ControllerRollInteraction {
                         PianoControllerLane::Velocity => return Some(CanvasAction::capture()),
                     };
                     let new_controllers = controllers_lane::build_drawn_controllers(
-                        start, current, bounds, pps, clip_len, lane_cfg,
+                        start,
+                        current,
+                        bounds,
+                        pps,
+                        self.sample_rate_hz,
+                        self.samples_per_bar,
+                        clip_len,
+                        lane_cfg,
                     );
                     if new_controllers.is_empty() {
                         return Some(CanvasAction::request_redraw().and_capture());
@@ -1444,12 +1462,25 @@ impl Program<Message> for ControllerRollInteraction {
                         .with_color(Color::from_rgba(0.98, 0.94, 0.2, 0.95)),
                 );
 
-                let value_from_y = |y: f32| -> u8 {
+                let lane = self
+                    .state
+                    .blocking_read()
+                    .piano_controller_lane;
+                let value_from_y = |y: f32| -> u16 {
                     if bounds.height <= f32::EPSILON {
-                        return 64;
+                        return if matches!(lane, PianoControllerLane::Rpn | PianoControllerLane::Nrpn)
+                        {
+                            8192
+                        } else {
+                            64
+                        };
                     }
                     let t = (1.0 - (y / bounds.height)).clamp(0.0, 1.0);
-                    (t * 127.0).round().clamp(0.0, 127.0) as u8
+                    if matches!(lane, PianoControllerLane::Rpn | PianoControllerLane::Nrpn) {
+                        (t * 16383.0).round().clamp(0.0, 16383.0) as u16
+                    } else {
+                        (t * 127.0).round().clamp(0.0, 127.0) as u16
+                    }
                 };
                 let start_value = value_from_y(start.y);
                 let current_value = value_from_y(current.y);
@@ -1528,18 +1559,49 @@ mod controllers_lane {
 
     use crate::message::{PianoControllerEditData, PianoNrpnKind, PianoRpnKind};
 
+    const MAX_RPN_NRPN_POINTS: usize = 4096;
+    const MIDI_DIN_BYTES_PER_SEC: f64 = 3125.0;
+
+    fn max_points_for_rate(
+        start_sample: usize,
+        end_sample: usize,
+        sample_rate_hz: f64,
+        bytes_per_point: f64,
+        fixed_bytes: f64,
+    ) -> usize {
+        let span_samples = end_sample.saturating_sub(start_sample).max(1) as f64;
+        let duration_sec = span_samples / sample_rate_hz.max(1.0);
+        let bytes_budget = (duration_sec * MIDI_DIN_BYTES_PER_SEC - fixed_bytes).max(0.0);
+        let point_budget = (bytes_budget / bytes_per_point).floor() as usize;
+        point_budget.saturating_add(1).max(2)
+    }
+
+    fn max_points_for_1_128(start_sample: usize, end_sample: usize, samples_per_bar: f32) -> usize {
+        let span_samples = end_sample.saturating_sub(start_sample).max(1);
+        let min_step = (samples_per_bar.max(1.0) / 128.0).round().max(1.0) as usize;
+        span_samples / min_step + 1
+    }
+
     pub enum LaneConfig {
         Controller(u8),
         Rpn(usize),
         Nrpn(usize),
     }
 
-    fn y_to_value(y: f32, bounds: Rectangle) -> u8 {
+    fn y_to_value7(y: f32, bounds: Rectangle) -> u8 {
         if bounds.height <= f32::EPSILON {
             return 64;
         }
         let t = (1.0 - (y / bounds.height)).clamp(0.0, 1.0);
         (t * 127.0).round().clamp(0.0, 127.0) as u8
+    }
+
+    fn y_to_value14(y: f32, bounds: Rectangle) -> u16 {
+        if bounds.height <= f32::EPSILON {
+            return 8192;
+        }
+        let t = (1.0 - (y / bounds.height)).clamp(0.0, 1.0);
+        (t * 16383.0).round().clamp(0.0, 16383.0) as u16
     }
 
     fn rpn_param(row: usize) -> (u8, u8) {
@@ -1571,6 +1633,8 @@ mod controllers_lane {
         end: Point,
         bounds: Rectangle,
         pps: f32,
+        sample_rate_hz: f64,
+        samples_per_bar: f32,
         clip_len: usize,
         lane: LaneConfig,
     ) -> Vec<PianoControllerEditData> {
@@ -1583,15 +1647,18 @@ mod controllers_lane {
         let s1 = (x1 / pps).round().max(0.0) as usize;
         let start_sample = s0.min(clip_len.saturating_sub(1));
         let end_sample = s1.min(clip_len.saturating_sub(1)).max(start_sample);
-        let start_value = i16::from(y_to_value(start.y, bounds));
-        let end_value = i16::from(y_to_value(end.y, bounds));
-        let delta = end_value - start_value;
-        let value_steps = delta.unsigned_abs() as usize;
-        let points = value_steps + 1;
 
         let mut out = Vec::new();
         match lane {
             LaneConfig::Controller(cc) => {
+                let start_value = i16::from(y_to_value7(start.y, bounds));
+                let end_value = i16::from(y_to_value7(end.y, bounds));
+                let delta = end_value - start_value;
+                let value_steps = delta.unsigned_abs() as usize;
+                let points_by_rate =
+                    max_points_for_rate(start_sample, end_sample, sample_rate_hz, 3.0, 0.0);
+                let points_by_snap = max_points_for_1_128(start_sample, end_sample, samples_per_bar);
+                let points = (value_steps + 1).min(points_by_rate).min(points_by_snap).max(2);
                 for i in 0..points {
                     let t = if points <= 1 {
                         0.0
@@ -1613,6 +1680,20 @@ mod controllers_lane {
                 }
             }
             LaneConfig::Rpn(row) => {
+                let start_value = i32::from(y_to_value14(start.y, bounds));
+                let end_value = i32::from(y_to_value14(end.y, bounds));
+                let delta = end_value - start_value;
+                let value_steps = delta.unsigned_abs() as usize;
+                let mut points = value_steps + 1;
+                let max_by_span = end_sample.saturating_sub(start_sample).saturating_add(1).max(2);
+                let max_by_rate =
+                    max_points_for_rate(start_sample, end_sample, sample_rate_hz, 6.0, 6.0);
+                let max_by_snap = max_points_for_1_128(start_sample, end_sample, samples_per_bar);
+                points = points
+                    .min(max_by_span)
+                    .min(max_by_rate)
+                    .min(max_by_snap)
+                    .min(MAX_RPN_NRPN_POINTS);
                 let (msb, lsb) = rpn_param(row);
                 out.push(PianoControllerEditData {
                     sample: start_sample,
@@ -1633,20 +1714,40 @@ mod controllers_lane {
                         i as f32 / (points - 1) as f32
                     };
                     let sample = start_sample + ((end_sample - start_sample) as f32 * t) as usize;
-                    let value = if delta >= 0 {
-                        (start_value + i as i16).clamp(0, 127) as u8
-                    } else {
-                        (start_value - i as i16).clamp(0, 127) as u8
-                    };
+                    let value14: u16 = (start_value as f32 + (delta as f32) * t)
+                        .round()
+                        .clamp(0.0, 16383.0) as u16;
+                    let value_msb = ((value14 >> 7) & 0x7f) as u8;
+                    let value_lsb = (value14 & 0x7f) as u8;
                     out.push(PianoControllerEditData {
                         sample,
                         controller: 6,
-                        value,
+                        value: value_msb,
+                        channel: 0,
+                    });
+                    out.push(PianoControllerEditData {
+                        sample,
+                        controller: 38,
+                        value: value_lsb,
                         channel: 0,
                     });
                 }
             }
             LaneConfig::Nrpn(row) => {
+                let start_value = i32::from(y_to_value14(start.y, bounds));
+                let end_value = i32::from(y_to_value14(end.y, bounds));
+                let delta = end_value - start_value;
+                let value_steps = delta.unsigned_abs() as usize;
+                let mut points = value_steps + 1;
+                let max_by_span = end_sample.saturating_sub(start_sample).saturating_add(1).max(2);
+                let max_by_rate =
+                    max_points_for_rate(start_sample, end_sample, sample_rate_hz, 6.0, 6.0);
+                let max_by_snap = max_points_for_1_128(start_sample, end_sample, samples_per_bar);
+                points = points
+                    .min(max_by_span)
+                    .min(max_by_rate)
+                    .min(max_by_snap)
+                    .min(MAX_RPN_NRPN_POINTS);
                 let (msb, lsb) = nrpn_param(row);
                 out.push(PianoControllerEditData {
                     sample: start_sample,
@@ -1667,15 +1768,21 @@ mod controllers_lane {
                         i as f32 / (points - 1) as f32
                     };
                     let sample = start_sample + ((end_sample - start_sample) as f32 * t) as usize;
-                    let value = if delta >= 0 {
-                        (start_value + i as i16).clamp(0, 127) as u8
-                    } else {
-                        (start_value - i as i16).clamp(0, 127) as u8
-                    };
+                    let value14: u16 = (start_value as f32 + (delta as f32) * t)
+                        .round()
+                        .clamp(0.0, 16383.0) as u16;
+                    let value_msb = ((value14 >> 7) & 0x7f) as u8;
+                    let value_lsb = (value14 & 0x7f) as u8;
                     out.push(PianoControllerEditData {
                         sample,
                         controller: 6,
-                        value,
+                        value: value_msb,
+                        channel: 0,
+                    });
+                    out.push(PianoControllerEditData {
+                        sample,
+                        controller: 38,
+                        value: value_lsb,
                         channel: 0,
                     });
                 }
