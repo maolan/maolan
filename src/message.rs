@@ -640,6 +640,16 @@ pub enum Message {
         clip_idx: usize,
         kind: Kind,
     },
+    ClipCycleActiveTake {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+    },
+    ClipUnmuteTakesInRange {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+    },
 
     TrackRenameShow(String),
     TrackRenameInput(String),

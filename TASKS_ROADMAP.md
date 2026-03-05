@@ -43,6 +43,7 @@ Last updated: 2026-03-05
 - [ ] Comping/Take lanes (MIDI + audio)
   - [x] First pass: clip mute state in engine/UI + "Set Active Take" overlap comping action
   - [x] Second pass: visual take-lane stacking for overlapping clips in timeline
+  - [x] Third pass: overlap-group actions (`Next Active Take`, `Unmute All Takes`)
 
 ## Phase 2 - Production Workflow
 

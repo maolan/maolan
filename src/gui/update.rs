@@ -4667,6 +4667,145 @@ impl Maolan {
                 tasks.push(self.send(Action::EndHistoryGroup));
                 return Task::batch(tasks);
             }
+            Message::ClipCycleActiveTake {
+                ref track_idx,
+                clip_idx,
+                kind,
+            } => {
+                let updates = {
+                    let state = self.state.blocking_read();
+                    let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) else {
+                        return Task::none();
+                    };
+                    let mut group: Vec<(usize, usize, bool)> = match kind {
+                        Kind::Audio => {
+                            let Some(selected) = track.audio.clips.get(clip_idx) else {
+                                return Task::none();
+                            };
+                            let selected_end = selected.start.saturating_add(selected.length);
+                            track
+                                .audio
+                                .clips
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(idx, clip)| {
+                                    let end = clip.start.saturating_add(clip.length);
+                                    (selected.start < end && clip.start < selected_end)
+                                        .then_some((idx, clip.start, clip.muted))
+                                })
+                                .collect()
+                        }
+                        Kind::MIDI => {
+                            let Some(selected) = track.midi.clips.get(clip_idx) else {
+                                return Task::none();
+                            };
+                            let selected_end = selected.start.saturating_add(selected.length);
+                            track
+                                .midi
+                                .clips
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(idx, clip)| {
+                                    let end = clip.start.saturating_add(clip.length);
+                                    (selected.start < end && clip.start < selected_end)
+                                        .then_some((idx, clip.start, clip.muted))
+                                })
+                                .collect()
+                        }
+                    };
+                    if group.is_empty() {
+                        return Task::none();
+                    }
+                    group.sort_by_key(|(idx, start, _)| (*start, *idx));
+                    let current_pos = group
+                        .iter()
+                        .position(|(idx, _, _)| *idx == clip_idx)
+                        .or_else(|| group.iter().position(|(_, _, muted)| !*muted))
+                        .unwrap_or(0);
+                    let next_pos = (current_pos + 1) % group.len();
+                    let next_idx = group[next_pos].0;
+                    group
+                        .iter()
+                        .map(|(idx, _, _)| (*idx, *idx != next_idx))
+                        .collect::<Vec<_>>()
+                };
+                if updates.is_empty() {
+                    return Task::none();
+                }
+                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+                for (idx, should_mute) in updates {
+                    tasks.push(self.send(Action::SetClipMuted {
+                        track_name: track_idx.clone(),
+                        clip_index: idx,
+                        kind,
+                        muted: should_mute,
+                    }));
+                }
+                tasks.push(self.send(Action::EndHistoryGroup));
+                return Task::batch(tasks);
+            }
+            Message::ClipUnmuteTakesInRange {
+                ref track_idx,
+                clip_idx,
+                kind,
+            } => {
+                let updates = {
+                    let state = self.state.blocking_read();
+                    let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) else {
+                        return Task::none();
+                    };
+                    match kind {
+                        Kind::Audio => {
+                            let Some(selected) = track.audio.clips.get(clip_idx) else {
+                                return Task::none();
+                            };
+                            let selected_end = selected.start.saturating_add(selected.length);
+                            track
+                                .audio
+                                .clips
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(idx, clip)| {
+                                    let end = clip.start.saturating_add(clip.length);
+                                    (selected.start < end && clip.start < selected_end)
+                                        .then_some((idx, false))
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                        Kind::MIDI => {
+                            let Some(selected) = track.midi.clips.get(clip_idx) else {
+                                return Task::none();
+                            };
+                            let selected_end = selected.start.saturating_add(selected.length);
+                            track
+                                .midi
+                                .clips
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(idx, clip)| {
+                                    let end = clip.start.saturating_add(clip.length);
+                                    (selected.start < end && clip.start < selected_end)
+                                        .then_some((idx, false))
+                                })
+                                .collect::<Vec<_>>()
+                        }
+                    }
+                };
+                if updates.is_empty() {
+                    return Task::none();
+                }
+                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+                for (idx, should_mute) in updates {
+                    tasks.push(self.send(Action::SetClipMuted {
+                        track_name: track_idx.clone(),
+                        clip_index: idx,
+                        kind,
+                        muted: should_mute,
+                    }));
+                }
+                tasks.push(self.send(Action::EndHistoryGroup));
+                return Task::batch(tasks);
+            }
             Message::TrackRenameShow(ref track_name) => {
                 let mut state = self.state.blocking_write();
                 state.track_rename_dialog = Some(crate::state::TrackRenameDialog {

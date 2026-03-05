@@ -747,6 +747,16 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         clip_idx: index_for_menu,
                         kind: Kind::Audio,
                     }),
+                    button("Next Active Take").on_press(Message::ClipCycleActiveTake {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::Audio,
+                    }),
+                    button("Unmute All Takes").on_press(Message::ClipUnmuteTakesInRange {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::Audio,
+                    }),
                     button(if muted_for_menu {
                         "Unmute Take"
                     } else {
@@ -1173,6 +1183,16 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         kind: Kind::MIDI,
                     }),
                     button("Set Active Take").on_press(Message::ClipSetActiveTake {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::MIDI,
+                    }),
+                    button("Next Active Take").on_press(Message::ClipCycleActiveTake {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::MIDI,
+                    }),
+                    button("Unmute All Takes").on_press(Message::ClipUnmuteTakesInRange {
                         track_idx: track_idx_for_menu.clone(),
                         clip_idx: index_for_menu,
                         kind: Kind::MIDI,
