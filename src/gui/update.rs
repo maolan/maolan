@@ -71,18 +71,45 @@ impl Maolan {
             let mut vol = None;
             let mut bal = None;
             let mut muted = None;
+            let runtime = self
+                .track_automation_runtime
+                .entry(track.name.clone())
+                .or_default();
             for lane in &track.automation_lanes {
                 let value = Self::automation_lane_value_at(&lane.points, sample);
                 match lane.target {
                     TrackAutomationTarget::Volume => vol = value,
                     TrackAutomationTarget::Balance => bal = value,
                     TrackAutomationTarget::Mute => muted = value.map(|v| v >= 0.5),
+                    TrackAutomationTarget::ClapParameter {
+                        instance_id,
+                        param_id,
+                        min,
+                        max,
+                    } => {
+                        if let Some(v) = value {
+                            let lo = min.min(max);
+                            let hi = max.max(min);
+                            let param_value = (lo + v as f64 * (hi - lo)).clamp(lo, hi);
+                            let key = (instance_id, param_id);
+                            if runtime
+                                .clap_params
+                                .get(&key)
+                                .is_none_or(|current| (current - param_value).abs() >= 0.0005)
+                            {
+                                runtime.clap_params.insert(key, param_value);
+                                actions.push(Action::TrackSetClapParameterAt {
+                                    track_name: track.name.clone(),
+                                    instance_id,
+                                    param_id,
+                                    value: param_value,
+                                    frame: 0,
+                                });
+                            }
+                        }
+                    }
                 }
             }
-            let runtime = self
-                .track_automation_runtime
-                .entry(track.name.clone())
-                .or_default();
             if let Some(v) = vol {
                 let level_db = (-90.0 + v * 110.0).clamp(-90.0, 20.0);
                 if runtime
@@ -2698,6 +2725,48 @@ impl Maolan {
                         .or_default()
                         .insert(plugin_path.clone(), clap_state.clone());
                 }
+                Action::TrackClapParameters {
+                    track_name,
+                    instance_id,
+                    parameters,
+                } => {
+                    if self
+                        .pending_add_clap_automation_instances
+                        .remove(&(track_name.clone(), *instance_id))
+                    {
+                        let mut state = self.state.blocking_write();
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        {
+                            for param in parameters {
+                                let target = TrackAutomationTarget::ClapParameter {
+                                    instance_id: *instance_id,
+                                    param_id: param.id,
+                                    min: param.min_value,
+                                    max: param.max_value,
+                                };
+                                if let Some(existing) = track
+                                    .automation_lanes
+                                    .iter_mut()
+                                    .find(|lane| lane.target == target)
+                                {
+                                    existing.visible = true;
+                                } else {
+                                    track.automation_lanes.push(crate::state::TrackAutomationLane {
+                                        target,
+                                        visible: true,
+                                        points: vec![],
+                                    });
+                                }
+                            }
+                            track.height = track.min_height_for_layout().max(60.0);
+                            state.message = format!(
+                                "Added {} CLAP automation lanes on '{}'",
+                                parameters.len(),
+                                track_name
+                            );
+                        }
+                    }
+                }
                 #[cfg(any(target_os = "windows", target_os = "macos"))]
                 Action::TrackSnapshotAllClapStates { track_name } => {
                     if self.pending_save_path.is_some() {
@@ -2889,6 +2958,37 @@ impl Maolan {
                         state.plugin_graph_plugin_positions = new_positions;
                     }
                     drop(state);
+
+                    let mut pending_queries: Vec<Task<Message>> = vec![];
+                    let pending_paths: Vec<(String, String)> = self
+                        .pending_add_clap_automation_paths
+                        .iter()
+                        .filter(|(name, _)| name == track_name)
+                        .cloned()
+                        .collect();
+                    for (pending_track, pending_path) in pending_paths {
+                        if let Some(instance_id) = plugins
+                            .iter()
+                            .find(|plugin| {
+                                plugin.format.eq_ignore_ascii_case("CLAP")
+                                    && (plugin.uri == pending_path
+                                        || plugin.plugin_id == pending_path)
+                            })
+                            .map(|plugin| plugin.instance_id)
+                        {
+                            self.pending_add_clap_automation_paths
+                                .remove(&(pending_track.clone(), pending_path));
+                            self.pending_add_clap_automation_instances
+                                .insert((pending_track.clone(), instance_id));
+                            pending_queries.push(self.send(Action::TrackGetClapParameters {
+                                track_name: pending_track,
+                                instance_id,
+                            }));
+                        }
+                    }
+                    if !pending_queries.is_empty() {
+                        return Task::batch(pending_queries);
+                    }
 
                     if self.pending_save_path.is_some() {
                         self.pending_save_tracks.remove(track_name);
@@ -3138,6 +3238,48 @@ impl Maolan {
                         });
                     }
                     track.height = track.min_height_for_layout().max(60.0);
+                }
+            }
+            Message::TrackAutomationAddClapLanes {
+                ref track_name,
+                ref plugin_path,
+            } => {
+                #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+                {
+                    let instance_id = {
+                        let state = self.state.blocking_read();
+                        state
+                            .plugin_graphs_by_track
+                            .get(track_name)
+                            .and_then(|(plugins, _)| {
+                                plugins
+                                    .iter()
+                                    .find(|plugin| {
+                                        plugin.format.eq_ignore_ascii_case("CLAP")
+                                            && (plugin.uri == *plugin_path
+                                                || plugin.plugin_id == *plugin_path)
+                                    })
+                                    .map(|plugin| plugin.instance_id)
+                            })
+                    };
+                    if let Some(instance_id) = instance_id {
+                        self.pending_add_clap_automation_instances
+                            .insert((track_name.clone(), instance_id));
+                        return self.send(Action::TrackGetClapParameters {
+                            track_name: track_name.clone(),
+                            instance_id,
+                        });
+                    }
+                    self.pending_add_clap_automation_paths
+                        .insert((track_name.clone(), plugin_path.clone()));
+                    return self.send(Action::TrackGetPluginGraph {
+                        track_name: track_name.clone(),
+                    });
+                }
+                #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]
+                {
+                    self.state.blocking_write().message =
+                        "CLAP automation lanes are unavailable on this platform".to_string();
                 }
             }
             Message::TrackAutomationLaneHover {

@@ -93,6 +93,7 @@ struct TrackAutomationRuntime {
     level_db: Option<f32>,
     balance: Option<f32>,
     muted: Option<bool>,
+    clap_params: HashMap<(usize, u32), f64>,
 }
 
 pub struct Maolan {
@@ -129,6 +130,8 @@ pub struct Maolan {
     pending_save_is_template: bool,
     pending_audio_peaks: HashMap<AudioClipKey, Vec<Vec<f32>>>,
     track_automation_runtime: HashMap<String, TrackAutomationRuntime>,
+    pending_add_clap_automation_paths: HashSet<(String, String)>,
+    pending_add_clap_automation_instances: HashSet<(String, usize)>,
     playing: bool,
     paused: bool,
     transport_samples: f64,
@@ -265,6 +268,8 @@ impl Default for Maolan {
             pending_save_is_template: false,
             pending_audio_peaks: HashMap::new(),
             track_automation_runtime: HashMap::new(),
+            pending_add_clap_automation_paths: HashSet::new(),
+            pending_add_clap_automation_instances: HashSet::new(),
             playing: false,
             paused: false,
             transport_samples: 0.0,
@@ -1867,6 +1872,10 @@ impl Maolan {
             loaded_clap_items.push(
                 row![
                     text(name).width(Length::Fill),
+                    button("Auto").on_press(Message::TrackAutomationAddClapLanes {
+                        track_name: title.clone(),
+                        plugin_path: path.clone(),
+                    }),
                     button("UI").on_press(Message::ShowClapPluginUi(path.clone())),
                     button("Unload").on_press(Message::UnloadClapPlugin(path)),
                 ]
@@ -2049,6 +2058,10 @@ impl Maolan {
             loaded_clap_items.push(
                 row![
                     text(name).width(Length::Fill),
+                    button("Auto").on_press(Message::TrackAutomationAddClapLanes {
+                        track_name: title.clone(),
+                        plugin_path: path.clone(),
+                    }),
                     button("UI").on_press(Message::ShowClapPluginUi(path.clone())),
                     button("Unload").on_press(Message::UnloadClapPlugin(path)),
                 ]

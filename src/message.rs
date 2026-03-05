@@ -86,11 +86,17 @@ pub enum PianoControllerLane {
     SysEx,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TrackAutomationTarget {
     Volume,
     Balance,
     Mute,
+    ClapParameter {
+        instance_id: usize,
+        param_id: u32,
+        min: f64,
+        max: f64,
+    },
 }
 
 impl fmt::Display for TrackAutomationTarget {
@@ -99,6 +105,11 @@ impl fmt::Display for TrackAutomationTarget {
             Self::Volume => write!(f, "Volume"),
             Self::Balance => write!(f, "Balance"),
             Self::Mute => write!(f, "Mute"),
+            Self::ClapParameter {
+                instance_id,
+                param_id,
+                ..
+            } => write!(f, "CLAP {}:{}", instance_id, param_id),
         }
     }
 }
@@ -286,6 +297,10 @@ pub enum Message {
     TrackAutomationAddLane {
         track_name: String,
         target: TrackAutomationTarget,
+    },
+    TrackAutomationAddClapLanes {
+        track_name: String,
+        plugin_path: String,
     },
     TrackAutomationLaneHover {
         track_name: String,
