@@ -5,7 +5,10 @@ use super::{
 use crate::message::PluginFormat;
 use crate::{
     connections,
-    message::{ExportNormalizeMode, Message, Show, TrackAutomationMode, TrackAutomationTarget},
+    message::{
+        ExportNormalizeMode, ExportRenderMode, Message, Show, TrackAutomationMode,
+        TrackAutomationTarget,
+    },
     state::{
         ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, TempoPoint,
         TimeSignaturePoint, Track, TrackAutomationPoint, View,
@@ -31,8 +34,9 @@ use maolan_engine::{
 use rfd::AsyncFileDialog;
 use std::{
     collections::{HashMap, HashSet},
+    fs,
     process::exit,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tracing::error;
 use serde::{Deserialize, Serialize};
@@ -61,7 +65,220 @@ struct MidiMappingsFile {
     tracks: HashMap<String, MidiMappingsTrackFile>,
 }
 
+const AUTOSAVE_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(60);
+
 impl Maolan {
+    fn autosave_snapshot_root(&self) -> Option<std::path::PathBuf> {
+        self.session_dir
+            .as_ref()
+            .map(|session_dir| session_dir.join(".maolan_autosave"))
+    }
+
+    fn autosave_snapshots_dir_for(path: &std::path::Path) -> std::path::PathBuf {
+        path.join(".maolan_autosave/snapshots")
+    }
+
+    fn list_autosave_snapshots_for(path: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let snapshots_dir = Self::autosave_snapshots_dir_for(path);
+        let mut snapshots = fs::read_dir(snapshots_dir)
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
+            .map(|entry| entry.path())
+            .filter(|snapshot_dir| snapshot_dir.is_dir() && snapshot_dir.join("session.json").exists())
+            .collect::<Vec<_>>();
+        snapshots.sort_by(|a, b| b.cmp(a));
+        snapshots
+    }
+
+    fn has_newer_autosave_snapshot(path: &std::path::Path) -> bool {
+        let Some(autosave_session) = Self::list_autosave_snapshots_for(path).first().cloned() else {
+            return false;
+        };
+        let autosave_mtime = fs::metadata(autosave_session.join("session.json"))
+            .and_then(|m| m.modified())
+            .ok();
+        let session_mtime = fs::metadata(path.join("session.json"))
+            .and_then(|m| m.modified())
+            .ok();
+        match (autosave_mtime, session_mtime) {
+            (Some(a), Some(s)) => a > s,
+            (Some(_), None) => true,
+            _ => false,
+        }
+    }
+
+    fn autosave_recovery_preview_summary(
+        session_dir: &std::path::Path,
+        snapshot_dir: &std::path::Path,
+    ) -> String {
+        fn read_counts(path: &std::path::Path) -> Option<(usize, usize, usize)> {
+            let f = fs::File::open(path).ok()?;
+            let json: serde_json::Value = serde_json::from_reader(f).ok()?;
+            let tracks = json.get("tracks")?.as_array()?;
+            let track_count = tracks.len();
+            let mut audio_count = 0usize;
+            let mut midi_count = 0usize;
+            for track in tracks {
+                audio_count = audio_count.saturating_add(
+                    track
+                        .get("audio")
+                        .and_then(|a| a.get("clips"))
+                        .and_then(serde_json::Value::as_array)
+                        .map(|clips| clips.len())
+                        .unwrap_or(0),
+                );
+                midi_count = midi_count.saturating_add(
+                    track
+                        .get("midi")
+                        .and_then(|m| m.get("clips"))
+                        .and_then(serde_json::Value::as_array)
+                        .map(|clips| clips.len())
+                        .unwrap_or(0),
+                );
+            }
+            Some((track_count, audio_count, midi_count))
+        }
+
+        let live = read_counts(&session_dir.join("session.json"));
+        let snap = read_counts(&snapshot_dir.join("session.json"));
+        let label = snapshot_dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("snapshot");
+        match (live, snap) {
+            (Some((lt, la, lm)), Some((st, sa, sm))) => format!(
+                "Autosave preview [{label}]: tracks {lt}->{st}, audio clips {la}->{sa}, midi clips {lm}->{sm}"
+            ),
+            _ => format!("Autosave preview [{label}]: unable to compute diff summary"),
+        }
+    }
+
+    fn write_last_session_hint(path: &str) {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let config_dir = std::path::PathBuf::from(home).join(".config/maolan");
+        let _ = fs::create_dir_all(&config_dir);
+        let _ = fs::write(config_dir.join("last_session_path"), path);
+    }
+
+    fn export_diagnostics_bundle(&self) -> Result<std::path::PathBuf, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let root = self
+            .session_dir
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+            .join(format!("maolan_diagnostics_{stamp}"));
+        fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+
+        let state = self.state.blocking_read();
+        let diagnostics = state
+            .diagnostics_report
+            .clone()
+            .unwrap_or_else(|| "No diagnostics report captured yet".to_string());
+        fs::write(root.join("session_diagnostics.txt"), diagnostics).map_err(|e| e.to_string())?;
+        fs::write(
+            root.join("midi_mappings.txt"),
+            if self.midi_mappings_report_lines.is_empty() {
+                "No MIDI mappings captured yet".to_string()
+            } else {
+                self.midi_mappings_report_lines.join("\n")
+            },
+        )
+        .map_err(|e| e.to_string())?;
+
+        let summary = serde_json::json!({
+            "transport": {
+                "playing": self.playing,
+                "paused": self.paused,
+                "sample": self.transport_samples.max(0.0) as usize,
+            },
+            "session_dir": self.session_dir.as_ref().map(|p| p.to_string_lossy().to_string()),
+            "track_count": state.tracks.len(),
+            "selected_tracks": state.selected.iter().cloned().collect::<Vec<String>>(),
+            "export_in_progress": self.export_in_progress,
+            "freeze_in_progress": self.freeze_in_progress,
+            "record_armed": self.record_armed,
+            "timestamp_unix": stamp,
+        });
+        let f = fs::File::create(root.join("ui_summary.json")).map_err(|e| e.to_string())?;
+        serde_json::to_writer_pretty(f, &summary).map_err(|e| e.to_string())?;
+        Ok(root)
+    }
+
+    fn prepare_pending_autosave_recovery(&mut self, select_older: bool) -> Result<(), String> {
+        if let Some(pending) = self.pending_autosave_recovery.as_mut() {
+            if select_older {
+                if pending.selected_index + 1 < pending.snapshots.len() {
+                    pending.selected_index += 1;
+                } else {
+                    return Err("No older autosave snapshot available".to_string());
+                }
+            }
+            pending.confirm_armed = false;
+            return Ok(());
+        }
+
+        let base_session_dir = self
+            .pending_recovery_session_dir
+            .clone()
+            .or_else(|| self.session_dir.clone())
+            .ok_or_else(|| "No session available for autosave recovery".to_string())?;
+        let snapshots = Self::list_autosave_snapshots_for(&base_session_dir);
+        if snapshots.is_empty() {
+            return Err("No autosave snapshot found for this session".to_string());
+        }
+        let selected_index = if select_older {
+            if snapshots.len() >= 2 {
+                1
+            } else {
+                return Err("No older autosave snapshot available".to_string());
+            }
+        } else {
+            0
+        };
+        self.pending_autosave_recovery = Some(super::PendingAutosaveRecovery {
+            session_dir: base_session_dir,
+            snapshots,
+            selected_index,
+            confirm_armed: false,
+        });
+        Ok(())
+    }
+
+    fn apply_pending_autosave_recovery(&mut self) -> Task<Message> {
+        let Some(pending) = self.pending_autosave_recovery.clone() else {
+            self.state.blocking_write().message = "No autosave recovery pending".to_string();
+            return Task::none();
+        };
+        let mut errors = Vec::<String>::new();
+        for snapshot in pending.snapshots.iter().skip(pending.selected_index) {
+            self.session_dir = Some(pending.session_dir.clone());
+            self.stop_recording_preview();
+            match self.load(snapshot.to_string_lossy().to_string()) {
+                Ok(task) => {
+                    self.pending_recovery_session_dir = None;
+                    self.pending_autosave_recovery = None;
+                    self.has_unsaved_changes = true;
+                    self.state.blocking_write().message =
+                        format!("Recovered autosave snapshot '{}'", snapshot.display());
+                    return task;
+                }
+                Err(e) => {
+                    errors.push(format!("{} ({})", snapshot.display(), e));
+                }
+            }
+        }
+        self.pending_autosave_recovery = None;
+        self.state.blocking_write().message = format!(
+            "Autosave recovery failed for all available snapshots: {}",
+            errors.join(" | ")
+        );
+        Task::none()
+    }
+
     fn rebuild_midi_mappings_report_lines_from_state(&mut self) {
         let state = self.state.blocking_read();
         let mut lines = Vec::<String>::new();
@@ -1735,6 +1952,9 @@ impl Maolan {
                     Show::ExportSettings => {
                         self.modal = Some(Show::ExportSettings);
                     }
+                    Show::Preferences => {
+                        self.modal = Some(Show::Preferences);
+                    }
                 }
             }
             Message::AddTrackFromTemplate {
@@ -1813,6 +2033,7 @@ impl Maolan {
                     .map(|t| t.name.clone())
                     .collect();
                 let mut tasks = vec![
+                    self.send(Action::BeginSessionRestore),
                     self.send(Action::Stop),
                     self.send(Action::SetRecordEnabled(false)),
                     self.send(Action::SetLoopRange(None)),
@@ -1833,6 +2054,7 @@ impl Maolan {
                 for name in existing_tracks {
                     tasks.push(self.send(Action::RemoveTrack(name)));
                 }
+                tasks.push(self.send(Action::EndSessionRestore));
                 {
                     let mut state = self.state.blocking_write();
                     state.connections.clear();
@@ -1862,6 +2084,12 @@ impl Maolan {
                 self.freeze_cancel_requested = false;
                 self.has_unsaved_changes = false;
                 self.session_restore_in_progress = false;
+                self.last_autosave_snapshot = None;
+                self.pending_recovery_session_dir = None;
+                self.pending_autosave_recovery = None;
+                self.pending_diagnostics_bundle_export = false;
+                self.diagnostics_bundle_wait_session_report = false;
+                self.diagnostics_bundle_wait_midi_report = false;
                 return Task::batch(tasks);
             }
             Message::Cancel => self.modal = None,
@@ -2000,6 +2228,50 @@ impl Maolan {
                 if !tasks.is_empty() {
                     return Task::batch(tasks);
                 }
+            }
+            Message::AutosaveSnapshotTick => {
+                if !self.has_unsaved_changes
+                    || self.session_restore_in_progress
+                    || self.pending_save_path.is_some()
+                {
+                    return Task::none();
+                }
+                let Some(autosave_root) = self.autosave_snapshot_root() else {
+                    return Task::none();
+                };
+                let now = Instant::now();
+                if self.last_autosave_snapshot.is_some_and(|last| {
+                    now.duration_since(last) < AUTOSAVE_SNAPSHOT_INTERVAL
+                }) {
+                    return Task::none();
+                }
+                let stamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let snapshot_dir = autosave_root.join("snapshots").join(format!("{stamp}"));
+                match self.save(snapshot_dir.to_string_lossy().to_string()) {
+                    Ok(()) => {
+                        self.last_autosave_snapshot = Some(now);
+                        let mut snapshots = self
+                            .session_dir
+                            .as_ref()
+                            .map(|path| Self::list_autosave_snapshots_for(path))
+                            .unwrap_or_default();
+                        const AUTOSAVE_KEEP_COUNT: usize = 10;
+                        if snapshots.len() > AUTOSAVE_KEEP_COUNT {
+                            snapshots.sort();
+                            let remove_count = snapshots.len().saturating_sub(AUTOSAVE_KEEP_COUNT);
+                            for stale in snapshots.into_iter().take(remove_count) {
+                                let _ = fs::remove_dir_all(stale);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        self.state.blocking_write().message = format!("Autosave failed: {e}");
+                    }
+                }
+                return Task::none();
             }
             Message::SetLoopRange(range) => {
                 let normalized = range.and_then(|(start, end)| {
@@ -4826,6 +5098,27 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     state.message = report.clone();
                     state.diagnostics_report = Some(report);
+                    if self.pending_diagnostics_bundle_export {
+                        self.diagnostics_bundle_wait_session_report = false;
+                        if !self.diagnostics_bundle_wait_session_report
+                            && !self.diagnostics_bundle_wait_midi_report
+                        {
+                            self.pending_diagnostics_bundle_export = false;
+                            match self.export_diagnostics_bundle() {
+                                Ok(path) => {
+                                    state.message = format!(
+                                        "Diagnostics bundle exported: {}",
+                                        path.display()
+                                    );
+                                }
+                                Err(e) => {
+                                    state.message = format!(
+                                        "Diagnostics bundle export failed: {e}"
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
                 Action::MidiLearnMappingsReport { lines } => {
                     let report = lines.join(" | ");
@@ -4833,6 +5126,27 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     state.message = format!("MIDI mappings: {}", report);
                     state.diagnostics_report = Some(format!("MIDI mappings: {}", report));
+                    if self.pending_diagnostics_bundle_export {
+                        self.diagnostics_bundle_wait_midi_report = false;
+                        if !self.diagnostics_bundle_wait_session_report
+                            && !self.diagnostics_bundle_wait_midi_report
+                        {
+                            self.pending_diagnostics_bundle_export = false;
+                            match self.export_diagnostics_bundle() {
+                                Ok(path) => {
+                                    state.message = format!(
+                                        "Diagnostics bundle exported: {}",
+                                        path.display()
+                                    );
+                                }
+                                Err(e) => {
+                                    state.message = format!(
+                                        "Diagnostics bundle export failed: {e}"
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
                 Action::ClearAllMidiLearnBindings => {
                     self.midi_mappings_report_lines.clear();
@@ -5184,6 +5498,16 @@ impl Maolan {
                 }
                 Action::SetSessionPath(_) => {
                     self.has_unsaved_changes = false;
+                    self.last_autosave_snapshot = None;
+                    self.pending_autosave_recovery = None;
+                    if let Some(path) = &self.session_dir {
+                        Self::write_last_session_hint(&path.to_string_lossy());
+                    }
+                    if let Some(autosave_root) = self.autosave_snapshot_root()
+                        && autosave_root.exists()
+                    {
+                        let _ = fs::remove_dir_all(&autosave_root);
+                    }
                     if self.pending_record_after_save {
                         self.pending_record_after_save = false;
                         return self.send(Action::SetRecordEnabled(true));
@@ -5192,10 +5516,14 @@ impl Maolan {
                 Action::BeginSessionRestore => {
                     self.session_restore_in_progress = true;
                     self.has_unsaved_changes = false;
+                    self.last_autosave_snapshot = None;
+                    self.pending_autosave_recovery = None;
                 }
                 Action::EndSessionRestore => {
                     self.session_restore_in_progress = false;
                     self.has_unsaved_changes = false;
+                    self.last_autosave_snapshot = None;
+                    self.pending_autosave_recovery = None;
                 }
                 Action::TransportPosition(sample) => {
                     self.transport_samples = *sample as f64;
@@ -5837,6 +6165,9 @@ impl Maolan {
                 self.freeze_in_progress = false;
                 self.freeze_track_name = None;
                 self.freeze_cancel_requested = false;
+                self.pending_diagnostics_bundle_export = false;
+                self.diagnostics_bundle_wait_session_report = false;
+                self.diagnostics_bundle_wait_midi_report = false;
                 self.state.blocking_write().message = e.clone();
                 error!("Engine error: {e}");
             }
@@ -5875,7 +6206,20 @@ impl Maolan {
                     state.ctrl = false;
                     state.shift = false;
                 }
+                if self
+                    .pending_recovery_session_dir
+                    .as_ref()
+                    .is_some_and(|pending| pending == &path)
+                {
+                    self.pending_recovery_session_dir = None;
+                } else if Self::has_newer_autosave_snapshot(&path) {
+                    self.pending_recovery_session_dir = Some(path.clone());
+                    self.pending_autosave_recovery = None;
+                    self.state.blocking_write().message = "Found newer autosave snapshot. Use File -> Recover Autosave Snapshot to preview and restore it, or open the same session again to ignore.".to_string();
+                    return Task::none();
+                }
                 self.session_dir = Some(path.clone());
+                self.pending_autosave_recovery = None;
                 self.stop_recording_preview();
                 match self.load(path.to_string_lossy().to_string()) {
                     Ok(task) => return task,
@@ -5884,6 +6228,51 @@ impl Maolan {
                         return Task::none();
                     }
                 }
+            }
+            Message::RecoverAutosaveSnapshot => {
+                if let Err(e) = self.prepare_pending_autosave_recovery(false) {
+                    self.state.blocking_write().message = e;
+                    return Task::none();
+                }
+                if let Some(pending) = self.pending_autosave_recovery.as_mut() {
+                    let selected_snapshot = pending
+                        .snapshots
+                        .get(pending.selected_index)
+                        .cloned()
+                        .unwrap_or_else(|| pending.snapshots[0].clone());
+                    let preview = Self::autosave_recovery_preview_summary(
+                        &pending.session_dir,
+                        &selected_snapshot,
+                    );
+                    if !pending.confirm_armed {
+                        pending.confirm_armed = true;
+                        self.state.blocking_write().message = format!(
+                            "{preview}. Run Recover Autosave Snapshot again to apply. Use Recover Older Autosave Snapshot to pick an older one."
+                        );
+                        return Task::none();
+                    }
+                }
+                return self.apply_pending_autosave_recovery();
+            }
+            Message::RecoverOlderAutosaveSnapshot => {
+                if let Err(e) = self.prepare_pending_autosave_recovery(true) {
+                    self.state.blocking_write().message = e;
+                    return Task::none();
+                }
+                if let Some(pending) = self.pending_autosave_recovery.as_mut() {
+                    let selected_snapshot = pending
+                        .snapshots
+                        .get(pending.selected_index)
+                        .cloned()
+                        .unwrap_or_else(|| pending.snapshots[0].clone());
+                    let preview = Self::autosave_recovery_preview_summary(
+                        &pending.session_dir,
+                        &selected_snapshot,
+                    );
+                    self.state.blocking_write().message =
+                        format!("{preview}. Run Recover Autosave Snapshot to apply this selection.");
+                }
+                return Task::none();
             }
             Message::ShiftPressed => {
                 if !self.state.blocking_read().hw_loaded {
@@ -8737,6 +9126,15 @@ impl Maolan {
                 self.export_sample_rate_hz = nearest_rate;
                 self.modal = Some(crate::message::Show::ExportSettings);
             }
+            Message::ExportDiagnosticsBundleRequest => {
+                self.pending_diagnostics_bundle_export = true;
+                self.diagnostics_bundle_wait_session_report = true;
+                self.diagnostics_bundle_wait_midi_report = true;
+                return Task::batch(vec![
+                    self.send(Action::RequestSessionDiagnostics),
+                    self.send(Action::RequestMidiLearnMappingsReport),
+                ]);
+            }
             Message::SessionDiagnosticsRequest => {
                 return self.send(Action::RequestSessionDiagnostics);
             }
@@ -8763,10 +9161,12 @@ impl Maolan {
             Message::MidiLearnMappingsImportRequest => {
                 match self.import_midi_mappings_actions() {
                     Ok(actions) => {
-                        let mut tasks = Vec::with_capacity(actions.len());
+                        let mut tasks = Vec::with_capacity(actions.len() + 2);
+                        tasks.push(self.send(Action::BeginHistoryGroup));
                         for action in actions {
                             tasks.push(self.send(action));
                         }
+                        tasks.push(self.send(Action::EndHistoryGroup));
                         self.state.blocking_write().message = "Imported MIDI mappings".to_string();
                         return Task::batch(tasks);
                     }
@@ -8783,6 +9183,12 @@ impl Maolan {
             }
             Message::ExportBitDepthSelected(bit_depth) => {
                 self.export_bit_depth = bit_depth;
+            }
+            Message::ExportRenderModeSelected(mode) => {
+                self.export_render_mode = mode;
+                if !matches!(mode, ExportRenderMode::Mixdown) {
+                    self.export_normalize = false;
+                }
             }
             Message::ExportNormalizeToggled(enabled) => {
                 self.export_normalize = enabled;
@@ -8893,6 +9299,7 @@ impl Maolan {
                 let normalize_tp_limiter = self.export_normalize_tp_limiter;
                 let export_path = Self::ensure_wav_extension(path.clone());
                 let state_clone = self.state.clone();
+                let render_mode = self.export_render_mode;
 
                 self.export_in_progress = true;
                 self.export_progress = 0.0;
@@ -8925,6 +9332,7 @@ impl Maolan {
                             let options = super::ExportSessionOptions {
                                 export_path: export_path.clone(),
                                 sample_rate,
+                                render_mode,
                                 bit_depth: export_bit_depth,
                                 normalize: export_normalize,
                                 normalize_target_dbfs,
@@ -8978,13 +9386,46 @@ impl Maolan {
                     self.state.blocking_write().message = op.clone();
                 } else if progress >= 1.0 {
                     self.export_in_progress = false;
-                    self.state.blocking_write().message = "Export complete".to_string();
+                    self.state.blocking_write().message =
+                        operation.clone().unwrap_or_else(|| "Export complete".to_string());
                 } else if let Some(op) = operation {
                     let percent = (progress * 100.0) as usize;
                     self.state.blocking_write().message = format!("Exporting ({percent}%): {}", op);
                 } else {
                     let percent = (progress * 100.0) as usize;
                     self.state.blocking_write().message = format!("Exporting ({percent}%)...");
+                }
+            }
+            Message::PreferencesSampleRateSelected(rate) => {
+                self.prefs_export_sample_rate_hz = rate;
+            }
+            Message::PreferencesSnapModeSelected(mode) => {
+                self.prefs_snap_mode = mode;
+            }
+            Message::PreferencesSave => {
+                let prefs = super::AppPreferences {
+                    default_export_sample_rate_hz: self.prefs_export_sample_rate_hz,
+                    default_snap_mode: self.prefs_snap_mode,
+                };
+                let path = super::preferences_path();
+                if let Some(parent) = path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                match fs::File::create(&path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|f| serde_json::to_writer_pretty(f, &prefs).map_err(|e| e.to_string()))
+                {
+                    Ok(()) => {
+                        self.export_sample_rate_hz = self.prefs_export_sample_rate_hz;
+                        self.snap_mode = self.prefs_snap_mode;
+                        self.modal = None;
+                        self.state.blocking_write().message =
+                            format!("Preferences saved: {}", path.display());
+                    }
+                    Err(e) => {
+                        self.state.blocking_write().message =
+                            format!("Failed to save preferences: {e}");
+                    }
                 }
             }
             Message::ImportProgress {

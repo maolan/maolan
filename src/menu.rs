@@ -128,6 +128,8 @@ impl Menu {
                 menu_tpl(menu_items!(
                     (submenu("New", Message::None), new_submenu),
                     (menu_item("Open", Message::Show(Show::Open))),
+                    (menu_item("Recover Autosave Snapshot", Message::RecoverAutosaveSnapshot)),
+                    (menu_item("Recover Older Autosave Snapshot", Message::RecoverOlderAutosaveSnapshot)),
                     (menu_item("Save", Message::Show(Show::Save))),
                     (menu_item("Save as", Message::Show(Show::SaveAs))),
                     (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
@@ -144,7 +146,9 @@ impl Menu {
                 menu_tpl(menu_items!(
                     (menu_item("Undo (Ctrl+Z)", Message::Undo)),
                     (menu_item("Redo (Ctrl+Shift+Z)", Message::Redo)),
+                    (menu_item("Preferences", Message::Show(Show::Preferences))),
                     (menu_item("Session Diagnostics", Message::SessionDiagnosticsRequest)),
+                    (menu_item("Export Diagnostics Bundle", Message::ExportDiagnosticsBundleRequest)),
                     (menu_item("Toggle MIDI Mappings Panel", Message::MidiLearnMappingsPanelToggle)),
                     (menu_item("MIDI Mappings Report", Message::MidiLearnMappingsReportRequest)),
                     (menu_item("Export MIDI Mappings", Message::MidiLearnMappingsExportRequest)),

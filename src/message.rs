@@ -17,6 +17,7 @@ pub enum Show {
     AddTrack,
     TrackPluginList,
     ExportSettings,
+    Preferences,
     Save,
     SaveAs,
     SaveTemplateAs,
@@ -40,7 +41,7 @@ impl fmt::Display for PluginFormat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SnapMode {
     NoSnap,
     Bar,
@@ -373,9 +374,24 @@ pub enum ExportNormalizeMode {
     Loudness,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportRenderMode {
+    Mixdown,
+    StemsPostFader,
+    StemsPreFader,
+}
+
 impl ExportNormalizeMode {
     pub const ALL: [ExportNormalizeMode; 2] =
         [ExportNormalizeMode::Peak, ExportNormalizeMode::Loudness];
+}
+
+impl ExportRenderMode {
+    pub const ALL: [ExportRenderMode; 3] = [
+        ExportRenderMode::Mixdown,
+        ExportRenderMode::StemsPostFader,
+        ExportRenderMode::StemsPreFader,
+    ];
 }
 
 impl fmt::Display for ExportNormalizeMode {
@@ -383,6 +399,16 @@ impl fmt::Display for ExportNormalizeMode {
         match self {
             ExportNormalizeMode::Peak => write!(f, "Peak"),
             ExportNormalizeMode::Loudness => write!(f, "Loudness"),
+        }
+    }
+}
+
+impl fmt::Display for ExportRenderMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExportRenderMode::Mixdown => write!(f, "Mixdown"),
+            ExportRenderMode::StemsPostFader => write!(f, "Stems (Post-Fader)"),
+            ExportRenderMode::StemsPreFader => write!(f, "Stems (Pre-Fader)"),
         }
     }
 }
@@ -528,7 +554,10 @@ pub enum Message {
 
     SaveFolderSelected(Option<PathBuf>),
     OpenFolderSelected(Option<PathBuf>),
+    RecoverAutosaveSnapshot,
+    RecoverOlderAutosaveSnapshot,
     OpenExporter,
+    ExportDiagnosticsBundleRequest,
     SessionDiagnosticsRequest,
     MidiLearnMappingsPanelToggle,
     MidiLearnMappingsReportRequest,
@@ -536,6 +565,7 @@ pub enum Message {
     MidiLearnMappingsImportRequest,
     MidiLearnMappingsClearAllRequest,
     ExportSampleRateSelected(u32),
+    ExportRenderModeSelected(ExportRenderMode),
     ExportBitDepthSelected(ExportBitDepth),
     ExportNormalizeToggled(bool),
     ExportNormalizeModeSelected(ExportNormalizeMode),
@@ -549,6 +579,9 @@ pub enum Message {
         progress: f32,
         operation: Option<String>,
     },
+    PreferencesSampleRateSelected(u32),
+    PreferencesSnapModeSelected(SnapMode),
+    PreferencesSave,
 
     TrackResizeStart(String),
     TrackResizeHover(String, bool),
@@ -586,6 +619,7 @@ pub enum Message {
     WindowResized(Size),
     WindowCloseRequested,
     PlaybackTick,
+    AutosaveSnapshotTick,
     RecordingPreviewTick,
     RecordingPreviewPeaksTick,
     ToggleTransport,

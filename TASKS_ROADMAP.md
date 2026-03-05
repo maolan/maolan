@@ -99,12 +99,16 @@ Last updated: 2026-03-05
   - [x] Dirty-state tracking in GUI (window title `*` marker)
   - [x] Safe close guard for unsaved sessions (confirm-on-second-close)
   - [x] Clear dirty flag on successful save/session restore
-- [ ] Crash recovery and autosave journal
-  - [ ] Periodic autosave snapshot
-  - [ ] Recovery prompt on next launch
-  - [ ] Autosave retention and cleanup policy
+- [x] Crash recovery and autosave journal
+  - [x] Periodic autosave snapshot
+  - [x] Recovery prompt on next launch
+  - [x] Autosave retention and cleanup policy
+  - [x] Startup recovery hint from last opened session
+  - [x] Multi-generation autosave snapshots + older snapshot selection
+  - [x] Recovery preview summary before apply
+  - [x] Corruption fallback (attempt older snapshots automatically)
 - [ ] Export/render completeness
-  - [ ] Stem export (selected tracks, pre/post-fader)
+  - [x] Stem export (selected tracks, pre/post-fader)
   - [ ] Real-time export fallback for offline-incompatible plugins
 - [ ] Routing/mix completeness
   - [ ] Aux sends/returns workflow
@@ -112,9 +116,13 @@ Last updated: 2026-03-05
 - [ ] Undo/redo audit completion
   - [ ] Full action coverage audit for recent features
   - [ ] Deterministic grouping for complex multi-step actions
-- [ ] Productization
-  - [ ] Preferences screen for audio/MIDI/session defaults
-  - [ ] Packaging/release artifacts + diagnostics bundle export
+    - [x] Grouped MIDI mappings import into a single undo/redo history step
+    - [x] New Session now runs as a restore transaction (no history spam)
+  - [x] Added automated history coverage audit script (`scripts/audit-history-coverage.sh`)
+- [x] Productization
+  - [x] Preferences screen for audio/MIDI/session defaults
+  - [x] Packaging/release artifacts
+  - [x] Diagnostics bundle export
 
 ## Notes
 

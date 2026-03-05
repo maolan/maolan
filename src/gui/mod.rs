@@ -9,8 +9,8 @@ use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
     message::{
-        DraggedClip, EditTool, ExportBitDepth, ExportNormalizeMode, Message, PluginFormat, Show,
-        SnapMode,
+        DraggedClip, EditTool, ExportBitDepth, ExportNormalizeMode, ExportRenderMode, Message,
+        PluginFormat, Show, SnapMode,
     },
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{
@@ -36,6 +36,7 @@ use midly::{
 use serde_json::Value;
 #[cfg(unix)]
 use serde_json::json;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
@@ -71,9 +72,18 @@ struct PendingTrackFreezeBounce {
     backup_midi: Vec<MIDIClip>,
 }
 
+#[derive(Debug, Clone)]
+struct PendingAutosaveRecovery {
+    session_dir: PathBuf,
+    snapshots: Vec<PathBuf>,
+    selected_index: usize,
+    confirm_armed: bool,
+}
+
 struct ExportSessionOptions {
     export_path: PathBuf,
     sample_rate: i32,
+    render_mode: ExportRenderMode,
     bit_depth: ExportBitDepth,
     normalize: bool,
     normalize_target_dbfs: f32,
@@ -83,6 +93,32 @@ struct ExportSessionOptions {
     normalize_tp_limiter: bool,
     state: State,
     session_root: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AppPreferences {
+    default_export_sample_rate_hz: u32,
+    default_snap_mode: SnapMode,
+}
+
+impl Default for AppPreferences {
+    fn default() -> Self {
+        Self {
+            default_export_sample_rate_hz: 48_000,
+            default_snap_mode: SnapMode::Bar,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ExportNormalizeParams {
+    mode: ExportNormalizeMode,
+    target_dbfs: f32,
+    target_lufs: f32,
+    true_peak_dbtp: f32,
+    tp_limiter: bool,
+    sample_rate: i32,
+    output_channels: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -218,6 +254,7 @@ pub struct Maolan {
     export_operation: Option<String>,
     export_sample_rate_hz: u32,
     export_bit_depth: ExportBitDepth,
+    export_render_mode: ExportRenderMode,
     export_normalize: bool,
     export_normalize_mode: ExportNormalizeMode,
     export_normalize_dbfs_input: String,
@@ -243,6 +280,70 @@ pub struct Maolan {
     has_unsaved_changes: bool,
     close_confirm_pending: bool,
     session_restore_in_progress: bool,
+    last_autosave_snapshot: Option<Instant>,
+    pending_recovery_session_dir: Option<PathBuf>,
+    pending_autosave_recovery: Option<PendingAutosaveRecovery>,
+    pending_diagnostics_bundle_export: bool,
+    diagnostics_bundle_wait_session_report: bool,
+    diagnostics_bundle_wait_midi_report: bool,
+    prefs_export_sample_rate_hz: u32,
+    prefs_snap_mode: SnapMode,
+}
+
+fn last_session_hint_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join(".config/maolan/last_session_path")
+}
+
+fn read_last_session_hint() -> Option<PathBuf> {
+    let hint_path = last_session_hint_path();
+    let value = fs::read_to_string(hint_path).ok()?;
+    let path = PathBuf::from(value.trim());
+    if path.join("session.json").exists() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn newest_autosave_snapshot_for(session_dir: &Path) -> Option<PathBuf> {
+    let snapshots_dir = session_dir.join(".maolan_autosave/snapshots");
+    let mut dirs = fs::read_dir(snapshots_dir)
+        .ok()?
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| path.is_dir() && path.join("session.json").exists())
+        .collect::<Vec<_>>();
+    dirs.sort();
+    dirs.pop()
+}
+
+fn detect_startup_recovery_session() -> Option<PathBuf> {
+    let session_dir = read_last_session_hint()?;
+    let snapshot = newest_autosave_snapshot_for(&session_dir)?;
+    let autosave_mtime = fs::metadata(snapshot.join("session.json"))
+        .and_then(|m| m.modified())
+        .ok()?;
+    let session_mtime = fs::metadata(session_dir.join("session.json"))
+        .and_then(|m| m.modified())
+        .ok()?;
+    if autosave_mtime > session_mtime {
+        Some(session_dir)
+    } else {
+        None
+    }
+}
+
+fn preferences_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join(".config/maolan/preferences.json")
+}
+
+fn load_preferences() -> AppPreferences {
+    let path = preferences_path();
+    let Ok(file) = File::open(path) else {
+        return AppPreferences::default();
+    };
+    serde_json::from_reader(file).unwrap_or_default()
 }
 
 fn scan_templates() -> Vec<String> {
@@ -296,7 +397,8 @@ impl Default for Maolan {
         let state = Arc::new(RwLock::new(state_data));
         let mut menu = menu::Menu::default();
         menu.update_templates(scan_templates());
-        Self {
+        let prefs = load_preferences();
+        let mut app = Self {
             clip: None,
             clip_preview_target_track: None,
             menu,
@@ -361,7 +463,7 @@ impl Default for Maolan {
             loop_range_samples: None,
             punch_enabled: false,
             punch_range_samples: None,
-            snap_mode: SnapMode::Bar,
+            snap_mode: prefs.default_snap_mode,
             edit_tool: EditTool::Select,
             zoom_visible_bars: 127.0,
             editor_scroll_x: 0.0,
@@ -381,8 +483,9 @@ impl Default for Maolan {
             export_in_progress: false,
             export_progress: 0.0,
             export_operation: None,
-            export_sample_rate_hz: 48_000,
+            export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             export_bit_depth: ExportBitDepth::Int24,
+            export_render_mode: ExportRenderMode::Mixdown,
             export_normalize: false,
             export_normalize_mode: ExportNormalizeMode::Peak,
             export_normalize_dbfs_input: "0.0".to_string(),
@@ -408,7 +511,23 @@ impl Default for Maolan {
             has_unsaved_changes: false,
             close_confirm_pending: false,
             session_restore_in_progress: false,
+            last_autosave_snapshot: None,
+            pending_recovery_session_dir: None,
+            pending_autosave_recovery: None,
+            pending_diagnostics_bundle_export: false,
+            diagnostics_bundle_wait_session_report: false,
+            diagnostics_bundle_wait_midi_report: false,
+            prefs_export_sample_rate_hz: prefs.default_export_sample_rate_hz,
+            prefs_snap_mode: prefs.default_snap_mode,
+        };
+        if let Some(recovery_session) = detect_startup_recovery_session() {
+            app.pending_recovery_session_dir = Some(recovery_session.clone());
+            app.state.blocking_write().message = format!(
+                "Autosave recovery available for '{}'. Use File -> Recover Autosave Snapshot.",
+                recovery_session.display()
+            );
         }
+        app
     }
 }
 
@@ -1130,6 +1249,142 @@ impl Maolan {
         }
     }
 
+    fn apply_export_normalization(
+        mixed_buffer: &mut [f32],
+        params: ExportNormalizeParams,
+    ) -> io::Result<()> {
+        match params.mode {
+            ExportNormalizeMode::Peak => {
+                let peak = mixed_buffer
+                    .iter()
+                    .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
+                if peak > 0.0 {
+                    let target_amp = 10.0_f32
+                        .powf(params.target_dbfs / 20.0)
+                        .clamp(0.0, 1.0);
+                    let gain = target_amp / peak;
+                    for sample in mixed_buffer {
+                        *sample *= gain;
+                    }
+                }
+            }
+            ExportNormalizeMode::Loudness => {
+                let (measured_lufs, measured_tp_amp) =
+                    Self::measure_lufs_and_true_peak(
+                        mixed_buffer,
+                        params.output_channels,
+                        params.sample_rate,
+                    )?;
+                let gain_loudness_db = params.target_lufs - measured_lufs;
+                let gain_loudness = 10.0_f32.powf(gain_loudness_db / 20.0);
+
+                let ceiling_amp = 10.0_f32
+                    .powf(params.true_peak_dbtp / 20.0)
+                    .clamp(0.0, 1.0);
+                let gain_tp = if measured_tp_amp > 0.0 {
+                    ceiling_amp / measured_tp_amp
+                } else {
+                    gain_loudness
+                };
+
+                let applied_gain = if params.tp_limiter {
+                    gain_loudness
+                } else {
+                    gain_loudness.min(gain_tp)
+                };
+
+                for sample in mixed_buffer.iter_mut() {
+                    *sample *= applied_gain;
+                }
+
+                if params.tp_limiter {
+                    let predicted_tp = measured_tp_amp * applied_gain;
+                    if predicted_tp > ceiling_amp && ceiling_amp > 0.0 {
+                        for sample in mixed_buffer.iter_mut() {
+                            *sample = sample.clamp(-ceiling_amp, ceiling_amp);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn mix_track_clips_to_stereo(
+        clips: &[crate::state::AudioClip],
+        session_root: &Path,
+        total_length: usize,
+        level_db: f32,
+        balance: f32,
+        apply_fader: bool,
+    ) -> io::Result<Vec<f32>> {
+        let output_channels = 2usize;
+        let mut mixed = vec![0.0_f32; total_length * output_channels];
+        let (left_gain, right_gain) = if apply_fader {
+            let level_amp = 10.0_f32.powf(level_db / 20.0);
+            let left = if balance <= 0.0 {
+                level_amp
+            } else {
+                level_amp * (1.0 - balance)
+            };
+            let right = if balance >= 0.0 {
+                level_amp
+            } else {
+                level_amp * (1.0 + balance)
+            };
+            (left, right)
+        } else {
+            (1.0, 1.0)
+        };
+
+        for clip in clips {
+            let clip_path = if std::path::PathBuf::from(&clip.name).is_absolute() {
+                std::path::PathBuf::from(&clip.name)
+            } else {
+                session_root.join(&clip.name)
+            };
+            let mut wav = Wav::<f32>::from_path(&clip_path).map_err(|e| {
+                io::Error::other(format!("Failed to open WAV '{}': {}", clip_path.display(), e))
+            })?;
+            let clip_channels = wav.n_channels().max(1) as usize;
+            let samples: wavers::Samples<f32> = wav.read().map_err(|e| {
+                io::Error::other(format!("WAV read error '{}': {}", clip_path.display(), e))
+            })?;
+            if samples.is_empty() {
+                continue;
+            }
+            let clip_frames = samples.len() / clip_channels;
+            let start_frame = clip.start;
+            let offset_frame = clip.offset;
+            let length_frames = clip.length.min(clip_frames.saturating_sub(offset_frame));
+
+            for frame_idx in 0..length_frames {
+                let src_frame = offset_frame + frame_idx;
+                let dst_frame = start_frame + frame_idx;
+                if dst_frame >= total_length {
+                    break;
+                }
+                let src_idx = src_frame * clip_channels;
+                if src_idx + clip_channels > samples.len() {
+                    break;
+                }
+                let left_sample = samples[src_idx];
+                let right_sample = if clip_channels == 1 {
+                    samples[src_idx]
+                } else if clip_channels >= 2 {
+                    samples[src_idx + 1]
+                } else {
+                    left_sample
+                };
+                let dst_idx = dst_frame * output_channels;
+                mixed[dst_idx] += left_sample * left_gain;
+                mixed[dst_idx + 1] += right_sample * right_gain;
+            }
+        }
+
+        Ok(mixed)
+    }
+
     async fn export_session<F>(
         options: &ExportSessionOptions,
         mut progress_callback: F,
@@ -1146,13 +1401,14 @@ impl Maolan {
         let normalize_target_lufs = options.normalize_target_lufs;
         let normalize_true_peak_dbtp = options.normalize_true_peak_dbtp;
         let normalize_tp_limiter = options.normalize_tp_limiter;
+        let render_mode = options.render_mode;
         let state = options.state.clone();
         let session_root = options.session_root.as_path();
 
         progress_callback(0.0, Some("Analyzing tracks".to_string()));
         tokio::task::yield_now().await;
 
-        let (tracks, total_length) = {
+        let (tracks, total_length, selected_tracks) = {
             let state = state.read().await;
             let mut max_length = 0_usize;
             let tracks_data: Vec<_> = state
@@ -1175,7 +1431,11 @@ impl Maolan {
                     )
                 })
                 .collect();
-            (tracks_data, max_length)
+            (
+                tracks_data,
+                max_length,
+                state.selected.iter().cloned().collect::<HashSet<String>>(),
+            )
         };
 
         if total_length == 0 {
@@ -1185,191 +1445,135 @@ impl Maolan {
         }
 
         let has_solo = tracks.iter().any(|(_, _, _, _, soloed, _)| *soloed);
+        if !matches!(render_mode, ExportRenderMode::Mixdown) && selected_tracks.is_empty() {
+            return Err(io::Error::other(
+                "Stem export requires at least one selected track",
+            ));
+        }
         let output_channels = 2;
-        let mut mixed_buffer = vec![0.0_f32; total_length * output_channels];
-
-        progress_callback(0.1, Some("Loading and mixing tracks".to_string()));
-        tokio::task::yield_now().await;
-
-        for (track_idx, (track_name, level, balance, muted, soloed, clips)) in
-            tracks.iter().enumerate()
-        {
-            if *muted || (has_solo && !soloed) {
-                continue;
-            }
-
-            let track_progress_start = 0.1 + (track_idx as f32 / tracks.len() as f32) * 0.7;
-            let track_progress_span = 0.7 / tracks.len() as f32;
-
-            progress_callback(
-                track_progress_start,
-                Some(format!("Processing track: {}", track_name)),
-            );
-            tokio::task::yield_now().await;
-
-            for clip in clips {
-                let clip_path = if std::path::PathBuf::from(&clip.name).is_absolute() {
-                    std::path::PathBuf::from(&clip.name)
-                } else {
-                    session_root.join(&clip.name)
-                };
-
-                let mut wav = Wav::<f32>::from_path(&clip_path).map_err(|e| {
-                    io::Error::other(format!(
-                        "Failed to open WAV '{}': {}",
-                        clip_path.display(),
-                        e
-                    ))
-                })?;
-
-                let clip_channels = wav.n_channels().max(1) as usize;
-                let samples: wavers::Samples<f32> = wav.read().map_err(|e| {
-                    io::Error::other(format!("WAV read error '{}': {}", clip_path.display(), e))
-                })?;
-
-                if samples.is_empty() {
-                    continue;
-                }
-
-                let clip_frames = samples.len() / clip_channels;
-                let start_frame = clip.start;
-                let offset_frame = clip.offset;
-                let length_frames = clip.length.min(clip_frames.saturating_sub(offset_frame));
-
-                let level_amp = 10.0_f32.powf(*level / 20.0);
-                let left_gain = if *balance <= 0.0 {
-                    level_amp
-                } else {
-                    level_amp * (1.0 - *balance)
-                };
-                let right_gain = if *balance >= 0.0 {
-                    level_amp
-                } else {
-                    level_amp * (1.0 + *balance)
-                };
-
-                for frame_idx in 0..length_frames {
-                    let src_frame = offset_frame + frame_idx;
-                    let dst_frame = start_frame + frame_idx;
-
-                    if dst_frame >= total_length {
-                        break;
-                    }
-
-                    let src_idx = src_frame * clip_channels;
-                    if src_idx + clip_channels > samples.len() {
-                        break;
-                    }
-
-                    let left_sample = samples[src_idx];
-
-                    let right_sample = if clip_channels == 1 {
-                        samples[src_idx]
-                    } else if clip_channels >= 2 {
-                        samples[src_idx + 1]
-                    } else {
-                        left_sample
-                    };
-
-                    let dst_idx = dst_frame * output_channels;
-                    mixed_buffer[dst_idx] += left_sample * left_gain;
-                    mixed_buffer[dst_idx + 1] += right_sample * right_gain;
-                }
-            }
-
-            progress_callback(
-                track_progress_start + track_progress_span,
-                Some(format!("Finished: {}", track_name)),
-            );
-            tokio::task::yield_now().await;
-        }
-
-        if normalize {
-            match normalize_mode {
-                ExportNormalizeMode::Peak => {
-                    progress_callback(
-                        0.85,
-                        Some(format!(
-                            "Normalizing peak to {:.1} dBFS",
-                            normalize_target_dbfs
-                        )),
-                    );
-                    tokio::task::yield_now().await;
-                    let peak = mixed_buffer
-                        .iter()
-                        .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
-                    if peak > 0.0 {
-                        let target_amp =
-                            10.0_f32.powf(normalize_target_dbfs / 20.0).clamp(0.0, 1.0);
-                        let gain = target_amp / peak;
-                        for sample in &mut mixed_buffer {
-                            *sample *= gain;
-                        }
-                    }
-                }
-                ExportNormalizeMode::Loudness => {
-                    progress_callback(
-                        0.85,
-                        Some(format!(
-                            "Normalizing loudness to {:.1} LUFS (TP {:.1} dBTP)",
-                            normalize_target_lufs, normalize_true_peak_dbtp
-                        )),
-                    );
-                    tokio::task::yield_now().await;
-                    let (measured_lufs, measured_tp_amp) = Self::measure_lufs_and_true_peak(
-                        &mixed_buffer,
-                        output_channels,
-                        sample_rate,
-                    )?;
-                    let gain_loudness_db = normalize_target_lufs - measured_lufs;
-                    let gain_loudness = 10.0_f32.powf(gain_loudness_db / 20.0);
-
-                    let ceiling_amp = 10.0_f32
-                        .powf(normalize_true_peak_dbtp / 20.0)
-                        .clamp(0.0, 1.0);
-                    let gain_tp = if measured_tp_amp > 0.0 {
-                        ceiling_amp / measured_tp_amp
-                    } else {
-                        gain_loudness
-                    };
-
-                    // Ardour-like behavior:
-                    // - limiter enabled: hit loudness target, then constrain true-peak with limiter
-                    // - limiter disabled: reduce gain so true-peak ceiling is not exceeded
-                    let applied_gain = if normalize_tp_limiter {
-                        gain_loudness
-                    } else {
-                        gain_loudness.min(gain_tp)
-                    };
-
-                    for sample in &mut mixed_buffer {
-                        *sample *= applied_gain;
-                    }
-
-                    if normalize_tp_limiter {
-                        let predicted_tp = measured_tp_amp * applied_gain;
-                        if predicted_tp > ceiling_amp && ceiling_amp > 0.0 {
-                            for sample in &mut mixed_buffer {
-                                *sample = sample.clamp(-ceiling_amp, ceiling_amp);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        progress_callback(0.9, Some(format!("Writing WAV ({bit_depth})")));
-        tokio::task::yield_now().await;
-
-        Self::write_wav_with_bit_depth(
-            export_path,
-            &mixed_buffer,
+        let normalize_params = ExportNormalizeParams {
+            mode: normalize_mode,
+            target_dbfs: normalize_target_dbfs,
+            target_lufs: normalize_target_lufs,
+            true_peak_dbtp: normalize_true_peak_dbtp,
+            tp_limiter: normalize_tp_limiter,
             sample_rate,
             output_channels,
-            bit_depth,
-        )?;
+        };
+        progress_callback(0.1, Some("Loading and mixing tracks".to_string()));
+        tokio::task::yield_now().await;
+        if matches!(render_mode, ExportRenderMode::Mixdown) {
+            let mut mixed_buffer = vec![0.0_f32; total_length * output_channels];
+            for (track_idx, (track_name, level, balance, muted, soloed, clips)) in
+                tracks.iter().enumerate()
+            {
+                if *muted || (has_solo && !soloed) {
+                    continue;
+                }
+                let track_progress_start = 0.1 + (track_idx as f32 / tracks.len() as f32) * 0.7;
+                let track_progress_span = 0.7 / tracks.len() as f32;
+                progress_callback(
+                    track_progress_start,
+                    Some(format!("Processing track: {}", track_name)),
+                );
+                tokio::task::yield_now().await;
+                let mixed = Self::mix_track_clips_to_stereo(
+                    clips,
+                    session_root,
+                    total_length,
+                    *level,
+                    *balance,
+                    true,
+                )?;
+                for (dst, src) in mixed_buffer.iter_mut().zip(mixed.iter()) {
+                    *dst += *src;
+                }
+                progress_callback(
+                    track_progress_start + track_progress_span,
+                    Some(format!("Finished: {}", track_name)),
+                );
+                tokio::task::yield_now().await;
+            }
 
-        progress_callback(1.0, Some("Complete".to_string()));
+            if normalize {
+                Self::apply_export_normalization(
+                    &mut mixed_buffer,
+                    normalize_params,
+                )?;
+            }
+            progress_callback(0.9, Some(format!("Writing WAV ({bit_depth})")));
+            tokio::task::yield_now().await;
+            Self::write_wav_with_bit_depth(
+                export_path,
+                &mixed_buffer,
+                sample_rate,
+                output_channels,
+                bit_depth,
+            )?;
+            progress_callback(1.0, Some("Complete".to_string()));
+            return Ok(());
+        }
+
+        let stem_mode_label = if matches!(render_mode, ExportRenderMode::StemsPreFader) {
+            "pre"
+        } else {
+            "post"
+        };
+        let export_parent = export_path.parent().unwrap_or_else(|| Path::new("."));
+        let export_stem = export_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("export");
+        let stem_dir = export_parent.join(format!("{export_stem}_stems"));
+        fs::create_dir_all(&stem_dir)?;
+
+        let selected_tracks: Vec<_> = tracks
+            .iter()
+            .filter(|(name, _, _, muted, soloed, _)| {
+                selected_tracks.contains(name) && !*muted && (!has_solo || *soloed)
+            })
+            .collect();
+        if selected_tracks.is_empty() {
+            return Err(io::Error::other(
+                "No selected tracks are eligible for stem export",
+            ));
+        }
+
+        for (idx, (track_name, level, balance, _, _, clips)) in selected_tracks.iter().enumerate() {
+            let start = 0.1 + (idx as f32 / selected_tracks.len() as f32) * 0.75;
+            progress_callback(start, Some(format!("Rendering stem: {}", track_name)));
+            tokio::task::yield_now().await;
+            let mut stem_buffer = Self::mix_track_clips_to_stereo(
+                clips,
+                session_root,
+                total_length,
+                *level,
+                *balance,
+                matches!(render_mode, ExportRenderMode::StemsPostFader),
+            )?;
+            if normalize {
+                Self::apply_export_normalization(
+                    &mut stem_buffer,
+                    normalize_params,
+                )?;
+            }
+            let stem_file = stem_dir.join(format!(
+                "{}_{}.wav",
+                Self::sanitize_export_component(track_name),
+                stem_mode_label
+            ));
+            Self::write_wav_with_bit_depth(
+                &stem_file,
+                &stem_buffer,
+                sample_rate,
+                output_channels,
+                bit_depth,
+            )?;
+        }
+        progress_callback(
+            1.0,
+            Some(format!("Complete (stems written to {})", stem_dir.display())),
+        );
         Ok(())
     }
 
@@ -2316,6 +2520,22 @@ impl Maolan {
         }
     }
 
+    fn sanitize_export_component(value: &str) -> String {
+        let mut out = String::with_capacity(value.len());
+        for ch in value.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                out.push(ch);
+            } else {
+                out.push('_');
+            }
+        }
+        if out.is_empty() {
+            "track".to_string()
+        } else {
+            out
+        }
+    }
+
     fn export_settings_view(&self) -> iced::Element<'_, Message> {
         let bit_depth_options = Self::export_bit_depth_options();
         let selected_bit_depth = if bit_depth_options.contains(&self.export_bit_depth) {
@@ -2353,6 +2573,18 @@ impl Maolan {
                         Message::ExportBitDepthSelected
                     )
                     .placeholder("Choose bit depth"),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Render mode:"),
+                    pick_list(
+                        ExportRenderMode::ALL.to_vec(),
+                        Some(self.export_render_mode),
+                        Message::ExportRenderModeSelected
+                    )
+                    .placeholder("Choose render mode")
+                    .width(Length::Fixed(220.0)),
                 ]
                 .spacing(10)
                 .align_y(iced::Alignment::Center),
@@ -2418,6 +2650,53 @@ impl Maolan {
                 ]
                 .spacing(10),
                 text("Use standard sample rates for broad compatibility."),
+            ]
+            .align_x(iced::Alignment::Start)
+            .spacing(12),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
+    fn preferences_view(&self) -> iced::Element<'_, Message> {
+        container(
+            column![
+                text("Preferences").size(16),
+                row![
+                    text("Default export sample rate (Hz):"),
+                    pick_list(
+                        Self::STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
+                        Some(self.prefs_export_sample_rate_hz),
+                        Message::PreferencesSampleRateSelected
+                    )
+                    .placeholder("Choose sample rate")
+                    .width(Length::Fixed(220.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Default snap mode:"),
+                    pick_list(
+                        SnapMode::ALL.to_vec(),
+                        Some(self.prefs_snap_mode),
+                        Message::PreferencesSnapModeSelected
+                    )
+                    .placeholder("Choose snap mode")
+                    .width(Length::Fixed(220.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    button("Save").on_press(Message::PreferencesSave),
+                    button("Cancel")
+                        .on_press(Message::Cancel)
+                        .style(button::secondary),
+                ]
+                .spacing(10),
             ]
             .align_x(iced::Alignment::Start)
             .spacing(12),

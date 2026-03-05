@@ -50,6 +50,23 @@ cargo run --release
 cargo run --release -- --debug
 ```
 
+### Package release artifact
+
+```bash
+cargo build --release
+./scripts/package-release.sh
+```
+
+The script creates a `dist/maolan-<timestamp>-<target>.tar.gz` bundle with the release binary and core docs.
+
+### Audit undo/redo coverage
+
+```bash
+./scripts/audit-history-coverage.sh
+```
+
+Prints mutating `engine::message::Action` candidates not currently included in history `should_record`.
+
 ## Quick Start
 
 1. Create or open a session.
