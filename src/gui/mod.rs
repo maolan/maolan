@@ -3303,8 +3303,26 @@ impl Maolan {
         self.add_track.update(message.clone());
         self.clip_rename.update(message.clone());
         self.track_rename.update(message.clone());
-        for track in &mut self.state.blocking_write().tracks {
-            track.update(message.clone());
+        let track_needs_update = matches!(
+            message,
+            Message::Response(Ok(
+                Action::TrackLevel(_, _)
+                    | Action::TrackBalance(_, _)
+                    | Action::TrackMeters { .. }
+                    | Action::TrackToggleArm(_)
+                    | Action::TrackToggleMute(_)
+                    | Action::TrackToggleSolo(_)
+                    | Action::TrackToggleInputMonitor(_)
+                    | Action::TrackToggleDiskMonitor(_)
+                    | Action::TrackSetFrozen { .. }
+                    | Action::TrackSetVcaMaster { .. }
+                    | Action::TrackSetMidiLearnBinding { .. }
+            ))
+        );
+        if track_needs_update {
+            for track in &mut self.state.blocking_write().tracks {
+                track.update(message.clone());
+            }
         }
     }
 }

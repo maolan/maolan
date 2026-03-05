@@ -1,6 +1,5 @@
 use crate::message::{Message, Show};
 use engine::message::Action;
-use maolan_engine::message::GlobalMidiLearnTarget;
 use iced::{
     Border, Color, Element, Length, alignment,
     widget::{button, row, text},
@@ -11,6 +10,7 @@ use iced_aw::{
 };
 use iced_fonts::lucide::chevron_right;
 use maolan_engine as engine;
+use maolan_engine::message::GlobalMidiLearnTarget;
 
 pub(crate) fn base_button<'a>(
     content: impl Into<Element<'a, Message>>,
@@ -155,12 +155,14 @@ impl Menu {
                     (menu_item("Export MIDI Mappings", Message::MidiLearnMappingsExportRequest)),
                     (menu_item("Import MIDI Mappings", Message::MidiLearnMappingsImportRequest)),
                     (menu_item("Clear All MIDI Mappings", Message::MidiLearnMappingsClearAllRequest)),
-                    (menu_item("MIDI Learn: Play/Pause", Message::GlobalMidiLearnArm { target: GlobalMidiLearnTarget::PlayPause })),
-                    (menu_item("MIDI Learn: Stop", Message::GlobalMidiLearnArm { target: GlobalMidiLearnTarget::Stop })),
-                    (menu_item("MIDI Learn: Record Toggle", Message::GlobalMidiLearnArm { target: GlobalMidiLearnTarget::RecordToggle })),
-                    (menu_item("Clear MIDI Learn: Play/Pause", Message::GlobalMidiLearnClear { target: GlobalMidiLearnTarget::PlayPause })),
-                    (menu_item("Clear MIDI Learn: Stop", Message::GlobalMidiLearnClear { target: GlobalMidiLearnTarget::Stop })),
-                    (menu_item("Clear MIDI Learn: Record Toggle", Message::GlobalMidiLearnClear { target: GlobalMidiLearnTarget::RecordToggle })),
+                    (submenu("MIDI Learn", Message::None), menu_tpl(menu_items!(
+                        (menu_item("MIDI Learn: Play/Pause", Message::GlobalMidiLearnArm { target: GlobalMidiLearnTarget::PlayPause })),
+                        (menu_item("MIDI Learn: Stop", Message::GlobalMidiLearnArm { target: GlobalMidiLearnTarget::Stop })),
+                        (menu_item("MIDI Learn: Record Toggle", Message::GlobalMidiLearnArm { target: GlobalMidiLearnTarget::RecordToggle })),
+                        (menu_item("Clear MIDI Learn: Play/Pause", Message::GlobalMidiLearnClear { target: GlobalMidiLearnTarget::PlayPause })),
+                        (menu_item("Clear MIDI Learn: Stop", Message::GlobalMidiLearnClear { target: GlobalMidiLearnTarget::Stop })),
+                        (menu_item("Clear MIDI Learn: Record Toggle", Message::GlobalMidiLearnClear { target: GlobalMidiLearnTarget::RecordToggle })),
+                    ))),
                 ))
             }),
             (menu_dropdown("Track", Message::None), {
