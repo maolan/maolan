@@ -317,6 +317,10 @@ pub enum Message {
         position: Point,
     },
     PianoCreateNoteEnd,
+    PianoAdjustVelocity {
+        note_index: usize,
+        delta: i8,
+    },
     PianoDeleteSelectedNotes,
     #[cfg(all(unix, not(target_os = "macos")))]
     RefreshLv2Plugins,

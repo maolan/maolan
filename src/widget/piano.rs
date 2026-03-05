@@ -687,6 +687,18 @@ impl PianoRollInteraction {
         }
         None
     }
+
+    fn velocity_delta_from_scroll(delta: &mouse::ScrollDelta) -> i8 {
+        let raw = match delta {
+            mouse::ScrollDelta::Lines { y, .. } => *y,
+            mouse::ScrollDelta::Pixels { y, .. } => *y / 16.0,
+        };
+        let mut steps = raw.round() as i32;
+        if steps == 0 && raw.abs() > f32::EPSILON {
+            steps = raw.signum() as i32;
+        }
+        steps.clamp(-24, 24) as i8
+    }
 }
 
 #[derive(Default, Debug)]
@@ -820,6 +832,22 @@ impl Program<Message> for PianoRollInteraction {
                             }
                             DraggingMode::None => {}
                         }
+                    }
+                }
+            }
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                if let Some(position) = cursor.position_in(bounds)
+                    && let Some(note_idx) = self.note_at_position(position, row_h, pps, &notes)
+                {
+                    let velocity_delta = Self::velocity_delta_from_scroll(delta);
+                    if velocity_delta != 0 {
+                        return Some(
+                            CanvasAction::publish(Message::PianoAdjustVelocity {
+                                note_index: note_idx,
+                                delta: velocity_delta,
+                            })
+                            .and_capture(),
+                        );
                     }
                 }
             }
