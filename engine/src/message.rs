@@ -663,6 +663,7 @@ pub enum Action {
     OpenMidiOutputDevice(String),
     RequestSessionDiagnostics,
     RequestMidiLearnMappingsReport,
+    ClearAllMidiLearnBindings,
     SessionDiagnosticsReport {
         track_count: usize,
         frozen_track_count: usize,

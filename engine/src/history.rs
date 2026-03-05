@@ -84,6 +84,7 @@ pub fn should_record(action: &Action) -> bool {
             | Action::TrackToggleInputMonitor(_)
             | Action::TrackToggleDiskMonitor(_)
             | Action::TrackSetMidiLearnBinding { .. }
+            | Action::SetGlobalMidiLearnBinding { .. }
             | Action::TrackSetVcaMaster { .. }
             | Action::TrackSetFrozen { .. }
             | Action::AddClip { .. }
@@ -93,6 +94,7 @@ pub fn should_record(action: &Action) -> bool {
             | Action::SetClipFade { .. }
             | Action::SetClipMuted { .. }
             | Action::SetAudioClipWarpMarkers { .. }
+            | Action::ClearAllMidiLearnBindings
             | Action::Connect { .. }
             | Action::Disconnect { .. }
             | Action::TrackConnectVst3Audio { .. }
@@ -708,6 +710,53 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
 }
 
 pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Action>> {
+    if let Action::ClearAllMidiLearnBindings = action {
+        let mut actions = Vec::<Action>::new();
+        for (track_name, track) in &state.tracks {
+            let t = track.lock();
+            let mut push_if_some =
+                |target: crate::message::TrackMidiLearnTarget,
+                 binding: Option<crate::message::MidiLearnBinding>| {
+                    if binding.is_some() {
+                        actions.push(Action::TrackSetMidiLearnBinding {
+                            track_name: track_name.clone(),
+                            target,
+                            binding,
+                        });
+                    }
+                };
+            push_if_some(
+                crate::message::TrackMidiLearnTarget::Volume,
+                t.midi_learn_volume.clone(),
+            );
+            push_if_some(
+                crate::message::TrackMidiLearnTarget::Balance,
+                t.midi_learn_balance.clone(),
+            );
+            push_if_some(
+                crate::message::TrackMidiLearnTarget::Mute,
+                t.midi_learn_mute.clone(),
+            );
+            push_if_some(
+                crate::message::TrackMidiLearnTarget::Solo,
+                t.midi_learn_solo.clone(),
+            );
+            push_if_some(
+                crate::message::TrackMidiLearnTarget::Arm,
+                t.midi_learn_arm.clone(),
+            );
+            push_if_some(
+                crate::message::TrackMidiLearnTarget::InputMonitor,
+                t.midi_learn_input_monitor.clone(),
+            );
+            push_if_some(
+                crate::message::TrackMidiLearnTarget::DiskMonitor,
+                t.midi_learn_disk_monitor.clone(),
+            );
+        }
+        return Some(actions);
+    }
+
     if let Action::RemoveTrack(track_name) = action {
         let mut actions = Vec::new();
         {

@@ -21,6 +21,7 @@ use iced::{Length, Point, Task, mouse};
 #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
 use maolan_engine::message::PluginGraphNode;
 use maolan_engine::{
+    history,
     kind::Kind,
     message::{
         Action, AudioWarpMarker, ClipMoveFrom, ClipMoveTo, Message as EngineMessage,
@@ -34,8 +35,84 @@ use std::{
     time::{Duration, Instant},
 };
 use tracing::error;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct MidiMappingsGlobalFile {
+    play_pause: Option<maolan_engine::message::MidiLearnBinding>,
+    stop: Option<maolan_engine::message::MidiLearnBinding>,
+    record_toggle: Option<maolan_engine::message::MidiLearnBinding>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct MidiMappingsTrackFile {
+    volume: Option<maolan_engine::message::MidiLearnBinding>,
+    balance: Option<maolan_engine::message::MidiLearnBinding>,
+    mute: Option<maolan_engine::message::MidiLearnBinding>,
+    solo: Option<maolan_engine::message::MidiLearnBinding>,
+    arm: Option<maolan_engine::message::MidiLearnBinding>,
+    input_monitor: Option<maolan_engine::message::MidiLearnBinding>,
+    disk_monitor: Option<maolan_engine::message::MidiLearnBinding>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct MidiMappingsFile {
+    global: MidiMappingsGlobalFile,
+    tracks: HashMap<String, MidiMappingsTrackFile>,
+}
 
 impl Maolan {
+    fn rebuild_midi_mappings_report_lines_from_state(&mut self) {
+        let state = self.state.blocking_read();
+        let mut lines = Vec::<String>::new();
+        let mut push_binding = |scope: String, label: &str, binding: &maolan_engine::message::MidiLearnBinding| {
+            lines.push(format!(
+                "{scope} {label}: CH{} CC{}",
+                binding.channel + 1,
+                binding.cc
+            ));
+        };
+
+        if let Some(binding) = state.global_midi_learn_play_pause.as_ref() {
+            push_binding("Global".to_string(), "Play/Pause", binding);
+        }
+        if let Some(binding) = state.global_midi_learn_stop.as_ref() {
+            push_binding("Global".to_string(), "Stop", binding);
+        }
+        if let Some(binding) = state.global_midi_learn_record_toggle.as_ref() {
+            push_binding("Global".to_string(), "Record Toggle", binding);
+        }
+
+        for track in &state.tracks {
+            if let Some(binding) = track.midi_learn_volume.as_ref() {
+                push_binding(format!("Track '{}'", track.name), "Volume", binding);
+            }
+            if let Some(binding) = track.midi_learn_balance.as_ref() {
+                push_binding(format!("Track '{}'", track.name), "Balance", binding);
+            }
+            if let Some(binding) = track.midi_learn_mute.as_ref() {
+                push_binding(format!("Track '{}'", track.name), "Mute", binding);
+            }
+            if let Some(binding) = track.midi_learn_solo.as_ref() {
+                push_binding(format!("Track '{}'", track.name), "Solo", binding);
+            }
+            if let Some(binding) = track.midi_learn_arm.as_ref() {
+                push_binding(format!("Track '{}'", track.name), "Arm", binding);
+            }
+            if let Some(binding) = track.midi_learn_input_monitor.as_ref() {
+                push_binding(format!("Track '{}'", track.name), "Input Monitor", binding);
+            }
+            if let Some(binding) = track.midi_learn_disk_monitor.as_ref() {
+                push_binding(format!("Track '{}'", track.name), "Disk Monitor", binding);
+            }
+        }
+
+        if lines.is_empty() {
+            lines.push("No MIDI learn bindings".to_string());
+        }
+        self.midi_mappings_report_lines = lines;
+    }
+
     fn assign_take_lanes<T, FBase, FStart, FLen, FPreferred>(
         clips: &[T],
         base_lane: FBase,
@@ -464,6 +541,148 @@ impl Maolan {
             .iter()
             .find(|t| t.name == track_name)
             .is_some_and(|t| t.frozen)
+    }
+
+    fn midi_mappings_path(&self) -> Option<std::path::PathBuf> {
+        self.session_dir
+            .as_ref()
+            .map(|root| root.join("midi_mappings.json"))
+    }
+
+    fn export_midi_mappings_file(&self) -> Result<std::path::PathBuf, String> {
+        let Some(path) = self.midi_mappings_path() else {
+            return Err("Export MIDI mappings requires an opened/saved session".to_string());
+        };
+        let state = self.state.blocking_read();
+        let mut tracks = HashMap::<String, MidiMappingsTrackFile>::new();
+        for track in &state.tracks {
+            tracks.insert(
+                track.name.clone(),
+                MidiMappingsTrackFile {
+                    volume: track.midi_learn_volume.clone(),
+                    balance: track.midi_learn_balance.clone(),
+                    mute: track.midi_learn_mute.clone(),
+                    solo: track.midi_learn_solo.clone(),
+                    arm: track.midi_learn_arm.clone(),
+                    input_monitor: track.midi_learn_input_monitor.clone(),
+                    disk_monitor: track.midi_learn_disk_monitor.clone(),
+                },
+            );
+        }
+        let file = MidiMappingsFile {
+            global: MidiMappingsGlobalFile {
+                play_pause: state.global_midi_learn_play_pause.clone(),
+                stop: state.global_midi_learn_stop.clone(),
+                record_toggle: state.global_midi_learn_record_toggle.clone(),
+            },
+            tracks,
+        };
+        let f = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+        serde_json::to_writer_pretty(f, &file).map_err(|e| e.to_string())?;
+        Ok(path)
+    }
+
+    fn import_midi_mappings_actions(&self) -> Result<Vec<Action>, String> {
+        let Some(path) = self.midi_mappings_path() else {
+            return Err("Import MIDI mappings requires an opened/saved session".to_string());
+        };
+        let f = std::fs::File::open(&path).map_err(|e| e.to_string())?;
+        let file: MidiMappingsFile = serde_json::from_reader(f).map_err(|e| e.to_string())?;
+        let state = self.state.blocking_read();
+        let mut actions = Vec::<Action>::new();
+        actions.push(Action::SetGlobalMidiLearnBinding {
+            target: maolan_engine::message::GlobalMidiLearnTarget::PlayPause,
+            binding: None,
+        });
+        actions.push(Action::SetGlobalMidiLearnBinding {
+            target: maolan_engine::message::GlobalMidiLearnTarget::Stop,
+            binding: None,
+        });
+        actions.push(Action::SetGlobalMidiLearnBinding {
+            target: maolan_engine::message::GlobalMidiLearnTarget::RecordToggle,
+            binding: None,
+        });
+        for track in &state.tracks {
+            let name = track.name.clone();
+            for target in [
+                maolan_engine::message::TrackMidiLearnTarget::Volume,
+                maolan_engine::message::TrackMidiLearnTarget::Balance,
+                maolan_engine::message::TrackMidiLearnTarget::Mute,
+                maolan_engine::message::TrackMidiLearnTarget::Solo,
+                maolan_engine::message::TrackMidiLearnTarget::Arm,
+                maolan_engine::message::TrackMidiLearnTarget::InputMonitor,
+                maolan_engine::message::TrackMidiLearnTarget::DiskMonitor,
+            ] {
+                actions.push(Action::TrackSetMidiLearnBinding {
+                    track_name: name.clone(),
+                    target,
+                    binding: None,
+                });
+            }
+        }
+        if file.global.play_pause.is_some() {
+            actions.push(Action::SetGlobalMidiLearnBinding {
+                target: maolan_engine::message::GlobalMidiLearnTarget::PlayPause,
+                binding: file.global.play_pause,
+            });
+        }
+        if file.global.stop.is_some() {
+            actions.push(Action::SetGlobalMidiLearnBinding {
+                target: maolan_engine::message::GlobalMidiLearnTarget::Stop,
+                binding: file.global.stop,
+            });
+        }
+        if file.global.record_toggle.is_some() {
+            actions.push(Action::SetGlobalMidiLearnBinding {
+                target: maolan_engine::message::GlobalMidiLearnTarget::RecordToggle,
+                binding: file.global.record_toggle,
+            });
+        }
+        for (track_name, mapping) in file.tracks {
+            if !state.tracks.iter().any(|t| t.name == track_name) {
+                continue;
+            }
+            let mut push_if_some =
+                |target: maolan_engine::message::TrackMidiLearnTarget,
+                 binding: Option<maolan_engine::message::MidiLearnBinding>| {
+                    if binding.is_some() {
+                        actions.push(Action::TrackSetMidiLearnBinding {
+                            track_name: track_name.clone(),
+                            target,
+                            binding,
+                        });
+                    }
+                };
+            push_if_some(
+                maolan_engine::message::TrackMidiLearnTarget::Volume,
+                mapping.volume,
+            );
+            push_if_some(
+                maolan_engine::message::TrackMidiLearnTarget::Balance,
+                mapping.balance,
+            );
+            push_if_some(
+                maolan_engine::message::TrackMidiLearnTarget::Mute,
+                mapping.mute,
+            );
+            push_if_some(
+                maolan_engine::message::TrackMidiLearnTarget::Solo,
+                mapping.solo,
+            );
+            push_if_some(
+                maolan_engine::message::TrackMidiLearnTarget::Arm,
+                mapping.arm,
+            );
+            push_if_some(
+                maolan_engine::message::TrackMidiLearnTarget::InputMonitor,
+                mapping.input_monitor,
+            );
+            push_if_some(
+                maolan_engine::message::TrackMidiLearnTarget::DiskMonitor,
+                mapping.disk_monitor,
+            );
+        }
+        Ok(actions)
     }
 
     fn warp_markers_for_speed(clip_length: usize, speed: f32) -> Vec<AudioWarpMarker> {
@@ -1358,6 +1577,9 @@ impl Maolan {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        if !matches!(message, Message::WindowCloseRequested) {
+            self.close_confirm_pending = false;
+        }
         match message {
             Message::None => {
                 return Task::none();
@@ -1422,6 +1644,13 @@ impl Maolan {
                 return self.sync_editor_scrollbars();
             }
             Message::WindowCloseRequested => {
+                if self.has_unsaved_changes && !self.close_confirm_pending {
+                    self.close_confirm_pending = true;
+                    self.state.blocking_write().message =
+                        "Unsaved changes detected. Close again to discard, or save the session."
+                            .to_string();
+                    return Task::none();
+                }
                 exit(0);
             }
             Message::Show(ref show) => {
@@ -1631,6 +1860,8 @@ impl Maolan {
                 self.freeze_progress = 0.0;
                 self.freeze_track_name = None;
                 self.freeze_cancel_requested = false;
+                self.has_unsaved_changes = false;
+                self.session_restore_in_progress = false;
                 return Task::batch(tasks);
             }
             Message::Cancel => self.modal = None,
@@ -3972,7 +4203,11 @@ impl Maolan {
                 error!("Error: {}", e);
             }
             Message::SendMessageFinished(Ok(())) => {}
-            Message::Response(Ok(ref a)) => match a {
+            Message::Response(Ok(ref a)) => {
+                if !self.session_restore_in_progress && history::should_record(a) {
+                    self.has_unsaved_changes = true;
+                }
+                match a {
                 Action::Quit => {
                     exit(0);
                 }
@@ -4594,9 +4829,27 @@ impl Maolan {
                 }
                 Action::MidiLearnMappingsReport { lines } => {
                     let report = lines.join(" | ");
+                    self.midi_mappings_report_lines = lines.clone();
                     let mut state = self.state.blocking_write();
                     state.message = format!("MIDI mappings: {}", report);
                     state.diagnostics_report = Some(format!("MIDI mappings: {}", report));
+                }
+                Action::ClearAllMidiLearnBindings => {
+                    self.midi_mappings_report_lines.clear();
+                    let mut state = self.state.blocking_write();
+                    state.global_midi_learn_play_pause = None;
+                    state.global_midi_learn_stop = None;
+                    state.global_midi_learn_record_toggle = None;
+                    for track in &mut state.tracks {
+                        track.midi_learn_volume = None;
+                        track.midi_learn_balance = None;
+                        track.midi_learn_mute = None;
+                        track.midi_learn_solo = None;
+                        track.midi_learn_arm = None;
+                        track.midi_learn_input_monitor = None;
+                        track.midi_learn_disk_monitor = None;
+                    }
+                    state.message = "Cleared all MIDI mappings".to_string();
                 }
                 Action::TrackLevel(name, level) => {
                     let mut state = self.state.blocking_write();
@@ -4767,6 +5020,9 @@ impl Maolan {
                         format!("MIDI learn cleared for '{}' {:?}", track_name, target)
                     };
                     self.state.blocking_write().message = message;
+                    if self.midi_mappings_panel_open {
+                        self.rebuild_midi_mappings_report_lines_from_state();
+                    }
                 }
                 Action::SetGlobalMidiLearnBinding { target, binding } => {
                     {
@@ -4793,6 +5049,9 @@ impl Maolan {
                     } else {
                         format!("Global MIDI learn cleared for {:?}", target)
                     };
+                    if self.midi_mappings_panel_open {
+                        self.rebuild_midi_mappings_report_lines_from_state();
+                    }
                 }
                 Action::TrackSetFrozen { track_name, frozen } => {
                     self.state.blocking_write().message = if *frozen {
@@ -4924,10 +5183,19 @@ impl Maolan {
                     return Task::none();
                 }
                 Action::SetSessionPath(_) => {
+                    self.has_unsaved_changes = false;
                     if self.pending_record_after_save {
                         self.pending_record_after_save = false;
                         return self.send(Action::SetRecordEnabled(true));
                     }
+                }
+                Action::BeginSessionRestore => {
+                    self.session_restore_in_progress = true;
+                    self.has_unsaved_changes = false;
+                }
+                Action::EndSessionRestore => {
+                    self.session_restore_in_progress = false;
+                    self.has_unsaved_changes = false;
                 }
                 Action::TransportPosition(sample) => {
                     self.transport_samples = *sample as f64;
@@ -5560,7 +5828,8 @@ impl Maolan {
                     state.message = format!("Renamed track to '{}'", new_name);
                 }
                 _ => {}
-            },
+                }
+            }
             Message::Response(Err(ref e)) => {
                 if !self.pending_track_freeze_bounce.is_empty() {
                     self.pending_track_freeze_bounce.clear();
@@ -8471,8 +8740,43 @@ impl Maolan {
             Message::SessionDiagnosticsRequest => {
                 return self.send(Action::RequestSessionDiagnostics);
             }
+            Message::MidiLearnMappingsPanelToggle => {
+                self.midi_mappings_panel_open = !self.midi_mappings_panel_open;
+                if self.midi_mappings_panel_open {
+                    return self.send(Action::RequestMidiLearnMappingsReport);
+                }
+            }
             Message::MidiLearnMappingsReportRequest => {
                 return self.send(Action::RequestMidiLearnMappingsReport);
+            }
+            Message::MidiLearnMappingsExportRequest => {
+                match self.export_midi_mappings_file() {
+                    Ok(path) => {
+                        self.state.blocking_write().message =
+                            format!("Exported MIDI mappings: {}", path.display());
+                    }
+                    Err(e) => {
+                        self.state.blocking_write().message = e;
+                    }
+                }
+            }
+            Message::MidiLearnMappingsImportRequest => {
+                match self.import_midi_mappings_actions() {
+                    Ok(actions) => {
+                        let mut tasks = Vec::with_capacity(actions.len());
+                        for action in actions {
+                            tasks.push(self.send(action));
+                        }
+                        self.state.blocking_write().message = "Imported MIDI mappings".to_string();
+                        return Task::batch(tasks);
+                    }
+                    Err(e) => {
+                        self.state.blocking_write().message = e;
+                    }
+                }
+            }
+            Message::MidiLearnMappingsClearAllRequest => {
+                return self.send(Action::ClearAllMidiLearnBindings);
             }
             Message::ExportSampleRateSelected(rate) => {
                 self.export_sample_rate_hz = rate;

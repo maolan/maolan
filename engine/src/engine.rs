@@ -120,6 +120,12 @@ struct OfflineBounceJob {
     cancel: Arc<AtomicBool>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum MidiLearnSlot {
+    Track(String, crate::message::TrackMidiLearnTarget),
+    Global(crate::message::GlobalMidiLearnTarget),
+}
+
 pub struct Engine {
     clients: Vec<Sender<Message>>,
     rx: Receiver<Message>,
@@ -937,6 +943,115 @@ impl Engine {
         track.strip_prefix("midi:hw:out:")
     }
 
+    fn midi_binding_matches(
+        a: &crate::message::MidiLearnBinding,
+        b: &crate::message::MidiLearnBinding,
+    ) -> bool {
+        if a.channel != b.channel || a.cc != b.cc {
+            return false;
+        }
+        match (&a.device, &b.device) {
+            (Some(ad), Some(bd)) => ad == bd,
+            _ => true,
+        }
+    }
+
+    fn midi_learn_slot_conflicts(
+        &self,
+        binding: &crate::message::MidiLearnBinding,
+        ignore: Option<MidiLearnSlot>,
+    ) -> Vec<String> {
+        let mut conflicts = Vec::<String>::new();
+        let state = self.state.lock();
+        let mut push_conflict = |slot: MidiLearnSlot, label: String| {
+            if ignore.as_ref().is_some_and(|i| i == &slot) {
+                return;
+            }
+            conflicts.push(label);
+        };
+        let check_global =
+            |current: &Option<crate::message::MidiLearnBinding>,
+             target: crate::message::GlobalMidiLearnTarget,
+             label: &str,
+             push_conflict: &mut dyn FnMut(MidiLearnSlot, String)| {
+                if let Some(existing) = current
+                    && Self::midi_binding_matches(binding, existing)
+                {
+                    push_conflict(MidiLearnSlot::Global(target), format!("Global {label}"));
+                }
+            };
+        check_global(
+            &self.global_midi_learn_play_pause,
+            crate::message::GlobalMidiLearnTarget::PlayPause,
+            "PlayPause",
+            &mut push_conflict,
+        );
+        check_global(
+            &self.global_midi_learn_stop,
+            crate::message::GlobalMidiLearnTarget::Stop,
+            "Stop",
+            &mut push_conflict,
+        );
+        check_global(
+            &self.global_midi_learn_record_toggle,
+            crate::message::GlobalMidiLearnTarget::RecordToggle,
+            "RecordToggle",
+            &mut push_conflict,
+        );
+        for (track_name, track) in state.tracks.iter() {
+            let t = track.lock();
+            let mut check_track =
+                |current: &Option<crate::message::MidiLearnBinding>,
+                 target: crate::message::TrackMidiLearnTarget,
+                 label: &str| {
+                    if let Some(existing) = current
+                        && Self::midi_binding_matches(binding, existing)
+                    {
+                        push_conflict(
+                            MidiLearnSlot::Track(track_name.clone(), target),
+                            format!("{track_name} {label}"),
+                        );
+                    }
+                };
+            check_track(
+                &t.midi_learn_volume,
+                crate::message::TrackMidiLearnTarget::Volume,
+                "Volume",
+            );
+            check_track(
+                &t.midi_learn_balance,
+                crate::message::TrackMidiLearnTarget::Balance,
+                "Balance",
+            );
+            check_track(
+                &t.midi_learn_mute,
+                crate::message::TrackMidiLearnTarget::Mute,
+                "Mute",
+            );
+            check_track(
+                &t.midi_learn_solo,
+                crate::message::TrackMidiLearnTarget::Solo,
+                "Solo",
+            );
+            check_track(
+                &t.midi_learn_arm,
+                crate::message::TrackMidiLearnTarget::Arm,
+                "Arm",
+            );
+            check_track(
+                &t.midi_learn_input_monitor,
+                crate::message::TrackMidiLearnTarget::InputMonitor,
+                "InputMonitor",
+            );
+            check_track(
+                &t.midi_learn_disk_monitor,
+                crate::message::TrackMidiLearnTarget::DiskMonitor,
+                "DiskMonitor",
+            );
+        }
+        conflicts
+    }
+
     async fn handle_incoming_hw_cc(&mut self, device: &str, channel: u8, cc: u8, value: u8) {
         let gate_key = (device.to_string(), channel, cc);
         let high = value >= 64;
@@ -950,6 +1065,21 @@ impl Engine {
                 channel,
                 cc,
             };
+            let conflicts = self.midi_learn_slot_conflicts(
+                &binding,
+                Some(MidiLearnSlot::Track(track_name.clone(), target)),
+            );
+            if !conflicts.is_empty() {
+                self.pending_midi_learn = None;
+                self.notify_clients(Err(format!(
+                    "MIDI learn conflict for '{}' {:?}: {}",
+                    track_name,
+                    target,
+                    conflicts.join(", ")
+                )))
+                .await;
+                return;
+            }
             if let Some(track) = self.state.lock().tracks.get(&track_name) {
                 match target {
                     crate::message::TrackMidiLearnTarget::Volume => {
@@ -991,6 +1121,17 @@ impl Engine {
                 channel,
                 cc,
             };
+            let conflicts =
+                self.midi_learn_slot_conflicts(&binding, Some(MidiLearnSlot::Global(target)));
+            if !conflicts.is_empty() {
+                self.notify_clients(Err(format!(
+                    "Global MIDI learn conflict for {:?}: {}",
+                    target,
+                    conflicts.join(", ")
+                )))
+                .await;
+                return;
+            }
             match target {
                 crate::message::GlobalMidiLearnTarget::PlayPause => {
                     self.global_midi_learn_play_pause = Some(binding.clone());
@@ -2000,6 +2141,29 @@ impl Engine {
                 });
             }
         }
+        if record_history
+            && !self.history_suspended
+            && matches!(action_to_process, Action::ClearAllMidiLearnBindings)
+        {
+            if let Some(binding) = self.global_midi_learn_play_pause.clone() {
+                extra_inverse_actions.push(Action::SetGlobalMidiLearnBinding {
+                    target: crate::message::GlobalMidiLearnTarget::PlayPause,
+                    binding: Some(binding),
+                });
+            }
+            if let Some(binding) = self.global_midi_learn_stop.clone() {
+                extra_inverse_actions.push(Action::SetGlobalMidiLearnBinding {
+                    target: crate::message::GlobalMidiLearnTarget::Stop,
+                    binding: Some(binding),
+                });
+            }
+            if let Some(binding) = self.global_midi_learn_record_toggle.clone() {
+                extra_inverse_actions.push(Action::SetGlobalMidiLearnBinding {
+                    target: crate::message::GlobalMidiLearnTarget::RecordToggle,
+                    binding: Some(binding),
+                });
+            }
+        }
         let mut inverse_actions = if record_history
             && !suppress_timing_history
             && should_record(&action_to_process)
@@ -2022,6 +2186,23 @@ impl Engine {
                     inverse_actions = Some(vec![Action::SetTimeSignature {
                         numerator: self.tsig_num,
                         denominator: self.tsig_denom,
+                    }]);
+                }
+                Action::SetGlobalMidiLearnBinding { target, .. } => {
+                    let binding = match target {
+                        crate::message::GlobalMidiLearnTarget::PlayPause => {
+                            self.global_midi_learn_play_pause.clone()
+                        }
+                        crate::message::GlobalMidiLearnTarget::Stop => {
+                            self.global_midi_learn_stop.clone()
+                        }
+                        crate::message::GlobalMidiLearnTarget::RecordToggle => {
+                            self.global_midi_learn_record_toggle.clone()
+                        }
+                    };
+                    inverse_actions = Some(vec![Action::SetGlobalMidiLearnBinding {
+                        target: *target,
+                        binding,
                     }]);
                 }
                 _ => {}
@@ -2481,6 +2662,22 @@ impl Engine {
                 target,
                 ref binding,
             } => {
+                if let Some(binding) = binding.as_ref() {
+                    let conflicts = self.midi_learn_slot_conflicts(
+                        binding,
+                        Some(MidiLearnSlot::Track(track_name.clone(), target)),
+                    );
+                    if !conflicts.is_empty() {
+                        self.notify_clients(Err(format!(
+                            "MIDI learn conflict for '{}' {:?}: {}",
+                            track_name,
+                            target,
+                            conflicts.join(", ")
+                        )))
+                        .await;
+                        return;
+                    }
+                }
                 if let Some(track) = self.state.lock().tracks.get(track_name) {
                     match target {
                         crate::message::TrackMidiLearnTarget::Volume => {
@@ -2512,6 +2709,19 @@ impl Engine {
                 }
             }
             Action::SetGlobalMidiLearnBinding { target, ref binding } => {
+                if let Some(binding) = binding.as_ref() {
+                    let conflicts =
+                        self.midi_learn_slot_conflicts(binding, Some(MidiLearnSlot::Global(target)));
+                    if !conflicts.is_empty() {
+                        self.notify_clients(Err(format!(
+                            "Global MIDI learn conflict for {:?}: {}",
+                            target,
+                            conflicts.join(", ")
+                        )))
+                        .await;
+                        return;
+                    }
+                }
                 match target {
                     crate::message::GlobalMidiLearnTarget::PlayPause => {
                         self.global_midi_learn_play_pause = binding.clone();
@@ -4462,6 +4672,24 @@ impl Engine {
                 }
                 self.notify_clients(Ok(Action::MidiLearnMappingsReport { lines }))
                     .await;
+            }
+            Action::ClearAllMidiLearnBindings => {
+                self.pending_midi_learn = None;
+                self.pending_global_midi_learn = None;
+                self.global_midi_learn_play_pause = None;
+                self.global_midi_learn_stop = None;
+                self.global_midi_learn_record_toggle = None;
+                self.midi_cc_gate.clear();
+                for track in self.state.lock().tracks.values() {
+                    let t = track.lock();
+                    t.midi_learn_volume = None;
+                    t.midi_learn_balance = None;
+                    t.midi_learn_mute = None;
+                    t.midi_learn_solo = None;
+                    t.midi_learn_arm = None;
+                    t.midi_learn_input_monitor = None;
+                    t.midi_learn_disk_monitor = None;
+                }
             }
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLv2PluginControls { .. } => {}

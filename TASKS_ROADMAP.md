@@ -81,6 +81,10 @@ Last updated: 2026-03-05
   - [x] Expanded MIDI CC learn targets for input monitor/disk monitor
   - [x] Global MIDI CC learn for transport play/pause/stop/record-toggle
   - [x] MIDI mappings report command to inspect active learned bindings
+  - [x] MIDI mappings side panel (toggle + refresh + clear-all shortcuts)
+  - [x] MIDI learn conflict detection (reject duplicate CC binding collisions)
+  - [x] MIDI mappings import/export (`midi_mappings.json`)
+  - [x] Clear-all MIDI mappings command
   - [x] Per-track learn arm/clear controls in track context menu
   - [x] Session persistence + restore for learned mappings
 - [x] Session diagnostics/performance tooling
@@ -88,6 +92,29 @@ Last updated: 2026-03-05
   - [x] UI trigger via menu (`Edit -> Session Diagnostics`)
   - [x] Diagnostics report surfaced in status area
 - [x] Optional MIDI 2.0 investigation track (separate from core roadmap) - N/A on FreeBSD (platform support unavailable)
+
+## Phase 4 - Product Completion (Except MIDI 2.0)
+
+- [x] Session safety baseline
+  - [x] Dirty-state tracking in GUI (window title `*` marker)
+  - [x] Safe close guard for unsaved sessions (confirm-on-second-close)
+  - [x] Clear dirty flag on successful save/session restore
+- [ ] Crash recovery and autosave journal
+  - [ ] Periodic autosave snapshot
+  - [ ] Recovery prompt on next launch
+  - [ ] Autosave retention and cleanup policy
+- [ ] Export/render completeness
+  - [ ] Stem export (selected tracks, pre/post-fader)
+  - [ ] Real-time export fallback for offline-incompatible plugins
+- [ ] Routing/mix completeness
+  - [ ] Aux sends/returns workflow
+  - [ ] Master chain metering/limiter slot polish
+- [ ] Undo/redo audit completion
+  - [ ] Full action coverage audit for recent features
+  - [ ] Deterministic grouping for complex multi-step actions
+- [ ] Productization
+  - [ ] Preferences screen for audio/MIDI/session defaults
+  - [ ] Packaging/release artifacts + diagnostics bundle export
 
 ## Notes
 

@@ -7,7 +7,7 @@ use crate::{
 };
 use iced::{
     Length,
-    widget::{button, column, container, progress_bar, row, text, text_input},
+    widget::{button, column, container, progress_bar, row, scrollable, text, text_input},
 };
 
 impl Maolan {
@@ -137,7 +137,8 @@ impl Maolan {
                     }
                     let has_timing_selection = !self.selected_tempo_points.is_empty()
                         || !self.selected_time_signature_points.is_empty();
-                    let view = if matches!(state.view, View::Workspace | View::Piano)
+                    let mut view: iced::Element<'_, Message> =
+                        if matches!(state.view, View::Workspace | View::Piano)
                         && has_timing_selection
                     {
                         let lane_label = match self.timing_selection_lane {
@@ -210,6 +211,37 @@ impl Maolan {
                     } else {
                         view
                     };
+                    if self.midi_mappings_panel_open {
+                        let mappings_list = if self.midi_mappings_report_lines.is_empty() {
+                            column![text("No MIDI mappings loaded").size(11)]
+                        } else {
+                            self.midi_mappings_report_lines
+                                .iter()
+                                .fold(column![].spacing(4), |col, line| {
+                                    col.push(text(line.clone()).size(11))
+                                })
+                        };
+                        let mappings_panel = container(
+                            column![
+                                row![
+                                    text("MIDI Mappings"),
+                                    button("Refresh").on_press(Message::MidiLearnMappingsReportRequest),
+                                    button("Clear All").on_press(Message::MidiLearnMappingsClearAllRequest),
+                                    button("Hide").on_press(Message::MidiLearnMappingsPanelToggle),
+                                ]
+                                .spacing(6),
+                                scrollable(mappings_list).height(Length::Fill),
+                            ]
+                            .spacing(8),
+                        )
+                        .width(Length::Fixed(340.0))
+                        .height(Length::Fill)
+                        .padding(8);
+                        view = row![container(view).width(Length::Fill), mappings_panel]
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .into();
+                    }
                     content = content.push(view);
                     if self.import_in_progress {
                         let overall_progress = if self.import_total_files > 0 {

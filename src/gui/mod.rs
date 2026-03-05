@@ -238,6 +238,11 @@ pub struct Maolan {
     selected_tempo_points: BTreeSet<usize>,
     selected_time_signature_points: BTreeSet<usize>,
     timing_selection_lane: Option<TimingSelectionLane>,
+    midi_mappings_panel_open: bool,
+    midi_mappings_report_lines: Vec<String>,
+    has_unsaved_changes: bool,
+    close_confirm_pending: bool,
+    session_restore_in_progress: bool,
 }
 
 fn scan_templates() -> Vec<String> {
@@ -398,6 +403,11 @@ impl Default for Maolan {
             selected_tempo_points: BTreeSet::new(),
             selected_time_signature_points: BTreeSet::new(),
             timing_selection_lane: None,
+            midi_mappings_panel_open: false,
+            midi_mappings_report_lines: Vec::new(),
+            has_unsaved_changes: false,
+            close_confirm_pending: false,
+            session_restore_in_progress: false,
         }
     }
 }
@@ -423,7 +433,8 @@ impl Maolan {
             })
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "<New>".to_string());
-        format!("Maolan: {session}")
+        let dirty_suffix = if self.has_unsaved_changes { " *" } else { "" };
+        format!("Maolan: {session}{dirty_suffix}")
     }
 
     fn samples_per_beat(&self) -> f64 {
