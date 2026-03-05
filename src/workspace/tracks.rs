@@ -54,6 +54,7 @@ impl Tracks {
             let midi_learn_arm = track.midi_learn_arm.clone();
             let midi_learn_input_monitor = track.midi_learn_input_monitor.clone();
             let midi_learn_disk_monitor = track.midi_learn_disk_monitor.clone();
+            let aux_sends = track.aux_sends.clone();
             let vca_candidates: Vec<String> = track_names
                 .iter()
                 .filter(|candidate| **candidate != track.name)
@@ -317,6 +318,57 @@ impl Tracks {
                                     master_track: None,
                                 },
                             ),
+                        );
+                    }
+                    for send in &aux_sends {
+                        menu = menu.push(
+                            button(text(format!(
+                                "Send {} Level -1dB ({:.1})",
+                                send.aux_track, send.level_db
+                            )))
+                            .on_press(Message::TrackAuxSendLevelAdjust {
+                                track_name: track_name_for_menu.clone(),
+                                aux_track: send.aux_track.clone(),
+                                delta_db: -1.0,
+                            }),
+                        );
+                        menu = menu.push(
+                            button(text(format!(
+                                "Send {} Level +1dB ({:.1})",
+                                send.aux_track, send.level_db
+                            )))
+                            .on_press(Message::TrackAuxSendLevelAdjust {
+                                track_name: track_name_for_menu.clone(),
+                                aux_track: send.aux_track.clone(),
+                                delta_db: 1.0,
+                            }),
+                        );
+                        menu = menu.push(
+                            button(text(format!("Send {} Pan L ({:.2})", send.aux_track, send.pan)))
+                                .on_press(Message::TrackAuxSendPanAdjust {
+                                    track_name: track_name_for_menu.clone(),
+                                    aux_track: send.aux_track.clone(),
+                                    delta: -0.1,
+                                }),
+                        );
+                        menu = menu.push(
+                            button(text(format!("Send {} Pan R ({:.2})", send.aux_track, send.pan)))
+                                .on_press(Message::TrackAuxSendPanAdjust {
+                                    track_name: track_name_for_menu.clone(),
+                                    aux_track: send.aux_track.clone(),
+                                    delta: 0.1,
+                                }),
+                        );
+                        menu = menu.push(
+                            button(text(format!(
+                                "Send {} Mode: {}",
+                                send.aux_track,
+                                if send.pre_fader { "Pre-Fader" } else { "Post-Fader" }
+                            )))
+                            .on_press(Message::TrackAuxSendTogglePrePost {
+                                track_name: track_name_for_menu.clone(),
+                                aux_track: send.aux_track.clone(),
+                            }),
                         );
                     }
                     menu = menu.push(

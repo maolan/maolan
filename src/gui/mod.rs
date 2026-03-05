@@ -531,6 +531,7 @@ impl Default for Maolan {
         };
         if let Some(recovery_session) = detect_startup_recovery_session() {
             app.pending_recovery_session_dir = Some(recovery_session.clone());
+            app.modal = Some(Show::AutosaveRecovery);
             app.state.blocking_write().message = format!(
                 "Autosave recovery available for '{}'. Use File -> Recover Autosave Snapshot.",
                 recovery_session.display()
@@ -2746,6 +2747,37 @@ impl Maolan {
                     button("Cancel")
                         .on_press(Message::Cancel)
                         .style(button::secondary),
+                ]
+                .spacing(10),
+            ]
+            .align_x(iced::Alignment::Start)
+            .spacing(12),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
+    fn autosave_recovery_view(&self) -> iced::Element<'_, Message> {
+        let session_label = self
+            .pending_recovery_session_dir
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "<unknown session>".to_string());
+        container(
+            column![
+                text("Autosave Recovery").size(16),
+                text(format!(
+                    "A newer autosave snapshot was found for:\n{}",
+                    session_label
+                )),
+                row![
+                    button("Recover Latest").on_press(Message::RecoverAutosaveSnapshot),
+                    button("Recover Older").on_press(Message::RecoverOlderAutosaveSnapshot),
+                    button("Ignore").on_press(Message::RecoverAutosaveIgnore),
                 ]
                 .spacing(10),
             ]

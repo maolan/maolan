@@ -63,6 +63,14 @@ pub struct TrackAutomationLane {
     pub points: Vec<TrackAutomationPoint>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuxSend {
+    pub aux_track: String,
+    pub level_db: f32,
+    pub pan: f32,
+    pub pre_fader: bool,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "Point")]
 struct PointDef {
@@ -112,6 +120,8 @@ pub struct Track {
     pub frozen_render_clip: Option<String>,
     #[serde(default)]
     pub automation_lanes: Vec<TrackAutomationLane>,
+    #[serde(default)]
+    pub aux_sends: Vec<AuxSend>,
     #[serde(default = "default_automation_mode")]
     pub automation_mode: TrackAutomationMode,
     #[serde(with = "PointDef")]
@@ -157,6 +167,7 @@ impl Track {
             frozen_midi_backup: vec![],
             frozen_render_clip: None,
             automation_lanes: vec![],
+            aux_sends: vec![],
             automation_mode: TrackAutomationMode::Read,
             height: 60.0,
             position: Point::new(100.0, 100.0),

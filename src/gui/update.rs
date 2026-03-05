@@ -1955,6 +1955,9 @@ impl Maolan {
                     Show::Preferences => {
                         self.modal = Some(Show::Preferences);
                     }
+                    Show::AutosaveRecovery => {
+                        self.modal = Some(Show::AutosaveRecovery);
+                    }
                 }
             }
             Message::AddTrackFromTemplate {
@@ -4553,6 +4556,7 @@ impl Maolan {
                             if track.vca_master.as_deref() == Some(name.as_str()) {
                                 track.vca_master = None;
                             }
+                            track.aux_sends.retain(|send| send.aux_track != *name);
                         }
                     }
                 }
@@ -6230,9 +6234,14 @@ impl Maolan {
                 }
             }
             Message::RecoverAutosaveSnapshot => {
+                let startup_modal_flow = matches!(self.modal, Some(Show::AutosaveRecovery));
                 if let Err(e) = self.prepare_pending_autosave_recovery(false) {
                     self.state.blocking_write().message = e;
                     return Task::none();
+                }
+                if startup_modal_flow {
+                    self.modal = None;
+                    return self.apply_pending_autosave_recovery();
                 }
                 if let Some(pending) = self.pending_autosave_recovery.as_mut() {
                     let selected_snapshot = pending
@@ -6255,9 +6264,14 @@ impl Maolan {
                 return self.apply_pending_autosave_recovery();
             }
             Message::RecoverOlderAutosaveSnapshot => {
+                let startup_modal_flow = matches!(self.modal, Some(Show::AutosaveRecovery));
                 if let Err(e) = self.prepare_pending_autosave_recovery(true) {
                     self.state.blocking_write().message = e;
                     return Task::none();
+                }
+                if startup_modal_flow {
+                    self.modal = None;
+                    return self.apply_pending_autosave_recovery();
                 }
                 if let Some(pending) = self.pending_autosave_recovery.as_mut() {
                     let selected_snapshot = pending
@@ -6272,6 +6286,13 @@ impl Maolan {
                     self.state.blocking_write().message =
                         format!("{preview}. Run Recover Autosave Snapshot to apply this selection.");
                 }
+                return Task::none();
+            }
+            Message::RecoverAutosaveIgnore => {
+                self.pending_recovery_session_dir = None;
+                self.pending_autosave_recovery = None;
+                self.modal = None;
+                self.state.blocking_write().message = "Autosave recovery ignored".to_string();
                 return Task::none();
             }
             Message::ShiftPressed => {
@@ -6398,9 +6419,9 @@ impl Maolan {
                     audio_outs: max_outs,
                     midi_outs: max_midi_outs,
                 }));
-                for track_name in selected_tracks {
+                for track_name in &selected_tracks {
                     tasks.push(self.send(Action::Connect {
-                        from_track: track_name,
+                        from_track: track_name.clone(),
                         from_port: 0,
                         to_track: aux_name.clone(),
                         to_port: 0,
@@ -6415,11 +6436,78 @@ impl Maolan {
                     kind: Kind::Audio,
                 }));
                 tasks.push(self.send(Action::EndHistoryGroup));
+                {
+                    let mut state = self.state.blocking_write();
+                    for track in &mut state.tracks {
+                        if selected_tracks.iter().any(|name| name == &track.name)
+                            && !track.aux_sends.iter().any(|s| s.aux_track == aux_name)
+                        {
+                            track.aux_sends.push(crate::state::AuxSend {
+                                aux_track: aux_name.clone(),
+                                level_db: 0.0,
+                                pan: 0.0,
+                                pre_fader: false,
+                            });
+                        }
+                    }
+                }
                 self.state.blocking_write().message = format!(
                     "Created '{}' and connected selected tracks as sends",
                     aux_name
                 );
                 return Task::batch(tasks);
+            }
+            Message::TrackAuxSendLevelAdjust {
+                ref track_name,
+                ref aux_track,
+                delta_db,
+            } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                    && let Some(send) = track.aux_sends.iter_mut().find(|s| s.aux_track == *aux_track)
+                {
+                    send.level_db = (send.level_db + delta_db).clamp(-60.0, 12.0);
+                    state.message = format!(
+                        "Aux send {} -> {} level {:.1} dB",
+                        track_name, aux_track, send.level_db
+                    );
+                }
+                return Task::none();
+            }
+            Message::TrackAuxSendPanAdjust {
+                ref track_name,
+                ref aux_track,
+                delta,
+            } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                    && let Some(send) = track.aux_sends.iter_mut().find(|s| s.aux_track == *aux_track)
+                {
+                    send.pan = (send.pan + delta).clamp(-1.0, 1.0);
+                    state.message = format!(
+                        "Aux send {} -> {} pan {:.2}",
+                        track_name, aux_track, send.pan
+                    );
+                }
+                return Task::none();
+            }
+            Message::TrackAuxSendTogglePrePost {
+                ref track_name,
+                ref aux_track,
+            } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                    && let Some(send) = track.aux_sends.iter_mut().find(|s| s.aux_track == *aux_track)
+                {
+                    send.pre_fader = !send.pre_fader;
+                    state.message = format!(
+                        "Aux send {} -> {} mode {}",
+                        track_name,
+                        aux_track,
+                        if send.pre_fader { "Pre-Fader" } else { "Post-Fader" }
+                    );
+                }
+                return Task::none();
             }
             Message::TrackMidiLearnArm {
                 ref track_name,

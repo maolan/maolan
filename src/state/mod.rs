@@ -36,7 +36,7 @@ use std::{
 #[cfg(target_os = "freebsd")]
 use std::{ffi::c_void, fs::File, os::fd::AsRawFd};
 use tokio::sync::RwLock;
-pub use track::{Track, TrackAutomationLane, TrackAutomationPoint};
+pub use track::{AuxSend, Track, TrackAutomationLane, TrackAutomationPoint};
 
 pub const HW_IN_ID: &str = "hw:in";
 pub const HW_OUT_ID: &str = "hw:out";
