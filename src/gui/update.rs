@@ -61,7 +61,9 @@ impl Maolan {
         Ok(out)
     }
 
-    fn sysex_to_engine(points: &[PianoSysExPoint]) -> Vec<maolan_engine::message::MidiRawEventData> {
+    fn sysex_to_engine(
+        points: &[PianoSysExPoint],
+    ) -> Vec<maolan_engine::message::MidiRawEventData> {
         points
             .iter()
             .map(|p| maolan_engine::message::MidiRawEventData {
@@ -391,10 +393,10 @@ impl Maolan {
                 // First create the track
                 let task = self.send(Action::AddTrack {
                     name: name.clone(),
-                    audio_ins: audio_ins,
-                    midi_ins: midi_ins,
-                    audio_outs: audio_outs,
-                    midi_outs: midi_outs,
+                    audio_ins,
+                    midi_ins,
+                    audio_outs,
+                    midi_outs,
                 });
 
                 // Store pending template load
@@ -715,11 +717,8 @@ impl Maolan {
             Message::PianoControllerLaneSelected(lane) => {
                 let mut state = self.state.blocking_write();
                 state.piano_controller_lane = lane;
-                if matches!(lane, crate::message::PianoControllerLane::SysEx) {
-                    state.piano_sysex_panel_open = true;
-                } else {
-                    state.piano_sysex_panel_open = false;
-                }
+                state.piano_sysex_panel_open =
+                    matches!(lane, crate::message::PianoControllerLane::SysEx);
             }
             Message::PianoControllerKindSelected(kind) => {
                 let mut state = self.state.blocking_write();
@@ -800,22 +799,22 @@ impl Maolan {
                 }
 
                 // Start dragging if notes are selected
-                if !state.piano_selected_notes.is_empty() {
-                    if let Some(piano) = state.piano.as_ref() {
-                        let selected_indices: Vec<usize> =
-                            state.piano_selected_notes.iter().copied().collect();
-                        let original_notes: Vec<crate::state::PianoNote> = selected_indices
-                            .iter()
-                            .filter_map(|&idx| piano.notes.get(idx).cloned())
-                            .collect();
+                if !state.piano_selected_notes.is_empty()
+                    && let Some(piano) = state.piano.as_ref()
+                {
+                    let selected_indices: Vec<usize> =
+                        state.piano_selected_notes.iter().copied().collect();
+                    let original_notes: Vec<crate::state::PianoNote> = selected_indices
+                        .iter()
+                        .filter_map(|&idx| piano.notes.get(idx).cloned())
+                        .collect();
 
-                        state.piano_dragging_notes = Some(crate::state::DraggingNotes {
-                            note_indices: selected_indices,
-                            start_point: position,
-                            current_point: position,
-                            original_notes,
-                        });
-                    }
+                    state.piano_dragging_notes = Some(crate::state::DraggingNotes {
+                        note_indices: selected_indices,
+                        start_point: position,
+                        current_point: position,
+                        original_notes,
+                    });
                 }
             }
             Message::PianoNotesDrag { position } => {
@@ -1606,41 +1605,40 @@ impl Maolan {
                     state.piano_selected_notes.iter().copied().collect();
                 selected_indices.sort_unstable();
 
-                if !selected_indices.is_empty() {
-                    if let Some(piano) = state.piano.as_mut() {
-                        let track_name = piano.track_idx.clone();
-                        let clip_idx = 0; // TODO: Get actual clip index
-                        let deleted_notes: Vec<(usize, maolan_engine::message::MidiNoteData)> =
-                            selected_indices
-                                .iter()
-                                .filter_map(|&idx| {
-                                    piano.notes.get(idx).map(|note| {
-                                        (
-                                            idx,
-                                            maolan_engine::message::MidiNoteData {
-                                                start_sample: note.start_sample,
-                                                length_samples: note.length_samples,
-                                                pitch: note.pitch,
-                                                velocity: note.velocity,
-                                                channel: note.channel,
-                                            },
-                                        )
-                                    })
+                if !selected_indices.is_empty()
+                    && let Some(piano) = state.piano.as_mut()
+                {
+                    let track_name = piano.track_idx.clone();
+                    let clip_idx = 0; // TODO: Get actual clip index
+                    let deleted_notes: Vec<(usize, maolan_engine::message::MidiNoteData)> =
+                        selected_indices
+                            .iter()
+                            .filter_map(|&idx| {
+                                piano.notes.get(idx).map(|note| {
+                                    (
+                                        idx,
+                                        maolan_engine::message::MidiNoteData {
+                                            start_sample: note.start_sample,
+                                            length_samples: note.length_samples,
+                                            pitch: note.pitch,
+                                            velocity: note.velocity,
+                                            channel: note.channel,
+                                        },
+                                    )
                                 })
-                                .collect();
+                            })
+                            .collect();
 
-                        let note_indices: Vec<usize> =
-                            selected_indices.iter().rev().copied().collect();
+                    let note_indices: Vec<usize> = selected_indices.iter().rev().copied().collect();
 
-                        state.piano_selected_notes.clear();
-                        drop(state);
-                        return self.send(Action::DeleteMidiNotes {
-                            track_name,
-                            clip_index: clip_idx,
-                            note_indices,
-                            deleted_notes,
-                        });
-                    }
+                    state.piano_selected_notes.clear();
+                    drop(state);
+                    return self.send(Action::DeleteMidiNotes {
+                        track_name,
+                        clip_index: clip_idx,
+                        note_indices,
+                        deleted_notes,
+                    });
                 }
             }
             Message::TracksResizeHover(hovered) => {
@@ -1940,11 +1938,11 @@ impl Maolan {
                     let pending_template = state.pending_track_template_load.clone();
                     drop(state);
 
-                    if let Some((template_track_name, template_name)) = pending_template {
-                        if template_track_name == *name {
-                            self.state.blocking_write().pending_track_template_load = None;
-                            return self.load_track_template(name.clone(), template_name);
-                        }
+                    if let Some((template_track_name, template_name)) = pending_template
+                        && template_track_name == *name
+                    {
+                        self.state.blocking_write().pending_track_template_load = None;
+                        return self.load_track_template(name.clone(), template_name);
                     }
 
                     self.modal = None;
@@ -2678,10 +2676,10 @@ impl Maolan {
                     note_names,
                 } => {
                     let mut state = self.state.blocking_write();
-                    if let Some(piano) = &mut state.piano {
-                        if piano.track_idx == *track_name {
-                            piano.midnam_note_names = note_names.clone();
-                        }
+                    if let Some(piano) = &mut state.piano
+                        && piano.track_idx == *track_name
+                    {
+                        piano.midnam_note_names = note_names.clone();
                     }
                 }
                 #[cfg(all(unix, not(target_os = "macos")))]
@@ -4775,21 +4773,20 @@ impl Maolan {
                                 });
                             };
 
-                            let result = Self::export_session(
-                                &export_path,
+                            let options = super::ExportSessionOptions {
+                                export_path: export_path.clone(),
                                 sample_rate,
-                                export_bit_depth,
-                                export_normalize,
+                                bit_depth: export_bit_depth,
+                                normalize: export_normalize,
                                 normalize_target_dbfs,
                                 normalize_mode,
                                 normalize_target_lufs,
                                 normalize_true_peak_dbtp,
                                 normalize_tp_limiter,
-                                state_clone,
-                                &session_root,
-                                progress_fn,
-                            )
-                            .await;
+                                state: state_clone,
+                                session_root: session_root.clone(),
+                            };
+                            let result = Self::export_session(&options, progress_fn).await;
 
                             if let Err(e) = result {
                                 let _ = tx.send(Message::ExportProgress {

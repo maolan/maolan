@@ -155,11 +155,17 @@ pub struct Engine {
     history_suspended: bool,
 }
 
+type MidiEditParseResult = (
+    Vec<MidiNoteData>,
+    Vec<MidiControllerData>,
+    Vec<(u64, Vec<u8>)>,
+);
+
 impl Engine {
     fn parse_midi_clip_for_edit(
         path: &Path,
         sample_rate: f64,
-    ) -> Result<(Vec<MidiNoteData>, Vec<MidiControllerData>, Vec<(u64, Vec<u8>)>), String> {
+    ) -> Result<MidiEditParseResult, String> {
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
         let smf = Smf::parse(&bytes).map_err(|e| e.to_string())?;
         let Timing::Metrical(ppq) = smf.header.timing else {
@@ -230,8 +236,7 @@ impl Engine {
                                 let pitch = key.as_int();
                                 let velocity = vel.as_int();
                                 if velocity == 0 {
-                                    if let Some(starts) =
-                                        active_notes.get_mut(&(channel_u8, pitch))
+                                    if let Some(starts) = active_notes.get_mut(&(channel_u8, pitch))
                                         && let Some((start_tick, start_vel)) = starts.pop()
                                     {
                                         let start_sample = ticks_to_samples(start_tick);
@@ -262,9 +267,9 @@ impl Engine {
                                     let end_sample = ticks_to_samples(tick);
                                     notes.push(MidiNoteData {
                                         start_sample,
-                                            length_samples: end_sample
-                                                .saturating_sub(start_sample)
-                                                .max(1),
+                                        length_samples: end_sample
+                                            .saturating_sub(start_sample)
+                                            .max(1),
                                         pitch,
                                         velocity: start_vel,
                                         channel: channel_u8,
@@ -348,10 +353,17 @@ impl Engine {
             let channel = ctrl.channel.min(15);
             let controller = ctrl.controller.min(127);
             let value = ctrl.value.min(127);
-            events.push((ctrl.sample as u64, 1, vec![0xB0 | channel, controller, value]));
+            events.push((
+                ctrl.sample as u64,
+                1,
+                vec![0xB0 | channel, controller, value],
+            ));
         }
         events.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-        events.into_iter().map(|(sample, _, data)| (sample, data)).collect()
+        events
+            .into_iter()
+            .map(|(sample, _, data)| (sample, data))
+            .collect()
     }
 
     fn apply_midi_edit_action(&mut self, action: &Action) -> Result<(), String> {
@@ -404,7 +416,9 @@ impl Engine {
         let (clip_name, clip_path, sample_rate) = {
             let track = track_handle.lock();
             if clip_index >= track.midi.clips.len() {
-                return Err(format!("Invalid MIDI clip index {clip_index} for '{track_name}'"));
+                return Err(format!(
+                    "Invalid MIDI clip index {clip_index} for '{track_name}'"
+                ));
             }
             let clip_name = track.midi.clips[clip_index].name.clone();
             let clip_path = track.resolve_clip_path(&clip_name);
@@ -436,7 +450,9 @@ impl Engine {
                     }
                 }
             }
-            Action::InsertMidiNotes { notes: inserted, .. } => {
+            Action::InsertMidiNotes {
+                notes: inserted, ..
+            } => {
                 let mut sorted = inserted.clone();
                 sorted.sort_unstable_by_key(|(idx, _)| *idx);
                 for (idx, note) in sorted {
@@ -481,9 +497,8 @@ impl Engine {
             Action::SetMidiSysExEvents {
                 new_sysex_events, ..
             } => {
-                passthrough_events.retain(|(_, data)| {
-                    !matches!(data.first(), Some(0xF0) | Some(0xF7))
-                });
+                passthrough_events
+                    .retain(|(_, data)| !matches!(data.first(), Some(0xF0) | Some(0xF7)));
                 passthrough_events.extend(
                     new_sysex_events
                         .iter()
@@ -1640,18 +1655,16 @@ impl Engine {
                 });
             }
         }
-        let inverse_actions = if record_history
-            && should_record(&action_to_process)
-            && !self.history_suspended
-        {
-            let state = self.state.lock();
-            create_inverse_actions(&action_to_process, &state).map(|mut actions| {
-                actions.extend(extra_inverse_actions);
-                actions
-            })
-        } else {
-            None
-        };
+        let inverse_actions =
+            if record_history && should_record(&action_to_process) && !self.history_suspended {
+                let state = self.state.lock();
+                create_inverse_actions(&action_to_process, state).map(|mut actions| {
+                    actions.extend(extra_inverse_actions);
+                    actions
+                })
+            } else {
+                None
+            };
 
         match action_to_process {
             Action::Play => {

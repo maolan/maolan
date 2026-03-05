@@ -1751,9 +1751,7 @@ fn scan_plugin_capabilities(
     host: &ClapHost,
     plugin_id: &str,
 ) -> Option<ClapPluginCapabilities> {
-    let Some(create) = factory.create_plugin else {
-        return None;
-    };
+    let create = factory.create_plugin?;
 
     let id_cstring = CString::new(plugin_id).ok()?;
     // SAFETY: valid factory, host, and id pointers.
@@ -1764,9 +1762,7 @@ fn scan_plugin_capabilities(
 
     // SAFETY: plugin pointer validated above.
     let plugin_ref = unsafe { &*plugin };
-    let Some(plugin_init) = plugin_ref.init else {
-        return None;
-    };
+    let plugin_init = plugin_ref.init?;
 
     // SAFETY: plugin pointer and function pointer follow CLAP ABI.
     if unsafe { !plugin_init(plugin) } {
@@ -1870,7 +1866,12 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
         )));
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    ))]
     {
         roots.push(PathBuf::from("/usr/lib/clap"));
         roots.push(PathBuf::from("/usr/lib64/clap"));

@@ -1127,11 +1127,9 @@ impl Lv2Processor {
             // Extract Name attribute
             let name = if let Some(start) = line.find("Name=\"") {
                 let start = start + 6; // len("Name=\"")
-                if let Some(end) = line[start..].find('"') {
-                    Some(line[start..start + end].to_string())
-                } else {
-                    None
-                }
+                line[start..]
+                    .find('"')
+                    .map(|end| line[start..start + end].to_string())
             } else {
                 None
             };

@@ -190,7 +190,7 @@ impl Maolan {
             self.state.blocking_write().message =
                 format!("Saving track template for {}", track_name);
 
-            return Task::batch(tasks);
+            Task::batch(tasks)
         }
 
         #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -258,7 +258,7 @@ impl Maolan {
                         // Set plugin state if available
                         if let Some(state) = plugin
                             .get("state")
-                            .and_then(|s| Self::lv2_state_from_json(s))
+                            .and_then(Self::lv2_state_from_json)
                         {
                             tasks.push(self.send(Action::TrackSetLv2PluginState {
                                 track_name: track_name.clone(),

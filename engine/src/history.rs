@@ -156,7 +156,9 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
         }
         Action::TrackToggleDiskMonitor(name) => Some(Action::TrackToggleDiskMonitor(name.clone())),
 
-        Action::AddClip { track_name, kind, .. } => {
+        Action::AddClip {
+            track_name, kind, ..
+        } => {
             // To undo adding a clip, we need to know which index it will have
             let track = state.tracks.get(track_name)?;
             let track_lock = track.lock();
@@ -214,9 +216,9 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         offset: clip.offset,
                         input_channel: clip.input_channel,
                         kind: Kind::MIDI,
-                        fade_enabled: true,  // Default value for MIDI clips
+                        fade_enabled: true,    // Default value for MIDI clips
                         fade_in_samples: 240,  // Default value
-                        fade_out_samples: 240,  // Default value
+                        fade_out_samples: 240, // Default value
                     })
                 }
             }
@@ -243,7 +245,12 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             })
         }
 
-        Action::ClipMove { kind, from, to, copy } => {
+        Action::ClipMove {
+            kind,
+            from,
+            to,
+            copy,
+        } => {
             let (original_start, original_input_channel) = {
                 let source_track = state.tracks.get(&from.track_name)?;
                 let source_lock = source_track.lock();
@@ -690,7 +697,7 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
         for (from_name, from_track_handle) in &state.tracks {
             let from_track = from_track_handle.lock();
             for (from_port, out) in from_track.audio.outs.iter().enumerate() {
-                let conns: Vec<Arc<AudioIO>> = out.connections.lock().iter().cloned().collect();
+                let conns: Vec<Arc<AudioIO>> = out.connections.lock().to_vec();
                 for conn in conns {
                     for (to_name, to_track_handle) in &state.tracks {
                         let to_track = to_track_handle.lock();
@@ -719,7 +726,7 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
 
             for (from_port, out) in from_track.midi.outs.iter().enumerate() {
                 let conns: Vec<Arc<crate::mutex::UnsafeMutex<Box<MIDIIO>>>> =
-                    out.lock().connections.iter().cloned().collect();
+                    out.lock().connections.to_vec();
                 for conn in conns {
                     for (to_name, to_track_handle) in &state.tracks {
                         let to_track = to_track_handle.lock();
@@ -756,10 +763,15 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                 for (from_name, from_track_handle) in &state.tracks {
                     let from_track = from_track_handle.lock();
                     for (from_port, out) in from_track.audio.outs.iter().enumerate() {
-                        let conns: Vec<Arc<AudioIO>> = out.connections.lock().iter().cloned().collect();
+                        let conns: Vec<Arc<AudioIO>> =
+                            out.connections.lock().to_vec();
                         if conns.iter().any(|conn| Arc::ptr_eq(conn, to_in))
-                            && seen_audio
-                                .insert((from_name.clone(), from_port, to_name.clone(), to_port))
+                            && seen_audio.insert((
+                                from_name.clone(),
+                                from_port,
+                                to_name.clone(),
+                                to_port,
+                            ))
                         {
                             actions.push(Action::Connect {
                                 from_track: from_name.clone(),
@@ -777,10 +789,14 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     let from_track = from_track_handle.lock();
                     for (from_port, out) in from_track.midi.outs.iter().enumerate() {
                         let conns: Vec<Arc<crate::mutex::UnsafeMutex<Box<MIDIIO>>>> =
-                            out.lock().connections.iter().cloned().collect();
+                            out.lock().connections.to_vec();
                         if conns.iter().any(|conn| Arc::ptr_eq(conn, to_in))
-                            && seen_midi
-                                .insert((from_name.clone(), from_port, to_name.clone(), to_port))
+                            && seen_midi.insert((
+                                from_name.clone(),
+                                from_port,
+                                to_name.clone(),
+                                to_port,
+                            ))
                         {
                             actions.push(Action::Connect {
                                 from_track: from_name.clone(),

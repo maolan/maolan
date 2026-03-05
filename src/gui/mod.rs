@@ -52,6 +52,21 @@ static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::
 const MIN_CLIP_WIDTH_PX: f32 = 12.0;
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
 type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
+type PianoParseResult = (Vec<PianoNote>, Vec<PianoControllerPoint>, Vec<PianoSysExPoint>, usize);
+
+struct ExportSessionOptions {
+    export_path: PathBuf,
+    sample_rate: i32,
+    bit_depth: ExportBitDepth,
+    normalize: bool,
+    normalize_target_dbfs: f32,
+    normalize_mode: ExportNormalizeMode,
+    normalize_target_lufs: f32,
+    normalize_true_peak_dbtp: f32,
+    normalize_tp_limiter: bool,
+    state: State,
+    session_root: PathBuf,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct AudioClipKey {
@@ -194,8 +209,10 @@ fn scan_track_templates() -> Vec<String> {
 
 impl Default for Maolan {
     fn default() -> Self {
-        let mut state_data = StateData::default();
-        state_data.available_templates = scan_templates();
+        let state_data = StateData {
+            available_templates: scan_templates(),
+            ..StateData::default()
+        };
         let state = Arc::new(RwLock::new(state_data));
         let mut menu = menu::Menu::default();
         menu.update_templates(scan_templates());
@@ -994,22 +1011,24 @@ impl Maolan {
     }
 
     async fn export_session<F>(
-        export_path: &Path,
-        sample_rate: i32,
-        bit_depth: ExportBitDepth,
-        normalize: bool,
-        normalize_target_dbfs: f32,
-        normalize_mode: ExportNormalizeMode,
-        normalize_target_lufs: f32,
-        normalize_true_peak_dbtp: f32,
-        normalize_tp_limiter: bool,
-        state: State,
-        session_root: &Path,
+        options: &ExportSessionOptions,
         mut progress_callback: F,
     ) -> std::io::Result<()>
     where
         F: FnMut(f32, Option<String>),
     {
+        let export_path = options.export_path.as_path();
+        let sample_rate = options.sample_rate;
+        let bit_depth = options.bit_depth;
+        let normalize = options.normalize;
+        let normalize_target_dbfs = options.normalize_target_dbfs;
+        let normalize_mode = options.normalize_mode;
+        let normalize_target_lufs = options.normalize_target_lufs;
+        let normalize_true_peak_dbtp = options.normalize_true_peak_dbtp;
+        let normalize_tp_limiter = options.normalize_tp_limiter;
+        let state = options.state.clone();
+        let session_root = options.session_root.as_path();
+
         progress_callback(0.0, Some("Analyzing tracks".to_string()));
         tokio::task::yield_now().await;
 
@@ -1347,10 +1366,7 @@ impl Maolan {
         Some((Box::new(mapper), ppq, max_tick))
     }
 
-    fn parse_midi_clip_for_piano(
-        path: &Path,
-        sample_rate: f64,
-    ) -> std::io::Result<(Vec<PianoNote>, Vec<PianoControllerPoint>, Vec<PianoSysExPoint>, usize)> {
+    fn parse_midi_clip_for_piano(path: &Path, sample_rate: f64) -> std::io::Result<PianoParseResult> {
         let bytes = fs::read(path)?;
         let smf = Smf::parse(&bytes).map_err(|e| {
             io::Error::other(format!("Failed to parse MIDI '{}': {e}", path.display()))

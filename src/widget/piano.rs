@@ -6,9 +6,9 @@ use crate::{
 use iced::{
     Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::{
-        Id, Stack,
+        Id, Stack, button,
         canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
-        button, column, container, pin, row, scrollable, slider, text, text_input, vertical_slider,
+        column, container, pin, row, scrollable, slider, text, text_input, vertical_slider,
     },
 };
 use iced_aw::{
@@ -239,7 +239,11 @@ impl Piano {
     }
 
     fn sysex_preview(data: &[u8]) -> String {
-        let mut parts = data.iter().take(6).map(|b| format!("{b:02X}")).collect::<Vec<_>>();
+        let mut parts = data
+            .iter()
+            .take(6)
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>();
         if data.len() > 6 {
             parts.push("...".to_string());
         }
@@ -691,7 +695,6 @@ impl Piano {
         let menu_tpl = |items| IcedMenu::new(items).width(220.0).offset(15.0).spacing(5.0);
         let controller_submenu = IcedMenu::new(
             (0u8..=127)
-                .into_iter()
                 .map(|cc| {
                     Item::new(menu_item(
                         Self::cc_label(cc),
@@ -891,11 +894,7 @@ impl Piano {
             .enumerate()
             .fold(column![], |col, (idx, ev)| {
                 let is_selected = selected_sysex == Some(idx);
-                let label = format!(
-                    "{:>8}  {}",
-                    ev.sample,
-                    Self::sysex_preview(&ev.data)
-                );
+                let label = format!("{:>8}  {}", ev.sample, Self::sysex_preview(&ev.data));
                 col.push(
                     button(text(label).size(11))
                         .on_press(Message::PianoSysExSelect(Some(idx)))
@@ -982,7 +981,10 @@ impl Piano {
         {
             layout = layout.push(sysex_panel);
         }
-        container(layout).width(Length::Fill).height(Length::Fill).into()
+        container(layout)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 }
 
@@ -1234,6 +1236,15 @@ pub struct ControllerRollInteraction {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct ControllerHitTest<'a> {
+    lane: PianoControllerLane,
+    pane_h: f32,
+    pps: f32,
+    selected_row: Option<usize>,
+    controllers: &'a [crate::state::PianoControllerPoint],
+}
+
+#[derive(Debug, Clone, Copy)]
 enum ControllerAdjustTarget {
     Controller(usize),
     Velocity(usize),
@@ -1285,27 +1296,22 @@ impl ControllerRollInteraction {
     fn controller_at_position(
         &self,
         position: Point,
-        lane: PianoControllerLane,
-        _row_h: f32,
-        pane_h: f32,
-        pps: f32,
-        selected_row: Option<usize>,
-        controllers: &[crate::state::PianoControllerPoint],
+        hit: ControllerHitTest<'_>,
     ) -> Option<usize> {
         let mut best: Option<(usize, f32)> = None;
-        for (idx, row) in Piano::lane_controller_events(lane, controllers) {
-            if let Some(selected_row) = selected_row
+        for (idx, row) in Piano::lane_controller_events(hit.lane, hit.controllers) {
+            if let Some(selected_row) = hit.selected_row
                 && row != selected_row
             {
                 continue;
             }
-            let ctrl = &controllers[idx];
-            let stem_h = (pane_h * (ctrl.value as f32 / 127.0)).max(1.0);
-            let stem_y = pane_h - stem_h;
-            if position.y < stem_y || position.y > pane_h {
+            let ctrl = &hit.controllers[idx];
+            let stem_h = (hit.pane_h * (ctrl.value as f32 / 127.0)).max(1.0);
+            let stem_y = hit.pane_h - stem_h;
+            if position.y < stem_y || position.y > hit.pane_h {
                 continue;
             }
-            let x = ctrl.sample as f32 * pps;
+            let x = ctrl.sample as f32 * hit.pps;
             let dx = (position.x - x).abs();
             if dx > 4.0 {
                 continue;
@@ -1379,9 +1385,7 @@ impl Program<Message> for ControllerRollInteraction {
         cursor: mouse::Cursor,
     ) -> Option<CanvasAction<Message>> {
         let app_state = self.state.blocking_read();
-        let Some(roll) = app_state.piano.as_ref() else {
-            return None;
-        };
+        let roll = app_state.piano.as_ref()?;
         let lane = app_state.piano_controller_lane;
         let selected_row = match lane {
             PianoControllerLane::Controller => Some(usize::from(
@@ -1408,9 +1412,7 @@ impl Program<Message> for ControllerRollInteraction {
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                let Some(position) = cursor.position_in(bounds) else {
-                    return None;
-                };
+                let position = cursor.position_in(bounds)?;
                 if matches!(lane, PianoControllerLane::SysEx) {
                     if let Some(index) = self.sysex_at_position(position, pps, &sysexes) {
                         let now = Instant::now();
@@ -1450,12 +1452,13 @@ impl Program<Message> for ControllerRollInteraction {
                 } else {
                     self.controller_at_position(
                         position,
-                        lane,
-                        row_h,
-                        bounds.height,
-                        pps,
-                        selected_row,
-                        &controllers,
+                        ControllerHitTest {
+                            lane,
+                            pane_h: bounds.height,
+                            pps,
+                            selected_row,
+                            controllers: &controllers,
+                        },
                     )
                     .and_then(|idx| controllers.get(idx).map(|c| (idx, c.value)))
                     .map(|(idx, value)| (ControllerAdjustTarget::Controller(idx), value))
@@ -1475,20 +1478,17 @@ impl Program<Message> for ControllerRollInteraction {
                 if matches!(lane, PianoControllerLane::Velocity) {
                     return None;
                 }
-                let Some(position) = cursor.position_in(bounds) else {
-                    return None;
-                };
-                let Some(controller_index) = self.controller_at_position(
+                let position = cursor.position_in(bounds)?;
+                let controller_index = self.controller_at_position(
                     position,
-                    lane,
-                    row_h,
-                    bounds.height,
-                    pps,
-                    selected_row,
-                    &controllers,
-                ) else {
-                    return None;
-                };
+                    ControllerHitTest {
+                        lane,
+                        pane_h: bounds.height,
+                        pps,
+                        selected_row,
+                        controllers: &controllers,
+                    },
+                )?;
                 let value_delta = PianoRollInteraction::velocity_delta_from_scroll(delta);
                 if value_delta == 0 {
                     return None;
@@ -1584,8 +1584,10 @@ impl Program<Message> for ControllerRollInteraction {
                     if let Some(position) = cursor.position_in(bounds) {
                         current_x = position.x;
                     }
-                    let delta_samples =
-                        ((current_x - start_x) / pps).round().max(-(original_sample as f32)) as isize;
+                    let delta_samples = ((current_x - start_x) / pps)
+                        .round()
+                        .max(-(original_sample as f32))
+                        as isize;
                     let new_sample = (original_sample as isize + delta_samples).max(0) as usize;
                     return Some(
                         CanvasAction::publish(Message::PianoSysExMove {
@@ -1598,7 +1600,10 @@ impl Program<Message> for ControllerRollInteraction {
                 None
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
-                if matches!(lane, PianoControllerLane::Velocity | PianoControllerLane::SysEx) {
+                if matches!(
+                    lane,
+                    PianoControllerLane::Velocity | PianoControllerLane::SysEx
+                ) {
                     return None;
                 }
                 if let Some(position) = cursor.position_in(bounds) {
@@ -1632,11 +1637,13 @@ impl Program<Message> for ControllerRollInteraction {
                     let new_controllers = controllers_lane::build_drawn_controllers(
                         start,
                         current,
-                        bounds,
-                        pps,
-                        self.sample_rate_hz,
-                        self.samples_per_bar,
-                        clip_len,
+                        controllers_lane::DrawContext {
+                            bounds,
+                            pps,
+                            sample_rate_hz: self.sample_rate_hz,
+                            samples_per_bar: self.samples_per_bar,
+                            clip_len,
+                        },
                         lane_cfg,
                     );
                     if new_controllers.is_empty() {
@@ -1786,6 +1793,15 @@ mod controllers_lane {
     const MAX_RPN_NRPN_POINTS: usize = 4096;
     const MIDI_DIN_BYTES_PER_SEC: f64 = 3125.0;
 
+    #[derive(Debug, Clone, Copy)]
+    pub struct DrawContext {
+        pub bounds: Rectangle,
+        pub pps: f32,
+        pub sample_rate_hz: f64,
+        pub samples_per_bar: f32,
+        pub clip_len: usize,
+    }
+
     fn max_points_for_rate(
         start_sample: usize,
         end_sample: usize,
@@ -1855,13 +1871,16 @@ mod controllers_lane {
     pub fn build_drawn_controllers(
         start: Point,
         end: Point,
-        bounds: Rectangle,
-        pps: f32,
-        sample_rate_hz: f64,
-        samples_per_bar: f32,
-        clip_len: usize,
+        ctx: DrawContext,
         lane: LaneConfig,
     ) -> Vec<PianoControllerEditData> {
+        let DrawContext {
+            bounds,
+            pps,
+            sample_rate_hz,
+            samples_per_bar,
+            clip_len,
+        } = ctx;
         if pps <= f32::EPSILON || clip_len == 0 {
             return vec![];
         }
@@ -2104,9 +2123,7 @@ impl Program<Message> for PianoRollInteraction {
         cursor: mouse::Cursor,
     ) -> Option<CanvasAction<Message>> {
         let app_state = self.state.blocking_read();
-        let Some(roll) = app_state.piano.as_ref() else {
-            return None;
-        };
+        let roll = app_state.piano.as_ref()?;
 
         let zoom_x = app_state.piano_zoom_x;
         let zoom_y = app_state.piano_zoom_y;
@@ -2122,9 +2139,7 @@ impl Program<Message> for PianoRollInteraction {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(position) = cursor.position_in(bounds) {
                     if let Some(note_idx) = self.note_at_position(position, row_h, pps, &notes) {
-                        let Some(note) = notes.get(note_idx) else {
-                            return None;
-                        };
+                        let note = notes.get(note_idx)?;
                         let note_x = note.start_sample as f32 * pps;
                         let note_w = (note.length_samples as f32 * pps).max(2.0);
                         let resize_handle_w = 6.0;
@@ -2183,31 +2198,29 @@ impl Program<Message> for PianoRollInteraction {
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if let Some(position) = cursor.position_in(bounds) {
-                    if state.drag_start.is_some() {
-                        match state.dragging_mode {
-                            DraggingMode::SelectingRect => {
-                                return Some(CanvasAction::publish(Message::PianoSelectRectDrag {
-                                    position,
-                                }));
-                            }
-                            DraggingMode::DraggingNotes => {
-                                return Some(CanvasAction::publish(Message::PianoNotesDrag {
-                                    position,
-                                }));
-                            }
-                            DraggingMode::ResizingNote => {
-                                return Some(CanvasAction::publish(Message::PianoNoteResizeDrag {
-                                    position,
-                                }));
-                            }
-                            DraggingMode::CreatingNote => {
-                                return Some(CanvasAction::publish(Message::PianoCreateNoteDrag {
-                                    position,
-                                }));
-                            }
-                            DraggingMode::None => {}
+                if let Some(position) = cursor.position_in(bounds)
+                    && state.drag_start.is_some()
+                {
+                    match state.dragging_mode {
+                        DraggingMode::SelectingRect => {
+                            return Some(CanvasAction::publish(Message::PianoSelectRectDrag {
+                                position,
+                            }));
                         }
+                        DraggingMode::DraggingNotes => {
+                            return Some(CanvasAction::publish(Message::PianoNotesDrag { position }));
+                        }
+                        DraggingMode::ResizingNote => {
+                            return Some(CanvasAction::publish(Message::PianoNoteResizeDrag {
+                                position,
+                            }));
+                        }
+                        DraggingMode::CreatingNote => {
+                            return Some(CanvasAction::publish(Message::PianoCreateNoteDrag {
+                                position,
+                            }));
+                        }
+                        DraggingMode::None => {}
                     }
                 }
             }

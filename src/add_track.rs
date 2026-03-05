@@ -127,8 +127,7 @@ impl AddTrackView {
 
         let selected_display = self
             .selected_template
-            .as_ref()
-            .map(|s| s.as_str())
+            .as_deref()
             .unwrap_or("empty");
         let is_empty_template = selected_display == "empty";
 
