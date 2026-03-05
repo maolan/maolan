@@ -1108,6 +1108,7 @@ enum ControllerDragMode {
         target: ControllerAdjustTarget,
         start_y: f32,
         start_value: u8,
+        current_y: f32,
     },
     Drawing {
         start: Point,
@@ -1127,7 +1128,8 @@ impl ControllerRollInteraction {
         &self,
         position: Point,
         lane: PianoControllerLane,
-        row_h: f32,
+        _row_h: f32,
+        pane_h: f32,
         pps: f32,
         selected_row: Option<usize>,
         controllers: &[crate::state::PianoControllerPoint],
@@ -1139,15 +1141,15 @@ impl ControllerRollInteraction {
             {
                 continue;
             }
-            let y0 = row as f32 * row_h;
-            let y1 = y0 + row_h;
-            if position.y < y0 || position.y > y1 {
+            let ctrl = &controllers[idx];
+            let stem_h = (pane_h * (ctrl.value as f32 / 127.0)).max(1.0);
+            let stem_y = pane_h - stem_h;
+            if position.y < stem_y || position.y > pane_h {
                 continue;
             }
-            let ctrl = &controllers[idx];
             let x = ctrl.sample as f32 * pps;
             let dx = (position.x - x).abs();
-            if dx > 5.0 {
+            if dx > 4.0 {
                 continue;
             }
             match best {
@@ -1237,6 +1239,7 @@ impl Program<Message> for ControllerRollInteraction {
                         position,
                         lane,
                         row_h,
+                        bounds.height,
                         pps,
                         selected_row,
                         &controllers,
@@ -1249,6 +1252,7 @@ impl Program<Message> for ControllerRollInteraction {
                         target,
                         start_y: position.y,
                         start_value,
+                        current_y: position.y,
                     };
                     return Some(CanvasAction::request_redraw().and_capture());
                 }
@@ -1265,6 +1269,7 @@ impl Program<Message> for ControllerRollInteraction {
                     position,
                     lane,
                     row_h,
+                    bounds.height,
                     pps,
                     selected_row,
                     &controllers,
@@ -1285,6 +1290,22 @@ impl Program<Message> for ControllerRollInteraction {
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(position) = cursor.position_in(bounds)
+                    && let ControllerDragMode::Adjusting {
+                        target,
+                        start_y,
+                        start_value,
+                        ..
+                    } = state.mode
+                {
+                    state.mode = ControllerDragMode::Adjusting {
+                        target,
+                        start_y,
+                        start_value,
+                        current_y: position.y,
+                    };
+                    return Some(CanvasAction::request_redraw().and_capture());
+                }
+                if let Some(position) = cursor.position_in(bounds)
                     && let ControllerDragMode::Drawing { start, .. } = state.mode
                 {
                     state.mode = ControllerDragMode::Drawing {
@@ -1300,13 +1321,14 @@ impl Program<Message> for ControllerRollInteraction {
                     target,
                     start_y,
                     start_value,
+                    mut current_y,
                 } = state.mode
                 {
                     state.mode = ControllerDragMode::None;
-                    let Some(position) = cursor.position_in(bounds) else {
-                        return Some(CanvasAction::capture());
-                    };
-                    let delta = ((start_y - position.y) / 4.0).round() as i16;
+                    if let Some(position) = cursor.position_in(bounds) {
+                        current_y = position.y;
+                    }
+                    let delta = ((start_y - current_y) / 4.0).round() as i16;
                     let value = (i16::from(start_value) + delta).clamp(0, 127) as u8;
                     let msg = match target {
                         ControllerAdjustTarget::Controller(controller_index) => {
@@ -1381,46 +1403,92 @@ impl Program<Message> for ControllerRollInteraction {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let ControllerDragMode::Drawing { start, current } = state.mode else {
-            return vec![];
-        };
-
         let mut frame = Frame::new(renderer, bounds.size());
-        let line = Path::line(start, current);
-        frame.stroke(
-            &line,
-            canvas::Stroke::default()
-                .with_width(2.0)
-                .with_color(Color::from_rgba(0.98, 0.94, 0.2, 0.95)),
-        );
+        match state.mode {
+            ControllerDragMode::None => return vec![],
+            ControllerDragMode::Drawing { start, current } => {
+                let line = Path::line(start, current);
+                frame.stroke(
+                    &line,
+                    canvas::Stroke::default()
+                        .with_width(2.0)
+                        .with_color(Color::from_rgba(0.98, 0.94, 0.2, 0.95)),
+                );
 
-        let value_from_y = |y: f32| -> u8 {
-            if bounds.height <= f32::EPSILON {
-                return 64;
+                let value_from_y = |y: f32| -> u8 {
+                    if bounds.height <= f32::EPSILON {
+                        return 64;
+                    }
+                    let t = (1.0 - (y / bounds.height)).clamp(0.0, 1.0);
+                    (t * 127.0).round().clamp(0.0, 127.0) as u8
+                };
+                let start_value = value_from_y(start.y);
+                let current_value = value_from_y(current.y);
+                let drag_right = current.x >= start.x;
+                let x_offset = if drag_right { -24.0 } else { 8.0 };
+
+                use iced::widget::canvas::Text;
+                frame.fill_text(Text {
+                    content: start_value.to_string(),
+                    position: Point::new(start.x + x_offset, (start.y - 6.0).max(0.0)),
+                    color: Color::from_rgba(1.0, 0.96, 0.45, 0.95),
+                    size: 11.0.into(),
+                    ..Text::default()
+                });
+                frame.fill_text(Text {
+                    content: current_value.to_string(),
+                    position: Point::new(current.x + x_offset, (current.y - 6.0).max(0.0)),
+                    color: Color::from_rgba(1.0, 0.96, 0.45, 0.95),
+                    size: 11.0.into(),
+                    ..Text::default()
+                });
             }
-            let t = (1.0 - (y / bounds.height)).clamp(0.0, 1.0);
-            (t * 127.0).round().clamp(0.0, 127.0) as u8
-        };
-        let start_value = value_from_y(start.y);
-        let current_value = value_from_y(current.y);
-        let drag_right = current.x >= start.x;
-        let x_offset = if drag_right { -24.0 } else { 8.0 };
+            ControllerDragMode::Adjusting {
+                target,
+                start_y,
+                start_value,
+                current_y,
+            } => {
+                let app_state = self.state.blocking_read();
+                let Some(roll) = app_state.piano.as_ref() else {
+                    return vec![];
+                };
+                let pps = (self.pixels_per_sample * app_state.piano_zoom_x).max(0.0001);
+                let delta = ((start_y - current_y) / 4.0).round() as i16;
+                let preview_value = (i16::from(start_value) + delta).clamp(0, 127) as u8;
+                let x = match target {
+                    ControllerAdjustTarget::Controller(idx) => roll
+                        .controllers
+                        .get(idx)
+                        .map(|c| c.sample as f32 * pps),
+                    ControllerAdjustTarget::Velocity(idx) => {
+                        roll.notes.get(idx).map(|n| n.start_sample as f32 * pps)
+                    }
+                };
+                let Some(x) = x else {
+                    return vec![];
+                };
+                let old_stem_h = (bounds.height * (start_value as f32 / 127.0)).max(1.0);
+                let old_stem_y = bounds.height - old_stem_h;
+                let erase_rect =
+                    Path::rectangle(Point::new((x - 1.0).max(0.0), old_stem_y), Size::new(5.0, old_stem_h));
+                frame.fill(&erase_rect, Color::from_rgba(0.16, 0.16, 0.18, 1.0));
 
-        use iced::widget::canvas::Text;
-        frame.fill_text(Text {
-            content: start_value.to_string(),
-            position: Point::new(start.x + x_offset, (start.y - 6.0).max(0.0)),
-            color: Color::from_rgba(1.0, 0.96, 0.45, 0.95),
-            size: 11.0.into(),
-            ..Text::default()
-        });
-        frame.fill_text(Text {
-            content: current_value.to_string(),
-            position: Point::new(current.x + x_offset, (current.y - 6.0).max(0.0)),
-            color: Color::from_rgba(1.0, 0.96, 0.45, 0.95),
-            size: 11.0.into(),
-            ..Text::default()
-        });
+                let stem_h = (bounds.height * (preview_value as f32 / 127.0)).max(1.0);
+                let stem_y = bounds.height - stem_h;
+                let rect = Path::rectangle(Point::new(x, stem_y), Size::new(3.0, stem_h));
+                frame.fill(&rect, Color::from_rgba(1.0, 0.85, 0.2, 0.95));
+
+                use iced::widget::canvas::Text;
+                frame.fill_text(Text {
+                    content: preview_value.to_string(),
+                    position: Point::new(x + 6.0, (stem_y - 6.0).max(0.0)),
+                    color: Color::from_rgba(1.0, 0.96, 0.45, 1.0),
+                    size: 11.0.into(),
+                    ..Text::default()
+                });
+            }
+        }
         vec![frame.into_geometry()]
     }
 }
