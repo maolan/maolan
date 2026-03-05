@@ -1,5 +1,5 @@
 use super::{AudioClip, MIDIClip};
-use crate::message::{Message, TrackAutomationTarget};
+use crate::message::{Message, TrackAutomationMode, TrackAutomationTarget};
 use iced::Point;
 use maolan_engine::message::Action;
 use serde::{Deserialize, Serialize};
@@ -88,8 +88,14 @@ pub struct Track {
     pub midi: MIDIData,
     #[serde(default)]
     pub automation_lanes: Vec<TrackAutomationLane>,
+    #[serde(default = "default_automation_mode")]
+    pub automation_mode: TrackAutomationMode,
     #[serde(with = "PointDef")]
     pub position: Point,
+}
+
+fn default_automation_mode() -> TrackAutomationMode {
+    TrackAutomationMode::Read
 }
 
 impl Track {
@@ -115,6 +121,7 @@ impl Track {
             audio: AudioData::new(audio_ins, audio_outs),
             midi: MIDIData::new(midi_ins, midi_outs),
             automation_lanes: vec![],
+            automation_mode: TrackAutomationMode::Read,
             height: 60.0,
             position: Point::new(100.0, 100.0),
         };

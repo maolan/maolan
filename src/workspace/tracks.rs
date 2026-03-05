@@ -134,6 +134,11 @@ impl Tracks {
                         .on_press(Message::TrackAutomationToggle {
                             track_name: track.name.clone(),
                         }),
+                    button(text(format!("A:{}", track.automation_mode)))
+                        .padding(3)
+                        .on_press(Message::TrackAutomationCycleMode {
+                            track_name: track.name.clone(),
+                        }),
                 ]
                 .height(Length::Fixed(layout.header_height)),
                 lane_rows.height(Length::Fill),

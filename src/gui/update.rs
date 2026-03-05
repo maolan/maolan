@@ -3,7 +3,7 @@ use super::{CLIENT, MIN_CLIP_WIDTH_PX, Maolan, platform};
 use crate::message::PluginFormat;
 use crate::{
     connections,
-    message::{ExportNormalizeMode, Message, Show, TrackAutomationTarget},
+    message::{ExportNormalizeMode, Message, Show, TrackAutomationMode, TrackAutomationTarget},
     state::{
         ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, Track,
         TrackAutomationPoint, View,
@@ -68,6 +68,9 @@ impl Maolan {
     ) -> Vec<Action> {
         let mut actions = Vec::new();
         for track in tracks {
+            if track.automation_mode == TrackAutomationMode::Write {
+                continue;
+            }
             let mut vol = None;
             let mut bal = None;
             let mut muted = None;
@@ -81,6 +84,33 @@ impl Maolan {
                     TrackAutomationTarget::Volume => vol = value,
                     TrackAutomationTarget::Balance => bal = value,
                     TrackAutomationTarget::Mute => muted = value.map(|v| v >= 0.5),
+                    TrackAutomationTarget::Lv2Parameter {
+                        instance_id,
+                        index,
+                        min,
+                        max,
+                    } => {
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        if let Some(v) = value {
+                            let lo = min.min(max);
+                            let hi = max.max(min);
+                            let param_value = (lo + v * (hi - lo)).clamp(lo, hi);
+                            let key = (instance_id, index);
+                            if runtime
+                                .lv2_params
+                                .get(&key)
+                                .is_none_or(|current| (current - param_value).abs() >= 0.0005)
+                            {
+                                runtime.lv2_params.insert(key, param_value);
+                                actions.push(Action::TrackSetLv2ControlValue {
+                                    track_name: track.name.clone(),
+                                    instance_id,
+                                    index,
+                                    value: param_value,
+                                });
+                            }
+                        }
+                    }
                     TrackAutomationTarget::Vst3Parameter {
                         instance_id,
                         param_id,
@@ -2950,6 +2980,43 @@ impl Maolan {
                     controls,
                     instance_access_handle,
                 } => {
+                    if self
+                        .pending_add_lv2_automation_instances
+                        .remove(&(track_name.clone(), *instance_id))
+                    {
+                        let mut state = self.state.blocking_write();
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        {
+                            for control in controls {
+                                let target = TrackAutomationTarget::Lv2Parameter {
+                                    instance_id: *instance_id,
+                                    index: control.index,
+                                    min: control.min,
+                                    max: control.max,
+                                };
+                                if let Some(existing) = track
+                                    .automation_lanes
+                                    .iter_mut()
+                                    .find(|lane| lane.target == target)
+                                {
+                                    existing.visible = true;
+                                } else {
+                                    track.automation_lanes.push(crate::state::TrackAutomationLane {
+                                        target,
+                                        visible: true,
+                                        points: vec![],
+                                    });
+                                }
+                            }
+                            track.height = track.min_height_for_layout().max(60.0);
+                            state.message = format!(
+                                "Added {} LV2 automation lanes on '{}'",
+                                controls.len(),
+                                track_name
+                            );
+                        }
+                        return Task::none();
+                    }
                     let (plugin_name, plugin_uri) = {
                         let state = self.state.blocking_read();
                         state
@@ -3022,6 +3089,32 @@ impl Maolan {
                     drop(state);
 
                     let mut pending_queries: Vec<Task<Message>> = vec![];
+                    let pending_lv2_uris: Vec<(String, String)> = self
+                        .pending_add_lv2_automation_uris
+                        .iter()
+                        .filter(|(name, _)| name == track_name)
+                        .cloned()
+                        .collect();
+                    for (pending_track, pending_uri) in pending_lv2_uris {
+                        if let Some(instance_id) = plugins
+                            .iter()
+                            .find(|plugin| {
+                                plugin.format.eq_ignore_ascii_case("LV2")
+                                    && (plugin.uri == pending_uri
+                                        || plugin.plugin_id == pending_uri)
+                            })
+                            .map(|plugin| plugin.instance_id)
+                        {
+                            self.pending_add_lv2_automation_uris
+                                .remove(&(pending_track.clone(), pending_uri));
+                            self.pending_add_lv2_automation_instances
+                                .insert((pending_track.clone(), instance_id));
+                            pending_queries.push(self.send(Action::TrackGetLv2PluginControls {
+                                track_name: pending_track,
+                                instance_id,
+                            }));
+                        }
+                    }
                     let pending_vst3_paths: Vec<(String, String)> = self
                         .pending_add_vst3_automation_paths
                         .iter()
@@ -3302,6 +3395,25 @@ impl Maolan {
                     track.height = track.min_height_for_layout().max(60.0);
                 }
             }
+            Message::TrackAutomationCycleMode { ref track_name } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.name == track_name.as_str())
+                {
+                    track.automation_mode = match track.automation_mode {
+                        TrackAutomationMode::Read => TrackAutomationMode::Touch,
+                        TrackAutomationMode::Touch => TrackAutomationMode::Latch,
+                        TrackAutomationMode::Latch => TrackAutomationMode::Write,
+                        TrackAutomationMode::Write => TrackAutomationMode::Read,
+                    };
+                    state.message = format!(
+                        "Track '{}' automation mode: {}",
+                        track.name, track.automation_mode
+                    );
+                }
+            }
             Message::TrackAutomationAddLane {
                 ref track_name,
                 target,
@@ -3410,6 +3522,48 @@ impl Maolan {
                 {
                     self.state.blocking_write().message =
                         "VST3 automation lanes are unavailable on this platform".to_string();
+                }
+            }
+            Message::TrackAutomationAddLv2Lanes {
+                ref track_name,
+                ref plugin_uri,
+            } => {
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    let instance_id = {
+                        let state = self.state.blocking_read();
+                        state
+                            .plugin_graphs_by_track
+                            .get(track_name)
+                            .and_then(|(plugins, _)| {
+                                plugins
+                                    .iter()
+                                    .find(|plugin| {
+                                        plugin.format.eq_ignore_ascii_case("LV2")
+                                            && (plugin.uri == *plugin_uri
+                                                || plugin.plugin_id == *plugin_uri)
+                                    })
+                                    .map(|plugin| plugin.instance_id)
+                            })
+                    };
+                    if let Some(instance_id) = instance_id {
+                        self.pending_add_lv2_automation_instances
+                            .insert((track_name.clone(), instance_id));
+                        return self.send(Action::TrackGetLv2PluginControls {
+                            track_name: track_name.clone(),
+                            instance_id,
+                        });
+                    }
+                    self.pending_add_lv2_automation_uris
+                        .insert((track_name.clone(), plugin_uri.clone()));
+                    return self.send(Action::TrackGetPluginGraph {
+                        track_name: track_name.clone(),
+                    });
+                }
+                #[cfg(not(all(unix, not(target_os = "macos"))))]
+                {
+                    self.state.blocking_write().message =
+                        "LV2 automation lanes are unavailable on this platform".to_string();
                 }
             }
             Message::TrackAutomationLaneHover {

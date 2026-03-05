@@ -93,6 +93,7 @@ struct TrackAutomationRuntime {
     level_db: Option<f32>,
     balance: Option<f32>,
     muted: Option<bool>,
+    lv2_params: HashMap<(usize, u32), f32>,
     vst3_params: HashMap<(usize, u32), f32>,
     clap_params: HashMap<(usize, u32), f64>,
 }
@@ -131,6 +132,8 @@ pub struct Maolan {
     pending_save_is_template: bool,
     pending_audio_peaks: HashMap<AudioClipKey, Vec<Vec<f32>>>,
     track_automation_runtime: HashMap<String, TrackAutomationRuntime>,
+    pending_add_lv2_automation_uris: HashSet<(String, String)>,
+    pending_add_lv2_automation_instances: HashSet<(String, usize)>,
     pending_add_vst3_automation_paths: HashSet<(String, String)>,
     pending_add_vst3_automation_instances: HashSet<(String, usize)>,
     pending_add_clap_automation_paths: HashSet<(String, String)>,
@@ -271,6 +274,8 @@ impl Default for Maolan {
             pending_save_is_template: false,
             pending_audio_peaks: HashMap::new(),
             track_automation_runtime: HashMap::new(),
+            pending_add_lv2_automation_uris: HashSet::new(),
+            pending_add_lv2_automation_instances: HashSet::new(),
             pending_add_vst3_automation_paths: HashSet::new(),
             pending_add_vst3_automation_instances: HashSet::new(),
             pending_add_clap_automation_paths: HashSet::new(),
@@ -1909,6 +1914,46 @@ impl Maolan {
                 container("").into()
             }
         };
+        let loaded_lv2_section: iced::Element<'_, Message> = {
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                let loaded_lv2 = state
+                    .plugin_graphs_by_track
+                    .get(&title)
+                    .map(|(plugins, _)| {
+                        plugins
+                            .iter()
+                            .filter(|plugin| plugin.format.eq_ignore_ascii_case("LV2"))
+                            .map(|plugin| (plugin.name.clone(), plugin.uri.clone()))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let mut loaded_lv2_items = Vec::new();
+                for (name, uri) in loaded_lv2 {
+                    loaded_lv2_items.push(
+                        row![
+                            text(name).width(Length::Fill),
+                            button("Auto").on_press(Message::TrackAutomationAddLv2Lanes {
+                                track_name: title.clone(),
+                                plugin_uri: uri,
+                            }),
+                        ]
+                        .spacing(8)
+                        .into(),
+                    );
+                }
+                column![
+                    text("Loaded LV2"),
+                    scrollable(column(loaded_lv2_items)).height(Length::Fixed(72.0)),
+                ]
+                .spacing(6)
+                .into()
+            }
+            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            {
+                container("").into()
+            }
+        };
 
         let loaded_clap = state
             .clap_plugins_by_track
@@ -1941,6 +1986,7 @@ impl Maolan {
             column![
                 text(format!("Track Plugins: {title}")),
                 plugin_controls,
+                loaded_lv2_section,
                 loaded_vst3_section,
                 text("Loaded CLAP"),
                 scrollable(loaded_clap_list).height(Length::Fixed(100.0)),

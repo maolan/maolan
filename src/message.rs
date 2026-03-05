@@ -91,6 +91,12 @@ pub enum TrackAutomationTarget {
     Volume,
     Balance,
     Mute,
+    Lv2Parameter {
+        instance_id: usize,
+        index: u32,
+        min: f32,
+        max: f32,
+    },
     Vst3Parameter {
         instance_id: usize,
         param_id: u32,
@@ -103,12 +109,34 @@ pub enum TrackAutomationTarget {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TrackAutomationMode {
+    Read,
+    Touch,
+    Latch,
+    Write,
+}
+
+impl fmt::Display for TrackAutomationMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Read => write!(f, "Read"),
+            Self::Touch => write!(f, "Touch"),
+            Self::Latch => write!(f, "Latch"),
+            Self::Write => write!(f, "Write"),
+        }
+    }
+}
+
 impl fmt::Display for TrackAutomationTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Volume => write!(f, "Volume"),
             Self::Balance => write!(f, "Balance"),
             Self::Mute => write!(f, "Mute"),
+            Self::Lv2Parameter {
+                instance_id, index, ..
+            } => write!(f, "LV2 {}:{}", instance_id, index),
             Self::Vst3Parameter {
                 instance_id,
                 param_id,
@@ -302,6 +330,9 @@ pub enum Message {
     TrackAutomationToggle {
         track_name: String,
     },
+    TrackAutomationCycleMode {
+        track_name: String,
+    },
     TrackAutomationAddLane {
         track_name: String,
         target: TrackAutomationTarget,
@@ -313,6 +344,10 @@ pub enum Message {
     TrackAutomationAddVst3Lanes {
         track_name: String,
         plugin_path: String,
+    },
+    TrackAutomationAddLv2Lanes {
+        track_name: String,
+        plugin_uri: String,
     },
     TrackAutomationLaneHover {
         track_name: String,

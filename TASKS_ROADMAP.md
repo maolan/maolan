@@ -19,12 +19,14 @@ Last updated: 2026-03-05
     - [x] Playback tick evaluates automation value at transport sample
     - [x] Sends non-history engine actions for Volume/Balance/Mute automation
     - [x] Runtime smoothing/thresholds to avoid excessive action spam
-  - [ ] Step 5: Plugin parameter automation targets + playback
+  - [x] Step 5: Plugin parameter automation targets + playback
     - [x] CLAP: add parameter automation lanes from loaded plugin (`Auto` button)
     - [x] CLAP: playback applies parameter lanes via `TrackSetClapParameterAt`
     - [x] VST3: parameter lane creation + playback path
-    - [ ] LV2: parameter lane creation + playback path
+    - [x] LV2: parameter lane creation + playback path
   - [ ] Step 6: Automation write modes (Read/Touch/Latch/Write)
+    - [x] Track automation mode field + UI cycle button
+    - [x] Playback honors `Write` mode by skipping readback
 - [ ] Quantize/Humanize/Groove
 - [ ] Tempo/Time Signature track editor
 - [ ] Comping/Take lanes (MIDI + audio)
