@@ -31,6 +31,62 @@ use std::{
 use tracing::error;
 
 impl Maolan {
+    fn assign_take_lanes<T, FBase, FStart, FLen, FPreferred>(
+        clips: &[T],
+        base_lane: FBase,
+        start_sample: FStart,
+        length_samples: FLen,
+        preferred_take_lane: FPreferred,
+    ) -> (Vec<usize>, Vec<usize>)
+    where
+        FBase: Fn(&T) -> usize,
+        FStart: Fn(&T) -> usize,
+        FLen: Fn(&T) -> usize,
+        FPreferred: Fn(&T) -> Option<usize>,
+    {
+        let mut take_index_by_clip = vec![0_usize; clips.len()];
+        let mut max_takes_by_lane: HashMap<usize, usize> = HashMap::new();
+        let mut active_by_lane: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
+
+        let mut order: Vec<usize> = (0..clips.len()).collect();
+        order.sort_by_key(|idx| {
+            let clip = &clips[*idx];
+            (base_lane(clip), start_sample(clip), *idx)
+        });
+
+        for idx in order {
+            let clip = &clips[idx];
+            let lane = base_lane(clip);
+            let start = start_sample(clip);
+            let end = start.saturating_add(length_samples(clip));
+            let active = active_by_lane.entry(lane).or_default();
+            active.retain(|(existing_end, _)| *existing_end > start);
+            let preferred = preferred_take_lane(clip);
+            let mut take_idx = preferred.unwrap_or(0);
+            if preferred.is_none() {
+                while active.iter().any(|(_, existing_take)| *existing_take == take_idx) {
+                    take_idx = take_idx.saturating_add(1);
+                }
+            }
+            active.push((end, take_idx));
+            take_index_by_clip[idx] = take_idx;
+            max_takes_by_lane
+                .entry(lane)
+                .and_modify(|max_take| *max_take = (*max_take).max(take_idx.saturating_add(1)))
+                .or_insert(take_idx.saturating_add(1));
+        }
+
+        let take_count_by_clip = clips
+            .iter()
+            .map(|clip| {
+                let lane = base_lane(clip);
+                max_takes_by_lane.get(&lane).copied().unwrap_or(1).max(1)
+            })
+            .collect::<Vec<_>>();
+
+        (take_index_by_clip, take_count_by_clip)
+    }
+
     fn timing_at_sample(state: &crate::state::StateData, sample: usize) -> (f32, u8, u8) {
         let bpm = state
             .tempo_points
@@ -895,6 +951,230 @@ impl Maolan {
             return Some((track.name.clone(), lane));
         }
         None
+    }
+
+    fn comp_target_at_position(&self, position: Point) -> Option<(String, Kind, usize, usize)> {
+        let pps = self.pixels_per_sample().max(1.0e-6);
+        let sample = (position.x.max(0.0) / pps) as usize;
+        let state = self.state.blocking_read();
+        let mut y_offset = 0.0_f32;
+        for track in &state.tracks {
+            let track_top = y_offset;
+            let track_bottom = y_offset + track.height;
+            if position.y < track_top || position.y > track_bottom {
+                y_offset += track.height;
+                continue;
+            }
+            let local_y = (position.y - y_offset).max(0.0);
+            let layout = track.lane_layout();
+            let lane_clip_h = (layout.lane_height - 6.0).max(12.0);
+            if track.audio.ins > 0 {
+                let audio_top = track.lane_top(Kind::Audio, 0) + 3.0;
+                let audio_bottom = audio_top + lane_clip_h;
+                if local_y >= audio_top && local_y <= audio_bottom {
+                    let (take_idx, take_count) = Self::assign_take_lanes(
+                        &track.audio.clips,
+                        |_| 0,
+                        |clip| clip.start,
+                        |clip| clip.length,
+                        |clip| clip.take_lane_override,
+                    );
+                    let overlap = track
+                        .audio
+                        .clips
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, clip)| {
+                            let end = clip.start.saturating_add(clip.length);
+                            clip.start <= sample && sample < end
+                        })
+                        .map(|(idx, _)| idx)
+                        .collect::<Vec<_>>();
+                    let max_takes = overlap
+                        .iter()
+                        .filter_map(|idx| take_count.get(*idx).copied())
+                        .max()
+                        .unwrap_or(1)
+                        .max(1);
+                    let rel_y = (local_y - audio_top).max(0.0);
+                    let slot_h = (lane_clip_h / max_takes as f32).max(1.0);
+                    let desired_take = (rel_y / slot_h).floor() as usize;
+                    if let Some(found) = overlap
+                        .iter()
+                        .filter_map(|idx| take_idx.get(*idx).copied())
+                        .find(|idx| *idx == desired_take)
+                    {
+                        return Some((track.name.clone(), Kind::Audio, 0, found));
+                    }
+                    return Some((track.name.clone(), Kind::Audio, 0, desired_take));
+                }
+            }
+            if track.midi.ins > 0 {
+                let midi_lane = track
+                    .lane_index_at_y(Kind::MIDI, local_y)
+                    .min(track.midi.ins.saturating_sub(1));
+                let midi_top = track.lane_top(Kind::MIDI, midi_lane) + 3.0;
+                let midi_bottom = midi_top + lane_clip_h;
+                if local_y >= midi_top && local_y <= midi_bottom {
+                    let (take_idx, take_count) = Self::assign_take_lanes(
+                        &track.midi.clips,
+                        |clip| clip.input_channel.min(track.midi.ins.saturating_sub(1)),
+                        |clip| clip.start,
+                        |clip| clip.length,
+                        |clip| clip.take_lane_override,
+                    );
+                    let overlap = track
+                        .midi
+                        .clips
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, clip)| {
+                            let end = clip.start.saturating_add(clip.length);
+                            let base = clip.input_channel.min(track.midi.ins.saturating_sub(1));
+                            base == midi_lane && clip.start <= sample && sample < end
+                        })
+                        .map(|(idx, _)| idx)
+                        .collect::<Vec<_>>();
+                    let max_takes = overlap
+                        .iter()
+                        .filter_map(|idx| take_count.get(*idx).copied())
+                        .max()
+                        .unwrap_or(1)
+                        .max(1);
+                    let rel_y = (local_y - midi_top).max(0.0);
+                    let slot_h = (lane_clip_h / max_takes as f32).max(1.0);
+                    let desired_take = (rel_y / slot_h).floor() as usize;
+                    if let Some(found) = overlap
+                        .iter()
+                        .filter_map(|idx| take_idx.get(*idx).copied())
+                        .find(|idx| *idx == desired_take)
+                    {
+                        return Some((track.name.clone(), Kind::MIDI, midi_lane, found));
+                    }
+                    return Some((track.name.clone(), Kind::MIDI, midi_lane, desired_take));
+                }
+            }
+            return None;
+        }
+        None
+    }
+
+    fn comp_swipe_updates(
+        &self,
+        track_name: &str,
+        kind: Kind,
+        base_lane: usize,
+        take_lane: usize,
+        start_sample: usize,
+        end_sample: usize,
+    ) -> Vec<(usize, bool)> {
+        let state = self.state.blocking_read();
+        let Some(track) = state.tracks.iter().find(|t| t.name == track_name) else {
+            return Vec::new();
+        };
+        match kind {
+            Kind::Audio => {
+                let (take_idx, _) = Self::assign_take_lanes(
+                    &track.audio.clips,
+                    |_| 0,
+                    |clip| clip.start,
+                    |clip| clip.length,
+                    |clip| clip.take_lane_override,
+                );
+                track
+                    .audio
+                    .clips
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, clip)| {
+                        if clip.take_lane_locked {
+                            return None;
+                        }
+                        let end = clip.start.saturating_add(clip.length);
+                        if clip.start >= end_sample || end <= start_sample || base_lane != 0 {
+                            return None;
+                        }
+                        let should_mute = take_idx.get(idx).copied().unwrap_or(0) != take_lane;
+                        (clip.muted != should_mute).then_some((idx, should_mute))
+                    })
+                    .collect()
+            }
+            Kind::MIDI => {
+                let (take_idx, _) = Self::assign_take_lanes(
+                    &track.midi.clips,
+                    |clip| clip.input_channel.min(track.midi.ins.saturating_sub(1)),
+                    |clip| clip.start,
+                    |clip| clip.length,
+                    |clip| clip.take_lane_override,
+                );
+                track
+                    .midi
+                    .clips
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, clip)| {
+                        if clip.take_lane_locked {
+                            return None;
+                        }
+                        let end = clip.start.saturating_add(clip.length);
+                        let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
+                        if clip.start >= end_sample || end <= start_sample || lane != base_lane {
+                            return None;
+                        }
+                        let should_mute = take_idx.get(idx).copied().unwrap_or(0) != take_lane;
+                        (clip.muted != should_mute).then_some((idx, should_mute))
+                    })
+                .collect()
+            }
+        }
+    }
+
+    fn apply_comp_swipe(&mut self) -> Task<Message> {
+        let (start, end) = {
+            let mut state = self.state.blocking_write();
+            let start = state.comp_swipe_start.take();
+            let end = state.comp_swipe_end.take();
+            (start, end)
+        };
+        let (Some(start), Some(end)) = (start, end) else {
+            return Task::none();
+        };
+        if (start.x - end.x).abs() <= 1.0 || (start.y - end.y).abs() <= 1.0 {
+            return Task::none();
+        }
+        let pps = self.pixels_per_sample().max(1.0e-6);
+        let swipe_start_sample = (start.x.min(end.x).max(0.0) / pps) as usize;
+        let swipe_end_sample = (start.x.max(end.x).max(0.0) / pps) as usize;
+        if swipe_end_sample <= swipe_start_sample {
+            return Task::none();
+        }
+        let target_pos = Point::new(start.x, (start.y + end.y) * 0.5);
+        let Some((track_name, kind, base_lane, take_lane)) = self.comp_target_at_position(target_pos)
+        else {
+            return Task::none();
+        };
+        let updates = self.comp_swipe_updates(
+            &track_name,
+            kind,
+            base_lane,
+            take_lane,
+            swipe_start_sample,
+            swipe_end_sample,
+        );
+        if updates.is_empty() {
+            return Task::none();
+        }
+        let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+        for (idx, muted) in updates {
+            tasks.push(self.send(Action::SetClipMuted {
+                track_name: track_name.clone(),
+                clip_index: idx,
+                kind,
+                muted,
+            }));
+        }
+        tasks.push(self.send(Action::EndHistoryGroup));
+        Task::batch(tasks)
     }
 
     fn create_empty_midi_clip_from_drag(&mut self, start: Point, end: Point) -> Task<Message> {
@@ -1932,6 +2212,17 @@ impl Maolan {
             }
             Message::SetSnapMode(mode) => {
                 self.snap_mode = mode;
+            }
+            Message::ToggleCompTool => {
+                self.edit_tool = match self.edit_tool {
+                    crate::message::EditTool::Select => crate::message::EditTool::Comp,
+                    crate::message::EditTool::Comp => crate::message::EditTool::Select,
+                };
+                if !matches!(self.edit_tool, crate::message::EditTool::Comp) {
+                    let mut state = self.state.blocking_write();
+                    state.comp_swipe_start = None;
+                    state.comp_swipe_end = None;
+                }
             }
             Message::RecordingPreviewTick => {
                 if self.playing
@@ -3505,6 +3796,9 @@ impl Maolan {
                                     fade_enabled: *fade_enabled,
                                     fade_in_samples: *fade_in_samples,
                                     fade_out_samples: *fade_out_samples,
+                                    take_lane_override: None,
+                                    take_lane_pinned: false,
+                                    take_lane_locked: false,
                                 });
                             }
                             Kind::MIDI => {
@@ -3519,6 +3813,9 @@ impl Maolan {
                                     fade_enabled: *fade_enabled,
                                     fade_in_samples: *fade_in_samples,
                                     fade_out_samples: *fade_out_samples,
+                                    take_lane_override: None,
+                                    take_lane_pinned: false,
+                                    take_lane_locked: false,
                                 });
                             }
                         }
@@ -5281,7 +5578,9 @@ impl Maolan {
                                 .enumerate()
                                 .filter_map(|(idx, clip)| {
                                     let end = clip.start.saturating_add(clip.length);
-                                    (selected.start < end && clip.start < selected_end)
+                                    (!clip.take_lane_locked
+                                        && selected.start < end
+                                        && clip.start < selected_end)
                                         .then_some((idx, idx != clip_idx))
                                 })
                                 .collect::<Vec<_>>()
@@ -5298,7 +5597,9 @@ impl Maolan {
                                 .enumerate()
                                 .filter_map(|(idx, clip)| {
                                     let end = clip.start.saturating_add(clip.length);
-                                    (selected.start < end && clip.start < selected_end)
+                                    (!clip.take_lane_locked
+                                        && selected.start < end
+                                        && clip.start < selected_end)
                                         .then_some((idx, idx != clip_idx))
                                 })
                                 .collect::<Vec<_>>()
@@ -5343,7 +5644,9 @@ impl Maolan {
                                 .enumerate()
                                 .filter_map(|(idx, clip)| {
                                     let end = clip.start.saturating_add(clip.length);
-                                    (selected.start < end && clip.start < selected_end)
+                                    (!clip.take_lane_locked
+                                        && selected.start < end
+                                        && clip.start < selected_end)
                                         .then_some((idx, clip.start, clip.muted))
                                 })
                                 .collect()
@@ -5360,7 +5663,9 @@ impl Maolan {
                                 .enumerate()
                                 .filter_map(|(idx, clip)| {
                                     let end = clip.start.saturating_add(clip.length);
-                                    (selected.start < end && clip.start < selected_end)
+                                    (!clip.take_lane_locked
+                                        && selected.start < end
+                                        && clip.start < selected_end)
                                         .then_some((idx, clip.start, clip.muted))
                                 })
                                 .collect()
@@ -5420,7 +5725,9 @@ impl Maolan {
                                 .enumerate()
                                 .filter_map(|(idx, clip)| {
                                     let end = clip.start.saturating_add(clip.length);
-                                    (selected.start < end && clip.start < selected_end)
+                                    (!clip.take_lane_locked
+                                        && selected.start < end
+                                        && clip.start < selected_end)
                                         .then_some((idx, false))
                                 })
                                 .collect::<Vec<_>>()
@@ -5437,7 +5744,9 @@ impl Maolan {
                                 .enumerate()
                                 .filter_map(|(idx, clip)| {
                                     let end = clip.start.saturating_add(clip.length);
-                                    (selected.start < end && clip.start < selected_end)
+                                    (!clip.take_lane_locked
+                                        && selected.start < end
+                                        && clip.start < selected_end)
                                         .then_some((idx, false))
                                 })
                                 .collect::<Vec<_>>()
@@ -5458,6 +5767,153 @@ impl Maolan {
                 }
                 tasks.push(self.send(Action::EndHistoryGroup));
                 return Task::batch(tasks);
+            }
+            Message::ClipTakeLanePinToggle {
+                ref track_idx,
+                clip_idx,
+                kind,
+            } => {
+                let mut state = self.state.blocking_write();
+                let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_idx) else {
+                    return Task::none();
+                };
+                match kind {
+                    Kind::Audio => {
+                        if clip_idx >= track.audio.clips.len() {
+                            return Task::none();
+                        }
+                        let current_take = {
+                            let (take_idx, _) = Self::assign_take_lanes(
+                                &track.audio.clips,
+                                |_| 0,
+                                |clip| clip.start,
+                                |clip| clip.length,
+                                |clip| clip.take_lane_override,
+                            );
+                            take_idx.get(clip_idx).copied().unwrap_or(0)
+                        };
+                        let clip = &mut track.audio.clips[clip_idx];
+                        if clip.take_lane_pinned {
+                            clip.take_lane_pinned = false;
+                            if !clip.take_lane_locked {
+                                clip.take_lane_override = None;
+                            }
+                        } else {
+                            clip.take_lane_pinned = true;
+                            clip.take_lane_override = Some(current_take);
+                        }
+                    }
+                    Kind::MIDI => {
+                        if clip_idx >= track.midi.clips.len() {
+                            return Task::none();
+                        }
+                        let lane_count = track.midi.ins.max(1);
+                        let (take_idx, _) = Self::assign_take_lanes(
+                            &track.midi.clips,
+                            |clip| clip.input_channel.min(lane_count.saturating_sub(1)),
+                            |clip| clip.start,
+                            |clip| clip.length,
+                            |clip| clip.take_lane_override,
+                        );
+                        let current_take = take_idx.get(clip_idx).copied().unwrap_or(0);
+                        let clip = &mut track.midi.clips[clip_idx];
+                        if clip.take_lane_pinned {
+                            clip.take_lane_pinned = false;
+                            if !clip.take_lane_locked {
+                                clip.take_lane_override = None;
+                            }
+                        } else {
+                            clip.take_lane_pinned = true;
+                            clip.take_lane_override = Some(current_take);
+                        }
+                    }
+                }
+            }
+            Message::ClipTakeLaneLockToggle {
+                ref track_idx,
+                clip_idx,
+                kind,
+            } => {
+                let mut state = self.state.blocking_write();
+                let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_idx) else {
+                    return Task::none();
+                };
+                match kind {
+                    Kind::Audio => {
+                        let Some(clip) = track.audio.clips.get_mut(clip_idx) else {
+                            return Task::none();
+                        };
+                        clip.take_lane_locked = !clip.take_lane_locked;
+                    }
+                    Kind::MIDI => {
+                        let Some(clip) = track.midi.clips.get_mut(clip_idx) else {
+                            return Task::none();
+                        };
+                        clip.take_lane_locked = !clip.take_lane_locked;
+                    }
+                }
+            }
+            Message::ClipTakeLaneMove {
+                ref track_idx,
+                clip_idx,
+                kind,
+                delta,
+            } => {
+                let mut state = self.state.blocking_write();
+                let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_idx) else {
+                    return Task::none();
+                };
+                match kind {
+                    Kind::Audio => {
+                        if clip_idx >= track.audio.clips.len() {
+                            return Task::none();
+                        }
+                        let (take_idx, _) = Self::assign_take_lanes(
+                            &track.audio.clips,
+                            |_| 0,
+                            |clip| clip.start,
+                            |clip| clip.length,
+                            |clip| clip.take_lane_override,
+                        );
+                        let current_take = take_idx.get(clip_idx).copied().unwrap_or(0);
+                        let clip = &mut track.audio.clips[clip_idx];
+                        if clip.take_lane_locked {
+                            return Task::none();
+                        }
+                        let next_take = if delta.is_negative() {
+                            current_take.saturating_sub(delta.unsigned_abs() as usize)
+                        } else {
+                            current_take.saturating_add(delta as usize)
+                        };
+                        clip.take_lane_override = Some(next_take);
+                        clip.take_lane_pinned = true;
+                    }
+                    Kind::MIDI => {
+                        if clip_idx >= track.midi.clips.len() {
+                            return Task::none();
+                        }
+                        let lane_count = track.midi.ins.max(1);
+                        let (take_idx, _) = Self::assign_take_lanes(
+                            &track.midi.clips,
+                            |clip| clip.input_channel.min(lane_count.saturating_sub(1)),
+                            |clip| clip.start,
+                            |clip| clip.length,
+                            |clip| clip.take_lane_override,
+                        );
+                        let current_take = take_idx.get(clip_idx).copied().unwrap_or(0);
+                        let clip = &mut track.midi.clips[clip_idx];
+                        if clip.take_lane_locked {
+                            return Task::none();
+                        }
+                        let next_take = if delta.is_negative() {
+                            current_take.saturating_sub(delta.unsigned_abs() as usize)
+                        } else {
+                            current_take.saturating_add(delta as usize)
+                        };
+                        clip.take_lane_override = Some(next_take);
+                        clip.take_lane_pinned = true;
+                    }
+                }
             }
             Message::TrackRenameShow(ref track_name) => {
                 let mut state = self.state.blocking_write();
@@ -5578,6 +6034,8 @@ impl Maolan {
                 state.mouse_right_down = false;
                 state.clip_marquee_start = None;
                 state.clip_marquee_end = None;
+                state.comp_swipe_start = None;
+                state.comp_swipe_end = None;
                 state.midi_clip_create_start = None;
                 state.midi_clip_create_end = None;
                 state.selected_clips.clear();
@@ -5592,6 +6050,10 @@ impl Maolan {
                             state.mouse_left_down = true;
                             state.clip_marquee_start = None;
                             state.clip_marquee_end = None;
+                            if matches!(self.edit_tool, crate::message::EditTool::Comp) {
+                                state.comp_swipe_start = Some(state.cursor);
+                                state.comp_swipe_end = Some(state.cursor);
+                            }
                         }
                         mouse::Button::Right => {
                             state.mouse_right_down = true;
@@ -5853,6 +6315,9 @@ impl Maolan {
                             let Some(clip) = track.audio.clips.get(clip_index) else {
                                 return Task::none();
                             };
+                            if clip.take_lane_locked {
+                                return Task::none();
+                            }
                             let initial_value = if is_right_side {
                                 clip.length
                             } else {
@@ -5872,6 +6337,9 @@ impl Maolan {
                             let Some(clip) = track.midi.clips.get(clip_index) else {
                                 return Task::none();
                             };
+                            if clip.take_lane_locked {
+                                return Task::none();
+                            }
                             let initial_value = if is_right_side {
                                 clip.length
                             } else {
@@ -5900,18 +6368,24 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) {
                     let initial_samples = match kind {
-                        Kind::Audio => track.audio.clips.get(clip_idx).map(|clip| {
+                        Kind::Audio => track.audio.clips.get(clip_idx).and_then(|clip| {
+                            if clip.take_lane_locked {
+                                return None;
+                            }
                             if is_fade_out {
-                                clip.fade_out_samples
+                                Some(clip.fade_out_samples)
                             } else {
-                                clip.fade_in_samples
+                                Some(clip.fade_in_samples)
                             }
                         }),
-                        Kind::MIDI => track.midi.clips.get(clip_idx).map(|clip| {
+                        Kind::MIDI => track.midi.clips.get(clip_idx).and_then(|clip| {
+                            if clip.take_lane_locked {
+                                return None;
+                            }
                             if is_fade_out {
-                                clip.fade_out_samples
+                                Some(clip.fade_out_samples)
                             } else {
-                                clip.fade_in_samples
+                                Some(clip.fade_in_samples)
                             }
                         }),
                     };
@@ -6085,6 +6559,15 @@ impl Maolan {
                 }
                 let mouse_left_down = self.state.blocking_read().mouse_left_down;
                 if mouse_left_down && !matches!(resizing, Some(Resizing::Clip { .. })) {
+                    if matches!(self.edit_tool, crate::message::EditTool::Comp)
+                        && matches!(self.state.blocking_read().view, View::Workspace)
+                    {
+                        let mut state = self.state.blocking_write();
+                        if state.comp_swipe_start.is_some() {
+                            state.comp_swipe_end = Some(position);
+                        }
+                        return Task::none();
+                    }
                     if let Some(active) = self.clip.as_mut() {
                         active.end = position;
                         return iced_drop::zones_on_point(
@@ -6140,6 +6623,7 @@ impl Maolan {
                     && matches!(state.view, View::Workspace)
                     && self.modal.is_none()
                     && state.clip_marquee_start.is_none()
+                    && matches!(self.edit_tool, crate::message::EditTool::Select)
                 {
                     state.clip_marquee_start = Some(position);
                     state.clip_marquee_end = Some(position);
@@ -6157,6 +6641,21 @@ impl Maolan {
                 }
             }
             Message::MouseReleased => {
+                if matches!(self.edit_tool, crate::message::EditTool::Comp) {
+                    let had_swipe = {
+                        let mut state = self.state.blocking_write();
+                        state.mouse_left_down = false;
+                        state.mouse_right_down = false;
+                        state.clip_click_consumed = false;
+                        state.resizing = None;
+                        self.clip = None;
+                        state.comp_swipe_start.is_some() && state.comp_swipe_end.is_some()
+                    };
+                    if had_swipe {
+                        return self.apply_comp_swipe();
+                    }
+                    return Task::none();
+                }
                 let active = std::mem::take(&mut self.touch_active_keys);
                 for (track_name, keys) in active {
                     if let Some(values) = self.touch_automation_overrides.get_mut(&track_name) {
@@ -6175,6 +6674,8 @@ impl Maolan {
                     state.clip_click_consumed = false;
                     state.clip_marquee_start = None;
                     state.clip_marquee_end = None;
+                    state.comp_swipe_start = None;
+                    state.comp_swipe_end = None;
                     state.midi_clip_create_start = None;
                     state.midi_clip_create_end = None;
                     self.clip = None;
@@ -6329,6 +6830,9 @@ impl Maolan {
                 self.clip_preview_target_track = None;
             }
             Message::ClipDrag(ref clip) => {
+                if matches!(self.edit_tool, crate::message::EditTool::Comp) {
+                    return Task::none();
+                }
                 if !self.state.blocking_read().mouse_left_down {
                     return Task::none();
                 }

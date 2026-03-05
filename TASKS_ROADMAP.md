@@ -43,12 +43,12 @@ Last updated: 2026-03-05
   - [x] Engine transport timing sync (plugins receive current BPM + time signature)
   - [x] Tempo/time-signature change events on timeline (not just global current values)
   - [x] Direct numeric editing UI (typed BPM/TS with validation)
-- [ ] Comping/Take lanes (MIDI + audio)
+- [x] Comping/Take lanes (MIDI + audio)
   - [x] First pass: clip mute state in engine/UI + "Set Active Take" overlap comping action
   - [x] Second pass: visual take-lane stacking for overlapping clips in timeline
   - [x] Third pass: overlap-group actions (`Next Active Take`, `Unmute All Takes`)
-  - [ ] Explicit take lane controls (pin/lock lane, reorder lanes)
-  - [ ] Dedicated comp tool/edit mode for swipe comping
+  - [x] Explicit take lane controls (pin/lock lane, reorder lanes)
+  - [x] Dedicated comp tool/edit mode for swipe comping
 
 ## Phase 2 - Production Workflow
 

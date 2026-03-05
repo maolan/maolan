@@ -1,5 +1,5 @@
 use crate::{
-    message::{DraggedClip, Message, SnapMode},
+    message::{DraggedClip, EditTool, Message, SnapMode},
     state::{State, StateData, Track},
 };
 use iced::{
@@ -18,6 +18,7 @@ struct TrackElementViewArgs<'a> {
     pixels_per_sample: f32,
     samples_per_bar: f32,
     snap_mode: SnapMode,
+    edit_tool: EditTool,
     samples_per_beat: f64,
     active_clip_drag: Option<&'a DraggedClip>,
     active_target_track: Option<&'a str>,
@@ -36,16 +37,18 @@ fn clean_clip_name(name: &str) -> String {
     cleaned
 }
 
-fn assign_take_lanes<T, FBase, FStart, FLen>(
+fn assign_take_lanes<T, FBase, FStart, FLen, FPreferred>(
     clips: &[T],
     base_lane: FBase,
     start_sample: FStart,
     length_samples: FLen,
+    preferred_take_lane: FPreferred,
 ) -> (Vec<usize>, Vec<usize>)
 where
     FBase: Fn(&T) -> usize,
     FStart: Fn(&T) -> usize,
     FLen: Fn(&T) -> usize,
+    FPreferred: Fn(&T) -> Option<usize>,
 {
     let mut take_index_by_clip = vec![0_usize; clips.len()];
     let mut max_takes_by_lane: HashMap<usize, usize> = HashMap::new();
@@ -67,9 +70,11 @@ where
         // Keep only active overlaps in this lane (touching edges is not overlap).
         active.retain(|(existing_end, _)| *existing_end > start);
 
-        let mut take_idx = 0_usize;
-        while active.iter().any(|(_, existing_take)| *existing_take == take_idx) {
-            take_idx = take_idx.saturating_add(1);
+        let mut take_idx = preferred_take_lane(clip).unwrap_or(0);
+        if preferred_take_lane(clip).is_none() {
+            while active.iter().any(|(_, existing_take)| *existing_take == take_idx) {
+                take_idx = take_idx.saturating_add(1);
+            }
         }
         active.push((end, take_idx));
         take_index_by_clip[idx] = take_idx;
@@ -181,6 +186,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         pixels_per_sample,
         samples_per_bar,
         snap_mode,
+        edit_tool,
         samples_per_beat,
         active_clip_drag,
         active_target_track,
@@ -226,13 +232,19 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     let lane_height = layout.lane_height.max(12.0);
     let lane_clip_height = (lane_height - 6.0).max(12.0);
     let track_name_cloned = track.name.clone();
-    let (audio_take_idx, audio_take_count) =
-        assign_take_lanes(&track.audio.clips, |_| 0, |clip| clip.start, |clip| clip.length);
+    let (audio_take_idx, audio_take_count) = assign_take_lanes(
+        &track.audio.clips,
+        |_| 0,
+        |clip| clip.start,
+        |clip| clip.length,
+        |clip| clip.take_lane_override,
+    );
     let (midi_take_idx, midi_take_count) = assign_take_lanes(
         &track.midi.clips,
         |clip| clip.input_channel.min(track.midi.ins.saturating_sub(1)),
         |clip| clip.start,
         |clip| clip.length,
+        |clip| clip.take_lane_override,
     );
 
     clips.push(
@@ -405,6 +417,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
     for (index, clip) in track.audio.clips.iter().enumerate() {
         let clip_name = clip.name.clone();
+        let clip_label = format!(
+            "{}{}{}",
+            clean_clip_name(&clip_name),
+            if clip.take_lane_pinned { " [P]" } else { "" },
+            if clip.take_lane_locked { " [L]" } else { "" }
+        );
         let clip_peaks = clip.peaks.clone();
         let clip_muted = clip.muted;
         let clip_id = crate::state::ClipId {
@@ -516,7 +534,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 clip.length,
                 clip.max_length_samples,
             ),
-            container(text(clean_clip_name(&clip_name)).size(12))
+            container(text(clip_label.clone()).size(12))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .padding(5)
@@ -712,29 +730,31 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         };
 
         if !dragged_to_other_track {
-            let clip_with_mouse = mouse_area(clip_with_fades)
-                .on_press(Message::SelectClip {
+            let clip_with_mouse = {
+                let base = mouse_area(clip_with_fades).on_press(Message::SelectClip {
                     track_idx: track_name_cloned.clone(),
                     clip_idx: index,
                     kind: Kind::Audio,
-                })
-                .on_move({
+                });
+                if matches!(edit_tool, EditTool::Select) && !clip.take_lane_locked {
                     let track_name_for_drag_closure = track_name_cloned.clone();
-                    move |point| {
-                        let mut clip_data = DraggedClip::new(
-                            Kind::Audio,
-                            index,
-                            track_name_for_drag_closure.clone(),
-                        );
+                    base.on_move(move |point| {
+                        let mut clip_data =
+                            DraggedClip::new(Kind::Audio, index, track_name_for_drag_closure.clone());
                         clip_data.start = point;
                         Message::ClipDrag(clip_data)
-                    }
-                });
+                    })
+                } else {
+                    base
+                }
+            };
 
             let track_idx_for_menu = track_name_cloned.clone();
             let index_for_menu = index;
             let fade_enabled = clip.fade_enabled;
             let muted_for_menu = clip_muted;
+            let pinned_for_menu = clip.take_lane_pinned;
+            let locked_for_menu = clip.take_lane_locked;
             let clip_with_context = ContextMenu::new(clip_with_mouse, move || {
                 column![
                     button("Rename").on_press(Message::ClipRenameShow {
@@ -756,6 +776,38 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         track_idx: track_idx_for_menu.clone(),
                         clip_idx: index_for_menu,
                         kind: Kind::Audio,
+                    }),
+                    button(if pinned_for_menu {
+                        "Unpin Take Lane"
+                    } else {
+                        "Pin Take Lane"
+                    })
+                    .on_press(Message::ClipTakeLanePinToggle {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::Audio,
+                    }),
+                    button(if locked_for_menu {
+                        "Unlock Take Lane"
+                    } else {
+                        "Lock Take Lane"
+                    })
+                    .on_press(Message::ClipTakeLaneLockToggle {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::Audio,
+                    }),
+                    button("Take Lane Up").on_press(Message::ClipTakeLaneMove {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::Audio,
+                        delta: -1,
+                    }),
+                    button("Take Lane Down").on_press(Message::ClipTakeLaneMove {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::Audio,
+                        delta: 1,
                     }),
                     button(if muted_for_menu {
                         "Unmute Take"
@@ -801,7 +853,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     clip.length,
                     clip.max_length_samples,
                 ),
-                container(text(clean_clip_name(&clip_name)).size(12))
+                container(text(clip_label).size(12))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .padding(5)
@@ -856,6 +908,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     }
     for (index, clip) in track.midi.clips.iter().enumerate() {
         let clip_name = clip.name.clone();
+        let clip_label = format!(
+            "{}{}{}",
+            clean_clip_name(&clip_name),
+            if clip.take_lane_pinned { " [P]" } else { "" },
+            if clip.take_lane_locked { " [L]" } else { "" }
+        );
         let clip_muted = clip.muted;
         let clip_id = crate::state::ClipId {
             track_idx: track_name_cloned.clone(),
@@ -957,7 +1015,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         ));
 
         let clip_content =
-            container(container(text(clean_clip_name(&clip_name)).size(12)).padding(5))
+            container(container(text(clip_label.clone()).size(12)).padding(5))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .padding(0)
@@ -1148,33 +1206,36 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         };
 
         if !dragged_to_other_track {
-            let clip_with_mouse = mouse_area(clip_with_fades)
-                .on_press(Message::SelectClip {
-                    track_idx: track_name_cloned.clone(),
-                    clip_idx: index,
-                    kind: Kind::MIDI,
-                })
-                .on_double_click(Message::OpenMidiPiano {
-                    track_idx: track_name_cloned.clone(),
-                    clip_idx: index,
-                })
-                .on_move({
+            let clip_with_mouse = {
+                let base = mouse_area(clip_with_fades)
+                    .on_press(Message::SelectClip {
+                        track_idx: track_name_cloned.clone(),
+                        clip_idx: index,
+                        kind: Kind::MIDI,
+                    })
+                    .on_double_click(Message::OpenMidiPiano {
+                        track_idx: track_name_cloned.clone(),
+                        clip_idx: index,
+                    });
+                if matches!(edit_tool, EditTool::Select) && !clip.take_lane_locked {
                     let track_name_for_drag_closure = track_name_cloned.clone();
-                    move |point| {
-                        let mut clip_data = DraggedClip::new(
-                            Kind::MIDI,
-                            index,
-                            track_name_for_drag_closure.clone(),
-                        );
+                    base.on_move(move |point| {
+                        let mut clip_data =
+                            DraggedClip::new(Kind::MIDI, index, track_name_for_drag_closure.clone());
                         clip_data.start = point;
                         Message::ClipDrag(clip_data)
-                    }
-                });
+                    })
+                } else {
+                    base
+                }
+            };
 
             let track_idx_for_menu = track_name_cloned.clone();
             let index_for_menu = index;
             let fade_enabled = clip.fade_enabled;
             let muted_for_menu = clip_muted;
+            let pinned_for_menu = clip.take_lane_pinned;
+            let locked_for_menu = clip.take_lane_locked;
             let clip_with_context = ContextMenu::new(clip_with_mouse, move || {
                 column![
                     button("Rename").on_press(Message::ClipRenameShow {
@@ -1196,6 +1257,38 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         track_idx: track_idx_for_menu.clone(),
                         clip_idx: index_for_menu,
                         kind: Kind::MIDI,
+                    }),
+                    button(if pinned_for_menu {
+                        "Unpin Take Lane"
+                    } else {
+                        "Pin Take Lane"
+                    })
+                    .on_press(Message::ClipTakeLanePinToggle {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::MIDI,
+                    }),
+                    button(if locked_for_menu {
+                        "Unlock Take Lane"
+                    } else {
+                        "Lock Take Lane"
+                    })
+                    .on_press(Message::ClipTakeLaneLockToggle {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::MIDI,
+                    }),
+                    button("Take Lane Up").on_press(Message::ClipTakeLaneMove {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::MIDI,
+                        delta: -1,
+                    }),
+                    button("Take Lane Down").on_press(Message::ClipTakeLaneMove {
+                        track_idx: track_idx_for_menu.clone(),
+                        clip_idx: index_for_menu,
+                        kind: Kind::MIDI,
+                        delta: 1,
                     }),
                     button(if muted_for_menu {
                         "Unmute Take"
@@ -1233,7 +1326,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = snap_sample(clip.start as f32 + delta_samples);
             let preview_content =
-                container(container(text(clean_clip_name(&clip_name)).size(12)).padding(5))
+                container(container(text(clip_label).size(12)).padding(5))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .padding(0)
@@ -1569,6 +1662,7 @@ pub struct EditorViewArgs<'a> {
     pub pixels_per_sample: f32,
     pub samples_per_bar: f32,
     pub snap_mode: SnapMode,
+    pub edit_tool: EditTool,
     pub samples_per_beat: f64,
     pub active_clip_drag: Option<&'a DraggedClip>,
     pub active_target_track: Option<&'a str>,
@@ -1586,6 +1680,7 @@ impl Editor {
             pixels_per_sample,
             samples_per_bar,
             snap_mode,
+            edit_tool,
             samples_per_beat,
             active_clip_drag,
             active_target_track,
@@ -1601,6 +1696,7 @@ impl Editor {
                 pixels_per_sample,
                 samples_per_bar,
                 snap_mode,
+                edit_tool,
                 samples_per_beat,
                 active_clip_drag,
                 active_target_track,
@@ -1647,6 +1743,38 @@ impl Editor {
                     .into(),
                 );
             }
+        }
+        if let (Some(start), Some(end)) = (state.comp_swipe_start, state.comp_swipe_end) {
+            let x = start.x.min(end.x).max(0.0);
+            let y = start.y.min(end.y).max(0.0);
+            let w = (start.x - end.x).abs().max(2.0);
+            let h = (start.y - end.y).abs().max(2.0);
+            layers.push(
+                pin(container("")
+                    .width(Length::Fixed(w))
+                    .height(Length::Fixed(h))
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.95,
+                            g: 0.7,
+                            b: 0.2,
+                            a: 0.2,
+                        })),
+                        border: Border {
+                            color: Color {
+                                r: 1.0,
+                                g: 0.8,
+                                b: 0.2,
+                                a: 0.98,
+                            },
+                            width: 1.0,
+                            radius: 0.0.into(),
+                        },
+                        ..container::Style::default()
+                    }))
+                .position(Point::new(x, y))
+                .into(),
+            );
         }
         if let (Some(start), Some(end)) = (state.midi_clip_create_start, state.midi_clip_create_end)
         {

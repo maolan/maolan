@@ -51,6 +51,12 @@ pub enum SnapMode {
     SixtyFourth,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditTool {
+    Select,
+    Comp,
+}
+
 impl fmt::Display for SnapMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -75,6 +81,15 @@ impl SnapMode {
         SnapMode::ThirtySecond,
         SnapMode::SixtyFourth,
     ];
+}
+
+impl fmt::Display for EditTool {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Select => write!(f, "Select"),
+            Self::Comp => write!(f, "Comp"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -499,6 +514,7 @@ pub enum Message {
     TimeSignatureDenominatorInputChanged(String),
     TimeSignatureInputCommit,
     SetSnapMode(SnapMode),
+    ToggleCompTool,
     RecordFolderSelected(Option<PathBuf>),
 
     SendMessageFinished(Result<(), String>),
@@ -679,6 +695,22 @@ pub enum Message {
         track_idx: String,
         clip_idx: usize,
         kind: Kind,
+    },
+    ClipTakeLanePinToggle {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+    },
+    ClipTakeLaneLockToggle {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+    },
+    ClipTakeLaneMove {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+        delta: i8,
     },
 
     TrackRenameShow(String),

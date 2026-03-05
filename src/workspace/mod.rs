@@ -5,7 +5,7 @@ mod tempo;
 mod tracks;
 
 use crate::{
-    message::{DraggedClip, Message, SnapMode},
+    message::{DraggedClip, EditTool, Message, SnapMode},
     state::State,
     widget::piano,
 };
@@ -41,6 +41,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub loop_range_samples: Option<(usize, usize)>,
     pub punch_range_samples: Option<(usize, usize)>,
     pub snap_mode: SnapMode,
+    pub edit_tool: EditTool,
     pub samples_per_beat: f64,
     pub zoom_visible_bars: f32,
     pub tracks_resize_hovered: bool,
@@ -96,6 +97,7 @@ impl Workspace {
             loop_range_samples,
             punch_range_samples,
             snap_mode,
+            edit_tool,
             samples_per_beat,
             zoom_visible_bars,
             tracks_resize_hovered,
@@ -164,6 +166,7 @@ impl Workspace {
                     pixels_per_sample,
                     samples_per_bar,
                     snap_mode,
+                    edit_tool,
                     samples_per_beat,
                     active_clip_drag,
                     active_target_track: active_clip_target_track,
@@ -182,6 +185,7 @@ impl Workspace {
                 pixels_per_sample,
                 samples_per_bar,
                 snap_mode,
+                edit_tool,
                 samples_per_beat,
                 active_clip_drag,
                 active_target_track: active_clip_target_track,
