@@ -2958,6 +2958,33 @@ impl Maolan {
                     state.connection_view_selection = ConnectionViewSelection::Tracks(set);
                 }
             }
+            Message::TrackAutomationAddLane {
+                ref track_name,
+                target,
+            } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.name == track_name.as_str())
+                {
+                    if let Some(lane) = track
+                        .automation_lanes
+                        .iter()
+                        .position(|lane| lane.target == target)
+                        .and_then(|idx| track.automation_lanes.get_mut(idx))
+                    {
+                        lane.visible = !lane.visible;
+                    } else {
+                        track.automation_lanes.push(crate::state::TrackAutomationLane {
+                            target,
+                            visible: true,
+                            points: vec![],
+                        });
+                    }
+                    track.height = track.min_height_for_layout().max(60.0);
+                }
+            }
             Message::RemoveSelectedTracks => {
                 let mut actions = vec![Action::BeginHistoryGroup];
                 for name in &self.state.blocking_read().selected {

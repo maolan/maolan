@@ -86,6 +86,23 @@ pub enum PianoControllerLane {
     SysEx,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TrackAutomationTarget {
+    Volume,
+    Balance,
+    Mute,
+}
+
+impl fmt::Display for TrackAutomationTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Volume => write!(f, "Volume"),
+            Self::Balance => write!(f, "Balance"),
+            Self::Mute => write!(f, "Mute"),
+        }
+    }
+}
+
 impl fmt::Display for PianoControllerLane {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -263,6 +280,10 @@ pub enum Message {
 
     AddTrack(AddTrack),
     SelectTrack(String),
+    TrackAutomationAddLane {
+        track_name: String,
+        target: TrackAutomationTarget,
+    },
     SelectClip {
         track_idx: String,
         clip_idx: usize,

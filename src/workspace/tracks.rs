@@ -1,4 +1,8 @@
-use crate::{message::Message, state::State, style};
+use crate::{
+    message::{Message, TrackAutomationTarget},
+    state::State,
+    style,
+};
 use iced::{
     Background, Border, Color, Element, Length,
     widget::{Column, Space, button, column, container, mouse_area, row, text},
@@ -70,6 +74,23 @@ impl Tracks {
                         }),
                 );
             }
+            for lane in track.automation_lanes.iter().filter(|lane| lane.visible) {
+                lane_rows = lane_rows.push(
+                    container(text(format!("Auto {}", lane.target)).size(11))
+                        .width(Length::Fill)
+                        .height(Length::Fixed(lane_h))
+                        .padding(4)
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.28,
+                                g: 0.2,
+                                b: 0.12,
+                                a: 0.55,
+                            })),
+                            ..container::Style::default()
+                        }),
+                );
+            }
 
             let track_ui: Column<'_, Message> = column![
                 row![
@@ -107,6 +128,10 @@ impl Tracks {
                         .on_press(Message::Request(Action::TrackToggleDiskMonitor(
                             track.name.clone()
                         ))),
+                    button("A+").padding(3).on_press(Message::TrackAutomationAddLane {
+                        track_name: track.name.clone(),
+                        target: TrackAutomationTarget::Volume,
+                    }),
                 ]
                 .height(Length::Fixed(layout.header_height)),
                 lane_rows.height(Length::Fill),

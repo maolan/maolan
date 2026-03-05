@@ -1,5 +1,5 @@
 use super::{AudioClip, MIDIClip};
-use crate::message::Message;
+use crate::message::{Message, TrackAutomationTarget};
 use iced::Point;
 use maolan_engine::message::Action;
 use serde::{Deserialize, Serialize};
@@ -50,6 +50,19 @@ impl MIDIData {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackAutomationPoint {
+    pub sample: usize,
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackAutomationLane {
+    pub target: TrackAutomationTarget,
+    pub visible: bool,
+    pub points: Vec<TrackAutomationPoint>,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "Point")]
 struct PointDef {
@@ -73,6 +86,8 @@ pub struct Track {
     pub height: f32,
     pub audio: AudioData,
     pub midi: MIDIData,
+    #[serde(default)]
+    pub automation_lanes: Vec<TrackAutomationLane>,
     #[serde(with = "PointDef")]
     pub position: Point,
 }
@@ -99,6 +114,7 @@ impl Track {
             disk_monitor: true,
             audio: AudioData::new(audio_ins, audio_outs),
             midi: MIDIData::new(midi_ins, midi_outs),
+            automation_lanes: vec![],
             height: 60.0,
             position: Point::new(100.0, 100.0),
         };
@@ -166,9 +182,14 @@ impl Track {
         self.midi.ins
     }
 
+    pub fn automation_lane_count(&self) -> usize {
+        self.automation_lanes.iter().filter(|lane| lane.visible).count()
+    }
+
     pub fn total_lane_count(&self) -> usize {
         self.audio_lane_count()
             .saturating_add(self.midi_lane_count())
+            .saturating_add(self.automation_lane_count())
     }
 
     pub fn min_height_for_layout(&self) -> f32 {
