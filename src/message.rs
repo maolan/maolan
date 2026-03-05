@@ -371,6 +371,20 @@ pub enum ExportBitDepth {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    Wav,
+    Mp3,
+    Ogg,
+    Flac,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportMp3Mode {
+    Cbr,
+    Vbr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportNormalizeMode {
     Peak,
     Loudness,
@@ -388,6 +402,10 @@ impl ExportNormalizeMode {
         [ExportNormalizeMode::Peak, ExportNormalizeMode::Loudness];
 }
 
+impl ExportMp3Mode {
+    pub const ALL: [ExportMp3Mode; 2] = [ExportMp3Mode::Cbr, ExportMp3Mode::Vbr];
+}
+
 impl ExportRenderMode {
     pub const ALL: [ExportRenderMode; 3] = [
         ExportRenderMode::Mixdown,
@@ -401,6 +419,26 @@ impl fmt::Display for ExportNormalizeMode {
         match self {
             ExportNormalizeMode::Peak => write!(f, "Peak"),
             ExportNormalizeMode::Loudness => write!(f, "Loudness"),
+        }
+    }
+}
+
+impl fmt::Display for ExportFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExportFormat::Wav => write!(f, "WAV"),
+            ExportFormat::Mp3 => write!(f, "MP3"),
+            ExportFormat::Ogg => write!(f, "OGG"),
+            ExportFormat::Flac => write!(f, "FLAC"),
+        }
+    }
+}
+
+impl fmt::Display for ExportMp3Mode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ExportMp3Mode::Cbr => write!(f, "CBR"),
+            ExportMp3Mode::Vbr => write!(f, "VBR"),
         }
     }
 }
@@ -583,6 +621,13 @@ pub enum Message {
     MidiLearnMappingsImportRequest,
     MidiLearnMappingsClearAllRequest,
     ExportSampleRateSelected(u32),
+    ExportFormatWavToggled(bool),
+    ExportFormatMp3Toggled(bool),
+    ExportFormatOggToggled(bool),
+    ExportFormatFlacToggled(bool),
+    ExportMp3ModeSelected(ExportMp3Mode),
+    ExportMp3BitrateSelected(u16),
+    ExportOggQualityInput(String),
     ExportRenderModeSelected(ExportRenderMode),
     ExportRealtimeFallbackToggled(bool),
     ExportBitDepthSelected(ExportBitDepth),

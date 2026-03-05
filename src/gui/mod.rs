@@ -9,8 +9,8 @@ use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
     message::{
-        DraggedClip, EditTool, ExportBitDepth, ExportNormalizeMode, ExportRenderMode, Message,
-        PluginFormat, Show, SnapMode,
+        DraggedClip, EditTool, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
+        ExportRenderMode, Message, PluginFormat, Show, SnapMode,
     },
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{
@@ -19,6 +19,8 @@ use crate::{
     template_save, toolbar, track_rename, track_template_save, workspace,
 };
 use ebur128::{EbuR128, Mode as LoudnessMode};
+use flacenc::component::BitRepr;
+use flacenc::error::Verify;
 use iced::{
     Length, Size, Task,
     widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
@@ -37,14 +39,20 @@ use serde_json::Value;
 #[cfg(unix)]
 use serde_json::json;
 use serde::{Deserialize, Serialize};
+use mp3lame_encoder::{
+    Bitrate as Mp3Bitrate, Builder as Mp3Builder, FlushNoGap, InterleavedPcm,
+    Quality as Mp3Quality,
+};
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
     io::{self, BufReader},
+    num::{NonZeroU32, NonZeroU8},
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
+use vorbis_rs::{VorbisBitrateManagementStrategy, VorbisEncoderBuilder};
 use symphonia::core::{
     audio::SampleBuffer, codecs::DecoderOptions, errors::Error as SymphoniaError,
     formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
@@ -83,9 +91,13 @@ struct PendingAutosaveRecovery {
 struct ExportSessionOptions {
     export_path: PathBuf,
     sample_rate: i32,
+    formats: Vec<ExportFormat>,
     render_mode: ExportRenderMode,
     realtime_fallback: bool,
     bit_depth: ExportBitDepth,
+    mp3_mode: ExportMp3Mode,
+    mp3_bitrate_kbps: u16,
+    ogg_quality: f32,
     normalize: bool,
     normalize_target_dbfs: f32,
     normalize_mode: ExportNormalizeMode,
@@ -94,8 +106,40 @@ struct ExportSessionOptions {
     normalize_tp_limiter: bool,
     master_limiter: bool,
     master_limiter_ceiling_dbtp: f32,
+    metadata_author: String,
+    metadata_album: String,
+    metadata_year: Option<u32>,
+    metadata_track_number: Option<u32>,
+    metadata_genre: String,
     state: State,
     session_root: PathBuf,
+}
+
+#[derive(Clone)]
+struct ExportMetadata {
+    author: String,
+    album: String,
+    year: Option<u32>,
+    track_number: Option<u32>,
+    genre: String,
+}
+
+#[derive(Clone, Copy)]
+struct ExportCodecSettings {
+    mp3_mode: ExportMp3Mode,
+    mp3_bitrate_kbps: u16,
+    ogg_quality: f32,
+}
+
+struct ExportWriteRequest<'a> {
+    export_path: &'a Path,
+    mixed_buffer: &'a [f32],
+    sample_rate: i32,
+    output_channels: usize,
+    bit_depth: ExportBitDepth,
+    format: ExportFormat,
+    codec: ExportCodecSettings,
+    metadata: &'a ExportMetadata,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,7 +300,14 @@ pub struct Maolan {
     export_progress: f32,
     export_operation: Option<String>,
     export_sample_rate_hz: u32,
+    export_format_wav: bool,
+    export_format_mp3: bool,
+    export_format_ogg: bool,
+    export_format_flac: bool,
     export_bit_depth: ExportBitDepth,
+    export_mp3_mode: ExportMp3Mode,
+    export_mp3_bitrate_kbps: u16,
+    export_ogg_quality_input: String,
     export_render_mode: ExportRenderMode,
     export_realtime_fallback: bool,
     export_normalize: bool,
@@ -490,7 +541,14 @@ impl Default for Maolan {
             export_progress: 0.0,
             export_operation: None,
             export_sample_rate_hz: prefs.default_export_sample_rate_hz,
+            export_format_wav: true,
+            export_format_mp3: false,
+            export_format_ogg: false,
+            export_format_flac: false,
             export_bit_depth: ExportBitDepth::Int24,
+            export_mp3_mode: ExportMp3Mode::Cbr,
+            export_mp3_bitrate_kbps: 320,
+            export_ogg_quality_input: "0.6".to_string(),
             export_render_mode: ExportRenderMode::Mixdown,
             export_realtime_fallback: false,
             export_normalize: false,
@@ -1226,6 +1284,253 @@ impl Maolan {
         })
     }
 
+    fn quantize_samples_for_bit_depth(mixed_buffer: &[f32], bit_depth: ExportBitDepth) -> (Vec<i32>, u8) {
+        let (scale, min, max, bps) = match bit_depth {
+            ExportBitDepth::Int16 => (i16::MAX as f32, i16::MIN as f32, i16::MAX as f32, 16),
+            ExportBitDepth::Int24 => (8_388_607.0_f32, -8_388_608.0_f32, 8_388_607.0_f32, 24),
+            ExportBitDepth::Int32 => (i32::MAX as f32, i32::MIN as f32, i32::MAX as f32, 32),
+            ExportBitDepth::Float32 => (8_388_607.0_f32, -8_388_608.0_f32, 8_388_607.0_f32, 24),
+        };
+        let samples = mixed_buffer
+            .iter()
+            .map(|s| (s.clamp(-1.0, 1.0) * scale).round().clamp(min, max) as i32)
+            .collect();
+        (samples, bps)
+    }
+
+    fn write_flac_with_bit_depth(
+        export_path: &Path,
+        mixed_buffer: &[f32],
+        sample_rate: i32,
+        output_channels: usize,
+        bit_depth: ExportBitDepth,
+    ) -> io::Result<()> {
+        let (quantized, bits_per_sample) = Self::quantize_samples_for_bit_depth(mixed_buffer, bit_depth);
+        let config = flacenc::config::Encoder::default()
+            .into_verified()
+            .map_err(|e| io::Error::other(format!("Invalid FLAC encoder config: {e:?}")))?;
+        let source = flacenc::source::MemSource::from_samples(
+            &quantized,
+            output_channels,
+            bits_per_sample as usize,
+            sample_rate.max(1) as usize,
+        );
+        let stream = flacenc::encode_with_fixed_block_size(&config, source, config.block_size)
+            .map_err(|e| io::Error::other(format!("FLAC encode failed: {e}")))?;
+        let mut sink = flacenc::bitsink::ByteSink::new();
+        stream
+            .write(&mut sink)
+            .map_err(|e| io::Error::other(format!("FLAC bitstream write failed: {e}")))?;
+        fs::write(export_path, sink.as_slice()).map_err(|e| {
+            io::Error::other(format!(
+                "Failed to write '{}': {}",
+                export_path.display(),
+                e
+            ))
+        })
+    }
+
+    fn write_mp3(
+        export_path: &Path,
+        mixed_buffer: &[f32],
+        sample_rate: i32,
+        output_channels: usize,
+        codec: ExportCodecSettings,
+        metadata: &ExportMetadata,
+    ) -> io::Result<()> {
+        if output_channels != 1 && output_channels != 2 {
+            return Err(io::Error::other(format!(
+                "MP3 export supports only mono/stereo, got {} channels",
+                output_channels
+            )));
+        }
+        let mut builder = Mp3Builder::new()
+            .ok_or_else(|| io::Error::other("Failed to initialize MP3 encoder builder"))?;
+        builder
+            .set_num_channels(output_channels as u8)
+            .map_err(|e| io::Error::other(format!("MP3 set channels failed: {e}")))?;
+        builder
+            .set_sample_rate(sample_rate.max(1) as u32)
+            .map_err(|e| io::Error::other(format!("MP3 set sample rate failed: {e}")))?;
+        let mp3_bitrate = match codec.mp3_bitrate_kbps {
+            8 => Mp3Bitrate::Kbps8,
+            16 => Mp3Bitrate::Kbps16,
+            24 => Mp3Bitrate::Kbps24,
+            32 => Mp3Bitrate::Kbps32,
+            40 => Mp3Bitrate::Kbps40,
+            48 => Mp3Bitrate::Kbps48,
+            64 => Mp3Bitrate::Kbps64,
+            80 => Mp3Bitrate::Kbps80,
+            96 => Mp3Bitrate::Kbps96,
+            112 => Mp3Bitrate::Kbps112,
+            128 => Mp3Bitrate::Kbps128,
+            160 => Mp3Bitrate::Kbps160,
+            192 => Mp3Bitrate::Kbps192,
+            224 => Mp3Bitrate::Kbps224,
+            256 => Mp3Bitrate::Kbps256,
+            _ => Mp3Bitrate::Kbps320,
+        };
+        builder
+            .set_brate(mp3_bitrate)
+            .map_err(|e| io::Error::other(format!("MP3 set bitrate failed: {e}")))?;
+        if matches!(codec.mp3_mode, ExportMp3Mode::Vbr) {
+            builder
+                .set_vbr_mode(mp3lame_encoder::VbrMode::Mtrh)
+                .map_err(|e| io::Error::other(format!("MP3 set VBR mode failed: {e}")))?;
+            builder
+                .set_vbr_quality(Mp3Quality::NearBest)
+                .map_err(|e| io::Error::other(format!("MP3 set VBR quality failed: {e}")))?;
+        } else {
+            builder
+                .set_vbr_mode(mp3lame_encoder::VbrMode::Off)
+                .map_err(|e| io::Error::other(format!("MP3 set CBR mode failed: {e}")))?;
+        }
+        builder
+            .set_quality(Mp3Quality::Best)
+            .map_err(|e| io::Error::other(format!("MP3 set quality failed: {e}")))?;
+        let id3_year = metadata.year.map(|v| v.to_string()).unwrap_or_default();
+        let mut id3_comment = String::new();
+        if let Some(track_number) = metadata.track_number {
+            id3_comment.push_str(&format!("TRACKNUMBER={track_number};"));
+        }
+        if !metadata.genre.is_empty() {
+            id3_comment.push_str(&format!("GENRE={};", metadata.genre));
+        }
+        let id3 = mp3lame_encoder::Id3Tag {
+            title: b"",
+            artist: metadata.author.as_bytes(),
+            album: metadata.album.as_bytes(),
+            album_art: &[],
+            year: id3_year.as_bytes(),
+            comment: id3_comment.as_bytes(),
+        };
+        let _ = builder.set_id3_tag(id3);
+        let mut encoder = builder
+            .build()
+            .map_err(|e| io::Error::other(format!("MP3 encoder build failed: {e}")))?;
+
+        let mut out = Vec::<u8>::with_capacity(mp3lame_encoder::max_required_buffer_size(
+            mixed_buffer.len(),
+        ));
+        let frame_chunk = 4096usize;
+        for chunk in mixed_buffer.chunks(frame_chunk * output_channels.max(1)) {
+            encoder
+                .encode_to_vec(InterleavedPcm(chunk), &mut out)
+                .map_err(|e| io::Error::other(format!("MP3 encode failed: {e}")))?;
+        }
+        encoder
+            .flush_to_vec::<FlushNoGap>(&mut out)
+            .map_err(|e| io::Error::other(format!("MP3 finalization failed: {e}")))?;
+        fs::write(export_path, out).map_err(|e| {
+            io::Error::other(format!(
+                "Failed to write '{}': {}",
+                export_path.display(),
+                e
+            ))
+        })
+    }
+
+    fn write_ogg_vorbis(
+        export_path: &Path,
+        mixed_buffer: &[f32],
+        sample_rate: i32,
+        output_channels: usize,
+        codec: ExportCodecSettings,
+        metadata: &ExportMetadata,
+    ) -> io::Result<()> {
+        let sampling_frequency = NonZeroU32::new(sample_rate.max(1) as u32)
+            .ok_or_else(|| io::Error::other("Invalid sample rate for OGG"))?;
+        let channels = NonZeroU8::new(output_channels as u8)
+            .ok_or_else(|| io::Error::other("Invalid channel count for OGG"))?;
+        let mut out = Vec::<u8>::new();
+        let mut builder = VorbisEncoderBuilder::new(sampling_frequency, channels, &mut out)
+            .map_err(|e| io::Error::other(format!("OGG encoder init failed: {e}")))?;
+        builder.bitrate_management_strategy(VorbisBitrateManagementStrategy::QualityVbr {
+            target_quality: codec.ogg_quality.clamp(-0.1, 1.0),
+        });
+        if !metadata.author.is_empty() {
+            let _ = builder.comment_tag("ARTIST", metadata.author.as_str());
+        }
+        if !metadata.album.is_empty() {
+            let _ = builder.comment_tag("ALBUM", metadata.album.as_str());
+        }
+        if let Some(year) = metadata.year {
+            let _ = builder.comment_tag("DATE", year.to_string());
+        }
+        if let Some(track_number) = metadata.track_number {
+            let _ = builder.comment_tag("TRACKNUMBER", track_number.to_string());
+        }
+        if !metadata.genre.is_empty() {
+            let _ = builder.comment_tag("GENRE", metadata.genre.as_str());
+        }
+        let mut encoder = builder
+            .build()
+            .map_err(|e| io::Error::other(format!("OGG encoder build failed: {e}")))?;
+
+        let frame_chunk = 2048usize;
+        for chunk in mixed_buffer.chunks(frame_chunk * output_channels.max(1)) {
+            let frames = chunk.len() / output_channels.max(1);
+            if frames == 0 {
+                continue;
+            }
+            let mut planar = vec![vec![0.0_f32; frames]; output_channels];
+            for frame in 0..frames {
+                for ch in 0..output_channels {
+                    planar[ch][frame] = chunk[frame * output_channels + ch];
+                }
+            }
+            let block = planar.iter().map(Vec::as_slice).collect::<Vec<_>>();
+            encoder
+                .encode_audio_block(&block)
+                .map_err(|e| io::Error::other(format!("OGG encode failed: {e}")))?;
+        }
+        encoder
+            .finish()
+            .map_err(|e| io::Error::other(format!("OGG finalization failed: {e}")))?;
+        fs::write(export_path, out).map_err(|e| {
+            io::Error::other(format!(
+                "Failed to write '{}': {}",
+                export_path.display(),
+                e
+            ))
+        })
+    }
+
+    fn write_export_audio(req: ExportWriteRequest<'_>) -> io::Result<()> {
+        match req.format {
+            ExportFormat::Wav => Self::write_wav_with_bit_depth(
+                req.export_path,
+                req.mixed_buffer,
+                req.sample_rate,
+                req.output_channels,
+                req.bit_depth,
+            ),
+            ExportFormat::Flac => Self::write_flac_with_bit_depth(
+                req.export_path,
+                req.mixed_buffer,
+                req.sample_rate,
+                req.output_channels,
+                req.bit_depth,
+            ),
+            ExportFormat::Mp3 => Self::write_mp3(
+                req.export_path,
+                req.mixed_buffer,
+                req.sample_rate,
+                req.output_channels,
+                req.codec,
+                req.metadata,
+            ),
+            ExportFormat::Ogg => Self::write_ogg_vorbis(
+                req.export_path,
+                req.mixed_buffer,
+                req.sample_rate,
+                req.output_channels,
+                req.codec,
+                req.metadata,
+            ),
+        }
+    }
+
     fn measure_lufs_and_true_peak(
         samples: &[f32],
         channels: usize,
@@ -1404,7 +1709,11 @@ impl Maolan {
     {
         let export_path = options.export_path.as_path();
         let sample_rate = options.sample_rate;
+        let export_formats = options.formats.clone();
         let bit_depth = options.bit_depth;
+        let mp3_mode = options.mp3_mode;
+        let mp3_bitrate_kbps = options.mp3_bitrate_kbps;
+        let ogg_quality = options.ogg_quality;
         let realtime_fallback = options.realtime_fallback;
         let normalize = options.normalize;
         let normalize_target_dbfs = options.normalize_target_dbfs;
@@ -1414,6 +1723,23 @@ impl Maolan {
         let normalize_tp_limiter = options.normalize_tp_limiter;
         let master_limiter = options.master_limiter;
         let master_limiter_ceiling_dbtp = options.master_limiter_ceiling_dbtp;
+        let metadata_author = options.metadata_author.clone();
+        let metadata_album = options.metadata_album.clone();
+        let metadata_year = options.metadata_year;
+        let metadata_track_number = options.metadata_track_number;
+        let metadata_genre = options.metadata_genre.clone();
+        let codec = ExportCodecSettings {
+            mp3_mode,
+            mp3_bitrate_kbps,
+            ogg_quality,
+        };
+        let metadata = ExportMetadata {
+            author: metadata_author,
+            album: metadata_album,
+            year: metadata_year,
+            track_number: metadata_track_number,
+            genre: metadata_genre,
+        };
         let render_mode = options.render_mode;
         let state = options.state.clone();
         let session_root = options.session_root.as_path();
@@ -1455,6 +1781,9 @@ impl Maolan {
             return Err(io::Error::other(
                 "No audio clips found. Nothing to export.".to_string(),
             ));
+        }
+        if export_formats.is_empty() {
+            return Err(io::Error::other("Select at least one export format"));
         }
 
         let has_solo = tracks.iter().any(|(_, _, _, _, soloed, _)| *soloed);
@@ -1527,15 +1856,27 @@ impl Maolan {
                     *sample = sample.clamp(-ceiling_amp, ceiling_amp);
                 }
             }
-            progress_callback(0.9, Some(format!("Writing WAV ({bit_depth})")));
-            tokio::task::yield_now().await;
-            Self::write_wav_with_bit_depth(
-                export_path,
-                &mixed_buffer,
-                sample_rate,
-                output_channels,
-                bit_depth,
-            )?;
+            let base_path = Self::export_base_path(export_path.to_path_buf());
+            let write_span = 0.1 / export_formats.len().max(1) as f32;
+            for (format_idx, format) in export_formats.iter().enumerate() {
+                let write_progress = 0.9 + write_span * format_idx as f32;
+                progress_callback(
+                    write_progress.clamp(0.0, 0.99),
+                    Some(format!("Writing {} ({bit_depth})", format)),
+                );
+                tokio::task::yield_now().await;
+                let out_path = base_path.with_extension(Self::export_format_extension(*format));
+                Self::write_export_audio(ExportWriteRequest {
+                    export_path: &out_path,
+                    mixed_buffer: &mixed_buffer,
+                    sample_rate,
+                    output_channels,
+                    bit_depth,
+                    format: *format,
+                    codec,
+                    metadata: &metadata,
+                })?;
+            }
             progress_callback(1.0, Some("Complete".to_string()));
             return Ok(());
         }
@@ -1591,18 +1932,24 @@ impl Maolan {
                     *sample = sample.clamp(-ceiling_amp, ceiling_amp);
                 }
             }
-            let stem_file = stem_dir.join(format!(
-                "{}_{}.wav",
-                Self::sanitize_export_component(track_name),
-                stem_mode_label
-            ));
-            Self::write_wav_with_bit_depth(
-                &stem_file,
-                &stem_buffer,
-                sample_rate,
-                output_channels,
-                bit_depth,
-            )?;
+            for format in &export_formats {
+                let stem_file = stem_dir.join(format!(
+                    "{}_{}.{}",
+                    Self::sanitize_export_component(track_name),
+                    stem_mode_label,
+                    Self::export_format_extension(*format)
+                ));
+                Self::write_export_audio(ExportWriteRequest {
+                    export_path: &stem_file,
+                    mixed_buffer: &stem_buffer,
+                    sample_rate,
+                    output_channels,
+                    bit_depth,
+                    format: *format,
+                    codec,
+                    metadata: &metadata,
+                })?;
+            }
             if realtime_fallback {
                 let seconds = (total_length as f64 / sample_rate.max(1) as f64).max(0.0);
                 tokio::time::sleep(Duration::from_secs_f64(seconds)).await;
@@ -2542,19 +2889,53 @@ impl Maolan {
         8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000, 384000,
     ];
 
-    fn export_bit_depth_options() -> Vec<ExportBitDepth> {
-        ExportBitDepth::ALL.to_vec()
+    fn selected_export_formats(&self) -> Vec<ExportFormat> {
+        let mut formats = Vec::new();
+        if self.export_format_wav {
+            formats.push(ExportFormat::Wav);
+        }
+        if self.export_format_mp3 {
+            formats.push(ExportFormat::Mp3);
+        }
+        if self.export_format_ogg {
+            formats.push(ExportFormat::Ogg);
+        }
+        if self.export_format_flac {
+            formats.push(ExportFormat::Flac);
+        }
+        formats
     }
 
-    fn ensure_wav_extension(path: PathBuf) -> PathBuf {
-        let has_matching_ext = path
+    fn export_bit_depth_options(formats: &[ExportFormat]) -> Vec<ExportBitDepth> {
+        if formats
+            .iter()
+            .any(|f| matches!(f, ExportFormat::Wav | ExportFormat::Flac))
+        {
+            ExportBitDepth::ALL.to_vec()
+        } else {
+            vec![ExportBitDepth::Float32]
+        }
+    }
+
+    fn export_format_extension(format: ExportFormat) -> &'static str {
+        match format {
+            ExportFormat::Wav => "wav",
+            ExportFormat::Mp3 => "mp3",
+            ExportFormat::Ogg => "ogg",
+            ExportFormat::Flac => "flac",
+        }
+    }
+
+    fn export_base_path(path: PathBuf) -> PathBuf {
+        let known_ext = path
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("wav"));
-        if has_matching_ext {
-            path
+            .map(|e| e.to_ascii_lowercase())
+            .is_some_and(|e| matches!(e.as_str(), "wav" | "mp3" | "ogg" | "flac"));
+        if known_ext {
+            path.with_extension("")
         } else {
-            path.with_extension("wav")
+            path
         }
     }
 
@@ -2575,7 +2956,8 @@ impl Maolan {
     }
 
     fn export_settings_view(&self) -> iced::Element<'_, Message> {
-        let bit_depth_options = Self::export_bit_depth_options();
+        let selected_formats = self.selected_export_formats();
+        let bit_depth_options = Self::export_bit_depth_options(&selected_formats);
         let selected_bit_depth = if bit_depth_options.contains(&self.export_bit_depth) {
             self.export_bit_depth
         } else {
@@ -2588,9 +2970,23 @@ impl Maolan {
         container(
             column![
                 text("Export session").size(16),
-                row![text("Format: WAV"),]
-                    .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                row![
+                    text("Formats:"),
+                    checkbox(self.export_format_wav)
+                        .label("WAV")
+                        .on_toggle(Message::ExportFormatWavToggled),
+                    checkbox(self.export_format_mp3)
+                        .label("MP3")
+                        .on_toggle(Message::ExportFormatMp3Toggled),
+                    checkbox(self.export_format_ogg)
+                        .label("OGG")
+                        .on_toggle(Message::ExportFormatOggToggled),
+                    checkbox(self.export_format_flac)
+                        .label("FLAC")
+                        .on_toggle(Message::ExportFormatFlacToggled),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
                 row![
                     text("Sample rate (Hz):"),
                     pick_list(
@@ -2603,17 +2999,62 @@ impl Maolan {
                 ]
                 .spacing(10)
                 .align_y(iced::Alignment::Center),
-                row![
-                    text("Bit depth:"),
-                    pick_list(
-                        bit_depth_options,
-                        Some(selected_bit_depth),
-                        Message::ExportBitDepthSelected
-                    )
-                    .placeholder("Choose bit depth"),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
+                if selected_formats
+                    .iter()
+                    .any(|f| matches!(f, ExportFormat::Wav | ExportFormat::Flac))
+                {
+                    row![
+                        text("Bit depth:"),
+                        pick_list(
+                            bit_depth_options,
+                            Some(selected_bit_depth),
+                            Message::ExportBitDepthSelected
+                        )
+                        .placeholder("Choose bit depth"),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center)
+                } else {
+                    row![text("Bit depth: codec-managed (lossy formats)")]
+                        .spacing(10)
+                        .align_y(iced::Alignment::Center)
+                },
+                if self.export_format_mp3 {
+                    row![
+                        text("MP3 mode:"),
+                        pick_list(
+                            ExportMp3Mode::ALL.to_vec(),
+                            Some(self.export_mp3_mode),
+                            Message::ExportMp3ModeSelected
+                        )
+                        .placeholder("Choose MP3 mode")
+                        .width(Length::Fixed(160.0)),
+                        text("Bitrate (kbps):"),
+                        pick_list(
+                            vec![96_u16, 128, 160, 192, 224, 256, 320],
+                            Some(self.export_mp3_bitrate_kbps),
+                            Message::ExportMp3BitrateSelected
+                        )
+                        .placeholder("Bitrate")
+                        .width(Length::Fixed(140.0)),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center)
+                } else {
+                    row![text("")].spacing(10).align_y(iced::Alignment::Center)
+                },
+                if self.export_format_ogg {
+                    row![
+                        text("OGG quality (-0.1..1.0):"),
+                        text_input("0.6", &self.export_ogg_quality_input)
+                            .on_input(Message::ExportOggQualityInput)
+                            .width(Length::Fixed(140.0)),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center)
+                } else {
+                    row![text("")].spacing(10).align_y(iced::Alignment::Center)
+                },
                 row![
                     text("Render mode:"),
                     pick_list(

@@ -9626,6 +9626,58 @@ impl Maolan {
             Message::ExportSampleRateSelected(rate) => {
                 self.export_sample_rate_hz = rate;
             }
+            Message::ExportFormatWavToggled(enabled) => {
+                self.export_format_wav = enabled;
+                let selected = self.selected_export_formats();
+                let valid_bit_depths = super::Maolan::export_bit_depth_options(&selected);
+                if !valid_bit_depths.contains(&self.export_bit_depth)
+                    && let Some(first) = valid_bit_depths.first().copied()
+                {
+                    self.export_bit_depth = first;
+                }
+            }
+            Message::ExportFormatMp3Toggled(enabled) => {
+                self.export_format_mp3 = enabled;
+                let selected = self.selected_export_formats();
+                let valid_bit_depths = super::Maolan::export_bit_depth_options(&selected);
+                if !valid_bit_depths.contains(&self.export_bit_depth)
+                    && let Some(first) = valid_bit_depths.first().copied()
+                {
+                    self.export_bit_depth = first;
+                }
+            }
+            Message::ExportFormatOggToggled(enabled) => {
+                self.export_format_ogg = enabled;
+                let selected = self.selected_export_formats();
+                let valid_bit_depths = super::Maolan::export_bit_depth_options(&selected);
+                if !valid_bit_depths.contains(&self.export_bit_depth)
+                    && let Some(first) = valid_bit_depths.first().copied()
+                {
+                    self.export_bit_depth = first;
+                }
+            }
+            Message::ExportFormatFlacToggled(enabled) => {
+                self.export_format_flac = enabled;
+                let selected = self.selected_export_formats();
+                let valid_bit_depths = super::Maolan::export_bit_depth_options(&selected);
+                if !valid_bit_depths.contains(&self.export_bit_depth)
+                    && let Some(first) = valid_bit_depths.first().copied()
+                {
+                    self.export_bit_depth = first;
+                }
+            }
+            Message::ExportMp3ModeSelected(mode) => {
+                self.export_mp3_mode = mode;
+            }
+            Message::ExportMp3BitrateSelected(kbps) => {
+                self.export_mp3_bitrate_kbps = kbps;
+            }
+            Message::ExportOggQualityInput(ref input) => {
+                self.export_ogg_quality_input = input
+                    .chars()
+                    .filter(|c| c.is_ascii_digit() || *c == '-' || *c == '.')
+                    .collect();
+            }
             Message::ExportBitDepthSelected(bit_depth) => {
                 self.export_bit_depth = bit_depth;
             }
@@ -9727,13 +9779,32 @@ impl Maolan {
                         }
                     }
                 }
+                let selected_formats = self.selected_export_formats();
+                if selected_formats.is_empty() {
+                    self.state.blocking_write().message =
+                        "Select at least one export format".to_string();
+                    return Task::none();
+                }
+                if self.export_format_ogg {
+                    let ogg_quality = self.export_ogg_quality_input.parse::<f32>().ok();
+                    let Some(ogg_quality) = ogg_quality else {
+                        self.state.blocking_write().message =
+                            "OGG quality must be a number between -0.1 and 1.0".to_string();
+                        return Task::none();
+                    };
+                    if !(-0.1..=1.0).contains(&ogg_quality) {
+                        self.state.blocking_write().message =
+                            "OGG quality must be between -0.1 and 1.0".to_string();
+                        return Task::none();
+                    }
+                }
                 self.modal = None;
                 return Task::perform(
-                    async {
+                    async move {
                         AsyncFileDialog::new()
-                            .set_title("Export to WAV")
-                            .add_filter("WAV Audio", &["wav"])
-                            .set_file_name("export.wav")
+                            .set_title("Export Audio")
+                            .add_filter("Audio", &["wav", "mp3", "ogg", "flac"])
+                            .set_file_name("export")
                             .save_file()
                             .await
                             .map(|handle| handle.path().to_path_buf())
@@ -9775,9 +9846,35 @@ impl Maolan {
                     .ok()
                     .unwrap_or(-1.0);
                 let export_realtime_fallback = self.export_realtime_fallback;
-                let export_path = Self::ensure_wav_extension(path.clone());
+                let export_formats = self.selected_export_formats();
+                if export_formats.is_empty() {
+                    self.state.blocking_write().message =
+                        "Select at least one export format".to_string();
+                    return Task::none();
+                }
+                let export_path = Self::export_base_path(path.clone());
+                let export_mp3_mode = self.export_mp3_mode;
+                let export_mp3_bitrate_kbps = self.export_mp3_bitrate_kbps;
+                let export_ogg_quality =
+                    self.export_ogg_quality_input.parse::<f32>().ok().unwrap_or(0.6);
                 let state_clone = self.state.clone();
                 let render_mode = self.export_render_mode;
+                let (
+                    metadata_author,
+                    metadata_album,
+                    metadata_year,
+                    metadata_track_number,
+                    metadata_genre,
+                ) = {
+                    let state = self.state.blocking_read();
+                    (
+                        state.session_author.trim().to_string(),
+                        state.session_album.trim().to_string(),
+                        state.session_year.trim().parse::<u32>().ok(),
+                        state.session_track_number.trim().parse::<u32>().ok(),
+                        state.session_genre.trim().to_string(),
+                    )
+                };
 
                 self.export_in_progress = true;
                 self.export_progress = 0.0;
@@ -9810,9 +9907,13 @@ impl Maolan {
                             let options = super::ExportSessionOptions {
                                 export_path: export_path.clone(),
                                 sample_rate,
+                                formats: export_formats,
                                 render_mode,
                                 realtime_fallback: export_realtime_fallback,
                                 bit_depth: export_bit_depth,
+                                mp3_mode: export_mp3_mode,
+                                mp3_bitrate_kbps: export_mp3_bitrate_kbps,
+                                ogg_quality: export_ogg_quality,
                                 normalize: export_normalize,
                                 normalize_target_dbfs,
                                 normalize_mode,
@@ -9821,6 +9922,11 @@ impl Maolan {
                                 normalize_tp_limiter,
                                 master_limiter: export_master_limiter,
                                 master_limiter_ceiling_dbtp: export_master_limiter_ceiling_dbtp,
+                                metadata_author,
+                                metadata_album,
+                                metadata_year,
+                                metadata_track_number,
+                                metadata_genre,
                                 state: state_clone,
                                 session_root: session_root.clone(),
                             };
