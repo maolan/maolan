@@ -1631,6 +1631,9 @@ impl Engine {
                 }
             }
             Action::ModifyMidiNotes { .. } => {}
+            Action::ModifyMidiControllers { .. } => {}
+            Action::DeleteMidiControllers { .. } => {}
+            Action::InsertMidiControllers { .. } => {}
             Action::DeleteMidiNotes { .. } => {}
             Action::InsertMidiNotes { .. } => {}
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -3193,6 +3196,9 @@ impl Engine {
                     | Action::BeginSessionRestore
                     | Action::PianoKey { .. }
                     | Action::ModifyMidiNotes { .. }
+                    | Action::ModifyMidiControllers { .. }
+                    | Action::DeleteMidiControllers { .. }
+                    | Action::InsertMidiControllers { .. }
                     | Action::DeleteMidiNotes { .. }
                     | Action::InsertMidiNotes { .. } => {
                         self.handle_request(a).await;

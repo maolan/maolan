@@ -101,6 +101,9 @@ pub fn should_record(action: &Action) -> bool {
             | Action::TrackSetClapParameter { .. }
             | Action::TrackSetVst3Parameter { .. }
             | Action::ModifyMidiNotes { .. }
+            | Action::ModifyMidiControllers { .. }
+            | Action::DeleteMidiControllers { .. }
+            | Action::InsertMidiControllers { .. }
             | Action::DeleteMidiNotes { .. }
             | Action::InsertMidiNotes { .. }
     )
@@ -531,6 +534,44 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             new_notes: old_notes.clone(),
             old_notes: new_notes.clone(),
         }),
+        Action::ModifyMidiControllers {
+            track_name,
+            clip_index,
+            controller_indices,
+            new_controllers,
+            old_controllers,
+        } => Some(Action::ModifyMidiControllers {
+            track_name: track_name.clone(),
+            clip_index: *clip_index,
+            controller_indices: controller_indices.clone(),
+            new_controllers: old_controllers.clone(),
+            old_controllers: new_controllers.clone(),
+        }),
+        Action::DeleteMidiControllers {
+            track_name,
+            clip_index,
+            deleted_controllers,
+            ..
+        } => Some(Action::InsertMidiControllers {
+            track_name: track_name.clone(),
+            clip_index: *clip_index,
+            controllers: deleted_controllers.clone(),
+        }),
+        Action::InsertMidiControllers {
+            track_name,
+            clip_index,
+            controllers,
+        } => {
+            let mut controller_indices: Vec<usize> =
+                controllers.iter().map(|(idx, _)| *idx).collect();
+            controller_indices.sort_unstable_by(|a, b| b.cmp(a));
+            Some(Action::DeleteMidiControllers {
+                track_name: track_name.clone(),
+                clip_index: *clip_index,
+                controller_indices,
+                deleted_controllers: controllers.clone(),
+            })
+        }
 
         Action::DeleteMidiNotes {
             track_name,

@@ -673,16 +673,24 @@ impl Maolan {
                 self.state.blocking_write().piano_controller_lane = lane;
             }
             Message::PianoControllerKindSelected(kind) => {
-                self.state.blocking_write().piano_controller_kind = kind;
+                let mut state = self.state.blocking_write();
+                state.piano_controller_lane = crate::message::PianoControllerLane::Controller;
+                state.piano_controller_kind = kind;
             }
             Message::PianoVelocityKindSelected(kind) => {
-                self.state.blocking_write().piano_velocity_kind = kind;
+                let mut state = self.state.blocking_write();
+                state.piano_controller_lane = crate::message::PianoControllerLane::Velocity;
+                state.piano_velocity_kind = kind;
             }
             Message::PianoRpnKindSelected(kind) => {
-                self.state.blocking_write().piano_rpn_kind = kind;
+                let mut state = self.state.blocking_write();
+                state.piano_controller_lane = crate::message::PianoControllerLane::Rpn;
+                state.piano_rpn_kind = kind;
             }
             Message::PianoNrpnKindSelected(kind) => {
-                self.state.blocking_write().piano_nrpn_kind = kind;
+                let mut state = self.state.blocking_write();
+                state.piano_controller_lane = crate::message::PianoControllerLane::Nrpn;
+                state.piano_nrpn_kind = kind;
             }
             Message::PianoKeyPressed(note) => {
                 let track_name = self
@@ -1037,6 +1045,159 @@ impl Maolan {
                     note_indices: changed_indices,
                     new_notes,
                     old_notes,
+                });
+            }
+            Message::PianoSetVelocity {
+                note_index,
+                velocity,
+            } => {
+                let mut state = self.state.blocking_write();
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+                let Some(note) = piano.notes.get_mut(note_index) else {
+                    return Task::none();
+                };
+                if note.velocity == velocity {
+                    return Task::none();
+                }
+                let old_note = maolan_engine::message::MidiNoteData {
+                    start_sample: note.start_sample,
+                    length_samples: note.length_samples,
+                    pitch: note.pitch,
+                    velocity: note.velocity,
+                    channel: note.channel,
+                };
+                note.velocity = velocity;
+                let new_note = maolan_engine::message::MidiNoteData {
+                    start_sample: note.start_sample,
+                    length_samples: note.length_samples,
+                    pitch: note.pitch,
+                    velocity: note.velocity,
+                    channel: note.channel,
+                };
+                let track_name = piano.track_idx.clone();
+                let clip_idx = 0; // TODO: Get actual clip index
+                drop(state);
+                return self.send(Action::ModifyMidiNotes {
+                    track_name,
+                    clip_index: clip_idx,
+                    note_indices: vec![note_index],
+                    new_notes: vec![new_note],
+                    old_notes: vec![old_note],
+                });
+            }
+            Message::PianoAdjustController {
+                controller_index,
+                delta,
+            } => {
+                if delta == 0 {
+                    return Task::none();
+                }
+                let mut state = self.state.blocking_write();
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+                let Some(ctrl) = piano.controllers.get_mut(controller_index) else {
+                    return Task::none();
+                };
+                let old_ctrl = maolan_engine::message::MidiControllerData {
+                    sample: ctrl.sample,
+                    controller: ctrl.controller,
+                    value: ctrl.value,
+                    channel: ctrl.channel,
+                };
+                let new_value = (i16::from(ctrl.value) + i16::from(delta)).clamp(0, 127) as u8;
+                if new_value == ctrl.value {
+                    return Task::none();
+                }
+                ctrl.value = new_value;
+                let new_ctrl = maolan_engine::message::MidiControllerData {
+                    sample: ctrl.sample,
+                    controller: ctrl.controller,
+                    value: ctrl.value,
+                    channel: ctrl.channel,
+                };
+                let track_name = piano.track_idx.clone();
+                let clip_idx = 0; // TODO: Get actual clip index
+                drop(state);
+                return self.send(Action::ModifyMidiControllers {
+                    track_name,
+                    clip_index: clip_idx,
+                    controller_indices: vec![controller_index],
+                    new_controllers: vec![new_ctrl],
+                    old_controllers: vec![old_ctrl],
+                });
+            }
+            Message::PianoSetControllerValue {
+                controller_index,
+                value,
+            } => {
+                let mut state = self.state.blocking_write();
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+                let Some(ctrl) = piano.controllers.get_mut(controller_index) else {
+                    return Task::none();
+                };
+                if ctrl.value == value {
+                    return Task::none();
+                }
+                let old_ctrl = maolan_engine::message::MidiControllerData {
+                    sample: ctrl.sample,
+                    controller: ctrl.controller,
+                    value: ctrl.value,
+                    channel: ctrl.channel,
+                };
+                ctrl.value = value;
+                let new_ctrl = maolan_engine::message::MidiControllerData {
+                    sample: ctrl.sample,
+                    controller: ctrl.controller,
+                    value: ctrl.value,
+                    channel: ctrl.channel,
+                };
+                let track_name = piano.track_idx.clone();
+                let clip_idx = 0; // TODO: Get actual clip index
+                drop(state);
+                return self.send(Action::ModifyMidiControllers {
+                    track_name,
+                    clip_index: clip_idx,
+                    controller_indices: vec![controller_index],
+                    new_controllers: vec![new_ctrl],
+                    old_controllers: vec![old_ctrl],
+                });
+            }
+            Message::PianoInsertControllers { controllers } => {
+                if controllers.is_empty() {
+                    return Task::none();
+                }
+                let mut state = self.state.blocking_write();
+                let Some(piano) = state.piano.as_mut() else {
+                    return Task::none();
+                };
+                let track_name = piano.track_idx.clone();
+                let clip_idx = 0; // TODO: Get actual clip index
+                let insert_base = piano.controllers.len();
+                let payload: Vec<(usize, maolan_engine::message::MidiControllerData)> = controllers
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, ctrl)| {
+                        (
+                            insert_base + offset,
+                            maolan_engine::message::MidiControllerData {
+                                sample: ctrl.sample,
+                                controller: ctrl.controller,
+                                value: ctrl.value,
+                                channel: ctrl.channel,
+                            },
+                        )
+                    })
+                    .collect();
+                drop(state);
+                return self.send(Action::InsertMidiControllers {
+                    track_name,
+                    clip_index: clip_idx,
+                    controllers: payload,
                 });
             }
             Message::PianoSelectRectStart { position } => {
@@ -1722,6 +1883,72 @@ impl Maolan {
                                 note.velocity = new_note.velocity;
                                 note.channel = new_note.channel;
                             }
+                        }
+                    }
+                }
+                Action::ModifyMidiControllers {
+                    track_name,
+                    controller_indices,
+                    new_controllers,
+                    ..
+                } => {
+                    let mut state = self.state.blocking_write();
+                    if let Some(piano) = state.piano.as_mut()
+                        && piano.track_idx == *track_name
+                    {
+                        for (ctrl_idx, new_ctrl) in
+                            controller_indices.iter().zip(new_controllers.iter())
+                        {
+                            if let Some(ctrl) = piano.controllers.get_mut(*ctrl_idx) {
+                                ctrl.sample = new_ctrl.sample;
+                                ctrl.controller = new_ctrl.controller;
+                                ctrl.value = new_ctrl.value;
+                                ctrl.channel = new_ctrl.channel;
+                            }
+                        }
+                    }
+                }
+                Action::DeleteMidiControllers {
+                    track_name,
+                    controller_indices,
+                    ..
+                } => {
+                    let mut state = self.state.blocking_write();
+                    if let Some(piano) = state.piano.as_mut()
+                        && piano.track_idx == *track_name
+                    {
+                        let mut indices = controller_indices.clone();
+                        indices.sort_unstable();
+                        indices.dedup();
+                        for idx in indices.into_iter().rev() {
+                            if idx < piano.controllers.len() {
+                                piano.controllers.remove(idx);
+                            }
+                        }
+                    }
+                }
+                Action::InsertMidiControllers {
+                    track_name,
+                    controllers,
+                    ..
+                } => {
+                    let mut state = self.state.blocking_write();
+                    if let Some(piano) = state.piano.as_mut()
+                        && piano.track_idx == *track_name
+                    {
+                        let mut sorted = controllers.clone();
+                        sorted.sort_unstable_by_key(|(idx, _)| *idx);
+                        for (idx, ctrl) in sorted {
+                            let insert_at = idx.min(piano.controllers.len());
+                            piano.controllers.insert(
+                                insert_at,
+                                crate::state::PianoControllerPoint {
+                                    sample: ctrl.sample,
+                                    controller: ctrl.controller,
+                                    value: ctrl.value,
+                                    channel: ctrl.channel,
+                                },
+                            );
                         }
                     }
                 }

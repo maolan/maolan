@@ -17,6 +17,8 @@ use iced_aw::{
 };
 use std::collections::{HashMap, HashSet};
 
+const MIDI_CHANNELS: usize = 16;
+
 #[derive(Debug)]
 pub struct Piano {
     state: State,
@@ -159,10 +161,133 @@ impl Piano {
         format!("CC{cc:03} {}", Self::cc_name(cc))
     }
 
+    fn controller_lane_line_count(lane: PianoControllerLane) -> usize {
+        match lane {
+            PianoControllerLane::Controller => 128,
+            PianoControllerLane::Velocity => 128,
+            PianoControllerLane::Rpn => PianoRpnKind::ALL.len(),
+            PianoControllerLane::Nrpn => PianoNrpnKind::ALL.len(),
+        }
+    }
+
+    fn controller_row_for_lane(lane: PianoControllerLane, controller: u8) -> Option<usize> {
+        match lane {
+            PianoControllerLane::Controller => Some(usize::from(127_u8.saturating_sub(controller))),
+            PianoControllerLane::Velocity => None,
+            PianoControllerLane::Rpn => match controller {
+                101 => Some(0),
+                100 => Some(1),
+                6 | 38 | 96 | 97 => Some(2),
+                _ => None,
+            },
+            PianoControllerLane::Nrpn => match controller {
+                99 => Some(0),
+                98 => Some(1),
+                6 | 38 | 96 | 97 => Some(2),
+                _ => None,
+            },
+        }
+    }
+
+    fn rpn_param(kind: PianoRpnKind) -> (u8, u8) {
+        match kind {
+            PianoRpnKind::PitchBendSensitivity => (0, 0),
+            PianoRpnKind::FineTuning => (0, 1),
+            PianoRpnKind::CoarseTuning => (0, 2),
+        }
+    }
+
+    fn nrpn_param(kind: PianoNrpnKind) -> (u8, u8) {
+        match kind {
+            PianoNrpnKind::Brightness => (1, 8),
+            PianoNrpnKind::VibratoRate => (1, 9),
+            PianoNrpnKind::VibratoDepth => (1, 10),
+        }
+    }
+
+    fn rpn_row_for_param(msb: u8, lsb: u8) -> Option<usize> {
+        PianoRpnKind::ALL
+            .iter()
+            .position(|kind| Self::rpn_param(*kind) == (msb, lsb))
+    }
+
+    fn nrpn_row_for_param(msb: u8, lsb: u8) -> Option<usize> {
+        PianoNrpnKind::ALL
+            .iter()
+            .position(|kind| Self::nrpn_param(*kind) == (msb, lsb))
+    }
+
+    fn lane_controller_events(
+        lane: PianoControllerLane,
+        controllers: &[crate::state::PianoControllerPoint],
+    ) -> Vec<(usize, usize)> {
+        match lane {
+            PianoControllerLane::Controller => controllers
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, ctrl)| {
+                    Self::controller_row_for_lane(lane, ctrl.controller).map(|row| (idx, row))
+                })
+                .collect(),
+            PianoControllerLane::Velocity => vec![],
+            PianoControllerLane::Rpn => {
+                let mut ordered: Vec<usize> = (0..controllers.len()).collect();
+                ordered.sort_unstable_by_key(|idx| (controllers[*idx].sample, *idx));
+                let mut current_msb: [Option<u8>; MIDI_CHANNELS] = [None; MIDI_CHANNELS];
+                let mut current_lsb: [Option<u8>; MIDI_CHANNELS] = [None; MIDI_CHANNELS];
+                let mut out = Vec::new();
+                for idx in ordered {
+                    let ctrl = &controllers[idx];
+                    let channel = usize::from(ctrl.channel.min((MIDI_CHANNELS - 1) as u8));
+                    match ctrl.controller {
+                        101 => current_msb[channel] = Some(ctrl.value),
+                        100 => current_lsb[channel] = Some(ctrl.value),
+                        6 | 38 | 96 | 97 => {
+                            if let (Some(msb), Some(lsb)) =
+                                (current_msb[channel], current_lsb[channel])
+                                && let Some(row) = Self::rpn_row_for_param(msb, lsb)
+                            {
+                                out.push((idx, row));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                out
+            }
+            PianoControllerLane::Nrpn => {
+                let mut ordered: Vec<usize> = (0..controllers.len()).collect();
+                ordered.sort_unstable_by_key(|idx| (controllers[*idx].sample, *idx));
+                let mut current_msb: [Option<u8>; MIDI_CHANNELS] = [None; MIDI_CHANNELS];
+                let mut current_lsb: [Option<u8>; MIDI_CHANNELS] = [None; MIDI_CHANNELS];
+                let mut out = Vec::new();
+                for idx in ordered {
+                    let ctrl = &controllers[idx];
+                    let channel = usize::from(ctrl.channel.min((MIDI_CHANNELS - 1) as u8));
+                    match ctrl.controller {
+                        99 => current_msb[channel] = Some(ctrl.value),
+                        98 => current_lsb[channel] = Some(ctrl.value),
+                        6 | 38 | 96 | 97 => {
+                            if let (Some(msb), Some(lsb)) =
+                                (current_msb[channel], current_lsb[channel])
+                                && let Some(row) = Self::nrpn_row_for_param(msb, lsb)
+                            {
+                                out.push((idx, row));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                out
+            }
+        }
+    }
+
     pub fn view(&self, pixels_per_sample: f32, samples_per_bar: f32) -> Element<'_, Message> {
         let state = self.state.blocking_read();
         let zoom_x = state.piano_zoom_x;
         let zoom_y = state.piano_zoom_y;
+        let controller_lane = state.piano_controller_lane;
 
         let Some(roll) = state.piano.as_ref() else {
             return container(text("No MIDI clip selected."))
@@ -177,7 +302,9 @@ impl Piano {
             * zoom_y)
             .max(1.0);
         let notes_h = pitch_count as f32 * row_h;
-        let ctrl_h = 140.0_f32;
+        let ctrl_line_count = Self::controller_lane_line_count(controller_lane).max(1);
+        let ctrl_h = (ctrl_line_count as f32).max(140.0);
+        let ctrl_row_h = (ctrl_h / ctrl_line_count as f32).max(1.0);
         let pps_notes = (pixels_per_sample * zoom_x).max(0.0001);
         let pps_ctrl = (pixels_per_sample * zoom_x).max(0.0001);
         let notes_w = (roll.clip_length_samples as f32 * pps_notes).max(1.0);
@@ -230,6 +357,27 @@ impl Piano {
             .position(Point::new(0.0, 0.0))
             .into(),
         ];
+
+        for row in 0..ctrl_line_count {
+            let y = row as f32 * ctrl_row_h;
+            let divider = if row.is_multiple_of(8) { 0.28 } else { 0.2 };
+            ctrl_layers.push(
+                pin(container("")
+                    .width(Length::Fixed(ctrl_w))
+                    .height(Length::Fixed(1.0))
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: divider,
+                            g: divider,
+                            b: divider + 0.02,
+                            a: 0.5,
+                        })),
+                        ..container::Style::default()
+                    }))
+                .position(Point::new(0.0, y))
+                .into(),
+            );
+        }
 
         let beat_samples = (samples_per_bar / 4.0).max(1.0);
         let mut beat = 0usize;
@@ -301,22 +449,145 @@ impl Piano {
             );
         }
 
-        for ctrl in &roll.controllers {
-            let x = ctrl.sample as f32 * pps_ctrl;
-            let h = ((ctrl.value as f32 / 127.0) * (ctrl_h - 10.0)).max(1.0);
-            let color = Self::controller_color(ctrl.controller, ctrl.channel);
-            ctrl_layers.push(
-                pin(container("")
-                    .width(Length::Fixed(2.0))
-                    .height(Length::Fixed(h))
-                    .style(move |_theme| container::Style {
-                        background: Some(Background::Color(color)),
-                        ..container::Style::default()
-                    }))
-                .position(Point::new(x, 4.0 + (ctrl_h - h)))
-                .into(),
-            );
+        match controller_lane {
+            PianoControllerLane::Controller => {
+                for (idx, row) in Self::lane_controller_events(controller_lane, &roll.controllers) {
+                    let ctrl = &roll.controllers[idx];
+                    let x = ctrl.sample as f32 * pps_ctrl;
+                    let mut color = Self::controller_color(ctrl.controller, ctrl.channel);
+                    color.a = (0.2 + (ctrl.value as f32 / 127.0) * 0.8).clamp(0.2, 1.0);
+                    let stem_h = (ctrl_h * (ctrl.value as f32 / 127.0)).max(1.0);
+                    let stem_y = ctrl_h - stem_h;
+                    ctrl_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(2.0))
+                            .height(Length::Fixed(stem_h))
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(color)),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new(x, stem_y))
+                        .into(),
+                    );
+                    let y = row as f32 * ctrl_row_h;
+                    ctrl_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(2.0))
+                            .height(Length::Fixed(1.0))
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgba(
+                                    1.0, 1.0, 1.0, 0.35,
+                                ))),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new(x, y))
+                        .into(),
+                    );
+                }
+            }
+            PianoControllerLane::Velocity => {
+                for note in &roll.notes {
+                    let x = note.start_sample as f32 * pps_ctrl;
+                    let row = usize::from(127_u8.saturating_sub(note.velocity));
+                    let y = row as f32 * ctrl_row_h;
+                    let mut color = Self::note_color(note.velocity, note.channel);
+                    color.a = 0.9;
+                    let stem_h = (ctrl_h - y).max(ctrl_row_h);
+                    ctrl_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(2.0))
+                            .height(Length::Fixed(stem_h))
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(color)),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new(x, y))
+                        .into(),
+                    );
+                }
+            }
+            PianoControllerLane::Rpn => {
+                for (idx, row) in Self::lane_controller_events(controller_lane, &roll.controllers) {
+                    let ctrl = &roll.controllers[idx];
+                    let x = ctrl.sample as f32 * pps_ctrl;
+                    let mut color = Self::controller_color(ctrl.controller, ctrl.channel);
+                    color.a = (0.2 + (ctrl.value as f32 / 127.0) * 0.8).clamp(0.2, 1.0);
+                    let stem_h = (ctrl_h * (ctrl.value as f32 / 127.0)).max(1.0);
+                    let stem_y = ctrl_h - stem_h;
+                    ctrl_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(2.0))
+                            .height(Length::Fixed(stem_h))
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(color)),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new(x, stem_y))
+                        .into(),
+                    );
+                    let y = row as f32 * ctrl_row_h;
+                    ctrl_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(2.0))
+                            .height(Length::Fixed(1.0))
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgba(
+                                    1.0, 1.0, 1.0, 0.35,
+                                ))),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new(x, y))
+                        .into(),
+                    );
+                }
+            }
+            PianoControllerLane::Nrpn => {
+                for (idx, row) in Self::lane_controller_events(controller_lane, &roll.controllers) {
+                    let ctrl = &roll.controllers[idx];
+                    let x = ctrl.sample as f32 * pps_ctrl;
+                    let mut color = Self::controller_color(ctrl.controller, ctrl.channel);
+                    color.a = (0.2 + (ctrl.value as f32 / 127.0) * 0.8).clamp(0.2, 1.0);
+                    let stem_h = (ctrl_h * (ctrl.value as f32 / 127.0)).max(1.0);
+                    let stem_y = ctrl_h - stem_h;
+                    ctrl_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(2.0))
+                            .height(Length::Fixed(stem_h))
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(color)),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new(x, stem_y))
+                        .into(),
+                    );
+                    let y = row as f32 * ctrl_row_h;
+                    ctrl_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(2.0))
+                            .height(Length::Fixed(1.0))
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgba(
+                                    1.0, 1.0, 1.0, 0.35,
+                                ))),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new(x, y))
+                        .into(),
+                    );
+                }
+            }
         }
+
+        ctrl_layers.push(
+            pin(iced::widget::canvas(ControllerRollInteraction::new(
+                self.state.clone(),
+                pixels_per_sample,
+            ))
+            .width(Length::Fixed(ctrl_w))
+            .height(Length::Fixed(ctrl_h)))
+            .position(Point::new(0.0, 0.0))
+            .into(),
+        );
 
         // Add interactive canvas overlay for note selection and dragging
         note_layers.push(
@@ -809,6 +1080,470 @@ impl Program<Message> for OctaveKeyboard {
                 &self.midnam_note_names,
             )
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct ControllerRollInteraction {
+    pub state: State,
+    pub pixels_per_sample: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ControllerAdjustTarget {
+    Controller(usize),
+    Velocity(usize),
+}
+
+#[derive(Default, Debug)]
+pub struct ControllerRollInteractionState {
+    mode: ControllerDragMode,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+enum ControllerDragMode {
+    #[default]
+    None,
+    Adjusting {
+        target: ControllerAdjustTarget,
+        start_y: f32,
+        start_value: u8,
+    },
+    Drawing {
+        start: Point,
+        current: Point,
+    },
+}
+
+impl ControllerRollInteraction {
+    pub fn new(state: State, pixels_per_sample: f32) -> Self {
+        Self {
+            state,
+            pixels_per_sample,
+        }
+    }
+
+    fn controller_at_position(
+        &self,
+        position: Point,
+        lane: PianoControllerLane,
+        row_h: f32,
+        pps: f32,
+        selected_row: Option<usize>,
+        controllers: &[crate::state::PianoControllerPoint],
+    ) -> Option<usize> {
+        let mut best: Option<(usize, f32)> = None;
+        for (idx, row) in Piano::lane_controller_events(lane, controllers) {
+            if let Some(selected_row) = selected_row
+                && row != selected_row
+            {
+                continue;
+            }
+            let y0 = row as f32 * row_h;
+            let y1 = y0 + row_h;
+            if position.y < y0 || position.y > y1 {
+                continue;
+            }
+            let ctrl = &controllers[idx];
+            let x = ctrl.sample as f32 * pps;
+            let dx = (position.x - x).abs();
+            if dx > 5.0 {
+                continue;
+            }
+            match best {
+                Some((_, best_dx)) if dx >= best_dx => {}
+                _ => best = Some((idx, dx)),
+            }
+        }
+        best.map(|(idx, _)| idx)
+    }
+
+    fn velocity_note_at_position(
+        &self,
+        position: Point,
+        row_h: f32,
+        pps: f32,
+        notes: &[crate::state::PianoNote],
+    ) -> Option<usize> {
+        let mut best: Option<(usize, f32)> = None;
+        for (idx, note) in notes.iter().enumerate() {
+            let row = usize::from(127_u8.saturating_sub(note.velocity));
+            let y0 = row as f32 * row_h;
+            let y1 = y0 + row_h;
+            if position.y < y0 || position.y > y1 {
+                continue;
+            }
+            let x = note.start_sample as f32 * pps;
+            let dx = (position.x - x).abs();
+            if dx > 5.0 {
+                continue;
+            }
+            match best {
+                Some((_, best_dx)) if dx >= best_dx => {}
+                _ => best = Some((idx, dx)),
+            }
+        }
+        best.map(|(idx, _)| idx)
+    }
+}
+
+impl Program<Message> for ControllerRollInteraction {
+    type State = ControllerRollInteractionState;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<CanvasAction<Message>> {
+        let app_state = self.state.blocking_read();
+        let Some(roll) = app_state.piano.as_ref() else {
+            return None;
+        };
+        let lane = app_state.piano_controller_lane;
+        let selected_row = match lane {
+            PianoControllerLane::Controller => Some(usize::from(
+                127_u8.saturating_sub(app_state.piano_controller_kind),
+            )),
+            PianoControllerLane::Rpn => PianoRpnKind::ALL
+                .iter()
+                .position(|kind| *kind == app_state.piano_rpn_kind),
+            PianoControllerLane::Nrpn => PianoNrpnKind::ALL
+                .iter()
+                .position(|kind| *kind == app_state.piano_nrpn_kind),
+            PianoControllerLane::Velocity => None,
+        };
+        let controllers = roll.controllers.clone();
+        let notes = roll.notes.clone();
+        let clip_len = roll.clip_length_samples;
+        let zoom_x = app_state.piano_zoom_x;
+        let pps = (self.pixels_per_sample * zoom_x).max(0.0001);
+        let row_h =
+            (bounds.height / Piano::controller_lane_line_count(lane).max(1) as f32).max(1.0);
+        drop(app_state);
+
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                let Some(position) = cursor.position_in(bounds) else {
+                    return None;
+                };
+                let target = if matches!(lane, PianoControllerLane::Velocity) {
+                    self.velocity_note_at_position(position, row_h, pps, &notes)
+                        .and_then(|idx| notes.get(idx).map(|n| (idx, n.velocity)))
+                        .map(|(idx, velocity)| (ControllerAdjustTarget::Velocity(idx), velocity))
+                } else {
+                    self.controller_at_position(
+                        position,
+                        lane,
+                        row_h,
+                        pps,
+                        selected_row,
+                        &controllers,
+                    )
+                    .and_then(|idx| controllers.get(idx).map(|c| (idx, c.value)))
+                    .map(|(idx, value)| (ControllerAdjustTarget::Controller(idx), value))
+                };
+                if let Some((target, start_value)) = target {
+                    state.mode = ControllerDragMode::Adjusting {
+                        target,
+                        start_y: position.y,
+                        start_value,
+                    };
+                    return Some(CanvasAction::capture());
+                }
+                None
+            }
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                if matches!(lane, PianoControllerLane::Velocity) {
+                    return None;
+                }
+                let Some(position) = cursor.position_in(bounds) else {
+                    return None;
+                };
+                let Some(controller_index) = self.controller_at_position(
+                    position,
+                    lane,
+                    row_h,
+                    pps,
+                    selected_row,
+                    &controllers,
+                ) else {
+                    return None;
+                };
+                let value_delta = PianoRollInteraction::velocity_delta_from_scroll(delta);
+                if value_delta == 0 {
+                    return None;
+                }
+                Some(
+                    CanvasAction::publish(Message::PianoAdjustController {
+                        controller_index,
+                        delta: value_delta,
+                    })
+                    .and_capture(),
+                )
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if let Some(position) = cursor.position_in(bounds)
+                    && let ControllerDragMode::Drawing { start, .. } = state.mode
+                {
+                    state.mode = ControllerDragMode::Drawing {
+                        start,
+                        current: position,
+                    };
+                    return Some(CanvasAction::capture());
+                }
+                None
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if let ControllerDragMode::Adjusting {
+                    target,
+                    start_y,
+                    start_value,
+                } = state.mode
+                {
+                    state.mode = ControllerDragMode::None;
+                    let Some(position) = cursor.position_in(bounds) else {
+                        return Some(CanvasAction::capture());
+                    };
+                    let delta = ((start_y - position.y) / 4.0).round() as i16;
+                    let value = (i16::from(start_value) + delta).clamp(0, 127) as u8;
+                    let msg = match target {
+                        ControllerAdjustTarget::Controller(controller_index) => {
+                            Message::PianoSetControllerValue {
+                                controller_index,
+                                value,
+                            }
+                        }
+                        ControllerAdjustTarget::Velocity(note_index) => Message::PianoSetVelocity {
+                            note_index,
+                            velocity: value,
+                        },
+                    };
+                    return Some(CanvasAction::publish(msg).and_capture());
+                }
+                None
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
+                if matches!(lane, PianoControllerLane::Velocity) {
+                    return None;
+                }
+                if let Some(position) = cursor.position_in(bounds) {
+                    state.mode = ControllerDragMode::Drawing {
+                        start: position,
+                        current: position,
+                    };
+                    return Some(CanvasAction::capture());
+                }
+                None
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) => {
+                if let ControllerDragMode::Drawing { start, current } = state.mode {
+                    state.mode = ControllerDragMode::None;
+                    let lane_cfg = match lane {
+                        PianoControllerLane::Controller => {
+                            controllers_lane::LaneConfig::Controller(
+                                127_u8.saturating_sub(selected_row.unwrap_or(126) as u8),
+                            )
+                        }
+                        PianoControllerLane::Rpn => {
+                            controllers_lane::LaneConfig::Rpn(selected_row.unwrap_or(0))
+                        }
+                        PianoControllerLane::Nrpn => {
+                            controllers_lane::LaneConfig::Nrpn(selected_row.unwrap_or(0))
+                        }
+                        PianoControllerLane::Velocity => return Some(CanvasAction::capture()),
+                    };
+                    let new_controllers = controllers_lane::build_drawn_controllers(
+                        start, current, bounds, pps, clip_len, lane_cfg,
+                    );
+                    if new_controllers.is_empty() {
+                        return Some(CanvasAction::capture());
+                    }
+                    return Some(
+                        CanvasAction::publish(Message::PianoInsertControllers {
+                            controllers: new_controllers,
+                        })
+                        .and_capture(),
+                    );
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        _renderer: &Renderer,
+        _theme: &Theme,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        vec![]
+    }
+}
+
+mod controllers_lane {
+    use iced::{Point, Rectangle};
+
+    use crate::message::{PianoControllerEditData, PianoNrpnKind, PianoRpnKind};
+
+    pub enum LaneConfig {
+        Controller(u8),
+        Rpn(usize),
+        Nrpn(usize),
+    }
+
+    fn y_to_value(y: f32, bounds: Rectangle) -> u8 {
+        if bounds.height <= f32::EPSILON {
+            return 64;
+        }
+        let t = (1.0 - (y / bounds.height)).clamp(0.0, 1.0);
+        (t * 127.0).round().clamp(0.0, 127.0) as u8
+    }
+
+    fn rpn_param(row: usize) -> (u8, u8) {
+        let kind = PianoRpnKind::ALL
+            .get(row)
+            .copied()
+            .unwrap_or(PianoRpnKind::PitchBendSensitivity);
+        match kind {
+            PianoRpnKind::PitchBendSensitivity => (0, 0),
+            PianoRpnKind::FineTuning => (0, 1),
+            PianoRpnKind::CoarseTuning => (0, 2),
+        }
+    }
+
+    fn nrpn_param(row: usize) -> (u8, u8) {
+        let kind = PianoNrpnKind::ALL
+            .get(row)
+            .copied()
+            .unwrap_or(PianoNrpnKind::Brightness);
+        match kind {
+            PianoNrpnKind::Brightness => (1, 8),
+            PianoNrpnKind::VibratoRate => (1, 9),
+            PianoNrpnKind::VibratoDepth => (1, 10),
+        }
+    }
+
+    pub fn build_drawn_controllers(
+        start: Point,
+        end: Point,
+        bounds: Rectangle,
+        pps: f32,
+        clip_len: usize,
+        lane: LaneConfig,
+    ) -> Vec<PianoControllerEditData> {
+        if pps <= f32::EPSILON || clip_len == 0 {
+            return vec![];
+        }
+        let x0 = start.x.min(end.x).max(0.0);
+        let x1 = start.x.max(end.x).max(0.0);
+        let s0 = (x0 / pps).round().max(0.0) as usize;
+        let s1 = (x1 / pps).round().max(0.0) as usize;
+        let start_sample = s0.min(clip_len.saturating_sub(1));
+        let end_sample = s1.min(clip_len.saturating_sub(1)).max(start_sample);
+        let start_value = i16::from(y_to_value(start.y, bounds));
+        let end_value = i16::from(y_to_value(end.y, bounds));
+        let delta = end_value - start_value;
+        let value_steps = delta.unsigned_abs() as usize;
+        let points = value_steps + 1;
+
+        let mut out = Vec::new();
+        match lane {
+            LaneConfig::Controller(cc) => {
+                for i in 0..points {
+                    let t = if points <= 1 {
+                        0.0
+                    } else {
+                        i as f32 / (points - 1) as f32
+                    };
+                    let sample = start_sample + ((end_sample - start_sample) as f32 * t) as usize;
+                    let value = if delta >= 0 {
+                        (start_value + i as i16).clamp(0, 127) as u8
+                    } else {
+                        (start_value - i as i16).clamp(0, 127) as u8
+                    };
+                    out.push(PianoControllerEditData {
+                        sample,
+                        controller: cc,
+                        value,
+                        channel: 0,
+                    });
+                }
+            }
+            LaneConfig::Rpn(row) => {
+                let (msb, lsb) = rpn_param(row);
+                out.push(PianoControllerEditData {
+                    sample: start_sample,
+                    controller: 101,
+                    value: msb,
+                    channel: 0,
+                });
+                out.push(PianoControllerEditData {
+                    sample: start_sample,
+                    controller: 100,
+                    value: lsb,
+                    channel: 0,
+                });
+                for i in 0..points {
+                    let t = if points <= 1 {
+                        0.0
+                    } else {
+                        i as f32 / (points - 1) as f32
+                    };
+                    let sample = start_sample + ((end_sample - start_sample) as f32 * t) as usize;
+                    let value = if delta >= 0 {
+                        (start_value + i as i16).clamp(0, 127) as u8
+                    } else {
+                        (start_value - i as i16).clamp(0, 127) as u8
+                    };
+                    out.push(PianoControllerEditData {
+                        sample,
+                        controller: 6,
+                        value,
+                        channel: 0,
+                    });
+                }
+            }
+            LaneConfig::Nrpn(row) => {
+                let (msb, lsb) = nrpn_param(row);
+                out.push(PianoControllerEditData {
+                    sample: start_sample,
+                    controller: 99,
+                    value: msb,
+                    channel: 0,
+                });
+                out.push(PianoControllerEditData {
+                    sample: start_sample,
+                    controller: 98,
+                    value: lsb,
+                    channel: 0,
+                });
+                for i in 0..points {
+                    let t = if points <= 1 {
+                        0.0
+                    } else {
+                        i as f32 / (points - 1) as f32
+                    };
+                    let sample = start_sample + ((end_sample - start_sample) as f32 * t) as usize;
+                    let value = if delta >= 0 {
+                        (start_value + i as i16).clamp(0, 127) as u8
+                    } else {
+                        (start_value - i as i16).clamp(0, 127) as u8
+                    };
+                    out.push(PianoControllerEditData {
+                        sample,
+                        controller: 6,
+                        value,
+                        channel: 0,
+                    });
+                }
+            }
+        }
+        out
     }
 }
 

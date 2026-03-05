@@ -17,6 +17,14 @@ pub struct MidiNoteData {
 }
 
 #[derive(Clone, Debug)]
+pub struct MidiControllerData {
+    pub sample: usize,
+    pub controller: u8,
+    pub value: u8,
+    pub channel: u8,
+}
+
+#[derive(Clone, Debug)]
 pub struct HwMidiEvent {
     pub device: String,
     pub event: MidiEvent,
@@ -215,6 +223,24 @@ pub enum Action {
         note_indices: Vec<usize>,
         new_notes: Vec<MidiNoteData>,
         old_notes: Vec<MidiNoteData>,
+    },
+    ModifyMidiControllers {
+        track_name: String,
+        clip_index: usize,
+        controller_indices: Vec<usize>,
+        new_controllers: Vec<MidiControllerData>,
+        old_controllers: Vec<MidiControllerData>,
+    },
+    DeleteMidiControllers {
+        track_name: String,
+        clip_index: usize,
+        controller_indices: Vec<usize>,
+        deleted_controllers: Vec<(usize, MidiControllerData)>,
+    },
+    InsertMidiControllers {
+        track_name: String,
+        clip_index: usize,
+        controllers: Vec<(usize, MidiControllerData)>,
     },
     DeleteMidiNotes {
         track_name: String,

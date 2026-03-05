@@ -412,6 +412,21 @@ pub enum Message {
         note_index: usize,
         delta: i8,
     },
+    PianoSetVelocity {
+        note_index: usize,
+        velocity: u8,
+    },
+    PianoAdjustController {
+        controller_index: usize,
+        delta: i8,
+    },
+    PianoSetControllerValue {
+        controller_index: usize,
+        value: u8,
+    },
+    PianoInsertControllers {
+        controllers: Vec<PianoControllerEditData>,
+    },
     PianoControllerLaneSelected(PianoControllerLane),
     PianoControllerKindSelected(u8),
     PianoVelocityKindSelected(PianoVelocityKind),
@@ -520,4 +535,12 @@ pub enum Message {
 
     Undo,
     Redo,
+}
+
+#[derive(Debug, Clone)]
+pub struct PianoControllerEditData {
+    pub sample: usize,
+    pub controller: u8,
+    pub value: u8,
+    pub channel: u8,
 }
