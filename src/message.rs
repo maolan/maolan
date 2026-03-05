@@ -231,6 +231,116 @@ pub enum PianoNrpnKind {
     VibratoDepth,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PianoScaleRoot {
+    C,
+    CSharp,
+    D,
+    DSharp,
+    E,
+    F,
+    FSharp,
+    G,
+    GSharp,
+    A,
+    ASharp,
+    B,
+}
+
+impl PianoScaleRoot {
+    pub const ALL: [PianoScaleRoot; 12] = [
+        PianoScaleRoot::C,
+        PianoScaleRoot::CSharp,
+        PianoScaleRoot::D,
+        PianoScaleRoot::DSharp,
+        PianoScaleRoot::E,
+        PianoScaleRoot::F,
+        PianoScaleRoot::FSharp,
+        PianoScaleRoot::G,
+        PianoScaleRoot::GSharp,
+        PianoScaleRoot::A,
+        PianoScaleRoot::ASharp,
+        PianoScaleRoot::B,
+    ];
+
+    pub fn semitone(self) -> u8 {
+        match self {
+            PianoScaleRoot::C => 0,
+            PianoScaleRoot::CSharp => 1,
+            PianoScaleRoot::D => 2,
+            PianoScaleRoot::DSharp => 3,
+            PianoScaleRoot::E => 4,
+            PianoScaleRoot::F => 5,
+            PianoScaleRoot::FSharp => 6,
+            PianoScaleRoot::G => 7,
+            PianoScaleRoot::GSharp => 8,
+            PianoScaleRoot::A => 9,
+            PianoScaleRoot::ASharp => 10,
+            PianoScaleRoot::B => 11,
+        }
+    }
+}
+
+impl fmt::Display for PianoScaleRoot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PianoScaleRoot::C => write!(f, "C"),
+            PianoScaleRoot::CSharp => write!(f, "C#"),
+            PianoScaleRoot::D => write!(f, "D"),
+            PianoScaleRoot::DSharp => write!(f, "D#"),
+            PianoScaleRoot::E => write!(f, "E"),
+            PianoScaleRoot::F => write!(f, "F"),
+            PianoScaleRoot::FSharp => write!(f, "F#"),
+            PianoScaleRoot::G => write!(f, "G"),
+            PianoScaleRoot::GSharp => write!(f, "G#"),
+            PianoScaleRoot::A => write!(f, "A"),
+            PianoScaleRoot::ASharp => write!(f, "A#"),
+            PianoScaleRoot::B => write!(f, "B"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PianoChordKind {
+    MajorTriad,
+    MinorTriad,
+    Dominant7,
+    Major7,
+    Minor7,
+}
+
+impl PianoChordKind {
+    pub const ALL: [PianoChordKind; 5] = [
+        PianoChordKind::MajorTriad,
+        PianoChordKind::MinorTriad,
+        PianoChordKind::Dominant7,
+        PianoChordKind::Major7,
+        PianoChordKind::Minor7,
+    ];
+
+    pub fn intervals(self) -> &'static [u8] {
+        match self {
+            PianoChordKind::MajorTriad => &[4, 7],
+            PianoChordKind::MinorTriad => &[3, 7],
+            PianoChordKind::Dominant7 => &[4, 7, 10],
+            PianoChordKind::Major7 => &[4, 7, 11],
+            PianoChordKind::Minor7 => &[3, 7, 10],
+        }
+    }
+}
+
+impl fmt::Display for PianoChordKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PianoChordKind::MajorTriad => write!(f, "Maj"),
+            PianoChordKind::MinorTriad => write!(f, "Min"),
+            PianoChordKind::Dominant7 => write!(f, "7"),
+            PianoChordKind::Major7 => write!(f, "Maj7"),
+            PianoChordKind::Minor7 => write!(f, "Min7"),
+        }
+    }
+}
+
 impl PianoNrpnKind {
     pub const ALL: [PianoNrpnKind; 3] = [
         PianoNrpnKind::Brightness,
@@ -600,6 +710,14 @@ pub enum Message {
     PianoVelocityKindSelected(PianoVelocityKind),
     PianoRpnKindSelected(PianoRpnKind),
     PianoNrpnKindSelected(PianoNrpnKind),
+    PianoScaleSelectedNotes,
+    PianoScaleRootSelected(PianoScaleRoot),
+    PianoScaleMinorToggled(bool),
+    PianoChordSelectedNotes,
+    PianoChordKindSelected(PianoChordKind),
+    PianoLegatoSelectedNotes,
+    PianoVelocityShapeSelectedNotes,
+    PianoVelocityShapeAmountChanged(f32),
     PianoQuantizeSelectedNotes,
     PianoHumanizeSelectedNotes,
     PianoGrooveSelectedNotes,

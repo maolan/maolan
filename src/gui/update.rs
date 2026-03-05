@@ -223,6 +223,28 @@ impl Maolan {
         (x % range) as i64 - amplitude
     }
 
+    fn nearest_scale_pitch(pitch: u8, root_semitone: u8, minor: bool) -> u8 {
+        let pattern: &[u8] = if minor {
+            &[0, 2, 3, 5, 7, 8, 10]
+        } else {
+            &[0, 2, 4, 5, 7, 9, 11]
+        };
+        let mut best = pitch;
+        let mut best_dist = i16::MAX;
+        for candidate in 0_u8..=127_u8 {
+            let rel = (candidate as i16 - root_semitone as i16).rem_euclid(12) as u8;
+            if !pattern.contains(&rel) {
+                continue;
+            }
+            let dist = (candidate as i16 - pitch as i16).abs();
+            if dist < best_dist || (dist == best_dist && candidate < best) {
+                best = candidate;
+                best_dist = dist;
+            }
+        }
+        best
+    }
+
     fn automation_key(target: TrackAutomationTarget) -> AutomationWriteKey {
         match target {
             TrackAutomationTarget::Volume => AutomationWriteKey::Volume,
@@ -3400,6 +3422,149 @@ impl Maolan {
                     out
                 });
             }
+            Message::PianoScaleSelectedNotes => {
+                let (root, minor) = {
+                    let state = self.state.blocking_read();
+                    (state.piano_scale_root.semitone(), state.piano_scale_minor)
+                };
+                return self.selected_piano_notes_edit(move |_idx, note| {
+                    let mut out = note.clone();
+                    out.pitch = Self::nearest_scale_pitch(note.pitch, root, minor);
+                    out
+                });
+            }
+            Message::PianoChordSelectedNotes => {
+                let chord_kind = self.state.blocking_read().piano_chord_kind;
+                let state = self.state.blocking_write();
+                let selected: Vec<usize> = {
+                    let mut v: Vec<usize> = state.piano_selected_notes.iter().copied().collect();
+                    v.sort_unstable();
+                    v
+                };
+                if selected.is_empty() {
+                    return Task::none();
+                }
+                let Some(piano) = state.piano.as_ref() else {
+                    return Task::none();
+                };
+                let track_name = piano.track_idx.clone();
+                let mut existing = std::collections::HashSet::<(usize, usize, u8, u8)>::new();
+                for note in &piano.notes {
+                    existing.insert((
+                        note.start_sample,
+                        note.length_samples,
+                        note.pitch,
+                        note.channel,
+                    ));
+                }
+                let mut to_insert: Vec<(usize, maolan_engine::message::MidiNoteData)> = Vec::new();
+                let mut next_index = piano.notes.len();
+                for idx in selected {
+                    let Some(note) = piano.notes.get(idx) else {
+                        continue;
+                    };
+                    for interval in chord_kind.intervals() {
+                        let pitch = note.pitch.saturating_add(*interval).min(127);
+                        let key = (note.start_sample, note.length_samples, pitch, note.channel);
+                        if existing.contains(&key) {
+                            continue;
+                        }
+                        existing.insert(key);
+                        to_insert.push((
+                            next_index,
+                            maolan_engine::message::MidiNoteData {
+                                start_sample: note.start_sample,
+                                length_samples: note.length_samples,
+                                pitch,
+                                velocity: note.velocity,
+                                channel: note.channel,
+                            },
+                        ));
+                        next_index = next_index.saturating_add(1);
+                    }
+                }
+                drop(state);
+                if to_insert.is_empty() {
+                    return Task::none();
+                }
+                return self.send(Action::InsertMidiNotes {
+                    track_name,
+                    clip_index: 0,
+                    notes: to_insert,
+                });
+            }
+            Message::PianoLegatoSelectedNotes => {
+                let state = self.state.blocking_read();
+                let Some(piano) = state.piano.as_ref() else {
+                    return Task::none();
+                };
+                let mut selected: Vec<usize> = state.piano_selected_notes.iter().copied().collect();
+                selected.sort_unstable();
+                if selected.is_empty() {
+                    return Task::none();
+                }
+                let notes = piano.notes.clone();
+                drop(state);
+                return self.selected_piano_notes_edit(move |idx, note| {
+                    let mut out = note.clone();
+                    let next_start = notes
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, n)| {
+                            *i != idx
+                                && n.channel == note.channel
+                                && n.pitch == note.pitch
+                                && n.start_sample > note.start_sample
+                        })
+                        .map(|(_, n)| n.start_sample)
+                        .min();
+                    if let Some(next) = next_start {
+                        out.length_samples = next.saturating_sub(note.start_sample).max(1);
+                    }
+                    out
+                });
+            }
+            Message::PianoVelocityShapeSelectedNotes => {
+                let amount = self
+                    .state
+                    .blocking_read()
+                    .piano_velocity_shape_amount
+                    .clamp(0.0, 1.0);
+                let state = self.state.blocking_read();
+                let Some(piano) = state.piano.as_ref() else {
+                    return Task::none();
+                };
+                let mut selected: Vec<(usize, usize)> = state
+                    .piano_selected_notes
+                    .iter()
+                    .copied()
+                    .filter_map(|idx| piano.notes.get(idx).map(|n| (idx, n.start_sample)))
+                    .collect();
+                selected.sort_unstable_by_key(|(_, start)| *start);
+                let rank: std::collections::HashMap<usize, usize> = selected
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (idx, _))| (*idx, i))
+                    .collect();
+                let total = selected.len().max(1);
+                drop(state);
+                return self.selected_piano_notes_edit(move |idx, note| {
+                    let mut out = note.clone();
+                    let pos = *rank.get(&idx).unwrap_or(&0);
+                    let t = if total <= 1 {
+                        0.5
+                    } else {
+                        pos as f32 / (total.saturating_sub(1)) as f32
+                    };
+                    let shaped = (35.0 + t * (120.0 - 35.0)).round().clamp(1.0, 127.0) as u8;
+                    let blended = (note.velocity as f32
+                        + (shaped as f32 - note.velocity as f32) * amount)
+                        .round()
+                        .clamp(1.0, 127.0) as u8;
+                    out.velocity = blended;
+                    out
+                });
+            }
             Message::PianoHumanizeSelectedNotes => {
                 let interval = self.snap_interval_samples().max(1) as i64;
                 let (time_amount, vel_amount) = {
@@ -3459,6 +3624,18 @@ impl Maolan {
             }
             Message::PianoGrooveAmountChanged(value) => {
                 self.state.blocking_write().piano_groove_amount = value.clamp(0.0, 1.0);
+            }
+            Message::PianoScaleRootSelected(root) => {
+                self.state.blocking_write().piano_scale_root = root;
+            }
+            Message::PianoScaleMinorToggled(minor) => {
+                self.state.blocking_write().piano_scale_minor = minor;
+            }
+            Message::PianoChordKindSelected(kind) => {
+                self.state.blocking_write().piano_chord_kind = kind;
+            }
+            Message::PianoVelocityShapeAmountChanged(value) => {
+                self.state.blocking_write().piano_velocity_shape_amount = value.clamp(0.0, 1.0);
             }
             Message::TracksResizeHover(hovered) => {
                 self.tracks_resize_hovered = hovered;

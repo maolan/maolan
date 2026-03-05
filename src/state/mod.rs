@@ -4,7 +4,8 @@ mod track;
 
 use crate::config;
 use crate::message::{
-    PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoVelocityKind, TrackAutomationTarget,
+    PianoChordKind, PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoScaleRoot,
+    PianoVelocityKind, TrackAutomationTarget,
 };
 
 #[cfg(target_os = "linux")]
@@ -516,6 +517,10 @@ pub struct StateData {
     pub piano_velocity_kind: PianoVelocityKind,
     pub piano_rpn_kind: PianoRpnKind,
     pub piano_nrpn_kind: PianoNrpnKind,
+    pub piano_scale_root: PianoScaleRoot,
+    pub piano_scale_minor: bool,
+    pub piano_chord_kind: PianoChordKind,
+    pub piano_velocity_shape_amount: f32,
     pub piano_selected_sysex: Option<usize>,
     pub piano_sysex_hex_input: String,
     pub piano_sysex_panel_open: bool,
@@ -685,6 +690,10 @@ impl Default for StateData {
             piano_velocity_kind: PianoVelocityKind::NoteVelocity,
             piano_rpn_kind: PianoRpnKind::PitchBendSensitivity,
             piano_nrpn_kind: PianoNrpnKind::Brightness,
+            piano_scale_root: PianoScaleRoot::C,
+            piano_scale_minor: false,
+            piano_chord_kind: PianoChordKind::MajorTriad,
+            piano_velocity_shape_amount: 1.0,
             piano_selected_sysex: None,
             piano_sysex_hex_input: String::new(),
             piano_sysex_panel_open: false,

@@ -1,6 +1,9 @@
 use crate::{
     menu::{menu_dropdown, menu_item, submenu},
-    message::{Message, PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoVelocityKind},
+    message::{
+        Message, PianoChordKind, PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoScaleRoot,
+        PianoVelocityKind,
+    },
     state::State,
 };
 use iced::{
@@ -8,7 +11,8 @@ use iced::{
     widget::{
         Id, Stack, button,
         canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
-        column, container, pin, row, scrollable, slider, text, text_input, vertical_slider,
+        checkbox, column, container, pick_list, pin, row, scrollable, slider, text, text_input,
+        vertical_slider,
     },
 };
 use iced_aw::{
@@ -325,6 +329,10 @@ impl Piano {
         let humanize_time_amount = state.piano_humanize_time_amount.clamp(0.0, 1.0);
         let humanize_velocity_amount = state.piano_humanize_velocity_amount.clamp(0.0, 1.0);
         let groove_amount = state.piano_groove_amount.clamp(0.0, 1.0);
+        let scale_root = state.piano_scale_root;
+        let scale_minor = state.piano_scale_minor;
+        let chord_kind = state.piano_chord_kind;
+        let velocity_shape_amount = state.piano_velocity_shape_amount.clamp(0.0, 1.0);
         let controller_lane = state.piano_controller_lane;
 
         let Some(roll) = state.piano.as_ref() else {
@@ -956,46 +964,85 @@ impl Piano {
                     container("")
                         .width(Length::Fixed(Self::KEYBOARD_WIDTH))
                         .height(Length::Fixed(16.0)),
-                    row![
-                        h_scroll,
-                        slider(
-                            Self::H_ZOOM_MIN..=Self::H_ZOOM_MAX,
-                            Self::zoom_x_to_slider(zoom_x),
-                            |value| Message::PianoZoomXChanged(Self::slider_to_zoom_x(value)),
-                        )
-                        .step(0.1)
-                        .width(Length::Fixed(100.0)),
-                        button(text("Quantize").size(11))
-                            .on_press(Message::PianoQuantizeSelectedNotes),
-                        slider(
-                            0.0..=1.0,
-                            quantize_strength,
-                            Message::PianoQuantizeStrengthChanged
-                        )
-                        .step(0.01)
-                        .width(Length::Fixed(72.0)),
-                        button(text("Humanize").size(11))
-                            .on_press(Message::PianoHumanizeSelectedNotes),
-                        slider(
-                            0.0..=1.0,
-                            humanize_time_amount,
-                            Message::PianoHumanizeTimeAmountChanged,
-                        )
-                        .step(0.01)
-                        .width(Length::Fixed(58.0)),
-                        slider(
-                            0.0..=1.0,
-                            humanize_velocity_amount,
-                            Message::PianoHumanizeVelocityAmountChanged,
-                        )
-                        .step(0.01)
-                        .width(Length::Fixed(58.0)),
-                        button(text("Groove").size(11)).on_press(Message::PianoGrooveSelectedNotes),
-                        slider(0.0..=1.0, groove_amount, Message::PianoGrooveAmountChanged)
+                    column![
+                        row![
+                            h_scroll,
+                            slider(
+                                Self::H_ZOOM_MIN..=Self::H_ZOOM_MAX,
+                                Self::zoom_x_to_slider(zoom_x),
+                                |value| Message::PianoZoomXChanged(Self::slider_to_zoom_x(value)),
+                            )
+                            .step(0.1)
+                            .width(Length::Fixed(100.0)),
+                            button(text("Quantize").size(11))
+                                .on_press(Message::PianoQuantizeSelectedNotes),
+                            slider(
+                                0.0..=1.0,
+                                quantize_strength,
+                                Message::PianoQuantizeStrengthChanged
+                            )
                             .step(0.01)
                             .width(Length::Fixed(72.0)),
+                            button(text("Humanize").size(11))
+                                .on_press(Message::PianoHumanizeSelectedNotes),
+                            slider(
+                                0.0..=1.0,
+                                humanize_time_amount,
+                                Message::PianoHumanizeTimeAmountChanged,
+                            )
+                            .step(0.01)
+                            .width(Length::Fixed(58.0)),
+                            slider(
+                                0.0..=1.0,
+                                humanize_velocity_amount,
+                                Message::PianoHumanizeVelocityAmountChanged,
+                            )
+                            .step(0.01)
+                            .width(Length::Fixed(58.0)),
+                            button(text("Groove").size(11))
+                                .on_press(Message::PianoGrooveSelectedNotes),
+                            slider(0.0..=1.0, groove_amount, Message::PianoGrooveAmountChanged)
+                                .step(0.01)
+                                .width(Length::Fixed(72.0)),
+                        ]
+                        .spacing(8)
+                        .width(Length::Fill),
+                        row![
+                            button(text("Scale").size(11))
+                                .on_press(Message::PianoScaleSelectedNotes),
+                            pick_list(
+                                PianoScaleRoot::ALL.to_vec(),
+                                Some(scale_root),
+                                Message::PianoScaleRootSelected
+                            )
+                            .width(Length::Fixed(62.0)),
+                            checkbox(scale_minor)
+                                .label("Min")
+                                .on_toggle(Message::PianoScaleMinorToggled),
+                            button(text("Chord").size(11))
+                                .on_press(Message::PianoChordSelectedNotes),
+                            pick_list(
+                                PianoChordKind::ALL.to_vec(),
+                                Some(chord_kind),
+                                Message::PianoChordKindSelected
+                            )
+                            .width(Length::Fixed(74.0)),
+                            button(text("Legato").size(11))
+                                .on_press(Message::PianoLegatoSelectedNotes),
+                            button(text("VelShape").size(11))
+                                .on_press(Message::PianoVelocityShapeSelectedNotes),
+                            slider(
+                                0.0..=1.0,
+                                velocity_shape_amount,
+                                Message::PianoVelocityShapeAmountChanged
+                            )
+                            .step(0.01)
+                            .width(Length::Fixed(72.0)),
+                        ]
+                        .spacing(8)
+                        .width(Length::Fill),
                     ]
-                    .spacing(8)
+                    .spacing(4)
                     .width(Length::Fill),
                 ]
             ]

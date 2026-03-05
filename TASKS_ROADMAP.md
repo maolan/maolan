@@ -60,7 +60,11 @@ Last updated: 2026-03-05
   - [x] Commit/freeze rendering including plugin-processed track offline bounce
   - [x] Freeze bounce automation bake + progress reporting + in-flight cancel
 - [ ] Folder/Group/VCA-like controls
-- [ ] MIDI power tools (scale, chord, legato, velocity shaping)
+- [x] MIDI power tools (scale, chord, legato, velocity shaping)
+  - [x] Scale snap selected notes (root + major/minor)
+  - [x] Chord generation from selected notes (triad/7th presets)
+  - [x] Legato selected notes to next note start
+  - [x] Velocity shaping over selected note range
 - [ ] Audio warp/time-stretch with markers
 
 ## Phase 3 - Control and Integration
