@@ -83,9 +83,17 @@ pub struct Track {
     pub soloed: bool,
     pub input_monitor: bool,
     pub disk_monitor: bool,
+    #[serde(default)]
+    pub frozen: bool,
     pub height: f32,
     pub audio: AudioData,
     pub midi: MIDIData,
+    #[serde(default)]
+    pub frozen_audio_backup: Vec<AudioClip>,
+    #[serde(default)]
+    pub frozen_midi_backup: Vec<MIDIClip>,
+    #[serde(default)]
+    pub frozen_render_clip: Option<String>,
     #[serde(default)]
     pub automation_lanes: Vec<TrackAutomationLane>,
     #[serde(default = "default_automation_mode")]
@@ -118,8 +126,12 @@ impl Track {
             soloed: false,
             input_monitor: false,
             disk_monitor: true,
+            frozen: false,
             audio: AudioData::new(audio_ins, audio_outs),
             midi: MIDIData::new(midi_ins, midi_outs),
+            frozen_audio_backup: vec![],
+            frozen_midi_backup: vec![],
+            frozen_render_clip: None,
             automation_lanes: vec![],
             automation_mode: TrackAutomationMode::Read,
             height: 60.0,
@@ -175,6 +187,11 @@ impl Track {
                         self.disk_monitor = !self.disk_monitor;
                     }
                 }
+                Action::TrackSetFrozen { track_name, frozen } => {
+                    if track_name == self.name {
+                        self.frozen = frozen;
+                    }
+                }
                 _ => {}
             }
         }
@@ -190,7 +207,10 @@ impl Track {
     }
 
     pub fn automation_lane_count(&self) -> usize {
-        self.automation_lanes.iter().filter(|lane| lane.visible).count()
+        self.automation_lanes
+            .iter()
+            .filter(|lane| lane.visible)
+            .count()
     }
 
     pub fn total_lane_count(&self) -> usize {

@@ -72,7 +72,10 @@ where
 
         let mut take_idx = preferred_take_lane(clip).unwrap_or(0);
         if preferred_take_lane(clip).is_none() {
-            while active.iter().any(|(_, existing_take)| *existing_take == take_idx) {
+            while active
+                .iter()
+                .any(|(_, existing_take)| *existing_take == take_idx)
+            {
                 take_idx = take_idx.saturating_add(1);
             }
         }
@@ -340,19 +343,21 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .into(),
         );
         clips.push(
-            pin(container(text(format!("Automation {}", lane.target)).size(10))
-                .width(Length::Shrink)
-                .height(Length::Fixed(12.0))
-                .padding([1, 4])
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(Color {
-                        r: 0.35,
-                        g: 0.24,
-                        b: 0.12,
-                        a: 0.45,
-                    })),
-                    ..container::Style::default()
-                }))
+            pin(
+                container(text(format!("Automation {}", lane.target)).size(10))
+                    .width(Length::Shrink)
+                    .height(Length::Fixed(12.0))
+                    .padding([1, 4])
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.35,
+                            g: 0.24,
+                            b: 0.12,
+                            a: 0.45,
+                        })),
+                        ..container::Style::default()
+                    }),
+            )
             .position(Point::new(4.0, lane_top + 2.0))
             .into(),
         );
@@ -365,7 +370,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let right = &segment[1];
             let left_x = left.sample as f32 * pixels_per_sample;
             let right_x = right.sample as f32 * pixels_per_sample;
-            let left_y = lane_top + 3.0 + (lane_clip_height - 2.0) * (1.0 - left.value.clamp(0.0, 1.0));
+            let left_y =
+                lane_top + 3.0 + (lane_clip_height - 2.0) * (1.0 - left.value.clamp(0.0, 1.0));
             let right_y =
                 lane_top + 3.0 + (lane_clip_height - 2.0) * (1.0 - right.value.clamp(0.0, 1.0));
             let width = (right_x - left_x).abs().max(1.0);
@@ -739,8 +745,11 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 if matches!(edit_tool, EditTool::Select) && !clip.take_lane_locked {
                     let track_name_for_drag_closure = track_name_cloned.clone();
                     base.on_move(move |point| {
-                        let mut clip_data =
-                            DraggedClip::new(Kind::Audio, index, track_name_for_drag_closure.clone());
+                        let mut clip_data = DraggedClip::new(
+                            Kind::Audio,
+                            index,
+                            track_name_for_drag_closure.clone(),
+                        );
                         clip_data.start = point;
                         Message::ClipDrag(clip_data)
                     })
@@ -1014,32 +1023,31 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             true,
         ));
 
-        let clip_content =
-            container(container(text(clip_label.clone()).size(12)).padding(5))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(0)
-                .style(move |_theme| {
-                    use container::Style;
-                    Style {
-                        background: Some(Background::Color(if is_selected {
-                            Color {
-                                r: 0.82,
-                                g: 1.0,
-                                b: 0.84,
-                                a: if clip_muted { 0.45 } else { 1.0 },
-                            }
-                        } else {
-                            Color {
-                                r: 0.24,
-                                g: 0.5,
-                                b: 0.26,
-                                a: if clip_muted { 0.35 } else { 0.82 },
-                            }
-                        })),
-                        ..Style::default()
-                    }
-                });
+        let clip_content = container(container(text(clip_label.clone()).size(12)).padding(5))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(0)
+            .style(move |_theme| {
+                use container::Style;
+                Style {
+                    background: Some(Background::Color(if is_selected {
+                        Color {
+                            r: 0.82,
+                            g: 1.0,
+                            b: 0.84,
+                            a: if clip_muted { 0.45 } else { 1.0 },
+                        }
+                    } else {
+                        Color {
+                            r: 0.24,
+                            g: 0.5,
+                            b: 0.26,
+                            a: if clip_muted { 0.35 } else { 0.82 },
+                        }
+                    })),
+                    ..Style::default()
+                }
+            });
 
         let clip_widget = container(row![left_handle, clip_content, right_handle])
             .width(Length::Fixed(clip_width))
@@ -1220,8 +1228,11 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 if matches!(edit_tool, EditTool::Select) && !clip.take_lane_locked {
                     let track_name_for_drag_closure = track_name_cloned.clone();
                     base.on_move(move |point| {
-                        let mut clip_data =
-                            DraggedClip::new(Kind::MIDI, index, track_name_for_drag_closure.clone());
+                        let mut clip_data = DraggedClip::new(
+                            Kind::MIDI,
+                            index,
+                            track_name_for_drag_closure.clone(),
+                        );
                         clip_data.start = point;
                         Message::ClipDrag(clip_data)
                     })
@@ -1325,23 +1336,22 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = snap_sample(clip.start as f32 + delta_samples);
-            let preview_content =
-                container(container(text(clip_label).size(12)).padding(5))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .padding(0)
-                    .style(|_theme| {
-                        use container::Style;
-                        Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.82,
-                                g: 1.0,
-                                b: 0.84,
-                                a: 0.7,
-                            })),
-                            ..Style::default()
-                        }
-                    });
+            let preview_content = container(container(text(clip_label).size(12)).padding(5))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(0)
+                .style(|_theme| {
+                    use container::Style;
+                    Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.82,
+                            g: 1.0,
+                            b: 0.84,
+                            a: 0.7,
+                        })),
+                        ..Style::default()
+                    }
+                });
             let preview = container(row![
                 container("")
                     .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))

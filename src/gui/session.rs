@@ -69,6 +69,12 @@ impl Maolan {
                 if let Some(midi) = track.get_mut("midi").and_then(Value::as_object_mut) {
                     midi.insert("clips".to_string(), Value::Array(vec![]));
                 }
+                if let Some(obj) = track.as_object_mut() {
+                    obj.insert("frozen".to_string(), Value::Bool(false));
+                    obj.insert("frozen_audio_backup".to_string(), Value::Array(vec![]));
+                    obj.insert("frozen_midi_backup".to_string(), Value::Array(vec![]));
+                    obj.insert("frozen_render_clip".to_string(), Value::Null);
+                }
             }
         }
 
@@ -274,9 +280,7 @@ impl Maolan {
                         }));
 
                         // Set plugin state if available
-                        if let Some(state) = plugin
-                            .get("state")
-                            .and_then(Self::lv2_state_from_json)
+                        if let Some(state) = plugin.get("state").and_then(Self::lv2_state_from_json)
                         {
                             tasks.push(self.send(Action::TrackSetLv2PluginState {
                                 track_name: track_name.clone(),
@@ -701,9 +705,12 @@ impl Maolan {
             Action::BeginSessionRestore,
             Action::SetSessionPath(path.clone()),
         ];
+        let mut frozen_tracks: Vec<String> = Vec::new();
         let mut warnings: Vec<String> = Vec::new();
         let session_root = PathBuf::from(path.clone());
         self.pending_audio_peaks.clear();
+        self.pending_track_freeze_restore.clear();
+        self.pending_track_freeze_bounce.clear();
         let existing_tracks: Vec<String> = self
             .state
             .blocking_read()
@@ -877,7 +884,10 @@ impl Maolan {
         }
         loaded_tempo_points.sort_unstable_by_key(|p| p.sample);
         loaded_time_signature_points.sort_unstable_by_key(|p| p.sample);
-        if loaded_tempo_points.first().is_some_and(|first| first.sample != 0) {
+        if loaded_tempo_points
+            .first()
+            .is_some_and(|first| first.sample != 0)
+        {
             loaded_tempo_points.insert(
                 0,
                 crate::state::TempoPoint {
@@ -1065,6 +1075,25 @@ impl Maolan {
                         io::ErrorKind::InvalidInput,
                         "'disk_monitor' is not boolean",
                     ));
+                }
+                if track["frozen"].as_bool().unwrap_or(false) {
+                    frozen_tracks.push(name.clone());
+                }
+                let frozen_audio_backup: Vec<crate::state::AudioClip> =
+                    serde_json::from_value(track["frozen_audio_backup"].clone())
+                        .unwrap_or_default();
+                let frozen_midi_backup: Vec<crate::state::MIDIClip> =
+                    serde_json::from_value(track["frozen_midi_backup"].clone()).unwrap_or_default();
+                let frozen_render_clip =
+                    track["frozen_render_clip"].as_str().map(|s| s.to_string());
+                if !frozen_audio_backup.is_empty()
+                    || !frozen_midi_backup.is_empty()
+                    || frozen_render_clip.is_some()
+                {
+                    self.pending_track_freeze_restore.insert(
+                        name.clone(),
+                        (frozen_audio_backup, frozen_midi_backup, frozen_render_clip),
+                    );
                 }
 
                 if let Some(audio_clips) = track["audio"]["clips"].as_array() {
@@ -1353,6 +1382,12 @@ impl Maolan {
                 msg.push_str(&format!("\n- ... and {} more", warnings.len() - shown));
             }
             self.state.blocking_write().message = msg;
+        }
+        for track_name in frozen_tracks {
+            restore_actions.push(Action::TrackSetFrozen {
+                track_name,
+                frozen: true,
+            });
         }
         restore_actions.push(Action::EndSessionRestore);
         Ok(Self::restore_actions_task(restore_actions))

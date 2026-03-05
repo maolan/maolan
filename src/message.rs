@@ -345,6 +345,12 @@ pub enum Message {
     TrackAutomationToggle {
         track_name: String,
     },
+    TrackFreezeToggle {
+        track_name: String,
+    },
+    TrackFreezeFlatten {
+        track_name: String,
+    },
     TrackAutomationCycleMode {
         track_name: String,
     },

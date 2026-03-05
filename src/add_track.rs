@@ -125,10 +125,7 @@ impl AddTrackView {
         let mut template_options = vec!["empty".to_string()];
         template_options.extend(self.available_templates.clone());
 
-        let selected_display = self
-            .selected_template
-            .as_deref()
-            .unwrap_or("empty");
+        let selected_display = self.selected_template.as_deref().unwrap_or("empty");
         let is_empty_template = selected_display == "empty";
 
         let mut col = column![

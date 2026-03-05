@@ -95,8 +95,17 @@ impl Tracks {
 
             let track_ui: Column<'_, Message> = column![
                 row![
-                    text(format!("▾ {}", track.name.clone())),
+                    text(format!(
+                        "▾ {}{}",
+                        track.name.clone(),
+                        if track.frozen { " [FRZ]" } else { "" }
+                    )),
                     Space::new().width(Length::Fill),
+                    button("FZ")
+                        .padding(3)
+                        .on_press(Message::TrackFreezeToggle {
+                            track_name: track.name.clone(),
+                        }),
                     button("R")
                         .padding(3)
                         .style(move |theme, _state| { style::arm::style(theme, track.armed) })
@@ -167,6 +176,7 @@ impl Tracks {
 
             {
                 let track_name_for_menu = track.name.clone();
+                let track_is_frozen = track.frozen;
                 let track_with_mouse = mouse_area(
                     container(track_ui)
                         .id(track.name.clone())
@@ -221,6 +231,21 @@ impl Tracks {
                         }),
                         button("Rename")
                             .on_press(Message::TrackRenameShow(track_name_for_menu.clone())),
+                        button(if track_is_frozen {
+                            "Unfreeze"
+                        } else {
+                            "Freeze"
+                        })
+                        .on_press(Message::TrackFreezeToggle {
+                            track_name: track_name_for_menu.clone(),
+                        }),
+                        if track_is_frozen {
+                            button("Flatten").on_press(Message::TrackFreezeFlatten {
+                                track_name: track_name_for_menu.clone(),
+                            })
+                        } else {
+                            button("Flatten")
+                        },
                         button("Save as template")
                             .on_press(Message::TrackTemplateSaveShow(track_name_for_menu.clone())),
                     ]

@@ -61,6 +61,7 @@ pub struct Track {
     pub soloed: bool,
     pub input_monitor: bool,
     pub disk_monitor: bool,
+    pub frozen: bool,
     pub audio: AudioTrack,
     pub midi: MIDITrack,
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -118,6 +119,7 @@ impl Track {
             soloed: false,
             input_monitor: false,
             disk_monitor: true,
+            frozen: false,
             audio: AudioTrack::new(audio_ins, audio_outs, buffer_size),
             midi: MIDITrack::new(midi_ins, midi_outs),
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -888,6 +890,85 @@ impl Track {
     }
     pub fn set_session_base_dir(&mut self, base_dir: Option<PathBuf>) {
         self.session_base_dir = base_dir;
+    }
+
+    pub fn frozen(&self) -> bool {
+        self.frozen
+    }
+
+    pub fn set_frozen(&mut self, frozen: bool) {
+        self.frozen = frozen;
+    }
+
+    pub fn offline_bounce_interleaved(
+        &mut self,
+        start_sample: usize,
+        length_samples: usize,
+    ) -> (usize, Vec<f32>) {
+        let channels = self.audio.outs.len().max(1);
+        if length_samples == 0 {
+            return (channels, vec![]);
+        }
+        let block_size = self
+            .audio
+            .outs
+            .first()
+            .map(|io| io.buffer.lock().len())
+            .or_else(|| self.audio.ins.first().map(|io| io.buffer.lock().len()))
+            .unwrap_or(0)
+            .max(1);
+
+        let saved_transport = self.transport_sample;
+        let saved_disk_monitor = self.disk_monitor;
+        let saved_input_monitor = self.input_monitor;
+        let saved_clip_playback_enabled = self.clip_playback_enabled;
+        let saved_record_tap_enabled = self.record_tap_enabled;
+        let saved_armed = self.armed;
+        let saved_output_enabled = self.output_enabled;
+        let saved_loop_enabled = self.loop_enabled;
+        let saved_loop_range = self.loop_range_samples;
+        let saved_pending_hw = self.pending_hw_midi_out_events.clone();
+
+        self.disk_monitor = true;
+        self.input_monitor = false;
+        self.clip_playback_enabled = true;
+        self.record_tap_enabled = false;
+        self.armed = false;
+        self.output_enabled = true;
+        self.loop_enabled = false;
+        self.loop_range_samples = None;
+        self.pending_hw_midi_out_events.clear();
+
+        let mut rendered = vec![0.0_f32; length_samples.saturating_mul(channels)];
+        let mut cursor = 0usize;
+        while cursor < length_samples {
+            self.transport_sample = start_sample.saturating_add(cursor);
+            self.process();
+            let step = (length_samples - cursor).min(block_size);
+            for ch in 0..channels {
+                let out = self.audio.outs[ch].buffer.lock();
+                let copy_len = step.min(out.len());
+                for i in 0..copy_len {
+                    let dst = (cursor + i) * channels + ch;
+                    rendered[dst] = out[i];
+                }
+            }
+            cursor = cursor.saturating_add(step);
+            self.pending_hw_midi_out_events.clear();
+        }
+
+        self.transport_sample = saved_transport;
+        self.disk_monitor = saved_disk_monitor;
+        self.input_monitor = saved_input_monitor;
+        self.clip_playback_enabled = saved_clip_playback_enabled;
+        self.record_tap_enabled = saved_record_tap_enabled;
+        self.armed = saved_armed;
+        self.output_enabled = saved_output_enabled;
+        self.loop_enabled = saved_loop_enabled;
+        self.loop_range_samples = saved_loop_range;
+        self.pending_hw_midi_out_events = saved_pending_hw;
+
+        (channels, rendered)
     }
 
     pub(crate) fn resolve_clip_path(&self, clip_name: &str) -> PathBuf {

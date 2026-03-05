@@ -53,7 +53,11 @@ impl Maolan {
                             recording_preview_bounds: self.recording_preview_bounds(),
                             recording_preview_peaks: Some(self.recording_preview_peaks.clone()),
                             shift_pressed: state.shift,
-                            selected_tempo_points: self.selected_tempo_points.iter().copied().collect(),
+                            selected_tempo_points: self
+                                .selected_tempo_points
+                                .iter()
+                                .copied()
+                                .collect(),
                             selected_time_signature_points: self
                                 .selected_time_signature_points
                                 .iter()
@@ -81,7 +85,11 @@ impl Maolan {
                             recording_preview_bounds: None,
                             recording_preview_peaks: None,
                             shift_pressed: state.shift,
-                            selected_tempo_points: self.selected_tempo_points.iter().copied().collect(),
+                            selected_tempo_points: self
+                                .selected_tempo_points
+                                .iter()
+                                .copied()
+                                .collect(),
                             selected_time_signature_points: self
                                 .selected_time_signature_points
                                 .iter()
@@ -129,7 +137,9 @@ impl Maolan {
                     }
                     let has_timing_selection = !self.selected_tempo_points.is_empty()
                         || !self.selected_time_signature_points.is_empty();
-                    let view = if matches!(state.view, View::Workspace | View::Piano) && has_timing_selection {
+                    let view = if matches!(state.view, View::Workspace | View::Piano)
+                        && has_timing_selection
+                    {
                         let lane_label = match self.timing_selection_lane {
                             Some(super::TimingSelectionLane::Tempo) => "Tempo Points",
                             Some(super::TimingSelectionLane::TimeSignature) => {
@@ -161,24 +171,30 @@ impl Maolan {
                                 ]
                                 .spacing(6),
                                 row![
-                                    button("Duplicate").on_press(if !self.selected_tempo_points.is_empty() {
-                                        Message::TempoSelectionDuplicate
-                                    } else {
-                                        Message::TimeSignatureSelectionDuplicate
-                                    }),
-                                    button("Reset").on_press(if !self.selected_tempo_points.is_empty() {
-                                        Message::TempoSelectionResetToPrevious
-                                    } else {
-                                        Message::TimeSignatureSelectionResetToPrevious
-                                    }),
+                                    button("Duplicate").on_press(
+                                        if !self.selected_tempo_points.is_empty() {
+                                            Message::TempoSelectionDuplicate
+                                        } else {
+                                            Message::TimeSignatureSelectionDuplicate
+                                        }
+                                    ),
+                                    button("Reset").on_press(
+                                        if !self.selected_tempo_points.is_empty() {
+                                            Message::TempoSelectionResetToPrevious
+                                        } else {
+                                            Message::TimeSignatureSelectionResetToPrevious
+                                        }
+                                    ),
                                 ]
                                 .spacing(6),
                                 row![
-                                    button("Delete").on_press(if !self.selected_tempo_points.is_empty() {
-                                        Message::TempoSelectionDelete
-                                    } else {
-                                        Message::TimeSignatureSelectionDelete
-                                    }),
+                                    button("Delete").on_press(
+                                        if !self.selected_tempo_points.is_empty() {
+                                            Message::TempoSelectionDelete
+                                        } else {
+                                            Message::TimeSignatureSelectionDelete
+                                        }
+                                    ),
                                     button("Clear").on_press(Message::ClearTimingPointSelection),
                                 ]
                                 .spacing(6),

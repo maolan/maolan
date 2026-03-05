@@ -72,9 +72,7 @@ pub fn should_record(action: &Action) -> bool {
     matches!(
         action,
         Action::SetTempo(_)
-            | Action::SetTimeSignature {
-                ..
-            }
+            | Action::SetTimeSignature { .. }
             | Action::AddTrack { .. }
             | Action::RemoveTrack(_)
             | Action::RenameTrack { .. }
@@ -85,6 +83,7 @@ pub fn should_record(action: &Action) -> bool {
             | Action::TrackToggleSolo(_)
             | Action::TrackToggleInputMonitor(_)
             | Action::TrackToggleDiskMonitor(_)
+            | Action::TrackSetFrozen { .. }
             | Action::AddClip { .. }
             | Action::RemoveClip { .. }
             | Action::RenameClip { .. }
@@ -160,6 +159,14 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             Some(Action::TrackToggleInputMonitor(name.clone()))
         }
         Action::TrackToggleDiskMonitor(name) => Some(Action::TrackToggleDiskMonitor(name.clone())),
+        Action::TrackSetFrozen { track_name, .. } => {
+            let track = state.tracks.get(track_name)?;
+            let track_lock = track.lock();
+            Some(Action::TrackSetFrozen {
+                track_name: track_name.clone(),
+                frozen: track_lock.frozen(),
+            })
+        }
 
         Action::AddClip {
             track_name, kind, ..
@@ -791,8 +798,7 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                 for (from_name, from_track_handle) in &state.tracks {
                     let from_track = from_track_handle.lock();
                     for (from_port, out) in from_track.audio.outs.iter().enumerate() {
-                        let conns: Vec<Arc<AudioIO>> =
-                            out.connections.lock().to_vec();
+                        let conns: Vec<Arc<AudioIO>> = out.connections.lock().to_vec();
                         if conns.iter().any(|conn| Arc::ptr_eq(conn, to_in))
                             && seen_audio.insert((
                                 from_name.clone(),

@@ -13,7 +13,9 @@ use crate::{
         SnapMode,
     },
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
-    state::{PianoControllerPoint, PianoNote, PianoSysExPoint, State, StateData},
+    state::{
+        AudioClip, MIDIClip, PianoControllerPoint, PianoNote, PianoSysExPoint, State, StateData,
+    },
     template_save, toolbar, track_rename, track_template_save, workspace,
 };
 use ebur128::{EbuR128, Mode as LoudnessMode};
@@ -53,7 +55,21 @@ static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::
 const MIN_CLIP_WIDTH_PX: f32 = 12.0;
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
 type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
-type PianoParseResult = (Vec<PianoNote>, Vec<PianoControllerPoint>, Vec<PianoSysExPoint>, usize);
+type PianoParseResult = (
+    Vec<PianoNote>,
+    Vec<PianoControllerPoint>,
+    Vec<PianoSysExPoint>,
+    usize,
+);
+type TrackFreezeRestore = (Vec<AudioClip>, Vec<MIDIClip>, Option<String>);
+
+#[derive(Debug, Clone)]
+struct PendingTrackFreezeBounce {
+    rendered_clip_rel: String,
+    rendered_length: usize,
+    backup_audio: Vec<AudioClip>,
+    backup_midi: Vec<MIDIClip>,
+}
 
 struct ExportSessionOptions {
     export_path: PathBuf,
@@ -94,18 +110,9 @@ enum AutomationWriteKey {
     Volume,
     Balance,
     Mute,
-    Lv2 {
-        instance_id: usize,
-        index: u32,
-    },
-    Vst3 {
-        instance_id: usize,
-        param_id: u32,
-    },
-    Clap {
-        instance_id: usize,
-        param_id: u32,
-    },
+    Lv2 { instance_id: usize, index: u32 },
+    Vst3 { instance_id: usize, param_id: u32 },
+    Clap { instance_id: usize, param_id: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,8 +170,11 @@ pub struct Maolan {
     pending_save_tracks: std::collections::HashSet<String>,
     pending_save_is_template: bool,
     pending_audio_peaks: HashMap<AudioClipKey, Vec<Vec<f32>>>,
+    pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
+    pending_track_freeze_bounce: HashMap<String, PendingTrackFreezeBounce>,
     track_automation_runtime: HashMap<String, TrackAutomationRuntime>,
-    touch_automation_overrides: HashMap<String, HashMap<AutomationWriteKey, TouchAutomationOverride>>,
+    touch_automation_overrides:
+        HashMap<String, HashMap<AutomationWriteKey, TouchAutomationOverride>>,
     touch_active_keys: HashMap<String, HashSet<AutomationWriteKey>>,
     latch_automation_overrides: HashMap<String, HashMap<AutomationWriteKey, f32>>,
     pending_add_lv2_automation_uris: HashSet<(String, String)>,
@@ -173,6 +183,10 @@ pub struct Maolan {
     pending_add_vst3_automation_instances: HashSet<(String, usize)>,
     pending_add_clap_automation_paths: HashSet<(String, String)>,
     pending_add_clap_automation_instances: HashSet<(String, usize)>,
+    freeze_in_progress: bool,
+    freeze_progress: f32,
+    freeze_track_name: Option<String>,
+    freeze_cancel_requested: bool,
     playing: bool,
     paused: bool,
     transport_samples: f64,
@@ -317,6 +331,8 @@ impl Default for Maolan {
             pending_save_tracks: std::collections::HashSet::new(),
             pending_save_is_template: false,
             pending_audio_peaks: HashMap::new(),
+            pending_track_freeze_restore: HashMap::new(),
+            pending_track_freeze_bounce: HashMap::new(),
             track_automation_runtime: HashMap::new(),
             touch_automation_overrides: HashMap::new(),
             touch_active_keys: HashMap::new(),
@@ -327,6 +343,10 @@ impl Default for Maolan {
             pending_add_vst3_automation_instances: HashSet::new(),
             pending_add_clap_automation_paths: HashSet::new(),
             pending_add_clap_automation_instances: HashSet::new(),
+            freeze_in_progress: false,
+            freeze_progress: 0.0,
+            freeze_track_name: None,
+            freeze_cancel_requested: false,
             playing: false,
             paused: false,
             transport_samples: 0.0,
@@ -1455,7 +1475,10 @@ impl Maolan {
         Some((Box::new(mapper), ppq, max_tick))
     }
 
-    fn parse_midi_clip_for_piano(path: &Path, sample_rate: f64) -> std::io::Result<PianoParseResult> {
+    fn parse_midi_clip_for_piano(
+        path: &Path,
+        sample_rate: f64,
+    ) -> std::io::Result<PianoParseResult> {
         let bytes = fs::read(path)?;
         let smf = Smf::parse(&bytes).map_err(|e| {
             io::Error::other(format!("Failed to parse MIDI '{}': {e}", path.display()))
@@ -1944,11 +1967,7 @@ impl Maolan {
                             .iter()
                             .filter(|plugin| plugin.format.eq_ignore_ascii_case("VST3"))
                             .map(|plugin| {
-                                (
-                                    plugin.name.clone(),
-                                    plugin.uri.clone(),
-                                    plugin.instance_id,
-                                )
+                                (plugin.name.clone(), plugin.uri.clone(), plugin.instance_id)
                             })
                             .collect::<Vec<_>>()
                     })

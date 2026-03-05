@@ -4,7 +4,7 @@ use crate::lv2::Lv2PluginInfo;
 use crate::midi::io::MidiEvent;
 use crate::vst3::Vst3PluginInfo;
 use crate::{kind::Kind, mutex::UnsafeMutex, track::Track};
-use std::sync::Arc;
+use std::sync::{Arc, atomic::AtomicBool};
 use tokio::sync::mpsc::Sender;
 
 #[derive(Clone, Debug)]
@@ -34,6 +34,56 @@ pub struct MidiRawEventData {
 pub struct HwMidiEvent {
     pub device: String,
     pub event: MidiEvent,
+}
+
+#[derive(Clone, Debug)]
+pub struct OfflineAutomationPoint {
+    pub sample: usize,
+    pub value: f32,
+}
+
+#[derive(Clone, Debug)]
+pub enum OfflineAutomationTarget {
+    Volume,
+    Balance,
+    Mute,
+    #[cfg(all(unix, not(target_os = "macos")))]
+    Lv2Parameter {
+        instance_id: usize,
+        index: u32,
+        min: f32,
+        max: f32,
+    },
+    Vst3Parameter {
+        instance_id: usize,
+        param_id: u32,
+    },
+    ClapParameter {
+        instance_id: usize,
+        param_id: u32,
+        min: f64,
+        max: f64,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct OfflineAutomationLane {
+    pub target: OfflineAutomationTarget,
+    pub points: Vec<OfflineAutomationPoint>,
+}
+
+#[derive(Clone, Debug)]
+pub struct OfflineBounceWork {
+    pub state: Arc<UnsafeMutex<crate::state::State>>,
+    pub track_name: String,
+    pub output_path: String,
+    pub start_sample: usize,
+    pub length_samples: usize,
+    pub tempo_bpm: f64,
+    pub tsig_num: u16,
+    pub tsig_denom: u16,
+    pub automation_lanes: Vec<OfflineAutomationLane>,
+    pub cancel: Arc<AtomicBool>,
 }
 
 #[derive(Clone, Debug)]
@@ -232,6 +282,28 @@ pub enum Action {
     TrackToggleSolo(String),
     TrackToggleInputMonitor(String),
     TrackToggleDiskMonitor(String),
+    TrackSetFrozen {
+        track_name: String,
+        frozen: bool,
+    },
+    TrackOfflineBounce {
+        track_name: String,
+        output_path: String,
+        start_sample: usize,
+        length_samples: usize,
+        automation_lanes: Vec<OfflineAutomationLane>,
+    },
+    TrackOfflineBounceCancel {
+        track_name: String,
+    },
+    TrackOfflineBounceCanceled {
+        track_name: String,
+    },
+    TrackOfflineBounceProgress {
+        track_name: String,
+        progress: f32,
+        operation: Option<String>,
+    },
     PianoKey {
         track_name: String,
         note: u8,
@@ -548,6 +620,7 @@ pub enum Message {
     TracksFinished,
 
     ProcessTrack(Arc<UnsafeMutex<Box<Track>>>),
+    ProcessOfflineBounce(OfflineBounceWork),
     Channel(Sender<Self>),
 
     Request(Action),
@@ -555,4 +628,5 @@ pub enum Message {
     HWMidiEvents(Vec<HwMidiEvent>),
     HWMidiOutEvents(Vec<HwMidiEvent>),
     HWFinished,
+    OfflineBounceFinished { result: Result<Action, String> },
 }

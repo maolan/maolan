@@ -110,7 +110,14 @@ impl Workspace {
             selected_tempo_points,
             selected_time_signature_points,
         } = args;
-        let (tracks_width, max_end_samples, tempo, time_signature, tempo_points, time_signature_points) = {
+        let (
+            tracks_width,
+            max_end_samples,
+            tempo,
+            time_signature,
+            tempo_points,
+            time_signature_points,
+        ) = {
             let state = self.state.blocking_read();
             let max_end_samples = state
                 .tracks
@@ -373,20 +380,27 @@ impl Workspace {
     }
 
     pub fn piano_view(&self, args: WorkspaceViewArgs<'_>) -> Element<'_, Message> {
-                let WorkspaceViewArgs {
-                    playhead_samples,
-                    pixels_per_sample,
-                    beat_pixels,
-                    samples_per_bar,
-                    snap_mode,
-                    samples_per_beat,
-                    shift_pressed,
-                    selected_tempo_points,
-                    selected_time_signature_points,
-                    ..
-                } = args;
+        let WorkspaceViewArgs {
+            playhead_samples,
+            pixels_per_sample,
+            beat_pixels,
+            samples_per_bar,
+            snap_mode,
+            samples_per_beat,
+            shift_pressed,
+            selected_tempo_points,
+            selected_time_signature_points,
+            ..
+        } = args;
 
-        let (tempo, time_signature, tempo_points, time_signature_points, clip_length_samples, zoom_x) = {
+        let (
+            tempo,
+            time_signature,
+            tempo_points,
+            time_signature_points,
+            clip_length_samples,
+            zoom_x,
+        ) = {
             let state = self.state.blocking_read();
             (
                 state.tempo,

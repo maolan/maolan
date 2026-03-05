@@ -52,7 +52,13 @@ Last updated: 2026-03-05
 
 ## Phase 2 - Production Workflow
 
-- [ ] Freeze/Commit/Flatten track
+- [x] Freeze/Commit/Flatten track
+  - [x] First pass: reversible per-track freeze state (UI + engine + undo + session restore)
+  - [x] Freeze guardrails for plugin/routing/arm operations
+  - [x] Freeze rendering workflow (audio render + reversible clip swap)
+  - [x] Flatten frozen track workflow (keep rendered audio, discard backups, unfreeze)
+  - [x] Commit/freeze rendering including plugin-processed track offline bounce
+  - [x] Freeze bounce automation bake + progress reporting + in-flight cancel
 - [ ] Folder/Group/VCA-like controls
 - [ ] MIDI power tools (scale, chord, legato, velocity shaping)
 - [ ] Audio warp/time-stretch with markers

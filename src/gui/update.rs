@@ -1,12 +1,14 @@
-use super::{AutomationWriteKey, CLIENT, MIN_CLIP_WIDTH_PX, Maolan, TouchAutomationOverride, platform};
+use super::{
+    AutomationWriteKey, CLIENT, MIN_CLIP_WIDTH_PX, Maolan, TouchAutomationOverride, platform,
+};
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use crate::message::PluginFormat;
 use crate::{
     connections,
     message::{ExportNormalizeMode, Message, Show, TrackAutomationMode, TrackAutomationTarget},
     state::{
-        ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, TempoPoint, Track,
-        TrackAutomationPoint, TimeSignaturePoint, View,
+        ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, TempoPoint,
+        TimeSignaturePoint, Track, TrackAutomationPoint, View,
     },
     ui_timing::DOUBLE_CLICK,
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
@@ -20,7 +22,10 @@ use iced::{Length, Point, Task, mouse};
 use maolan_engine::message::PluginGraphNode;
 use maolan_engine::{
     kind::Kind,
-    message::{Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage},
+    message::{
+        Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage, OfflineAutomationLane,
+        OfflineAutomationPoint, OfflineAutomationTarget,
+    },
 };
 use rfd::AsyncFileDialog;
 use std::{
@@ -64,7 +69,10 @@ impl Maolan {
             let preferred = preferred_take_lane(clip);
             let mut take_idx = preferred.unwrap_or(0);
             if preferred.is_none() {
-                while active.iter().any(|(_, existing_take)| *existing_take == take_idx) {
+                while active
+                    .iter()
+                    .any(|(_, existing_take)| *existing_take == take_idx)
+                {
                     take_idx = take_idx.saturating_add(1);
                 }
             }
@@ -102,7 +110,10 @@ impl Maolan {
             .filter(|p| p.sample <= sample)
             .max_by_key(|p| p.sample)
             .map(|p| (p.numerator.max(1), p.denominator.max(1)))
-            .unwrap_or((state.time_signature_num.max(1), state.time_signature_denom.max(1)));
+            .unwrap_or((
+                state.time_signature_num.max(1),
+                state.time_signature_denom.max(1),
+            ));
         (bpm, num, den)
     }
 
@@ -126,7 +137,10 @@ impl Maolan {
 
     fn selected_piano_notes_edit<F>(&mut self, mut edit: F) -> Task<Message>
     where
-        F: FnMut(usize, &maolan_engine::message::MidiNoteData) -> maolan_engine::message::MidiNoteData,
+        F: FnMut(
+            usize,
+            &maolan_engine::message::MidiNoteData,
+        ) -> maolan_engine::message::MidiNoteData,
     {
         let mut state = self.state.blocking_write();
         if !matches!(state.view, View::Piano) {
@@ -272,14 +286,16 @@ impl Maolan {
             }
             lane.visible = true;
         } else {
-            track.automation_lanes.push(crate::state::TrackAutomationLane {
-                target,
-                visible: true,
-                points: vec![TrackAutomationPoint {
-                    sample,
-                    value: value.clamp(0.0, 1.0),
-                }],
-            });
+            track
+                .automation_lanes
+                .push(crate::state::TrackAutomationLane {
+                    target,
+                    visible: true,
+                    points: vec![TrackAutomationPoint {
+                        sample,
+                        value: value.clamp(0.0, 1.0),
+                    }],
+                });
         }
         track.height = track.min_height_for_layout().max(60.0);
     }
@@ -371,20 +387,25 @@ impl Maolan {
     ) -> Option<TrackAutomationTarget> {
         let state = self.state.blocking_read();
         let track = state.tracks.iter().find(|t| t.name == track_name)?;
-        track.automation_lanes.iter().find_map(|lane| match lane.target {
-            TrackAutomationTarget::ClapParameter {
-                instance_id: i,
-                param_id: p,
-                min,
-                max,
-            } if i == instance_id && p == param_id => Some(TrackAutomationTarget::ClapParameter {
-                instance_id: i,
-                param_id: p,
-                min,
-                max,
-            }),
-            _ => None,
-        })
+        track
+            .automation_lanes
+            .iter()
+            .find_map(|lane| match lane.target {
+                TrackAutomationTarget::ClapParameter {
+                    instance_id: i,
+                    param_id: p,
+                    min,
+                    max,
+                } if i == instance_id && p == param_id => {
+                    Some(TrackAutomationTarget::ClapParameter {
+                        instance_id: i,
+                        param_id: p,
+                        min,
+                        max,
+                    })
+                }
+                _ => None,
+            })
     }
 
     fn find_lv2_target(
@@ -395,20 +416,32 @@ impl Maolan {
     ) -> Option<TrackAutomationTarget> {
         let state = self.state.blocking_read();
         let track = state.tracks.iter().find(|t| t.name == track_name)?;
-        track.automation_lanes.iter().find_map(|lane| match lane.target {
-            TrackAutomationTarget::Lv2Parameter {
-                instance_id: i,
-                index: c,
-                min,
-                max,
-            } if i == instance_id && c == index => Some(TrackAutomationTarget::Lv2Parameter {
-                instance_id: i,
-                index: c,
-                min,
-                max,
-            }),
-            _ => None,
-        })
+        track
+            .automation_lanes
+            .iter()
+            .find_map(|lane| match lane.target {
+                TrackAutomationTarget::Lv2Parameter {
+                    instance_id: i,
+                    index: c,
+                    min,
+                    max,
+                } if i == instance_id && c == index => Some(TrackAutomationTarget::Lv2Parameter {
+                    instance_id: i,
+                    index: c,
+                    min,
+                    max,
+                }),
+                _ => None,
+            })
+    }
+
+    fn is_track_frozen(&self, track_name: &str) -> bool {
+        let state = self.state.blocking_read();
+        state
+            .tracks
+            .iter()
+            .find(|t| t.name == track_name)
+            .is_some_and(|t| t.frozen)
     }
 
     fn maybe_record_automation_from_request(&mut self, action: &Action) {
@@ -420,7 +453,11 @@ impl Maolan {
             }
             Action::TrackBalance(track_name, balance) if track_name != "hw:out" => {
                 let normalized = ((*balance + 1.0) * 0.5).clamp(0.0, 1.0);
-                self.record_automation_point(track_name, TrackAutomationTarget::Balance, normalized);
+                self.record_automation_point(
+                    track_name,
+                    TrackAutomationTarget::Balance,
+                    normalized,
+                );
                 self.record_manual_override(track_name, TrackAutomationTarget::Balance, normalized);
             }
             Action::TrackToggleMute(track_name) if track_name != "hw:out" => {
@@ -451,6 +488,9 @@ impl Maolan {
                 param_id,
                 value,
             } => {
+                if self.is_track_frozen(track_name) {
+                    return;
+                }
                 self.record_automation_point(
                     track_name,
                     TrackAutomationTarget::Vst3Parameter {
@@ -481,6 +521,9 @@ impl Maolan {
                 value,
                 ..
             } => {
+                if self.is_track_frozen(track_name) {
+                    return;
+                }
                 if let Some(TrackAutomationTarget::ClapParameter { min, max, .. }) =
                     self.find_clap_target(track_name, *instance_id, *param_id)
                 {
@@ -518,6 +561,9 @@ impl Maolan {
                 param_id,
                 ..
             } => {
+                if self.is_track_frozen(track_name) {
+                    return;
+                }
                 self.begin_touch_gesture(
                     track_name,
                     AutomationWriteKey::Clap {
@@ -532,6 +578,9 @@ impl Maolan {
                 param_id,
                 ..
             } => {
+                if self.is_track_frozen(track_name) {
+                    return;
+                }
                 self.end_touch_gesture(
                     track_name,
                     AutomationWriteKey::Clap {
@@ -547,6 +596,9 @@ impl Maolan {
                 index,
                 value,
             } => {
+                if self.is_track_frozen(track_name) {
+                    return;
+                }
                 if let Some(TrackAutomationTarget::Lv2Parameter { min, max, .. }) =
                     self.find_lv2_target(track_name, *instance_id, *index)
                 {
@@ -592,11 +644,7 @@ impl Maolan {
             return Some(sorted[0].value.clamp(0.0, 1.0));
         }
         if sample >= sorted[sorted.len().saturating_sub(1)].sample {
-            return Some(
-                sorted[sorted.len().saturating_sub(1)]
-                    .value
-                    .clamp(0.0, 1.0),
-            );
+            return Some(sorted[sorted.len().saturating_sub(1)].value.clamp(0.0, 1.0));
         }
         for segment in sorted.windows(2) {
             let left = segment[0];
@@ -612,11 +660,7 @@ impl Maolan {
         None
     }
 
-    fn collect_track_automation_actions(
-        &mut self,
-        sample: usize,
-        tracks: &[Track],
-    ) -> Vec<Action> {
+    fn collect_track_automation_actions(&mut self, sample: usize, tracks: &[Track]) -> Vec<Action> {
         let now = Instant::now();
         for (track_name, active_keys) in self.touch_active_keys.iter_mut() {
             let values = self.touch_automation_overrides.get(track_name);
@@ -624,11 +668,9 @@ impl Maolan {
                 if Self::key_has_explicit_gesture_lifecycle(*key) {
                     true
                 } else {
-                    values
-                        .and_then(|map| map.get(key))
-                        .is_some_and(|entry| {
-                            now.duration_since(entry.updated_at) <= Duration::from_millis(220)
-                        })
+                    values.and_then(|map| map.get(key)).is_some_and(|entry| {
+                        now.duration_since(entry.updated_at) <= Duration::from_millis(220)
+                    })
                 }
             });
         }
@@ -640,7 +682,8 @@ impl Maolan {
                     || now.duration_since(entry.updated_at) <= Duration::from_millis(220)
             });
         }
-        self.touch_automation_overrides.retain(|_, values| !values.is_empty());
+        self.touch_automation_overrides
+            .retain(|_, values| !values.is_empty());
 
         let mut actions = Vec::new();
         for track in tracks {
@@ -689,6 +732,9 @@ impl Maolan {
                         min,
                         max,
                     } => {
+                        if track.frozen {
+                            continue;
+                        }
                         #[cfg(all(unix, not(target_os = "macos")))]
                         if let Some(v) = value {
                             let lo = min.min(max);
@@ -714,6 +760,9 @@ impl Maolan {
                         instance_id,
                         param_id,
                     } => {
+                        if track.frozen {
+                            continue;
+                        }
                         if let Some(v) = value {
                             let param_value = v.clamp(0.0, 1.0);
                             let key = (instance_id, param_id);
@@ -738,6 +787,9 @@ impl Maolan {
                         min,
                         max,
                     } => {
+                        if track.frozen {
+                            continue;
+                        }
                         if let Some(v) = value {
                             let lo = min.min(max);
                             let hi = max.max(min);
@@ -781,7 +833,9 @@ impl Maolan {
                     actions.push(Action::TrackAutomationBalance(track.name.clone(), balance));
                 }
             }
-            if let Some(v) = muted && runtime.muted != Some(v) {
+            if let Some(v) = muted
+                && runtime.muted != Some(v)
+            {
                 runtime.muted = Some(v);
                 actions.push(Action::TrackAutomationMute(track.name.clone(), v));
             }
@@ -1124,7 +1178,7 @@ impl Maolan {
                         let should_mute = take_idx.get(idx).copied().unwrap_or(0) != take_lane;
                         (clip.muted != should_mute).then_some((idx, should_mute))
                     })
-                .collect()
+                    .collect()
             }
         }
     }
@@ -1149,7 +1203,8 @@ impl Maolan {
             return Task::none();
         }
         let target_pos = Point::new(start.x, (start.y + end.y) * 0.5);
-        let Some((track_name, kind, base_lane, take_lane)) = self.comp_target_at_position(target_pos)
+        let Some((track_name, kind, base_lane, take_lane)) =
+            self.comp_target_at_position(target_pos)
         else {
             return Task::none();
         };
@@ -1474,6 +1529,12 @@ impl Maolan {
                     state.message = "New session".to_string();
                     state.piano = None;
                 }
+                self.pending_track_freeze_restore.clear();
+                self.pending_track_freeze_bounce.clear();
+                self.freeze_in_progress = false;
+                self.freeze_progress = 0.0;
+                self.freeze_track_name = None;
+                self.freeze_cancel_requested = false;
                 return Task::batch(tasks);
             }
             Message::Cancel => self.modal = None,
@@ -1584,7 +1645,9 @@ impl Maolan {
                         self.time_signature_num_input = num.to_string();
                         self.time_signature_denom_input = den.to_string();
                     }
-                    if self.last_sent_tempo_bpm.is_none_or(|prev| (prev - bpm as f64).abs() > 0.0001)
+                    if self
+                        .last_sent_tempo_bpm
+                        .is_none_or(|prev| (prev - bpm as f64).abs() > 0.0001)
                     {
                         self.last_sent_tempo_bpm = Some(bpm as f64);
                         tasks.push(self.send(Action::SetTempo(bpm as f64)));
@@ -1638,7 +1701,8 @@ impl Maolan {
             Message::TempoAdjust(delta) => {
                 let sample = self.transport_samples.max(0.0) as usize;
                 let mut state = self.state.blocking_write();
-                let selected_samples: Vec<usize> = self.selected_tempo_points.iter().copied().collect();
+                let selected_samples: Vec<usize> =
+                    self.selected_tempo_points.iter().copied().collect();
                 let current_bpm = if let Some(sel) = selected_samples.first().copied() {
                     state
                         .tempo_points
@@ -1670,7 +1734,10 @@ impl Maolan {
                 {
                     point.bpm = tempo;
                 } else {
-                    state.tempo_points.push(TempoPoint { sample: 0, bpm: tempo });
+                    state.tempo_points.push(TempoPoint {
+                        sample: 0,
+                        bpm: tempo,
+                    });
                 }
                 state.tempo_points.sort_unstable_by_key(|p| p.sample);
                 state.tempo = tempo;
@@ -1696,10 +1763,7 @@ impl Maolan {
                 self.sync_timing_inputs_from_selection();
                 return self.update(Message::PlaybackTick);
             }
-            Message::TempoPointSelect {
-                sample,
-                additive,
-            } => {
+            Message::TempoPointSelect { sample, additive } => {
                 if additive {
                     if !self.selected_tempo_points.insert(sample) {
                         self.selected_tempo_points.remove(&sample);
@@ -1757,12 +1821,21 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 let mut inserted = Vec::new();
                 for sample in self.selected_tempo_points.iter().copied() {
-                    let Some(point) = state.tempo_points.iter().find(|p| p.sample == sample).cloned()
+                    let Some(point) = state
+                        .tempo_points
+                        .iter()
+                        .find(|p| p.sample == sample)
+                        .cloned()
                     else {
                         continue;
                     };
-                    let new_sample = sample.saturating_add(self.samples_per_beat().round() as usize).max(1);
-                    if let Some(existing) = state.tempo_points.iter_mut().find(|p| p.sample == new_sample)
+                    let new_sample = sample
+                        .saturating_add(self.samples_per_beat().round() as usize)
+                        .max(1);
+                    if let Some(existing) = state
+                        .tempo_points
+                        .iter_mut()
+                        .find(|p| p.sample == new_sample)
                     {
                         existing.bpm = point.bpm;
                     } else {
@@ -1796,7 +1869,8 @@ impl Maolan {
                         .max_by_key(|p| p.sample)
                         .map(|p| p.bpm)
                         .unwrap_or(state.tempo);
-                    if let Some(point) = state.tempo_points.iter_mut().find(|p| p.sample == sample) {
+                    if let Some(point) = state.tempo_points.iter_mut().find(|p| p.sample == sample)
+                    {
                         point.bpm = previous_bpm;
                     }
                 }
@@ -1834,7 +1908,9 @@ impl Maolan {
                         numerator,
                         denominator,
                     });
-                    state.time_signature_points.sort_unstable_by_key(|p| p.sample);
+                    state
+                        .time_signature_points
+                        .sort_unstable_by_key(|p| p.sample);
                 }
                 self.selected_time_signature_points.clear();
                 self.selected_time_signature_points.insert(sample);
@@ -1844,10 +1920,7 @@ impl Maolan {
                 self.sync_timing_inputs_from_selection();
                 return self.update(Message::PlaybackTick);
             }
-            Message::TimeSignaturePointSelect {
-                sample,
-                additive,
-            } => {
+            Message::TimeSignaturePointSelect { sample, additive } => {
                 if additive {
                     if !self.selected_time_signature_points.insert(sample) {
                         self.selected_time_signature_points.remove(&sample);
@@ -1877,7 +1950,10 @@ impl Maolan {
                     if sample == 0 {
                         continue;
                     }
-                    if let Some(idx) = state.time_signature_points.iter().position(|p| p.sample == sample)
+                    if let Some(idx) = state
+                        .time_signature_points
+                        .iter()
+                        .position(|p| p.sample == sample)
                     {
                         moved_values.push((
                             state.time_signature_points[idx].numerator,
@@ -1904,7 +1980,9 @@ impl Maolan {
                         });
                     }
                 }
-                state.time_signature_points.sort_unstable_by_key(|p| p.sample);
+                state
+                    .time_signature_points
+                    .sort_unstable_by_key(|p| p.sample);
                 drop(state);
                 self.selected_time_signature_points.clear();
                 self.selected_time_signature_points.extend(to_samples);
@@ -1928,7 +2006,9 @@ impl Maolan {
                     else {
                         continue;
                     };
-                    let new_sample = sample.saturating_add(self.samples_per_beat().round() as usize).max(1);
+                    let new_sample = sample
+                        .saturating_add(self.samples_per_beat().round() as usize)
+                        .max(1);
                     if let Some(existing) = state
                         .time_signature_points
                         .iter_mut()
@@ -1945,7 +2025,9 @@ impl Maolan {
                     }
                     inserted.push(new_sample);
                 }
-                state.time_signature_points.sort_unstable_by_key(|p| p.sample);
+                state
+                    .time_signature_points
+                    .sort_unstable_by_key(|p| p.sample);
                 drop(state);
                 self.selected_time_signature_points.clear();
                 self.selected_time_signature_points.extend(inserted);
@@ -1959,7 +2041,11 @@ impl Maolan {
                     return Task::none();
                 }
                 let mut state = self.state.blocking_write();
-                let samples: Vec<usize> = self.selected_time_signature_points.iter().copied().collect();
+                let samples: Vec<usize> = self
+                    .selected_time_signature_points
+                    .iter()
+                    .copied()
+                    .collect();
                 for sample in samples {
                     let (num, den) = state
                         .time_signature_points
@@ -2003,8 +2089,11 @@ impl Maolan {
             Message::TimeSignatureNumeratorAdjust(delta) => {
                 let sample = self.transport_samples.max(0.0) as usize;
                 let mut state = self.state.blocking_write();
-                let selected_samples: Vec<usize> =
-                    self.selected_time_signature_points.iter().copied().collect();
+                let selected_samples: Vec<usize> = self
+                    .selected_time_signature_points
+                    .iter()
+                    .copied()
+                    .collect();
                 let current = if let Some(sel) = selected_samples.first().copied() {
                     state
                         .time_signature_points
@@ -2043,7 +2132,9 @@ impl Maolan {
                         denominator,
                     });
                 }
-                state.time_signature_points.sort_unstable_by_key(|p| p.sample);
+                state
+                    .time_signature_points
+                    .sort_unstable_by_key(|p| p.sample);
                 state.time_signature_num = next;
                 let numerator = state.time_signature_num as u16;
                 let denominator = state.time_signature_denom as u16;
@@ -2059,8 +2150,11 @@ impl Maolan {
                 let sample = self.transport_samples.max(0.0) as usize;
                 let mut state = self.state.blocking_write();
                 let values = [2_u8, 4, 8, 16];
-                let selected_samples: Vec<usize> =
-                    self.selected_time_signature_points.iter().copied().collect();
+                let selected_samples: Vec<usize> = self
+                    .selected_time_signature_points
+                    .iter()
+                    .copied()
+                    .collect();
                 let current = if let Some(sel) = selected_samples.first().copied() {
                     state
                         .time_signature_points
@@ -2101,7 +2195,9 @@ impl Maolan {
                         denominator: next,
                     });
                 }
-                state.time_signature_points.sort_unstable_by_key(|p| p.sample);
+                state
+                    .time_signature_points
+                    .sort_unstable_by_key(|p| p.sample);
                 state.time_signature_denom = next;
                 let numerator = state.time_signature_num as u16;
                 let denominator = state.time_signature_denom as u16;
@@ -2124,7 +2220,8 @@ impl Maolan {
                 let bpm = parsed.clamp(20.0, 300.0);
                 let sample = self.transport_samples.max(0.0) as usize;
                 let mut state = self.state.blocking_write();
-                let selected_samples: Vec<usize> = self.selected_tempo_points.iter().copied().collect();
+                let selected_samples: Vec<usize> =
+                    self.selected_tempo_points.iter().copied().collect();
                 if !selected_samples.is_empty() {
                     for point in state.tempo_points.iter_mut() {
                         if selected_samples.contains(&point.sample) {
@@ -2156,11 +2253,13 @@ impl Maolan {
             }
             Message::TimeSignatureInputCommit => {
                 let Ok(num) = self.time_signature_num_input.trim().parse::<u16>() else {
-                    self.state.blocking_write().message = "Invalid time signature numerator".to_string();
+                    self.state.blocking_write().message =
+                        "Invalid time signature numerator".to_string();
                     return Task::none();
                 };
                 let Ok(den) = self.time_signature_denom_input.trim().parse::<u16>() else {
-                    self.state.blocking_write().message = "Invalid time signature denominator".to_string();
+                    self.state.blocking_write().message =
+                        "Invalid time signature denominator".to_string();
                     return Task::none();
                 };
                 let numerator = num.clamp(1, 16) as u8;
@@ -2174,8 +2273,11 @@ impl Maolan {
                 };
                 let sample = self.transport_samples.max(0.0) as usize;
                 let mut state = self.state.blocking_write();
-                let selected_samples: Vec<usize> =
-                    self.selected_time_signature_points.iter().copied().collect();
+                let selected_samples: Vec<usize> = self
+                    .selected_time_signature_points
+                    .iter()
+                    .copied()
+                    .collect();
                 if !selected_samples.is_empty() {
                     for point in state.time_signature_points.iter_mut() {
                         if selected_samples.contains(&point.sample) {
@@ -2198,7 +2300,9 @@ impl Maolan {
                         denominator,
                     });
                 }
-                state.time_signature_points.sort_unstable_by_key(|p| p.sample);
+                state
+                    .time_signature_points
+                    .sort_unstable_by_key(|p| p.sample);
                 state.time_signature_num = numerator;
                 state.time_signature_denom = denominator;
                 self.time_signature_num_input = numerator.to_string();
@@ -3277,7 +3381,11 @@ impl Maolan {
             }
             Message::PianoQuantizeSelectedNotes => {
                 let interval = self.snap_interval_samples().max(1);
-                let strength = self.state.blocking_read().piano_quantize_strength.clamp(0.0, 1.0);
+                let strength = self
+                    .state
+                    .blocking_read()
+                    .piano_quantize_strength
+                    .clamp(0.0, 1.0);
                 return self.selected_piano_notes_edit(move |_idx, note| {
                     let snapped =
                         ((note.start_sample.saturating_add(interval / 2)) / interval) * interval;
@@ -3287,8 +3395,7 @@ impl Maolan {
                     } else {
                         let cur = note.start_sample as f32;
                         let dst = snapped as f32;
-                        out.start_sample =
-                            (cur + (dst - cur) * strength).round().max(0.0) as usize;
+                        out.start_sample = (cur + (dst - cur) * strength).round().max(0.0) as usize;
                     }
                     out
                 });
@@ -3306,7 +3413,8 @@ impl Maolan {
                 let max_vel_jitter = (6.0_f32 * vel_amount).round() as i64;
                 return self.selected_piano_notes_edit(move |idx, note| {
                     let mut out = note.clone();
-                    let dt = Self::deterministic_note_jitter(idx, note.start_sample, max_time_jitter);
+                    let dt =
+                        Self::deterministic_note_jitter(idx, note.start_sample, max_time_jitter);
                     let new_start = (note.start_sample as i64 + dt).max(0) as usize;
                     let dv = Self::deterministic_note_jitter(
                         idx ^ 0xA5A5,
@@ -3321,7 +3429,11 @@ impl Maolan {
             }
             Message::PianoGrooveSelectedNotes => {
                 let interval = self.snap_interval_samples().max(1);
-                let amount = self.state.blocking_read().piano_groove_amount.clamp(0.0, 1.0);
+                let amount = self
+                    .state
+                    .blocking_read()
+                    .piano_groove_amount
+                    .clamp(0.0, 1.0);
                 let swing = (((interval as f32) * 0.22) * amount).round().max(0.0) as usize;
                 return self.selected_piano_notes_edit(move |_idx, note| {
                     let straight =
@@ -3343,8 +3455,7 @@ impl Maolan {
                 self.state.blocking_write().piano_humanize_time_amount = value.clamp(0.0, 1.0);
             }
             Message::PianoHumanizeVelocityAmountChanged(value) => {
-                self.state.blocking_write().piano_humanize_velocity_amount =
-                    value.clamp(0.0, 1.0);
+                self.state.blocking_write().piano_humanize_velocity_amount = value.clamp(0.0, 1.0);
             }
             Message::PianoGrooveAmountChanged(value) => {
                 self.state.blocking_write().piano_groove_amount = value.clamp(0.0, 1.0);
@@ -3640,6 +3751,14 @@ impl Maolan {
                         && let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name)
                     {
                         track.height = height;
+                    }
+                    if let Some((audio_backup, midi_backup, render_clip)) =
+                        self.pending_track_freeze_restore.remove(name)
+                        && let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name)
+                    {
+                        track.frozen_audio_backup = audio_backup;
+                        track.frozen_midi_backup = midi_backup;
+                        track.frozen_render_clip = render_clip;
                     }
 
                     // Check if we need to load a template for this track
@@ -4197,6 +4316,115 @@ impl Maolan {
                         state.hw_out_muted = !state.hw_out_muted;
                     }
                 }
+                Action::TrackSetFrozen { track_name, frozen } => {
+                    self.state.blocking_write().message = if *frozen {
+                        format!("Track '{track_name}' frozen")
+                    } else {
+                        format!("Track '{track_name}' unfrozen")
+                    };
+                }
+                Action::TrackOfflineBounce {
+                    track_name,
+                    output_path,
+                    ..
+                } => {
+                    self.freeze_in_progress = false;
+                    self.freeze_track_name = None;
+                    if let Some(pending) = self.pending_track_freeze_bounce.remove(track_name) {
+                        if self.freeze_cancel_requested {
+                            self.freeze_cancel_requested = false;
+                            let _ = std::fs::remove_file(output_path);
+                            self.state.blocking_write().message =
+                                format!("Freeze canceled for '{}'", track_name);
+                            return Task::none();
+                        }
+                        let render_path = std::path::PathBuf::from(output_path);
+                        let render_peaks =
+                            Self::compute_audio_clip_peaks(&render_path, 512).unwrap_or_default();
+                        {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track_mut) =
+                                state.tracks.iter_mut().find(|t| t.name == *track_name)
+                            {
+                                track_mut.frozen_audio_backup = pending.backup_audio.clone();
+                                track_mut.frozen_midi_backup = pending.backup_midi.clone();
+                                track_mut.frozen_render_clip =
+                                    Some(pending.rendered_clip_rel.clone());
+                                state.message = format!("Frozen track '{}'", track_name);
+                            }
+                        }
+                        let key = Self::audio_clip_key(
+                            track_name,
+                            &pending.rendered_clip_rel,
+                            0,
+                            pending.rendered_length,
+                            0,
+                        );
+                        self.pending_audio_peaks.insert(key, render_peaks);
+                        let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+                        if !pending.backup_audio.is_empty() {
+                            tasks.push(self.send(Action::RemoveClip {
+                                track_name: track_name.clone(),
+                                kind: Kind::Audio,
+                                clip_indices: (0..pending.backup_audio.len()).collect(),
+                            }));
+                        }
+                        if !pending.backup_midi.is_empty() {
+                            tasks.push(self.send(Action::RemoveClip {
+                                track_name: track_name.clone(),
+                                kind: Kind::MIDI,
+                                clip_indices: (0..pending.backup_midi.len()).collect(),
+                            }));
+                        }
+                        tasks.push(self.send(Action::AddClip {
+                            name: pending.rendered_clip_rel,
+                            track_name: track_name.clone(),
+                            start: 0,
+                            length: pending.rendered_length.max(1),
+                            offset: 0,
+                            input_channel: 0,
+                            muted: false,
+                            kind: Kind::Audio,
+                            fade_enabled: true,
+                            fade_in_samples: 240,
+                            fade_out_samples: 240,
+                        }));
+                        tasks.push(self.send(Action::TrackSetFrozen {
+                            track_name: track_name.clone(),
+                            frozen: true,
+                        }));
+                        tasks.push(self.send(Action::EndHistoryGroup));
+                        return Task::batch(tasks);
+                    }
+                }
+                Action::TrackOfflineBounceProgress {
+                    track_name,
+                    progress,
+                    operation,
+                } => {
+                    self.freeze_in_progress = true;
+                    self.freeze_track_name = Some(track_name.clone());
+                    self.freeze_progress = *progress;
+                    let percent = (progress * 100.0).round().clamp(0.0, 100.0) as u32;
+                    self.state.blocking_write().message = if self.freeze_cancel_requested {
+                        format!("Canceling freeze ({percent}%)...")
+                    } else if let Some(op) = operation {
+                        format!("{} ({percent}%)", op)
+                    } else {
+                        format!("Rendering freeze ({percent}%)")
+                    };
+                    return Task::none();
+                }
+                Action::TrackOfflineBounceCanceled { track_name } => {
+                    self.freeze_in_progress = false;
+                    self.freeze_track_name = None;
+                    self.freeze_progress = 0.0;
+                    self.freeze_cancel_requested = false;
+                    self.pending_track_freeze_bounce.remove(track_name);
+                    self.state.blocking_write().message =
+                        format!("Freeze canceled for '{}'", track_name);
+                    return Task::none();
+                }
                 Action::TrackMeters {
                     track_name,
                     output_db,
@@ -4392,11 +4620,13 @@ impl Maolan {
                                 {
                                     existing.visible = true;
                                 } else {
-                                    track.automation_lanes.push(crate::state::TrackAutomationLane {
-                                        target,
-                                        visible: true,
-                                        points: vec![],
-                                    });
+                                    track.automation_lanes.push(
+                                        crate::state::TrackAutomationLane {
+                                            target,
+                                            visible: true,
+                                            points: vec![],
+                                        },
+                                    );
                                 }
                             }
                             track.height = track.min_height_for_layout().max(60.0);
@@ -4432,11 +4662,13 @@ impl Maolan {
                                 {
                                     existing.visible = true;
                                 } else {
-                                    track.automation_lanes.push(crate::state::TrackAutomationLane {
-                                        target,
-                                        visible: true,
-                                        points: vec![],
-                                    });
+                                    track.automation_lanes.push(
+                                        crate::state::TrackAutomationLane {
+                                            target,
+                                            visible: true,
+                                            points: vec![],
+                                        },
+                                    );
                                 }
                             }
                             track.height = track.min_height_for_layout().max(60.0);
@@ -4590,11 +4822,13 @@ impl Maolan {
                                 {
                                     existing.visible = true;
                                 } else {
-                                    track.automation_lanes.push(crate::state::TrackAutomationLane {
-                                        target,
-                                        visible: true,
-                                        points: vec![],
-                                    });
+                                    track.automation_lanes.push(
+                                        crate::state::TrackAutomationLane {
+                                            target,
+                                            visible: true,
+                                            points: vec![],
+                                        },
+                                    );
                                 }
                             }
                             track.height = track.min_height_for_layout().max(60.0);
@@ -4844,6 +5078,12 @@ impl Maolan {
                 _ => {}
             },
             Message::Response(Err(ref e)) => {
+                if !self.pending_track_freeze_bounce.is_empty() {
+                    self.pending_track_freeze_bounce.clear();
+                }
+                self.freeze_in_progress = false;
+                self.freeze_track_name = None;
+                self.freeze_cancel_requested = false;
                 self.state.blocking_write().message = e.clone();
                 error!("Engine error: {e}");
             }
@@ -4958,6 +5198,253 @@ impl Maolan {
                     state.connection_view_selection = ConnectionViewSelection::Tracks(set);
                 }
             }
+            Message::TrackFreezeToggle { ref track_name } => {
+                if self.freeze_in_progress {
+                    if self.freeze_track_name.as_deref() == Some(track_name.as_str()) {
+                        self.freeze_cancel_requested = true;
+                        self.state.blocking_write().message =
+                            format!("Cancel requested for freezing '{}'", track_name);
+                        return self.send(Action::TrackOfflineBounceCancel {
+                            track_name: track_name.clone(),
+                        });
+                    } else {
+                        self.state.blocking_write().message = format!(
+                            "Freeze in progress for '{}'",
+                            self.freeze_track_name.clone().unwrap_or_default()
+                        );
+                    }
+                    return Task::none();
+                }
+                let Some(session_root) = self.session_dir.clone() else {
+                    self.state.blocking_write().message =
+                        "Freeze requires an opened/saved session".to_string();
+                    return Task::none();
+                };
+                let track_snapshot = {
+                    let state = self.state.blocking_read();
+                    state.tracks.iter().find(|t| t.name == *track_name).cloned()
+                };
+                let Some(track) = track_snapshot else {
+                    self.state.blocking_write().message =
+                        format!("Track '{}' not found", track_name);
+                    return Task::none();
+                };
+
+                if track.frozen {
+                    let current_audio_len = track.audio.clips.len();
+                    let current_midi_len = track.midi.clips.len();
+                    let restore_audio = track.frozen_audio_backup.clone();
+                    let restore_midi = track.frozen_midi_backup.clone();
+                    {
+                        let mut state = self.state.blocking_write();
+                        if let Some(track_mut) =
+                            state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        {
+                            track_mut.frozen_audio_backup.clear();
+                            track_mut.frozen_midi_backup.clear();
+                            track_mut.frozen_render_clip = None;
+                        }
+                    }
+                    let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+                    if current_audio_len > 0 {
+                        tasks.push(self.send(Action::RemoveClip {
+                            track_name: track_name.clone(),
+                            kind: Kind::Audio,
+                            clip_indices: (0..current_audio_len).collect(),
+                        }));
+                    }
+                    if current_midi_len > 0 {
+                        tasks.push(self.send(Action::RemoveClip {
+                            track_name: track_name.clone(),
+                            kind: Kind::MIDI,
+                            clip_indices: (0..current_midi_len).collect(),
+                        }));
+                    }
+                    for clip in restore_audio {
+                        tasks.push(self.send(Action::AddClip {
+                            name: clip.name,
+                            track_name: track_name.clone(),
+                            start: clip.start,
+                            length: clip.length,
+                            offset: clip.offset,
+                            input_channel: clip.input_channel,
+                            muted: clip.muted,
+                            kind: Kind::Audio,
+                            fade_enabled: clip.fade_enabled,
+                            fade_in_samples: clip.fade_in_samples,
+                            fade_out_samples: clip.fade_out_samples,
+                        }));
+                    }
+                    for clip in restore_midi {
+                        tasks.push(self.send(Action::AddClip {
+                            name: clip.name,
+                            track_name: track_name.clone(),
+                            start: clip.start,
+                            length: clip.length,
+                            offset: clip.offset,
+                            input_channel: clip.input_channel,
+                            muted: clip.muted,
+                            kind: Kind::MIDI,
+                            fade_enabled: clip.fade_enabled,
+                            fade_in_samples: clip.fade_in_samples,
+                            fade_out_samples: clip.fade_out_samples,
+                        }));
+                    }
+                    tasks.push(self.send(Action::TrackSetFrozen {
+                        track_name: track_name.clone(),
+                        frozen: false,
+                    }));
+                    tasks.push(self.send(Action::EndHistoryGroup));
+                    return Task::batch(tasks);
+                }
+
+                if track.audio.clips.is_empty() && track.midi.clips.is_empty() {
+                    self.state.blocking_write().message =
+                        format!("Track '{}' has no clips to freeze", track_name);
+                    return Task::none();
+                }
+                let render_length = track
+                    .audio
+                    .clips
+                    .iter()
+                    .map(|clip| clip.start.saturating_add(clip.length))
+                    .chain(
+                        track
+                            .midi
+                            .clips
+                            .iter()
+                            .map(|clip| clip.start.saturating_add(clip.length)),
+                    )
+                    .max()
+                    .unwrap_or(0)
+                    .max(1);
+                let stem = format!("{}_freeze", Self::sanitize_peak_file_component(track_name));
+                let render_rel =
+                    match Self::unique_import_rel_path(&session_root, "audio", &stem, "wav") {
+                        Ok(path) => path,
+                        Err(e) => {
+                            self.state.blocking_write().message =
+                                format!("Failed to prepare freeze render: {e}");
+                            return Task::none();
+                        }
+                    };
+                let render_abs = session_root.join(&render_rel).to_string_lossy().to_string();
+                let mut automation_lanes = Vec::<OfflineAutomationLane>::new();
+                for lane in track
+                    .automation_lanes
+                    .iter()
+                    .filter(|lane| !lane.points.is_empty())
+                {
+                    let target = match lane.target {
+                        crate::message::TrackAutomationTarget::Volume => {
+                            OfflineAutomationTarget::Volume
+                        }
+                        crate::message::TrackAutomationTarget::Balance => {
+                            OfflineAutomationTarget::Balance
+                        }
+                        crate::message::TrackAutomationTarget::Mute => {
+                            OfflineAutomationTarget::Mute
+                        }
+                        crate::message::TrackAutomationTarget::Lv2Parameter {
+                            instance_id,
+                            index,
+                            min,
+                            max,
+                        } => {
+                            #[cfg(all(unix, not(target_os = "macos")))]
+                            {
+                                OfflineAutomationTarget::Lv2Parameter {
+                                    instance_id,
+                                    index,
+                                    min,
+                                    max,
+                                }
+                            }
+                            #[cfg(not(all(unix, not(target_os = "macos"))))]
+                            {
+                                continue;
+                            }
+                        }
+                        crate::message::TrackAutomationTarget::Vst3Parameter {
+                            instance_id,
+                            param_id,
+                        } => OfflineAutomationTarget::Vst3Parameter {
+                            instance_id,
+                            param_id,
+                        },
+                        crate::message::TrackAutomationTarget::ClapParameter {
+                            instance_id,
+                            param_id,
+                            min,
+                            max,
+                        } => OfflineAutomationTarget::ClapParameter {
+                            instance_id,
+                            param_id,
+                            min,
+                            max,
+                        },
+                    };
+                    let points = lane
+                        .points
+                        .iter()
+                        .map(|p| OfflineAutomationPoint {
+                            sample: p.sample,
+                            value: p.value,
+                        })
+                        .collect::<Vec<_>>();
+                    automation_lanes.push(OfflineAutomationLane { target, points });
+                }
+                self.pending_track_freeze_bounce.insert(
+                    track_name.clone(),
+                    super::PendingTrackFreezeBounce {
+                        rendered_clip_rel: render_rel,
+                        rendered_length: render_length.max(1),
+                        backup_audio: track.audio.clips.clone(),
+                        backup_midi: track.midi.clips.clone(),
+                    },
+                );
+                self.freeze_in_progress = true;
+                self.freeze_progress = 0.0;
+                self.freeze_track_name = Some(track_name.clone());
+                self.freeze_cancel_requested = false;
+                self.state.blocking_write().message =
+                    format!("Rendering freeze for '{}'", track_name);
+                return self.send(Action::TrackOfflineBounce {
+                    track_name: track_name.clone(),
+                    output_path: render_abs,
+                    start_sample: 0,
+                    length_samples: render_length.max(1),
+                    automation_lanes,
+                });
+            }
+            Message::TrackFreezeFlatten { ref track_name } => {
+                let is_frozen = {
+                    let state = self.state.blocking_read();
+                    state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *track_name)
+                        .is_some_and(|t| t.frozen)
+                };
+                if !is_frozen {
+                    self.state.blocking_write().message =
+                        format!("Track '{}' is not frozen", track_name);
+                    return Task::none();
+                }
+                {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                        track.frozen_audio_backup.clear();
+                        track.frozen_midi_backup.clear();
+                        track.frozen_render_clip = None;
+                    }
+                    state.message = format!("Flattened track '{}'", track_name);
+                }
+                return self.send(Action::TrackSetFrozen {
+                    track_name: track_name.clone(),
+                    frozen: false,
+                });
+            }
             Message::TrackAutomationToggle { ref track_name } => {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state
@@ -4971,11 +5458,13 @@ impl Maolan {
                             lane.visible = false;
                         }
                     } else if track.automation_lanes.is_empty() {
-                        track.automation_lanes.push(crate::state::TrackAutomationLane {
-                            target: crate::message::TrackAutomationTarget::Volume,
-                            visible: true,
-                            points: vec![],
-                        });
+                        track
+                            .automation_lanes
+                            .push(crate::state::TrackAutomationLane {
+                                target: crate::message::TrackAutomationTarget::Volume,
+                                visible: true,
+                                points: vec![],
+                            });
                     } else {
                         for lane in &mut track.automation_lanes {
                             lane.visible = true;
@@ -5045,11 +5534,13 @@ impl Maolan {
                     {
                         lane.visible = true;
                     } else {
-                        track.automation_lanes.push(crate::state::TrackAutomationLane {
-                            target,
-                            visible: true,
-                            points: vec![],
-                        });
+                        track
+                            .automation_lanes
+                            .push(crate::state::TrackAutomationLane {
+                                target,
+                                visible: true,
+                                points: vec![],
+                            });
                     }
                     track.height = track.min_height_for_layout().max(60.0);
                 }
@@ -5219,19 +5710,23 @@ impl Maolan {
                         .iter_mut()
                         .find(|lane| lane.target == target)
                     {
-                        if let Some(existing) = lane.points.iter_mut().find(|p| p.sample == sample) {
+                        if let Some(existing) = lane.points.iter_mut().find(|p| p.sample == sample)
+                        {
                             existing.value = value;
                         } else {
-                            lane.points.push(crate::state::TrackAutomationPoint { sample, value });
+                            lane.points
+                                .push(crate::state::TrackAutomationPoint { sample, value });
                             lane.points.sort_unstable_by_key(|p| p.sample);
                         }
                         lane.visible = true;
                     } else {
-                        track.automation_lanes.push(crate::state::TrackAutomationLane {
-                            target,
-                            visible: true,
-                            points: vec![crate::state::TrackAutomationPoint { sample, value }],
-                        });
+                        track
+                            .automation_lanes
+                            .push(crate::state::TrackAutomationLane {
+                                target,
+                                visible: true,
+                                points: vec![crate::state::TrackAutomationPoint { sample, value }],
+                            });
                     }
                 }
             }

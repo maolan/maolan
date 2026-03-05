@@ -14,7 +14,10 @@ use std::{
     collections::{HashMap, VecDeque},
     fs::File,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::mpsc::{Receiver, Sender, channel};
@@ -112,6 +115,11 @@ struct MidiHwOutRoute {
     device: String,
 }
 
+struct OfflineBounceJob {
+    track_name: String,
+    cancel: Arc<AtomicBool>,
+}
+
 pub struct Engine {
     clients: Vec<Sender<Message>>,
     rx: Receiver<Message>,
@@ -156,6 +164,7 @@ pub struct Engine {
     history: History,
     history_group: Option<UndoEntry>,
     history_suspended: bool,
+    offline_bounce_job: Option<OfflineBounceJob>,
 }
 
 type MidiEditParseResult = (
@@ -367,6 +376,27 @@ impl Engine {
             .into_iter()
             .map(|(sample, _, data)| (sample, data))
             .collect()
+    }
+
+    fn is_track_frozen(&self, track_name: &str) -> bool {
+        self.state
+            .lock()
+            .tracks
+            .get(track_name)
+            .map(|track| track.lock().frozen())
+            .unwrap_or(false)
+    }
+
+    async fn reject_if_track_frozen(&mut self, track_name: &str, operation: &str) -> bool {
+        if self.is_track_frozen(track_name) {
+            self.notify_clients(Err(format!(
+                "Track '{track_name}' is frozen; {operation} is blocked"
+            )))
+            .await;
+            true
+        } else {
+            false
+        }
     }
 
     fn apply_midi_edit_action(&mut self, action: &Action) -> Result<(), String> {
@@ -705,6 +735,7 @@ impl Engine {
             history: History::default(),
             history_group: None,
             history_suspended: false,
+            offline_bounce_job: None,
         }
     }
 
@@ -1635,10 +1666,7 @@ impl Engine {
         let suppress_timing_history = self.playing
             && matches!(
                 &action_to_process,
-                Action::SetTempo(_)
-                    | Action::SetTimeSignature {
-                        ..
-                    }
+                Action::SetTempo(_) | Action::SetTimeSignature { .. }
             );
         let mut extra_inverse_actions: Vec<Action> = Vec::new();
         if record_history
@@ -1677,22 +1705,20 @@ impl Engine {
             && should_record(&action_to_process)
             && !self.history_suspended
         {
-                let state = self.state.lock();
-                create_inverse_actions(&action_to_process, state).map(|mut actions| {
-                    actions.extend(extra_inverse_actions);
-                    actions
-                })
-            } else {
-                None
-            };
+            let state = self.state.lock();
+            create_inverse_actions(&action_to_process, state).map(|mut actions| {
+                actions.extend(extra_inverse_actions);
+                actions
+            })
+        } else {
+            None
+        };
         if record_history && !suppress_timing_history && !self.history_suspended {
             match &action_to_process {
                 Action::SetTempo(_) => {
                     inverse_actions = Some(vec![Action::SetTempo(self.tempo_bpm)]);
                 }
-                Action::SetTimeSignature {
-                    ..
-                } => {
+                Action::SetTimeSignature { .. } => {
                     inverse_actions = Some(vec![Action::SetTimeSignature {
                         numerator: self.tsig_num,
                         denominator: self.tsig_denom,
@@ -2013,6 +2039,9 @@ impl Engine {
             }
             Action::TrackMeters { .. } => {}
             Action::TrackToggleArm(ref name) => {
+                if self.reject_if_track_frozen(name, "arming/disarming").await {
+                    return;
+                }
                 if let Some(track) = self.state.lock().tracks.get(name).cloned() {
                     track.lock().arm();
                     if !track.lock().armed && self.audio_recordings.contains_key(name) {
@@ -2045,6 +2074,85 @@ impl Engine {
                     track.lock().toggle_disk_monitor();
                 }
             }
+            Action::TrackSetFrozen {
+                ref track_name,
+                frozen,
+            } => {
+                if let Some(track) = self.state.lock().tracks.get(track_name) {
+                    track.lock().set_frozen(frozen);
+                } else {
+                    self.notify_clients(Err(format!("Track not found: {track_name}")))
+                        .await;
+                    return;
+                }
+            }
+            Action::TrackOfflineBounce {
+                track_name,
+                output_path,
+                start_sample,
+                length_samples,
+                automation_lanes,
+            } => {
+                if self.offline_bounce_job.is_some() {
+                    self.notify_clients(Err(
+                        "Another offline bounce is already in progress".to_string()
+                    ))
+                    .await;
+                    return;
+                }
+                if !self.state.lock().tracks.contains_key(&track_name) {
+                    self.notify_clients(Err(format!("Track not found: {track_name}")))
+                        .await;
+                    return;
+                }
+                if length_samples == 0 {
+                    self.notify_clients(Err(format!(
+                        "Track '{}' has no renderable content for offline bounce",
+                        track_name
+                    )))
+                    .await;
+                    return;
+                }
+                if self.ready_workers.is_empty() {
+                    self.pending_requests
+                        .push_front(Action::TrackOfflineBounce {
+                            track_name,
+                            output_path,
+                            start_sample,
+                            length_samples,
+                            automation_lanes,
+                        });
+                    return;
+                }
+                let cancel = Arc::new(AtomicBool::new(false));
+                self.offline_bounce_job = Some(OfflineBounceJob {
+                    track_name: track_name.clone(),
+                    cancel: cancel.clone(),
+                });
+                let worker_index = self.ready_workers.remove(0);
+                let worker = &self.workers[worker_index];
+                let job = crate::message::OfflineBounceWork {
+                    state: self.state.clone(),
+                    track_name,
+                    output_path,
+                    start_sample,
+                    length_samples,
+                    tempo_bpm: self.tempo_bpm,
+                    tsig_num: self.tsig_num,
+                    tsig_denom: self.tsig_denom,
+                    automation_lanes,
+                    cancel,
+                };
+                if let Err(e) = worker.tx.send(Message::ProcessOfflineBounce(job)).await {
+                    self.offline_bounce_job = None;
+                    self.notify_clients(Err(format!("Failed to schedule offline bounce: {e}")))
+                        .await;
+                }
+                return;
+            }
+            Action::TrackOfflineBounceCancel { .. } => {}
+            Action::TrackOfflineBounceCanceled { .. } => {}
+            Action::TrackOfflineBounceProgress { .. } => {}
             Action::PianoKey {
                 ref track_name,
                 note,
@@ -2079,6 +2187,12 @@ impl Engine {
                 ref track_name,
                 ref plugin_uri,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "LV2 plugin loading")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2095,6 +2209,12 @@ impl Engine {
                 }
             }
             Action::TrackClearDefaultPassthrough { ref track_name } => {
+                if self
+                    .reject_if_track_frozen(track_name, "plugin graph editing")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2113,6 +2233,12 @@ impl Engine {
                 instance_id,
                 ref state,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "LV2 plugin state changes")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2136,6 +2262,12 @@ impl Engine {
                 ref track_name,
                 instance_id,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "LV2 plugin unloading")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2209,6 +2341,12 @@ impl Engine {
                 index,
                 value,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "LV2 parameter changes")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2265,6 +2403,12 @@ impl Engine {
                 ref to_node,
                 to_port,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "plugin routing changes")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2293,6 +2437,12 @@ impl Engine {
                 ref to_node,
                 to_port,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "plugin routing changes")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2321,6 +2471,12 @@ impl Engine {
                 ref to_node,
                 to_port,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "plugin routing changes")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2349,6 +2505,12 @@ impl Engine {
                 ref to_node,
                 to_port,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "plugin routing changes")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2403,6 +2565,12 @@ impl Engine {
                 ref track_name,
                 ref plugin_path,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "CLAP plugin loading")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2422,6 +2590,12 @@ impl Engine {
                 ref track_name,
                 ref plugin_path,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "CLAP plugin unloading")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2443,6 +2617,12 @@ impl Engine {
                 param_id,
                 value,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "CLAP parameter changes")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2469,6 +2649,12 @@ impl Engine {
                 value,
                 frame,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "CLAP parameter changes")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2494,6 +2680,12 @@ impl Engine {
                 param_id,
                 frame,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "CLAP parameter edit gestures")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2519,6 +2711,12 @@ impl Engine {
                 param_id,
                 frame,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "CLAP parameter edit gestures")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2605,6 +2803,12 @@ impl Engine {
                 instance_id,
                 ref state,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "CLAP state restore")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2647,6 +2851,12 @@ impl Engine {
                 ref track_name,
                 ref plugin_path,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "VST3 plugin loading")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2666,6 +2876,12 @@ impl Engine {
                 ref track_name,
                 instance_id,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "VST3 plugin unloading")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2730,6 +2946,12 @@ impl Engine {
                 param_id,
                 value,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "VST3 parameter changes")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2832,6 +3054,12 @@ impl Engine {
                 ref to_node,
                 to_port,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "VST3 routing changes")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -2857,6 +3085,12 @@ impl Engine {
                 ref to_node,
                 to_port,
             } => {
+                if self
+                    .reject_if_track_frozen(track_name, "VST3 routing changes")
+                    .await
+                {
+                    return;
+                }
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
                     Some(track) => {
@@ -3641,6 +3875,16 @@ impl Engine {
                 }
 
                 Message::Request(a) => match a {
+                    Action::TrackOfflineBounceCancel { track_name } => {
+                        if let Some(job) = &self.offline_bounce_job
+                            && job.track_name == track_name
+                        {
+                            job.cancel.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    _ if self.offline_bounce_job.is_some() => {
+                        self.pending_requests.push_back(a);
+                    }
                     Action::OpenAudioDevice { .. }
                     | Action::OpenMidiInputDevice(_)
                     | Action::OpenMidiOutputDevice(_)
@@ -3708,6 +3952,13 @@ impl Engine {
                         }
                     }
                 },
+                Message::OfflineBounceFinished { result } => {
+                    self.offline_bounce_job = None;
+                    self.notify_clients(result).await;
+                    while let Some(next) = self.pending_requests.pop_front() {
+                        self.handle_request(next).await;
+                    }
+                }
                 Message::HWFinished => {
                     if !self.awaiting_hwfinished {
                         continue;

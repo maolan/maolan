@@ -967,9 +967,13 @@ impl Piano {
                         .width(Length::Fixed(100.0)),
                         button(text("Quantize").size(11))
                             .on_press(Message::PianoQuantizeSelectedNotes),
-                        slider(0.0..=1.0, quantize_strength, Message::PianoQuantizeStrengthChanged)
-                            .step(0.01)
-                            .width(Length::Fixed(72.0)),
+                        slider(
+                            0.0..=1.0,
+                            quantize_strength,
+                            Message::PianoQuantizeStrengthChanged
+                        )
+                        .step(0.01)
+                        .width(Length::Fixed(72.0)),
                         button(text("Humanize").size(11))
                             .on_press(Message::PianoHumanizeSelectedNotes),
                         slider(
@@ -986,8 +990,7 @@ impl Piano {
                         )
                         .step(0.01)
                         .width(Length::Fixed(58.0)),
-                        button(text("Groove").size(11))
-                            .on_press(Message::PianoGrooveSelectedNotes),
+                        button(text("Groove").size(11)).on_press(Message::PianoGrooveSelectedNotes),
                         slider(0.0..=1.0, groove_amount, Message::PianoGrooveAmountChanged)
                             .step(0.01)
                             .width(Length::Fixed(72.0)),
@@ -1323,11 +1326,7 @@ impl ControllerRollInteraction {
         }
     }
 
-    fn controller_at_position(
-        &self,
-        position: Point,
-        hit: ControllerHitTest<'_>,
-    ) -> Option<usize> {
+    fn controller_at_position(&self, position: Point, hit: ControllerHitTest<'_>) -> Option<usize> {
         let mut best: Option<(usize, f32)> = None;
         for (idx, row) in Piano::lane_controller_events(hit.lane, hit.controllers) {
             if let Some(selected_row) = hit.selected_row
@@ -2238,7 +2237,9 @@ impl Program<Message> for PianoRollInteraction {
                             }));
                         }
                         DraggingMode::DraggingNotes => {
-                            return Some(CanvasAction::publish(Message::PianoNotesDrag { position }));
+                            return Some(CanvasAction::publish(Message::PianoNotesDrag {
+                                position,
+                            }));
                         }
                         DraggingMode::ResizingNote => {
                             return Some(CanvasAction::publish(Message::PianoNoteResizeDrag {
