@@ -2761,6 +2761,66 @@ impl Maolan {
         .into()
     }
 
+    fn session_metadata_view(&self) -> iced::Element<'_, Message> {
+        let state = self.state.blocking_read();
+        container(
+            column![
+                text("Session Metadata").size(16),
+                row![
+                    text("Author:"),
+                    text_input("Author", &state.session_author)
+                        .on_input(Message::SessionMetadataAuthorInput)
+                        .width(Length::Fixed(260.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Album:"),
+                    text_input("Album", &state.session_album)
+                        .on_input(Message::SessionMetadataAlbumInput)
+                        .width(Length::Fixed(260.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Year:"),
+                    text_input("Year", &state.session_year)
+                        .on_input(Message::SessionMetadataYearInput)
+                        .width(Length::Fixed(120.0)),
+                    text("Track #:"),
+                    text_input("Track number", &state.session_track_number)
+                        .on_input(Message::SessionMetadataTrackNumberInput)
+                        .width(Length::Fixed(120.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Genre:"),
+                    text_input("Genre", &state.session_genre)
+                        .on_input(Message::SessionMetadataGenreInput)
+                        .width(Length::Fixed(260.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    button("Save").on_press(Message::SessionMetadataSave),
+                    button("Cancel")
+                        .on_press(Message::Cancel)
+                        .style(button::secondary),
+                ]
+                .spacing(10),
+            ]
+            .align_x(iced::Alignment::Start)
+            .spacing(12),
+        )
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
     fn autosave_recovery_view(&self) -> iced::Element<'_, Message> {
         let session_label = self
             .pending_recovery_session_dir

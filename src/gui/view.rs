@@ -29,6 +29,7 @@ impl Maolan {
             match self.modal {
                 Some(Show::AddTrack) => self.add_track.view(),
                 Some(Show::ExportSettings) => self.export_settings_view(),
+                Some(Show::SessionMetadata) => self.session_metadata_view(),
                 Some(Show::Preferences) => self.preferences_view(),
                 Some(Show::AutosaveRecovery) => self.autosave_recovery_view(),
                 #[cfg(all(unix, not(target_os = "macos")))]

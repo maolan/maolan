@@ -537,6 +537,11 @@ pub struct StateData {
     pub time_signature_denom: u8,
     pub tempo_points: Vec<TempoPoint>,
     pub time_signature_points: Vec<TimeSignaturePoint>,
+    pub session_author: String,
+    pub session_album: String,
+    pub session_year: String,
+    pub session_track_number: String,
+    pub session_genre: String,
     pub available_templates: Vec<String>,
 }
 
@@ -721,6 +726,11 @@ impl Default for StateData {
                 numerator: 4,
                 denominator: 4,
             }],
+            session_author: String::new(),
+            session_album: String::new(),
+            session_year: String::new(),
+            session_track_number: String::new(),
+            session_genre: String::new(),
             available_templates: vec![],
         }
     }

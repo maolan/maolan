@@ -2230,6 +2230,9 @@ impl Maolan {
                     Show::ExportSettings => {
                         self.modal = Some(Show::ExportSettings);
                     }
+                    Show::SessionMetadata => {
+                        self.modal = Some(Show::SessionMetadata);
+                    }
                     Show::Preferences => {
                         self.modal = Some(Show::Preferences);
                     }
@@ -2354,6 +2357,11 @@ impl Maolan {
                     state.global_midi_learn_play_pause = None;
                     state.global_midi_learn_stop = None;
                     state.global_midi_learn_record_toggle = None;
+                    state.session_author.clear();
+                    state.session_album.clear();
+                    state.session_year.clear();
+                    state.session_track_number.clear();
+                    state.session_genre.clear();
                     state.message = "New session".to_string();
                     state.piano = None;
                 }
@@ -9900,6 +9908,40 @@ impl Maolan {
                             format!("Failed to save preferences: {e}");
                     }
                 }
+            }
+            Message::SessionMetadataAuthorInput(ref value) => {
+                self.state.blocking_write().session_author = value.clone();
+            }
+            Message::SessionMetadataAlbumInput(ref value) => {
+                self.state.blocking_write().session_album = value.clone();
+            }
+            Message::SessionMetadataYearInput(ref value) => {
+                self.state.blocking_write().session_year = value
+                    .chars()
+                    .filter(|c| c.is_ascii_digit())
+                    .collect::<String>();
+            }
+            Message::SessionMetadataTrackNumberInput(ref value) => {
+                self.state.blocking_write().session_track_number = value
+                    .chars()
+                    .filter(|c| c.is_ascii_digit())
+                    .collect::<String>();
+            }
+            Message::SessionMetadataGenreInput(ref value) => {
+                self.state.blocking_write().session_genre = value.clone();
+            }
+            Message::SessionMetadataSave => {
+                {
+                    let mut state = self.state.blocking_write();
+                    state.session_author = state.session_author.trim().to_string();
+                    state.session_album = state.session_album.trim().to_string();
+                    state.session_year = state.session_year.trim().to_string();
+                    state.session_track_number = state.session_track_number.trim().to_string();
+                    state.session_genre = state.session_genre.trim().to_string();
+                    state.message = "Session metadata updated".to_string();
+                }
+                self.has_unsaved_changes = true;
+                self.modal = None;
             }
             Message::ImportProgress {
                 file_index,

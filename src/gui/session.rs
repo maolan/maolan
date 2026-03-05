@@ -148,6 +148,8 @@ impl Maolan {
                 })
                 .collect(),
         );
+        let metadata_year = state.session_year.trim().parse::<u64>().ok();
+        let metadata_track_number = state.session_track_number.trim().parse::<u64>().ok();
 
         let result = json!({
             "tracks": tracks_json,
@@ -155,6 +157,13 @@ impl Maolan {
             "graphs": graphs,
             "clap": clap,
             "clap_state": clap_state,
+            "metadata": {
+                "author": state.session_author.clone(),
+                "album": state.session_album.clone(),
+                "year": metadata_year,
+                "track_number": metadata_track_number,
+                "genre": state.session_genre.clone(),
+            },
             "transport": {
                 "loop_range_samples": self.loop_range_samples.map(|(start, end)| vec![start, end]),
                 "loop_enabled": self.loop_enabled,
@@ -665,12 +674,21 @@ impl Maolan {
                 })
                 .collect(),
         );
+        let metadata_year = state.session_year.trim().parse::<u64>().ok();
+        let metadata_track_number = state.session_track_number.trim().parse::<u64>().ok();
         let result = json!({
             "tracks": tracks_json,
             "connections": &state.connections,
             "graphs": graphs,
             "clap": clap,
             "clap_state": clap_state,
+            "metadata": {
+                "author": state.session_author.clone(),
+                "album": state.session_album.clone(),
+                "year": metadata_year,
+                "track_number": metadata_track_number,
+                "genre": state.session_genre.clone(),
+            },
             "transport": {
                 "loop_range_samples": self.loop_range_samples.map(|(start, end)| vec![start, end]),
                 "loop_enabled": self.loop_enabled,
@@ -755,6 +773,11 @@ impl Maolan {
             state.global_midi_learn_play_pause = None;
             state.global_midi_learn_stop = None;
             state.global_midi_learn_record_toggle = None;
+            state.session_author.clear();
+            state.session_album.clear();
+            state.session_year.clear();
+            state.session_track_number.clear();
+            state.session_genre.clear();
             #[cfg(all(unix, not(target_os = "macos")))]
             state.plugin_graphs_by_track.clear();
         }
@@ -795,6 +818,46 @@ impl Maolan {
                     binding,
                 });
             }
+        }
+        if let Some(metadata) = session.get("metadata").and_then(Value::as_object) {
+            let mut state = self.state.blocking_write();
+            state.session_author = metadata
+                .get("author")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            state.session_album = metadata
+                .get("album")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            state.session_year = metadata
+                .get("year")
+                .and_then(Value::as_u64)
+                .map(|v| v.to_string())
+                .or_else(|| {
+                    metadata
+                        .get("year")
+                        .and_then(Value::as_str)
+                        .and_then(|s| s.trim().parse::<u64>().ok().map(|v| v.to_string()))
+                })
+                .unwrap_or_default();
+            state.session_track_number = metadata
+                .get("track_number")
+                .and_then(Value::as_u64)
+                .map(|v| v.to_string())
+                .or_else(|| {
+                    metadata
+                        .get("track_number")
+                        .and_then(Value::as_str)
+                        .and_then(|s| s.trim().parse::<u64>().ok().map(|v| v.to_string()))
+                })
+                .unwrap_or_default();
+            state.session_genre = metadata
+                .get("genre")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
         }
 
         let transport = session.get("transport").ok_or_else(|| {

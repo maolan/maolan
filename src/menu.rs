@@ -132,6 +132,7 @@ impl Menu {
                     (menu_item("Recover Older Autosave Snapshot", Message::RecoverOlderAutosaveSnapshot)),
                     (menu_item("Save", Message::Show(Show::Save))),
                     (menu_item("Save as", Message::Show(Show::SaveAs))),
+                    (menu_item("Session Metadata", Message::Show(Show::SessionMetadata))),
                     (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
                     (menu_item("Import", Message::OpenFileImporter)),
                     (menu_item("Export", Message::OpenExporter)),
