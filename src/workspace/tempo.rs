@@ -81,6 +81,7 @@ impl canvas::Program<Message> for TempoCanvas {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Option<CanvasAction<Message>> {
+        let signed_step = |v: f32| if v >= 0.0 { 1_i8 } else { -1_i8 };
         let cursor_position = cursor.position_in(bounds);
         let cursor_x = cursor
             .position()
@@ -97,12 +98,12 @@ impl canvas::Program<Message> for TempoCanvas {
                         }
                         if pos.x <= TIME_SIG_HIT_X_SPLIT {
                             return Some(
-                                CanvasAction::publish(Message::TimeSignatureNumeratorCycle)
+                                CanvasAction::publish(Message::TimeSignatureNumeratorAdjust(1))
                                     .and_capture(),
                             );
                         }
                         return Some(
-                            CanvasAction::publish(Message::TimeSignatureDenominatorCycle)
+                            CanvasAction::publish(Message::TimeSignatureDenominatorAdjust(1))
                                 .and_capture(),
                         );
                     }
@@ -175,7 +176,24 @@ impl canvas::Program<Message> for TempoCanvas {
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
-                if cursor_position.is_some() {
+                if let Some(pos) = cursor_position {
+                    if pos.x <= LEFT_HIT_WIDTH {
+                        if pos.y <= TEMPO_HIT_HEIGHT {
+                            return Some(
+                                CanvasAction::publish(Message::TempoAdjust(-1.0)).and_capture()
+                            );
+                        }
+                        if pos.x <= TIME_SIG_HIT_X_SPLIT {
+                            return Some(
+                                CanvasAction::publish(Message::TimeSignatureNumeratorAdjust(-1))
+                                    .and_capture(),
+                            );
+                        }
+                        return Some(
+                            CanvasAction::publish(Message::TimeSignatureDenominatorAdjust(-1))
+                                .and_capture(),
+                        );
+                    }
                     return Some(CanvasAction::publish(Message::SetPunchRange(None)).and_capture());
                 }
             }
@@ -203,12 +221,16 @@ impl canvas::Program<Message> for TempoCanvas {
                         }
                         if pos.x <= TIME_SIG_HIT_X_SPLIT {
                             return Some(
-                                CanvasAction::publish(Message::TimeSignatureNumeratorCycle)
+                                CanvasAction::publish(Message::TimeSignatureNumeratorAdjust(
+                                    signed_step(scroll_y),
+                                ))
                                     .and_capture(),
                             );
                         }
                         return Some(
-                            CanvasAction::publish(Message::TimeSignatureDenominatorCycle)
+                            CanvasAction::publish(Message::TimeSignatureDenominatorAdjust(
+                                signed_step(scroll_y),
+                            ))
                                 .and_capture(),
                         );
                     }
@@ -307,6 +329,20 @@ impl canvas::Program<Message> for TempoCanvas {
             position: Point::new(10.0, 15.0),
             color: Color::WHITE,
             size: 10.0.into(),
+            ..Default::default()
+        });
+        frame.fill_text(Text {
+            content: "L+/R-".to_string(),
+            position: Point::new(56.0, 2.0),
+            color: Color::from_rgba(0.82, 0.82, 0.82, 0.8),
+            size: 9.0.into(),
+            ..Default::default()
+        });
+        frame.fill_text(Text {
+            content: "Scroll +/-".to_string(),
+            position: Point::new(47.0, 15.0),
+            color: Color::from_rgba(0.82, 0.82, 0.82, 0.8),
+            size: 9.0.into(),
             ..Default::default()
         });
 

@@ -38,6 +38,7 @@ Last updated: 2026-03-05
   - [x] Piano UI controls (buttons + amount sliders + Q/H/G shortcuts)
 - [ ] Tempo/Time Signature track editor
   - [x] First pass: interactive tempo/time-signature edit from timeline header
+  - [x] Second pass: bidirectional edits (increment/decrement via click + scroll hints)
   - [x] Session/template persistence for time signature
 - [ ] Comping/Take lanes (MIDI + audio)
 

@@ -1288,19 +1288,19 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.tempo = (state.tempo + delta).clamp(20.0, 300.0);
             }
-            Message::TimeSignatureNumeratorCycle => {
+            Message::TimeSignatureNumeratorAdjust(delta) => {
                 let mut state = self.state.blocking_write();
-                let next = state.time_signature_num.saturating_add(1);
-                state.time_signature_num = if next > 16 { 1 } else { next.max(1) };
+                let current = i16::from(state.time_signature_num);
+                let next = (current + i16::from(delta)).clamp(1, 16) as u8;
+                state.time_signature_num = next;
             }
-            Message::TimeSignatureDenominatorCycle => {
+            Message::TimeSignatureDenominatorAdjust(delta) => {
                 let mut state = self.state.blocking_write();
-                state.time_signature_denom = match state.time_signature_denom {
-                    2 => 4,
-                    4 => 8,
-                    8 => 16,
-                    _ => 2,
-                };
+                let values = [2_u8, 4, 8, 16];
+                let current = state.time_signature_denom;
+                let current_idx = values.iter().position(|v| *v == current).unwrap_or(1) as i16;
+                let next_idx = (current_idx + i16::from(delta)).clamp(0, 3) as usize;
+                state.time_signature_denom = values[next_idx];
             }
             Message::SetSnapMode(mode) => {
                 self.snap_mode = mode;

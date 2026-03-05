@@ -466,8 +466,8 @@ pub enum Message {
     TogglePunch,
     SetPunchRange(Option<(usize, usize)>),
     TempoAdjust(f32),
-    TimeSignatureNumeratorCycle,
-    TimeSignatureDenominatorCycle,
+    TimeSignatureNumeratorAdjust(i8),
+    TimeSignatureDenominatorAdjust(i8),
     SetSnapMode(SnapMode),
     RecordFolderSelected(Option<PathBuf>),
 
