@@ -1152,6 +1152,16 @@ impl Maolan {
                     midi_ins,
                     midi_outs,
                 });
+                if let Some(value) = track["level"].as_f64()
+                    && value.is_finite()
+                {
+                    restore_actions.push(Action::TrackLevel(name.clone(), value as f32));
+                }
+                if let Some(value) = track["balance"].as_f64()
+                    && value.is_finite()
+                {
+                    restore_actions.push(Action::TrackBalance(name.clone(), value as f32));
+                }
                 if let Some(value) = track["armed"].as_bool() {
                     if value {
                         restore_actions.push(Action::TrackToggleArm(name.clone()));
