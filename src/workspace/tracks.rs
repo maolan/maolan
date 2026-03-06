@@ -11,7 +11,6 @@ use iced_aw::ContextMenu;
 use iced_drop::droppable;
 use iced_fonts::lucide::{audio_waveform, disc};
 use maolan_engine::message::{Action, TrackMidiLearnTarget};
-use std::collections::HashMap;
 
 #[derive(Debug, Default)]
 pub struct Tracks {
@@ -30,6 +29,18 @@ impl Tracks {
         value.chars().take(max_chars).collect()
     }
 
+    fn rotate_text_cw(value: &str, max_chars: usize) -> String {
+        Self::trim_with_ellipsis(value, max_chars)
+            .chars()
+            .map(|c| c.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn char_slice(value: &str, start: usize, len: usize) -> String {
+        value.chars().skip(start).take(len).collect()
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
         let (tracks, selected, width, hovered_resize_track) = {
             let state = self.state.blocking_read();
@@ -45,19 +56,27 @@ impl Tracks {
             _ => 200.0,
         };
         let track_names: Vec<String> = tracks.iter().map(|t| t.name.clone()).collect();
-        let mut vca_follower_counts: HashMap<String, usize> = HashMap::new();
+        let track_heights: Vec<f32> = tracks.iter().map(|t| t.height).collect();
+        let mut vca_has_followers = std::collections::HashSet::new();
         for track in &tracks {
             if let Some(master) = track.vca_master.as_ref() {
-                *vca_follower_counts.entry(master.clone()).or_default() += 1;
+                vca_has_followers.insert(master.clone());
             }
         }
-
+        let vca_display_labels: Vec<Option<String>> = tracks
+            .iter()
+            .map(|track| {
+                track
+                    .vca_master
+                    .clone()
+                    .or_else(|| vca_has_followers.contains(&track.name).then(|| track.name.clone()))
+            })
+            .collect();
         let result = Column::with_children(tracks.into_iter().enumerate().map(|(index, track)| {
             let selected = selected.contains(&track.name);
             let height = track.height;
             let is_resize_hovered = hovered_resize_track.as_deref() == Some(track.name.as_str());
-            let vca_follower_count = vca_follower_counts.get(&track.name).copied().unwrap_or(0);
-            let vca_master_label = track.vca_master.clone();
+            let vca_master_label = vca_display_labels[index].clone();
             let midi_learn_vol = track.midi_learn_volume.clone();
             let midi_learn_bal = track.midi_learn_balance.clone();
             let midi_learn_mute = track.midi_learn_mute.clone();
@@ -81,7 +100,7 @@ impl Tracks {
                         .width(Length::Fill)
                         .height(Length::Fixed(lane_h))
                         .padding(4)
-                        .style(|_theme| container::Style {
+                        .style(move |_theme| container::Style {
                             background: Some(Background::Color(Color {
                                 r: 0.28,
                                 g: 0.2,
@@ -99,12 +118,6 @@ impl Tracks {
                 Self::trim_with_ellipsis(&track.name, max_name_chars as usize),
                 if track.frozen { " [FRZ]" } else { "" }
             );
-            if let Some(master) = vca_master_label.as_ref() {
-                title.push_str(&format!(" [VCA<-{}]", master));
-            }
-            if vca_follower_count > 0 {
-                title.push_str(&format!(" [VCA x{}]", vca_follower_count));
-            }
             if let Some(binding) = midi_learn_vol.as_ref() {
                 title.push_str(&format!(" [CC{}:{}->Vol]", binding.channel + 1, binding.cc));
             }
@@ -224,6 +237,69 @@ impl Tracks {
                 let track_midi_learn_arm = track.midi_learn_arm.clone();
                 let track_midi_learn_input_monitor = track.midi_learn_input_monitor.clone();
                 let track_midi_learn_disk_monitor = track.midi_learn_disk_monitor.clone();
+                let vca_strip_width = 18.0;
+                let vca_strip = if let Some(master) = vca_master_label.as_ref() {
+                    let prev_same = index > 0
+                        && vca_display_labels[index - 1].as_deref() == Some(master.as_str());
+                    let next_same = index + 1 < vca_display_labels.len()
+                        && vca_display_labels[index + 1].as_deref() == Some(master.as_str());
+                    let mut group_start = index;
+                    while group_start > 0
+                        && vca_display_labels[group_start - 1].as_deref() == Some(master.as_str())
+                    {
+                        group_start -= 1;
+                    }
+                    let mut group_end = index;
+                    while group_end + 1 < vca_display_labels.len()
+                        && vca_display_labels[group_end + 1].as_deref() == Some(master.as_str())
+                    {
+                        group_end += 1;
+                    }
+                    let line_h = 10.0;
+                    let cap_for = |h: f32| -> usize { ((h - 8.0).max(0.0) / line_h).floor() as usize };
+                    let mut capacity_before = 0usize;
+                    for h in &track_heights[group_start..index] {
+                        capacity_before += cap_for(*h);
+                    }
+                    let segment_capacity = cap_for(track_heights[index]);
+                    let strip_name = if segment_capacity == 0 {
+                        String::new()
+                    } else {
+                        let mut group_capacity = 0usize;
+                        for h in &track_heights[group_start..=group_end] {
+                            group_capacity += cap_for(*h);
+                        }
+                        let full = Self::trim_with_ellipsis(master, group_capacity.max(1));
+                        let segment = Self::char_slice(&full, capacity_before, segment_capacity);
+                        Self::rotate_text_cw(&segment, segment_capacity)
+                    };
+                    container(
+                        text(strip_name)
+                            .size(10)
+                            .align_x(iced::alignment::Horizontal::Center),
+                    )
+                        .width(Length::Fixed(vca_strip_width))
+                        .height(Length::Fill)
+                        .padding([4, 2])
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.24,
+                                g: 0.26,
+                                b: 0.3,
+                                a: 0.85,
+                            })),
+                            border: Border {
+                                color: Color::TRANSPARENT,
+                                width: 0.0,
+                                radius: if prev_same || next_same { 0.0 } else { 3.0 }.into(),
+                            },
+                            ..container::Style::default()
+                        })
+                } else {
+                    container("")
+                        .width(Length::Fixed(vca_strip_width))
+                        .height(Length::Fill)
+                };
                 let track_body = container(track_ui)
                     .id(track.name.clone())
                     .width(Length::Fill)
@@ -257,6 +333,9 @@ impl Tracks {
                         },
                         ..container::Style::default()
                     });
+                let track_body = container(row![vca_strip, track_body].spacing(2.0))
+                    .width(Length::Fill)
+                    .height(Length::Fixed(height));
 
                 let track_with_drop = droppable(track_body)
                     .on_drag(move |_, _| Message::TrackDrag(index))
