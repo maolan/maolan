@@ -95,7 +95,7 @@ impl Tracks {
 
             let max_name_chars = (((track_width_px - 90.0) / 7.0).floor() as i32).clamp(8, 64);
             let mut title = format!(
-                "▾ {}{}",
+                "{}{}",
                 Self::trim_with_ellipsis(&track.name, max_name_chars as usize),
                 if track.frozen { " [FRZ]" } else { "" }
             );
@@ -177,12 +177,15 @@ impl Tracks {
 
             lane_rows = lane_rows.push(track_controls);
 
+            let header = mouse_area(
+                row![text(title), Space::new().width(Length::Fill),]
+                    .height(Length::Fixed(layout.header_height)),
+            )
+            .on_press(Message::SelectTrack(track.name.clone()))
+            .on_double_click(Message::OpenTrackPlugins(track.name.clone()));
+
             let track_ui: Column<'_, Message> = column![
-                row![
-                    text(title),
-                    Space::new().width(Length::Fill),
-                ]
-                .height(Length::Fixed(layout.header_height)),
+                header,
                 lane_rows.height(Length::Fill),
                 mouse_area(
                     container("")
@@ -221,45 +224,45 @@ impl Tracks {
                 let track_midi_learn_arm = track.midi_learn_arm.clone();
                 let track_midi_learn_input_monitor = track.midi_learn_input_monitor.clone();
                 let track_midi_learn_disk_monitor = track.midi_learn_disk_monitor.clone();
-                let track_with_mouse = mouse_area(
-                    container(track_ui)
-                        .id(track.name.clone())
-                        .width(Length::Fill)
-                        .height(Length::Fixed(height))
-                        .padding(5)
-                        .style(move |_theme| container::Style {
-                            background: if selected {
-                                Some(Background::Color(Color {
-                                    r: 1.0,
-                                    g: 1.0,
-                                    b: 1.0,
-                                    a: 0.1,
-                                }))
-                            } else {
-                                Some(Background::Color(Color {
-                                    r: 0.0,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 0.0,
-                                }))
+                let track_body = container(track_ui)
+                    .id(track.name.clone())
+                    .width(Length::Fill)
+                    .height(Length::Fixed(height))
+                    .padding(5)
+                    .style(move |_theme| container::Style {
+                        background: if selected {
+                            Some(Background::Color(Color {
+                                r: 1.0,
+                                g: 1.0,
+                                b: 1.0,
+                                a: 0.1,
+                            }))
+                        } else {
+                            Some(Background::Color(Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 0.0,
+                            }))
+                        },
+                        border: Border {
+                            color: Color {
+                                r: 0.0,
+                                g: 0.0,
+                                b: 0.0,
+                                a: 1.0,
                             },
-                            border: Border {
-                                color: Color {
-                                    r: 0.0,
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 1.0,
-                                },
-                                width: 1.0,
-                                radius: 5.0.into(),
-                            },
-                            ..container::Style::default()
-                        }),
-                )
-                .on_press(Message::SelectTrack(track.name.clone()))
-                .on_double_click(Message::OpenTrackPlugins(track.name.clone()));
+                            width: 1.0,
+                            radius: 5.0.into(),
+                        },
+                        ..container::Style::default()
+                    });
 
-                let track_with_context = ContextMenu::new(track_with_mouse, move || {
+                let track_with_drop = droppable(track_body)
+                    .on_drag(move |_, _| Message::TrackDrag(index))
+                    .on_drop(Message::TrackDropped);
+
+                ContextMenu::new(track_with_drop, move || {
                     let mut menu = column![
                         button("Automation: Volume").on_press(Message::TrackAutomationAddLane {
                             track_name: track_name_for_menu.clone(),
@@ -283,13 +286,10 @@ impl Tracks {
                         .on_press(Message::TrackAutomationToggle {
                             track_name: track_name_for_menu.clone(),
                         }),
-                        button(text(format!(
-                            "Automation Mode: {}",
-                            track_automation_mode
-                        )))
-                        .on_press(Message::TrackAutomationCycleMode {
-                            track_name: track_name_for_menu.clone(),
-                        }),
+                        button(text(format!("Automation Mode: {}", track_automation_mode)))
+                            .on_press(Message::TrackAutomationCycleMode {
+                                track_name: track_name_for_menu.clone(),
+                            }),
                         button(if track_is_frozen {
                             "Unfreeze"
                         } else {
@@ -495,16 +495,10 @@ impl Tracks {
                         ));
                     }
                     menu.into()
-                });
-
-                droppable(track_with_context)
-                    .on_drag(move |_, _| Message::TrackDrag(index))
-                    .on_drop(Message::TrackDropped)
-                    .into()
+                })
+                .into()
             }
         }));
-        mouse_area(result.width(width))
-            .on_press(Message::DeselectAll)
-            .into()
+        result.width(width).into()
     }
 }

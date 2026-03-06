@@ -4842,7 +4842,8 @@ impl Maolan {
                         if let Some(height) = state.pending_track_heights.remove(name)
                             && let Some(track) = state.tracks.iter_mut().find(|t| &t.name == name)
                         {
-                            track.height = height;
+                            let min_h = track.min_height_for_layout().max(60.0);
+                            track.height = height.max(min_h);
                         }
                         if let Some((audio_backup, midi_backup, render_clip)) =
                             self.pending_track_freeze_restore.remove(name)
@@ -9393,22 +9394,25 @@ impl Maolan {
                 }
             }
             Message::TrackDrag(index) => {
-                if self.track.is_none() {
-                    let state = self.state.blocking_read();
-                    if index < state.tracks.len() {
-                        self.track = Some(state.tracks[index].name.clone());
-                    }
+                let state = self.state.blocking_read();
+                if index < state.tracks.len() {
+                    self.track = Some(state.tracks[index].name.clone());
                 }
             }
             Message::TrackDropped(point, _rect) => {
                 if self.track.is_some() {
                     return iced_drop::zones_on_point(Message::HandleTrackZones, point, None, None);
                 }
+                self.track = None;
             }
             Message::HandleTrackZones(ref zones) => {
-                if let Some(index_name) = &self.track
-                    && let Some((track_id, _)) = zones.first()
-                {
+                if let Some(index_name) = &self.track {
+                    let dragged_id = Id::from(index_name.clone());
+                    let target_zone = zones
+                        .iter()
+                        .find(|(zone_id, _)| *zone_id != dragged_id)
+                        .or_else(|| zones.first());
+                    if let Some((track_id, _)) = target_zone {
                     let mut state = self.state.blocking_write();
                     if let Some(index) = state.tracks.iter().position(|t| t.name == *index_name) {
                         let moved_track = state.tracks.remove(index);
@@ -9424,6 +9428,8 @@ impl Maolan {
                         }
                     }
                 }
+                }
+                self.track = None;
             }
             Message::OpenFileImporter => {
                 return Task::perform(
