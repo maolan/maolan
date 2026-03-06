@@ -168,179 +168,54 @@ fn audio_waveform_overlay(
             .height(Length::Fill)
             .into();
     }
-    let inner_w = (clip_width - 2.0).max(2.0);
-    let inner_h = (clip_height - 2.0).max(4.0);
+    let inner_w = clip_width.max(4.0);
+    let inner_h = clip_height.max(4.0);
     let channel_count = peaks.len().max(1);
     let channel_h = inner_h / channel_count as f32;
     let mut bars: Vec<Element<'static, Message>> = Vec::new();
-    let clip_level = 0.98853_f32;
+    let max_bins = 220usize;
 
     for (channel_idx, channel_peaks) in peaks.iter().enumerate() {
         if channel_peaks.is_empty() {
             continue;
         }
-        let raw_bins = (inner_w.ceil() as usize).max(1);
-        // Iced widget composition gets expensive with too many tiny elements.
-        // Cap draw bins to keep high-zoom rendering responsive.
-        let display_bins = raw_bins.min(1400);
-        let x_step = inner_w / display_bins as f32;
+        let bins = ((inner_w / 3.0) as usize).clamp(16, max_bins);
+        let x_step = inner_w / bins as f32;
         let channel_top = channel_h * channel_idx as f32;
         let center_y = channel_top + channel_h * 0.5;
-        let half_span = (channel_h * 0.48).max(1.0);
-        let draw_outlines = display_bins <= 700;
-        let draw_clip_markers = display_bins <= 900;
-
-        // Draw zero/center line per channel for better shape readability.
-        bars.push(
-            pin(container("")
-                .width(Length::Fixed(inner_w))
-                .height(Length::Fixed(1.0))
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(Color {
-                        r: 0.95,
-                        g: 0.97,
-                        b: 1.0,
-                        a: 0.2,
-                    })),
-                    ..container::Style::default()
-                }))
-            .position(Point::new(0.0, center_y))
-            .into(),
-        );
-
+        let half_span = (channel_h * 0.45).max(1.0);
         let total_peaks = channel_peaks.len();
         let max_len = max_length.max(1);
-        let peaks_per_pixel = (total_peaks as f32 / display_bins as f32).max(1.0);
-        let src_window = peaks_per_pixel.ceil() as usize;
 
-        for i in 0..display_bins {
-            let clip_sample_pos = (i * clip_length) / display_bins;
+        for i in 0..bins {
+            let clip_sample_pos = (i * clip_length) / bins;
             let absolute_sample_pos = clip_offset + clip_sample_pos;
-            let src_pos = (absolute_sample_pos as f32 / max_len as f32)
-                * (total_peaks.saturating_sub(1) as f32);
-            let mut min_val = 0.0_f32;
-            let mut max_val = 0.0_f32;
-            if src_window <= 1 {
-                let idx0 = src_pos.floor() as usize;
-                let idx1 = (idx0 + 1).min(total_peaks.saturating_sub(1));
-                let frac = (src_pos - idx0 as f32).clamp(0.0, 1.0);
-                let p0 = channel_peaks[idx0];
-                let p1 = channel_peaks[idx1];
-                min_val = p0[0] + (p1[0] - p0[0]) * frac;
-                max_val = p0[1] + (p1[1] - p0[1]) * frac;
-            } else {
-                let src_idx =
-                    ((absolute_sample_pos * total_peaks) / max_len).min(total_peaks.saturating_sub(1));
-                let start = src_idx.saturating_sub(src_window / 2);
-                let end = (src_idx + src_window / 2 + 1).min(total_peaks);
-                for pair in &channel_peaks[start..end] {
-                    min_val = min_val.min(pair[0]);
-                    max_val = max_val.max(pair[1]);
-                }
-            }
-            min_val = min_val.clamp(-1.0, 1.0);
-            max_val = max_val.clamp(-1.0, 1.0);
-            if (max_val - min_val) < 0.003 {
-                continue;
-            }
-
+            let src_idx =
+                ((absolute_sample_pos * total_peaks) / max_len).min(total_peaks.saturating_sub(1));
+            let pair = channel_peaks[src_idx];
+            let min_val = pair[0].clamp(-1.0, 1.0);
+            let max_val = pair[1].clamp(-1.0, 1.0);
             let top = (center_y - (max_val * half_span)).clamp(channel_top, channel_top + channel_h);
             let bottom =
                 (center_y - (min_val * half_span)).clamp(channel_top, channel_top + channel_h);
-            let x = i as f32 * x_step;
-            let w = x_step.max(1.0).ceil();
             let y = top.min(bottom);
-            let total_h = (bottom - top).abs().max(1.0);
-
-            // Main waveform fill (mirrored around center line).
+            let h = (bottom - top).abs().max(1.0);
             bars.push(
                 pin(container("")
-                    .width(Length::Fixed(w))
-                    .height(Length::Fixed(total_h))
+                    .width(Length::Fixed(x_step.max(1.0)))
+                    .height(Length::Fixed(h))
                     .style(|_theme| container::Style {
                         background: Some(Background::Color(Color {
                             r: 0.8,
                             g: 0.9,
                             b: 1.0,
-                            a: 0.34,
+                            a: 0.32,
                         })),
                         ..container::Style::default()
                     }))
-                .position(Point::new(x, y))
+                .position(Point::new(i as f32 * x_step, y))
                 .into(),
             );
-
-            // Edge highlights similar to Ardour's outline feel.
-            if draw_outlines {
-                bars.push(
-                    pin(container("")
-                        .width(Length::Fixed(w))
-                        .height(Length::Fixed(1.0))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.92,
-                                g: 0.97,
-                                b: 1.0,
-                                a: 0.55,
-                            })),
-                            ..container::Style::default()
-                        }))
-                    .position(Point::new(x, y))
-                    .into(),
-                );
-                bars.push(
-                    pin(container("")
-                        .width(Length::Fixed(w))
-                        .height(Length::Fixed(1.0))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.92,
-                                g: 0.97,
-                                b: 1.0,
-                                a: 0.55,
-                            })),
-                            ..container::Style::default()
-                        }))
-                    .position(Point::new(x, y + total_h - 1.0))
-                    .into(),
-                );
-            }
-
-            if draw_clip_markers && max_val.abs().max(min_val.abs()) >= clip_level {
-                let clip_marker_h = (channel_h * 0.12).max(1.5);
-                bars.push(
-                    pin(container("")
-                        .width(Length::Fixed(w))
-                        .height(Length::Fixed(clip_marker_h))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 1.0,
-                                g: 0.33,
-                                b: 0.28,
-                                a: 0.85,
-                            })),
-                            ..container::Style::default()
-                        }))
-                    .position(Point::new(x, channel_top))
-                    .into(),
-                );
-                bars.push(
-                    pin(container("")
-                        .width(Length::Fixed(w))
-                        .height(Length::Fixed(clip_marker_h))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 1.0,
-                                g: 0.33,
-                                b: 0.28,
-                                a: 0.85,
-                            })),
-                            ..container::Style::default()
-                        }))
-                    .position(Point::new(x, channel_top + channel_h - clip_marker_h))
-                    .into(),
-                );
-            }
         }
     }
     Stack::from_vec(bars)
@@ -1032,9 +907,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     clip_width,
                     clip_height,
                     clip.offset,
-                clip.length,
-                clip.max_length_samples,
-            ),
+                    clip.length,
+                    clip.max_length_samples,
+                ),
                 clip_label_overlay(display_clip_label.clone()),
             ]))
             .width(Length::Fill)
