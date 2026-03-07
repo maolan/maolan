@@ -98,6 +98,7 @@ pub struct AudioDeviceOption {
     pub id: String,
     pub label: String,
     pub supported_bits: Vec<usize>,
+    pub supported_sample_rates: Vec<i32>,
 }
 
 #[cfg(any(
@@ -107,64 +108,78 @@ pub struct AudioDeviceOption {
     target_os = "openbsd"
 ))]
 impl AudioDeviceOption {
+    fn normalize_sample_rates(mut rates: Vec<i32>) -> Vec<i32> {
+        rates.retain(|r| *r > 0);
+        rates.sort_unstable();
+        rates.dedup();
+        rates
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "netbsd", target_os = "openbsd"))]
+    fn default_sample_rates() -> Vec<i32> {
+        vec![
+            8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
+            192_000, 384_000,
+        ]
+    }
+
+    pub fn with_supported_caps(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        mut supported_bits: Vec<usize>,
+        supported_sample_rates: Vec<i32>,
+    ) -> Self {
+        supported_bits.sort_by(|a, b| b.cmp(a));
+        supported_bits.dedup();
+        let supported_sample_rates = Self::normalize_sample_rates(supported_sample_rates);
+        Self {
+            id: id.into(),
+            label: label.into(),
+            supported_bits,
+            supported_sample_rates,
+        }
+    }
+
     #[cfg(target_os = "linux")]
     pub fn with_supported_bits(
         id: impl Into<String>,
         label: impl Into<String>,
-        mut supported_bits: Vec<usize>,
+        supported_bits: Vec<usize>,
     ) -> Self {
-        supported_bits.sort_by(|a, b| b.cmp(a));
-        supported_bits.dedup();
-        Self {
-            id: id.into(),
-            label: label.into(),
+        Self::with_supported_caps(
+            id,
+            label,
             supported_bits,
-        }
-    }
-
-    #[cfg(target_os = "freebsd")]
-    pub fn with_supported_bits(
-        id: impl Into<String>,
-        label: impl Into<String>,
-        mut supported_bits: Vec<usize>,
-    ) -> Self {
-        supported_bits.sort_by(|a, b| b.cmp(a));
-        supported_bits.dedup();
-        Self {
-            id: id.into(),
-            label: label.into(),
-            supported_bits,
-        }
+            Self::default_sample_rates(),
+        )
     }
 
     #[cfg(target_os = "netbsd")]
     pub fn with_supported_bits(
         id: impl Into<String>,
         label: impl Into<String>,
-        mut supported_bits: Vec<usize>,
+        supported_bits: Vec<usize>,
     ) -> Self {
-        supported_bits.sort_by(|a, b| b.cmp(a));
-        supported_bits.dedup();
-        Self {
-            id: id.into(),
-            label: label.into(),
+        Self::with_supported_caps(
+            id,
+            label,
             supported_bits,
-        }
+            Self::default_sample_rates(),
+        )
     }
 
     #[cfg(target_os = "openbsd")]
     pub fn with_supported_bits(
         id: impl Into<String>,
         label: impl Into<String>,
-        mut supported_bits: Vec<usize>,
+        supported_bits: Vec<usize>,
     ) -> Self {
-        supported_bits.sort_by(|a, b| b.cmp(a));
-        supported_bits.dedup();
-        Self {
-            id: id.into(),
-            label: label.into(),
+        Self::with_supported_caps(
+            id,
+            label,
             supported_bits,
-        }
+            Self::default_sample_rates(),
+        )
     }
 
     pub fn preferred_bits(&self) -> Option<usize> {
@@ -1069,10 +1084,15 @@ fn parse_sndstat_nvlist(buf: &[u8]) -> Option<Vec<AudioDeviceOption>> {
             if supported_bits.is_empty() {
                 supported_bits = probe_oss_supported_bits(&devpath);
             }
-            Some(AudioDeviceOption::with_supported_bits(
+            let mut supported_sample_rates = decode_supported_sample_rates_from_dsp(dsp);
+            if supported_sample_rates.is_empty() {
+                supported_sample_rates = probe_oss_supported_sample_rates(&devpath);
+            }
+            Some(AudioDeviceOption::with_supported_caps(
                 devpath,
                 label,
                 supported_bits,
+                supported_sample_rates,
             ))
         })
         .collect::<Vec<_>>();
@@ -1173,6 +1193,76 @@ fn bits_from_format_mask(mask: u64) -> Vec<usize> {
 }
 
 #[cfg(target_os = "freebsd")]
+fn decode_supported_sample_rates_from_dsp(dsp: &Nvtree) -> Vec<i32> {
+    use std::collections::BTreeSet;
+
+    fn parse_number_text(s: &str) -> Option<i32> {
+        s.trim().parse::<i32>().ok().filter(|v| *v > 0)
+    }
+
+    fn collect_rates_from_value(value: &Nvtvalue, rates: &mut BTreeSet<i32>) {
+        match value {
+            Nvtvalue::Number(n) => {
+                if let Ok(rate) = i32::try_from(*n)
+                    && rate > 0
+                {
+                    rates.insert(rate);
+                }
+            }
+            Nvtvalue::String(s) => {
+                if let Some(rate) = parse_number_text(s) {
+                    rates.insert(rate);
+                }
+            }
+            Nvtvalue::NumberArray(arr) => {
+                for rate in arr.iter().copied().filter_map(|n| i32::try_from(n).ok()) {
+                    if rate > 0 {
+                        rates.insert(rate);
+                    }
+                }
+            }
+            Nvtvalue::StringArray(arr) => {
+                for s in arr {
+                    if let Some(rate) = parse_number_text(s) {
+                        rates.insert(rate);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_rates_from_tree(tree: &Nvtree, rates: &mut BTreeSet<i32>) {
+        const RATE_KEYS: [&str; 8] = [
+            "rates",
+            "rate",
+            "irates",
+            "orates",
+            "playrates",
+            "recrates",
+            "playback_rates",
+            "capture_rates",
+        ];
+        for key in RATE_KEYS {
+            if let Some(pair) = nvtree_find(tree, key) {
+                collect_rates_from_value(&pair.value, rates);
+            }
+        }
+    }
+
+    let mut rates = BTreeSet::new();
+    collect_rates_from_tree(dsp, &mut rates);
+    for nested_name in ["play", "playback", "record", "capture"] {
+        if let Some(pair) = nvtree_find(dsp, nested_name)
+            && let Nvtvalue::Nested(nested) = &pair.value
+        {
+            collect_rates_from_tree(nested, &mut rates);
+        }
+    }
+    rates.into_iter().collect()
+}
+
+#[cfg(target_os = "freebsd")]
 fn probe_oss_supported_bits(devpath: &str) -> Vec<usize> {
     let Ok(file) = std::fs::OpenOptions::new().read(true).open(devpath) else {
         return Vec::new();
@@ -1184,6 +1274,27 @@ fn probe_oss_supported_bits(devpath: &str) -> Vec<usize> {
         return Vec::new();
     }
     bits_from_format_mask(formats as u64)
+}
+
+#[cfg(target_os = "freebsd")]
+fn probe_oss_supported_sample_rates(devpath: &str) -> Vec<i32> {
+    const CANDIDATES: [i32; 12] = [
+        8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
+        192_000, 384_000,
+    ];
+    let Ok(file) = std::fs::OpenOptions::new().read(true).write(true).open(devpath) else {
+        return Vec::new();
+    };
+    let fd = file.as_raw_fd();
+    let mut supported = std::collections::BTreeSet::new();
+    for candidate in CANDIDATES {
+        let mut rate = candidate;
+        let ok = unsafe { oss_set_speed(fd, &mut rate).is_ok() };
+        if ok && rate > 0 {
+            supported.insert(rate);
+        }
+    }
+    supported.into_iter().collect()
 }
 
 #[cfg(target_os = "freebsd")]
@@ -1199,6 +1310,8 @@ nix::ioctl_none!(sndst_refresh_devs, b'D', 100);
 nix::ioctl_readwrite!(sndst_get_devs, b'D', 101, SndstIoctlNvArg);
 #[cfg(target_os = "freebsd")]
 nix::ioctl_read!(oss_get_formats, b'P', 11, i32);
+#[cfg(target_os = "freebsd")]
+nix::ioctl_readwrite!(oss_set_speed, b'P', 2, i32);
 
 #[cfg(target_os = "linux")]
 fn read_alsa_card_labels() -> std::collections::HashMap<u32, String> {

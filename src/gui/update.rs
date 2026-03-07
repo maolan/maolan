@@ -10902,6 +10902,9 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.oss_bits = bits;
             }
+            Message::HWSampleRateChanged(rate_hz) => {
+                self.state.blocking_write().hw_sample_rate_hz = rate_hz.max(1);
+            }
             Message::HWPeriodFramesChanged(period_frames) => {
                 self.state.blocking_write().oss_period_frames =
                     Self::normalize_period_frames(period_frames);

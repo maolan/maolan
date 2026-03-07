@@ -17,6 +17,10 @@ impl HW {
     pub fn audio_view(&self) -> iced::Element<'_, Message> {
         let period_options = vec![64, 128, 256, 512, 1024, 2048, 4096, 8192];
         let nperiod_options: Vec<usize> = (1..=16).collect();
+        let fallback_sample_rates = vec![
+            8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
+            192_000, 384_000,
+        ];
         #[cfg(any(
             target_os = "linux",
             target_os = "freebsd",
@@ -154,6 +158,44 @@ impl HW {
             target_os = "netbsd",
             target_os = "openbsd"
         ))]
+        let sample_rate_options = if selected_is_jack {
+            fallback_sample_rates.clone()
+        } else {
+            selected_hw
+                .as_ref()
+                .map(|hw| hw.supported_sample_rates.clone())
+                .unwrap_or_default()
+        };
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        )))]
+        let sample_rate_options = fallback_sample_rates.clone();
+        let chosen_sample_rate_hz = if sample_rate_options.contains(&sample_rate_hz) {
+            sample_rate_hz
+        } else {
+            sample_rate_options
+                .iter()
+                .min_by_key(|candidate| {
+                    ((*candidate).saturating_sub(sample_rate_hz))
+                        .abs()
+                })
+                .copied()
+                .unwrap_or(48_000)
+        };
+        let selected_sample_rate_hz = if sample_rate_options.is_empty() {
+            None
+        } else {
+            Some(chosen_sample_rate_hz)
+        };
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
         let bit_options = if selected_is_jack {
             fallback_bits.clone()
         } else {
@@ -207,13 +249,20 @@ impl HW {
         #[cfg(target_os = "windows")]
         let hw_ready = selected_is_jack || (selected_hw.is_some() && selected_input_hw.is_some());
         #[cfg(target_os = "freebsd")]
-        let hw_ready = selected_is_jack || (selected_hw.is_some() && selected_input_hw.is_some());
+        let hw_ready = selected_is_jack
+            || (selected_hw.is_some()
+                && selected_input_hw.is_some()
+                && !sample_rate_options.is_empty());
         #[cfg(target_os = "linux")]
-        let hw_ready = selected_is_jack || (selected_hw.is_some() && selected_input_hw.is_some());
+        let hw_ready = selected_is_jack
+            || (selected_hw.is_some()
+                && selected_input_hw.is_some()
+                && !sample_rate_options.is_empty());
         #[cfg(not(target_os = "windows"))]
         #[cfg(not(target_os = "freebsd"))]
         #[cfg(not(target_os = "linux"))]
-        let hw_ready = selected_is_jack || selected_hw.is_some();
+        let hw_ready =
+            selected_is_jack || (selected_hw.is_some() && !sample_rate_options.is_empty());
         if plugins_loaded && hw_ready {
             #[cfg(any(
                 target_os = "linux",
@@ -270,7 +319,7 @@ impl HW {
                 input_device: selected_input_hw.clone(),
                 #[cfg(any(target_os = "freebsd", target_os = "linux"))]
                 input_device,
-                sample_rate_hz,
+                sample_rate_hz: chosen_sample_rate_hz,
                 bits,
                 exclusive,
                 period_frames,
@@ -364,6 +413,18 @@ impl HW {
         }
 
         if !selected_is_jack {
+            content = content.push(
+                row![
+                    text("Sample rate (Hz):"),
+                    pick_list(
+                        sample_rate_options,
+                        selected_sample_rate_hz,
+                        Message::HWSampleRateChanged
+                    )
+                    .placeholder("Choose sample rate")
+                ]
+                .spacing(10),
+            );
             #[cfg(any(
                 target_os = "linux",
                 target_os = "freebsd",

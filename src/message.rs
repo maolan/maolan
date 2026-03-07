@@ -930,6 +930,7 @@ pub enum Message {
     HWExclusiveToggled(bool),
     #[cfg(unix)]
     HWBitsChanged(usize),
+    HWSampleRateChanged(i32),
     HWPeriodFramesChanged(usize),
     HWNPeriodsChanged(usize),
     HWSyncModeToggled(bool),
