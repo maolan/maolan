@@ -20,6 +20,7 @@ use tempo::TempoViewArgs;
 
 pub const EDITOR_SCROLL_ID: &str = "workspace.editor.scroll";
 pub const EDITOR_H_SCROLL_ID: &str = "workspace.editor.h_scroll";
+pub const TRACKS_SCROLL_ID: &str = "workspace.tracks.scroll";
 pub const PIANO_TEMPO_SCROLL_ID: &str = "workspace.piano.tempo.scroll";
 pub const PIANO_RULER_SCROLL_ID: &str = "workspace.piano.ruler.scroll";
 
@@ -219,7 +220,10 @@ impl Workspace {
             vertical: scrollable::Scrollbar::new(),
             horizontal: scrollable::Scrollbar::hidden(),
         })
-        .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
+        .on_scroll(|viewport| Message::EditorScrollChanged {
+            x: viewport.relative_offset().x,
+            y: viewport.relative_offset().y,
+        })
         .width(Length::Fill)
         .height(Length::Fill);
 
@@ -237,6 +241,14 @@ impl Workspace {
         .height(Length::Fixed(16.0));
 
         let editor_with_zoom = right_lanes_scrolled;
+        let tracks_scrolled = scrollable(self.tracks.view())
+            .id(Id::new(TRACKS_SCROLL_ID))
+            .direction(scrollable::Direction::Vertical(
+                scrollable::Scrollbar::hidden(),
+            ))
+            .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
+            .width(tracks_width)
+            .height(Length::Fixed(tracks_total_height));
 
         let shared_workspace = row![
                 column![
@@ -264,7 +276,7 @@ impl Workspace {
                             })),
                             ..container::Style::default()
                         }),
-                    self.tracks.view(),
+                    tracks_scrolled,
                 ]
                 .width(tracks_width),
                 mouse_area(column![

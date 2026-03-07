@@ -17,6 +17,7 @@ use crate::{
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
     workspace::{
         EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID, PIANO_RULER_SCROLL_ID, PIANO_TEMPO_SCROLL_ID,
+        TRACKS_SCROLL_ID,
     },
 };
 use iced::widget::{Id, operation};
@@ -1482,12 +1483,13 @@ impl Maolan {
 
     fn sync_editor_scrollbars(&self) -> Task<Message> {
         let x = self.editor_scroll_x.clamp(0.0, 1.0);
+        let y = self.editor_scroll_y.clamp(0.0, 1.0);
         Task::batch(vec![
             operation::snap_to(
                 Id::new(EDITOR_SCROLL_ID),
                 operation::RelativeOffset {
                     x: Some(x),
-                    y: None,
+                    y: Some(y),
                 },
             ),
             operation::snap_to(
@@ -1495,6 +1497,13 @@ impl Maolan {
                 operation::RelativeOffset {
                     x: Some(x),
                     y: None,
+                },
+            ),
+            operation::snap_to(
+                Id::new(TRACKS_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: None,
+                    y: Some(y),
                 },
             ),
         ])
@@ -3366,10 +3375,28 @@ impl Maolan {
                 self.zoom_visible_bars = value.clamp(1.0, 256.0);
                 return self.sync_editor_scrollbars();
             }
+            Message::EditorScrollChanged { x, y } => {
+                let x = x.clamp(0.0, 1.0);
+                let y = y.clamp(0.0, 1.0);
+                let x_changed = (self.editor_scroll_x - x).abs() > 0.0005;
+                let y_changed = (self.editor_scroll_y - y).abs() > 0.0005;
+                if x_changed || y_changed {
+                    self.editor_scroll_x = x;
+                    self.editor_scroll_y = y;
+                    return self.sync_editor_scrollbars();
+                }
+            }
             Message::EditorScrollXChanged(value) => {
                 let x = value.clamp(0.0, 1.0);
                 if (self.editor_scroll_x - x).abs() > 0.0005 {
                     self.editor_scroll_x = x;
+                    return self.sync_editor_scrollbars();
+                }
+            }
+            Message::EditorScrollYChanged(value) => {
+                let y = value.clamp(0.0, 1.0);
+                if (self.editor_scroll_y - y).abs() > 0.0005 {
+                    self.editor_scroll_y = y;
                     return self.sync_editor_scrollbars();
                 }
             }
