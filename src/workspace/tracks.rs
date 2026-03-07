@@ -4,8 +4,10 @@ use crate::{
     style,
 };
 use iced::{
-    Background, Border, Color, Element, Length,
+    Alignment, Background, Border, Color, Element, Length,
+    alignment::Horizontal,
     widget::{Column, Space, button, column, container, mouse_area, row, text},
+    Theme,
 };
 use iced_aw::ContextMenu;
 use iced_drop::droppable;
@@ -39,6 +41,41 @@ impl Tracks {
 
     fn char_slice(value: &str, start: usize, len: usize) -> String {
         value.chars().skip(start).take(len).collect()
+    }
+
+    fn format_balance(balance: f32) -> String {
+        let balance = balance.clamp(-1.0, 1.0);
+        if balance.abs() < 0.005 {
+            "C".to_string()
+        } else if balance < 0.0 {
+            format!("L{}", (-balance * 100.0).round() as i32)
+        } else {
+            format!("R{}", (balance * 100.0).round() as i32)
+        }
+    }
+
+    fn info_badge(label: String, accent: bool) -> Element<'static, Message> {
+        container(text(label).size(9))
+            .padding([2, 5])
+            .style(move |_theme| container::Style {
+                background: Some(Background::Color(if accent {
+                    Color::from_rgba(0.34, 0.48, 0.69, 0.88)
+                } else {
+                    Color::from_rgba(0.16, 0.19, 0.25, 0.95)
+                })),
+                border: Border {
+                    color: Color::from_rgba(0.62, 0.74, 0.9, if accent { 0.55 } else { 0.18 }),
+                    width: 1.0,
+                    radius: 5.0.into(),
+                },
+                text_color: Some(if accent {
+                    Color::WHITE
+                } else {
+                    Color::from_rgb(0.82, 0.86, 0.93)
+                }),
+                ..container::Style::default()
+            })
+            .into()
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -93,128 +130,222 @@ impl Tracks {
             let layout = track.lane_layout();
             let lane_h = layout.lane_height.max(12.0);
             let has_visible_automation = track.automation_lanes.iter().any(|lane| lane.visible);
-            let mut lane_rows: Column<'_, Message> = column![];
-            for lane in track.automation_lanes.iter().filter(|lane| lane.visible) {
-                lane_rows = lane_rows.push(
-                    container(text(format!("Auto {}", lane.target)).size(11))
-                        .width(Length::Fill)
-                        .height(Length::Fixed(lane_h))
-                        .padding(4)
-                        .style(move |_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.28,
-                                g: 0.2,
-                                b: 0.12,
-                                a: 0.55,
-                            })),
-                            ..container::Style::default()
-                        }),
-                );
-            }
-
-            let max_name_chars = (((track_width_px - 90.0) / 7.0).floor() as i32).clamp(8, 64);
-            let mut title = format!(
-                "{}{}",
-                Self::trim_with_ellipsis(&track.name, max_name_chars as usize),
-                if track.frozen { " [FRZ]" } else { "" }
-            );
-            if let Some(binding) = midi_learn_vol.as_ref() {
-                title.push_str(&format!(" [CC{}:{}->Vol]", binding.channel + 1, binding.cc));
-            }
-            if let Some(binding) = midi_learn_bal.as_ref() {
-                title.push_str(&format!(" [CC{}:{}->Bal]", binding.channel + 1, binding.cc));
-            }
-            if let Some(binding) = midi_learn_mute.as_ref() {
-                title.push_str(&format!(
-                    " [CC{}:{}->Mute]",
-                    binding.channel + 1,
-                    binding.cc
-                ));
-            }
-            if let Some(binding) = midi_learn_solo.as_ref() {
-                title.push_str(&format!(
-                    " [CC{}:{}->Solo]",
-                    binding.channel + 1,
-                    binding.cc
-                ));
-            }
-            if let Some(binding) = midi_learn_arm.as_ref() {
-                title.push_str(&format!(" [CC{}:{}->Arm]", binding.channel + 1, binding.cc));
-            }
-            if let Some(binding) = midi_learn_input_monitor.as_ref() {
-                title.push_str(&format!(
-                    " [CC{}:{}->InMon]",
-                    binding.channel + 1,
-                    binding.cc
-                ));
-            }
-            if let Some(binding) = midi_learn_disk_monitor.as_ref() {
-                title.push_str(&format!(
-                    " [CC{}:{}->Disk]",
-                    binding.channel + 1,
-                    binding.cc
-                ));
-            }
-
-            let track_controls = row![
-                button("R")
-                    .padding(3)
-                    .style(move |theme, _state| { style::arm::style(theme, track.armed) })
-                    .on_press(Message::Request(Action::TrackToggleArm(track.name.clone()))),
-                button("M")
-                    .padding(3)
-                    .style(move |theme, _state| { style::mute::style(theme, track.muted) })
-                    .on_press(Message::Request(Action::TrackToggleMute(
-                        track.name.clone()
-                    ))),
-                button("S")
-                    .padding(3)
-                    .style(move |theme, _state| { style::solo::style(theme, track.soloed) })
-                    .on_press(Message::Request(Action::TrackToggleSolo(
-                        track.name.clone()
-                    ))),
-                button(audio_waveform())
-                    .padding(3)
-                    .style(move |theme, _state| { style::input::style(theme, track.input_monitor) })
-                    .on_press(Message::Request(Action::TrackToggleInputMonitor(
-                        track.name.clone()
-                    ))),
-                button(disc())
-                    .padding(3)
-                    .style(move |theme, _state| { style::disk::style(theme, track.disk_monitor) })
-                    .on_press(Message::Request(Action::TrackToggleDiskMonitor(
-                        track.name.clone()
-                    ))),
+            let max_name_chars = (((track_width_px - 98.0) / 7.0).floor() as i32).clamp(10, 64);
+            let learn_count = [
+                midi_learn_vol.as_ref(),
+                midi_learn_bal.as_ref(),
+                midi_learn_mute.as_ref(),
+                midi_learn_solo.as_ref(),
+                midi_learn_arm.as_ref(),
+                midi_learn_input_monitor.as_ref(),
+                midi_learn_disk_monitor.as_ref(),
             ]
-            .spacing(4.0);
-
-            lane_rows = lane_rows.push(track_controls);
+            .iter()
+            .filter(|binding| binding.is_some())
+            .count();
+            let resize_handle_height = 6.0;
+            let outer_spacing = 6.0;
+            let inner_vertical_padding = 8.0;
+            let automation_height = if has_visible_automation {
+                track
+                    .automation_lanes
+                    .iter()
+                    .filter(|lane| lane.visible)
+                    .count() as f32
+                    * (lane_h + 4.0)
+            } else {
+                0.0
+            };
+            let inner_available_height = (height - inner_vertical_padding).max(16.0);
+            let body_height = (inner_available_height
+                - layout.header_height
+                - resize_handle_height
+                - outer_spacing
+                - automation_height)
+                .max(12.0);
+            let mut title_badges = row![].spacing(4).align_y(Alignment::Center);
+            if track.armed {
+                title_badges = title_badges.push(Self::info_badge("REC".to_string(), true));
+            }
+            if track.frozen {
+                title_badges = title_badges.push(Self::info_badge("FRZ".to_string(), false));
+            }
+            if learn_count > 0 {
+                title_badges =
+                    title_badges.push(Self::info_badge(format!("CC {}", learn_count), false));
+            }
+            if let Some(master) = vca_master_label.as_ref() {
+                title_badges = title_badges.push(Self::info_badge(
+                    format!("VCA {}", Self::trim_with_ellipsis(master, 8)),
+                    false,
+                ));
+            }
 
             let header = mouse_area(
-                row![text(title), Space::new().width(Length::Fill),]
-                    .height(Length::Fixed(layout.header_height)),
+                container(
+                    row![
+                        text(Self::trim_with_ellipsis(&track.name, max_name_chars as usize))
+                            .size(13),
+                        Space::new().width(Length::Fill),
+                        title_badges,
+                    ]
+                    .align_y(Alignment::Center)
+                    .spacing(6),
+                )
+                .height(Length::Fixed(layout.header_height))
+                .padding([2, 6])
+                .style(move |_theme| container::Style {
+                    background: Some(Background::Color(if selected {
+                        Color::from_rgba(0.28, 0.39, 0.56, 0.98)
+                    } else {
+                        Color::from_rgba(0.18, 0.22, 0.30, 0.96)
+                    })),
+                    border: Border {
+                        color: Color::from_rgba(0.78, 0.87, 0.99, if selected { 0.5 } else { 0.16 }),
+                        width: 1.0,
+                        radius: 7.0.into(),
+                    },
+                    text_color: Some(Color::from_rgb(0.92, 0.95, 1.0)),
+                    ..container::Style::default()
+                }),
             )
             .on_press(Message::SelectTrack(track.name.clone()))
             .on_double_click(Message::OpenTrackPlugins(track.name.clone()));
 
+            let track_name = track.name.clone();
+            let controls = row![
+                button("R")
+                    .padding([2, 5])
+                    .style(move |theme, _state| style::arm::style(theme, track.armed))
+                    .on_press(Message::Request(Action::TrackToggleArm(track_name.clone()))),
+                button("M")
+                    .padding([2, 5])
+                    .style(move |theme, _state| style::mute::style(theme, track.muted))
+                    .on_press(Message::Request(Action::TrackToggleMute(track.name.clone()))),
+                button("S")
+                    .padding([2, 5])
+                    .style(move |theme, _state| style::solo::style(theme, track.soloed))
+                    .on_press(Message::Request(Action::TrackToggleSolo(track.name.clone()))),
+                button(audio_waveform())
+                    .padding([2, 5])
+                    .style(move |theme, _state| style::input::style(theme, track.input_monitor))
+                    .on_press(Message::Request(Action::TrackToggleInputMonitor(
+                        track.name.clone(),
+                    ))),
+                button(disc())
+                    .padding([2, 5])
+                    .style(move |theme, _state| style::disk::style(theme, track.disk_monitor))
+                    .on_press(Message::Request(Action::TrackToggleDiskMonitor(
+                        track.name.clone(),
+                    ))),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center);
+
+            let mut lane_rows: Column<'_, Message> = column![];
+            for lane in track.automation_lanes.iter().filter(|lane| lane.visible) {
+                lane_rows = lane_rows.push(
+                    container(
+                        row![
+                            Self::info_badge("AUTO".to_string(), false),
+                            text(format!("{}", lane.target)).size(11),
+                            Space::new().width(Length::Fill),
+                            text(format!("{} pts", lane.points.len())).size(10),
+                        ]
+                        .align_y(Alignment::Center)
+                        .spacing(6),
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fixed(lane_h))
+                    .padding([4, 6])
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.19, 0.16, 0.11, 0.88))),
+                        border: Border {
+                            color: Color::from_rgba(0.62, 0.49, 0.28, 0.22),
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        text_color: Some(Color::from_rgb(0.84, 0.79, 0.69)),
+                        ..container::Style::default()
+                    }),
+                );
+            }
+
+            let audio_io = format!("A {}/{}", track.audio.ins, track.audio.outs);
+            let midi_io = format!("M {}/{}", track.midi.ins, track.midi.outs);
+            let mode_label = format!("{}", track.automation_mode);
+            let balance_label = Self::format_balance(track.balance);
+            let automation_hint = if has_visible_automation { "AUTO" } else { "" };
+
+            let body = row![
+                controls,
+                column![
+                    row![
+                        Self::info_badge(audio_io, false),
+                        Self::info_badge(midi_io, false),
+                        Self::info_badge(mode_label, false),
+                        Self::info_badge(balance_label, false),
+                        container(text(automation_hint).size(9))
+                            .padding([1, 0])
+                            .style(|_theme: &Theme| container::Style {
+                                text_color: Some(Color::from_rgba(0.77, 0.67, 0.52, 0.96)),
+                                ..container::Style::default()
+                            }),
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(3)
+                .width(Length::Fill)
+                .align_x(Horizontal::Left),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Start);
+
             let track_ui: Column<'_, Message> = column![
                 header,
-                lane_rows.height(Length::Fill),
+                mouse_area(
+                    container(body)
+                        .height(Length::Fixed(body_height))
+                        .padding([3, 6])
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(if selected {
+                                Color::from_rgba(0.13, 0.18, 0.27, 0.98)
+                            } else {
+                                Color::from_rgba(0.11, 0.14, 0.20, 0.96)
+                            })),
+                            border: Border {
+                                color: Color::from_rgba(
+                                    0.71,
+                                    0.82,
+                                    0.97,
+                                    if selected { 0.22 } else { 0.1 },
+                                ),
+                                width: 1.0,
+                                radius: 8.0.into(),
+                            },
+                            text_color: Some(Color::from_rgb(0.90, 0.93, 0.98)),
+                            ..container::Style::default()
+                        }),
+                )
+                .on_press(Message::SelectTrack(track.name.clone())),
+                lane_rows.spacing(4),
                 mouse_area(
                     container("")
                         .width(Length::Fill)
-                        .height(Length::Fixed(3.0))
-                        .style(move |_theme| {
-                            use container::Style;
-                            Style {
-                                background: Some(Background::Color(Color {
-                                    r: 0.5,
-                                    g: 0.5,
-                                    b: 0.5,
-                                    a: if is_resize_hovered { 0.8 } else { 0.5 },
-                                })),
-                                ..Style::default()
-                            }
+                        .height(Length::Fixed(resize_handle_height))
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(if is_resize_hovered {
+                                Color::from_rgba(0.51, 0.68, 0.92, 0.95)
+                            } else {
+                                Color::from_rgba(0.33, 0.40, 0.52, 0.65)
+                            })),
+                            border: Border {
+                                color: Color::TRANSPARENT,
+                                width: 0.0,
+                                radius: 2.0.into(),
+                            },
+                            ..container::Style::default()
                         }),
                 )
                 .on_enter(Message::TrackResizeHover(track.name.clone(), true))
@@ -237,7 +368,7 @@ impl Tracks {
                 let track_midi_learn_arm = track.midi_learn_arm.clone();
                 let track_midi_learn_input_monitor = track.midi_learn_input_monitor.clone();
                 let track_midi_learn_disk_monitor = track.midi_learn_disk_monitor.clone();
-                let vca_strip_width = 18.0;
+                let vca_strip_width = 12.0;
                 let vca_strip = if let Some(master) = vca_master_label.as_ref() {
                     let prev_same = index > 0
                         && vca_display_labels[index - 1].as_deref() == Some(master.as_str());
@@ -273,26 +404,18 @@ impl Tracks {
                         let segment = Self::char_slice(&full, capacity_before, segment_capacity);
                         Self::rotate_text_cw(&segment, segment_capacity)
                     };
-                    container(
-                        text(strip_name)
-                            .size(10)
-                            .align_x(iced::alignment::Horizontal::Center),
-                    )
+                    container(text(strip_name).size(9).align_x(Horizontal::Center))
                         .width(Length::Fixed(vca_strip_width))
                         .height(Length::Fill)
-                        .padding([4, 2])
+                        .padding([6, 1])
                         .style(move |_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.24,
-                                g: 0.26,
-                                b: 0.3,
-                                a: 0.85,
-                            })),
+                            background: Some(Background::Color(Color::from_rgba(0.25, 0.34, 0.49, 0.92))),
                             border: Border {
-                                color: Color::TRANSPARENT,
-                                width: 0.0,
-                                radius: if prev_same || next_same { 0.0 } else { 3.0 }.into(),
+                                color: Color::from_rgba(0.82, 0.9, 1.0, 0.18),
+                                width: 1.0,
+                                radius: if prev_same || next_same { 0.0 } else { 4.0 }.into(),
                             },
+                            text_color: Some(Color::from_rgb(0.89, 0.93, 0.99)),
                             ..container::Style::default()
                         })
                 } else {
@@ -304,36 +427,21 @@ impl Tracks {
                     .id(track.name.clone())
                     .width(Length::Fill)
                     .height(Length::Fixed(height))
-                    .padding(5)
+                    .padding([4, 6])
                     .style(move |_theme| container::Style {
-                        background: if selected {
-                            Some(Background::Color(Color {
-                                r: 1.0,
-                                g: 1.0,
-                                b: 1.0,
-                                a: 0.1,
-                            }))
+                        background: Some(Background::Color(if selected {
+                            Color::from_rgba(0.10, 0.14, 0.22, 0.98)
                         } else {
-                            Some(Background::Color(Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 0.0,
-                            }))
-                        },
+                            Color::from_rgba(0.08, 0.10, 0.16, 0.96)
+                        })),
                         border: Border {
-                            color: Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 1.0,
-                            },
+                            color: Color::from_rgba(0.74, 0.84, 0.98, if selected { 0.32 } else { 0.08 }),
                             width: 1.0,
-                            radius: 5.0.into(),
+                            radius: 8.0.into(),
                         },
                         ..container::Style::default()
                     });
-                let track_body = container(row![vca_strip, track_body].spacing(2.0))
+                let track_body = container(row![vca_strip, track_body].spacing(4.0))
                     .width(Length::Fill)
                     .height(Length::Fixed(height));
 
@@ -578,6 +686,6 @@ impl Tracks {
                 .into()
             }
         }));
-        result.width(width).into()
+        result.width(width).spacing(4).into()
     }
 }

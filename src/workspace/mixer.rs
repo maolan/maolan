@@ -5,8 +5,8 @@ use crate::{
     widget::{horizontal_slider::HorizontalSlider, slider::Slider},
 };
 use iced::{
-    Alignment, Background, Border, Color, Element, Length, Point,
-    widget::{Space, Stack, button, column, container, mouse_area, pin, row, text},
+    Alignment, Background, Color, Element, Length, Point,
+    widget::{Space, Stack, column, container, mouse_area, pin, row, text},
 };
 use maolan_engine::message::Action;
 use std::sync::LazyLock;
@@ -51,7 +51,12 @@ static BALANCE_LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 impl Mixer {
     const FADER_MIN_DB: f32 = -90.0;
     const FADER_MAX_DB: f32 = 20.0;
-    const FADER_WITH_TICKS_WIDTH: f32 = 58.0;
+    const STRIP_WIDTH: f32 = 96.0;
+    const PAN_SLIDER_WIDTH: f32 = 52.0;
+    const READOUT_WIDTH: f32 = 72.0;
+    const FADER_WIDTH: f32 = 14.0;
+    const SCALE_WIDTH: f32 = 22.0;
+    const PAN_ROW_HEIGHT: f32 = 12.0;
 
     pub fn new(state: State) -> Self {
         Self { state }
@@ -64,8 +69,8 @@ impl Mixer {
 
     fn fader_height_from_panel(height: Length) -> f32 {
         match height {
-            Length::Fixed(panel_h) => (panel_h - 118.0).max(80.0),
-            _ => 300.0,
+            Length::Fixed(panel_h) => (panel_h - 146.0).max(92.0),
+            _ => 160.0,
         }
     }
 
@@ -79,10 +84,30 @@ impl Mixer {
         let mut out = Vec::with_capacity(TICK_VALUES.len());
         for (idx, db) in TICK_VALUES.iter().copied().enumerate() {
             let y = Self::db_to_y(db, fader_height).clamp(0.0, fader_height - 1.0);
-            let label_y = (y - 5.0).clamp(0.0, (fader_height - 11.0).max(0.0));
+            let label_y = (y - 4.0).clamp(0.0, (fader_height - 10.0).max(0.0));
             out.push((label_y, TICK_LABELS[idx]));
         }
         out
+    }
+
+    fn tick_mark() -> iced::widget::container::Style {
+        iced::widget::container::Style {
+            background: Some(Background::Color(Color {
+                r: 0.62,
+                g: 0.67,
+                b: 0.77,
+                a: 0.78,
+            })),
+            ..iced::widget::container::Style::default()
+        }
+    }
+
+    fn strip_name(name: String) -> Element<'static, Message> {
+        container(text(name).size(12))
+            .width(Length::Fill)
+            .align_x(Alignment::Center)
+            .padding([0, 2])
+            .into()
     }
 
     fn slider_with_ticks<F>(
@@ -99,36 +124,30 @@ impl Mixer {
             marks.push(
                 pin(row![
                     container("")
-                        .width(Length::Fixed(6.0))
+                        .width(Length::Fixed(4.0))
                         .height(Length::Fixed(1.0))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.7,
-                                g: 0.7,
-                                b: 0.7,
-                                a: 0.8,
-                            })),
-                            ..container::Style::default()
-                        }),
-                    text(label).size(10),
+                        .style(|_theme| Self::tick_mark()),
+                    text(label).size(8),
                 ]
-                .spacing(3)
+                .spacing(2)
                 .align_y(Alignment::Center))
                 .position(Point::new(0.0, label_y))
                 .into(),
             );
         }
+
         let scale = Stack::from_vec(marks)
-            .width(Length::Fixed(34.0))
+            .width(Length::Fixed(Self::SCALE_WIDTH))
             .height(Length::Fixed(fader_height));
+
         row![
             Slider::new(Self::FADER_MIN_DB..=Self::FADER_MAX_DB, value, on_change)
-                .width(Length::Fixed(20.0))
+                .width(Length::Fixed(Self::FADER_WIDTH))
                 .height(Length::Fixed(fader_height)),
             scale,
         ]
-        .spacing(4)
-        .align_y(Alignment::Center)
+        .spacing(3)
+        .align_y(Alignment::End)
         .into()
     }
 
@@ -137,8 +156,8 @@ impl Mixer {
         F: Fn(f32) -> Message + 'static,
     {
         HorizontalSlider::new(-1.0..=1.0, value.clamp(-1.0, 1.0), on_change)
-            .width(Length::Fixed(Self::FADER_WITH_TICKS_WIDTH))
-            .height(Length::Fixed(14.0))
+            .width(Length::Fixed(Self::PAN_SLIDER_WIDTH))
+            .height(Length::Fixed(Self::PAN_ROW_HEIGHT))
             .into()
     }
 
@@ -158,67 +177,127 @@ impl Mixer {
         BALANCE_LABELS[idx]
     }
 
-    fn centered_readout(content: &'static str) -> Element<'static, Message> {
+    fn value_pill(content: &'static str) -> Element<'static, Message> {
         container(text(content).size(11))
-            .width(Length::Fixed(Self::FADER_WITH_TICKS_WIDTH))
+            .width(Length::Fixed(Self::READOUT_WIDTH))
+            .padding([4, 6])
             .align_x(Alignment::Center)
+            .style(|_theme| style::mixer::readout())
             .into()
+    }
+
+    fn pan_section<F>(value: f32, on_change: F) -> Element<'static, Message>
+    where
+        F: Fn(f32) -> Message + 'static,
+    {
+        row![
+            container(text(Self::format_balance(value)).size(9))
+                .width(Length::Fixed(24.0))
+                .align_x(Alignment::Center),
+            Self::balance_slider(value, on_change),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center)
+        .into()
+    }
+
+    fn pan_placeholder() -> Element<'static, Message> {
+        Space::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(Self::PAN_ROW_HEIGHT))
+            .into()
+    }
+
+    fn meter_fill_color(level_db: f32) -> Color {
+        if level_db >= 0.0 {
+            Color::from_rgb(0.96, 0.47, 0.34)
+        } else if level_db >= -12.0 {
+            Color::from_rgb(0.69, 0.86, 0.41)
+        } else {
+            Color::from_rgb(0.20, 0.78, 0.51)
+        }
     }
 
     fn vu_meter(channels: usize, levels_db: &[f32], meter_h: f32) -> Element<'static, Message> {
         let channels = channels.max(1);
-        let strip_w = 1.0;
+        let mut strips = row![].spacing(2).align_y(Alignment::End);
 
-        let mut strips = row![].spacing(3).align_y(Alignment::End);
         for channel_idx in 0..channels {
             let db = levels_db.get(channel_idx).copied().unwrap_or(-90.0);
             let fill = Self::level_to_meter_fill(db);
             let filled_h = (meter_h * fill).max(1.0);
             let empty_h = (meter_h - filled_h).max(0.0);
-            let strip = container(column![
-                Space::new().height(Length::Fixed(empty_h)),
-                container("")
-                    .width(Length::Fill)
-                    .height(Length::Fixed(filled_h))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.2,
-                            g: 0.8,
-                            b: 0.35,
-                            a: 0.95,
-                        })),
-                        ..container::Style::default()
-                    }),
-            ])
-            .width(Length::Fixed(strip_w))
-            .height(Length::Fixed(meter_h))
-            .style(|_theme| container::Style {
-                background: Some(Background::Color(Color {
-                    r: 0.08,
-                    g: 0.08,
-                    b: 0.08,
-                    a: 1.0,
-                })),
-                border: Border {
-                    color: Color {
-                        r: 0.2,
-                        g: 0.2,
-                        b: 0.2,
-                        a: 1.0,
-                    },
-                    width: 1.0,
-                    radius: 2.0.into(),
-                },
-                ..container::Style::default()
-            });
-            strips = strips.push(strip);
+            strips = strips.push(
+                column![
+                    Space::new().height(Length::Fixed(empty_h)),
+                    container("")
+                        .width(Length::Fixed(3.0))
+                        .height(Length::Fixed(filled_h))
+                        .style(move |_theme| iced::widget::container::Style {
+                            background: Some(Background::Color(Self::meter_fill_color(db))),
+                            ..iced::widget::container::Style::default()
+                        }),
+                ]
+                .spacing(0),
+            );
         }
 
-        container(strips).into()
+        container(strips)
+            .padding([3, 3])
+            .height(Length::Fixed(meter_h))
+            .style(|_theme| style::mixer::meter())
+            .into()
+    }
+
+    fn fader_bay<F>(
+        channels: usize,
+        levels_db: &[f32],
+        value: f32,
+        fader_height: f32,
+        tick_layout: &[(f32, &'static str)],
+        on_change: F,
+    ) -> Element<'static, Message>
+    where
+        F: Fn(f32) -> Message + 'static,
+    {
+        container(
+            row![
+                Self::slider_with_ticks(value, fader_height, tick_layout, on_change),
+                Self::vu_meter(channels, levels_db, fader_height),
+            ]
+            .spacing(8)
+            .align_y(Alignment::End),
+        )
+        .width(Length::Fill)
+        .padding([8, 7])
+        .style(|_theme| style::mixer::bay())
+        .into()
+    }
+
+    fn strip_shell(
+        name: String,
+        selected: bool,
+        pan_section: Option<Element<'static, Message>>,
+        bay: Element<'static, Message>,
+        level_label: &'static str,
+    ) -> Element<'static, Message> {
+        let mut content = column![].spacing(8).width(Length::Fill);
+        content = content.push(pan_section.unwrap_or_else(Self::pan_placeholder));
+        content = content
+            .push(bay)
+            .push(Self::value_pill(level_label))
+            .push(Self::strip_name(name));
+
+        container(content)
+            .width(Length::Fixed(Self::STRIP_WIDTH))
+            .height(Length::Fill)
+            .padding([8, 6])
+            .style(move |_theme| style::mixer::strip(selected))
+            .into()
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let mut strips = row![].width(Length::Fill);
+        let mut strips = row![].spacing(8).align_y(Alignment::Start);
         let (
             tracks,
             selected,
@@ -226,7 +305,6 @@ impl Mixer {
             hw_out_channels,
             hw_out_level,
             hw_out_balance,
-            hw_out_muted,
             hw_out_meter_db,
         ) = {
             let state = self.state.blocking_read();
@@ -237,7 +315,6 @@ impl Mixer {
                 state.hw_out.as_ref().map(|hw| hw.channels).unwrap_or(0),
                 state.hw_out_level,
                 state.hw_out_balance,
-                state.hw_out_muted,
                 state.hw_out_meter_db.clone(),
             )
         };
@@ -245,198 +322,69 @@ impl Mixer {
         let tick_layout = Self::tick_layout(fader_height);
 
         for track in tracks {
-            let selected = selected.contains(&track.name);
-            let t_name = track.name.clone();
-
+            let selected_strip = selected.contains(&track.name);
+            let strip_name = track.name.clone();
+            let select_name = track.name.clone();
+            let pan = if track.audio.outs == 2 {
+                Some(Self::pan_section(track.balance, {
+                    let name = track.name.clone();
+                    move |new_val| Message::Request(Action::TrackBalance(name.clone(), new_val))
+                }))
+            } else {
+                None
+            };
+            let bay = Self::fader_bay(
+                track.audio.outs,
+                &track.meter_out_db,
+                track.level,
+                fader_height,
+                &tick_layout,
+                {
+                    let name = track.name.clone();
+                    move |new_val| Message::Request(Action::TrackLevel(name.clone(), new_val))
+                },
+            );
             strips = strips.push(
-                mouse_area(
-                    container(
-                        column![
-                            row![
-                                column![
-                                    if track.audio.outs == 2 {
-                                        Self::balance_slider(track.balance, {
-                                            let name = track.name.clone();
-                                            move |new_val| {
-                                                Message::Request(Action::TrackBalance(
-                                                    name.clone(),
-                                                    new_val,
-                                                ))
-                                            }
-                                        })
-                                    } else {
-                                        Space::new()
-                                            .width(Length::Fixed(Self::FADER_WITH_TICKS_WIDTH))
-                                            .height(Length::Fixed(14.0))
-                                            .into()
-                                    },
-                                    Self::centered_readout(if track.audio.outs == 2 {
-                                        Self::format_balance(track.balance)
-                                    } else {
-                                        ""
-                                    }),
-                                    Self::slider_with_ticks(
-                                        track.level,
-                                        fader_height,
-                                        &tick_layout,
-                                        {
-                                            let name = track.name.clone();
-                                            move |new_val| {
-                                                Message::Request(Action::TrackLevel(
-                                                    name.clone(),
-                                                    new_val,
-                                                ))
-                                            }
-                                        }
-                                    ),
-                                    Self::centered_readout(Self::format_level_db(track.level)),
-                                ]
-                                .spacing(4),
-                                Self::vu_meter(track.audio.outs, &track.meter_out_db, fader_height),
-                            ]
-                            .height(Length::Fill)
-                            .spacing(6)
-                            .align_y(Alignment::Center),
-                            row![
-                                button("R")
-                                    .padding(3)
-                                    .style(move |theme, _state| {
-                                        style::arm::style(theme, track.armed)
-                                    })
-                                    .on_press(Message::Request(Action::TrackToggleArm(
-                                        t_name.clone()
-                                    ))),
-                                button("M")
-                                    .padding(3)
-                                    .style(move |theme, _state| {
-                                        style::mute::style(theme, track.muted)
-                                    })
-                                    .on_press(Message::Request(Action::TrackToggleMute(
-                                        t_name.clone()
-                                    ))),
-                                button("S")
-                                    .padding(3)
-                                    .style(move |theme, _state| {
-                                        style::solo::style(theme, track.soloed)
-                                    })
-                                    .on_press(Message::Request(Action::TrackToggleSolo(
-                                        t_name.clone()
-                                    ))),
-                            ]
-                        ]
-                        .height(Length::Fill),
-                    )
-                    .padding(5)
-                    .height(Length::Fill)
-                    .style(move |_theme| container::Style {
-                        background: if selected {
-                            Some(Background::Color(Color {
-                                r: 1.0,
-                                g: 1.0,
-                                b: 1.0,
-                                a: 0.1,
-                            }))
-                        } else {
-                            Some(Background::Color(Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 0.0,
-                            }))
-                        },
-                        border: Border {
-                            color: Color {
-                                r: 0.0,
-                                g: 0.0,
-                                b: 0.0,
-                                a: 1.0,
-                            },
-                            width: 1.0,
-                            radius: 5.0.into(),
-                        },
-                        ..container::Style::default()
-                    }),
-                )
-                .on_press(Message::SelectTrack(t_name.clone())),
-            )
+                mouse_area(Self::strip_shell(
+                    strip_name,
+                    selected_strip,
+                    pan,
+                    bay,
+                    Self::format_level_db(track.level),
+                ))
+                .on_press(Message::SelectTrack(select_name)),
+            );
         }
 
-        let master = row![mouse_area(
-            container(
-                column![
-                    row![
-                        column![
-                            if hw_out_channels == 2 {
-                                Self::balance_slider(hw_out_balance, move |new_val| {
-                                    Message::Request(Action::TrackBalance(
-                                        "hw:out".to_string(),
-                                        new_val,
-                                    ))
-                                })
-                            } else {
-                                Space::new()
-                                    .width(Length::Fixed(Self::FADER_WITH_TICKS_WIDTH))
-                                    .height(Length::Fixed(14.0))
-                                    .into()
-                            },
-                            Self::centered_readout(if hw_out_channels == 2 {
-                                Self::format_balance(hw_out_balance)
-                            } else {
-                                ""
-                            }),
-                            Self::slider_with_ticks(hw_out_level, fader_height, &tick_layout, {
-                                move |new_val| {
-                                    Message::Request(Action::TrackLevel(
-                                        "hw:out".to_string(),
-                                        new_val,
-                                    ))
-                                }
-                            }),
-                            Self::centered_readout(Self::format_level_db(hw_out_level)),
-                        ]
-                        .spacing(4),
-                        Self::vu_meter(hw_out_channels.max(1), &hw_out_meter_db, fader_height),
-                    ]
-                    .height(Length::Fill)
-                    .spacing(6)
-                    .align_y(Alignment::Center),
-                    row![
-                        button("M")
-                            .padding(3)
-                            .style(move |theme, _state| { style::mute::style(theme, hw_out_muted) })
-                            .on_press(Message::Request(Action::TrackToggleMute(
-                                "hw:out".to_string()
-                            ))),
-                    ]
-                ]
-                .height(Length::Fill)
-            )
-            .padding(5)
-            .height(Length::Fill)
-            .style(move |_theme| container::Style {
-                background: Some(Background::Color(Color {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 0.0,
-                })),
-                border: Border {
-                    color: Color {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
-                        a: 1.0,
-                    },
-                    width: 1.0,
-                    radius: 5.0.into(),
+        let master_selected = selected.contains("hw:out");
+        let master_strip = mouse_area(Self::strip_shell(
+            "Master".to_string(),
+            master_selected,
+            if hw_out_channels == 2 {
+                Some(Self::pan_section(hw_out_balance, move |new_val| {
+                    Message::Request(Action::TrackBalance("hw:out".to_string(), new_val))
+                }))
+            } else {
+                None
+            },
+            Self::fader_bay(
+                hw_out_channels.max(1),
+                &hw_out_meter_db,
+                hw_out_level,
+                fader_height,
+                &tick_layout,
+                move |new_val| {
+                    Message::Request(Action::TrackLevel("hw:out".to_string(), new_val))
                 },
-                ..container::Style::default()
-            }),
-        )];
+            ),
+            Self::format_level_db(hw_out_level),
+        ))
+        .on_press(Message::SelectTrack("hw:out".to_string()));
 
         mouse_area(
-            row![strips, master]
+            row![strips, Space::new().width(Length::Fill), master_strip]
                 .height(height)
+                .padding([8, 6])
                 .align_y(Alignment::Start),
         )
         .on_press(Message::DeselectAll)
