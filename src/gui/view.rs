@@ -55,6 +55,7 @@ impl Maolan {
                             active_clip_target_track: self.clip_preview_target_track.as_deref(),
                             recording_preview_bounds: self.recording_preview_bounds(),
                             recording_preview_peaks: Some(&self.recording_preview_peaks),
+                            midi_clip_previews: Some(&self.midi_clip_previews),
                             shift_pressed: state.shift,
                             selected_tempo_points: self
                                 .selected_tempo_points
@@ -87,6 +88,7 @@ impl Maolan {
                             active_clip_target_track: None,
                             recording_preview_bounds: None,
                             recording_preview_peaks: None,
+                            midi_clip_previews: None,
                             shift_pressed: state.shift,
                             selected_tempo_points: self
                                 .selected_tempo_points

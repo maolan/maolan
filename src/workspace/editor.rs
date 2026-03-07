@@ -1,6 +1,6 @@
 use crate::{
     message::{DraggedClip, EditTool, Message, SnapMode},
-    state::{ClipPeaks, State, StateData, Track},
+    state::{ClipPeaks, PianoNote, State, StateData, Track},
 };
 use iced::{
     Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Theme, gradient, mouse,
@@ -28,7 +28,6 @@ const MIDI_CLIP_SELECTED_BASE: Color = Color::from_rgb8(178, 150, 54);
 const MIDI_CLIP_BORDER: Color = Color::from_rgb(0.72, 0.52, 0.18);
 const MIDI_CLIP_SELECTED_BORDER: Color = Color::from_rgb(1.0, 0.86, 0.42);
 const CLIP_HANDLE: Color = Color::from_rgb8(52, 46, 25);
-
 struct TrackElementViewArgs<'a> {
     state: &'a StateData,
     track: Track,
@@ -41,6 +40,7 @@ struct TrackElementViewArgs<'a> {
     active_target_track: Option<&'a str>,
     recording_preview_bounds: Option<(usize, usize)>,
     recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
+    midi_clip_previews: Option<&'a HashMap<(String, usize), Vec<PianoNote>>>,
 }
 
 fn clean_clip_name(name: &str) -> String {
@@ -411,6 +411,126 @@ impl canvas::Program<Message> for WaveformCanvas {
     }
 }
 
+#[derive(Default)]
+struct MidiClipNotesCanvasState {
+    cache: canvas::Cache,
+    last_hash: Cell<u64>,
+}
+
+#[derive(Clone)]
+struct MidiClipNotesCanvas {
+    notes: Vec<PianoNote>,
+    clip_offset_samples: usize,
+    clip_visible_length_samples: usize,
+}
+
+impl MidiClipNotesCanvas {
+    fn shape_hash(&self, bounds: Rectangle) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bounds.width.to_bits().hash(&mut hasher);
+        bounds.height.to_bits().hash(&mut hasher);
+        self.clip_offset_samples.hash(&mut hasher);
+        self.clip_visible_length_samples.hash(&mut hasher);
+        self.notes.len().hash(&mut hasher);
+        if let Some(first) = self.notes.first() {
+            first.start_sample.hash(&mut hasher);
+            first.length_samples.hash(&mut hasher);
+            first.pitch.hash(&mut hasher);
+            first.velocity.hash(&mut hasher);
+        }
+        if let Some(last) = self.notes.last() {
+            last.start_sample.hash(&mut hasher);
+            last.length_samples.hash(&mut hasher);
+            last.pitch.hash(&mut hasher);
+            last.velocity.hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+}
+
+impl canvas::Program<Message> for MidiClipNotesCanvas {
+    type State = MidiClipNotesCanvasState;
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        if self.notes.is_empty() || bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return vec![];
+        }
+
+        let hash = self.shape_hash(bounds);
+        if state.last_hash.get() != hash {
+            state.cache.clear();
+            state.last_hash.set(hash);
+        }
+
+        let geom = state
+            .cache
+            .draw(renderer, bounds.size(), |frame: &mut Frame| {
+                let inner_w = bounds.width.max(1.0);
+                let inner_h = bounds.height.max(1.0);
+                let visible_start = self.clip_offset_samples;
+                let visible_len = self.clip_visible_length_samples.max(1);
+                let visible_end = visible_start.saturating_add(visible_len);
+                let clip_len = visible_len as f32;
+                // Keep note preview mapping stable: always show 10 octaves (C-1..B8 => 0..119).
+                let min_pitch = 0_u8;
+                let max_pitch = 119_u8;
+                let pitch_span = 120.0_f32;
+                let note_color = Color::from_rgba(0.20, 0.10, 0.03, 0.70);
+                let note_edge = Color::from_rgba(1.0, 0.95, 0.72, 0.90);
+
+                for note in &self.notes {
+                    let note_start = note.start_sample;
+                    let note_end = note.start_sample.saturating_add(note.length_samples.max(1));
+                    if note_end <= visible_start || note_start >= visible_end {
+                        continue;
+                    }
+                    let pitch = note.pitch.clamp(min_pitch, max_pitch);
+                    let clipped_start = note_start.max(visible_start);
+                    let clipped_end = note_end.min(visible_end);
+                    let rel_start = clipped_start.saturating_sub(visible_start);
+                    let rel_len = clipped_end.saturating_sub(clipped_start).max(1);
+                    let x = (rel_start as f32 / clip_len) * inner_w;
+                    let w = ((rel_len as f32 / clip_len) * inner_w).max(1.0);
+                    let pitch_pos = (i16::from(max_pitch) - i16::from(pitch)) as f32 / pitch_span;
+                    let y = pitch_pos * inner_h;
+                    let h = (inner_h / pitch_span).clamp(1.0, 8.0);
+                    let rect = Path::rectangle(Point::new(x, y), iced::Size::new(w, h));
+                    frame.fill(&rect, note_color);
+                    frame.stroke(
+                        &rect,
+                        canvas::Stroke::default()
+                            .with_color(note_edge)
+                            .with_width(0.5),
+                    );
+                }
+            });
+
+        vec![geom]
+    }
+}
+
+fn midi_clip_notes_overlay(
+    notes: Vec<PianoNote>,
+    clip_offset_samples: usize,
+    clip_visible_length_samples: usize,
+) -> Element<'static, Message> {
+    canvas(MidiClipNotesCanvas {
+        notes,
+        clip_offset_samples,
+        clip_visible_length_samples,
+    })
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
 fn audio_waveform_overlay(
     peaks: ClipPeaks,
     _clip_width: f32,
@@ -443,6 +563,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         active_target_track,
         recording_preview_bounds,
         recording_preview_peaks,
+        midi_clip_previews,
     } = args;
     let snap_sample = |sample: f32| -> f32 {
         match snap_mode {
@@ -1208,6 +1329,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             ((clip.length as f32 * pixels_per_sample) - CLIP_RESIZE_HANDLE_WIDTH * 2.0).max(12.0);
         let clip_height = (take_slot_height - 2.0).max(8.0);
         let display_clip_label = trim_label_to_width(&clip_label, clip_width);
+        let midi_notes_for_clip = midi_clip_previews
+            .and_then(|map| map.get(&(track_name_cloned.clone(), index)))
+            .cloned();
 
         let left_handle = mouse_area(
             container("")
@@ -1257,7 +1381,17 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             true,
         ));
 
-        let clip_content = container(clip_label_overlay(display_clip_label.clone()))
+        let mut clip_layers = Vec::with_capacity(2);
+        if let Some(notes) = midi_notes_for_clip.as_ref() {
+            clip_layers.push(midi_clip_notes_overlay(
+                notes.clone(),
+                clip.offset,
+                clip.length.max(1),
+            ));
+        }
+        clip_layers.push(clip_label_overlay(display_clip_label.clone()));
+
+        let clip_content = container(Stack::with_children(clip_layers))
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(0)
@@ -1558,7 +1692,16 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = snap_sample(clip.start as f32 + delta_samples);
-            let preview_content = container(clip_label_overlay(display_clip_label.clone()))
+            let mut preview_layers = Vec::with_capacity(2);
+            if let Some(notes) = midi_notes_for_clip.as_ref() {
+                preview_layers.push(midi_clip_notes_overlay(
+                    notes.clone(),
+                    clip.offset,
+                    clip.length.max(1),
+                ));
+            }
+            preview_layers.push(clip_label_overlay(display_clip_label.clone()));
+            let preview_content = container(Stack::with_children(preview_layers))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .padding(0)
@@ -1898,6 +2041,7 @@ pub struct EditorViewArgs<'a> {
     pub active_target_track: Option<&'a str>,
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
+    pub midi_clip_previews: Option<&'a HashMap<(String, usize), Vec<PianoNote>>>,
 }
 
 impl Editor {
@@ -1916,6 +2060,7 @@ impl Editor {
             active_target_track,
             recording_preview_bounds,
             recording_preview_peaks,
+            midi_clip_previews,
         } = args;
         let mut result = column![];
         let state = self.state.blocking_read();
@@ -1932,6 +2077,7 @@ impl Editor {
                 active_target_track,
                 recording_preview_bounds,
                 recording_preview_peaks,
+                midi_clip_previews,
             }));
         }
         let mut layers: Vec<Element<'_, Message>> =

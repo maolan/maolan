@@ -752,6 +752,8 @@ impl Maolan {
         self.pending_audio_peaks.clear();
         self.pending_peak_file_loads.clear();
         self.pending_peak_rebuilds.clear();
+        self.midi_clip_previews.clear();
+        self.pending_midi_clip_previews.clear();
         self.pending_track_freeze_restore.clear();
         self.pending_track_freeze_bounce.clear();
         let existing_tracks: Vec<String> = self

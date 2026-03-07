@@ -781,6 +781,12 @@ pub enum Message {
         track_idx: String,
         clip_idx: usize,
     },
+    MidiClipPreviewLoaded {
+        track_idx: String,
+        clip_idx: usize,
+        clip_name: String,
+        notes: Vec<crate::state::PianoNote>,
+    },
     PianoKeyPressed(u8),
     PianoKeyReleased(u8),
     PianoNoteClick {

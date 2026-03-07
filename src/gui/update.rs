@@ -507,6 +507,74 @@ impl Maolan {
         })
     }
 
+    fn queue_midi_clip_preview_loads(&mut self) -> Task<Message> {
+        let Some(session_dir) = self.session_dir.clone() else {
+            return Task::none();
+        };
+        let mut live = HashMap::<(String, usize), String>::new();
+        {
+            let state = self.state.blocking_read();
+            for track in &state.tracks {
+                for (clip_idx, clip) in track.midi.clips.iter().enumerate() {
+                    live.insert((track.name.clone(), clip_idx), clip.name.clone());
+                }
+            }
+        }
+
+        self.midi_clip_previews
+            .retain(|key, _| live.contains_key(key));
+        self.pending_midi_clip_previews
+            .retain(|(track_name, clip_idx, clip_name)| {
+                live.get(&(track_name.clone(), *clip_idx))
+                    .is_some_and(|name| name == clip_name)
+            });
+
+        let mut tasks = Vec::new();
+        for ((track_name, clip_idx), clip_name) in live {
+            if self
+                .midi_clip_previews
+                .contains_key(&(track_name.clone(), clip_idx))
+            {
+                continue;
+            }
+            let pending_key = (track_name.clone(), clip_idx, clip_name.clone());
+            if !self.pending_midi_clip_previews.insert(pending_key) {
+                continue;
+            }
+            let session_dir = session_dir.clone();
+            let playback_rate_hz = self.playback_rate_hz;
+            let task_clip = clip_name.clone();
+            let result_track = track_name.clone();
+            let result_clip = clip_name.clone();
+            tasks.push(Task::perform(
+                async move {
+                    let clip_path = std::path::PathBuf::from(&task_clip);
+                    let path = if clip_path.is_absolute() {
+                        clip_path
+                    } else {
+                        session_dir.join(&task_clip)
+                    };
+                    match Self::parse_midi_clip_for_piano(&path, playback_rate_hz) {
+                        Ok((notes, _, _, _)) => notes,
+                        Err(_) => Vec::new(),
+                    }
+                },
+                move |notes| Message::MidiClipPreviewLoaded {
+                    track_idx: result_track.clone(),
+                    clip_idx,
+                    clip_name: result_clip.clone(),
+                    notes,
+                },
+            ));
+        }
+
+        if tasks.is_empty() {
+            Task::none()
+        } else {
+            Task::batch(tasks)
+        }
+    }
+
     fn deterministic_note_jitter(seed_a: usize, seed_b: usize, amplitude: i64) -> i64 {
         if amplitude <= 0 {
             return 0;
@@ -2481,6 +2549,8 @@ impl Maolan {
                 self.pending_audio_peaks.clear();
                 self.pending_peak_file_loads.clear();
                 self.pending_peak_rebuilds.clear();
+                self.midi_clip_previews.clear();
+                self.pending_midi_clip_previews.clear();
                 self.session_dir = None;
                 self.stop_recording_preview();
 
@@ -5027,6 +5097,7 @@ impl Maolan {
                 if !self.session_restore_in_progress && history::should_record(a) {
                     self.has_unsaved_changes = true;
                 }
+                let mut refresh_midi_clip_previews = false;
                 match a {
                     Action::Quit => {
                         exit(0);
@@ -5172,6 +5243,9 @@ impl Maolan {
                                 }
                             }
                         }
+                        if *kind == Kind::MIDI {
+                            refresh_midi_clip_previews = true;
+                        }
                     }
                     Action::AddClip {
                         name,
@@ -5280,6 +5354,9 @@ impl Maolan {
                                 return task;
                             }
                         }
+                        if *kind == Kind::MIDI {
+                            refresh_midi_clip_previews = true;
+                        }
                     }
                     Action::SetClipMuted {
                         track_name,
@@ -5353,6 +5430,9 @@ impl Maolan {
                             }
                             !clip_indices.contains(&clip.clip_idx)
                         });
+                        if *kind == Kind::MIDI {
+                            refresh_midi_clip_previews = true;
+                        }
                     }
                     Action::ModifyMidiNotes {
                         track_name,
@@ -6549,24 +6629,6 @@ impl Maolan {
                         plugins,
                         connections,
                     } => {
-                        use tracing::info;
-                        info!(
-                            "Received plugin graph for track '{}' with {} plugins",
-                            track_name,
-                            plugins.len()
-                        );
-                        for (idx, plugin) in plugins.iter().enumerate() {
-                            info!(
-                                "  Plugin {}: uri={}, state properties count={}",
-                                idx,
-                                plugin.uri,
-                                plugin
-                                    .state
-                                    .as_ref()
-                                    .map(|s| s.properties.len())
-                                    .unwrap_or(0)
-                            );
-                        }
                         let mut state = self.state.blocking_write();
                         state
                             .plugin_graphs_by_track
@@ -6765,8 +6827,13 @@ impl Maolan {
                             }
                         }
                         state.message = format!("Renamed track to '{}'", new_name);
+                        refresh_midi_clip_previews = true;
                     }
                     _ => {}
+                }
+                if refresh_midi_clip_previews {
+                    self.update_children(&message);
+                    return self.queue_midi_clip_preview_loads();
                 }
             }
             Message::Response(Err(ref e)) => {
@@ -6843,7 +6910,9 @@ impl Maolan {
                 self.session_dir = Some(path.clone());
                 self.stop_recording_preview();
                 match self.load(path.to_string_lossy().to_string()) {
-                    Ok(task) => return task,
+                    Ok(task) => {
+                        return Task::batch(vec![task, self.queue_midi_clip_preview_loads()]);
+                    }
                     Err(e) => {
                         error!("{}", e);
                         self.state.blocking_write().message =
@@ -10517,10 +10586,37 @@ impl Maolan {
             Message::Workspace => {
                 let mut state = self.state.blocking_write();
                 state.view = View::Workspace;
+                drop(state);
+                return self.queue_midi_clip_preview_loads();
             }
             Message::Connections => {
                 let mut state = self.state.blocking_write();
                 state.view = View::Connections;
+            }
+            Message::MidiClipPreviewLoaded {
+                ref track_idx,
+                clip_idx,
+                ref clip_name,
+                ref notes,
+            } => {
+                self.pending_midi_clip_previews.remove(&(
+                    track_idx.clone(),
+                    clip_idx,
+                    clip_name.clone(),
+                ));
+                let valid = {
+                    let state = self.state.blocking_read();
+                    state
+                        .tracks
+                        .iter()
+                        .find(|track| track.name == *track_idx)
+                        .and_then(|track| track.midi.clips.get(clip_idx))
+                        .is_some_and(|clip| clip.name == *clip_name)
+                };
+                if valid {
+                    self.midi_clip_previews
+                        .insert((track_idx.clone(), clip_idx), notes.clone());
+                }
             }
             Message::OpenMidiPiano {
                 ref track_idx,
@@ -10548,10 +10644,18 @@ impl Maolan {
                 };
                 match Self::parse_midi_clip_for_piano(&path, self.playback_rate_hz) {
                     Ok((notes, controllers, sysexes, parsed_len)) => {
+                        self.midi_clip_previews
+                            .insert((track_idx.clone(), clip_idx), notes.clone());
+                        self.pending_midi_clip_previews.remove(&(
+                            track_idx.clone(),
+                            clip_idx,
+                            clip_name.clone(),
+                        ));
                         {
                             let mut state = self.state.blocking_write();
                             state.piano = Some(PianoData {
                                 track_idx: track_idx.clone(),
+                                clip_index: clip_idx,
                                 clip_length_samples: parsed_len.max(clip_length),
                                 notes,
                                 controllers,

@@ -6,7 +6,7 @@ mod tracks;
 
 use crate::{
     message::{DraggedClip, EditTool, Message, SnapMode},
-    state::{ClipPeaks, State},
+    state::{ClipPeaks, PianoNote, State},
     widget::piano,
 };
 use editor::EditorViewArgs;
@@ -51,6 +51,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub active_clip_target_track: Option<&'a str>,
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
+    pub midi_clip_previews: Option<&'a HashMap<(String, usize), Vec<PianoNote>>>,
     pub shift_pressed: bool,
     pub selected_tempo_points: Vec<usize>,
     pub selected_time_signature_points: Vec<usize>,
@@ -107,6 +108,7 @@ impl Workspace {
             active_clip_target_track,
             recording_preview_bounds,
             recording_preview_peaks,
+            midi_clip_previews,
             shift_pressed,
             selected_tempo_points,
             selected_time_signature_points,
@@ -194,6 +196,7 @@ impl Workspace {
                     active_target_track: active_clip_target_track,
                     recording_preview_bounds,
                     recording_preview_peaks,
+                    midi_clip_previews,
                 }),
                 pin(Self::playhead_line())
                     .position(Point::new(x.max(0.0), 0.0))
@@ -213,6 +216,7 @@ impl Workspace {
                 active_target_track: active_clip_target_track,
                 recording_preview_bounds,
                 recording_preview_peaks,
+                midi_clip_previews,
             })
         };
 
