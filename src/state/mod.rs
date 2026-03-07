@@ -454,6 +454,11 @@ pub struct StateData {
         target_os = "openbsd"
     )))]
     pub selected_hw: Option<String>,
+    #[cfg(target_os = "windows")]
+    pub available_input_hw: Vec<String>,
+    #[cfg(target_os = "windows")]
+    pub selected_input_hw: Option<String>,
+    pub hw_sample_rate_hz: i32,
     pub oss_exclusive: bool,
     #[cfg(unix)]
     pub oss_bits: usize,
@@ -577,6 +582,8 @@ impl Default for StateData {
         let hw: Vec<AudioDeviceOption> = { discover_alsa_devices() };
         #[cfg(target_os = "windows")]
         let hw: Vec<String> = discover_windows_audio_devices();
+        #[cfg(target_os = "windows")]
+        let hw_inputs: Vec<String> = discover_windows_input_devices();
         #[cfg(target_os = "macos")]
         let hw: Vec<String> = maolan_engine::discover_coreaudio_devices();
         #[cfg(not(any(
@@ -601,6 +608,8 @@ impl Default for StateData {
             target_os = "openbsd"
         )))]
         let selected_hw: Option<String> = None;
+        #[cfg(target_os = "windows")]
+        let selected_input_hw: Option<String> = None;
         Self {
             shift: false,
             ctrl: false,
@@ -637,6 +646,11 @@ impl Default for StateData {
             selected_backend,
             available_hw: hw,
             selected_hw,
+            #[cfg(target_os = "windows")]
+            available_input_hw: hw_inputs,
+            #[cfg(target_os = "windows")]
+            selected_input_hw,
+            hw_sample_rate_hz: 48_000,
             oss_exclusive: true,
             #[cfg(unix)]
             oss_bits: 32,
@@ -807,7 +821,7 @@ fn default_audio_backend() -> AudioBackendOption {
 }
 
 #[cfg(target_os = "windows")]
-fn discover_windows_audio_devices() -> Vec<String> {
+pub(crate) fn discover_windows_audio_devices() -> Vec<String> {
     let mut out = vec!["wasapi:default".to_string(), "asio:default".to_string()];
     if let Ok(host) = cpal::host_from_id(cpal::HostId::Wasapi)
         && let Ok(devices) = host.output_devices()
@@ -820,6 +834,32 @@ fn discover_windows_audio_devices() -> Vec<String> {
     }
     if let Ok(host) = cpal::host_from_id(cpal::HostId::Asio)
         && let Ok(devices) = host.output_devices()
+    {
+        for dev in devices {
+            if let Ok(name) = dev.name() {
+                out.push(format!("asio:{name}"));
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn discover_windows_input_devices() -> Vec<String> {
+    let mut out = vec!["wasapi:default".to_string(), "asio:default".to_string()];
+    if let Ok(host) = cpal::host_from_id(cpal::HostId::Wasapi)
+        && let Ok(devices) = host.input_devices()
+    {
+        for dev in devices {
+            if let Ok(name) = dev.name() {
+                out.push(format!("wasapi:{name}"));
+            }
+        }
+    }
+    if let Ok(host) = cpal::host_from_id(cpal::HostId::Asio)
+        && let Ok(devices) = host.input_devices()
     {
         for dev in devices {
             if let Ok(name) = dev.name() {

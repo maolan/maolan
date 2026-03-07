@@ -576,6 +576,7 @@ pub enum Message {
         track_name: String,
         plugin_path: String,
     },
+    #[cfg(all(unix, not(target_os = "macos")))]
     TrackAutomationAddLv2Lanes {
         track_name: String,
         plugin_uri: String,
@@ -915,6 +916,8 @@ pub enum Message {
         target_os = "openbsd"
     )))]
     HWSelected(String),
+    #[cfg(target_os = "windows")]
+    HWInputSelected(String),
     HWBackendSelected(AudioBackendOption),
     HWExclusiveToggled(bool),
     #[cfg(unix)]

@@ -232,6 +232,7 @@ struct TrackAutomationRuntime {
     level_db: Option<f32>,
     balance: Option<f32>,
     muted: Option<bool>,
+    #[cfg(all(unix, not(target_os = "macos")))]
     lv2_params: HashMap<(usize, u32), f32>,
     vst3_params: HashMap<(usize, u32), f32>,
     clap_params: HashMap<(usize, u32), f64>,
@@ -279,7 +280,9 @@ pub struct Maolan {
         HashMap<String, HashMap<AutomationWriteKey, TouchAutomationOverride>>,
     touch_active_keys: HashMap<String, HashSet<AutomationWriteKey>>,
     latch_automation_overrides: HashMap<String, HashMap<AutomationWriteKey, f32>>,
+    #[cfg(all(unix, not(target_os = "macos")))]
     pending_add_lv2_automation_uris: HashSet<(String, String)>,
+    #[cfg(all(unix, not(target_os = "macos")))]
     pending_add_lv2_automation_instances: HashSet<(String, usize)>,
     pending_add_vst3_automation_paths: HashSet<(String, String)>,
     pending_add_vst3_automation_instances: HashSet<(String, usize)>,
@@ -481,7 +484,9 @@ impl Default for Maolan {
             touch_automation_overrides: HashMap::new(),
             touch_active_keys: HashMap::new(),
             latch_automation_overrides: HashMap::new(),
+            #[cfg(all(unix, not(target_os = "macos")))]
             pending_add_lv2_automation_uris: HashSet::new(),
+            #[cfg(all(unix, not(target_os = "macos")))]
             pending_add_lv2_automation_instances: HashSet::new(),
             pending_add_vst3_automation_paths: HashSet::new(),
             pending_add_vst3_automation_instances: HashSet::new(),
@@ -3050,6 +3055,40 @@ impl Maolan {
                 .spacing(10),
             ]
             .spacing(10)
+        };
+
+        let loaded_vst3_section: iced::Element<'_, Message> = {
+            let loaded_vst3 = state
+                .plugin_graphs_by_track
+                .get(&title)
+                .map(|(plugins, _)| {
+                    plugins
+                        .iter()
+                        .filter(|plugin| plugin.format.eq_ignore_ascii_case("VST3"))
+                        .map(|plugin| (plugin.name.clone(), plugin.uri.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let mut loaded_vst3_items = Vec::new();
+            for (name, path) in loaded_vst3 {
+                loaded_vst3_items.push(
+                    row![
+                        text(name).width(Length::Fill),
+                        button("Auto").on_press(Message::TrackAutomationAddVst3Lanes {
+                            track_name: title.clone(),
+                            plugin_path: path,
+                        }),
+                    ]
+                    .spacing(8)
+                    .into(),
+                );
+            }
+            column![
+                text("Loaded VST3"),
+                scrollable(column(loaded_vst3_items)).height(Length::Fixed(72.0)),
+            ]
+            .spacing(6)
+            .into()
         };
 
         let loaded_clap = state

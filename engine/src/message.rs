@@ -653,6 +653,9 @@ pub enum Action {
     },
     OpenAudioDevice {
         device: String,
+        #[cfg(target_os = "windows")]
+        input_device: Option<String>,
+        sample_rate_hz: i32,
         bits: i32,
         exclusive: bool,
         period_frames: usize,

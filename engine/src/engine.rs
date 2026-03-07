@@ -4325,6 +4325,9 @@ impl Engine {
 
             Action::OpenAudioDevice {
                 ref device,
+                #[cfg(target_os = "windows")]
+                ref input_device,
+                sample_rate_hz,
                 bits,
                 exclusive,
                 period_frames,
@@ -4363,6 +4366,9 @@ impl Engine {
                                 }
                                 self.notify_clients(Ok(Action::OpenAudioDevice {
                                     device: device.clone(),
+                                    #[cfg(target_os = "windows")]
+                                    input_device: input_device.clone(),
+                                    sample_rate_hz,
                                     bits,
                                     exclusive,
                                     period_frames,
@@ -4397,7 +4403,18 @@ impl Engine {
                     ..Default::default()
                 };
                 let hw_profile_enabled = config::env_flag(config::HW_PROFILE_ENV);
-                match HwDriver::new_with_options(device, 48000, bits, hw_opts) {
+                #[cfg(target_os = "windows")]
+                let open_result = HwDriver::new_with_options(
+                    device,
+                    input_device.as_deref(),
+                    sample_rate_hz,
+                    bits,
+                    hw_opts,
+                );
+                #[cfg(not(target_os = "windows"))]
+                let open_result =
+                    HwDriver::new_with_options(device, sample_rate_hz, bits, hw_opts);
+                match open_result {
                     Ok(d) => {
                         let (in_channels, out_channels, rate, (in_lat, out_lat)) =
                             Self::hw_device_info(&d);
@@ -4526,6 +4543,8 @@ impl Engine {
                     let mut midi_clip_count = 0usize;
                     #[cfg(all(unix, not(target_os = "macos")))]
                     let mut lv2_instance_count = 0usize;
+                    #[cfg(not(all(unix, not(target_os = "macos"))))]
+                    let lv2_instance_count = 0usize;
                     let mut vst3_instance_count = 0usize;
                     let mut clap_instance_count = 0usize;
                     for track in tracks.values() {
@@ -4548,12 +4567,13 @@ impl Engine {
                         frozen_track_count,
                         audio_clip_count,
                         midi_clip_count,
-                        #[cfg(all(unix, not(target_os = "macos")))]
                         lv2_instance_count,
                         vst3_instance_count,
                         clap_instance_count,
                     )
                 };
+                #[cfg(not(all(unix, not(target_os = "macos"))))]
+                let _ = lv2_instance_count;
                 let pending_hw_midi_events = self.pending_hw_midi_events.len()
                     + self
                         .pending_hw_midi_events_by_device

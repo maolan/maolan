@@ -731,6 +731,7 @@ impl Maolan {
             })
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn find_lv2_target(
         &self,
         track_name: &str,
@@ -1320,6 +1321,7 @@ impl Maolan {
                     TrackAutomationTarget::Volume => vol = value,
                     TrackAutomationTarget::Balance => bal = value,
                     TrackAutomationTarget::Mute => muted = value.map(|v| v >= 0.5),
+                    #[cfg(all(unix, not(target_os = "macos")))]
                     TrackAutomationTarget::Lv2Parameter {
                         instance_id,
                         index,
@@ -1350,6 +1352,8 @@ impl Maolan {
                             }
                         }
                     }
+                    #[cfg(not(all(unix, not(target_os = "macos"))))]
+                    TrackAutomationTarget::Lv2Parameter { .. } => {}
                     TrackAutomationTarget::Vst3Parameter {
                         instance_id,
                         param_id,
@@ -5557,6 +5561,9 @@ impl Maolan {
 
                     Action::OpenAudioDevice {
                         device,
+                        #[cfg(target_os = "windows")]
+                        input_device: _,
+                        sample_rate_hz,
                         bits,
                         exclusive,
                         period_frames,
@@ -5565,10 +5572,11 @@ impl Maolan {
                     } => {
                         let mut state = self.state.blocking_write();
                         state.message = format!(
-                            "Opened device {} (bits={}, exclusive={}, period={}, nperiods={}, sync_mode={})",
-                            device, bits, exclusive, period_frames, nperiods, sync_mode
+                            "Opened device {} (rate={} Hz, bits={}, exclusive={}, period={}, nperiods={}, sync_mode={})",
+                            device, sample_rate_hz, bits, exclusive, period_frames, nperiods, sync_mode
                         );
                         state.hw_loaded = true;
+                        state.hw_sample_rate_hz = (*sample_rate_hz).max(1);
                         state.oss_period_frames = (*period_frames).max(1);
                         state.oss_nperiods = (*nperiods).max(1);
                     }
@@ -5603,6 +5611,9 @@ impl Maolan {
                             self.playback_rate_hz = *rate as f64;
                         }
                         let mut state = self.state.blocking_write();
+                        if *rate > 0 {
+                            state.hw_sample_rate_hz = *rate as i32;
+                        }
                         if !state.hw_loaded {
                             state.hw_loaded = true;
                         }
@@ -6577,12 +6588,14 @@ impl Maolan {
                         drop(state);
 
                         let mut pending_queries: Vec<Task<Message>> = vec![];
+                        #[cfg(all(unix, not(target_os = "macos")))]
                         let pending_lv2_uris: Vec<(String, String)> = self
                             .pending_add_lv2_automation_uris
                             .iter()
                             .filter(|(name, _)| name == track_name)
                             .cloned()
                             .collect();
+                        #[cfg(all(unix, not(target_os = "macos")))]
                         for (pending_track, pending_uri) in pending_lv2_uris {
                             if let Some(instance_id) = plugins
                                 .iter()
@@ -7333,26 +7346,20 @@ impl Maolan {
                         crate::message::TrackAutomationTarget::Mute => {
                             OfflineAutomationTarget::Mute
                         }
+                        #[cfg(all(unix, not(target_os = "macos")))]
                         crate::message::TrackAutomationTarget::Lv2Parameter {
                             instance_id,
                             index,
                             min,
                             max,
-                        } => {
-                            #[cfg(all(unix, not(target_os = "macos")))]
-                            {
-                                OfflineAutomationTarget::Lv2Parameter {
-                                    instance_id,
-                                    index,
-                                    min,
-                                    max,
-                                }
-                            }
-                            #[cfg(not(all(unix, not(target_os = "macos"))))]
-                            {
-                                continue;
-                            }
-                        }
+                        } => OfflineAutomationTarget::Lv2Parameter {
+                            instance_id,
+                            index,
+                            min,
+                            max,
+                        },
+                        #[cfg(not(all(unix, not(target_os = "macos"))))]
+                        crate::message::TrackAutomationTarget::Lv2Parameter { .. } => continue,
                         crate::message::TrackAutomationTarget::Vst3Parameter {
                             instance_id,
                             param_id,
@@ -7617,47 +7624,40 @@ impl Maolan {
                         "VST3 automation lanes are unavailable on this platform".to_string();
                 }
             }
+            #[cfg(all(unix, not(target_os = "macos")))]
             Message::TrackAutomationAddLv2Lanes {
                 ref track_name,
                 ref plugin_uri,
             } => {
-                #[cfg(all(unix, not(target_os = "macos")))]
-                {
-                    let instance_id = {
-                        let state = self.state.blocking_read();
-                        state
-                            .plugin_graphs_by_track
-                            .get(track_name)
-                            .and_then(|(plugins, _)| {
-                                plugins
-                                    .iter()
-                                    .find(|plugin| {
-                                        plugin.format.eq_ignore_ascii_case("LV2")
-                                            && (plugin.uri == *plugin_uri
-                                                || plugin.plugin_id == *plugin_uri)
-                                    })
-                                    .map(|plugin| plugin.instance_id)
-                            })
-                    };
-                    if let Some(instance_id) = instance_id {
-                        self.pending_add_lv2_automation_instances
-                            .insert((track_name.clone(), instance_id));
-                        return self.send(Action::TrackGetLv2PluginControls {
-                            track_name: track_name.clone(),
-                            instance_id,
-                        });
-                    }
-                    self.pending_add_lv2_automation_uris
-                        .insert((track_name.clone(), plugin_uri.clone()));
-                    return self.send(Action::TrackGetPluginGraph {
+                let instance_id = {
+                    let state = self.state.blocking_read();
+                    state
+                        .plugin_graphs_by_track
+                        .get(track_name)
+                        .and_then(|(plugins, _)| {
+                            plugins
+                                .iter()
+                                .find(|plugin| {
+                                    plugin.format.eq_ignore_ascii_case("LV2")
+                                        && (plugin.uri == *plugin_uri
+                                            || plugin.plugin_id == *plugin_uri)
+                                })
+                                .map(|plugin| plugin.instance_id)
+                        })
+                };
+                if let Some(instance_id) = instance_id {
+                    self.pending_add_lv2_automation_instances
+                        .insert((track_name.clone(), instance_id));
+                    return self.send(Action::TrackGetLv2PluginControls {
                         track_name: track_name.clone(),
+                        instance_id,
                     });
                 }
-                #[cfg(not(all(unix, not(target_os = "macos"))))]
-                {
-                    self.state.blocking_write().message =
-                        "LV2 automation lanes are unavailable on this platform".to_string();
-                }
+                self.pending_add_lv2_automation_uris
+                    .insert((track_name.clone(), plugin_uri.clone()));
+                return self.send(Action::TrackGetPluginGraph {
+                    track_name: track_name.clone(),
+                });
             }
             Message::TrackAutomationLaneHover {
                 ref track_name,
@@ -10669,6 +10669,10 @@ impl Maolan {
                 {
                     self.state.blocking_write().selected_hw = Some(hw.to_string());
                 }
+            }
+            #[cfg(target_os = "windows")]
+            Message::HWInputSelected(ref hw) => {
+                self.state.blocking_write().selected_input_hw = Some(hw.to_string());
             }
             Message::HWBackendSelected(ref backend) => {
                 let mut state = self.state.blocking_write();

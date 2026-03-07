@@ -50,6 +50,7 @@ pub struct HwDriver {
 impl HwDriver {
     pub fn new_with_options(
         device: &str,
+        input_device: Option<&str>,
         rate: i32,
         _bits: i32,
         options: HwOptions,
@@ -68,7 +69,11 @@ impl HwDriver {
             .map(|_| Arc::new(AudioIO::new(period_frames)))
             .collect();
 
-        let maybe_input_device = select_input_device(&host, requested_name);
+        let maybe_input_device = if let Some(input_name) = input_device {
+            select_input_device(&host, input_name)
+        } else {
+            select_input_device(&host, requested_name)
+        };
         let maybe_input_cfg = maybe_input_device
             .as_ref()
             .map(|d| select_f32_input_config(d, sample_rate as i32))
@@ -278,18 +283,33 @@ fn select_output_device(host: &cpal::Host, requested: &str) -> Option<cpal::Devi
 }
 
 fn select_input_device(host: &cpal::Host, requested: &str) -> Option<cpal::Device> {
+    let requested = requested
+        .strip_prefix(WASAPI_PREFIX)
+        .or_else(|| requested.strip_prefix(ASIO_PREFIX))
+        .unwrap_or(requested)
+        .trim();
     if requested.eq_ignore_ascii_case("default") || requested.is_empty() {
         return host.default_input_device();
     }
-    let devices = host.input_devices().ok()?;
+    let Ok(devices) = host.input_devices() else {
+        return host.default_input_device();
+    };
+    let mut fuzzy_match: Option<cpal::Device> = None;
+    let requested_lc = requested.to_lowercase();
     for dev in devices {
-        if let Ok(name) = dev.name()
-            && name.eq_ignore_ascii_case(requested)
-        {
-            return Some(dev);
+        if let Ok(name) = dev.name() {
+            if name.eq_ignore_ascii_case(requested) {
+                return Some(dev);
+            }
+            if fuzzy_match.is_none() {
+                let name_lc = name.to_lowercase();
+                if name_lc.contains(&requested_lc) || requested_lc.contains(&name_lc) {
+                    fuzzy_match = Some(dev);
+                }
+            }
         }
     }
-    None
+    fuzzy_match.or_else(|| host.default_input_device())
 }
 
 fn select_backend_host_and_device(device: &str) -> Result<(Host, &str, &'static str), String> {

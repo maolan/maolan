@@ -29,6 +29,7 @@ impl HW {
             selected_backend,
             available_hw,
             mut selected_hw,
+            sample_rate_hz,
             exclusive,
             period_frames,
             nperiods,
@@ -40,10 +41,19 @@ impl HW {
                 state.selected_backend.clone(),
                 state.available_hw.clone(),
                 state.selected_hw.clone(),
+                state.hw_sample_rate_hz,
                 state.oss_exclusive,
                 state.oss_period_frames,
                 state.oss_nperiods,
                 state.oss_sync_mode,
+            )
+        };
+        #[cfg(target_os = "windows")]
+        let (available_input_hw, mut selected_input_hw) = {
+            let state = self.state.blocking_read();
+            (
+                state.available_input_hw.clone(),
+                state.selected_input_hw.clone(),
             )
         };
         #[cfg(any(
@@ -82,6 +92,14 @@ impl HW {
                 crate::state::AudioBackendOption::Asio => hw.starts_with("asio:"),
             })
             .collect();
+        #[cfg(target_os = "windows")]
+        let available_input_hw: Vec<String> = available_input_hw
+            .into_iter()
+            .filter(|hw| match selected_backend {
+                crate::state::AudioBackendOption::Wasapi => hw.starts_with("wasapi:"),
+                crate::state::AudioBackendOption::Asio => hw.starts_with("asio:"),
+            })
+            .collect();
         #[cfg(any(
             target_os = "linux",
             target_os = "freebsd",
@@ -94,6 +112,8 @@ impl HW {
         #[cfg(target_os = "windows")]
         {
             selected_hw = selected_hw.filter(|s| available_hw.iter().any(|hw| hw == s));
+            selected_input_hw =
+                selected_input_hw.filter(|s| available_input_hw.iter().any(|hw| hw == s));
         }
         #[cfg(unix)]
         let selected_is_jack = matches!(selected_backend, crate::state::AudioBackendOption::Jack);
@@ -155,7 +175,11 @@ impl HW {
         )))]
         let plugins_loaded = true;
         let mut submit = button("Open Audio");
-        if plugins_loaded && (selected_is_jack || selected_hw.is_some()) {
+        #[cfg(target_os = "windows")]
+        let hw_ready = selected_is_jack || (selected_hw.is_some() && selected_input_hw.is_some());
+        #[cfg(not(target_os = "windows"))]
+        let hw_ready = selected_is_jack || selected_hw.is_some();
+        if plugins_loaded && hw_ready {
             #[cfg(any(
                 target_os = "linux",
                 target_os = "freebsd",
@@ -201,6 +225,9 @@ impl HW {
             let bits = 32;
             submit = submit.on_press(Message::Request(Action::OpenAudioDevice {
                 device,
+                #[cfg(target_os = "windows")]
+                input_device: selected_input_hw.clone(),
+                sample_rate_hz,
                 bits,
                 exclusive,
                 period_frames,
@@ -224,8 +251,15 @@ impl HW {
         if !selected_is_jack {
             content = content.push(
                 pick_list(available_hw, selected_hw, Message::HWSelected)
-                    .placeholder("Choose audio device"),
+                    .placeholder("Choose output device"),
             );
+            #[cfg(target_os = "windows")]
+            {
+                content = content.push(
+                    pick_list(available_input_hw, selected_input_hw, Message::HWInputSelected)
+                        .placeholder("Choose input device"),
+                );
+            }
         }
 
         if !selected_is_jack {
