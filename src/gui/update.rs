@@ -6898,7 +6898,6 @@ impl Maolan {
                 let now = Instant::now();
                 let track_name = name.clone();
                 let ctrl = self.state.blocking_read().ctrl;
-                let selected = self.state.blocking_read().selected.contains(name);
                 let mut state = self.state.blocking_write();
                 if ctrl {
                     state.connections_last_track_click = None;
@@ -6913,20 +6912,14 @@ impl Maolan {
                 }
 
                 if ctrl {
-                    if selected {
-                        state.selected.remove(name);
-                        if let ConnectionViewSelection::Tracks(set) =
-                            &mut state.connection_view_selection
-                        {
-                            set.remove(name);
-                        }
+                    state.selected.insert(name.clone());
+                    if let ConnectionViewSelection::Tracks(set) = &mut state.connection_view_selection
+                    {
+                        set.insert(name.clone());
                     } else {
-                        state.selected.insert(name.clone());
-                        if let ConnectionViewSelection::Tracks(set) =
-                            &mut state.connection_view_selection
-                        {
-                            set.insert(name.clone());
-                        }
+                        let mut set = std::collections::HashSet::new();
+                        set.insert(name.clone());
+                        state.connection_view_selection = ConnectionViewSelection::Tracks(set);
                     }
                 } else {
                     state.selected.clear();
@@ -6938,25 +6931,18 @@ impl Maolan {
             }
             Message::SelectTrackFromMixer(ref name) => {
                 let ctrl = self.state.blocking_read().ctrl;
-                let selected = self.state.blocking_read().selected.contains(name);
                 let mut state = self.state.blocking_write();
                 state.connections_last_track_click = None;
 
                 if ctrl {
-                    if selected {
-                        state.selected.remove(name);
-                        if let ConnectionViewSelection::Tracks(set) =
-                            &mut state.connection_view_selection
-                        {
-                            set.remove(name);
-                        }
+                    state.selected.insert(name.clone());
+                    if let ConnectionViewSelection::Tracks(set) = &mut state.connection_view_selection
+                    {
+                        set.insert(name.clone());
                     } else {
-                        state.selected.insert(name.clone());
-                        if let ConnectionViewSelection::Tracks(set) =
-                            &mut state.connection_view_selection
-                        {
-                            set.insert(name.clone());
-                        }
+                        let mut set = std::collections::HashSet::new();
+                        set.insert(name.clone());
+                        state.connection_view_selection = ConnectionViewSelection::Tracks(set);
                     }
                 } else {
                     state.selected.clear();
@@ -9233,7 +9219,6 @@ impl Maolan {
                     let create_start = state.midi_clip_create_start.take();
                     let create_end = state.midi_clip_create_end.take();
                     state.resizing = None;
-                    state.ctrl = false;
                     (
                         resizing,
                         marquee_start,
