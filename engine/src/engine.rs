@@ -4325,11 +4325,7 @@ impl Engine {
 
             Action::OpenAudioDevice {
                 ref device,
-                #[cfg(any(
-                    target_os = "windows",
-                    target_os = "freebsd",
-                    target_os = "linux"
-                ))]
+                #[cfg(any(target_os = "windows", target_os = "freebsd", target_os = "linux"))]
                 ref input_device,
                 sample_rate_hz,
                 bits,

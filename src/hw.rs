@@ -324,8 +324,12 @@ impl HW {
                 content = content.push(
                     row![
                         text("Input device:"),
-                        pick_list(available_input_hw, selected_input_hw, Message::HWInputSelected)
-                            .placeholder("Choose input device")
+                        pick_list(
+                            available_input_hw,
+                            selected_input_hw,
+                            Message::HWInputSelected
+                        )
+                        .placeholder("Choose input device")
                     ]
                     .spacing(10),
                 );
