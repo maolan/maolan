@@ -1359,20 +1359,7 @@ impl Maolan {
                                 ));
                             }
 
-                            let mut peaks = vec![];
-                            if let Some(peaks_rel) = peaks_file.as_ref() {
-                                let peaks_path = session_root.join(peaks_rel);
-                                if peaks_path.exists()
-                                    && let Ok(loaded) = Self::read_clip_peaks_file(&peaks_path)
-                                {
-                                    peaks = loaded;
-                                }
-                            }
-                            if !peaks.is_empty() {
-                                let key =
-                                    Self::audio_clip_key(&name, &clip_name, start, length, offset);
-                                self.pending_audio_peaks.insert(key, peaks);
-                            }
+                            let _ = peaks_file;
                         }
 
                         restore_actions.push(Action::AddClip {

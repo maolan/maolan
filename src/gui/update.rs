@@ -257,31 +257,22 @@ impl Maolan {
             self.state.blocking_write().message = "No autosave recovery pending".to_string();
             return Task::none();
         };
-        let mut errors = Vec::<String>::new();
-        for snapshot in pending.snapshots.iter().skip(pending.selected_index) {
+        if let Some(snapshot) = pending.snapshots.get(pending.selected_index) {
             self.session_dir = Some(pending.session_dir.clone());
             self.stop_recording_preview();
-            match self.load(snapshot.to_string_lossy().to_string()) {
-                Ok(task) => {
-                    self.pending_recovery_session_dir = None;
-                    self.pending_autosave_recovery = None;
-                    self.pending_open_session_dir = None;
-                    self.has_unsaved_changes = true;
-                    self.state.blocking_write().message =
-                        format!("Recovered autosave snapshot '{}'", snapshot.display());
-                    return task;
-                }
-                Err(e) => {
-                    errors.push(format!("{} ({})", snapshot.display(), e));
-                }
-            }
+            self.pending_recovery_session_dir = None;
+            self.pending_autosave_recovery = None;
+            self.pending_open_session_dir = None;
+            self.has_unsaved_changes = true;
+            self.state.blocking_write().message =
+                format!("Recovering autosave snapshot '{}'...", snapshot.display());
+            let snapshot = snapshot.clone();
+            return Task::perform(async move { snapshot }, Message::LoadSessionPath);
         }
         self.pending_autosave_recovery = None;
         self.pending_open_session_dir = None;
-        self.state.blocking_write().message = format!(
-            "Autosave recovery failed for all available snapshots: {}",
-            errors.join(" | ")
-        );
+        self.state.blocking_write().message =
+            "Autosave recovery failed: no snapshot available".to_string();
         Task::none()
     }
 
@@ -2392,18 +2383,12 @@ impl Maolan {
                     "{}/.config/maolan/session_templates/{}",
                     home, template_name
                 );
-
-                match self.load(template_path.clone()) {
-                    Ok(task) => return task,
-                    Err(e) => {
-                        error!(
-                            "Failed to load template '{}' from {}: {}",
-                            template_name, template_path, e
-                        );
-                        self.state.blocking_write().message =
-                            format!("Failed to load template: {}", e);
-                    }
-                }
+                self.state.blocking_write().message =
+                    format!("Loading template '{}'...", template_name);
+                return Task::perform(
+                    async move { std::path::PathBuf::from(template_path) },
+                    Message::LoadSessionPath,
+                );
             }
             Message::NewSession => {
                 if !self.state.blocking_read().hw_loaded {
@@ -6733,10 +6718,18 @@ impl Maolan {
                 self.session_dir = Some(path.clone());
                 self.pending_autosave_recovery = None;
                 self.stop_recording_preview();
+                self.state.blocking_write().message = "Loading session...".to_string();
+                return Task::perform(async move { path }, Message::LoadSessionPath);
+            }
+            Message::LoadSessionPath(path) => {
+                self.session_dir = Some(path.clone());
+                self.stop_recording_preview();
                 match self.load(path.to_string_lossy().to_string()) {
                     Ok(task) => return task,
                     Err(e) => {
                         error!("{}", e);
+                        self.state.blocking_write().message =
+                            format!("Failed to load session: {}", e);
                         return Task::none();
                     }
                 }
@@ -6804,15 +6797,8 @@ impl Maolan {
                 self.pending_open_session_dir = None;
                 self.modal = None;
                 if let Some(path) = deferred_open {
-                    self.session_dir = Some(path.clone());
-                    self.stop_recording_preview();
-                    match self.load(path.to_string_lossy().to_string()) {
-                        Ok(task) => return task,
-                        Err(e) => {
-                            error!("{}", e);
-                            return Task::none();
-                        }
-                    }
+                    self.state.blocking_write().message = "Loading session...".to_string();
+                    return Task::perform(async move { path }, Message::LoadSessionPath);
                 } else {
                     self.state.blocking_write().message = "Autosave recovery ignored".to_string();
                     return Task::none();

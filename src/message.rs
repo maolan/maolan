@@ -610,6 +610,7 @@ pub enum Message {
 
     SaveFolderSelected(Option<PathBuf>),
     OpenFolderSelected(Option<PathBuf>),
+    LoadSessionPath(PathBuf),
     RecoverAutosaveSnapshot,
     RecoverOlderAutosaveSnapshot,
     RecoverAutosaveIgnore,

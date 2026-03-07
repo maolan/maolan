@@ -46,7 +46,7 @@ use serde_json::json;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
-    io::{self, BufReader},
+    io::{self},
     num::{NonZeroU8, NonZeroU32},
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
@@ -760,91 +760,6 @@ impl Maolan {
         let track = Self::sanitize_peak_file_component(track_name);
         let clip = Self::sanitize_peak_file_component(clip_name);
         format!("peaks/{}_{:04}_{}.json", track, clip_idx, clip)
-    }
-
-    fn read_clip_peaks_file(path: &Path) -> std::io::Result<ClipPeaks> {
-        let file = File::open(path)?;
-        let json: Value = serde_json::from_reader(BufReader::new(file))?;
-        let peaks_val = &json["peaks"];
-
-        let Some(root) = peaks_val.as_array() else {
-            return Ok(vec![]);
-        };
-
-        if root.first().is_some_and(Value::is_number) {
-            let mono = root
-                .iter()
-                .filter_map(Value::as_f64)
-                .map(|v| {
-                    let a = (v as f32).abs().clamp(0.0, 1.0);
-                    [-a, a]
-                })
-                .collect::<Vec<_>>();
-            return Ok(if mono.is_empty() { vec![] } else { vec![mono] });
-        }
-
-        let first = root.first();
-        if first.is_some_and(|v| {
-            v.as_array()
-                .is_some_and(|a| a.len() == 2 && a[0].is_number() && a[1].is_number())
-        }) {
-            let mono = root
-                .iter()
-                .filter_map(Value::as_array)
-                .filter_map(|pair| {
-                    let min = pair.first()?.as_f64()? as f32;
-                    let max = pair.get(1)?.as_f64()? as f32;
-                    Some([min.min(max).clamp(-1.0, 1.0), min.max(max).clamp(-1.0, 1.0)])
-                })
-                .collect::<Vec<_>>();
-            return Ok(if mono.is_empty() { vec![] } else { vec![mono] });
-        }
-
-        let mut per_channel: ClipPeaks = Vec::with_capacity(root.len());
-        for channel in root {
-            let Some(arr) = channel.as_array() else {
-                continue;
-            };
-            if arr.first().is_some_and(Value::is_number) {
-                let ch = arr
-                    .iter()
-                    .filter_map(Value::as_f64)
-                    .map(|v| {
-                        let a = (v as f32).abs().clamp(0.0, 1.0);
-                        [-a, a]
-                    })
-                    .collect::<Vec<_>>();
-                per_channel.push(ch);
-                continue;
-            }
-            let mut ch = Vec::with_capacity(arr.len());
-            for peak in arr {
-                if let Some(pair) = peak.as_array()
-                    && pair.len() == 2
-                    && let (Some(min), Some(max)) = (
-                        pair.first().and_then(Value::as_f64),
-                        pair.get(1).and_then(Value::as_f64),
-                    )
-                {
-                    let min = min as f32;
-                    let max = max as f32;
-                    ch.push([min.min(max).clamp(-1.0, 1.0), min.max(max).clamp(-1.0, 1.0)]);
-                    continue;
-                }
-                if let Some(obj) = peak.as_object()
-                    && let (Some(min), Some(max)) = (
-                        obj.get("min").and_then(Value::as_f64),
-                        obj.get("max").and_then(Value::as_f64),
-                    )
-                {
-                    let min = min as f32;
-                    let max = max as f32;
-                    ch.push([min.min(max).clamp(-1.0, 1.0), min.max(max).clamp(-1.0, 1.0)]);
-                }
-            }
-            per_channel.push(ch);
-        }
-        Ok(per_channel)
     }
 
     fn compute_audio_clip_peaks(path: &Path) -> std::io::Result<ClipPeaks> {
