@@ -111,15 +111,35 @@ fn darken(color: Color, amount: f32) -> Color {
     }
 }
 
-fn clip_two_edge_gradient(base: Color, muted_alpha: f32, normal_alpha: f32) -> Background {
+fn clip_two_edge_gradient(
+    base: Color,
+    muted_alpha: f32,
+    normal_alpha: f32,
+    reverse: bool,
+) -> Background {
     let alpha = normal_alpha;
-    let edge = Color {
-        a: alpha,
-        ..brighten(base, 0.06)
-    };
-    let center = Color {
-        a: alpha,
-        ..darken(base, 0.05)
+    let (edge, center) = if reverse {
+        (
+            Color {
+                a: alpha,
+                ..darken(base, 0.05)
+            },
+            Color {
+                a: alpha,
+                ..brighten(base, 0.06)
+            },
+        )
+    } else {
+        (
+            Color {
+                a: alpha,
+                ..brighten(base, 0.06)
+            },
+            Color {
+                a: alpha,
+                ..darken(base, 0.05)
+            },
+        )
     };
     let edge_muted = Color {
         a: muted_alpha,
@@ -771,7 +791,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             };
             let (muted_alpha, normal_alpha) = if clip_muted { (0.45, 0.45) } else { (1.0, 1.0) };
             Style {
-                background: Some(clip_two_edge_gradient(base, muted_alpha, normal_alpha)),
+                background: Some(clip_two_edge_gradient(base, muted_alpha, normal_alpha, true)),
                 ..Style::default()
             }
         });
@@ -1244,7 +1264,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             };
             let (muted_alpha, normal_alpha) = if clip_muted { (0.55, 0.55) } else { (1.0, 1.0) };
             Style {
-                background: Some(clip_two_edge_gradient(base, muted_alpha, normal_alpha)),
+                background: Some(clip_two_edge_gradient(base, muted_alpha, normal_alpha, false)),
                 ..Style::default()
             }
         });
@@ -1533,7 +1553,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .style(|_theme| {
                     use container::Style;
                     Style {
-                        background: Some(clip_two_edge_gradient(MIDI_CLIP_SELECTED_BASE, 0.7, 0.7)),
+                        background: Some(clip_two_edge_gradient(
+                            MIDI_CLIP_SELECTED_BASE,
+                            0.7,
+                            0.7,
+                            false,
+                        )),
                         ..Style::default()
                     }
                 });
@@ -1625,7 +1650,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         .style(|_theme| {
                             use container::Style;
                             Style {
-                                background: Some(clip_two_edge_gradient(AUDIO_CLIP_SELECTED_BASE, 0.7, 0.7)),
+                                background: Some(clip_two_edge_gradient(
+                                    AUDIO_CLIP_SELECTED_BASE,
+                                    0.7,
+                                    0.7,
+                                    true,
+                                )),
                                 ..Style::default()
                             }
                         });
@@ -1698,7 +1728,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         .style(|_theme| {
                             use container::Style;
                             Style {
-                                background: Some(clip_two_edge_gradient(MIDI_CLIP_SELECTED_BASE, 0.7, 0.7)),
+                                background: Some(clip_two_edge_gradient(
+                                    MIDI_CLIP_SELECTED_BASE,
+                                    0.7,
+                                    0.7,
+                                    false,
+                                )),
                                 ..Style::default()
                             }
                         });
