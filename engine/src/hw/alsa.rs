@@ -76,15 +76,17 @@ impl std::fmt::Debug for HwDriver {
 
 impl HwDriver {
     pub fn new_with_options(
-        device: &str,
+        output_device: &str,
+        input_device: Option<&str>,
         rate: i32,
         bits: i32,
         options: HwOptions,
     ) -> Result<Self, String> {
-        let capture = PCM::new(device, Direction::Capture, false)
-            .map_err(|e| error_fmt::backend_open_error("ALSA", "capture", device, e))?;
-        let playback = PCM::new(device, Direction::Playback, false)
-            .map_err(|e| error_fmt::backend_open_error("ALSA", "playback", device, e))?;
+        let input_device = input_device.unwrap_or(output_device);
+        let capture = PCM::new(input_device, Direction::Capture, false)
+            .map_err(|e| error_fmt::backend_open_error("ALSA", "capture", input_device, e))?;
+        let playback = PCM::new(output_device, Direction::Playback, false)
+            .map_err(|e| error_fmt::backend_open_error("ALSA", "playback", output_device, e))?;
 
         let period = options.period_frames.max(1);
         let nperiods = options.nperiods.max(1);
@@ -155,7 +157,7 @@ impl HwDriver {
     }
 
     pub fn new(device: &str, rate: i32, bits: i32) -> Result<Self, String> {
-        Self::new_with_options(device, rate, bits, HwOptions::default())
+        Self::new_with_options(device, None, rate, bits, HwOptions::default())
     }
 
     pub fn set_playing(&mut self, playing: bool) {

@@ -653,7 +653,11 @@ pub enum Action {
     },
     OpenAudioDevice {
         device: String,
-        #[cfg(any(target_os = "windows", target_os = "freebsd"))]
+        #[cfg(any(
+            target_os = "windows",
+            target_os = "freebsd",
+            target_os = "linux"
+        ))]
         input_device: Option<String>,
         sample_rate_hz: i32,
         bits: i32,

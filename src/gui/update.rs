@@ -5646,7 +5646,11 @@ impl Maolan {
 
                     Action::OpenAudioDevice {
                         device,
-                        #[cfg(any(target_os = "windows", target_os = "freebsd"))]
+                        #[cfg(any(
+                            target_os = "windows",
+                            target_os = "freebsd",
+                            target_os = "linux"
+                        ))]
                             input_device: _,
                         sample_rate_hz: _,
                         bits,
@@ -10805,11 +10809,28 @@ impl Maolan {
                 }
                 state.selected_input_hw = Some(selected);
             }
+            #[cfg(target_os = "linux")]
+            Message::HWInputSelected(ref hw) => {
+                let mut state = self.state.blocking_write();
+                let refreshed = crate::state::discover_alsa_input_devices();
+                let selected = refreshed
+                    .iter()
+                    .find(|candidate| candidate.id == hw.id)
+                    .cloned()
+                    .unwrap_or_else(|| hw.clone());
+                if !refreshed.is_empty() {
+                    state.available_input_hw = refreshed;
+                }
+                if let Some(bits) = selected.preferred_bits() {
+                    state.oss_bits = bits;
+                }
+                state.selected_input_hw = Some(selected);
+            }
             Message::HWBackendSelected(ref backend) => {
                 let mut state = self.state.blocking_write();
                 state.selected_backend = backend.clone();
                 state.selected_hw = None;
-                #[cfg(target_os = "freebsd")]
+                #[cfg(any(target_os = "freebsd", target_os = "linux"))]
                 {
                     state.selected_input_hw = None;
                 }
@@ -10846,6 +10867,29 @@ impl Maolan {
                                 state.oss_bits = bits;
                             }
                             state.selected_hw = Some(selected);
+                        }
+                    }
+                    #[cfg(target_os = "linux")]
+                    if matches!(backend, crate::state::AudioBackendOption::Alsa) {
+                        let refreshed_out = crate::state::discover_alsa_output_devices();
+                        let refreshed_in = crate::state::discover_alsa_input_devices();
+                        if !refreshed_out.is_empty() {
+                            state.available_hw = refreshed_out.clone();
+                        }
+                        if !refreshed_in.is_empty() {
+                            state.available_input_hw = refreshed_in.clone();
+                        }
+                        if let Some(selected_out) = refreshed_out.first().cloned() {
+                            if let Some(bits) = selected_out.preferred_bits() {
+                                state.oss_bits = bits;
+                            }
+                            state.selected_hw = Some(selected_out);
+                        }
+                        if let Some(selected_in) = refreshed_in.first().cloned() {
+                            if let Some(bits) = selected_in.preferred_bits() {
+                                state.oss_bits = bits;
+                            }
+                            state.selected_input_hw = Some(selected_in);
                         }
                     }
                 }

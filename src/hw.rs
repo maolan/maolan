@@ -56,6 +56,14 @@ impl HW {
                 state.selected_input_hw.clone(),
             )
         };
+        #[cfg(target_os = "linux")]
+        let (available_input_hw, mut selected_input_hw) = {
+            let state = self.state.blocking_read();
+            (
+                state.available_input_hw.clone(),
+                state.selected_input_hw.clone(),
+            )
+        };
         #[cfg(target_os = "freebsd")]
         let mut selected_input_hw = self.state.blocking_read().selected_input_hw.clone();
         #[cfg(any(
@@ -84,6 +92,15 @@ impl HW {
                 crate::state::AudioBackendOption::Sndio => !hw.id.is_empty(),
                 #[cfg(target_os = "linux")]
                 crate::state::AudioBackendOption::Alsa => hw.id.starts_with("hw:"),
+            })
+            .collect();
+        #[cfg(target_os = "linux")]
+        let available_input_hw: Vec<crate::state::AudioDeviceOption> = available_input_hw
+            .into_iter()
+            .filter(|hw| match selected_backend {
+                crate::state::AudioBackendOption::Alsa => hw.id.starts_with("hw:"),
+                #[cfg(unix)]
+                crate::state::AudioBackendOption::Jack => false,
             })
             .collect();
         #[cfg(target_os = "windows")]
@@ -115,6 +132,11 @@ impl HW {
         {
             selected_input_hw =
                 selected_input_hw.filter(|s| available_hw.iter().any(|hw| hw.id == s.id));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            selected_input_hw =
+                selected_input_hw.filter(|s| available_input_hw.iter().any(|hw| hw.id == s.id));
         }
         #[cfg(target_os = "windows")]
         {
@@ -186,8 +208,11 @@ impl HW {
         let hw_ready = selected_is_jack || (selected_hw.is_some() && selected_input_hw.is_some());
         #[cfg(target_os = "freebsd")]
         let hw_ready = selected_is_jack || (selected_hw.is_some() && selected_input_hw.is_some());
+        #[cfg(target_os = "linux")]
+        let hw_ready = selected_is_jack || (selected_hw.is_some() && selected_input_hw.is_some());
         #[cfg(not(target_os = "windows"))]
         #[cfg(not(target_os = "freebsd"))]
+        #[cfg(not(target_os = "linux"))]
         let hw_ready = selected_is_jack || selected_hw.is_some();
         if plugins_loaded && hw_ready {
             #[cfg(any(
@@ -233,7 +258,7 @@ impl HW {
                 target_os = "openbsd"
             )))]
             let bits = 32;
-            #[cfg(target_os = "freebsd")]
+            #[cfg(any(target_os = "freebsd", target_os = "linux"))]
             let input_device = if selected_is_jack {
                 None
             } else {
@@ -243,7 +268,7 @@ impl HW {
                 device,
                 #[cfg(target_os = "windows")]
                 input_device: selected_input_hw.clone(),
-                #[cfg(target_os = "freebsd")]
+                #[cfg(any(target_os = "freebsd", target_os = "linux"))]
                 input_device,
                 sample_rate_hz,
                 bits,
@@ -286,7 +311,27 @@ impl HW {
                     .spacing(10),
                 );
             }
+            #[cfg(target_os = "linux")]
+            {
+                content = content.push(
+                    row![
+                        text("Output device:"),
+                        pick_list(available_hw, selected_hw, Message::HWSelected)
+                            .placeholder("Choose output device")
+                    ]
+                    .spacing(10),
+                );
+                content = content.push(
+                    row![
+                        text("Input device:"),
+                        pick_list(available_input_hw, selected_input_hw, Message::HWInputSelected)
+                            .placeholder("Choose input device")
+                    ]
+                    .spacing(10),
+                );
+            }
             #[cfg(not(target_os = "freebsd"))]
+            #[cfg(not(target_os = "linux"))]
             {
                 content = content.push(
                     row![

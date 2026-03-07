@@ -457,9 +457,11 @@ pub struct StateData {
     pub selected_hw: Option<String>,
     #[cfg(target_os = "windows")]
     pub available_input_hw: Vec<String>,
+    #[cfg(target_os = "linux")]
+    pub available_input_hw: Vec<AudioDeviceOption>,
     #[cfg(target_os = "windows")]
     pub selected_input_hw: Option<String>,
-    #[cfg(target_os = "freebsd")]
+    #[cfg(any(target_os = "freebsd", target_os = "linux"))]
     pub selected_input_hw: Option<AudioDeviceOption>,
     pub hw_sample_rate_hz: i32,
     pub oss_exclusive: bool,
@@ -582,7 +584,9 @@ impl Default for StateData {
         #[cfg(target_os = "openbsd")]
         let hw: Vec<AudioDeviceOption> = discover_openbsd_audio_devices();
         #[cfg(target_os = "linux")]
-        let hw: Vec<AudioDeviceOption> = { discover_alsa_devices() };
+        let hw: Vec<AudioDeviceOption> = discover_alsa_output_devices();
+        #[cfg(target_os = "linux")]
+        let hw_inputs: Vec<AudioDeviceOption> = discover_alsa_input_devices();
         #[cfg(target_os = "windows")]
         let hw: Vec<String> = discover_windows_audio_devices();
         #[cfg(target_os = "windows")]
@@ -602,9 +606,13 @@ impl Default for StateData {
         let selected_hw = hw.first().cloned();
         #[cfg(target_os = "freebsd")]
         let selected_input_hw = selected_hw.clone();
+        #[cfg(target_os = "linux")]
+        let selected_hw: Option<AudioDeviceOption> = None;
+        #[cfg(target_os = "linux")]
+        let selected_input_hw: Option<AudioDeviceOption> = None;
         #[cfg(target_os = "netbsd")]
         let selected_hw = hw.first().cloned();
-        #[cfg(any(target_os = "linux", target_os = "openbsd"))]
+        #[cfg(target_os = "openbsd")]
         let selected_hw: Option<AudioDeviceOption> = None;
         #[cfg(not(any(
             target_os = "linux",
@@ -653,9 +661,11 @@ impl Default for StateData {
             selected_hw,
             #[cfg(target_os = "windows")]
             available_input_hw: hw_inputs,
+            #[cfg(target_os = "linux")]
+            available_input_hw: hw_inputs,
             #[cfg(target_os = "windows")]
             selected_input_hw,
-            #[cfg(target_os = "freebsd")]
+            #[cfg(any(target_os = "freebsd", target_os = "linux"))]
             selected_input_hw,
             hw_sample_rate_hz: 48_000,
             oss_exclusive: true,
@@ -1216,23 +1226,14 @@ fn read_alsa_card_labels() -> std::collections::HashMap<u32, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn probe_alsa_supported_bits(device: &str) -> Vec<usize> {
-    let Ok(capture) = PCM::new(device, Direction::Capture, false) else {
+fn probe_alsa_supported_bits(device: &str, direction: Direction) -> Vec<usize> {
+    let Ok(pcm) = PCM::new(device, direction, false) else {
         return Vec::new();
     };
-    let Ok(playback) = PCM::new(device, Direction::Playback, false) else {
+    let Ok(hwp) = HwParams::any(&pcm) else {
         return Vec::new();
     };
-    let Ok(cap_hwp) = HwParams::any(&capture) else {
-        return Vec::new();
-    };
-    let Ok(pb_hwp) = HwParams::any(&playback) else {
-        return Vec::new();
-    };
-    if cap_hwp.set_access(Access::RWInterleaved).is_err() {
-        return Vec::new();
-    }
-    if pb_hwp.set_access(Access::RWInterleaved).is_err() {
+    if hwp.set_access(Access::RWInterleaved).is_err() {
         return Vec::new();
     }
 
@@ -1249,9 +1250,7 @@ fn probe_alsa_supported_bits(device: &str) -> Vec<usize> {
 
     let mut supported = Vec::new();
     for (bits, formats) in candidates {
-        let capture_ok = formats.iter().any(|f| supports(&cap_hwp, *f));
-        let playback_ok = formats.iter().any(|f| supports(&pb_hwp, *f));
-        if capture_ok && playback_ok {
+        if formats.iter().any(|f| supports(&hwp, *f)) {
             supported.push(bits);
         }
     }
@@ -1322,7 +1321,7 @@ fn foreign_s32() -> Format {
 }
 
 #[cfg(target_os = "linux")]
-fn discover_alsa_devices() -> Vec<AudioDeviceOption> {
+fn discover_alsa_devices(direction_marker: &str, direction: Direction) -> Vec<AudioDeviceOption> {
     let mut devices = Vec::new();
     let card_labels = read_alsa_card_labels();
     if let Ok(contents) = std::fs::read_to_string("/proc/asound/pcm") {
@@ -1330,7 +1329,7 @@ fn discover_alsa_devices() -> Vec<AudioDeviceOption> {
             let Some((card_dev, rest)) = line.split_once(':') else {
                 continue;
             };
-            if !rest.contains("playback") && !rest.contains("capture") {
+            if !rest.contains(direction_marker) {
                 continue;
             }
             let mut parts = card_dev.trim().split('-');
@@ -1355,7 +1354,7 @@ fn discover_alsa_devices() -> Vec<AudioDeviceOption> {
             };
             let id = format!("hw:{card},{dev}");
             let label = format!("{base_label} (hw:{card},{dev})");
-            let supported_bits = probe_alsa_supported_bits(&id);
+            let supported_bits = probe_alsa_supported_bits(&id, direction);
             devices.push(AudioDeviceOption::with_supported_bits(
                 id,
                 label,
@@ -1366,4 +1365,14 @@ fn discover_alsa_devices() -> Vec<AudioDeviceOption> {
     devices.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
     devices.dedup_by(|a, b| a.id == b.id);
     devices
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn discover_alsa_output_devices() -> Vec<AudioDeviceOption> {
+    discover_alsa_devices("playback", Direction::Playback)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn discover_alsa_input_devices() -> Vec<AudioDeviceOption> {
+    discover_alsa_devices("capture", Direction::Capture)
 }
