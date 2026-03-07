@@ -102,6 +102,7 @@ impl Tracks {
             balance: f32,
             automation_mode: String,
             visible_automation_lanes: Vec<VisibleAutomationLane>,
+            freeze_supported: bool,
             midi_learn_vol: bool,
             midi_learn_bal: bool,
             midi_learn_mute: bool,
@@ -135,6 +136,7 @@ impl Tracks {
                     audio_outs: track.audio.outs,
                     midi_ins: track.midi.ins,
                     midi_outs: track.midi.outs,
+                    freeze_supported: track.midi.ins == 0,
                     balance: track.balance,
                     automation_mode: track.automation_mode.to_string(),
                     visible_automation_lanes: track
@@ -193,6 +195,7 @@ impl Tracks {
             let midi_learn_arm = track.midi_learn_arm;
             let midi_learn_input_monitor = track.midi_learn_input_monitor;
             let midi_learn_disk_monitor = track.midi_learn_disk_monitor;
+            let track_freeze_supported = track.freeze_supported;
             let aux_sends = track.aux_sends.clone();
             let vca_candidates: Vec<String> = track_names
                 .iter()
@@ -603,24 +606,25 @@ impl Tracks {
                             .on_press(Message::TrackAutomationCycleMode {
                                 track_name: track_name_for_menu.clone(),
                             }),
-                        button(if track_is_frozen {
-                            "Unfreeze"
-                        } else {
-                            "Freeze"
-                        })
-                        .on_press(Message::TrackFreezeToggle {
-                            track_name: track_name_for_menu.clone(),
-                        }),
-                        if track_is_frozen {
+                        button("Save as template")
+                            .on_press(Message::TrackTemplateSaveShow(track_name_for_menu.clone())),
+                    ];
+                    if track_freeze_supported {
+                        menu = menu.push(
+                            button(if track_is_frozen { "Unfreeze" } else { "Freeze" }).on_press(
+                                Message::TrackFreezeToggle {
+                                    track_name: track_name_for_menu.clone(),
+                                },
+                            ),
+                        );
+                        menu = menu.push(if track_is_frozen {
                             button("Flatten").on_press(Message::TrackFreezeFlatten {
                                 track_name: track_name_for_menu.clone(),
                             })
                         } else {
                             button("Flatten")
-                        },
-                        button("Save as template")
-                            .on_press(Message::TrackTemplateSaveShow(track_name_for_menu.clone())),
-                    ];
+                        });
+                    }
                     if let Some(master) = track_vca_master.as_ref() {
                         menu =
                             menu.push(button(text(format!("VCA: Unassign ({master})"))).on_press(
