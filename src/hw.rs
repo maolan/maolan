@@ -56,6 +56,8 @@ impl HW {
                 state.selected_input_hw.clone(),
             )
         };
+        #[cfg(target_os = "freebsd")]
+        let mut selected_input_hw = self.state.blocking_read().selected_input_hw.clone();
         #[cfg(any(
             target_os = "linux",
             target_os = "freebsd",
@@ -108,6 +110,11 @@ impl HW {
         ))]
         {
             selected_hw = selected_hw.filter(|s| available_hw.iter().any(|hw| hw.id == s.id));
+        }
+        #[cfg(target_os = "freebsd")]
+        {
+            selected_input_hw =
+                selected_input_hw.filter(|s| available_hw.iter().any(|hw| hw.id == s.id));
         }
         #[cfg(target_os = "windows")]
         {
@@ -177,7 +184,10 @@ impl HW {
         let mut submit = button("Open Audio");
         #[cfg(target_os = "windows")]
         let hw_ready = selected_is_jack || (selected_hw.is_some() && selected_input_hw.is_some());
+        #[cfg(target_os = "freebsd")]
+        let hw_ready = selected_is_jack || (selected_hw.is_some() && selected_input_hw.is_some());
         #[cfg(not(target_os = "windows"))]
+        #[cfg(not(target_os = "freebsd"))]
         let hw_ready = selected_is_jack || selected_hw.is_some();
         if plugins_loaded && hw_ready {
             #[cfg(any(
@@ -223,10 +233,18 @@ impl HW {
                 target_os = "openbsd"
             )))]
             let bits = 32;
+            #[cfg(target_os = "freebsd")]
+            let input_device = if selected_is_jack {
+                None
+            } else {
+                selected_input_hw.as_ref().map(|hw| hw.id.clone())
+            };
             submit = submit.on_press(Message::Request(Action::OpenAudioDevice {
                 device,
                 #[cfg(target_os = "windows")]
                 input_device: selected_input_hw.clone(),
+                #[cfg(target_os = "freebsd")]
+                input_device,
                 sample_rate_hz,
                 bits,
                 exclusive,
@@ -249,15 +267,49 @@ impl HW {
         ]
         .spacing(10);
         if !selected_is_jack {
-            content = content.push(
-                pick_list(available_hw, selected_hw, Message::HWSelected)
-                    .placeholder("Choose output device"),
-            );
+            #[cfg(target_os = "freebsd")]
+            {
+                content = content.push(
+                    row![
+                        text("Output device:"),
+                        pick_list(available_hw.clone(), selected_hw, Message::HWSelected)
+                            .placeholder("Choose output device")
+                    ]
+                    .spacing(10),
+                );
+                content = content.push(
+                    row![
+                        text("Input device:"),
+                        pick_list(available_hw, selected_input_hw, Message::HWInputSelected)
+                            .placeholder("Choose input device")
+                    ]
+                    .spacing(10),
+                );
+            }
+            #[cfg(not(target_os = "freebsd"))]
+            {
+                content = content.push(
+                    row![
+                        text("Output device:"),
+                        pick_list(available_hw, selected_hw, Message::HWSelected)
+                            .placeholder("Choose output device")
+                    ]
+                    .spacing(10),
+                );
+            }
             #[cfg(target_os = "windows")]
             {
                 content = content.push(
-                    pick_list(available_input_hw, selected_input_hw, Message::HWInputSelected)
-                        .placeholder("Choose input device"),
+                    row![
+                        text("Input device:"),
+                        pick_list(
+                            available_input_hw,
+                            selected_input_hw,
+                            Message::HWInputSelected,
+                        )
+                        .placeholder("Choose input device")
+                    ]
+                    .spacing(10),
                 );
             }
         }

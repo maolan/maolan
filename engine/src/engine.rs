@@ -4325,7 +4325,7 @@ impl Engine {
 
             Action::OpenAudioDevice {
                 ref device,
-                #[cfg(target_os = "windows")]
+                #[cfg(any(target_os = "windows", target_os = "freebsd"))]
                 ref input_device,
                 sample_rate_hz,
                 bits,
@@ -4366,7 +4366,7 @@ impl Engine {
                                 }
                                 self.notify_clients(Ok(Action::OpenAudioDevice {
                                     device: device.clone(),
-                                    #[cfg(target_os = "windows")]
+                                    #[cfg(any(target_os = "windows", target_os = "freebsd"))]
                                     input_device: input_device.clone(),
                                     sample_rate_hz,
                                     bits,
@@ -4411,7 +4411,16 @@ impl Engine {
                     bits,
                     hw_opts,
                 );
+                #[cfg(target_os = "freebsd")]
+                let open_result = HwDriver::new_with_options(
+                    device,
+                    input_device.as_deref(),
+                    sample_rate_hz,
+                    bits,
+                    hw_opts,
+                );
                 #[cfg(not(target_os = "windows"))]
+                #[cfg(not(target_os = "freebsd"))]
                 let open_result =
                     HwDriver::new_with_options(device, sample_rate_hz, bits, hw_opts);
                 match open_result {

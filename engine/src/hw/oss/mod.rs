@@ -162,6 +162,7 @@ impl Audio {
 
     pub fn new(
         path: &str,
+        sync_key: &str,
         rate: i32,
         bits: i32,
         input: bool,
@@ -320,7 +321,7 @@ impl Audio {
             io_channels.push(Arc::new(AudioIO::new(chsamples)));
         }
 
-        let duplex_sync = get_or_create_duplex_sync(path, effective_rate, chsamples);
+        let duplex_sync = get_or_create_duplex_sync(sync_key, effective_rate, chsamples);
         let mut frame_clock = FrameClock::default();
         frame_clock.set_sample_rate(effective_rate as u32);
         {
@@ -359,7 +360,7 @@ impl Audio {
             last_published_balance: i64::MIN,
             frame_clock,
             frame_stamp: 0,
-            sync_path: path.to_string(),
+            sync_path: sync_key.to_string(),
             duplex_sync,
             correction,
             channel,

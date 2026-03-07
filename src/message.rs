@@ -916,6 +916,8 @@ pub enum Message {
         target_os = "openbsd"
     )))]
     HWSelected(String),
+    #[cfg(target_os = "freebsd")]
+    HWInputSelected(AudioDeviceOption),
     #[cfg(target_os = "windows")]
     HWInputSelected(String),
     HWBackendSelected(AudioBackendOption),

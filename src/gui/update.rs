@@ -5561,8 +5561,8 @@ impl Maolan {
 
                     Action::OpenAudioDevice {
                         device,
-                        #[cfg(target_os = "windows")]
-                        input_device: _,
+                        #[cfg(any(target_os = "windows", target_os = "freebsd"))]
+                            input_device: _,
                         sample_rate_hz,
                         bits,
                         exclusive,
@@ -5573,7 +5573,13 @@ impl Maolan {
                         let mut state = self.state.blocking_write();
                         state.message = format!(
                             "Opened device {} (rate={} Hz, bits={}, exclusive={}, period={}, nperiods={}, sync_mode={})",
-                            device, sample_rate_hz, bits, exclusive, period_frames, nperiods, sync_mode
+                            device,
+                            sample_rate_hz,
+                            bits,
+                            exclusive,
+                            period_frames,
+                            nperiods,
+                            sync_mode
                         );
                         state.hw_loaded = true;
                         state.hw_sample_rate_hz = (*sample_rate_hz).max(1);
@@ -10674,10 +10680,31 @@ impl Maolan {
             Message::HWInputSelected(ref hw) => {
                 self.state.blocking_write().selected_input_hw = Some(hw.to_string());
             }
+            #[cfg(target_os = "freebsd")]
+            Message::HWInputSelected(ref hw) => {
+                let mut state = self.state.blocking_write();
+                let refreshed = crate::state::discover_freebsd_audio_devices();
+                let selected = refreshed
+                    .iter()
+                    .find(|candidate| candidate.id == hw.id)
+                    .cloned()
+                    .unwrap_or_else(|| hw.clone());
+                if !refreshed.is_empty() {
+                    state.available_hw = refreshed;
+                }
+                if let Some(bits) = selected.preferred_bits() {
+                    state.oss_bits = bits;
+                }
+                state.selected_input_hw = Some(selected);
+            }
             Message::HWBackendSelected(ref backend) => {
                 let mut state = self.state.blocking_write();
                 state.selected_backend = backend.clone();
                 state.selected_hw = None;
+                #[cfg(target_os = "freebsd")]
+                {
+                    state.selected_input_hw = None;
+                }
                 #[cfg(any(
                     target_os = "linux",
                     target_os = "freebsd",
@@ -10697,6 +10724,7 @@ impl Maolan {
                                 state.oss_bits = bits;
                             }
                             state.selected_hw = Some(selected);
+                            state.selected_input_hw = state.selected_hw.clone();
                         }
                     }
                     #[cfg(target_os = "netbsd")]

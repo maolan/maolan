@@ -458,6 +458,8 @@ pub struct StateData {
     pub available_input_hw: Vec<String>,
     #[cfg(target_os = "windows")]
     pub selected_input_hw: Option<String>,
+    #[cfg(target_os = "freebsd")]
+    pub selected_input_hw: Option<AudioDeviceOption>,
     pub hw_sample_rate_hz: i32,
     pub oss_exclusive: bool,
     #[cfg(unix)]
@@ -597,6 +599,8 @@ impl Default for StateData {
         let hw: Vec<String> = vec![];
         #[cfg(target_os = "freebsd")]
         let selected_hw = hw.first().cloned();
+        #[cfg(target_os = "freebsd")]
+        let selected_input_hw = selected_hw.clone();
         #[cfg(target_os = "netbsd")]
         let selected_hw = hw.first().cloned();
         #[cfg(any(target_os = "linux", target_os = "openbsd"))]
@@ -649,6 +653,8 @@ impl Default for StateData {
             #[cfg(target_os = "windows")]
             available_input_hw: hw_inputs,
             #[cfg(target_os = "windows")]
+            selected_input_hw,
+            #[cfg(target_os = "freebsd")]
             selected_input_hw,
             hw_sample_rate_hz: 48_000,
             oss_exclusive: true,

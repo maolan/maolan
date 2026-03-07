@@ -33,18 +33,41 @@ impl Default for HwOptions {
 
 impl HwDriver {
     pub fn new(path: &str, rate: i32, bits: i32) -> std::io::Result<Self> {
-        Self::new_with_options(path, rate, bits, HwOptions::default())
+        Self::new_with_options(path, None, rate, bits, HwOptions::default())
     }
 
     pub fn new_with_options(
-        path: &str,
+        playback_path: &str,
+        capture_path: Option<&str>,
         rate: i32,
         bits: i32,
         options: HwOptions,
     ) -> std::io::Result<Self> {
         let playing = Arc::new(AtomicBool::new(false));
-        let capture = Audio::new(path, rate, bits, true, options, playing.clone())?;
-        let playback = Audio::new(path, rate, bits, false, options, playing.clone())?;
+        let capture_path = capture_path.unwrap_or(playback_path);
+        let sync_key = if capture_path == playback_path {
+            playback_path.to_string()
+        } else {
+            format!("{capture_path}|{playback_path}")
+        };
+        let capture = Audio::new(
+            capture_path,
+            &sync_key,
+            rate,
+            bits,
+            true,
+            options,
+            playing.clone(),
+        )?;
+        let playback = Audio::new(
+            playback_path,
+            &sync_key,
+            rate,
+            bits,
+            false,
+            options,
+            playing.clone(),
+        )?;
         let mut driver = Self {
             capture,
             playback,
