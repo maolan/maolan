@@ -5643,7 +5643,7 @@ impl Maolan {
                         device,
                         #[cfg(any(target_os = "windows", target_os = "freebsd"))]
                             input_device: _,
-                        sample_rate_hz,
+                        sample_rate_hz: _,
                         bits,
                         exclusive,
                         period_frames,
@@ -5654,7 +5654,7 @@ impl Maolan {
                         state.message = format!(
                             "Opened device {} (rate={} Hz, bits={}, exclusive={}, period={}, nperiods={}, sync_mode={})",
                             device,
-                            sample_rate_hz,
+                            state.hw_sample_rate_hz.max(1),
                             bits,
                             exclusive,
                             period_frames,
@@ -5662,7 +5662,6 @@ impl Maolan {
                             sync_mode
                         );
                         state.hw_loaded = true;
-                        state.hw_sample_rate_hz = (*sample_rate_hz).max(1);
                         state.oss_period_frames = (*period_frames).max(1);
                         state.oss_nperiods = (*nperiods).max(1);
                     }
@@ -9802,7 +9801,7 @@ impl Maolan {
                 self.import_current_filename = String::new();
 
                 let paths = paths.clone();
-                let playback_rate = self.playback_rate_hz;
+                let playback_rate = self.playback_rate_hz.max(1.0);
 
                 return Task::run(
                     {
@@ -9849,7 +9848,7 @@ impl Maolan {
                                     match Self::import_audio_to_session_wav_with_progress(
                                         path,
                                         &session_root,
-                                        playback_rate as u32,
+                                        playback_rate.round().max(1.0) as u32,
                                         progress_fn,
                                     )
                                     .await

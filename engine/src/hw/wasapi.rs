@@ -93,10 +93,13 @@ impl HwDriver {
         let output_stream = {
             let mut pending = Vec::<f32>::new();
             let mut pending_idx = 0usize;
+            let mut frames_since_tick = 0usize;
             output_device
                 .build_output_stream(
                     &output_cfg,
                     move |data: &mut [f32], _| {
+                        let channels = output_channels.max(1);
+                        let callback_frames = data.len() / channels;
                         for sample in data.iter_mut() {
                             loop {
                                 if pending_idx < pending.len() {
@@ -116,7 +119,11 @@ impl HwDriver {
                                 }
                             }
                         }
-                        let _ = cycle_tick_tx.try_send(());
+                        frames_since_tick = frames_since_tick.saturating_add(callback_frames);
+                        while frames_since_tick >= period_frames {
+                            let _ = cycle_tick_tx.try_send(());
+                            frames_since_tick -= period_frames;
+                        }
                     },
                     move |e| error!("{backend_label} output stream error: {e}"),
                     None,
