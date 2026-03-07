@@ -1,27 +1,5 @@
-use iced::{Background, Color, Theme, widget::button::Style};
+use iced::{Color, Theme, widget::button::Style};
 
 pub fn style(theme: &Theme, armed: bool) -> Style {
-    let palette = theme.extended_palette();
-    if armed {
-        Style {
-            background: Some(Background::Color(Color {
-                r: 1.0,
-                g: 0.0,
-                b: 0.0,
-                a: 1.0,
-            })),
-            ..Style::default()
-        }
-    } else {
-        Style {
-            background: Some(Background::Color(Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.0,
-            })),
-            text_color: palette.background.base.text,
-            ..Style::default()
-        }
-    }
+    super::track_toggle_button_style(theme, armed, Color::from_rgb(0.95, 0.20, 0.22))
 }

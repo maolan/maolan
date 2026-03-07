@@ -491,7 +491,11 @@ impl canvas::Program<Message> for MidiClipNotesCanvas {
 
                 for step in 0..=16 {
                     let x = (step as f32 / 16.0) * inner_w;
-                    let color = if step % 4 == 0 { grid_major } else { grid_minor };
+                    let color = if step % 4 == 0 {
+                        grid_major
+                    } else {
+                        grid_minor
+                    };
                     frame.stroke(
                         &Path::line(Point::new(x, 0.0), Point::new(x, inner_h)),
                         canvas::Stroke::default().with_color(color).with_width(1.0),
@@ -510,7 +514,9 @@ impl canvas::Program<Message> for MidiClipNotesCanvas {
                 let horizon_y = inner_h * 0.84;
                 frame.stroke(
                     &Path::line(Point::new(0.0, horizon_y), Point::new(inner_w, horizon_y)),
-                    canvas::Stroke::default().with_color(horizon).with_width(1.0),
+                    canvas::Stroke::default()
+                        .with_color(horizon)
+                        .with_width(1.0),
                 );
 
                 for note in &self.notes {

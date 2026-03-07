@@ -289,34 +289,74 @@ impl Tracks {
 
             let track_name = track.name.clone();
             let controls = row![
-                button("R")
-                    .padding([2, 5])
-                    .style(move |theme, _state| style::arm::style(theme, track.armed))
-                    .on_press(Message::Request(Action::TrackToggleArm(track_name.clone()))),
-                button("M")
-                    .padding([2, 5])
-                    .style(move |theme, _state| style::mute::style(theme, track.muted))
-                    .on_press(Message::Request(Action::TrackToggleMute(
-                        track.name.clone()
-                    ))),
-                button("S")
-                    .padding([2, 5])
-                    .style(move |theme, _state| style::solo::style(theme, track.soloed))
-                    .on_press(Message::Request(Action::TrackToggleSolo(
-                        track.name.clone()
-                    ))),
-                button(audio_waveform())
-                    .padding([2, 5])
-                    .style(move |theme, _state| style::input::style(theme, track.input_monitor))
-                    .on_press(Message::Request(Action::TrackToggleInputMonitor(
-                        track.name.clone(),
-                    ))),
-                button(disc())
-                    .padding([2, 5])
-                    .style(move |theme, _state| style::disk::style(theme, track.disk_monitor))
-                    .on_press(Message::Request(Action::TrackToggleDiskMonitor(
-                        track.name.clone(),
-                    ))),
+                button(
+                    container(text("R").size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::arm::style(theme, track.armed))
+                .on_press(Message::Request(Action::TrackToggleArm(track_name.clone()))),
+                button(
+                    container(text("M").size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::mute::style(theme, track.muted))
+                .on_press(Message::Request(Action::TrackToggleMute(
+                    track.name.clone()
+                ))),
+                button(
+                    container(text("S").size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::solo::style(theme, track.soloed))
+                .on_press(Message::Request(Action::TrackToggleSolo(
+                    track.name.clone()
+                ))),
+                button(
+                    container(audio_waveform().size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::input::style(theme, track.input_monitor))
+                .on_press(Message::Request(Action::TrackToggleInputMonitor(
+                    track.name.clone(),
+                ))),
+                button(
+                    container(disc().size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::disk::style(theme, track.disk_monitor))
+                .on_press(Message::Request(Action::TrackToggleDiskMonitor(
+                    track.name.clone(),
+                ))),
             ]
             .spacing(4)
             .align_y(Alignment::Center);
