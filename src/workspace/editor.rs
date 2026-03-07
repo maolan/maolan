@@ -4,6 +4,7 @@ use crate::{
 };
 use iced::{
     Background, Border, Color, Element, Length, Point,
+    gradient,
     widget::{Space, Stack, button, column, container, mouse_area, pin, row, text},
 };
 use iced_aw::ContextMenu;
@@ -11,6 +12,15 @@ use maolan_engine::kind::Kind;
 use std::collections::HashMap;
 
 const CLIP_RESIZE_HANDLE_WIDTH: f32 = 5.0;
+const AUDIO_CLIP_BASE: Color = Color::from_rgb8(68, 88, 132);
+const AUDIO_CLIP_SELECTED_BASE: Color = Color::from_rgb8(96, 126, 186);
+const AUDIO_CLIP_BORDER: Color = Color::from_rgb8(78, 93, 130);
+const AUDIO_CLIP_SELECTED_BORDER: Color = Color::from_rgb8(176, 218, 255);
+const MIDI_CLIP_BASE: Color = Color::from_rgb8(98, 82, 30);
+const MIDI_CLIP_SELECTED_BASE: Color = Color::from_rgb8(178, 150, 54);
+const MIDI_CLIP_BORDER: Color = Color::from_rgb(0.72, 0.52, 0.18);
+const MIDI_CLIP_SELECTED_BORDER: Color = Color::from_rgb(1.0, 0.86, 0.42);
+const CLIP_HANDLE: Color = Color::from_rgb8(52, 46, 25);
 
 struct TrackElementViewArgs<'a> {
     state: &'a StateData,
@@ -74,6 +84,57 @@ fn clip_label_overlay(label: String) -> Element<'static, Message> {
     .height(Length::Fill)
     .padding([0, 5])
     .into()
+}
+
+fn brighten(color: Color, amount: f32) -> Color {
+    Color {
+        r: (color.r + amount).min(1.0),
+        g: (color.g + amount).min(1.0),
+        b: (color.b + amount).min(1.0),
+        a: color.a,
+    }
+}
+
+fn darken(color: Color, amount: f32) -> Color {
+    Color {
+        r: (color.r - amount).max(0.0),
+        g: (color.g - amount).max(0.0),
+        b: (color.b - amount).max(0.0),
+        a: color.a,
+    }
+}
+
+fn clip_two_edge_gradient(base: Color, muted_alpha: f32, normal_alpha: f32) -> Background {
+    let alpha = normal_alpha;
+    let edge = Color {
+        a: alpha,
+        ..brighten(base, 0.06)
+    };
+    let center = Color {
+        a: alpha,
+        ..darken(base, 0.05)
+    };
+    let edge_muted = Color {
+        a: muted_alpha,
+        ..edge
+    };
+    let center_muted = Color {
+        a: muted_alpha,
+        ..center
+    };
+
+    let (top_bottom, middle) = if muted_alpha < normal_alpha {
+        (edge_muted, center_muted)
+    } else {
+        (edge, center)
+    };
+    Background::Gradient(
+        gradient::Linear::new(0.0)
+            .add_stop(0.0, top_bottom)
+            .add_stop(0.5, middle)
+            .add_stop(1.0, top_bottom)
+            .into(),
+    )
 }
 
 fn assign_take_lanes<T, FBase, FStart, FLen, FPreferred>(
@@ -527,9 +588,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     use container::Style;
                     Style {
                         background: Some(Background::Color(Color {
-                            r: 0.2,
-                            g: 0.4,
-                            b: 0.6,
+                            r: CLIP_HANDLE.r,
+                            g: CLIP_HANDLE.g,
+                            b: CLIP_HANDLE.b,
                             a: 0.9,
                         })),
                         ..Style::default()
@@ -551,9 +612,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     use container::Style;
                     Style {
                         background: Some(Background::Color(Color {
-                            r: 0.2,
-                            g: 0.4,
-                            b: 0.6,
+                            r: CLIP_HANDLE.r,
+                            g: CLIP_HANDLE.g,
+                            b: CLIP_HANDLE.b,
                             a: 0.9,
                         })),
                         ..Style::default()
@@ -583,22 +644,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         .padding(0)
         .style(move |_theme| {
             use container::Style;
+            let base = if is_selected {
+                AUDIO_CLIP_SELECTED_BASE
+            } else {
+                AUDIO_CLIP_BASE
+            };
+            let (muted_alpha, normal_alpha) = if clip_muted { (0.45, 0.45) } else { (1.0, 1.0) };
             Style {
-                background: Some(Background::Color(if is_selected {
-                    Color {
-                        r: 0.72,
-                        g: 0.86,
-                        b: 1.0,
-                        a: if clip_muted { 0.45 } else { 1.0 },
-                    }
-                } else {
-                    Color {
-                        r: 0.27,
-                        g: 0.45,
-                        b: 0.62,
-                        a: if clip_muted { 0.35 } else { 0.8 },
-                    }
-                })),
+                background: Some(clip_two_edge_gradient(base, muted_alpha, normal_alpha)),
                 ..Style::default()
             }
         });
@@ -610,19 +663,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 background: None,
                 border: Border {
                     color: if is_selected {
-                        Color {
-                            r: 0.98,
-                            g: 0.98,
-                            b: 0.98,
-                            a: 1.0,
-                        }
+                        AUDIO_CLIP_SELECTED_BORDER
                     } else {
-                        Color {
-                            r: 0.2,
-                            g: 0.4,
-                            b: 0.6,
-                            a: 1.0,
-                        }
+                        AUDIO_CLIP_BORDER
                     },
                     width: if is_selected { 2.0 } else { 1.0 },
                     radius: 3.0.into(),
@@ -1028,9 +1071,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     use container::Style;
                     Style {
                         background: Some(Background::Color(Color {
-                            r: 0.25,
-                            g: 0.55,
-                            b: 0.25,
+                            r: CLIP_HANDLE.r,
+                            g: CLIP_HANDLE.g,
+                            b: CLIP_HANDLE.b,
                             a: 0.9,
                         })),
                         ..Style::default()
@@ -1052,9 +1095,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     use container::Style;
                     Style {
                         background: Some(Background::Color(Color {
-                            r: 0.25,
-                            g: 0.55,
-                            b: 0.25,
+                            r: CLIP_HANDLE.r,
+                            g: CLIP_HANDLE.g,
+                            b: CLIP_HANDLE.b,
                             a: 0.9,
                         })),
                         ..Style::default()
@@ -1072,27 +1115,19 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(0)
-            .style(move |_theme| {
-                use container::Style;
-                Style {
-                    background: Some(Background::Color(if is_selected {
-                        Color {
-                            r: 0.82,
-                            g: 1.0,
-                            b: 0.84,
-                            a: if clip_muted { 0.45 } else { 1.0 },
-                        }
-                    } else {
-                        Color {
-                            r: 0.24,
-                            g: 0.5,
-                            b: 0.26,
-                            a: if clip_muted { 0.35 } else { 0.82 },
-                        }
-                    })),
-                    ..Style::default()
-                }
-            });
+        .style(move |_theme| {
+            use container::Style;
+            let base = if is_selected {
+                MIDI_CLIP_SELECTED_BASE
+            } else {
+                MIDI_CLIP_BASE
+            };
+            let (muted_alpha, normal_alpha) = if clip_muted { (0.55, 0.55) } else { (1.0, 1.0) };
+            Style {
+                background: Some(clip_two_edge_gradient(base, muted_alpha, normal_alpha)),
+                ..Style::default()
+            }
+        });
 
         let clip_widget = container(row![left_handle, clip_content, right_handle])
             .width(Length::Fixed(clip_width))
@@ -1101,19 +1136,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 background: None,
                 border: Border {
                     color: if is_selected {
-                        Color {
-                            r: 0.98,
-                            g: 0.98,
-                            b: 0.98,
-                            a: 1.0,
-                        }
+                        MIDI_CLIP_SELECTED_BORDER
                     } else {
-                        Color {
-                            r: 0.2,
-                            g: 0.45,
-                            b: 0.2,
-                            a: 1.0,
-                        }
+                        MIDI_CLIP_BORDER
                     },
                     width: if is_selected { 2.0 } else { 1.0 },
                     radius: 3.0.into(),
@@ -1388,12 +1413,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .style(|_theme| {
                     use container::Style;
                     Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.82,
-                            g: 1.0,
-                            b: 0.84,
-                            a: 0.7,
-                        })),
+                        background: Some(clip_two_edge_gradient(MIDI_CLIP_SELECTED_BASE, 0.7, 0.7)),
                         ..Style::default()
                     }
                 });
@@ -1485,12 +1505,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         .style(|_theme| {
                             use container::Style;
                             Style {
-                                background: Some(Background::Color(Color {
-                                    r: 0.72,
-                                    g: 0.86,
-                                    b: 1.0,
-                                    a: 0.7,
-                                })),
+                                background: Some(clip_two_edge_gradient(AUDIO_CLIP_SELECTED_BASE, 0.7, 0.7)),
                                 ..Style::default()
                             }
                         });
@@ -1563,12 +1578,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         .style(|_theme| {
                             use container::Style;
                             Style {
-                                background: Some(Background::Color(Color {
-                                    r: 0.82,
-                                    g: 1.0,
-                                    b: 0.84,
-                                    a: 0.7,
-                                })),
+                                background: Some(clip_two_edge_gradient(MIDI_CLIP_SELECTED_BASE, 0.7, 0.7)),
                                 ..Style::default()
                             }
                         });

@@ -7,7 +7,8 @@ use crate::{
     state::State,
 };
 use iced::{
-    Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, mouse,
+    Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, gradient,
+    mouse,
     widget::{
         Id, Stack, button,
         canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
@@ -64,6 +65,36 @@ impl Piano {
             b: 0.65 + 0.3 * c,
             a: 0.9,
         }
+    }
+
+    fn brighten(color: Color, amount: f32) -> Color {
+        Color {
+            r: (color.r + amount).min(1.0),
+            g: (color.g + amount).min(1.0),
+            b: (color.b + amount).min(1.0),
+            a: color.a,
+        }
+    }
+
+    fn darken(color: Color, amount: f32) -> Color {
+        Color {
+            r: (color.r - amount).max(0.0),
+            g: (color.g - amount).max(0.0),
+            b: (color.b - amount).max(0.0),
+            a: color.a,
+        }
+    }
+
+    fn note_two_edge_gradient(base: Color) -> Background {
+        let edge = Self::brighten(base, 0.08);
+        let middle = Self::darken(base, 0.08);
+        Background::Gradient(
+            gradient::Linear::new(0.0)
+                .add_stop(0.0, edge)
+                .add_stop(0.5, middle)
+                .add_stop(1.0, edge)
+                .into(),
+        )
     }
 
     fn controller_color(controller: u8, channel: u8) -> Color {
@@ -487,7 +518,7 @@ impl Piano {
                     .width(Length::Fixed(w))
                     .height(Length::Fixed((row_h - 2.0).max(2.0)))
                     .style(move |_theme| container::Style {
-                        background: Some(Background::Color(color)),
+                        background: Some(Self::note_two_edge_gradient(color)),
                         ..container::Style::default()
                     }))
                 .position(Point::new(x, y))
