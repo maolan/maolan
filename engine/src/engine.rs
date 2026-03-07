@@ -4421,8 +4421,7 @@ impl Engine {
                 );
                 #[cfg(not(target_os = "windows"))]
                 #[cfg(not(target_os = "freebsd"))]
-                let open_result =
-                    HwDriver::new_with_options(device, sample_rate_hz, bits, hw_opts);
+                let open_result = HwDriver::new_with_options(device, sample_rate_hz, bits, hw_opts);
                 match open_result {
                     Ok(d) => {
                         let (in_channels, out_channels, rate, (in_lat, out_lat)) =
