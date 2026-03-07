@@ -237,8 +237,7 @@ impl Workspace {
 
         let editor_with_zoom = right_lanes_scrolled;
 
-        let shared_workspace = scrollable(
-            row![
+        let shared_workspace = row![
                 column![
                     container("")
                         .width(tracks_width)
@@ -341,11 +340,9 @@ impl Workspace {
                 ]
                 .width(Length::Fill),
             ]
-            .height(Length::Fixed(workspace_content_height)),
-        )
-        .direction(scrollable::Direction::Vertical(
-            scrollable::Scrollbar::new(),
-        ))
+            .height(Length::Fixed(workspace_content_height));
+
+        let shared_workspace = container(shared_workspace)
         .width(Length::Fill)
         .height(Length::Fill);
 

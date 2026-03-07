@@ -318,31 +318,28 @@ impl Tracks {
 
             let track_ui: Column<'_, Message> = column![
                 header,
-                mouse_area(
-                    container(body)
-                        .height(Length::Fixed(body_height))
-                        .padding([3, 6])
-                        .style(move |_theme| container::Style {
-                            background: Some(Background::Color(if selected {
-                                Color::from_rgba(0.13, 0.18, 0.27, 0.98)
-                            } else {
-                                Color::from_rgba(0.11, 0.14, 0.20, 0.96)
-                            })),
-                            border: Border {
-                                color: Color::from_rgba(
-                                    0.71,
-                                    0.82,
-                                    0.97,
-                                    if selected { 0.22 } else { 0.1 },
-                                ),
-                                width: 1.0,
-                                radius: 8.0.into(),
-                            },
-                            text_color: Some(Color::from_rgb(0.90, 0.93, 0.98)),
-                            ..container::Style::default()
-                        }),
-                )
-                .on_press(Message::SelectTrack(track.name.clone())),
+                container(body)
+                    .height(Length::Fixed(body_height))
+                    .padding([3, 6])
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(if selected {
+                            Color::from_rgba(0.13, 0.18, 0.27, 0.98)
+                        } else {
+                            Color::from_rgba(0.11, 0.14, 0.20, 0.96)
+                        })),
+                        border: Border {
+                            color: Color::from_rgba(
+                                0.71,
+                                0.82,
+                                0.97,
+                                if selected { 0.22 } else { 0.1 },
+                            ),
+                            width: 1.0,
+                            radius: 8.0.into(),
+                        },
+                        text_color: Some(Color::from_rgb(0.90, 0.93, 0.98)),
+                        ..container::Style::default()
+                    }),
                 lane_rows.spacing(4),
                 mouse_area(
                     container("")
