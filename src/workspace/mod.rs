@@ -50,7 +50,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub active_clip_drag: Option<&'a DraggedClip>,
     pub active_clip_target_track: Option<&'a str>,
     pub recording_preview_bounds: Option<(usize, usize)>,
-    pub recording_preview_peaks: Option<HashMap<String, ClipPeaks>>,
+    pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
     pub shift_pressed: bool,
     pub selected_tempo_points: Vec<usize>,
     pub selected_time_signature_points: Vec<usize>,
@@ -187,7 +187,7 @@ impl Workspace {
                     active_clip_drag,
                     active_target_track: active_clip_target_track,
                     recording_preview_bounds,
-                    recording_preview_peaks: recording_preview_peaks.as_ref(),
+                    recording_preview_peaks,
                 }),
                 pin(Self::playhead_line())
                     .position(Point::new(x.max(0.0), 0.0))
@@ -206,7 +206,7 @@ impl Workspace {
                 active_clip_drag,
                 active_target_track: active_clip_target_track,
                 recording_preview_bounds,
-                recording_preview_peaks: recording_preview_peaks.as_ref(),
+                recording_preview_peaks,
             })
         };
 
@@ -331,11 +331,11 @@ impl Workspace {
                         samples_per_beat,
                         samples_per_bar: samples_per_bar as f64,
                         content_width: editor_content_width,
-                        tempo_points: tempo_points.clone(),
-                        time_signature_points: time_signature_points.clone(),
+                        tempo_points,
+                        time_signature_points,
                         shift_pressed,
-                        selected_tempo_points: selected_tempo_points.clone(),
-                        selected_time_signature_points: selected_time_signature_points.clone(),
+                        selected_tempo_points,
+                        selected_time_signature_points,
                     }))
                     .height(Length::Fixed(self.tempo.height())),
                     container(self.ruler.view(RulerViewArgs {

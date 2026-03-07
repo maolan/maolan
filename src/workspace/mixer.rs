@@ -304,31 +304,16 @@ impl Mixer {
 
     pub fn view(&self) -> Element<'_, Message> {
         let mut strips = row![].spacing(2).align_y(Alignment::Start);
-        let (
-            tracks,
-            selected,
-            height,
-            hw_out_channels,
-            hw_out_level,
-            hw_out_balance,
-            hw_out_meter_db,
-        ) = {
-            let state = self.state.blocking_read();
-            (
-                state.tracks.clone(),
-                state.selected.clone(),
-                state.mixer_height,
-                state.hw_out.as_ref().map(|hw| hw.channels).unwrap_or(0),
-                state.hw_out_level,
-                state.hw_out_balance,
-                state.hw_out_meter_db.clone(),
-            )
-        };
+        let state = self.state.blocking_read();
+        let height = state.mixer_height;
+        let hw_out_channels = state.hw_out.as_ref().map(|hw| hw.channels).unwrap_or(0);
+        let hw_out_level = state.hw_out_level;
+        let hw_out_balance = state.hw_out_balance;
+        let master_selected = state.selected.contains("hw:out");
         let fader_height = Self::fader_height_from_panel(height);
         let tick_layout = Self::tick_layout(fader_height);
 
-        for track in tracks {
-            let selected_strip = selected.contains(&track.name);
+        for track in &state.tracks {
             let strip_name = track.name.clone();
             let select_name = track.name.clone();
             let pan = if track.audio.outs == 2 {
@@ -353,7 +338,7 @@ impl Mixer {
             strips = strips.push(
                 mouse_area(Self::strip_shell(
                     strip_name,
-                    selected_strip,
+                    state.selected.contains(track.name.as_str()),
                     Self::STRIP_WIDTH,
                     pan,
                     bay,
@@ -363,7 +348,6 @@ impl Mixer {
             );
         }
 
-        let master_selected = selected.contains("hw:out");
         let master_strip_width = (Self::FADER_WIDTH
             + Self::SCALE_WIDTH
             + 3.0
@@ -384,7 +368,7 @@ impl Mixer {
             },
             Self::fader_bay(
                 hw_out_channels.max(1),
-                &hw_out_meter_db,
+                &state.hw_out_meter_db,
                 hw_out_level,
                 fader_height,
                 &tick_layout,

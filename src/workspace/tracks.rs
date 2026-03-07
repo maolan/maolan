@@ -1,6 +1,6 @@
 use crate::{
     message::{Message, TrackAutomationTarget},
-    state::State,
+    state::{AuxSend, State, TrackLaneLayout},
     style,
 };
 use iced::{
@@ -78,13 +78,88 @@ impl Tracks {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let (tracks, selected, width, hovered_resize_track) = {
+        struct VisibleAutomationLane {
+            target: TrackAutomationTarget,
+            points_len: usize,
+        }
+
+        struct TrackViewData {
+            name: String,
+            height: f32,
+            layout: TrackLaneLayout,
+            selected: bool,
+            resize_hovered: bool,
+            armed: bool,
+            frozen: bool,
+            muted: bool,
+            soloed: bool,
+            input_monitor: bool,
+            disk_monitor: bool,
+            audio_ins: usize,
+            audio_outs: usize,
+            midi_ins: usize,
+            midi_outs: usize,
+            balance: f32,
+            automation_mode: String,
+            visible_automation_lanes: Vec<VisibleAutomationLane>,
+            midi_learn_vol: bool,
+            midi_learn_bal: bool,
+            midi_learn_mute: bool,
+            midi_learn_solo: bool,
+            midi_learn_arm: bool,
+            midi_learn_input_monitor: bool,
+            midi_learn_disk_monitor: bool,
+            vca_master: Option<String>,
+            aux_sends: Vec<AuxSend>,
+        }
+
+        let (tracks, width) = {
             let state = self.state.blocking_read();
+            let hovered_resize_track = state.hovered_track_resize_handle.as_deref();
+            let tracks = state
+                .tracks
+                .iter()
+                .map(|track| TrackViewData {
+                    name: track.name.clone(),
+                    height: track.height,
+                    layout: track.lane_layout(),
+                    selected: state.selected.contains(track.name.as_str()),
+                    resize_hovered: hovered_resize_track == Some(track.name.as_str()),
+                    armed: track.armed,
+                    frozen: track.frozen,
+                    muted: track.muted,
+                    soloed: track.soloed,
+                    input_monitor: track.input_monitor,
+                    disk_monitor: track.disk_monitor,
+                    audio_ins: track.audio.ins,
+                    audio_outs: track.audio.outs,
+                    midi_ins: track.midi.ins,
+                    midi_outs: track.midi.outs,
+                    balance: track.balance,
+                    automation_mode: track.automation_mode.to_string(),
+                    visible_automation_lanes: track
+                        .automation_lanes
+                        .iter()
+                        .filter(|lane| lane.visible)
+                        .map(|lane| VisibleAutomationLane {
+                            target: lane.target,
+                            points_len: lane.points.len(),
+                        })
+                        .collect(),
+                    midi_learn_vol: track.midi_learn_volume.is_some(),
+                    midi_learn_bal: track.midi_learn_balance.is_some(),
+                    midi_learn_mute: track.midi_learn_mute.is_some(),
+                    midi_learn_solo: track.midi_learn_solo.is_some(),
+                    midi_learn_arm: track.midi_learn_arm.is_some(),
+                    midi_learn_input_monitor: track.midi_learn_input_monitor.is_some(),
+                    midi_learn_disk_monitor: track.midi_learn_disk_monitor.is_some(),
+                    vca_master: track.vca_master.clone(),
+                    aux_sends: track.aux_sends.clone(),
+                })
+                .collect::<Vec<_>>();
             (
-                state.tracks.clone(),
-                state.selected.clone(),
+                tracks,
                 state.tracks_width,
-                state.hovered_track_resize_handle.clone(),
             )
         };
         let track_width_px = match width {
@@ -110,49 +185,44 @@ impl Tracks {
             })
             .collect();
         let result = Column::with_children(tracks.into_iter().enumerate().map(|(index, track)| {
-            let selected = selected.contains(&track.name);
+            let selected = track.selected;
             let height = track.height;
-            let is_resize_hovered = hovered_resize_track.as_deref() == Some(track.name.as_str());
+            let is_resize_hovered = track.resize_hovered;
             let vca_master_label = vca_display_labels[index].clone();
-            let midi_learn_vol = track.midi_learn_volume.clone();
-            let midi_learn_bal = track.midi_learn_balance.clone();
-            let midi_learn_mute = track.midi_learn_mute.clone();
-            let midi_learn_solo = track.midi_learn_solo.clone();
-            let midi_learn_arm = track.midi_learn_arm.clone();
-            let midi_learn_input_monitor = track.midi_learn_input_monitor.clone();
-            let midi_learn_disk_monitor = track.midi_learn_disk_monitor.clone();
+            let midi_learn_vol = track.midi_learn_vol;
+            let midi_learn_bal = track.midi_learn_bal;
+            let midi_learn_mute = track.midi_learn_mute;
+            let midi_learn_solo = track.midi_learn_solo;
+            let midi_learn_arm = track.midi_learn_arm;
+            let midi_learn_input_monitor = track.midi_learn_input_monitor;
+            let midi_learn_disk_monitor = track.midi_learn_disk_monitor;
             let aux_sends = track.aux_sends.clone();
             let vca_candidates: Vec<String> = track_names
                 .iter()
                 .filter(|candidate| **candidate != track.name)
                 .cloned()
                 .collect();
-            let layout = track.lane_layout();
+            let layout = track.layout;
             let lane_h = layout.lane_height.max(12.0);
-            let has_visible_automation = track.automation_lanes.iter().any(|lane| lane.visible);
+            let has_visible_automation = !track.visible_automation_lanes.is_empty();
             let max_name_chars = (((track_width_px - 98.0) / 7.0).floor() as i32).clamp(10, 64);
             let learn_count = [
-                midi_learn_vol.as_ref(),
-                midi_learn_bal.as_ref(),
-                midi_learn_mute.as_ref(),
-                midi_learn_solo.as_ref(),
-                midi_learn_arm.as_ref(),
-                midi_learn_input_monitor.as_ref(),
-                midi_learn_disk_monitor.as_ref(),
+                midi_learn_vol,
+                midi_learn_bal,
+                midi_learn_mute,
+                midi_learn_solo,
+                midi_learn_arm,
+                midi_learn_input_monitor,
+                midi_learn_disk_monitor,
             ]
             .iter()
-            .filter(|binding| binding.is_some())
+            .filter(|bound| **bound)
             .count();
             let resize_handle_height = 6.0;
             let outer_spacing = 6.0;
             let inner_vertical_padding = 8.0;
             let automation_height = if has_visible_automation {
-                track
-                    .automation_lanes
-                    .iter()
-                    .filter(|lane| lane.visible)
-                    .count() as f32
-                    * (lane_h + 4.0)
+                track.visible_automation_lanes.len() as f32 * (lane_h + 4.0)
             } else {
                 0.0
             };
@@ -255,14 +325,14 @@ impl Tracks {
             .align_y(Alignment::Center);
 
             let mut lane_rows: Column<'_, Message> = column![];
-            for lane in track.automation_lanes.iter().filter(|lane| lane.visible) {
+            for lane in &track.visible_automation_lanes {
                 lane_rows = lane_rows.push(
                     container(
                         row![
                             Self::info_badge("AUTO".to_string(), false),
                             text(format!("{}", lane.target)).size(11),
                             Space::new().width(Length::Fill),
-                            text(format!("{} pts", lane.points.len())).size(10),
+                            text(format!("{} pts", lane.points_len)).size(10),
                         ]
                         .align_y(Alignment::Center)
                         .spacing(6),
@@ -285,9 +355,9 @@ impl Tracks {
                 );
             }
 
-            let audio_io = format!("A {}/{}", track.audio.ins, track.audio.outs);
-            let midi_io = format!("M {}/{}", track.midi.ins, track.midi.outs);
-            let mode_label = format!("{}", track.automation_mode);
+            let audio_io = format!("A {}/{}", track.audio_ins, track.audio_outs);
+            let midi_io = format!("M {}/{}", track.midi_ins, track.midi_outs);
+            let mode_label = track.automation_mode.clone();
             let balance_label = Self::format_balance(track.balance);
             let automation_hint = if has_visible_automation { "AUTO" } else { "" };
 
@@ -369,16 +439,16 @@ impl Tracks {
                 let track_name_for_menu = track.name.clone();
                 let track_is_frozen = track.frozen;
                 let track_has_visible_automation = has_visible_automation;
-                let track_automation_mode = track.automation_mode;
+                let track_automation_mode = track.automation_mode.clone();
                 let track_vca_master = track.vca_master.clone();
                 let track_vca_candidates = vca_candidates.clone();
-                let track_midi_learn_vol = track.midi_learn_volume.clone();
-                let track_midi_learn_bal = track.midi_learn_balance.clone();
-                let track_midi_learn_mute = track.midi_learn_mute.clone();
-                let track_midi_learn_solo = track.midi_learn_solo.clone();
-                let track_midi_learn_arm = track.midi_learn_arm.clone();
-                let track_midi_learn_input_monitor = track.midi_learn_input_monitor.clone();
-                let track_midi_learn_disk_monitor = track.midi_learn_disk_monitor.clone();
+                let track_midi_learn_vol = track.midi_learn_vol;
+                let track_midi_learn_bal = track.midi_learn_bal;
+                let track_midi_learn_mute = track.midi_learn_mute;
+                let track_midi_learn_solo = track.midi_learn_solo;
+                let track_midi_learn_arm = track.midi_learn_arm;
+                let track_midi_learn_input_monitor = track.midi_learn_input_monitor;
+                let track_midi_learn_disk_monitor = track.midi_learn_disk_monitor;
                 let vca_strip_width = 12.0;
                 let vca_strip = if let Some(master) = vca_master_label.as_ref() {
                     let prev_same = index > 0
@@ -636,7 +706,7 @@ impl Tracks {
                             target: TrackMidiLearnTarget::DiskMonitor,
                         },
                     ));
-                    if track_midi_learn_vol.is_some() {
+                    if track_midi_learn_vol {
                         menu = menu.push(button("Clear MIDI Learn Volume").on_press(
                             Message::TrackMidiLearnClear {
                                 track_name: track_name_for_menu.clone(),
@@ -644,7 +714,7 @@ impl Tracks {
                             },
                         ));
                     }
-                    if track_midi_learn_bal.is_some() {
+                    if track_midi_learn_bal {
                         menu = menu.push(button("Clear MIDI Learn Balance").on_press(
                             Message::TrackMidiLearnClear {
                                 track_name: track_name_for_menu.clone(),
@@ -652,7 +722,7 @@ impl Tracks {
                             },
                         ));
                     }
-                    if track_midi_learn_mute.is_some() {
+                    if track_midi_learn_mute {
                         menu = menu.push(button("Clear MIDI Learn Mute").on_press(
                             Message::TrackMidiLearnClear {
                                 track_name: track_name_for_menu.clone(),
@@ -660,7 +730,7 @@ impl Tracks {
                             },
                         ));
                     }
-                    if track_midi_learn_solo.is_some() {
+                    if track_midi_learn_solo {
                         menu = menu.push(button("Clear MIDI Learn Solo").on_press(
                             Message::TrackMidiLearnClear {
                                 track_name: track_name_for_menu.clone(),
@@ -668,7 +738,7 @@ impl Tracks {
                             },
                         ));
                     }
-                    if track_midi_learn_arm.is_some() {
+                    if track_midi_learn_arm {
                         menu = menu.push(button("Clear MIDI Learn Arm").on_press(
                             Message::TrackMidiLearnClear {
                                 track_name: track_name_for_menu.clone(),
@@ -676,7 +746,7 @@ impl Tracks {
                             },
                         ));
                     }
-                    if track_midi_learn_input_monitor.is_some() {
+                    if track_midi_learn_input_monitor {
                         menu = menu.push(button("Clear MIDI Learn Input Monitor").on_press(
                             Message::TrackMidiLearnClear {
                                 track_name: track_name_for_menu.clone(),
@@ -684,7 +754,7 @@ impl Tracks {
                             },
                         ));
                     }
-                    if track_midi_learn_disk_monitor.is_some() {
+                    if track_midi_learn_disk_monitor {
                         menu = menu.push(button("Clear MIDI Learn Disk Monitor").on_press(
                             Message::TrackMidiLearnClear {
                                 track_name: track_name_for_menu.clone(),

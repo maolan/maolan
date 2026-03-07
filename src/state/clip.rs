@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 pub type PeakPair = [f32; 2];
-pub type ClipPeaks = Vec<Vec<PeakPair>>;
+pub type ClipPeaksData = Vec<Vec<PeakPair>>;
+pub type ClipPeaks = Arc<ClipPeaksData>;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct AudioClip {

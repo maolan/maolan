@@ -797,7 +797,7 @@ impl Maolan {
         }
 
         if per_channel.iter().all(|ch| ch.is_empty()) {
-            return Ok(vec![]);
+            return Ok(Arc::new(Vec::new()));
         }
 
         // High-resolution, but bounded to avoid huge startup stalls and massive peak files.
@@ -828,7 +828,7 @@ impl Maolan {
                 }
             }
         }
-        Ok(peaks)
+        Ok(Arc::new(peaks))
     }
 
     fn read_clip_peaks_file(path: &Path) -> std::io::Result<ClipPeaks> {
@@ -836,7 +836,7 @@ impl Maolan {
         let json: Value = serde_json::from_reader(BufReader::new(file))?;
         let peaks_val = json.get("peaks").cloned().unwrap_or(Value::Null);
         let Some(root) = peaks_val.as_array() else {
-            return Ok(vec![]);
+            return Ok(Arc::new(Vec::new()));
         };
 
         if root.first().is_some_and(Value::is_number) {
@@ -848,7 +848,11 @@ impl Maolan {
                     [-a, a]
                 })
                 .collect::<Vec<_>>();
-            return Ok(if mono.is_empty() { vec![] } else { vec![mono] });
+            return Ok(Arc::new(if mono.is_empty() {
+                Vec::new()
+            } else {
+                vec![mono]
+            }));
         }
 
         let first = root.first();
@@ -865,10 +869,14 @@ impl Maolan {
                     Some([min.min(max).clamp(-1.0, 1.0), min.max(max).clamp(-1.0, 1.0)])
                 })
                 .collect::<Vec<_>>();
-            return Ok(if mono.is_empty() { vec![] } else { vec![mono] });
+            return Ok(Arc::new(if mono.is_empty() {
+                Vec::new()
+            } else {
+                vec![mono]
+            }));
         }
 
-        let mut per_channel: ClipPeaks = Vec::with_capacity(root.len());
+        let mut per_channel: Vec<Vec<[f32; 2]>> = Vec::with_capacity(root.len());
         for channel in root {
             let Some(arr) = channel.as_array() else {
                 continue;
@@ -894,7 +902,7 @@ impl Maolan {
             }
             per_channel.push(ch);
         }
-        Ok(per_channel)
+        Ok(Arc::new(per_channel))
     }
 
     fn stream_peak_file_to_queue(

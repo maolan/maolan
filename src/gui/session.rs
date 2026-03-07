@@ -560,7 +560,7 @@ impl Maolan {
                                 "version": 1,
                                 "track": track_name,
                                 "clip": clip_name,
-                                "peaks": peaks,
+                                "peaks": peaks.as_ref(),
                             });
                             let peak_file = File::create(&abs)?;
                             serde_json::to_writer_pretty(BufWriter::new(peak_file), &peak_json)?;

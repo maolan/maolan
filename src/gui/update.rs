@@ -12,7 +12,7 @@ use crate::{
     },
     state::{
         ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, TempoPoint,
-        TimeSignaturePoint, Track, TrackAutomationPoint, View,
+        TimeSignaturePoint, Track, TrackAutomationLane, TrackAutomationPoint, View,
     },
     ui_timing::DOUBLE_CLICK,
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
@@ -68,6 +68,14 @@ struct MidiMappingsFile {
 }
 
 const AUTOSAVE_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(60);
+
+#[derive(Clone)]
+struct AutomationTrackView {
+    name: String,
+    automation_mode: TrackAutomationMode,
+    automation_lanes: Vec<TrackAutomationLane>,
+    frozen: bool,
+}
 
 impl Maolan {
     fn autosave_snapshot_root(&self) -> Option<std::path::PathBuf> {
@@ -1245,7 +1253,11 @@ impl Maolan {
         None
     }
 
-    fn collect_track_automation_actions(&mut self, sample: usize, tracks: &[Track]) -> Vec<Action> {
+    fn collect_track_automation_actions(
+        &mut self,
+        sample: usize,
+        tracks: &[AutomationTrackView],
+    ) -> Vec<Action> {
         let now = Instant::now();
         for (track_name, active_keys) in self.touch_active_keys.iter_mut() {
             let values = self.touch_automation_overrides.get(track_name);
@@ -2679,7 +2691,19 @@ impl Maolan {
                     }
                 }
                 if self.playing && !self.paused {
-                    let tracks = self.state.blocking_read().tracks.clone();
+                    let tracks = {
+                        let state = self.state.blocking_read();
+                        state
+                            .tracks
+                            .iter()
+                            .map(|track| AutomationTrackView {
+                                name: track.name.clone(),
+                                automation_mode: track.automation_mode,
+                                automation_lanes: track.automation_lanes.clone(),
+                                frozen: track.frozen,
+                            })
+                            .collect::<Vec<_>>()
+                    };
                     let actions = self.collect_track_automation_actions(now_sample, &tracks);
                     if !actions.is_empty() {
                         tasks.extend(actions.into_iter().map(|a| self.send(a)));
@@ -2942,11 +2966,11 @@ impl Maolan {
                 if self.selected_tempo_points.is_empty() {
                     return Task::none();
                 }
-                let selected = self.selected_tempo_points.clone();
+                let selected: Vec<usize> = self.selected_tempo_points.iter().copied().collect();
                 let mut state = self.state.blocking_write();
                 state
                     .tempo_points
-                    .retain(|p| p.sample == 0 || !selected.contains(&p.sample));
+                    .retain(|p| p.sample == 0 || selected.binary_search(&p.sample).is_err());
                 drop(state);
                 self.selected_tempo_points.clear();
                 self.timing_selection_lane = None;
@@ -3131,11 +3155,15 @@ impl Maolan {
                 if self.selected_time_signature_points.is_empty() {
                     return Task::none();
                 }
-                let selected = self.selected_time_signature_points.clone();
+                let selected: Vec<usize> = self
+                    .selected_time_signature_points
+                    .iter()
+                    .copied()
+                    .collect();
                 let mut state = self.state.blocking_write();
                 state
                     .time_signature_points
-                    .retain(|p| p.sample == 0 || !selected.contains(&p.sample));
+                    .retain(|p| p.sample == 0 || selected.binary_search(&p.sample).is_err());
                 drop(state);
                 self.selected_time_signature_points.clear();
                 self.timing_selection_lane = None;
@@ -3420,24 +3448,21 @@ impl Maolan {
                     {
                         return Task::none();
                     }
-                    let tracks = self.state.blocking_read().tracks.clone();
-                    for track in tracks.iter().filter(|t| t.armed) {
+                    let peaks = &mut self.recording_preview_peaks;
+                    let state = self.state.blocking_read();
+                    for track in state.tracks.iter().filter(|track| track.armed) {
                         let channels = track.audio.outs.max(1);
-                        let entry = self
-                            .recording_preview_peaks
+                        let entry = peaks
                             .entry(track.name.clone())
-                            .or_insert_with(|| vec![vec![]; channels]);
+                            .or_insert_with(|| std::sync::Arc::new(vec![vec![]; channels]));
                         if entry.len() != channels {
-                            entry.resize_with(channels, Vec::new);
+                            *entry = std::sync::Arc::new(vec![vec![]; channels]);
                         }
+                        let entry_mut = std::sync::Arc::make_mut(entry);
                         for (channel_idx, channel_entry) in
-                            entry.iter_mut().enumerate().take(channels)
+                            entry_mut.iter_mut().enumerate().take(channels)
                         {
-                            let db = track
-                                .meter_out_db
-                                .get(channel_idx)
-                                .copied()
-                                .unwrap_or(-90.0);
+                            let db = track.meter_out_db.get(channel_idx).copied().unwrap_or(-90.0);
                             let amp = if db <= -90.0 {
                                 0.0
                             } else {
@@ -3861,20 +3886,19 @@ impl Maolan {
                     return Task::none();
                 }
                 let mut state = self.state.blocking_write();
-                let selected_notes = state.piano_selected_notes.clone();
+                let selected_contains = state.piano_selected_notes.contains(&note_index);
+                let selected_len = state.piano_selected_notes.len();
+                let mut target_indices: Vec<usize> = if selected_contains && selected_len > 1 {
+                    state.piano_selected_notes.iter().copied().collect()
+                } else {
+                    vec![note_index]
+                };
                 let Some(piano) = state.piano.as_mut() else {
                     return Task::none();
                 };
                 if note_index >= piano.notes.len() {
                     return Task::none();
                 }
-
-                let mut target_indices: Vec<usize> =
-                    if selected_notes.contains(&note_index) && selected_notes.len() > 1 {
-                        selected_notes.iter().copied().collect()
-                    } else {
-                        vec![note_index]
-                    };
                 target_indices.sort_unstable();
                 target_indices.dedup();
 
@@ -4184,7 +4208,7 @@ impl Maolan {
                 let Some(piano) = state.piano.as_mut() else {
                     return Task::none();
                 };
-                let old_sysexes = piano.sysexes.clone();
+                let old_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 let sample = selected_hint
                     .and_then(|idx| piano.sysexes.get(idx).map(|s| s.sample))
                     .unwrap_or(0);
@@ -4195,7 +4219,7 @@ impl Maolan {
                 piano.sysexes.sort_by_key(|s| s.sample);
                 let new_index = piano.sysexes.len().saturating_sub(1);
                 let track_name = piano.track_idx.clone();
-                let new_sysexes = piano.sysexes.clone();
+                let new_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 let new_hex = Self::format_sysex_hex(&piano.sysexes[new_index].data);
                 state.piano_selected_sysex = Some(new_index);
                 state.piano_sysex_hex_input = new_hex;
@@ -4203,8 +4227,8 @@ impl Maolan {
                 return self.send(Action::SetMidiSysExEvents {
                     track_name,
                     clip_index: 0,
-                    new_sysex_events: Self::sysex_to_engine(&new_sysexes),
-                    old_sysex_events: Self::sysex_to_engine(&old_sysexes),
+                    new_sysex_events,
+                    old_sysex_events,
                 });
             }
             Message::PianoSysExUpdate => {
@@ -4227,18 +4251,18 @@ impl Maolan {
                 if selected_idx >= piano.sysexes.len() {
                     return Task::none();
                 }
-                let old_sysexes = piano.sysexes.clone();
+                let old_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 piano.sysexes[selected_idx].data = payload;
                 let new_hex = Self::format_sysex_hex(&piano.sysexes[selected_idx].data);
                 let track_name = piano.track_idx.clone();
-                let new_sysexes = piano.sysexes.clone();
+                let new_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 state.piano_sysex_hex_input = new_hex;
                 drop(state);
                 return self.send(Action::SetMidiSysExEvents {
                     track_name,
                     clip_index: 0,
-                    new_sysex_events: Self::sysex_to_engine(&new_sysexes),
-                    old_sysex_events: Self::sysex_to_engine(&old_sysexes),
+                    new_sysex_events,
+                    old_sysex_events,
                 });
             }
             Message::PianoSysExDelete => {
@@ -4253,7 +4277,7 @@ impl Maolan {
                 if selected_idx >= piano.sysexes.len() {
                     return Task::none();
                 }
-                let old_sysexes = piano.sysexes.clone();
+                let old_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 piano.sysexes.remove(selected_idx);
                 let (new_sel, new_hex) = if piano.sysexes.is_empty() {
                     (None, String::new())
@@ -4262,15 +4286,15 @@ impl Maolan {
                     (Some(idx), Self::format_sysex_hex(&piano.sysexes[idx].data))
                 };
                 let track_name = piano.track_idx.clone();
-                let new_sysexes = piano.sysexes.clone();
+                let new_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 state.piano_selected_sysex = new_sel;
                 state.piano_sysex_hex_input = new_hex;
                 drop(state);
                 return self.send(Action::SetMidiSysExEvents {
                     track_name,
                     clip_index: 0,
-                    new_sysex_events: Self::sysex_to_engine(&new_sysexes),
-                    old_sysex_events: Self::sysex_to_engine(&old_sysexes),
+                    new_sysex_events,
+                    old_sysex_events,
                 });
             }
             Message::PianoSysExMove { index, sample } => {
@@ -4281,7 +4305,7 @@ impl Maolan {
                 if index >= piano.sysexes.len() {
                     return Task::none();
                 }
-                let old_sysexes = piano.sysexes.clone();
+                let old_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 let moved_data = piano.sysexes[index].data.clone();
                 let new_sample = sample.min(piano.clip_length_samples.saturating_sub(1));
                 piano.sysexes[index].sample = new_sample;
@@ -4292,15 +4316,15 @@ impl Maolan {
                     .map(|ev| Self::format_sysex_hex(&ev.data))
                     .unwrap_or_default();
                 let track_name = piano.track_idx.clone();
-                let new_sysexes = piano.sysexes.clone();
+                let new_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 state.piano_selected_sysex = new_sel;
                 state.piano_sysex_hex_input = new_hex;
                 drop(state);
                 return self.send(Action::SetMidiSysExEvents {
                     track_name,
                     clip_index: 0,
-                    new_sysex_events: Self::sysex_to_engine(&new_sysexes),
-                    old_sysex_events: Self::sysex_to_engine(&old_sysexes),
+                    new_sysex_events,
+                    old_sysex_events,
                 });
             }
             Message::PianoSelectRectStart { position } => {
@@ -4316,8 +4340,8 @@ impl Maolan {
                     state.piano_selecting_rect = Some((start, position));
 
                     // Update selection based on rectangle
-                    let (notes, zoom_x, zoom_y) = if let Some(piano) = state.piano.as_ref() {
-                        (piano.notes.clone(), state.piano_zoom_x, state.piano_zoom_y)
+                    let (zoom_x, zoom_y) = if state.piano.is_some() {
+                        (state.piano_zoom_x, state.piano_zoom_y)
                     } else {
                         return Task::none();
                     };
@@ -4342,23 +4366,24 @@ impl Maolan {
                     let min_y = start.y.min(position.y);
                     let max_y = start.y.max(position.y);
 
-                    state.piano_selected_notes.clear();
-                    for (idx, note) in notes.iter().enumerate() {
-                        if note.pitch > 119 {
-                            // PITCH_MAX
-                            continue;
-                        }
-                        let y_idx = (119 - note.pitch) as usize;
-                        let y = y_idx as f32 * row_h + 1.0;
-                        let x = note.start_sample as f32 * pps;
-                        let w = (note.length_samples as f32 * pps).max(2.0);
-                        let h = (row_h - 2.0).max(2.0);
+                    let mut selected = std::collections::HashSet::new();
+                    if let Some(piano) = state.piano.as_ref() {
+                        for (idx, note) in piano.notes.iter().enumerate() {
+                            if note.pitch > 119 {
+                                continue;
+                            }
+                            let y_idx = (119 - note.pitch) as usize;
+                            let y = y_idx as f32 * row_h + 1.0;
+                            let x = note.start_sample as f32 * pps;
+                            let w = (note.length_samples as f32 * pps).max(2.0);
+                            let h = (row_h - 2.0).max(2.0);
 
-                        // Check if note intersects with selection rectangle
-                        if x + w >= min_x && x <= max_x && y + h >= min_y && y <= max_y {
-                            state.piano_selected_notes.insert(idx);
+                            if x + w >= min_x && x <= max_x && y + h >= min_y && y <= max_y {
+                                selected.insert(idx);
+                            }
                         }
                     }
+                    state.piano_selected_notes = selected;
                 }
             }
             Message::PianoSelectRectEnd => {
@@ -4593,11 +4618,10 @@ impl Maolan {
                 if selected.is_empty() {
                     return Task::none();
                 }
-                let notes = piano.notes.clone();
-                drop(state);
-                return self.selected_piano_notes_edit(move |idx, note| {
-                    let mut out = note.clone();
-                    let next_start = notes
+                let mut next_start_by_idx = vec![None; piano.notes.len()];
+                for (idx, note) in piano.notes.iter().enumerate() {
+                    let next_start = piano
+                        .notes
                         .iter()
                         .enumerate()
                         .filter(|(i, n)| {
@@ -4608,6 +4632,12 @@ impl Maolan {
                         })
                         .map(|(_, n)| n.start_sample)
                         .min();
+                    next_start_by_idx[idx] = next_start;
+                }
+                drop(state);
+                return self.selected_piano_notes_edit(move |idx, note| {
+                    let mut out = note.clone();
+                    let next_start = next_start_by_idx.get(idx).and_then(|next| *next);
                     if let Some(next) = next_start {
                         out.length_samples = next.saturating_sub(note.start_sample).max(1);
                     }
@@ -5152,7 +5182,7 @@ impl Maolan {
                         fade_out_samples,
                         warp_markers,
                     } => {
-                        let mut audio_peaks = vec![];
+                        let mut audio_peaks = crate::state::ClipPeaks::default();
                         let mut max_length_samples = offset.saturating_add(*length);
                         let mut wav_path_for_rebuild: Option<std::path::PathBuf> = None;
                         let mut peaks_path_for_load: Option<std::path::PathBuf> = None;
@@ -5390,10 +5420,12 @@ impl Maolan {
                         if let Some(piano) = state.piano.as_mut()
                             && piano.track_idx == *track_name
                         {
-                            let mut sorted = controllers.clone();
-                            sorted.sort_unstable_by_key(|(idx, _)| *idx);
-                            for (idx, ctrl) in sorted {
-                                let insert_at = idx.min(piano.controllers.len());
+                            let mut sorted_indices: Vec<usize> =
+                                (0..controllers.len()).collect();
+                            sorted_indices.sort_unstable_by_key(|&i| controllers[i].0);
+                            for i in sorted_indices {
+                                let (idx, ctrl) = &controllers[i];
+                                let insert_at = (*idx).min(piano.controllers.len());
                                 piano.controllers.insert(
                                     insert_at,
                                     crate::state::PianoControllerPoint {
@@ -5464,10 +5496,11 @@ impl Maolan {
                         if let Some(piano) = state.piano.as_mut()
                             && piano.track_idx == *track_name
                         {
-                            let mut sorted_notes = notes.clone();
-                            sorted_notes.sort_unstable_by_key(|(idx, _)| *idx);
-                            for (idx, note) in sorted_notes {
-                                let insert_at = idx.min(piano.notes.len());
+                            let mut sorted_indices: Vec<usize> = (0..notes.len()).collect();
+                            sorted_indices.sort_unstable_by_key(|&i| notes[i].0);
+                            for i in sorted_indices {
+                                let (idx, note) = &notes[i];
+                                let insert_at = (*idx).min(piano.notes.len());
                                 piano.notes.insert(
                                     insert_at,
                                     crate::state::PianoNote {
@@ -10451,14 +10484,18 @@ impl Maolan {
                                 .unwrap_or(0)
                                 != update.target_bins
                         {
-                            clip.peaks = vec![vec![[0.0_f32, 0.0_f32]; update.target_bins]; update.channels];
+                            clip.peaks = std::sync::Arc::new(vec![
+                                vec![[0.0_f32, 0.0_f32]; update.target_bins];
+                                update.channels
+                            ]);
                         }
                         let chunk_bins = update.peaks.first().map(Vec::len).unwrap_or(0);
                         let end = (update.bin_start + chunk_bins).min(update.target_bins);
                         if end > update.bin_start {
-                            for channel_idx in 0..update.channels.min(clip.peaks.len()) {
+                            let peaks_mut = std::sync::Arc::make_mut(&mut clip.peaks);
+                            for channel_idx in 0..update.channels.min(peaks_mut.len()) {
                                 if let Some(src) = update.peaks.get(channel_idx) {
-                                    let dst = &mut clip.peaks[channel_idx][update.bin_start..end];
+                                    let dst = &mut peaks_mut[channel_idx][update.bin_start..end];
                                     let n = dst.len().min(src.len());
                                     dst[..n].copy_from_slice(&src[..n]);
                                 }

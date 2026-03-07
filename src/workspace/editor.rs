@@ -265,7 +265,7 @@ impl WaveformCanvas {
         self.clip_length.hash(&mut hasher);
         self.max_length.hash(&mut hasher);
         self.peaks.len().hash(&mut hasher);
-        for channel in &self.peaks {
+        for channel in self.peaks.iter() {
             channel.len().hash(&mut hasher);
             if let Some(first) = channel.first() {
                 first[0].to_bits().hash(&mut hasher);
@@ -594,11 +594,11 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         );
 
         let point_color = automation_point_color(lane.target);
-        let mut sorted_points = lane.points.clone();
-        sorted_points.sort_unstable_by_key(|p| p.sample);
-        for segment in sorted_points.windows(2) {
-            let left = &segment[0];
-            let right = &segment[1];
+        let mut sorted_indices: Vec<usize> = (0..lane.points.len()).collect();
+        sorted_indices.sort_unstable_by_key(|&idx| lane.points[idx].sample);
+        for pair in sorted_indices.windows(2) {
+            let left = &lane.points[pair[0]];
+            let right = &lane.points[pair[1]];
             let left_x = left.sample as f32 * pixels_per_sample;
             let right_x = right.sample as f32 * pixels_per_sample;
             let left_y =

@@ -1507,21 +1507,20 @@ impl Program<Message> for ControllerRollInteraction {
             PianoControllerLane::Velocity => None,
             PianoControllerLane::SysEx => None,
         };
-        let controllers = roll.controllers.clone();
-        let sysexes = roll.sysexes.clone();
-        let notes = roll.notes.clone();
+        let controllers = &roll.controllers;
+        let sysexes = &roll.sysexes;
+        let notes = &roll.notes;
         let clip_len = roll.clip_length_samples;
         let zoom_x = app_state.piano_zoom_x;
         let pps = (self.pixels_per_sample * zoom_x).max(0.0001);
         let row_h =
             (bounds.height / Piano::controller_lane_line_count(lane).max(1) as f32).max(1.0);
-        drop(app_state);
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let position = cursor.position_in(bounds)?;
                 if matches!(lane, PianoControllerLane::SysEx) {
-                    if let Some(index) = self.sysex_at_position(position, pps, &sysexes) {
+                    if let Some(index) = self.sysex_at_position(position, pps, sysexes) {
                         let now = Instant::now();
                         let double_click = state
                             .last_sysex_click
@@ -1553,7 +1552,7 @@ impl Program<Message> for ControllerRollInteraction {
                     state.last_sysex_click = None;
                 }
                 let target = if matches!(lane, PianoControllerLane::Velocity) {
-                    self.velocity_note_at_position(position, row_h, pps, &notes)
+                    self.velocity_note_at_position(position, row_h, pps, notes)
                         .and_then(|idx| notes.get(idx).map(|n| (idx, n.velocity)))
                         .map(|(idx, velocity)| (ControllerAdjustTarget::Velocity(idx), velocity))
                 } else {
@@ -1564,7 +1563,7 @@ impl Program<Message> for ControllerRollInteraction {
                             pane_h: bounds.height,
                             pps,
                             selected_row,
-                            controllers: &controllers,
+                            controllers,
                         },
                     )
                     .and_then(|idx| controllers.get(idx).map(|c| (idx, c.value)))
@@ -1593,7 +1592,7 @@ impl Program<Message> for ControllerRollInteraction {
                         pane_h: bounds.height,
                         pps,
                         selected_row,
-                        controllers: &controllers,
+                        controllers,
                     },
                 )?;
                 let value_delta = PianoRollInteraction::velocity_delta_from_scroll(delta);
@@ -2239,13 +2238,12 @@ impl Program<Message> for PianoRollInteraction {
             * zoom_y)
             .max(1.0);
         let pps = (self.pixels_per_sample * zoom_x).max(0.0001);
-        let notes = roll.notes.clone();
-        drop(app_state);
+        let notes = &roll.notes;
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(position) = cursor.position_in(bounds) {
-                    if let Some(note_idx) = self.note_at_position(position, row_h, pps, &notes) {
+                    if let Some(note_idx) = self.note_at_position(position, row_h, pps, notes) {
                         let note = notes.get(note_idx)?;
                         let note_x = note.start_sample as f32 * pps;
                         let note_w = (note.length_samples as f32 * pps).max(2.0);
@@ -2335,7 +2333,7 @@ impl Program<Message> for PianoRollInteraction {
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 if let Some(position) = cursor.position_in(bounds)
-                    && let Some(note_idx) = self.note_at_position(position, row_h, pps, &notes)
+                    && let Some(note_idx) = self.note_at_position(position, row_h, pps, notes)
                 {
                     let velocity_delta = Self::velocity_delta_from_scroll(delta);
                     if velocity_delta != 0 {

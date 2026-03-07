@@ -299,7 +299,7 @@ impl canvas::Program<Message> for TempoCanvas {
                         let sample = snap_sample(sample);
                         let sample_selected = self.selected_tempo_points.contains(&sample);
                         let mut originals = if sample_selected && !self.shift_pressed {
-                            self.selected_tempo_points.clone()
+                            self.selected_tempo_points.to_vec()
                         } else {
                             vec![sample]
                         };
@@ -328,7 +328,7 @@ impl canvas::Program<Message> for TempoCanvas {
                         let sample = snap_sample(sample);
                         let sample_selected = self.selected_time_signature_points.contains(&sample);
                         let mut originals = if sample_selected && !self.shift_pressed {
-                            self.selected_time_signature_points.clone()
+                            self.selected_time_signature_points.to_vec()
                         } else {
                             vec![sample]
                         };
