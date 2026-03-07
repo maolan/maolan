@@ -12,6 +12,7 @@ use crate::{
 };
 use iced::{
     Color, Point, Rectangle, Renderer, Theme,
+    advanced::graphics::gradient,
     alignment::{Horizontal, Vertical},
     event::Event,
     mouse,
@@ -905,6 +906,85 @@ impl canvas::Program<Message> for Graph {
         let midi_hw_box_gap = 6.0;
         let cursor_position = cursor.position_in(bounds);
         let rgb8 = |r: u8, g: u8, b: u8| Color::from_rgb8(r, g, b);
+        let draw_gradient_box = |frame: &mut Frame, pos: Point, size: iced::Size, base: Color| {
+            frame.fill(&Path::rectangle(pos, size), base);
+
+            // Subtle faux gradient: soft top highlight + bottom shadow.
+            let top_h = (size.height * 0.45).max(4.0).min(size.height);
+            let bottom_h = (size.height * 0.28).max(3.0).min(size.height);
+            frame.fill(
+                &Path::rectangle(pos, iced::Size::new(size.width, top_h)),
+                Color::from_rgba(1.0, 1.0, 1.0, 0.05),
+            );
+            frame.fill(
+                &Path::rectangle(
+                    Point::new(pos.x, pos.y + size.height - bottom_h),
+                    iced::Size::new(size.width, bottom_h),
+                ),
+                Color::from_rgba(0.0, 0.0, 0.0, 0.08),
+            );
+        };
+        let draw_true_gradient_box = |frame: &mut Frame, pos: Point, size: iced::Size, base: Color| {
+            let path = Path::rectangle(pos, size);
+            let brighten = |c: Color, amount: f32| Color {
+                r: (c.r + amount).min(1.0),
+                g: (c.g + amount).min(1.0),
+                b: (c.b + amount).min(1.0),
+                a: c.a,
+            };
+            let darken = |c: Color, amount: f32| Color {
+                r: (c.r - amount).max(0.0),
+                g: (c.g - amount).max(0.0),
+                b: (c.b - amount).max(0.0),
+                a: c.a,
+            };
+            let grad = gradient::Linear::new(
+                Point::new(pos.x + size.width * 0.5, pos.y),
+                Point::new(pos.x + size.width * 0.5, pos.y + size.height),
+            )
+                .add_stop(0.0, brighten(base, 0.07))
+                .add_stop(0.55, base)
+            .add_stop(1.0, darken(base, 0.08));
+            frame.fill(&path, grad);
+        };
+        let draw_grid = |frame: &mut Frame, width: f32, height: f32| {
+            let minor = 24.0;
+            let major_every = 4usize;
+            let minor_color = Color::from_rgba(0.78, 0.86, 1.0, 0.05);
+            let major_color = Color::from_rgba(0.78, 0.86, 1.0, 0.10);
+
+            let mut i = 0usize;
+            let mut x = 0.0;
+            while x <= width {
+                let c = if i.is_multiple_of(major_every) {
+                    major_color
+                } else {
+                    minor_color
+                };
+                frame.stroke(
+                    &Path::line(Point::new(x, 0.0), Point::new(x, height)),
+                    canvas::Stroke::default().with_color(c).with_width(1.0),
+                );
+                i += 1;
+                x += minor;
+            }
+
+            let mut j = 0usize;
+            let mut y = 0.0;
+            while y <= height {
+                let c = if j.is_multiple_of(major_every) {
+                    major_color
+                } else {
+                    minor_color
+                };
+                frame.stroke(
+                    &Path::line(Point::new(0.0, y), Point::new(width, y)),
+                    canvas::Stroke::default().with_color(c).with_width(1.0),
+                );
+                j += 1;
+                y += minor;
+            }
+        };
         let bg = rgb8(23, 31, 48);
         let edge_panel = rgb8(27, 35, 54);
         let edge_panel_border = rgb8(66, 78, 108);
@@ -912,8 +992,9 @@ impl canvas::Program<Message> for Graph {
         let node_border = rgb8(78, 93, 130);
         let node_hover = rgb8(106, 122, 158);
         let node_selected = rgb8(123, 173, 240);
-        let midi_box_fill = rgb8(30, 38, 58);
-        let midi_box_border = rgb8(79, 97, 131);
+        let midi_box_fill = rgb8(28, 24, 14);
+        let midi_box_selected_fill = rgb8(45, 40, 20);
+        let midi_box_border = Color::from_rgb(0.45, 0.28, 0.12);
         let conn_audio = Color::from_rgb(0.36, 0.66, 0.98);
         let conn_midi = Color::from_rgb(0.98, 0.68, 0.34);
         let conn_selected = Color::from_rgb(0.72, 0.90, 1.0);
@@ -921,6 +1002,7 @@ impl canvas::Program<Message> for Graph {
             &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
             bg,
         );
+        draw_grid(&mut frame, bounds.width, bounds.height);
 
         if let Ok(data) = self.state.try_read() {
             use crate::state::ConnectionViewSelection;
@@ -1251,7 +1333,7 @@ impl canvas::Program<Message> for Graph {
                     iced::Size::new(default_rect.width, default_rect.height),
                 );
                 let fill_color = if is_selected {
-                    rgb8(42, 54, 78)
+                    midi_box_selected_fill
                 } else {
                     midi_box_fill
                 };
@@ -1260,7 +1342,12 @@ impl canvas::Program<Message> for Graph {
                 } else {
                     midi_box_border
                 };
-                frame.fill(&rect, fill_color);
+                draw_gradient_box(
+                    &mut frame,
+                    pos,
+                    iced::Size::new(default_rect.width, default_rect.height),
+                    fill_color,
+                );
                 frame.stroke(
                     &rect,
                     canvas::Stroke::default()
@@ -1328,7 +1415,7 @@ impl canvas::Program<Message> for Graph {
                     iced::Size::new(default_rect.width, default_rect.height),
                 );
                 let fill_color = if is_selected {
-                    rgb8(42, 54, 78)
+                    midi_box_selected_fill
                 } else {
                     midi_box_fill
                 };
@@ -1337,7 +1424,12 @@ impl canvas::Program<Message> for Graph {
                 } else {
                     midi_box_border
                 };
-                frame.fill(&rect, fill_color);
+                draw_gradient_box(
+                    &mut frame,
+                    pos,
+                    iced::Size::new(default_rect.width, default_rect.height),
+                    fill_color,
+                );
                 frame.stroke(
                     &rect,
                     canvas::Stroke::default()
@@ -1381,7 +1473,7 @@ impl canvas::Program<Message> for Graph {
                 let pos = track.position;
                 let size = Self::track_box_size(track);
                 let path = Path::rectangle(pos, size);
-                frame.fill(&path, node_fill);
+                draw_true_gradient_box(&mut frame, pos, size, node_fill);
 
                 let is_h = data.hovering == Some(Hovering::Track(track.name.clone()));
                 let is_s = matches!(&data.connection_view_selection, ConnectionViewSelection::Tracks(set) if set.contains(&track.name));

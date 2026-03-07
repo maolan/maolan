@@ -11,6 +11,7 @@ use crate::{
 };
 use iced::{
     Color, Point, Rectangle, Renderer, Theme,
+    advanced::graphics::gradient,
     alignment::{Horizontal, Vertical},
     event::Event,
     mouse,
@@ -662,6 +663,82 @@ impl canvas::Program<Message> for Graph {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let cursor_position = cursor.position_in(bounds);
+        let rgb8 = |r: u8, g: u8, b: u8| Color::from_rgb8(r, g, b);
+        let draw_true_gradient_box = |frame: &mut Frame, pos: Point, size: iced::Size, base: Color| {
+            let path = Path::rectangle(pos, size);
+            let brighten = |c: Color, amount: f32| Color {
+                r: (c.r + amount).min(1.0),
+                g: (c.g + amount).min(1.0),
+                b: (c.b + amount).min(1.0),
+                a: c.a,
+            };
+            let darken = |c: Color, amount: f32| Color {
+                r: (c.r - amount).max(0.0),
+                g: (c.g - amount).max(0.0),
+                b: (c.b - amount).max(0.0),
+                a: c.a,
+            };
+            let grad = gradient::Linear::new(
+                Point::new(pos.x + size.width * 0.5, pos.y),
+                Point::new(pos.x + size.width * 0.5, pos.y + size.height),
+            )
+            .add_stop(0.0, brighten(base, 0.07))
+            .add_stop(0.55, base)
+            .add_stop(1.0, darken(base, 0.08));
+            frame.fill(&path, grad);
+        };
+        let draw_grid = |frame: &mut Frame, width: f32, height: f32| {
+            let minor = 24.0;
+            let major_every = 4usize;
+            let minor_color = Color::from_rgba(0.78, 0.86, 1.0, 0.05);
+            let major_color = Color::from_rgba(0.78, 0.86, 1.0, 0.10);
+
+            let mut i = 0usize;
+            let mut x = 0.0;
+            while x <= width {
+                let c = if i.is_multiple_of(major_every) {
+                    major_color
+                } else {
+                    minor_color
+                };
+                frame.stroke(
+                    &Path::line(Point::new(x, 0.0), Point::new(x, height)),
+                    canvas::Stroke::default().with_color(c).with_width(1.0),
+                );
+                i += 1;
+                x += minor;
+            }
+
+            let mut j = 0usize;
+            let mut y = 0.0;
+            while y <= height {
+                let c = if j.is_multiple_of(major_every) {
+                    major_color
+                } else {
+                    minor_color
+                };
+                frame.stroke(
+                    &Path::line(Point::new(0.0, y), Point::new(width, y)),
+                    canvas::Stroke::default().with_color(c).with_width(1.0),
+                );
+                j += 1;
+                y += minor;
+            }
+        };
+        let bg = rgb8(23, 31, 48);
+        let edge_panel = rgb8(27, 35, 54);
+        let edge_panel_border = rgb8(66, 78, 108);
+        let node_fill = rgb8(36, 45, 68);
+        let node_border = rgb8(78, 93, 130);
+        let node_selected = rgb8(123, 173, 240);
+        let conn_audio = Color::from_rgb(0.36, 0.66, 0.98);
+        let conn_midi = Color::from_rgb(0.98, 0.68, 0.34);
+        let conn_selected = Color::from_rgb(0.72, 0.90, 1.0);
+        frame.fill(
+            &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
+            bg,
+        );
+        draw_grid(&mut frame, bounds.width, bounds.height);
         if let Ok(data) = self.state.try_read() {
             let Some(track_name) = data.plugin_graph_track.as_ref() else {
                 return vec![frame.into_geometry()];
@@ -685,11 +762,11 @@ impl canvas::Program<Message> for Graph {
             let in_rect = Self::track_input_rect(bounds);
             let out_rect = Self::track_output_rect(bounds);
             let left_box = Path::rectangle(in_rect.position(), in_rect.size());
-            frame.fill(&left_box, Color::from_rgb8(30, 45, 30));
+            frame.fill(&left_box, edge_panel);
             frame.stroke(
                 &left_box,
                 canvas::Stroke::default()
-                    .with_color(Color::from_rgb(0.2, 0.85, 0.45))
+                    .with_color(edge_panel_border)
                     .with_width(2.0),
             );
             frame.fill_text(Text {
@@ -702,11 +779,11 @@ impl canvas::Program<Message> for Graph {
             });
 
             let right_box = Path::rectangle(out_rect.position(), out_rect.size());
-            frame.fill(&right_box, Color::from_rgb8(45, 30, 30));
+            frame.fill(&right_box, edge_panel);
             frame.stroke(
                 &right_box,
                 canvas::Stroke::default()
-                    .with_color(Color::from_rgb(0.85, 0.25, 0.25))
+                    .with_color(edge_panel_border)
                     .with_width(2.0),
             );
             frame.fill_text(Text {
@@ -817,16 +894,16 @@ impl canvas::Program<Message> for Graph {
                 let pos = Self::plugin_pos(&data, plugin, idx, bounds);
                 let plugin_h = Self::plugin_height(plugin);
                 let rect = Path::rectangle(pos, iced::Size::new(PLUGIN_W, plugin_h));
-                frame.fill(&rect, Color::from_rgb8(28, 28, 42));
+                draw_true_gradient_box(&mut frame, pos, iced::Size::new(PLUGIN_W, plugin_h), node_fill);
                 let is_selected_plugin =
                     data.plugin_graph_selected_plugin == Some(plugin.instance_id);
                 frame.stroke(
                     &rect,
                     canvas::Stroke::default()
                         .with_color(if is_selected_plugin {
-                            Color::from_rgb(1.0, 1.0, 0.0)
+                            node_selected
                         } else {
-                            Color::from_rgb(0.55, 0.55, 0.85)
+                            node_border
                         })
                         .with_width(if is_selected_plugin { 3.0 } else { 2.0 }),
                 );
@@ -1035,11 +1112,11 @@ impl canvas::Program<Message> for Graph {
                     }),
                     canvas::Stroke::default()
                         .with_color(if is_selected {
-                            Color::from_rgb(1.0, 1.0, 0.0)
+                            conn_selected
                         } else if conn.kind == Kind::MIDI {
-                            midi_port_color()
+                            conn_midi
                         } else {
-                            Color::from_rgb(0.2, 0.5, 1.0)
+                            conn_audio
                         })
                         .with_width(if is_selected {
                             4.0
@@ -1132,16 +1209,7 @@ impl canvas::Program<Message> for Graph {
                         p.bezier_curve_to(c1, c2, end);
                     }),
                     canvas::Stroke::default()
-                        .with_color(if connecting.kind == Kind::Audio {
-                            Color::from_rgba(1.0, 1.0, 1.0, 0.6)
-                        } else {
-                            Color::from_rgba(
-                                midi_port_color().r,
-                                midi_port_color().g,
-                                midi_port_color().b,
-                                0.7,
-                            )
-                        })
+                        .with_color(Color::from_rgba(0.73, 0.84, 1.0, 0.6))
                         .with_width(2.0),
                 );
             }
