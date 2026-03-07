@@ -904,6 +904,23 @@ impl canvas::Program<Message> for Graph {
         let midi_hw_box_h = 24.0;
         let midi_hw_box_gap = 6.0;
         let cursor_position = cursor.position_in(bounds);
+        let rgb8 = |r: u8, g: u8, b: u8| Color::from_rgb8(r, g, b);
+        let bg = rgb8(23, 31, 48);
+        let edge_panel = rgb8(27, 35, 54);
+        let edge_panel_border = rgb8(66, 78, 108);
+        let node_fill = rgb8(36, 45, 68);
+        let node_border = rgb8(78, 93, 130);
+        let node_hover = rgb8(106, 122, 158);
+        let node_selected = rgb8(123, 173, 240);
+        let midi_box_fill = rgb8(30, 38, 58);
+        let midi_box_border = rgb8(79, 97, 131);
+        let conn_audio = Color::from_rgb(0.36, 0.66, 0.98);
+        let conn_midi = Color::from_rgb(0.98, 0.68, 0.34);
+        let conn_selected = Color::from_rgb(0.72, 0.90, 1.0);
+        frame.fill(
+            &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
+            bg,
+        );
 
         if let Ok(data) = self.state.try_read() {
             use crate::state::ConnectionViewSelection;
@@ -997,17 +1014,17 @@ impl canvas::Program<Message> for Graph {
                     let is_hovered = cursor_position
                         .is_some_and(|cursor| is_bezier_hit(start, end, cursor, 20, 10.0));
                     let (color, width) = if is_selected {
-                        (Color::from_rgb(1.0, 1.0, 0.0), 4.0)
+                        (conn_selected, 4.0)
                     } else if is_hovered {
                         let c = match conn.kind {
-                            Kind::Audio => Color::from_rgb(0.2, 0.5, 1.0),
-                            Kind::MIDI => Color::from_rgb(1.0, 0.6, 0.0),
+                            Kind::Audio => conn_audio,
+                            Kind::MIDI => conn_midi,
                         };
                         (c, 3.0)
                     } else {
                         let c = match conn.kind {
-                            Kind::Audio => Color::from_rgb(0.2, 0.5, 1.0),
-                            Kind::MIDI => Color::from_rgb(1.0, 0.6, 0.0),
+                            Kind::Audio => conn_audio,
+                            Kind::MIDI => conn_midi,
                         };
                         (c, 2.0)
                     };
@@ -1100,26 +1117,26 @@ impl canvas::Program<Message> for Graph {
                             Point::new(end.x - dist, end.y),
                         )
                     };
-                    frame.stroke(
-                        &Path::new(|p| {
-                            p.move_to(start);
-                            p.bezier_curve_to(c1, c2, end);
-                        }),
-                        canvas::Stroke::default()
-                            .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.5))
-                            .with_width(2.0),
-                    );
-                }
+                frame.stroke(
+                    &Path::new(|p| {
+                        p.move_to(start);
+                        p.bezier_curve_to(c1, c2, end);
+                    }),
+                    canvas::Stroke::default()
+                        .with_color(Color::from_rgba(0.73, 0.84, 1.0, 0.6))
+                        .with_width(2.0),
+                );
+            }
             }
 
             if let Some(hw_in) = &data.hw_in {
                 let pos = Point::new(0.0, 0.0);
                 let rect = Path::rectangle(pos, iced::Size::new(hw_width, bounds.height));
-                frame.fill(&rect, Color::from_rgb8(30, 45, 30));
+                frame.fill(&rect, edge_panel);
                 frame.stroke(
                     &rect,
                     canvas::Stroke::default()
-                        .with_color(Color::from_rgb(0.0, 0.8, 0.4))
+                        .with_color(edge_panel_border)
                         .with_width(2.0),
                 );
                 frame.fill_text(Text {
@@ -1136,7 +1153,7 @@ impl canvas::Program<Message> for Graph {
                     frame.fill_text(Text {
                         content: format!("{}", j + 1),
                         position: Point::new(pos.x + hw_width - 10.0, py),
-                        color: Color::from_rgb(0.6, 0.6, 0.6),
+                        color: Color::from_rgb(0.65, 0.72, 0.84),
                         size: 10.0.into(),
                         align_x: Horizontal::Right.into(),
                         align_y: Vertical::Center,
@@ -1168,11 +1185,11 @@ impl canvas::Program<Message> for Graph {
             if let Some(hw_out) = &data.hw_out {
                 let pos = Point::new(bounds.width - hw_width, 0.0);
                 let rect = Path::rectangle(pos, iced::Size::new(hw_width, bounds.height));
-                frame.fill(&rect, Color::from_rgb8(45, 30, 30));
+                frame.fill(&rect, edge_panel);
                 frame.stroke(
                     &rect,
                     canvas::Stroke::default()
-                        .with_color(Color::from_rgb(0.8, 0.2, 0.2))
+                        .with_color(edge_panel_border)
                         .with_width(2.0),
                 );
                 frame.fill_text(Text {
@@ -1189,7 +1206,7 @@ impl canvas::Program<Message> for Graph {
                     frame.fill_text(Text {
                         content: format!("{}", j + 1),
                         position: Point::new(pos.x + 10.0, py),
-                        color: Color::from_rgb(0.6, 0.6, 0.6),
+                        color: Color::from_rgb(0.65, 0.72, 0.84),
                         size: 10.0.into(),
                         align_x: Horizontal::Left.into(),
                         align_y: Vertical::Center,
@@ -1234,14 +1251,14 @@ impl canvas::Program<Message> for Graph {
                     iced::Size::new(default_rect.width, default_rect.height),
                 );
                 let fill_color = if is_selected {
-                    Color::from_rgb8(45, 40, 20)
+                    rgb8(42, 54, 78)
                 } else {
-                    Color::from_rgb8(28, 24, 14)
+                    midi_box_fill
                 };
                 let stroke_color = if is_selected {
                     midi_port_color()
                 } else {
-                    Color::from_rgb(0.45, 0.28, 0.12)
+                    midi_box_border
                 };
                 frame.fill(&rect, fill_color);
                 frame.stroke(
@@ -1311,14 +1328,14 @@ impl canvas::Program<Message> for Graph {
                     iced::Size::new(default_rect.width, default_rect.height),
                 );
                 let fill_color = if is_selected {
-                    Color::from_rgb8(45, 40, 20)
+                    rgb8(42, 54, 78)
                 } else {
-                    Color::from_rgb8(28, 24, 14)
+                    midi_box_fill
                 };
                 let stroke_color = if is_selected {
                     midi_port_color()
                 } else {
-                    Color::from_rgb(0.45, 0.28, 0.12)
+                    midi_box_border
                 };
                 frame.fill(&rect, fill_color);
                 frame.stroke(
@@ -1364,16 +1381,16 @@ impl canvas::Program<Message> for Graph {
                 let pos = track.position;
                 let size = Self::track_box_size(track);
                 let path = Path::rectangle(pos, size);
-                frame.fill(&path, Color::from_rgb8(45, 45, 45));
+                frame.fill(&path, node_fill);
 
                 let is_h = data.hovering == Some(Hovering::Track(track.name.clone()));
                 let is_s = matches!(&data.connection_view_selection, ConnectionViewSelection::Tracks(set) if set.contains(&track.name));
                 let (sc, sw) = if is_s {
-                    (Color::from_rgb(1.0, 1.0, 0.0), 3.0)
+                    (node_selected, 2.5)
                 } else if is_h {
-                    (Color::from_rgb8(120, 120, 120), 1.0)
+                    (node_hover, 1.4)
                 } else {
-                    (Color::from_rgb8(80, 80, 80), 1.0)
+                    (node_border, 1.0)
                 };
                 frame.stroke(
                     &path,
