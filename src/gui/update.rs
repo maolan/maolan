@@ -5458,6 +5458,10 @@ impl Maolan {
                                 channels: *channels,
                             });
                         } else {
+                            eprintln!(
+                                "[maolan] HW output info: channels={channels}, rate={rate}, existing_meter_slots={}",
+                                state.hw_out_meter_db.len()
+                            );
                             state.hw_out = Some(HW {
                                 channels: *channels,
                             });
@@ -5908,6 +5912,10 @@ impl Maolan {
                         output_db,
                     } => {
                         if track_name == "hw:out" {
+                            eprintln!(
+                                "[maolan] master meters received: channels={}, values={output_db:?}",
+                                output_db.len()
+                            );
                             let mut state = self.state.blocking_write();
                             if state.hw_out_meter_db != *output_db {
                                 state.hw_out_meter_db = output_db.clone();

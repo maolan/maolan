@@ -110,6 +110,11 @@ impl Mixer {
             .into()
     }
 
+    fn meter_width(channels: usize) -> f32 {
+        let channels = channels.max(1) as f32;
+        6.0 + channels * 5.0
+    }
+
     fn slider_with_ticks<F>(
         value: f32,
         fader_height: f32,
@@ -277,6 +282,7 @@ impl Mixer {
     fn strip_shell(
         name: String,
         selected: bool,
+        width: f32,
         pan_section: Option<Element<'static, Message>>,
         bay: Element<'static, Message>,
         level_label: &'static str,
@@ -289,7 +295,7 @@ impl Mixer {
             .push(Self::strip_name(name));
 
         container(content)
-            .width(Length::Fixed(Self::STRIP_WIDTH))
+            .width(Length::Fixed(width))
             .height(Length::Fill)
             .padding([8, 6])
             .style(move |_theme| style::mixer::strip(selected))
@@ -348,6 +354,7 @@ impl Mixer {
                 mouse_area(Self::strip_shell(
                     strip_name,
                     selected_strip,
+                    Self::STRIP_WIDTH,
                     pan,
                     bay,
                     Self::format_level_db(track.level),
@@ -357,9 +364,17 @@ impl Mixer {
         }
 
         let master_selected = selected.contains("hw:out");
+        let master_strip_width = (Self::FADER_WIDTH
+            + Self::SCALE_WIDTH
+            + 3.0
+            + 8.0
+            + Self::meter_width(hw_out_channels.max(1))
+            + 16.0)
+            .max(Self::STRIP_WIDTH);
         let master_strip = mouse_area(Self::strip_shell(
             "Master".to_string(),
             master_selected,
+            master_strip_width,
             if hw_out_channels == 2 {
                 Some(Self::pan_section(hw_out_balance, move |new_val| {
                     Message::Request(Action::TrackBalance("hw:out".to_string(), new_val))
