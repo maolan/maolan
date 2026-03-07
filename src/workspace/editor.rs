@@ -3,11 +3,11 @@ use crate::{
     state::{ClipPeaks, State, StateData, Track},
 };
 use iced::{
-    Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse,
-    gradient,
+    Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Theme, gradient, mouse,
     widget::{
-        Space, Stack, button, canvas, column, container, mouse_area, pin, row, text,
+        Space, Stack, button, canvas,
         canvas::{Frame, Geometry, Path},
+        column, container, mouse_area, pin, row, text,
     },
 };
 use iced_aw::ContextMenu;
@@ -301,107 +301,112 @@ impl canvas::Program<Message> for WaveformCanvas {
             state.last_hash.set(hash);
         }
 
-        let geom = state.cache.draw(renderer, bounds.size(), |frame: &mut Frame| {
-            let inner_w = bounds.width.max(4.0);
-            let inner_h = bounds.height.max(4.0);
-            let channel_count = self.peaks.len().max(1);
-            let channel_h = inner_h / channel_count as f32;
-            let waveform_fill = Color::from_rgba(0.86, 0.94, 1.0, 0.34);
-            let waveform_edge = Color::from_rgba(0.96, 0.98, 1.0, 0.62);
-            let zero_line = Color::from_rgba(0.74, 0.86, 1.0, 0.28);
-            let clip_color = Color::from_rgba(1.0, 0.42, 0.30, 0.78);
-            let clip_level = 0.90_f32;
-            let edge_shade = darken(waveform_fill, 0.08);
+        let geom = state
+            .cache
+            .draw(renderer, bounds.size(), |frame: &mut Frame| {
+                let inner_w = bounds.width.max(4.0);
+                let inner_h = bounds.height.max(4.0);
+                let channel_count = self.peaks.len().max(1);
+                let channel_h = inner_h / channel_count as f32;
+                let waveform_fill = Color::from_rgba(0.86, 0.94, 1.0, 0.34);
+                let waveform_edge = Color::from_rgba(0.96, 0.98, 1.0, 0.62);
+                let zero_line = Color::from_rgba(0.74, 0.86, 1.0, 0.28);
+                let clip_color = Color::from_rgba(1.0, 0.42, 0.30, 0.78);
+                let clip_level = 0.90_f32;
+                let edge_shade = darken(waveform_fill, 0.08);
 
-            for (channel_idx, channel_peaks) in self.peaks.iter().enumerate() {
-                if channel_peaks.is_empty() {
-                    continue;
-                }
-                let channel_top = channel_h * channel_idx as f32;
-                let center_y = channel_top + channel_h * 0.5;
-                let half_span = (channel_h * 0.45).max(1.0);
-                let total_peaks = channel_peaks.len();
-                let max_len = self.max_length.max(1);
-                let start_idx =
-                    ((self.clip_offset * total_peaks) / max_len).min(total_peaks.saturating_sub(1));
-                let clip_end_sample = self.clip_offset.saturating_add(self.clip_length).min(max_len);
-                let mut end_idx = ((clip_end_sample * total_peaks) / max_len).min(total_peaks);
-                if end_idx <= start_idx {
-                    end_idx = (start_idx + 1).min(total_peaks);
-                }
-                let bins = end_idx.saturating_sub(start_idx).max(1);
-                let x_step = inner_w / bins as f32;
-
-                frame.fill(
-                    &Path::rectangle(Point::new(0.0, center_y), iced::Size::new(inner_w, 1.0)),
-                    zero_line,
-                );
-
-                for i in 0..bins {
-                    let src_idx = (start_idx + i).min(total_peaks.saturating_sub(1));
-                    let pair = channel_peaks[src_idx];
-                    let min_val = pair[0].clamp(-1.0, 1.0);
-                    let max_val = pair[1].clamp(-1.0, 1.0);
-                    let top =
-                        (center_y - (max_val * half_span)).clamp(channel_top, channel_top + channel_h);
-                    let bottom =
-                        (center_y - (min_val * half_span)).clamp(channel_top, channel_top + channel_h);
-                    let y = top.min(bottom);
-                    let h = (bottom - top).abs().max(1.0);
-                    let x = i as f32 * x_step;
-                    let bin_w = x_step.max(1.0);
+                for (channel_idx, channel_peaks) in self.peaks.iter().enumerate() {
+                    if channel_peaks.is_empty() {
+                        continue;
+                    }
+                    let channel_top = channel_h * channel_idx as f32;
+                    let center_y = channel_top + channel_h * 0.5;
+                    let half_span = (channel_h * 0.45).max(1.0);
+                    let total_peaks = channel_peaks.len();
+                    let max_len = self.max_length.max(1);
+                    let start_idx = ((self.clip_offset * total_peaks) / max_len)
+                        .min(total_peaks.saturating_sub(1));
+                    let clip_end_sample = self
+                        .clip_offset
+                        .saturating_add(self.clip_length)
+                        .min(max_len);
+                    let mut end_idx = ((clip_end_sample * total_peaks) / max_len).min(total_peaks);
+                    if end_idx <= start_idx {
+                        end_idx = (start_idx + 1).min(total_peaks);
+                    }
+                    let bins = end_idx.saturating_sub(start_idx).max(1);
+                    let x_step = inner_w / bins as f32;
 
                     frame.fill(
-                        &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, h)),
-                        waveform_fill,
-                    );
-                    let edge_h = (h * 0.2).clamp(1.0, 3.0);
-                    frame.fill(
-                        &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, edge_h)),
-                        edge_shade,
-                    );
-                    frame.fill(
-                        &Path::rectangle(
-                            Point::new(x, y + h - edge_h),
-                            iced::Size::new(bin_w, edge_h),
-                        ),
-                        edge_shade,
+                        &Path::rectangle(Point::new(0.0, center_y), iced::Size::new(inner_w, 1.0)),
+                        zero_line,
                     );
 
-                    if h >= 3.0 {
+                    for i in 0..bins {
+                        let src_idx = (start_idx + i).min(total_peaks.saturating_sub(1));
+                        let pair = channel_peaks[src_idx];
+                        let min_val = pair[0].clamp(-1.0, 1.0);
+                        let max_val = pair[1].clamp(-1.0, 1.0);
+                        let top = (center_y - (max_val * half_span))
+                            .clamp(channel_top, channel_top + channel_h);
+                        let bottom = (center_y - (min_val * half_span))
+                            .clamp(channel_top, channel_top + channel_h);
+                        let y = top.min(bottom);
+                        let h = (bottom - top).abs().max(1.0);
+                        let x = i as f32 * x_step;
+                        let bin_w = x_step.max(1.0);
+
                         frame.fill(
-                            &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, 1.0)),
-                            waveform_edge,
+                            &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, h)),
+                            waveform_fill,
+                        );
+                        let edge_h = (h * 0.2).clamp(1.0, 3.0);
+                        frame.fill(
+                            &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, edge_h)),
+                            edge_shade,
                         );
                         frame.fill(
                             &Path::rectangle(
-                                Point::new(x, y + h - 1.0),
-                                iced::Size::new(bin_w, 1.0),
+                                Point::new(x, y + h - edge_h),
+                                iced::Size::new(bin_w, edge_h),
                             ),
-                            waveform_edge,
+                            edge_shade,
                         );
-                    }
 
-                    if max_val >= clip_level {
-                        let clip_h = h.clamp(1.0, 3.0);
-                        frame.fill(
-                            &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, clip_h)),
-                            clip_color,
-                        );
-                    }
-                    if -min_val >= clip_level {
-                        let clip_h = h.clamp(1.0, 3.0);
-                        frame.fill(
-                            &Path::rectangle(
-                                Point::new(x, y + h - clip_h),
-                                iced::Size::new(bin_w, clip_h),
-                            ),
-                            clip_color,
-                        );
+                        if h >= 3.0 {
+                            frame.fill(
+                                &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, 1.0)),
+                                waveform_edge,
+                            );
+                            frame.fill(
+                                &Path::rectangle(
+                                    Point::new(x, y + h - 1.0),
+                                    iced::Size::new(bin_w, 1.0),
+                                ),
+                                waveform_edge,
+                            );
+                        }
+
+                        if max_val >= clip_level {
+                            let clip_h = h.clamp(1.0, 3.0);
+                            frame.fill(
+                                &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, clip_h)),
+                                clip_color,
+                            );
+                        }
+                        if -min_val >= clip_level {
+                            let clip_h = h.clamp(1.0, 3.0);
+                            frame.fill(
+                                &Path::rectangle(
+                                    Point::new(x, y + h - clip_h),
+                                    iced::Size::new(bin_w, clip_h),
+                                ),
+                                clip_color,
+                            );
+                        }
                     }
                 }
-            }
-        });
+            });
         vec![geom]
     }
 }
@@ -493,11 +498,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         |clip| clip.take_lane_override,
     );
 
-    clips.push(
-        pin(container(""))
-            .position(Point::new(0.0, 0.0))
-            .into(),
-    );
+    clips.push(pin(container("")).position(Point::new(0.0, 0.0)).into());
 
     for lane in 0..track.audio.ins {
         let y = track.lane_top(Kind::Audio, lane);
@@ -791,7 +792,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             };
             let (muted_alpha, normal_alpha) = if clip_muted { (0.45, 0.45) } else { (1.0, 1.0) };
             Style {
-                background: Some(clip_two_edge_gradient(base, muted_alpha, normal_alpha, true)),
+                background: Some(clip_two_edge_gradient(
+                    base,
+                    muted_alpha,
+                    normal_alpha,
+                    true,
+                )),
                 ..Style::default()
             }
         });
@@ -1255,19 +1261,25 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(0)
-        .style(move |_theme| {
-            use container::Style;
-            let base = if is_selected {
-                MIDI_CLIP_SELECTED_BASE
-            } else {
-                MIDI_CLIP_BASE
-            };
-            let (muted_alpha, normal_alpha) = if clip_muted { (0.55, 0.55) } else { (1.0, 1.0) };
-            Style {
-                background: Some(clip_two_edge_gradient(base, muted_alpha, normal_alpha, false)),
-                ..Style::default()
-            }
-        });
+            .style(move |_theme| {
+                use container::Style;
+                let base = if is_selected {
+                    MIDI_CLIP_SELECTED_BASE
+                } else {
+                    MIDI_CLIP_BASE
+                };
+                let (muted_alpha, normal_alpha) =
+                    if clip_muted { (0.55, 0.55) } else { (1.0, 1.0) };
+                Style {
+                    background: Some(clip_two_edge_gradient(
+                        base,
+                        muted_alpha,
+                        normal_alpha,
+                        false,
+                    )),
+                    ..Style::default()
+                }
+            });
 
         let clip_widget = container(row![left_handle, clip_content, right_handle])
             .width(Length::Fixed(clip_width))
@@ -1722,21 +1734,21 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let display_clip_label =
                             trim_label_to_width(&clean_clip_name(&source_clip.name), clip_width);
                         let preview_content = container(clip_label_overlay(display_clip_label))
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .padding(0)
-                        .style(|_theme| {
-                            use container::Style;
-                            Style {
-                                background: Some(clip_two_edge_gradient(
-                                    MIDI_CLIP_SELECTED_BASE,
-                                    0.7,
-                                    0.7,
-                                    false,
-                                )),
-                                ..Style::default()
-                            }
-                        });
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .padding(0)
+                            .style(|_theme| {
+                                use container::Style;
+                                Style {
+                                    background: Some(clip_two_edge_gradient(
+                                        MIDI_CLIP_SELECTED_BASE,
+                                        0.7,
+                                        0.7,
+                                        false,
+                                    )),
+                                    ..Style::default()
+                                }
+                            });
                         let preview = container(row![
                             container("")
                                 .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))

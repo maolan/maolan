@@ -1363,8 +1363,9 @@ impl Maolan {
                             if let Some(peaks_rel) = peaks_file.as_ref() {
                                 let peaks_path = session_root.join(peaks_rel);
                                 if peaks_path.exists() && peaks_path.is_file() {
-                                    let key =
-                                        Self::audio_clip_key(&name, &clip_name, start, length, offset);
+                                    let key = Self::audio_clip_key(
+                                        &name, &clip_name, start, length, offset,
+                                    );
                                     self.pending_peak_file_loads.insert(key, peaks_path);
                                 }
                             }

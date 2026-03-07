@@ -87,7 +87,9 @@ where
         _viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let rgb = |r: u8, g: u8, b: u8| Color::from_rgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+        let rgb = |r: u8, g: u8, b: u8| {
+            Color::from_rgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
+        };
 
         let border_width = 1.0;
         let handle_width = self.handle_width.min((bounds.width - 4.0).max(8.0));

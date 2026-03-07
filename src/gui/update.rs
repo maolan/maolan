@@ -1165,7 +1165,10 @@ impl Maolan {
         let Some(track) = state.tracks.iter().find(|t| t.name == track_name) else {
             return vec![track_name.to_string()];
         };
-        let master = track.vca_master.clone().unwrap_or_else(|| track.name.clone());
+        let master = track
+            .vca_master
+            .clone()
+            .unwrap_or_else(|| track.name.clone());
         let mut members = vec![master.clone()];
         members.extend(
             state
@@ -1181,40 +1184,29 @@ impl Maolan {
 
     fn expand_request_to_vca_group(&self, action: &Action) -> Option<Vec<Action>> {
         let (source_track, builder): (&str, fn(String, &Action) -> Action) = match action {
-            Action::TrackLevel(track_name, _) => (
-                track_name.as_str(),
-                |name, a| match a {
-                    Action::TrackLevel(_, level) => Action::TrackLevel(name, *level),
-                    _ => unreachable!(),
-                },
-            ),
-            Action::TrackBalance(track_name, _) => (
-                track_name.as_str(),
-                |name, a| match a {
-                    Action::TrackBalance(_, balance) => Action::TrackBalance(name, *balance),
-                    _ => unreachable!(),
-                },
-            ),
-            Action::TrackToggleArm(track_name) => (
-                track_name.as_str(),
-                |name, _| Action::TrackToggleArm(name),
-            ),
-            Action::TrackToggleMute(track_name) => (
-                track_name.as_str(),
-                |name, _| Action::TrackToggleMute(name),
-            ),
-            Action::TrackToggleSolo(track_name) => (
-                track_name.as_str(),
-                |name, _| Action::TrackToggleSolo(name),
-            ),
-            Action::TrackToggleInputMonitor(track_name) => (
-                track_name.as_str(),
-                |name, _| Action::TrackToggleInputMonitor(name),
-            ),
-            Action::TrackToggleDiskMonitor(track_name) => (
-                track_name.as_str(),
-                |name, _| Action::TrackToggleDiskMonitor(name),
-            ),
+            Action::TrackLevel(track_name, _) => (track_name.as_str(), |name, a| match a {
+                Action::TrackLevel(_, level) => Action::TrackLevel(name, *level),
+                _ => unreachable!(),
+            }),
+            Action::TrackBalance(track_name, _) => (track_name.as_str(), |name, a| match a {
+                Action::TrackBalance(_, balance) => Action::TrackBalance(name, *balance),
+                _ => unreachable!(),
+            }),
+            Action::TrackToggleArm(track_name) => {
+                (track_name.as_str(), |name, _| Action::TrackToggleArm(name))
+            }
+            Action::TrackToggleMute(track_name) => {
+                (track_name.as_str(), |name, _| Action::TrackToggleMute(name))
+            }
+            Action::TrackToggleSolo(track_name) => {
+                (track_name.as_str(), |name, _| Action::TrackToggleSolo(name))
+            }
+            Action::TrackToggleInputMonitor(track_name) => (track_name.as_str(), |name, _| {
+                Action::TrackToggleInputMonitor(name)
+            }),
+            Action::TrackToggleDiskMonitor(track_name) => (track_name.as_str(), |name, _| {
+                Action::TrackToggleDiskMonitor(name)
+            }),
             _ => return None,
         };
         if source_track == "hw:out" {
@@ -1224,7 +1216,12 @@ impl Maolan {
         if members.len() <= 1 {
             return None;
         }
-        Some(members.into_iter().map(|name| builder(name, action)).collect())
+        Some(
+            members
+                .into_iter()
+                .map(|name| builder(name, action))
+                .collect(),
+        )
     }
 
     fn automation_lane_value_at(points: &[TrackAutomationPoint], sample: usize) -> Option<f32> {
@@ -3462,7 +3459,11 @@ impl Maolan {
                         for (channel_idx, channel_entry) in
                             entry_mut.iter_mut().enumerate().take(channels)
                         {
-                            let db = track.meter_out_db.get(channel_idx).copied().unwrap_or(-90.0);
+                            let db = track
+                                .meter_out_db
+                                .get(channel_idx)
+                                .copied()
+                                .unwrap_or(-90.0);
                             let amp = if db <= -90.0 {
                                 0.0
                             } else {
@@ -5420,8 +5421,7 @@ impl Maolan {
                         if let Some(piano) = state.piano.as_mut()
                             && piano.track_idx == *track_name
                         {
-                            let mut sorted_indices: Vec<usize> =
-                                (0..controllers.len()).collect();
+                            let mut sorted_indices: Vec<usize> = (0..controllers.len()).collect();
                             sorted_indices.sort_unstable_by_key(|&i| controllers[i].0);
                             for i in sorted_indices {
                                 let (idx, ctrl) = &controllers[i];
@@ -5971,8 +5971,8 @@ impl Maolan {
                                 return Task::none();
                             }
                             let render_path = std::path::PathBuf::from(output_path);
-                            let render_peaks = Self::compute_audio_clip_peaks(&render_path)
-                                .unwrap_or_default();
+                            let render_peaks =
+                                Self::compute_audio_clip_peaks(&render_path).unwrap_or_default();
                             {
                                 let mut state = self.state.blocking_write();
                                 if let Some(track_mut) =
@@ -6946,7 +6946,8 @@ impl Maolan {
 
                 if ctrl {
                     state.selected.insert(name.clone());
-                    if let ConnectionViewSelection::Tracks(set) = &mut state.connection_view_selection
+                    if let ConnectionViewSelection::Tracks(set) =
+                        &mut state.connection_view_selection
                     {
                         set.insert(name.clone());
                     } else {
@@ -6969,7 +6970,8 @@ impl Maolan {
 
                 if ctrl {
                     state.selected.insert(name.clone());
-                    if let ConnectionViewSelection::Tracks(set) = &mut state.connection_view_selection
+                    if let ConnectionViewSelection::Tracks(set) =
+                        &mut state.connection_view_selection
                     {
                         set.insert(name.clone());
                     } else {
@@ -9659,21 +9661,22 @@ impl Maolan {
                         .find(|(zone_id, _)| *zone_id != dragged_id)
                         .or_else(|| zones.first());
                     if let Some((track_id, _)) = target_zone {
-                    let mut state = self.state.blocking_write();
-                    if let Some(index) = state.tracks.iter().position(|t| t.name == *index_name) {
-                        let moved_track = state.tracks.remove(index);
-                        let to_index = state
-                            .tracks
-                            .iter()
-                            .position(|t| Id::from(t.name.clone()) == *track_id);
+                        let mut state = self.state.blocking_write();
+                        if let Some(index) = state.tracks.iter().position(|t| t.name == *index_name)
+                        {
+                            let moved_track = state.tracks.remove(index);
+                            let to_index = state
+                                .tracks
+                                .iter()
+                                .position(|t| Id::from(t.name.clone()) == *track_id);
 
-                        if let Some(t_idx) = to_index {
-                            state.tracks.insert(t_idx, moved_track);
-                        } else {
-                            state.tracks.push(moved_track);
+                            if let Some(t_idx) = to_index {
+                                state.tracks.insert(t_idx, moved_track);
+                            } else {
+                                state.tracks.push(moved_track);
+                            }
                         }
                     }
-                }
                 }
                 self.track = None;
             }
@@ -10468,7 +10471,10 @@ impl Maolan {
                     if update.target_bins == 0 {
                         continue;
                     }
-                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == update.track_name)
+                    if let Some(track) = state
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == update.track_name)
                         && let Some(clip) = track.audio.clips.iter_mut().find(|clip| {
                             clip.name == update.clip_name
                                 && clip.start == update.start
@@ -10477,15 +10483,13 @@ impl Maolan {
                         })
                     {
                         if clip.peaks.len() != update.channels
-                            || clip
-                                .peaks
-                                .first()
-                                .map(Vec::len)
-                                .unwrap_or(0)
-                                != update.target_bins
+                            || clip.peaks.first().map(Vec::len).unwrap_or(0) != update.target_bins
                         {
                             clip.peaks = std::sync::Arc::new(vec![
-                                vec![[0.0_f32, 0.0_f32]; update.target_bins];
+                                vec![
+                                    [0.0_f32, 0.0_f32];
+                                    update.target_bins
+                                ];
                                 update.channels
                             ]);
                         }

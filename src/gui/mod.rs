@@ -1067,7 +1067,8 @@ impl Maolan {
             processed_frames = processed_frames.saturating_add(frames_read);
             let emit_end = (((processed_frames * target_bins) / total_frames) + 1).min(target_bins);
             if emit_end > last_emitted_bin {
-                let mut peaks_chunk = vec![Vec::with_capacity(emit_end - last_emitted_bin); channels];
+                let mut peaks_chunk =
+                    vec![Vec::with_capacity(emit_end - last_emitted_bin); channels];
                 for channel_idx in 0..channels {
                     for bin in last_emitted_bin..emit_end {
                         let pair = if touched[channel_idx][bin] {

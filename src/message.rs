@@ -681,7 +681,10 @@ pub enum Message {
 
     MouseMoved(mouse::Event),
     EditorMouseMoved(Point),
-    EditorScrollChanged { x: f32, y: f32 },
+    EditorScrollChanged {
+        x: f32,
+        y: f32,
+    },
     EditorScrollXChanged(f32),
     EditorScrollYChanged(f32),
     MousePressed(mouse::Button),

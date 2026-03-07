@@ -654,296 +654,304 @@ impl canvas::Program<Message> for TempoCanvas {
             state.last_hash.set(hash);
         }
 
-        let geom = state.cache.draw(renderer, bounds.size(), |frame: &mut Frame| {
-            frame.fill(
-                &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
-                Color::from_rgba(0.12, 0.12, 0.12, 1.0),
-            );
-            for (sample, bpm) in self.tempo_points.iter().filter(|(sample, _)| *sample > 0) {
-                let x = *sample as f32 * self.pixels_per_sample;
-                let selected = self.selected_tempo_points.contains(sample);
-                frame.stroke(
-                    &Path::line(Point::new(x, 0.0), Point::new(x, TEMPO_HIT_HEIGHT)),
-                    Stroke::default()
-                        .with_width(if selected { 2.0 } else { 1.0 })
-                        .with_color(if selected {
-                            Color::from_rgba(1.0, 0.95, 0.45, 1.0)
-                        } else {
-                            Color::from_rgba(0.9, 0.9, 0.35, 0.85)
-                        }),
-                );
-                frame.fill_text(Text {
-                    content: format!("{:.0}", bpm),
-                    position: Point::new(x + 3.0, 2.0),
-                    color: Color::from_rgba(0.95, 0.95, 0.78, 0.92),
-                    size: 9.0.into(),
-                    ..Default::default()
-                });
-            }
-            for (sample, n, d) in self
-                .time_signature_points
-                .iter()
-                .filter(|(sample, _, _)| *sample > 0)
-            {
-                let x = *sample as f32 * self.pixels_per_sample;
-                let selected = self.selected_time_signature_points.contains(sample);
-                frame.stroke(
-                    &Path::line(
-                        Point::new(x, TEMPO_HIT_HEIGHT),
-                        Point::new(x, bounds.height),
-                    ),
-                    Stroke::default()
-                        .with_width(if selected { 2.0 } else { 1.0 })
-                        .with_color(if selected {
-                            Color::from_rgba(0.52, 1.0, 1.0, 1.0)
-                        } else {
-                            Color::from_rgba(0.45, 0.9, 0.9, 0.85)
-                        }),
-                );
-                frame.fill_text(Text {
-                    content: format!("{n}/{d}"),
-                    position: Point::new(x + 3.0, TEMPO_HIT_HEIGHT + 1.0),
-                    color: Color::from_rgba(0.8, 0.98, 0.98, 0.9),
-                    size: 9.0.into(),
-                    ..Default::default()
-                });
-            }
-
-            if !matches!(state.drag_mode, DragMode::Punch { .. })
-                && let Some((punch_start, punch_end)) = self.punch_range_samples
-                && self.pixels_per_sample > 1.0e-9
-                && punch_end > punch_start
-            {
-                let start_x = punch_start as f32 * self.pixels_per_sample;
-                let end_x = punch_end as f32 * self.pixels_per_sample;
+        let geom = state
+            .cache
+            .draw(renderer, bounds.size(), |frame: &mut Frame| {
                 frame.fill(
-                    &Path::rectangle(
-                        Point::new(start_x.max(0.0), 0.0),
-                        iced::Size::new((end_x - start_x).max(1.0), bounds.height),
-                    ),
-                    Color::from_rgba(0.55, 0.18, 0.18, 0.30),
+                    &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
+                    Color::from_rgba(0.12, 0.12, 0.12, 1.0),
                 );
-                frame.stroke(
-                    &Path::line(
-                        Point::new(start_x.max(0.0), 0.0),
-                        Point::new(start_x.max(0.0), bounds.height),
-                    ),
-                    Stroke::default()
-                        .with_width(1.5)
-                        .with_color(Color::from_rgba(0.92, 0.45, 0.45, 0.9)),
-                );
-                frame.stroke(
-                    &Path::line(
-                        Point::new(end_x.max(0.0), 0.0),
-                        Point::new(end_x.max(0.0), bounds.height),
-                    ),
-                    Stroke::default()
-                        .with_width(1.5)
-                        .with_color(Color::from_rgba(0.92, 0.45, 0.45, 0.9)),
-                );
-            }
-
-            match &state.drag_mode {
-                DragMode::None => {}
-                DragMode::Punch {
-                    drag_start_x,
-                    last_x,
-                } => {
-                    let start_x = drag_start_x.min(*last_x).max(0.0);
-                    let end_x = drag_start_x.max(*last_x).max(0.0);
-                    frame.fill(
-                        &Path::rectangle(
-                            Point::new(start_x, 0.0),
-                            iced::Size::new((end_x - start_x).max(1.0), bounds.height),
-                        ),
-                        Color::from_rgba(0.92, 0.36, 0.36, 0.22),
-                    );
+                for (sample, bpm) in self.tempo_points.iter().filter(|(sample, _)| *sample > 0) {
+                    let x = *sample as f32 * self.pixels_per_sample;
+                    let selected = self.selected_tempo_points.contains(sample);
                     frame.stroke(
-                        &Path::line(Point::new(start_x, 0.0), Point::new(start_x, bounds.height)),
+                        &Path::line(Point::new(x, 0.0), Point::new(x, TEMPO_HIT_HEIGHT)),
                         Stroke::default()
-                            .with_width(1.5)
-                            .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
-                    );
-                    frame.stroke(
-                        &Path::line(Point::new(end_x, 0.0), Point::new(end_x, bounds.height)),
-                        Stroke::default()
-                            .with_width(1.5)
-                            .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
-                    );
-                }
-                DragMode::Marker {
-                    lane,
-                    original_samples,
-                    start_sample,
-                    current_sample,
-                } => {
-                    let delta = *current_sample as i64 - *start_sample as i64;
-                    for sample in original_samples {
-                        let moved_sample = (*sample as i64 + delta).max(1) as usize;
-                        let x = moved_sample as f32 * self.pixels_per_sample;
-                        let (y0, y1, color) = match lane {
-                            MarkerLane::Tempo => (
-                                0.0,
-                                TEMPO_HIT_HEIGHT,
-                                Color::from_rgba(1.0, 0.95, 0.45, 0.85),
-                            ),
-                            MarkerLane::TimeSignature => (
-                                TEMPO_HIT_HEIGHT,
-                                bounds.height,
-                                Color::from_rgba(0.52, 1.0, 1.0, 0.85),
-                            ),
-                        };
-                        frame.stroke(
-                            &Path::line(Point::new(x, y0), Point::new(x, y1)),
-                            Stroke::default().with_width(2.0).with_color(color),
-                        );
-                    }
-                }
-            }
-
-            frame.fill_text(Text {
-                content: format!("{:.0} BPM", self.bpm),
-                position: Point::new(10.0, 2.0),
-                color: Color::WHITE,
-                size: 14.0.into(),
-                ..Default::default()
-            });
-
-            frame.fill_text(Text {
-                content: format!("{}/{}", self.time_signature.0, self.time_signature.1),
-                position: Point::new(10.0, 15.0),
-                color: Color::WHITE,
-                size: 10.0.into(),
-                ..Default::default()
-            });
-            frame.fill_text(Text {
-                content: "L+/R-".to_string(),
-                position: Point::new(56.0, 2.0),
-                color: Color::from_rgba(0.82, 0.82, 0.82, 0.8),
-                size: 9.0.into(),
-                ..Default::default()
-            });
-            frame.fill_text(Text {
-                content: "Scroll +/-".to_string(),
-                position: Point::new(47.0, 15.0),
-                color: Color::from_rgba(0.82, 0.82, 0.82, 0.8),
-                size: 9.0.into(),
-                ..Default::default()
-            });
-
-            if let Some(menu) = state.context_menu {
-                let menu_height = CONTEXT_MENU_ITEM_HEIGHT * 3.0;
-                frame.fill(
-                    &Path::rectangle(
-                        Point::new(menu.x, menu.y),
-                        iced::Size::new(CONTEXT_MENU_WIDTH, menu_height),
-                    ),
-                    Color::from_rgba(0.16, 0.16, 0.16, 0.98),
-                );
-                for i in 1..3 {
-                    let y = menu.y + CONTEXT_MENU_ITEM_HEIGHT * i as f32;
-                    frame.stroke(
-                        &Path::line(
-                            Point::new(menu.x, y),
-                            Point::new(menu.x + CONTEXT_MENU_WIDTH, y),
-                        ),
-                        Stroke::default()
-                            .with_width(1.0)
-                            .with_color(Color::from_rgba(0.32, 0.32, 0.32, 0.9)),
-                    );
-                }
-                let labels = ["Duplicate", "Reset to Previous", "Delete"];
-                for (idx, label) in labels.iter().enumerate() {
-                    frame.fill_text(Text {
-                        content: (*label).to_string(),
-                        position: Point::new(
-                            menu.x + 6.0,
-                            menu.y + 2.0 + CONTEXT_MENU_ITEM_HEIGHT * idx as f32,
-                        ),
-                        color: Color::from_rgba(0.95, 0.95, 0.95, 0.95),
-                        size: 10.0.into(),
-                        ..Default::default()
-                    });
-                }
-            }
-
-            if let Some(pos) = cursor.position_in(bounds)
-                && pos.x > LEFT_HIT_WIDTH
-            {
-                let tooltip = if pos.y <= TEMPO_HIT_HEIGHT {
-                    self.tempo_points
-                        .iter()
-                        .filter(|(sample, _)| *sample > 0)
-                        .min_by(|(sa, _), (sb, _)| {
-                            let ax = *sa as f32 * self.pixels_per_sample;
-                            let bx = *sb as f32 * self.pixels_per_sample;
-                            (ax - pos.x)
-                                .abs()
-                                .partial_cmp(&(bx - pos.x).abs())
-                                .unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                        .and_then(|(sample, bpm)| {
-                            let x = *sample as f32 * self.pixels_per_sample;
-                            if (x - pos.x).abs() <= 6.0 {
-                                Some(format!("s:{}  {:.2} BPM", sample, bpm))
+                            .with_width(if selected { 2.0 } else { 1.0 })
+                            .with_color(if selected {
+                                Color::from_rgba(1.0, 0.95, 0.45, 1.0)
                             } else {
-                                None
-                            }
-                        })
-                } else {
-                    self.time_signature_points
-                        .iter()
-                        .filter(|(sample, _, _)| *sample > 0)
-                        .min_by(|(sa, _, _), (sb, _, _)| {
-                            let ax = *sa as f32 * self.pixels_per_sample;
-                            let bx = *sb as f32 * self.pixels_per_sample;
-                            (ax - pos.x)
-                                .abs()
-                                .partial_cmp(&(bx - pos.x).abs())
-                                .unwrap_or(std::cmp::Ordering::Equal)
-                        })
-                        .and_then(|(sample, n, d)| {
-                            let x = *sample as f32 * self.pixels_per_sample;
-                            if (x - pos.x).abs() <= 6.0 {
-                                Some(format!("s:{}  {}/{}", sample, n, d))
-                            } else {
-                                None
-                            }
-                        })
-                };
-                if let Some(text) = tooltip {
-                    let tip_x = (pos.x + 8.0).min((bounds.width - 150.0).max(0.0));
-                    let tip_y = (pos.y + 2.0).min((bounds.height - 14.0).max(0.0));
-                    frame.fill(
-                        &Path::rectangle(Point::new(tip_x, tip_y), iced::Size::new(148.0, 12.0)),
-                        Color::from_rgba(0.08, 0.08, 0.08, 0.9),
+                                Color::from_rgba(0.9, 0.9, 0.35, 0.85)
+                            }),
                     );
                     frame.fill_text(Text {
-                        content: text,
-                        position: Point::new(tip_x + 4.0, tip_y + 1.0),
-                        color: Color::from_rgba(0.96, 0.96, 0.96, 0.95),
+                        content: format!("{:.0}", bpm),
+                        position: Point::new(x + 3.0, 2.0),
+                        color: Color::from_rgba(0.95, 0.95, 0.78, 0.92),
                         size: 9.0.into(),
                         ..Default::default()
                     });
                 }
-            }
+                for (sample, n, d) in self
+                    .time_signature_points
+                    .iter()
+                    .filter(|(sample, _, _)| *sample > 0)
+                {
+                    let x = *sample as f32 * self.pixels_per_sample;
+                    let selected = self.selected_time_signature_points.contains(sample);
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(x, TEMPO_HIT_HEIGHT),
+                            Point::new(x, bounds.height),
+                        ),
+                        Stroke::default()
+                            .with_width(if selected { 2.0 } else { 1.0 })
+                            .with_color(if selected {
+                                Color::from_rgba(0.52, 1.0, 1.0, 1.0)
+                            } else {
+                                Color::from_rgba(0.45, 0.9, 0.9, 0.85)
+                            }),
+                    );
+                    frame.fill_text(Text {
+                        content: format!("{n}/{d}"),
+                        position: Point::new(x + 3.0, TEMPO_HIT_HEIGHT + 1.0),
+                        color: Color::from_rgba(0.8, 0.98, 0.98, 0.9),
+                        size: 9.0.into(),
+                        ..Default::default()
+                    });
+                }
 
-            if let Some(x) = self.playhead_x {
-                let path = Path::line(
-                    Point::new(x.max(0.0), 0.0),
-                    Point::new(x.max(0.0), bounds.height),
-                );
-                frame.stroke(
-                    &path,
-                    Stroke::default().with_width(2.0).with_color(Color {
-                        r: 0.95,
-                        g: 0.18,
-                        b: 0.14,
-                        a: 0.95,
-                    }),
-                );
-            }
-        });
+                if !matches!(state.drag_mode, DragMode::Punch { .. })
+                    && let Some((punch_start, punch_end)) = self.punch_range_samples
+                    && self.pixels_per_sample > 1.0e-9
+                    && punch_end > punch_start
+                {
+                    let start_x = punch_start as f32 * self.pixels_per_sample;
+                    let end_x = punch_end as f32 * self.pixels_per_sample;
+                    frame.fill(
+                        &Path::rectangle(
+                            Point::new(start_x.max(0.0), 0.0),
+                            iced::Size::new((end_x - start_x).max(1.0), bounds.height),
+                        ),
+                        Color::from_rgba(0.55, 0.18, 0.18, 0.30),
+                    );
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(start_x.max(0.0), 0.0),
+                            Point::new(start_x.max(0.0), bounds.height),
+                        ),
+                        Stroke::default()
+                            .with_width(1.5)
+                            .with_color(Color::from_rgba(0.92, 0.45, 0.45, 0.9)),
+                    );
+                    frame.stroke(
+                        &Path::line(
+                            Point::new(end_x.max(0.0), 0.0),
+                            Point::new(end_x.max(0.0), bounds.height),
+                        ),
+                        Stroke::default()
+                            .with_width(1.5)
+                            .with_color(Color::from_rgba(0.92, 0.45, 0.45, 0.9)),
+                    );
+                }
+
+                match &state.drag_mode {
+                    DragMode::None => {}
+                    DragMode::Punch {
+                        drag_start_x,
+                        last_x,
+                    } => {
+                        let start_x = drag_start_x.min(*last_x).max(0.0);
+                        let end_x = drag_start_x.max(*last_x).max(0.0);
+                        frame.fill(
+                            &Path::rectangle(
+                                Point::new(start_x, 0.0),
+                                iced::Size::new((end_x - start_x).max(1.0), bounds.height),
+                            ),
+                            Color::from_rgba(0.92, 0.36, 0.36, 0.22),
+                        );
+                        frame.stroke(
+                            &Path::line(
+                                Point::new(start_x, 0.0),
+                                Point::new(start_x, bounds.height),
+                            ),
+                            Stroke::default()
+                                .with_width(1.5)
+                                .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
+                        );
+                        frame.stroke(
+                            &Path::line(Point::new(end_x, 0.0), Point::new(end_x, bounds.height)),
+                            Stroke::default()
+                                .with_width(1.5)
+                                .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
+                        );
+                    }
+                    DragMode::Marker {
+                        lane,
+                        original_samples,
+                        start_sample,
+                        current_sample,
+                    } => {
+                        let delta = *current_sample as i64 - *start_sample as i64;
+                        for sample in original_samples {
+                            let moved_sample = (*sample as i64 + delta).max(1) as usize;
+                            let x = moved_sample as f32 * self.pixels_per_sample;
+                            let (y0, y1, color) = match lane {
+                                MarkerLane::Tempo => (
+                                    0.0,
+                                    TEMPO_HIT_HEIGHT,
+                                    Color::from_rgba(1.0, 0.95, 0.45, 0.85),
+                                ),
+                                MarkerLane::TimeSignature => (
+                                    TEMPO_HIT_HEIGHT,
+                                    bounds.height,
+                                    Color::from_rgba(0.52, 1.0, 1.0, 0.85),
+                                ),
+                            };
+                            frame.stroke(
+                                &Path::line(Point::new(x, y0), Point::new(x, y1)),
+                                Stroke::default().with_width(2.0).with_color(color),
+                            );
+                        }
+                    }
+                }
+
+                frame.fill_text(Text {
+                    content: format!("{:.0} BPM", self.bpm),
+                    position: Point::new(10.0, 2.0),
+                    color: Color::WHITE,
+                    size: 14.0.into(),
+                    ..Default::default()
+                });
+
+                frame.fill_text(Text {
+                    content: format!("{}/{}", self.time_signature.0, self.time_signature.1),
+                    position: Point::new(10.0, 15.0),
+                    color: Color::WHITE,
+                    size: 10.0.into(),
+                    ..Default::default()
+                });
+                frame.fill_text(Text {
+                    content: "L+/R-".to_string(),
+                    position: Point::new(56.0, 2.0),
+                    color: Color::from_rgba(0.82, 0.82, 0.82, 0.8),
+                    size: 9.0.into(),
+                    ..Default::default()
+                });
+                frame.fill_text(Text {
+                    content: "Scroll +/-".to_string(),
+                    position: Point::new(47.0, 15.0),
+                    color: Color::from_rgba(0.82, 0.82, 0.82, 0.8),
+                    size: 9.0.into(),
+                    ..Default::default()
+                });
+
+                if let Some(menu) = state.context_menu {
+                    let menu_height = CONTEXT_MENU_ITEM_HEIGHT * 3.0;
+                    frame.fill(
+                        &Path::rectangle(
+                            Point::new(menu.x, menu.y),
+                            iced::Size::new(CONTEXT_MENU_WIDTH, menu_height),
+                        ),
+                        Color::from_rgba(0.16, 0.16, 0.16, 0.98),
+                    );
+                    for i in 1..3 {
+                        let y = menu.y + CONTEXT_MENU_ITEM_HEIGHT * i as f32;
+                        frame.stroke(
+                            &Path::line(
+                                Point::new(menu.x, y),
+                                Point::new(menu.x + CONTEXT_MENU_WIDTH, y),
+                            ),
+                            Stroke::default()
+                                .with_width(1.0)
+                                .with_color(Color::from_rgba(0.32, 0.32, 0.32, 0.9)),
+                        );
+                    }
+                    let labels = ["Duplicate", "Reset to Previous", "Delete"];
+                    for (idx, label) in labels.iter().enumerate() {
+                        frame.fill_text(Text {
+                            content: (*label).to_string(),
+                            position: Point::new(
+                                menu.x + 6.0,
+                                menu.y + 2.0 + CONTEXT_MENU_ITEM_HEIGHT * idx as f32,
+                            ),
+                            color: Color::from_rgba(0.95, 0.95, 0.95, 0.95),
+                            size: 10.0.into(),
+                            ..Default::default()
+                        });
+                    }
+                }
+
+                if let Some(pos) = cursor.position_in(bounds)
+                    && pos.x > LEFT_HIT_WIDTH
+                {
+                    let tooltip = if pos.y <= TEMPO_HIT_HEIGHT {
+                        self.tempo_points
+                            .iter()
+                            .filter(|(sample, _)| *sample > 0)
+                            .min_by(|(sa, _), (sb, _)| {
+                                let ax = *sa as f32 * self.pixels_per_sample;
+                                let bx = *sb as f32 * self.pixels_per_sample;
+                                (ax - pos.x)
+                                    .abs()
+                                    .partial_cmp(&(bx - pos.x).abs())
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .and_then(|(sample, bpm)| {
+                                let x = *sample as f32 * self.pixels_per_sample;
+                                if (x - pos.x).abs() <= 6.0 {
+                                    Some(format!("s:{}  {:.2} BPM", sample, bpm))
+                                } else {
+                                    None
+                                }
+                            })
+                    } else {
+                        self.time_signature_points
+                            .iter()
+                            .filter(|(sample, _, _)| *sample > 0)
+                            .min_by(|(sa, _, _), (sb, _, _)| {
+                                let ax = *sa as f32 * self.pixels_per_sample;
+                                let bx = *sb as f32 * self.pixels_per_sample;
+                                (ax - pos.x)
+                                    .abs()
+                                    .partial_cmp(&(bx - pos.x).abs())
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .and_then(|(sample, n, d)| {
+                                let x = *sample as f32 * self.pixels_per_sample;
+                                if (x - pos.x).abs() <= 6.0 {
+                                    Some(format!("s:{}  {}/{}", sample, n, d))
+                                } else {
+                                    None
+                                }
+                            })
+                    };
+                    if let Some(text) = tooltip {
+                        let tip_x = (pos.x + 8.0).min((bounds.width - 150.0).max(0.0));
+                        let tip_y = (pos.y + 2.0).min((bounds.height - 14.0).max(0.0));
+                        frame.fill(
+                            &Path::rectangle(
+                                Point::new(tip_x, tip_y),
+                                iced::Size::new(148.0, 12.0),
+                            ),
+                            Color::from_rgba(0.08, 0.08, 0.08, 0.9),
+                        );
+                        frame.fill_text(Text {
+                            content: text,
+                            position: Point::new(tip_x + 4.0, tip_y + 1.0),
+                            color: Color::from_rgba(0.96, 0.96, 0.96, 0.95),
+                            size: 9.0.into(),
+                            ..Default::default()
+                        });
+                    }
+                }
+
+                if let Some(x) = self.playhead_x {
+                    let path = Path::line(
+                        Point::new(x.max(0.0), 0.0),
+                        Point::new(x.max(0.0), bounds.height),
+                    );
+                    frame.stroke(
+                        &path,
+                        Stroke::default().with_width(2.0).with_color(Color {
+                            r: 0.95,
+                            g: 0.18,
+                            b: 0.14,
+                            a: 0.95,
+                        }),
+                    );
+                }
+            });
 
         vec![geom]
     }

@@ -157,10 +157,7 @@ impl Tracks {
                     aux_sends: track.aux_sends.clone(),
                 })
                 .collect::<Vec<_>>();
-            (
-                tracks,
-                state.tracks_width,
-            )
+            (tracks, state.tracks_width)
         };
         let track_width_px = match width {
             Length::Fixed(v) => v,

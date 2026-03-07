@@ -664,29 +664,30 @@ impl canvas::Program<Message> for Graph {
         let mut frame = Frame::new(renderer, bounds.size());
         let cursor_position = cursor.position_in(bounds);
         let rgb8 = |r: u8, g: u8, b: u8| Color::from_rgb8(r, g, b);
-        let draw_true_gradient_box = |frame: &mut Frame, pos: Point, size: iced::Size, base: Color| {
-            let path = Path::rectangle(pos, size);
-            let brighten = |c: Color, amount: f32| Color {
-                r: (c.r + amount).min(1.0),
-                g: (c.g + amount).min(1.0),
-                b: (c.b + amount).min(1.0),
-                a: c.a,
+        let draw_true_gradient_box =
+            |frame: &mut Frame, pos: Point, size: iced::Size, base: Color| {
+                let path = Path::rectangle(pos, size);
+                let brighten = |c: Color, amount: f32| Color {
+                    r: (c.r + amount).min(1.0),
+                    g: (c.g + amount).min(1.0),
+                    b: (c.b + amount).min(1.0),
+                    a: c.a,
+                };
+                let darken = |c: Color, amount: f32| Color {
+                    r: (c.r - amount).max(0.0),
+                    g: (c.g - amount).max(0.0),
+                    b: (c.b - amount).max(0.0),
+                    a: c.a,
+                };
+                let grad = gradient::Linear::new(
+                    Point::new(pos.x + size.width * 0.5, pos.y),
+                    Point::new(pos.x + size.width * 0.5, pos.y + size.height),
+                )
+                .add_stop(0.0, brighten(base, 0.07))
+                .add_stop(0.55, base)
+                .add_stop(1.0, darken(base, 0.08));
+                frame.fill(&path, grad);
             };
-            let darken = |c: Color, amount: f32| Color {
-                r: (c.r - amount).max(0.0),
-                g: (c.g - amount).max(0.0),
-                b: (c.b - amount).max(0.0),
-                a: c.a,
-            };
-            let grad = gradient::Linear::new(
-                Point::new(pos.x + size.width * 0.5, pos.y),
-                Point::new(pos.x + size.width * 0.5, pos.y + size.height),
-            )
-            .add_stop(0.0, brighten(base, 0.07))
-            .add_stop(0.55, base)
-            .add_stop(1.0, darken(base, 0.08));
-            frame.fill(&path, grad);
-        };
         let draw_grid = |frame: &mut Frame, width: f32, height: f32| {
             let minor = 24.0;
             let major_every = 4usize;
@@ -734,10 +735,7 @@ impl canvas::Program<Message> for Graph {
         let conn_audio = Color::from_rgb(0.36, 0.66, 0.98);
         let conn_midi = Color::from_rgb(0.98, 0.68, 0.34);
         let conn_selected = Color::from_rgb(0.72, 0.90, 1.0);
-        frame.fill(
-            &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
-            bg,
-        );
+        frame.fill(&Path::rectangle(Point::new(0.0, 0.0), bounds.size()), bg);
         draw_grid(&mut frame, bounds.width, bounds.height);
         if let Ok(data) = self.state.try_read() {
             let Some(track_name) = data.plugin_graph_track.as_ref() else {
@@ -894,7 +892,12 @@ impl canvas::Program<Message> for Graph {
                 let pos = Self::plugin_pos(&data, plugin, idx, bounds);
                 let plugin_h = Self::plugin_height(plugin);
                 let rect = Path::rectangle(pos, iced::Size::new(PLUGIN_W, plugin_h));
-                draw_true_gradient_box(&mut frame, pos, iced::Size::new(PLUGIN_W, plugin_h), node_fill);
+                draw_true_gradient_box(
+                    &mut frame,
+                    pos,
+                    iced::Size::new(PLUGIN_W, plugin_h),
+                    node_fill,
+                );
                 let is_selected_plugin =
                     data.plugin_graph_selected_plugin == Some(plugin.instance_id);
                 frame.stroke(

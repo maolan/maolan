@@ -338,8 +338,8 @@ impl canvas::Program<Message> for Graph {
                         let track_midi_outs = track.midi.outs;
                         let t_ins = track_audio_ins + track_midi_ins;
                         for j in 0..t_ins {
-                            let py =
-                                track_pos.y + (track_size.height / (t_ins + 1) as f32) * (j + 1) as f32;
+                            let py = track_pos.y
+                                + (track_size.height / (t_ins + 1) as f32) * (j + 1) as f32;
                             if cursor_position.distance(Point::new(track_pos.x, py)) < 10.0 {
                                 data.connecting = Some(Connecting {
                                     from_track: track_name.clone(),
@@ -358,9 +358,10 @@ impl canvas::Program<Message> for Graph {
 
                         let t_outs = track_audio_outs + track_midi_outs;
                         for j in 0..t_outs {
-                            let py =
-                                track_pos.y + (track_size.height / (t_outs + 1) as f32) * (j + 1) as f32;
-                            if cursor_position.distance(Point::new(track_pos.x + track_size.width, py))
+                            let py = track_pos.y
+                                + (track_size.height / (t_outs + 1) as f32) * (j + 1) as f32;
+                            if cursor_position
+                                .distance(Point::new(track_pos.x + track_size.width, py))
                                 < 10.0
                             {
                                 data.connecting = Some(Connecting {
@@ -834,7 +835,8 @@ impl canvas::Program<Message> for Graph {
                                 break;
                             }
 
-                            if Rectangle::new(track.position, track_size).contains(cursor_position) {
+                            if Rectangle::new(track.position, track_size).contains(cursor_position)
+                            {
                                 new_h = Some(Hovering::Track(track.name.clone()));
                                 break;
                             }
@@ -924,29 +926,30 @@ impl canvas::Program<Message> for Graph {
                 Color::from_rgba(0.0, 0.0, 0.0, 0.08),
             );
         };
-        let draw_true_gradient_box = |frame: &mut Frame, pos: Point, size: iced::Size, base: Color| {
-            let path = Path::rectangle(pos, size);
-            let brighten = |c: Color, amount: f32| Color {
-                r: (c.r + amount).min(1.0),
-                g: (c.g + amount).min(1.0),
-                b: (c.b + amount).min(1.0),
-                a: c.a,
-            };
-            let darken = |c: Color, amount: f32| Color {
-                r: (c.r - amount).max(0.0),
-                g: (c.g - amount).max(0.0),
-                b: (c.b - amount).max(0.0),
-                a: c.a,
-            };
-            let grad = gradient::Linear::new(
-                Point::new(pos.x + size.width * 0.5, pos.y),
-                Point::new(pos.x + size.width * 0.5, pos.y + size.height),
-            )
+        let draw_true_gradient_box =
+            |frame: &mut Frame, pos: Point, size: iced::Size, base: Color| {
+                let path = Path::rectangle(pos, size);
+                let brighten = |c: Color, amount: f32| Color {
+                    r: (c.r + amount).min(1.0),
+                    g: (c.g + amount).min(1.0),
+                    b: (c.b + amount).min(1.0),
+                    a: c.a,
+                };
+                let darken = |c: Color, amount: f32| Color {
+                    r: (c.r - amount).max(0.0),
+                    g: (c.g - amount).max(0.0),
+                    b: (c.b - amount).max(0.0),
+                    a: c.a,
+                };
+                let grad = gradient::Linear::new(
+                    Point::new(pos.x + size.width * 0.5, pos.y),
+                    Point::new(pos.x + size.width * 0.5, pos.y + size.height),
+                )
                 .add_stop(0.0, brighten(base, 0.07))
                 .add_stop(0.55, base)
-            .add_stop(1.0, darken(base, 0.08));
-            frame.fill(&path, grad);
-        };
+                .add_stop(1.0, darken(base, 0.08));
+                frame.fill(&path, grad);
+            };
         let draw_grid = |frame: &mut Frame, width: f32, height: f32| {
             let minor = 24.0;
             let major_every = 4usize;
@@ -998,10 +1001,7 @@ impl canvas::Program<Message> for Graph {
         let conn_audio = Color::from_rgb(0.36, 0.66, 0.98);
         let conn_midi = Color::from_rgb(0.98, 0.68, 0.34);
         let conn_selected = Color::from_rgb(0.72, 0.90, 1.0);
-        frame.fill(
-            &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
-            bg,
-        );
+        frame.fill(&Path::rectangle(Point::new(0.0, 0.0), bounds.size()), bg);
         draw_grid(&mut frame, bounds.width, bounds.height);
 
         if let Ok(data) = self.state.try_read() {
@@ -1199,16 +1199,16 @@ impl canvas::Program<Message> for Graph {
                             Point::new(end.x - dist, end.y),
                         )
                     };
-                frame.stroke(
-                    &Path::new(|p| {
-                        p.move_to(start);
-                        p.bezier_curve_to(c1, c2, end);
-                    }),
-                    canvas::Stroke::default()
-                        .with_color(Color::from_rgba(0.73, 0.84, 1.0, 0.6))
-                        .with_width(2.0),
-                );
-            }
+                    frame.stroke(
+                        &Path::new(|p| {
+                            p.move_to(start);
+                            p.bezier_curve_to(c1, c2, end);
+                        }),
+                        canvas::Stroke::default()
+                            .with_color(Color::from_rgba(0.73, 0.84, 1.0, 0.6))
+                            .with_width(2.0),
+                    );
+                }
             }
 
             if let Some(hw_in) = &data.hw_in {
