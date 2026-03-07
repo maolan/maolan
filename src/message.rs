@@ -518,6 +518,7 @@ pub enum Message {
 
     AddTrack(AddTrack),
     SelectTrack(String),
+    SelectTrackFromMixer(String),
     TrackAutomationToggle {
         track_name: String,
     },

@@ -359,7 +359,7 @@ impl Mixer {
                     bay,
                     Self::format_level_db(track.level),
                 ))
-                .on_press(Message::SelectTrack(select_name)),
+                .on_press(Message::SelectTrackFromMixer(select_name)),
             );
         }
 
@@ -392,7 +392,7 @@ impl Mixer {
             ),
             Self::format_level_db(hw_out_level),
         ))
-        .on_press(Message::SelectTrack("hw:out".to_string()));
+        .on_press(Message::SelectTrackFromMixer("hw:out".to_string()));
 
         let track_strips = scrollable(
             row![strips, Space::new().width(Length::Fill)]

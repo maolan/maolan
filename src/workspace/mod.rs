@@ -215,9 +215,10 @@ impl Workspace {
                 .height(Length::Fixed(tracks_total_height)),
         )
         .id(Id::new(EDITOR_SCROLL_ID))
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::hidden(),
-        ))
+        .direction(scrollable::Direction::Both {
+            vertical: scrollable::Scrollbar::new(),
+            horizontal: scrollable::Scrollbar::hidden(),
+        })
         .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
         .width(Length::Fill)
         .height(Length::Fill);

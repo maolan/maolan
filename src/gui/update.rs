@@ -6813,6 +6813,36 @@ impl Maolan {
                     state.connection_view_selection = ConnectionViewSelection::Tracks(set);
                 }
             }
+            Message::SelectTrackFromMixer(ref name) => {
+                let ctrl = self.state.blocking_read().ctrl;
+                let selected = self.state.blocking_read().selected.contains(name);
+                let mut state = self.state.blocking_write();
+                state.connections_last_track_click = None;
+
+                if ctrl {
+                    if selected {
+                        state.selected.remove(name);
+                        if let ConnectionViewSelection::Tracks(set) =
+                            &mut state.connection_view_selection
+                        {
+                            set.remove(name);
+                        }
+                    } else {
+                        state.selected.insert(name.clone());
+                        if let ConnectionViewSelection::Tracks(set) =
+                            &mut state.connection_view_selection
+                        {
+                            set.insert(name.clone());
+                        }
+                    }
+                } else {
+                    state.selected.clear();
+                    state.selected.insert(name.clone());
+                    let mut set = std::collections::HashSet::new();
+                    set.insert(name.clone());
+                    state.connection_view_selection = ConnectionViewSelection::Tracks(set);
+                }
+            }
             Message::TrackSetVcaMaster {
                 ref track_name,
                 ref master_track,
