@@ -23,11 +23,12 @@ const AUDIO_CLIP_BASE: Color = Color::from_rgb8(68, 88, 132);
 const AUDIO_CLIP_SELECTED_BASE: Color = Color::from_rgb8(96, 126, 186);
 const AUDIO_CLIP_BORDER: Color = Color::from_rgb8(78, 93, 130);
 const AUDIO_CLIP_SELECTED_BORDER: Color = Color::from_rgb8(176, 218, 255);
-const MIDI_CLIP_BASE: Color = Color::from_rgb8(98, 82, 30);
-const MIDI_CLIP_SELECTED_BASE: Color = Color::from_rgb8(178, 150, 54);
-const MIDI_CLIP_BORDER: Color = Color::from_rgb(0.72, 0.52, 0.18);
-const MIDI_CLIP_SELECTED_BORDER: Color = Color::from_rgb(1.0, 0.86, 0.42);
-const CLIP_HANDLE: Color = Color::from_rgb8(52, 46, 25);
+const MIDI_CLIP_BASE: Color = Color::from_rgb8(55, 90, 50);
+const MIDI_CLIP_SELECTED_BASE: Color = Color::from_rgb8(84, 133, 72);
+const MIDI_CLIP_BORDER: Color = Color::from_rgb8(148, 215, 118);
+const MIDI_CLIP_SELECTED_BORDER: Color = Color::from_rgb8(196, 255, 151);
+const AUDIO_CLIP_HANDLE: Color = Color::from_rgb8(52, 46, 25);
+const MIDI_CLIP_HANDLE: Color = Color::from_rgb8(34, 62, 38);
 struct TrackElementViewArgs<'a> {
     state: &'a StateData,
     track: Track,
@@ -482,8 +483,35 @@ impl canvas::Program<Message> for MidiClipNotesCanvas {
                 let min_pitch = 0_u8;
                 let max_pitch = 119_u8;
                 let pitch_span = 120.0_f32;
-                let note_color = Color::from_rgba(0.20, 0.10, 0.03, 0.70);
-                let note_edge = Color::from_rgba(1.0, 0.95, 0.72, 0.90);
+                let note_color = Color::from_rgba(0.68, 0.92, 0.40, 0.82);
+                let note_edge = Color::from_rgba(0.86, 0.98, 0.62, 0.95);
+                let grid_major = Color::from_rgba(0.74, 0.95, 0.58, 0.14);
+                let grid_minor = Color::from_rgba(0.62, 0.86, 0.48, 0.07);
+                let horizon = Color::from_rgba(0.88, 0.98, 0.72, 0.22);
+
+                for step in 0..=16 {
+                    let x = (step as f32 / 16.0) * inner_w;
+                    let color = if step % 4 == 0 { grid_major } else { grid_minor };
+                    frame.stroke(
+                        &Path::line(Point::new(x, 0.0), Point::new(x, inner_h)),
+                        canvas::Stroke::default().with_color(color).with_width(1.0),
+                    );
+                }
+
+                for row in 0..=10 {
+                    let y = (row as f32 / 10.0) * inner_h;
+                    frame.stroke(
+                        &Path::line(Point::new(0.0, y), Point::new(inner_w, y)),
+                        canvas::Stroke::default()
+                            .with_color(if row % 2 == 0 { grid_minor } else { grid_major })
+                            .with_width(0.5),
+                    );
+                }
+                let horizon_y = inner_h * 0.84;
+                frame.stroke(
+                    &Path::line(Point::new(0.0, horizon_y), Point::new(inner_w, horizon_y)),
+                    canvas::Stroke::default().with_color(horizon).with_width(1.0),
+                );
 
                 for note in &self.notes {
                     let note_start = note.start_sample;
@@ -850,9 +878,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     use container::Style;
                     Style {
                         background: Some(Background::Color(Color {
-                            r: CLIP_HANDLE.r,
-                            g: CLIP_HANDLE.g,
-                            b: CLIP_HANDLE.b,
+                            r: AUDIO_CLIP_HANDLE.r,
+                            g: AUDIO_CLIP_HANDLE.g,
+                            b: AUDIO_CLIP_HANDLE.b,
                             a: 0.9,
                         })),
                         ..Style::default()
@@ -874,9 +902,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     use container::Style;
                     Style {
                         background: Some(Background::Color(Color {
-                            r: CLIP_HANDLE.r,
-                            g: CLIP_HANDLE.g,
-                            b: CLIP_HANDLE.b,
+                            r: AUDIO_CLIP_HANDLE.r,
+                            g: AUDIO_CLIP_HANDLE.g,
+                            b: AUDIO_CLIP_HANDLE.b,
                             a: 0.9,
                         })),
                         ..Style::default()
@@ -1341,9 +1369,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     use container::Style;
                     Style {
                         background: Some(Background::Color(Color {
-                            r: CLIP_HANDLE.r,
-                            g: CLIP_HANDLE.g,
-                            b: CLIP_HANDLE.b,
+                            r: MIDI_CLIP_HANDLE.r,
+                            g: MIDI_CLIP_HANDLE.g,
+                            b: MIDI_CLIP_HANDLE.b,
                             a: 0.9,
                         })),
                         ..Style::default()
@@ -1365,9 +1393,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     use container::Style;
                     Style {
                         background: Some(Background::Color(Color {
-                            r: CLIP_HANDLE.r,
-                            g: CLIP_HANDLE.g,
-                            b: CLIP_HANDLE.b,
+                            r: MIDI_CLIP_HANDLE.r,
+                            g: MIDI_CLIP_HANDLE.g,
+                            b: MIDI_CLIP_HANDLE.b,
                             a: 0.9,
                         })),
                         ..Style::default()
@@ -1402,8 +1430,11 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 } else {
                     MIDI_CLIP_BASE
                 };
-                let (muted_alpha, normal_alpha) =
-                    if clip_muted { (0.55, 0.55) } else { (1.0, 1.0) };
+                let (muted_alpha, normal_alpha) = if clip_muted {
+                    (0.42, 0.42)
+                } else {
+                    (0.92, 0.92)
+                };
                 Style {
                     background: Some(clip_two_edge_gradient(
                         base,
@@ -1426,8 +1457,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     } else {
                         MIDI_CLIP_BORDER
                     },
-                    width: if is_selected { 2.0 } else { 1.0 },
-                    radius: 3.0.into(),
+                    width: if is_selected { 2.2 } else { 1.4 },
+                    radius: 8.0.into(),
                 },
                 ..container::Style::default()
             });
@@ -1454,8 +1485,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         .style(|_theme| container::Style {
                             background: Some(Background::Color(Color {
                                 r: 0.7,
-                                g: 0.9,
-                                b: 0.7,
+                                g: 0.96,
+                                b: 0.62,
                                 a: 0.6,
                             })),
                             ..container::Style::default()
@@ -1473,14 +1504,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             background: Some(Background::Color(Color {
                                 r: 0.9,
                                 g: 1.0,
-                                b: 0.9,
+                                b: 0.72,
                                 a: 0.9,
                             })),
                             border: Border {
                                 color: Color {
-                                    r: 0.3,
-                                    g: 0.5,
-                                    b: 0.3,
+                                    r: 0.24,
+                                    g: 0.42,
+                                    b: 0.20,
                                     a: 1.0,
                                 },
                                 width: 1.0,
@@ -1517,8 +1548,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         .style(|_theme| container::Style {
                             background: Some(Background::Color(Color {
                                 r: 0.7,
-                                g: 0.9,
-                                b: 0.7,
+                                g: 0.96,
+                                b: 0.62,
                                 a: 0.6,
                             })),
                             ..container::Style::default()
@@ -1536,14 +1567,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             background: Some(Background::Color(Color {
                                 r: 0.9,
                                 g: 1.0,
-                                b: 0.9,
+                                b: 0.72,
                                 a: 0.9,
                             })),
                             border: Border {
                                 color: Color {
-                                    r: 0.3,
-                                    g: 0.5,
-                                    b: 0.3,
+                                    r: 0.24,
+                                    g: 0.42,
+                                    b: 0.20,
                                     a: 1.0,
                                 },
                                 width: 1.0,
@@ -1710,8 +1741,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     Style {
                         background: Some(clip_two_edge_gradient(
                             MIDI_CLIP_SELECTED_BASE,
-                            0.7,
-                            0.7,
+                            0.66,
+                            0.66,
                             false,
                         )),
                         ..Style::default()
@@ -1732,13 +1763,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 background: None,
                 border: Border {
                     color: Color {
-                        r: 0.98,
-                        g: 0.98,
-                        b: 0.98,
-                        a: 0.9,
+                        r: 0.88,
+                        g: 1.0,
+                        b: 0.78,
+                        a: 0.92,
                     },
                     width: 2.0,
-                    radius: 3.0.into(),
+                    radius: 8.0.into(),
                 },
                 ..container::Style::default()
             });
