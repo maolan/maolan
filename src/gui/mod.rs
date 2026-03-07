@@ -46,10 +46,10 @@ use serde_json::json;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
-    io::{self},
+    io::{self, BufReader},
     num::{NonZeroU8, NonZeroU32},
     path::{Path, PathBuf},
-    sync::{Arc, LazyLock},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
 use symphonia::core::{
@@ -178,6 +178,23 @@ struct AudioClipKey {
 }
 
 #[derive(Debug, Clone)]
+pub(super) struct AudioPeakChunkUpdate {
+    pub track_name: String,
+    pub clip_name: String,
+    pub start: usize,
+    pub length: usize,
+    pub offset: usize,
+    pub channels: usize,
+    pub target_bins: usize,
+    pub bin_start: usize,
+    pub peaks: Vec<Vec<[f32; 2]>>,
+    pub done: bool,
+}
+
+pub(super) static AUDIO_PEAK_UPDATES: LazyLock<Mutex<Vec<AudioPeakChunkUpdate>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+
+#[derive(Debug, Clone)]
 struct PendingVst3UiOpen {
     track_name: String,
     instance_id: usize,
@@ -253,6 +270,7 @@ pub struct Maolan {
     pending_save_tracks: std::collections::HashSet<String>,
     pending_save_is_template: bool,
     pending_audio_peaks: HashMap<AudioClipKey, ClipPeaks>,
+    pending_peak_file_loads: HashMap<AudioClipKey, PathBuf>,
     pending_peak_rebuilds: HashSet<AudioClipKey>,
     pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
     pending_track_freeze_bounce: HashMap<String, PendingTrackFreezeBounce>,
@@ -455,6 +473,7 @@ impl Default for Maolan {
             pending_save_tracks: std::collections::HashSet::new(),
             pending_save_is_template: false,
             pending_audio_peaks: HashMap::new(),
+            pending_peak_file_loads: HashMap::new(),
             pending_peak_rebuilds: HashSet::new(),
             pending_track_freeze_restore: HashMap::new(),
             pending_track_freeze_bounce: HashMap::new(),
@@ -810,6 +829,280 @@ impl Maolan {
             }
         }
         Ok(peaks)
+    }
+
+    fn read_clip_peaks_file(path: &Path) -> std::io::Result<ClipPeaks> {
+        let file = File::open(path)?;
+        let json: Value = serde_json::from_reader(BufReader::new(file))?;
+        let peaks_val = json.get("peaks").cloned().unwrap_or(Value::Null);
+        let Some(root) = peaks_val.as_array() else {
+            return Ok(vec![]);
+        };
+
+        if root.first().is_some_and(Value::is_number) {
+            let mono = root
+                .iter()
+                .filter_map(Value::as_f64)
+                .map(|v| {
+                    let a = (v as f32).abs().clamp(0.0, 1.0);
+                    [-a, a]
+                })
+                .collect::<Vec<_>>();
+            return Ok(if mono.is_empty() { vec![] } else { vec![mono] });
+        }
+
+        let first = root.first();
+        if first.is_some_and(|v| {
+            v.as_array()
+                .is_some_and(|a| a.len() == 2 && a[0].is_number() && a[1].is_number())
+        }) {
+            let mono = root
+                .iter()
+                .filter_map(Value::as_array)
+                .filter_map(|pair| {
+                    let min = pair.first()?.as_f64()? as f32;
+                    let max = pair.get(1)?.as_f64()? as f32;
+                    Some([min.min(max).clamp(-1.0, 1.0), min.max(max).clamp(-1.0, 1.0)])
+                })
+                .collect::<Vec<_>>();
+            return Ok(if mono.is_empty() { vec![] } else { vec![mono] });
+        }
+
+        let mut per_channel: ClipPeaks = Vec::with_capacity(root.len());
+        for channel in root {
+            let Some(arr) = channel.as_array() else {
+                continue;
+            };
+            let mut ch = Vec::with_capacity(arr.len());
+            for peak in arr {
+                if let Some(pair) = peak.as_array()
+                    && pair.len() == 2
+                    && let (Some(min), Some(max)) = (
+                        pair.first().and_then(Value::as_f64),
+                        pair.get(1).and_then(Value::as_f64),
+                    )
+                {
+                    let min = min as f32;
+                    let max = max as f32;
+                    ch.push([min.min(max).clamp(-1.0, 1.0), min.max(max).clamp(-1.0, 1.0)]);
+                    continue;
+                }
+                if let Some(v) = peak.as_f64() {
+                    let a = (v as f32).abs().clamp(0.0, 1.0);
+                    ch.push([-a, a]);
+                }
+            }
+            per_channel.push(ch);
+        }
+        Ok(per_channel)
+    }
+
+    fn stream_peak_file_to_queue(
+        peaks_path: &Path,
+        track_name: String,
+        clip_name: String,
+        start: usize,
+        length: usize,
+        offset: usize,
+    ) -> std::io::Result<()> {
+        let peaks = Self::read_clip_peaks_file(peaks_path)?;
+        if peaks.is_empty() {
+            if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+                queue.push(AudioPeakChunkUpdate {
+                    track_name,
+                    clip_name,
+                    start,
+                    length,
+                    offset,
+                    channels: 0,
+                    target_bins: 0,
+                    bin_start: 0,
+                    peaks: Vec::new(),
+                    done: true,
+                });
+            }
+            return Ok(());
+        }
+
+        let channels = peaks.len();
+        let target_bins = peaks.first().map(Vec::len).unwrap_or(0);
+        if target_bins == 0 {
+            if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+                queue.push(AudioPeakChunkUpdate {
+                    track_name,
+                    clip_name,
+                    start,
+                    length,
+                    offset,
+                    channels,
+                    target_bins: 0,
+                    bin_start: 0,
+                    peaks: Vec::new(),
+                    done: true,
+                });
+            }
+            return Ok(());
+        }
+
+        const BINS_PER_UPDATE: usize = 2048;
+        let mut bin_start = 0usize;
+        while bin_start < target_bins {
+            let end = (bin_start + BINS_PER_UPDATE).min(target_bins);
+            let mut chunk = vec![Vec::with_capacity(end - bin_start); channels];
+            for (channel_idx, chunk_channel) in chunk.iter_mut().enumerate().take(channels) {
+                if let Some(channel) = peaks.get(channel_idx) {
+                    chunk_channel.extend_from_slice(&channel[bin_start..end]);
+                }
+            }
+            if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+                queue.push(AudioPeakChunkUpdate {
+                    track_name: track_name.clone(),
+                    clip_name: clip_name.clone(),
+                    start,
+                    length,
+                    offset,
+                    channels,
+                    target_bins,
+                    bin_start,
+                    peaks: chunk,
+                    done: false,
+                });
+            }
+            bin_start = end;
+        }
+
+        if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+            queue.push(AudioPeakChunkUpdate {
+                track_name,
+                clip_name,
+                start,
+                length,
+                offset,
+                channels,
+                target_bins,
+                bin_start: 0,
+                peaks: Vec::new(),
+                done: true,
+            });
+        }
+        Ok(())
+    }
+
+    fn stream_audio_clip_peaks_to_queue(
+        path: &Path,
+        track_name: String,
+        clip_name: String,
+        start: usize,
+        length: usize,
+        offset: usize,
+    ) -> std::io::Result<()> {
+        let mut wav = Wav::<f32>::from_path(path).map_err(|e| {
+            io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
+        })?;
+        let channels = wav.n_channels().max(1) as usize;
+        let total_frames = wav.n_samples() / channels.max(1);
+        if total_frames == 0 {
+            if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+                queue.push(AudioPeakChunkUpdate {
+                    track_name,
+                    clip_name,
+                    start,
+                    length,
+                    offset,
+                    channels,
+                    target_bins: 0,
+                    bin_start: 0,
+                    peaks: Vec::new(),
+                    done: true,
+                });
+            }
+            return Ok(());
+        }
+
+        const MAX_PEAK_BINS: usize = 32_768;
+        const CHUNK_FRAMES: usize = 16_384;
+        let target_bins = total_frames.clamp(1024, MAX_PEAK_BINS);
+        let mut accum = vec![vec![[0.0_f32, 0.0_f32]; target_bins]; channels];
+        let mut touched = vec![vec![false; target_bins]; channels];
+        let mut processed_frames = 0usize;
+        let mut last_emitted_bin = 0usize;
+
+        while processed_frames < total_frames {
+            let frames_to_read = (total_frames - processed_frames).min(CHUNK_FRAMES);
+            let samples_to_read = frames_to_read.saturating_mul(channels);
+            let chunk: wavers::Samples<f32> = wav.read_samples(samples_to_read).map_err(|e| {
+                io::Error::other(format!("WAV read error '{}': {e}", path.display()))
+            })?;
+            if chunk.is_empty() {
+                break;
+            }
+            let frames_read = chunk.len() / channels.max(1);
+            if frames_read == 0 {
+                break;
+            }
+
+            for (frame_offset, frame) in chunk.chunks(channels).enumerate() {
+                let frame_index = processed_frames + frame_offset;
+                let bin = ((frame_index * target_bins) / total_frames).min(target_bins - 1);
+                for (channel_idx, sample) in frame.iter().enumerate() {
+                    let s = sample.clamp(-1.0, 1.0);
+                    if !touched[channel_idx][bin] {
+                        accum[channel_idx][bin] = [s, s];
+                        touched[channel_idx][bin] = true;
+                    } else {
+                        accum[channel_idx][bin][0] = accum[channel_idx][bin][0].min(s);
+                        accum[channel_idx][bin][1] = accum[channel_idx][bin][1].max(s);
+                    }
+                }
+            }
+
+            processed_frames = processed_frames.saturating_add(frames_read);
+            let emit_end = (((processed_frames * target_bins) / total_frames) + 1).min(target_bins);
+            if emit_end > last_emitted_bin {
+                let mut peaks_chunk = vec![Vec::with_capacity(emit_end - last_emitted_bin); channels];
+                for channel_idx in 0..channels {
+                    for bin in last_emitted_bin..emit_end {
+                        let pair = if touched[channel_idx][bin] {
+                            accum[channel_idx][bin]
+                        } else {
+                            [0.0_f32, 0.0_f32]
+                        };
+                        peaks_chunk[channel_idx].push(pair);
+                    }
+                }
+                if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+                    queue.push(AudioPeakChunkUpdate {
+                        track_name: track_name.clone(),
+                        clip_name: clip_name.clone(),
+                        start,
+                        length,
+                        offset,
+                        channels,
+                        target_bins,
+                        bin_start: last_emitted_bin,
+                        peaks: peaks_chunk,
+                        done: false,
+                    });
+                }
+                last_emitted_bin = emit_end;
+            }
+        }
+
+        if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+            queue.push(AudioPeakChunkUpdate {
+                track_name,
+                clip_name,
+                start,
+                length,
+                offset,
+                channels,
+                target_bins,
+                bin_start: 0,
+                peaks: Vec::new(),
+                done: true,
+            });
+        }
+        Ok(())
     }
 
     fn audio_clip_source_length(path: &Path) -> std::io::Result<usize> {

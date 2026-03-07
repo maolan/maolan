@@ -175,6 +175,11 @@ impl Maolan {
         };
         let autosave_sub =
             iced::time::every(Duration::from_secs(15)).map(|_| Message::AutosaveSnapshotTick);
+        let peak_rebuild_sub = if !self.pending_peak_rebuilds.is_empty() {
+            iced::time::every(Duration::from_millis(16)).map(|_| Message::DrainAudioPeakUpdates)
+        } else {
+            Subscription::none()
+        };
         #[cfg(all(unix, not(target_os = "macos")))]
         let lv2_ui_sub = if self.lv2_ui_host.has_open_windows() {
             iced::time::every(Duration::from_millis(16)).map(|_| Message::PumpLv2Ui)
@@ -187,6 +192,7 @@ impl Maolan {
             event_sub,
             playback_sub,
             autosave_sub,
+            peak_rebuild_sub,
             recording_preview_sub,
             recording_preview_peaks_sub,
             #[cfg(all(unix, not(target_os = "macos")))]
