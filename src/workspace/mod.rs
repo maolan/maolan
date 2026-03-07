@@ -12,7 +12,7 @@ use crate::{
 use editor::EditorViewArgs;
 use iced::{
     Background, Color, Element, Length, Point,
-    widget::{Id, Stack, column, container, mouse_area, pin, row, scrollable, slider},
+    widget::{Id, Space, Stack, column, container, mouse_area, pin, row, scrollable, slider},
 };
 use ruler::RulerViewArgs;
 use std::collections::HashMap;
@@ -112,7 +112,9 @@ impl Workspace {
         } = args;
         let (
             tracks_width,
+            tracks_width_px,
             max_end_samples,
+            tracks_total_height,
             tempo,
             time_signature,
             tempo_points,
@@ -143,7 +145,12 @@ impl Workspace {
                 .unwrap_or(0);
             (
                 state.tracks_width,
+                match state.tracks_width {
+                    Length::Fixed(width) => width,
+                    _ => 200.0,
+                },
                 max_end_samples,
+                state.tracks.iter().map(|track| track.height).sum::<f32>().max(1.0),
                 state.tempo,
                 (state.time_signature_num, state.time_signature_denom),
                 state
@@ -164,6 +171,7 @@ impl Workspace {
             .max(min_visible_samples)
             .max(min_timeline_samples);
         let editor_content_width = (timeline_samples as f32 * pixels_per_sample).max(1.0);
+        let workspace_content_height = self.tempo.height() + self.ruler.height() + tracks_total_height;
         let playhead_x =
             playhead_samples.map(|sample| (sample as f32 * pixels_per_sample).max(0.0));
 
@@ -202,39 +210,9 @@ impl Workspace {
         };
 
         let right_lanes_scrolled = scrollable(
-            column![
-                container(self.tempo.view(TempoViewArgs {
-                    bpm: tempo,
-                    time_signature,
-                    pixels_per_sample,
-                    playhead_x,
-                    punch_range_samples,
-                    snap_mode,
-                    samples_per_beat,
-                    samples_per_bar: samples_per_bar as f64,
-                    content_width: editor_content_width,
-                    tempo_points: tempo_points.clone(),
-                    time_signature_points: time_signature_points.clone(),
-                    shift_pressed,
-                    selected_tempo_points: selected_tempo_points.clone(),
-                    selected_time_signature_points: selected_time_signature_points.clone(),
-                }))
-                .height(Length::Fixed(self.tempo.height())),
-                container(self.ruler.view(RulerViewArgs {
-                    playhead_x,
-                    beat_pixels,
-                    pixels_per_sample,
-                    loop_range_samples,
-                    snap_mode,
-                    samples_per_beat,
-                    content_width: editor_content_width,
-                }))
-                .height(Length::Fixed(self.ruler.height())),
-                container(editor_with_playhead)
-                    .width(Length::Fixed(editor_content_width))
-                    .height(Length::Fill),
-            ]
-            .height(Length::Fill),
+            container(editor_with_playhead)
+                .width(Length::Fixed(editor_content_width))
+                .height(Length::Fixed(tracks_total_height)),
         )
         .id(Id::new(EDITOR_SCROLL_ID))
         .direction(scrollable::Direction::Horizontal(
@@ -257,31 +235,9 @@ impl Workspace {
         .width(Length::Fill)
         .height(Length::Fixed(16.0));
 
-        let editor_with_zoom = Stack::from_vec(vec![
-            right_lanes_scrolled.into(),
-            pin(container(
-                row![
-                    h_scroll,
-                    slider(
-                        1.0..=256.0,
-                        zoom_visible_bars,
-                        Message::ZoomVisibleBarsChanged,
-                    )
-                    .width(Length::Fixed(105.0)),
-                ]
-                .spacing(8),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(8)
-            .align_x(iced::alignment::Horizontal::Right)
-            .align_y(iced::alignment::Vertical::Bottom))
-            .into(),
-        ])
-        .width(Length::Fill)
-        .height(Length::Fill);
+        let editor_with_zoom = right_lanes_scrolled;
 
-        column![
+        let shared_workspace = scrollable(
             row![
                 column![
                     container("")
@@ -310,8 +266,7 @@ impl Workspace {
                         }),
                     self.tracks.view(),
                 ]
-                .width(tracks_width)
-                .height(Length::Fill),
+                .width(tracks_width),
                 mouse_area(column![
                     container("")
                         .width(Length::Fixed(3.0))
@@ -339,7 +294,7 @@ impl Workspace {
                         }),
                     container("")
                         .width(Length::Fixed(3.0))
-                        .height(Length::Fill)
+                        .height(Length::Fixed(tracks_total_height))
                         .style(move |_theme| container::Style {
                             background: Some(Background::Color(Color {
                                 r: 0.7,
@@ -353,9 +308,84 @@ impl Workspace {
                 .on_enter(Message::TracksResizeHover(true))
                 .on_exit(Message::TracksResizeHover(false))
                 .on_press(Message::TracksResizeStart),
-                editor_with_zoom,
+                column![
+                    container(self.tempo.view(TempoViewArgs {
+                        bpm: tempo,
+                        time_signature,
+                        pixels_per_sample,
+                        playhead_x,
+                        punch_range_samples,
+                        snap_mode,
+                        samples_per_beat,
+                        samples_per_bar: samples_per_bar as f64,
+                        content_width: editor_content_width,
+                        tempo_points: tempo_points.clone(),
+                        time_signature_points: time_signature_points.clone(),
+                        shift_pressed,
+                        selected_tempo_points: selected_tempo_points.clone(),
+                        selected_time_signature_points: selected_time_signature_points.clone(),
+                    }))
+                    .height(Length::Fixed(self.tempo.height())),
+                    container(self.ruler.view(RulerViewArgs {
+                        playhead_x,
+                        beat_pixels,
+                        pixels_per_sample,
+                        loop_range_samples,
+                        snap_mode,
+                        samples_per_beat,
+                        content_width: editor_content_width,
+                    }))
+                    .height(Length::Fixed(self.ruler.height())),
+                    container(editor_with_zoom)
+                        .height(Length::Fixed(tracks_total_height)),
+                ]
+                .width(Length::Fill),
             ]
-            .height(Length::Fill),
+            .height(Length::Fixed(workspace_content_height)),
+        )
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new(),
+        ))
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        let editor_footer = container(
+            row![
+                Space::new().width(Length::Fixed(tracks_width_px + 3.0)),
+                container(
+                    row![
+                        h_scroll,
+                        slider(
+                            1.0..=256.0,
+                            zoom_visible_bars,
+                            Message::ZoomVisibleBarsChanged,
+                        )
+                        .width(Length::Fixed(105.0)),
+                    ]
+                    .spacing(8),
+                )
+                .width(Length::Fill)
+                .height(Length::Fixed(16.0))
+                .padding([0, 8]),
+            ]
+            .height(Length::Fill)
+            .align_y(iced::alignment::Vertical::Bottom),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        let workspace_with_footer = Stack::from_vec(vec![
+            shared_workspace.into(),
+            container(editor_footer)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into(),
+        ])
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        column![
+            workspace_with_footer,
             mouse_area(
                 container("")
                     .width(Length::Fill)

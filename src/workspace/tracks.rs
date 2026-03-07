@@ -4,10 +4,9 @@ use crate::{
     style,
 };
 use iced::{
-    Alignment, Background, Border, Color, Element, Length,
+    Alignment, Background, Border, Color, Element, Length, Theme,
     alignment::Horizontal,
     widget::{Column, Space, button, column, container, mouse_area, row, text},
-    Theme,
 };
 use iced_aw::ContextMenu;
 use iced_drop::droppable;
@@ -103,10 +102,11 @@ impl Tracks {
         let vca_display_labels: Vec<Option<String>> = tracks
             .iter()
             .map(|track| {
-                track
-                    .vca_master
-                    .clone()
-                    .or_else(|| vca_has_followers.contains(&track.name).then(|| track.name.clone()))
+                track.vca_master.clone().or_else(|| {
+                    vca_has_followers
+                        .contains(&track.name)
+                        .then(|| track.name.clone())
+                })
             })
             .collect();
         let result = Column::with_children(tracks.into_iter().enumerate().map(|(index, track)| {
@@ -184,8 +184,11 @@ impl Tracks {
             let header = mouse_area(
                 container(
                     row![
-                        text(Self::trim_with_ellipsis(&track.name, max_name_chars as usize))
-                            .size(13),
+                        text(Self::trim_with_ellipsis(
+                            &track.name,
+                            max_name_chars as usize
+                        ))
+                        .size(13),
                         Space::new().width(Length::Fill),
                         title_badges,
                     ]
@@ -201,7 +204,12 @@ impl Tracks {
                         Color::from_rgba(0.18, 0.22, 0.30, 0.96)
                     })),
                     border: Border {
-                        color: Color::from_rgba(0.78, 0.87, 0.99, if selected { 0.5 } else { 0.16 }),
+                        color: Color::from_rgba(
+                            0.78,
+                            0.87,
+                            0.99,
+                            if selected { 0.5 } else { 0.16 },
+                        ),
                         width: 1.0,
                         radius: 7.0.into(),
                     },
@@ -221,11 +229,15 @@ impl Tracks {
                 button("M")
                     .padding([2, 5])
                     .style(move |theme, _state| style::mute::style(theme, track.muted))
-                    .on_press(Message::Request(Action::TrackToggleMute(track.name.clone()))),
+                    .on_press(Message::Request(Action::TrackToggleMute(
+                        track.name.clone()
+                    ))),
                 button("S")
                     .padding([2, 5])
                     .style(move |theme, _state| style::solo::style(theme, track.soloed))
-                    .on_press(Message::Request(Action::TrackToggleSolo(track.name.clone()))),
+                    .on_press(Message::Request(Action::TrackToggleSolo(
+                        track.name.clone()
+                    ))),
                 button(audio_waveform())
                     .padding([2, 5])
                     .style(move |theme, _state| style::input::style(theme, track.input_monitor))
@@ -259,7 +271,9 @@ impl Tracks {
                     .height(Length::Fixed(lane_h))
                     .padding([4, 6])
                     .style(move |_theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgba(0.19, 0.16, 0.11, 0.88))),
+                        background: Some(Background::Color(Color::from_rgba(
+                            0.19, 0.16, 0.11, 0.88,
+                        ))),
                         border: Border {
                             color: Color::from_rgba(0.62, 0.49, 0.28, 0.22),
                             width: 1.0,
@@ -387,7 +401,8 @@ impl Tracks {
                         group_end += 1;
                     }
                     let line_h = 10.0;
-                    let cap_for = |h: f32| -> usize { ((h - 8.0).max(0.0) / line_h).floor() as usize };
+                    let cap_for =
+                        |h: f32| -> usize { ((h - 8.0).max(0.0) / line_h).floor() as usize };
                     let mut capacity_before = 0usize;
                     for h in &track_heights[group_start..index] {
                         capacity_before += cap_for(*h);
@@ -409,7 +424,9 @@ impl Tracks {
                         .height(Length::Fill)
                         .padding([6, 1])
                         .style(move |_theme| container::Style {
-                            background: Some(Background::Color(Color::from_rgba(0.25, 0.34, 0.49, 0.92))),
+                            background: Some(Background::Color(Color::from_rgba(
+                                0.25, 0.34, 0.49, 0.92,
+                            ))),
                             border: Border {
                                 color: Color::from_rgba(0.82, 0.9, 1.0, 0.18),
                                 width: 1.0,
@@ -435,7 +452,12 @@ impl Tracks {
                             Color::from_rgba(0.08, 0.10, 0.16, 0.96)
                         })),
                         border: Border {
-                            color: Color::from_rgba(0.74, 0.84, 0.98, if selected { 0.32 } else { 0.08 }),
+                            color: Color::from_rgba(
+                                0.74,
+                                0.84,
+                                0.98,
+                                if selected { 0.32 } else { 0.08 },
+                            ),
                             width: 1.0,
                             radius: 8.0.into(),
                         },
@@ -686,6 +708,6 @@ impl Tracks {
                 .into()
             }
         }));
-        result.width(width).spacing(4).into()
+        result.width(width).into()
     }
 }

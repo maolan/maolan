@@ -6,7 +6,7 @@ use crate::{
 };
 use iced::{
     Alignment, Background, Color, Element, Length, Point,
-    widget::{Space, Stack, column, container, mouse_area, pin, row, text},
+    widget::{Space, Stack, column, container, mouse_area, pin, row, scrollable, text},
 };
 use maolan_engine::message::Action;
 use std::sync::LazyLock;
@@ -110,9 +110,9 @@ impl Mixer {
             .into()
     }
 
-    fn meter_width(channels: usize) -> f32 {
+    fn master_meter_width(channels: usize) -> f32 {
         let channels = channels.max(1) as f32;
-        6.0 + channels * 5.0
+        6.0 + channels * 2.5
     }
 
     fn slider_with_ticks<F>(
@@ -303,7 +303,7 @@ impl Mixer {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let mut strips = row![].spacing(8).align_y(Alignment::Start);
+        let mut strips = row![].spacing(2).align_y(Alignment::Start);
         let (
             tracks,
             selected,
@@ -368,7 +368,7 @@ impl Mixer {
             + Self::SCALE_WIDTH
             + 3.0
             + 8.0
-            + Self::meter_width(hw_out_channels.max(1))
+            + Self::master_meter_width(hw_out_channels.max(1))
             + 16.0)
             .max(Self::STRIP_WIDTH);
         let master_strip = mouse_area(Self::strip_shell(
@@ -388,18 +388,27 @@ impl Mixer {
                 hw_out_level,
                 fader_height,
                 &tick_layout,
-                move |new_val| {
-                    Message::Request(Action::TrackLevel("hw:out".to_string(), new_val))
-                },
+                move |new_val| Message::Request(Action::TrackLevel("hw:out".to_string(), new_val)),
             ),
             Self::format_level_db(hw_out_level),
         ))
         .on_press(Message::SelectTrack("hw:out".to_string()));
 
-        mouse_area(
-            row![strips, Space::new().width(Length::Fill), master_strip]
+        let track_strips = scrollable(
+            row![strips, Space::new().width(Length::Fill)]
                 .height(height)
                 .padding([8, 6])
+                .align_y(Alignment::Start),
+        )
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new(),
+        ))
+        .width(Length::Fill)
+        .height(height);
+
+        mouse_area(
+            row![track_strips, master_strip]
+                .height(height)
                 .align_y(Alignment::Start),
         )
         .on_press(Message::DeselectAll)
