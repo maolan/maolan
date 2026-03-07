@@ -457,7 +457,7 @@ impl Maolan {
             return Task::none();
         };
         let track_name = piano.track_idx.clone();
-        let clip_idx = 0;
+        let clip_idx = piano.clip_index;
 
         let mut changed_indices = Vec::new();
         let mut new_notes = Vec::new();
@@ -3768,7 +3768,7 @@ impl Maolan {
 
                     if copy && let Some(piano) = state.piano.as_ref() {
                         let track_name = piano.track_idx.clone();
-                        let clip_idx = 0; // TODO: Get actual clip index
+                        let clip_idx = piano.clip_index;
                         let insert_base = piano.notes.len();
 
                         let notes: Vec<(usize, maolan_engine::message::MidiNoteData)> = dragging
@@ -3804,7 +3804,7 @@ impl Maolan {
 
                     if let Some(piano) = state.piano.as_mut() {
                         let track_name = piano.track_idx.clone();
-                        let clip_idx = 0; // TODO: Get actual clip index
+                        let clip_idx = piano.clip_index;
 
                         // Modify the notes in place
                         for &note_idx in &dragging.note_indices {
@@ -3925,7 +3925,7 @@ impl Maolan {
                         && let Some(note) = piano.notes.get_mut(resizing.note_index)
                     {
                         let track_name = piano.track_idx.clone();
-                        let clip_idx = 0; // TODO: Get actual clip index
+                        let clip_idx = piano.clip_index;
 
                         note.start_sample = new_start;
                         note.length_samples = new_len;
@@ -4014,7 +4014,7 @@ impl Maolan {
                     return Task::none();
                 }
                 let track_name = piano.track_idx.clone();
-                let clip_idx = 0; // TODO: Get actual clip index
+                let clip_idx = piano.clip_index;
                 drop(state);
                 return self.send(Action::ModifyMidiNotes {
                     track_name,
@@ -4054,7 +4054,7 @@ impl Maolan {
                     channel: note.channel,
                 };
                 let track_name = piano.track_idx.clone();
-                let clip_idx = 0; // TODO: Get actual clip index
+                let clip_idx = piano.clip_index;
                 drop(state);
                 return self.send(Action::ModifyMidiNotes {
                     track_name,
@@ -4096,7 +4096,7 @@ impl Maolan {
                     channel: ctrl.channel,
                 };
                 let track_name = piano.track_idx.clone();
-                let clip_idx = 0; // TODO: Get actual clip index
+                let clip_idx = piano.clip_index;
                 drop(state);
                 return self.send(Action::ModifyMidiControllers {
                     track_name,
@@ -4134,7 +4134,7 @@ impl Maolan {
                     channel: ctrl.channel,
                 };
                 let track_name = piano.track_idx.clone();
-                let clip_idx = 0; // TODO: Get actual clip index
+                let clip_idx = piano.clip_index;
                 drop(state);
                 return self.send(Action::ModifyMidiControllers {
                     track_name,
@@ -4153,7 +4153,7 @@ impl Maolan {
                     return Task::none();
                 };
                 let track_name = piano.track_idx.clone();
-                let clip_idx = 0; // TODO: Get actual clip index
+                let clip_idx = piano.clip_index;
                 let min_sample = controllers.iter().map(|c| c.sample).min().unwrap_or(0);
                 let max_sample = controllers
                     .iter()
@@ -4294,6 +4294,7 @@ impl Maolan {
                 piano.sysexes.sort_by_key(|s| s.sample);
                 let new_index = piano.sysexes.len().saturating_sub(1);
                 let track_name = piano.track_idx.clone();
+                let clip_index = piano.clip_index;
                 let new_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 let new_hex = Self::format_sysex_hex(&piano.sysexes[new_index].data);
                 state.piano_selected_sysex = Some(new_index);
@@ -4301,7 +4302,7 @@ impl Maolan {
                 drop(state);
                 return self.send(Action::SetMidiSysExEvents {
                     track_name,
-                    clip_index: 0,
+                    clip_index,
                     new_sysex_events,
                     old_sysex_events,
                 });
@@ -4330,12 +4331,13 @@ impl Maolan {
                 piano.sysexes[selected_idx].data = payload;
                 let new_hex = Self::format_sysex_hex(&piano.sysexes[selected_idx].data);
                 let track_name = piano.track_idx.clone();
+                let clip_index = piano.clip_index;
                 let new_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 state.piano_sysex_hex_input = new_hex;
                 drop(state);
                 return self.send(Action::SetMidiSysExEvents {
                     track_name,
-                    clip_index: 0,
+                    clip_index,
                     new_sysex_events,
                     old_sysex_events,
                 });
@@ -4361,13 +4363,14 @@ impl Maolan {
                     (Some(idx), Self::format_sysex_hex(&piano.sysexes[idx].data))
                 };
                 let track_name = piano.track_idx.clone();
+                let clip_index = piano.clip_index;
                 let new_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 state.piano_selected_sysex = new_sel;
                 state.piano_sysex_hex_input = new_hex;
                 drop(state);
                 return self.send(Action::SetMidiSysExEvents {
                     track_name,
-                    clip_index: 0,
+                    clip_index,
                     new_sysex_events,
                     old_sysex_events,
                 });
@@ -4391,13 +4394,14 @@ impl Maolan {
                     .map(|ev| Self::format_sysex_hex(&ev.data))
                     .unwrap_or_default();
                 let track_name = piano.track_idx.clone();
+                let clip_index = piano.clip_index;
                 let new_sysex_events = Self::sysex_to_engine(&piano.sysexes);
                 state.piano_selected_sysex = new_sel;
                 state.piano_sysex_hex_input = new_hex;
                 drop(state);
                 return self.send(Action::SetMidiSysExEvents {
                     track_name,
-                    clip_index: 0,
+                    clip_index,
                     new_sysex_events,
                     old_sysex_events,
                 });
@@ -4531,7 +4535,7 @@ impl Maolan {
 
                 if let Some(piano) = state.piano.as_ref() {
                     let track_name = piano.track_idx.clone();
-                    let clip_idx = 0; // TODO: Get actual clip index
+                    let clip_idx = piano.clip_index;
                     let insert_idx = piano.notes.len();
                     let note = maolan_engine::message::MidiNoteData {
                         start_sample,
@@ -4559,7 +4563,7 @@ impl Maolan {
                     && let Some(piano) = state.piano.as_mut()
                 {
                     let track_name = piano.track_idx.clone();
-                    let clip_idx = 0; // TODO: Get actual clip index
+                    let clip_idx = piano.clip_index;
                     let deleted_notes: Vec<(usize, maolan_engine::message::MidiNoteData)> =
                         selected_indices
                             .iter()
@@ -4638,6 +4642,7 @@ impl Maolan {
                     return Task::none();
                 };
                 let track_name = piano.track_idx.clone();
+                let clip_index = piano.clip_index;
                 let mut existing = std::collections::HashSet::<(usize, usize, u8, u8)>::new();
                 for note in &piano.notes {
                     existing.insert((
@@ -4679,7 +4684,7 @@ impl Maolan {
                 }
                 return self.send(Action::InsertMidiNotes {
                     track_name,
-                    clip_index: 0,
+                    clip_index,
                     notes: to_insert,
                 });
             }
