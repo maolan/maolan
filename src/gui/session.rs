@@ -548,7 +548,7 @@ impl Maolan {
                         if peaks.is_empty() && clip_name.to_ascii_lowercase().ends_with(".wav") {
                             let wav_path = session_root.join(&clip_name);
                             if wav_path.exists()
-                                && let Ok(computed) = Self::compute_audio_clip_peaks(&wav_path, 512)
+                                && let Ok(computed) = Self::compute_audio_clip_peaks(&wav_path)
                             {
                                 peaks = computed;
                             }
@@ -750,6 +750,7 @@ impl Maolan {
         let mut warnings: Vec<String> = Vec::new();
         let session_root = PathBuf::from(path.clone());
         self.pending_audio_peaks.clear();
+        self.pending_peak_rebuilds.clear();
         self.pending_track_freeze_restore.clear();
         self.pending_track_freeze_bounce.clear();
         let existing_tracks: Vec<String> = self
@@ -1366,11 +1367,6 @@ impl Maolan {
                                 {
                                     peaks = loaded;
                                 }
-                            }
-                            if peaks.is_empty()
-                                && let Ok(computed) = Self::compute_audio_clip_peaks(&wav_path, 512)
-                            {
-                                peaks = computed;
                             }
                             if !peaks.is_empty() {
                                 let key =

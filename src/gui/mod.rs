@@ -253,6 +253,7 @@ pub struct Maolan {
     pending_save_tracks: std::collections::HashSet<String>,
     pending_save_is_template: bool,
     pending_audio_peaks: HashMap<AudioClipKey, ClipPeaks>,
+    pending_peak_rebuilds: HashSet<AudioClipKey>,
     pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
     pending_track_freeze_bounce: HashMap<String, PendingTrackFreezeBounce>,
     track_automation_runtime: HashMap<String, TrackAutomationRuntime>,
@@ -454,6 +455,7 @@ impl Default for Maolan {
             pending_save_tracks: std::collections::HashSet::new(),
             pending_save_is_template: false,
             pending_audio_peaks: HashMap::new(),
+            pending_peak_rebuilds: HashSet::new(),
             pending_track_freeze_restore: HashMap::new(),
             pending_track_freeze_bounce: HashMap::new(),
             track_automation_runtime: HashMap::new(),
@@ -845,7 +847,7 @@ impl Maolan {
         Ok(per_channel)
     }
 
-    fn compute_audio_clip_peaks(path: &Path, bins: usize) -> std::io::Result<ClipPeaks> {
+    fn compute_audio_clip_peaks(path: &Path) -> std::io::Result<ClipPeaks> {
         let mut wav = Wav::<f32>::from_path(path).map_err(|e| {
             io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
         })?;
@@ -863,7 +865,16 @@ impl Maolan {
         if per_channel.iter().all(|ch| ch.is_empty()) {
             return Ok(vec![]);
         }
-        let target_bins = bins.max(16);
+
+        // High-resolution, but bounded to avoid huge startup stalls and massive peak files.
+        const MAX_PEAK_BINS: usize = 32_768;
+        let target_bins = per_channel
+            .iter()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0)
+            .clamp(1024, MAX_PEAK_BINS);
+
         let mut peaks = vec![vec![[0.0_f32, 0.0_f32]; target_bins]; channels];
         for channel_idx in 0..channels {
             let samples = &per_channel[channel_idx];
@@ -887,14 +898,10 @@ impl Maolan {
     }
 
     fn audio_clip_source_length(path: &Path) -> std::io::Result<usize> {
-        let mut wav = Wav::<f32>::from_path(path).map_err(|e| {
+        let wav = Wav::<f32>::from_path(path).map_err(|e| {
             io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
         })?;
-        let channels = wav.n_channels().max(1) as usize;
-        let samples: wavers::Samples<f32> = wav
-            .read()
-            .map_err(|e| io::Error::other(format!("WAV read error '{}': {e}", path.display())))?;
-        Ok(samples.len() / channels.max(1))
+        Ok(wav.n_samples() / wav.n_channels().max(1) as usize)
     }
 
     fn file_extension_lower(path: &Path) -> Option<String> {

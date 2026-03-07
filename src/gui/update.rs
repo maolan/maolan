@@ -2156,6 +2156,41 @@ impl Maolan {
         })
     }
 
+    fn schedule_audio_peak_rebuild(
+        &mut self,
+        track_name: &str,
+        clip_name: &str,
+        start: usize,
+        length: usize,
+        offset: usize,
+        wav_path: std::path::PathBuf,
+    ) -> Option<Task<Message>> {
+        let key = Self::audio_clip_key(track_name, clip_name, start, length, offset);
+        if !self.pending_peak_rebuilds.insert(key) {
+            return None;
+        }
+
+        let track_name = track_name.to_string();
+        let clip_name = clip_name.to_string();
+        Some(Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || Self::compute_audio_clip_peaks(&wav_path))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or_default()
+            },
+            move |peaks| Message::AudioClipPeaksRebuilt {
+                track_name,
+                clip_name,
+                start,
+                length,
+                offset,
+                peaks,
+            },
+        ))
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         if !matches!(message, Message::WindowCloseRequested) {
             self.close_confirm_pending = false;
@@ -2391,6 +2426,7 @@ impl Maolan {
                 self.pending_save_path = None;
                 self.pending_save_tracks.clear();
                 self.pending_audio_peaks.clear();
+                self.pending_peak_rebuilds.clear();
                 self.session_dir = None;
                 self.stop_recording_preview();
 
@@ -5077,10 +5113,13 @@ impl Maolan {
                     } => {
                         let mut audio_peaks = vec![];
                         let mut max_length_samples = offset.saturating_add(*length);
+                        let mut wav_path_for_rebuild: Option<std::path::PathBuf> = None;
+                        let mut loaded_bins = 0usize;
                         if *kind == Kind::Audio {
                             let key =
                                 Self::audio_clip_key(track_name, name, *start, *length, *offset);
                             audio_peaks = self.pending_audio_peaks.remove(&key).unwrap_or_default();
+                            loaded_bins = audio_peaks.iter().map(Vec::len).max().unwrap_or(0);
                             if name.to_ascii_lowercase().ends_with(".wav") {
                                 let wav_path = if std::path::Path::new(name).is_absolute() {
                                     Some(std::path::PathBuf::from(name))
@@ -5090,13 +5129,6 @@ impl Maolan {
                                         .map(|session_root| session_root.join(name))
                                 };
                                 if let Some(wav_path) = wav_path {
-                                    if audio_peaks.is_empty()
-                                        && wav_path.exists()
-                                        && let Ok(computed) =
-                                            Self::compute_audio_clip_peaks(&wav_path, 512)
-                                    {
-                                        audio_peaks = computed;
-                                    }
                                     if wav_path.exists()
                                         && let Ok(total_samples) =
                                             Self::audio_clip_source_length(&wav_path)
@@ -5104,6 +5136,7 @@ impl Maolan {
                                         max_length_samples =
                                             total_samples.saturating_sub(*offset).max(1);
                                     }
+                                    wav_path_for_rebuild = Some(wav_path);
                                 }
                             }
                         }
@@ -5149,6 +5182,17 @@ impl Maolan {
                                     });
                                 }
                             }
+                        }
+                        drop(state);
+                        if *kind == Kind::Audio
+                            && loaded_bins < 32_768
+                            && let Some(wav_path) = wav_path_for_rebuild
+                            && let Some(task) = self.schedule_audio_peak_rebuild(
+                                track_name, name, *start, *length, *offset, wav_path,
+                            )
+                        {
+                            self.update_children(&message);
+                            return task;
                         }
                     }
                     Action::SetClipMuted {
@@ -5843,7 +5887,7 @@ impl Maolan {
                                 return Task::none();
                             }
                             let render_path = std::path::PathBuf::from(output_path);
-                            let render_peaks = Self::compute_audio_clip_peaks(&render_path, 512)
+                            let render_peaks = Self::compute_audio_clip_peaks(&render_path)
                                 .unwrap_or_default();
                             {
                                 let mut state = self.state.blocking_write();
@@ -10326,6 +10370,31 @@ impl Maolan {
                         "Importing {}/{} ({percent}%){}: {}",
                         file_index, total_files, op_text, filename
                     );
+                }
+            }
+            Message::AudioClipPeaksRebuilt {
+                ref track_name,
+                ref clip_name,
+                start,
+                length,
+                offset,
+                ref peaks,
+            } => {
+                let key = Self::audio_clip_key(track_name, clip_name, start, length, offset);
+                self.pending_peak_rebuilds.remove(&key);
+                if peaks.is_empty() {
+                    return Task::none();
+                }
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                    && let Some(clip) = track.audio.clips.iter_mut().find(|clip| {
+                        clip.name == *clip_name
+                            && clip.start == start
+                            && clip.length == length
+                            && clip.offset == offset
+                    })
+                {
+                    clip.peaks = peaks.clone();
                 }
             }
             Message::Workspace => {

@@ -3,13 +3,20 @@ use crate::{
     state::{ClipPeaks, State, StateData, Track},
 };
 use iced::{
-    Background, Border, Color, Element, Length, Point,
+    Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse,
     gradient,
-    widget::{Space, Stack, button, column, container, mouse_area, pin, row, text},
+    widget::{
+        Space, Stack, button, canvas, column, container, mouse_area, pin, row, text,
+        canvas::{Frame, Geometry, Path},
+    },
 };
 use iced_aw::ContextMenu;
 use maolan_engine::kind::Kind;
-use std::collections::HashMap;
+use std::{
+    cell::Cell,
+    collections::HashMap,
+    hash::{Hash, Hasher},
+};
 
 const CLIP_RESIZE_HANDLE_WIDTH: f32 = 5.0;
 const AUDIO_CLIP_BASE: Color = Color::from_rgb8(68, 88, 132);
@@ -215,74 +222,187 @@ fn automation_point_color(target: crate::message::TrackAutomationTarget) -> Colo
     }
 }
 
+#[derive(Default)]
+struct WaveformCanvasState {
+    cache: canvas::Cache,
+    last_hash: Cell<u64>,
+}
+
+#[derive(Clone)]
+struct WaveformCanvas {
+    peaks: ClipPeaks,
+    clip_offset: usize,
+    clip_length: usize,
+    max_length: usize,
+}
+
+impl WaveformCanvas {
+    fn shape_hash(&self, bounds: Rectangle) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bounds.width.to_bits().hash(&mut hasher);
+        bounds.height.to_bits().hash(&mut hasher);
+        self.clip_offset.hash(&mut hasher);
+        self.clip_length.hash(&mut hasher);
+        self.max_length.hash(&mut hasher);
+        self.peaks.len().hash(&mut hasher);
+        for channel in &self.peaks {
+            channel.len().hash(&mut hasher);
+            if let Some(first) = channel.first() {
+                first[0].to_bits().hash(&mut hasher);
+                first[1].to_bits().hash(&mut hasher);
+            }
+            if let Some(last) = channel.last() {
+                last[0].to_bits().hash(&mut hasher);
+                last[1].to_bits().hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+}
+
+impl canvas::Program<Message> for WaveformCanvas {
+    type State = WaveformCanvasState;
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        if self.peaks.is_empty() || bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return vec![];
+        }
+
+        let hash = self.shape_hash(bounds);
+        if state.last_hash.get() != hash {
+            state.cache.clear();
+            state.last_hash.set(hash);
+        }
+
+        let geom = state.cache.draw(renderer, bounds.size(), |frame: &mut Frame| {
+            let inner_w = bounds.width.max(4.0);
+            let inner_h = bounds.height.max(4.0);
+            let channel_count = self.peaks.len().max(1);
+            let channel_h = inner_h / channel_count as f32;
+            let waveform_fill = Color::from_rgba(0.86, 0.94, 1.0, 0.34);
+            let waveform_edge = Color::from_rgba(0.96, 0.98, 1.0, 0.62);
+            let zero_line = Color::from_rgba(0.74, 0.86, 1.0, 0.28);
+            let clip_color = Color::from_rgba(1.0, 0.42, 0.30, 0.78);
+            let clip_level = 0.90_f32;
+            let edge_shade = darken(waveform_fill, 0.08);
+
+            for (channel_idx, channel_peaks) in self.peaks.iter().enumerate() {
+                if channel_peaks.is_empty() {
+                    continue;
+                }
+                let channel_top = channel_h * channel_idx as f32;
+                let center_y = channel_top + channel_h * 0.5;
+                let half_span = (channel_h * 0.45).max(1.0);
+                let total_peaks = channel_peaks.len();
+                let max_len = self.max_length.max(1);
+                let start_idx =
+                    ((self.clip_offset * total_peaks) / max_len).min(total_peaks.saturating_sub(1));
+                let clip_end_sample = self.clip_offset.saturating_add(self.clip_length).min(max_len);
+                let mut end_idx = ((clip_end_sample * total_peaks) / max_len).min(total_peaks);
+                if end_idx <= start_idx {
+                    end_idx = (start_idx + 1).min(total_peaks);
+                }
+                let bins = end_idx.saturating_sub(start_idx).max(1);
+                let x_step = inner_w / bins as f32;
+
+                frame.fill(
+                    &Path::rectangle(Point::new(0.0, center_y), iced::Size::new(inner_w, 1.0)),
+                    zero_line,
+                );
+
+                for i in 0..bins {
+                    let src_idx = (start_idx + i).min(total_peaks.saturating_sub(1));
+                    let pair = channel_peaks[src_idx];
+                    let min_val = pair[0].clamp(-1.0, 1.0);
+                    let max_val = pair[1].clamp(-1.0, 1.0);
+                    let top =
+                        (center_y - (max_val * half_span)).clamp(channel_top, channel_top + channel_h);
+                    let bottom =
+                        (center_y - (min_val * half_span)).clamp(channel_top, channel_top + channel_h);
+                    let y = top.min(bottom);
+                    let h = (bottom - top).abs().max(1.0);
+                    let x = i as f32 * x_step;
+                    let bin_w = x_step.max(1.0);
+
+                    frame.fill(
+                        &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, h)),
+                        waveform_fill,
+                    );
+                    let edge_h = (h * 0.2).clamp(1.0, 3.0);
+                    frame.fill(
+                        &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, edge_h)),
+                        edge_shade,
+                    );
+                    frame.fill(
+                        &Path::rectangle(
+                            Point::new(x, y + h - edge_h),
+                            iced::Size::new(bin_w, edge_h),
+                        ),
+                        edge_shade,
+                    );
+
+                    if h >= 3.0 {
+                        frame.fill(
+                            &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, 1.0)),
+                            waveform_edge,
+                        );
+                        frame.fill(
+                            &Path::rectangle(
+                                Point::new(x, y + h - 1.0),
+                                iced::Size::new(bin_w, 1.0),
+                            ),
+                            waveform_edge,
+                        );
+                    }
+
+                    if max_val >= clip_level {
+                        let clip_h = h.clamp(1.0, 3.0);
+                        frame.fill(
+                            &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, clip_h)),
+                            clip_color,
+                        );
+                    }
+                    if -min_val >= clip_level {
+                        let clip_h = h.clamp(1.0, 3.0);
+                        frame.fill(
+                            &Path::rectangle(
+                                Point::new(x, y + h - clip_h),
+                                iced::Size::new(bin_w, clip_h),
+                            ),
+                            clip_color,
+                        );
+                    }
+                }
+            }
+        });
+        vec![geom]
+    }
+}
+
 fn audio_waveform_overlay(
-    peaks: &[Vec<[f32; 2]>],
-    clip_width: f32,
-    clip_height: f32,
+    peaks: ClipPeaks,
+    _clip_width: f32,
+    _clip_height: f32,
     clip_offset: usize,
     clip_length: usize,
     max_length: usize,
 ) -> Element<'static, Message> {
-    if peaks.is_empty() {
-        return container("")
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-    }
-    let inner_w = clip_width.max(4.0);
-    let inner_h = clip_height.max(4.0);
-    let channel_count = peaks.len().max(1);
-    let channel_h = inner_h / channel_count as f32;
-    let mut bars: Vec<Element<'static, Message>> = Vec::new();
-    let max_bins = 220usize;
-
-    for (channel_idx, channel_peaks) in peaks.iter().enumerate() {
-        if channel_peaks.is_empty() {
-            continue;
-        }
-        let bins = ((inner_w / 3.0) as usize).clamp(16, max_bins);
-        let x_step = inner_w / bins as f32;
-        let channel_top = channel_h * channel_idx as f32;
-        let center_y = channel_top + channel_h * 0.5;
-        let half_span = (channel_h * 0.45).max(1.0);
-        let total_peaks = channel_peaks.len();
-        let max_len = max_length.max(1);
-
-        for i in 0..bins {
-            let clip_sample_pos = (i * clip_length) / bins;
-            let absolute_sample_pos = clip_offset + clip_sample_pos;
-            let src_idx =
-                ((absolute_sample_pos * total_peaks) / max_len).min(total_peaks.saturating_sub(1));
-            let pair = channel_peaks[src_idx];
-            let min_val = pair[0].clamp(-1.0, 1.0);
-            let max_val = pair[1].clamp(-1.0, 1.0);
-            let top = (center_y - (max_val * half_span)).clamp(channel_top, channel_top + channel_h);
-            let bottom =
-                (center_y - (min_val * half_span)).clamp(channel_top, channel_top + channel_h);
-            let y = top.min(bottom);
-            let h = (bottom - top).abs().max(1.0);
-            bars.push(
-                pin(container("")
-                    .width(Length::Fixed(x_step.max(1.0)))
-                    .height(Length::Fixed(h))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.8,
-                            g: 0.9,
-                            b: 1.0,
-                            a: 0.32,
-                        })),
-                        ..container::Style::default()
-                    }))
-                .position(Point::new(i as f32 * x_step, y))
-                .into(),
-            );
-        }
-    }
-    Stack::from_vec(bars)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    canvas(WaveformCanvas {
+        peaks,
+        clip_offset,
+        clip_length,
+        max_length,
+    })
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
 }
 
 fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Message> {
@@ -630,7 +750,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         let clip_content = container(Stack::with_children(vec![
             audio_waveform_overlay(
-                &clip_peaks,
+                clip_peaks.clone(),
                 clip_width,
                 clip_height,
                 clip.offset,
@@ -946,7 +1066,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let preview_start = snap_sample(clip.start as f32 + delta_samples);
             let preview_content = container(Stack::with_children(vec![
                 audio_waveform_overlay(
-                    &clip_peaks,
+                    clip_peaks,
                     clip_width,
                     clip_height,
                     clip.offset,
@@ -1490,7 +1610,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             trim_label_to_width(&clean_clip_name(&source_clip.name), clip_width);
                         let preview_content = container(Stack::with_children(vec![
                             audio_waveform_overlay(
-                                &source_clip.peaks,
+                                source_clip.peaks.clone(),
                                 clip_width,
                                 clip_height,
                                 source_clip.offset,
@@ -1634,7 +1754,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let preview_clip = container(
             container(Stack::with_children(vec![
                 audio_waveform_overlay(
-                    &preview_peaks,
+                    preview_peaks,
                     preview_width,
                     preview_height,
                     0,
