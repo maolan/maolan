@@ -140,15 +140,6 @@ impl AudioDeviceOption {
         }
     }
 
-    #[cfg(target_os = "linux")]
-    pub fn with_supported_bits(
-        id: impl Into<String>,
-        label: impl Into<String>,
-        supported_bits: Vec<usize>,
-    ) -> Self {
-        Self::with_supported_caps(id, label, supported_bits, Self::default_sample_rates())
-    }
-
     #[cfg(target_os = "netbsd")]
     pub fn with_supported_bits(
         id: impl Into<String>,
@@ -1360,6 +1351,31 @@ fn probe_alsa_supported_bits(device: &str, direction: Direction) -> Vec<usize> {
 }
 
 #[cfg(target_os = "linux")]
+fn probe_alsa_supported_sample_rates(device: &str, direction: Direction) -> Vec<i32> {
+    const CANDIDATES: [u32; 12] = [
+        8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
+        384_000,
+    ];
+    let Ok(pcm) = PCM::new(device, direction, false) else {
+        return Vec::new();
+    };
+    let Ok(hwp) = HwParams::any(&pcm) else {
+        return Vec::new();
+    };
+    if hwp.set_access(Access::RWInterleaved).is_err() {
+        return Vec::new();
+    }
+
+    let mut supported = Vec::new();
+    for rate in CANDIDATES {
+        if hwp.test_rate(rate).is_ok() {
+            supported.push(rate as i32);
+        }
+    }
+    supported
+}
+
+#[cfg(target_os = "linux")]
 #[cfg(target_endian = "little")]
 fn native_s16() -> Format {
     Format::S16LE
@@ -1457,10 +1473,19 @@ fn discover_alsa_devices(direction_marker: &str, direction: Direction) -> Vec<Au
             let id = format!("hw:{card},{dev}");
             let label = format!("{base_label} (hw:{card},{dev})");
             let supported_bits = probe_alsa_supported_bits(&id, direction);
-            devices.push(AudioDeviceOption::with_supported_bits(
+            let supported_sample_rates = {
+                let rates = probe_alsa_supported_sample_rates(&id, direction);
+                if rates.is_empty() {
+                    AudioDeviceOption::default_sample_rates()
+                } else {
+                    rates
+                }
+            };
+            devices.push(AudioDeviceOption::with_supported_caps(
                 id,
                 label,
                 supported_bits,
+                supported_sample_rates,
             ));
         }
     }
