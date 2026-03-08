@@ -660,6 +660,13 @@ pub enum Message {
 
     TrackResizeStart(String),
     TrackResizeHover(String, bool),
+    ClipResizeHandleHover {
+        kind: Kind,
+        track_idx: String,
+        clip_idx: usize,
+        is_right_side: bool,
+        hovered: bool,
+    },
     TracksResizeStart,
     MixerResizeStart,
     ClipResizeStart(Kind, String, usize, bool),
@@ -1010,6 +1017,8 @@ pub enum Message {
     TrackTemplateSaveInput(String),
     TrackTemplateSaveConfirm,
     TrackTemplateSaveCancel,
+    TrackContextMenuHover { track_name: String, position: Point },
+    TrackContextMenuToggle(String),
 
     TemplateSaveInput(String),
     TemplateSaveConfirm,

@@ -1,14 +1,14 @@
 use crate::{
+    menu,
     message::{Message, TrackAutomationTarget},
-    state::{AuxSend, State, TrackLaneLayout},
+    state::{State, StateData, TrackLaneLayout},
     style,
 };
 use iced::{
-    Alignment, Background, Border, Color, Element, Length, Theme,
+    Alignment, Background, Border, Color, Element, Length, Point, Theme,
     alignment::Horizontal,
-    widget::{Column, Space, button, column, container, mouse_area, row, text},
+    widget::{Column, Space, Stack, button, column, container, mouse_area, pin, row, text},
 };
-use iced_aw::ContextMenu;
 use iced_drop::droppable;
 use iced_fonts::lucide::{audio_waveform, disc};
 use maolan_engine::message::{Action, TrackMidiLearnTarget};
@@ -16,6 +16,298 @@ use maolan_engine::message::{Action, TrackMidiLearnTarget};
 #[derive(Debug, Default)]
 pub struct Tracks {
     state: State,
+}
+
+fn track_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'static, Message>)> {
+    let menu_state = state.track_context_menu.as_ref()?;
+    let track = state
+        .tracks
+        .iter()
+        .find(|track| track.name == menu_state.track_name)?;
+
+    let mut top = 0.0_f32;
+    for t in &state.tracks {
+        if t.name == track.name {
+            break;
+        }
+        top += t.height;
+    }
+
+    let track_name = track.name.clone();
+    let has_visible_automation = track.automation_lanes.iter().any(|lane| lane.visible);
+    let freeze_supported = track.midi.ins == 0;
+    let mut items = vec![
+        menu::menu_item(
+            "Automation: Volume",
+            Message::TrackAutomationAddLane {
+                track_name: track_name.clone(),
+                target: TrackAutomationTarget::Volume,
+            },
+        ),
+        menu::menu_item(
+            "Automation: Balance",
+            Message::TrackAutomationAddLane {
+                track_name: track_name.clone(),
+                target: TrackAutomationTarget::Balance,
+            },
+        ),
+        menu::menu_item(
+            "Automation: Mute",
+            Message::TrackAutomationAddLane {
+                track_name: track_name.clone(),
+                target: TrackAutomationTarget::Mute,
+            },
+        ),
+        menu::menu_item("Rename", Message::TrackRenameShow(track_name.clone())),
+        menu::menu_item(
+            if has_visible_automation {
+                "Hide Automation (A-)"
+            } else {
+                "Show Automation (A+)"
+            },
+            Message::TrackAutomationToggle {
+                track_name: track_name.clone(),
+            },
+        ),
+        menu::menu_item(
+            format!("Automation Mode: {}", track.automation_mode),
+            Message::TrackAutomationCycleMode {
+                track_name: track_name.clone(),
+            },
+        ),
+        menu::menu_item(
+            "Save as template",
+            Message::TrackTemplateSaveShow(track_name.clone()),
+        ),
+        menu::menu_item(
+            "MIDI Learn Volume",
+            Message::TrackMidiLearnArm {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::Volume,
+            },
+        ),
+        menu::menu_item(
+            "MIDI Learn Balance",
+            Message::TrackMidiLearnArm {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::Balance,
+            },
+        ),
+        menu::menu_item(
+            "MIDI Learn Mute",
+            Message::TrackMidiLearnArm {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::Mute,
+            },
+        ),
+        menu::menu_item(
+            "MIDI Learn Solo",
+            Message::TrackMidiLearnArm {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::Solo,
+            },
+        ),
+        menu::menu_item(
+            "MIDI Learn Arm",
+            Message::TrackMidiLearnArm {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::Arm,
+            },
+        ),
+        menu::menu_item(
+            "MIDI Learn Input Monitor",
+            Message::TrackMidiLearnArm {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::InputMonitor,
+            },
+        ),
+        menu::menu_item(
+            "MIDI Learn Disk Monitor",
+            Message::TrackMidiLearnArm {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::DiskMonitor,
+            },
+        ),
+    ];
+
+    if freeze_supported {
+        items.push(menu::menu_item(
+            if track.frozen { "Unfreeze" } else { "Freeze" },
+            Message::TrackFreezeToggle {
+                track_name: track_name.clone(),
+            },
+        ));
+        if track.frozen {
+            items.push(menu::menu_item(
+                "Flatten",
+                Message::TrackFreezeFlatten {
+                    track_name: track_name.clone(),
+                },
+            ));
+        }
+    }
+
+    if let Some(master) = track.vca_master.as_ref() {
+        items.push(menu::menu_item(
+            format!("VCA: Unassign ({master})"),
+            Message::TrackSetVcaMaster {
+                track_name: track_name.clone(),
+                master_track: None,
+            },
+        ));
+    }
+    for send in &track.aux_sends {
+        items.push(menu::menu_item(
+            format!("Send {} Level -1dB ({:.1})", send.aux_track, send.level_db),
+            Message::TrackAuxSendLevelAdjust {
+                track_name: track_name.clone(),
+                aux_track: send.aux_track.clone(),
+                delta_db: -1.0,
+            },
+        ));
+        items.push(menu::menu_item(
+            format!("Send {} Level +1dB ({:.1})", send.aux_track, send.level_db),
+            Message::TrackAuxSendLevelAdjust {
+                track_name: track_name.clone(),
+                aux_track: send.aux_track.clone(),
+                delta_db: 1.0,
+            },
+        ));
+        items.push(menu::menu_item(
+            format!("Send {} Pan L ({:.2})", send.aux_track, send.pan),
+            Message::TrackAuxSendPanAdjust {
+                track_name: track_name.clone(),
+                aux_track: send.aux_track.clone(),
+                delta: -0.1,
+            },
+        ));
+        items.push(menu::menu_item(
+            format!("Send {} Pan R ({:.2})", send.aux_track, send.pan),
+            Message::TrackAuxSendPanAdjust {
+                track_name: track_name.clone(),
+                aux_track: send.aux_track.clone(),
+                delta: 0.1,
+            },
+        ));
+        items.push(menu::menu_item(
+            format!(
+                "Send {} Mode: {}",
+                send.aux_track,
+                if send.pre_fader {
+                    "Pre-Fader"
+                } else {
+                    "Post-Fader"
+                }
+            ),
+            Message::TrackAuxSendTogglePrePost {
+                track_name: track_name.clone(),
+                aux_track: send.aux_track.clone(),
+            },
+        ));
+    }
+
+    if track.midi_learn_volume.is_some() {
+        items.push(menu::menu_item(
+            "Clear MIDI Learn Volume",
+            Message::TrackMidiLearnClear {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::Volume,
+            },
+        ));
+    }
+    if track.midi_learn_balance.is_some() {
+        items.push(menu::menu_item(
+            "Clear MIDI Learn Balance",
+            Message::TrackMidiLearnClear {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::Balance,
+            },
+        ));
+    }
+    if track.midi_learn_mute.is_some() {
+        items.push(menu::menu_item(
+            "Clear MIDI Learn Mute",
+            Message::TrackMidiLearnClear {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::Mute,
+            },
+        ));
+    }
+    if track.midi_learn_solo.is_some() {
+        items.push(menu::menu_item(
+            "Clear MIDI Learn Solo",
+            Message::TrackMidiLearnClear {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::Solo,
+            },
+        ));
+    }
+    if track.midi_learn_arm.is_some() {
+        items.push(menu::menu_item(
+            "Clear MIDI Learn Arm",
+            Message::TrackMidiLearnClear {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::Arm,
+            },
+        ));
+    }
+    if track.midi_learn_input_monitor.is_some() {
+        items.push(menu::menu_item(
+            "Clear MIDI Learn Input Monitor",
+            Message::TrackMidiLearnClear {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::InputMonitor,
+            },
+        ));
+    }
+    if track.midi_learn_disk_monitor.is_some() {
+        items.push(menu::menu_item(
+            "Clear MIDI Learn Disk Monitor",
+            Message::TrackMidiLearnClear {
+                track_name: track_name.clone(),
+                target: TrackMidiLearnTarget::DiskMonitor,
+            },
+        ));
+    }
+
+    for candidate in state
+        .tracks
+        .iter()
+        .filter(|candidate| candidate.name != track.name)
+    {
+        items.push(menu::menu_item(
+            format!("VCA -> {}", candidate.name),
+            Message::TrackSetVcaMaster {
+                track_name: track_name.clone(),
+                master_track: Some(candidate.name.clone()),
+            },
+        ));
+    }
+
+    let panel = container(Column::with_children(items).spacing(2))
+        .width(Length::Fill)
+        .padding(6)
+        .style(|theme| {
+            let palette = theme.extended_palette();
+            container::Style {
+                background: Some(Background::Color(palette.background.weak.color)),
+                border: Border {
+                    color: palette.background.strong.color,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..container::Style::default()
+            }
+        })
+        .into();
+
+    Some((
+        Point::new(
+            0.0,
+            (top + menu_state.anchor.y).max(0.0),
+        ),
+        panel,
+    ))
 }
 
 impl Tracks {
@@ -102,7 +394,6 @@ impl Tracks {
             balance: f32,
             automation_mode: String,
             visible_automation_lanes: Vec<VisibleAutomationLane>,
-            freeze_supported: bool,
             midi_learn_vol: bool,
             midi_learn_bal: bool,
             midi_learn_mute: bool,
@@ -111,10 +402,9 @@ impl Tracks {
             midi_learn_input_monitor: bool,
             midi_learn_disk_monitor: bool,
             vca_master: Option<String>,
-            aux_sends: Vec<AuxSend>,
         }
 
-        let (tracks, width) = {
+        let (tracks, width, context_menu_overlay) = {
             let state = self.state.blocking_read();
             let hovered_resize_track = state.hovered_track_resize_handle.as_deref();
             let tracks = state
@@ -136,7 +426,6 @@ impl Tracks {
                     audio_outs: track.audio.outs,
                     midi_ins: track.midi.ins,
                     midi_outs: track.midi.outs,
-                    freeze_supported: track.midi.ins == 0,
                     balance: track.balance,
                     automation_mode: track.automation_mode.to_string(),
                     visible_automation_lanes: track
@@ -156,16 +445,18 @@ impl Tracks {
                     midi_learn_input_monitor: track.midi_learn_input_monitor.is_some(),
                     midi_learn_disk_monitor: track.midi_learn_disk_monitor.is_some(),
                     vca_master: track.vca_master.clone(),
-                    aux_sends: track.aux_sends.clone(),
                 })
                 .collect::<Vec<_>>();
-            (tracks, state.tracks_width)
+            (
+                tracks,
+                state.tracks_width,
+                track_context_menu_overlay(&state),
+            )
         };
         let track_width_px = match width {
             Length::Fixed(v) => v,
             _ => 200.0,
         };
-        let track_names: Vec<String> = tracks.iter().map(|t| t.name.clone()).collect();
         let track_heights: Vec<f32> = tracks.iter().map(|t| t.height).collect();
         let mut vca_has_followers = std::collections::HashSet::new();
         for track in &tracks {
@@ -195,13 +486,6 @@ impl Tracks {
             let midi_learn_arm = track.midi_learn_arm;
             let midi_learn_input_monitor = track.midi_learn_input_monitor;
             let midi_learn_disk_monitor = track.midi_learn_disk_monitor;
-            let track_freeze_supported = track.freeze_supported;
-            let aux_sends = track.aux_sends.clone();
-            let vca_candidates: Vec<String> = track_names
-                .iter()
-                .filter(|candidate| **candidate != track.name)
-                .cloned()
-                .collect();
             let layout = track.layout;
             let lane_h = layout.lane_height.max(12.0);
             let has_visible_automation = !track.visible_automation_lanes.is_empty();
@@ -476,19 +760,6 @@ impl Tracks {
             .spacing(2.0);
 
             {
-                let track_name_for_menu = track.name.clone();
-                let track_is_frozen = track.frozen;
-                let track_has_visible_automation = has_visible_automation;
-                let track_automation_mode = track.automation_mode.clone();
-                let track_vca_master = track.vca_master.clone();
-                let track_vca_candidates = vca_candidates.clone();
-                let track_midi_learn_vol = track.midi_learn_vol;
-                let track_midi_learn_bal = track.midi_learn_bal;
-                let track_midi_learn_mute = track.midi_learn_mute;
-                let track_midi_learn_solo = track.midi_learn_solo;
-                let track_midi_learn_arm = track.midi_learn_arm;
-                let track_midi_learn_input_monitor = track.midi_learn_input_monitor;
-                let track_midi_learn_disk_monitor = track.midi_learn_disk_monitor;
                 let vca_strip_width = 12.0;
                 let vca_strip = if let Some(master) = vca_master_label.as_ref() {
                     let prev_same = index > 0
@@ -578,247 +849,27 @@ impl Tracks {
                     .on_drag(move |_, _| Message::TrackDrag(index))
                     .on_drop(Message::TrackDropped);
 
-                ContextMenu::new(track_with_drop, move || {
-                    let mut menu = column![
-                        button("Automation: Volume").on_press(Message::TrackAutomationAddLane {
-                            track_name: track_name_for_menu.clone(),
-                            target: TrackAutomationTarget::Volume,
-                        }),
-                        button("Automation: Balance").on_press(Message::TrackAutomationAddLane {
-                            track_name: track_name_for_menu.clone(),
-                            target: TrackAutomationTarget::Balance,
-                        }),
-                        button("Automation: Mute").on_press(Message::TrackAutomationAddLane {
-                            track_name: track_name_for_menu.clone(),
-                            target: TrackAutomationTarget::Mute,
-                        }),
-                        button("Rename")
-                            .on_press(Message::TrackRenameShow(track_name_for_menu.clone())),
-                        button(if track_has_visible_automation {
-                            "Hide Automation (A-)"
-                        } else {
-                            "Show Automation (A+)"
-                        })
-                        .on_press(Message::TrackAutomationToggle {
-                            track_name: track_name_for_menu.clone(),
-                        }),
-                        button(text(format!("Automation Mode: {}", track_automation_mode)))
-                            .on_press(Message::TrackAutomationCycleMode {
-                                track_name: track_name_for_menu.clone(),
-                            }),
-                        button("Save as template")
-                            .on_press(Message::TrackTemplateSaveShow(track_name_for_menu.clone())),
-                    ];
-                    if track_freeze_supported {
-                        menu = menu.push(
-                            button(if track_is_frozen {
-                                "Unfreeze"
-                            } else {
-                                "Freeze"
-                            })
-                            .on_press(Message::TrackFreezeToggle {
-                                track_name: track_name_for_menu.clone(),
-                            }),
-                        );
-                        menu = menu.push(if track_is_frozen {
-                            button("Flatten").on_press(Message::TrackFreezeFlatten {
-                                track_name: track_name_for_menu.clone(),
-                            })
-                        } else {
-                            button("Flatten")
-                        });
-                    }
-                    if let Some(master) = track_vca_master.as_ref() {
-                        menu =
-                            menu.push(button(text(format!("VCA: Unassign ({master})"))).on_press(
-                                Message::TrackSetVcaMaster {
-                                    track_name: track_name_for_menu.clone(),
-                                    master_track: None,
-                                },
-                            ));
-                    }
-                    for send in &aux_sends {
-                        menu = menu.push(
-                            button(text(format!(
-                                "Send {} Level -1dB ({:.1})",
-                                send.aux_track, send.level_db
-                            )))
-                            .on_press(
-                                Message::TrackAuxSendLevelAdjust {
-                                    track_name: track_name_for_menu.clone(),
-                                    aux_track: send.aux_track.clone(),
-                                    delta_db: -1.0,
-                                },
-                            ),
-                        );
-                        menu = menu.push(
-                            button(text(format!(
-                                "Send {} Level +1dB ({:.1})",
-                                send.aux_track, send.level_db
-                            )))
-                            .on_press(
-                                Message::TrackAuxSendLevelAdjust {
-                                    track_name: track_name_for_menu.clone(),
-                                    aux_track: send.aux_track.clone(),
-                                    delta_db: 1.0,
-                                },
-                            ),
-                        );
-                        menu = menu.push(
-                            button(text(format!(
-                                "Send {} Pan L ({:.2})",
-                                send.aux_track, send.pan
-                            )))
-                            .on_press(
-                                Message::TrackAuxSendPanAdjust {
-                                    track_name: track_name_for_menu.clone(),
-                                    aux_track: send.aux_track.clone(),
-                                    delta: -0.1,
-                                },
-                            ),
-                        );
-                        menu = menu.push(
-                            button(text(format!(
-                                "Send {} Pan R ({:.2})",
-                                send.aux_track, send.pan
-                            )))
-                            .on_press(
-                                Message::TrackAuxSendPanAdjust {
-                                    track_name: track_name_for_menu.clone(),
-                                    aux_track: send.aux_track.clone(),
-                                    delta: 0.1,
-                                },
-                            ),
-                        );
-                        menu = menu.push(
-                            button(text(format!(
-                                "Send {} Mode: {}",
-                                send.aux_track,
-                                if send.pre_fader {
-                                    "Pre-Fader"
-                                } else {
-                                    "Post-Fader"
-                                }
-                            )))
-                            .on_press(
-                                Message::TrackAuxSendTogglePrePost {
-                                    track_name: track_name_for_menu.clone(),
-                                    aux_track: send.aux_track.clone(),
-                                },
-                            ),
-                        );
-                    }
-                    menu = menu.push(button("MIDI Learn Volume").on_press(
-                        Message::TrackMidiLearnArm {
-                            track_name: track_name_for_menu.clone(),
-                            target: TrackMidiLearnTarget::Volume,
-                        },
-                    ));
-                    menu = menu.push(button("MIDI Learn Balance").on_press(
-                        Message::TrackMidiLearnArm {
-                            track_name: track_name_for_menu.clone(),
-                            target: TrackMidiLearnTarget::Balance,
-                        },
-                    ));
-                    menu = menu.push(button("MIDI Learn Mute").on_press(
-                        Message::TrackMidiLearnArm {
-                            track_name: track_name_for_menu.clone(),
-                            target: TrackMidiLearnTarget::Mute,
-                        },
-                    ));
-                    menu = menu.push(button("MIDI Learn Solo").on_press(
-                        Message::TrackMidiLearnArm {
-                            track_name: track_name_for_menu.clone(),
-                            target: TrackMidiLearnTarget::Solo,
-                        },
-                    ));
-                    menu = menu.push(button("MIDI Learn Arm").on_press(
-                        Message::TrackMidiLearnArm {
-                            track_name: track_name_for_menu.clone(),
-                            target: TrackMidiLearnTarget::Arm,
-                        },
-                    ));
-                    menu = menu.push(button("MIDI Learn Input Monitor").on_press(
-                        Message::TrackMidiLearnArm {
-                            track_name: track_name_for_menu.clone(),
-                            target: TrackMidiLearnTarget::InputMonitor,
-                        },
-                    ));
-                    menu = menu.push(button("MIDI Learn Disk Monitor").on_press(
-                        Message::TrackMidiLearnArm {
-                            track_name: track_name_for_menu.clone(),
-                            target: TrackMidiLearnTarget::DiskMonitor,
-                        },
-                    ));
-                    if track_midi_learn_vol {
-                        menu = menu.push(button("Clear MIDI Learn Volume").on_press(
-                            Message::TrackMidiLearnClear {
-                                track_name: track_name_for_menu.clone(),
-                                target: TrackMidiLearnTarget::Volume,
-                            },
-                        ));
-                    }
-                    if track_midi_learn_bal {
-                        menu = menu.push(button("Clear MIDI Learn Balance").on_press(
-                            Message::TrackMidiLearnClear {
-                                track_name: track_name_for_menu.clone(),
-                                target: TrackMidiLearnTarget::Balance,
-                            },
-                        ));
-                    }
-                    if track_midi_learn_mute {
-                        menu = menu.push(button("Clear MIDI Learn Mute").on_press(
-                            Message::TrackMidiLearnClear {
-                                track_name: track_name_for_menu.clone(),
-                                target: TrackMidiLearnTarget::Mute,
-                            },
-                        ));
-                    }
-                    if track_midi_learn_solo {
-                        menu = menu.push(button("Clear MIDI Learn Solo").on_press(
-                            Message::TrackMidiLearnClear {
-                                track_name: track_name_for_menu.clone(),
-                                target: TrackMidiLearnTarget::Solo,
-                            },
-                        ));
-                    }
-                    if track_midi_learn_arm {
-                        menu = menu.push(button("Clear MIDI Learn Arm").on_press(
-                            Message::TrackMidiLearnClear {
-                                track_name: track_name_for_menu.clone(),
-                                target: TrackMidiLearnTarget::Arm,
-                            },
-                        ));
-                    }
-                    if track_midi_learn_input_monitor {
-                        menu = menu.push(button("Clear MIDI Learn Input Monitor").on_press(
-                            Message::TrackMidiLearnClear {
-                                track_name: track_name_for_menu.clone(),
-                                target: TrackMidiLearnTarget::InputMonitor,
-                            },
-                        ));
-                    }
-                    if track_midi_learn_disk_monitor {
-                        menu = menu.push(button("Clear MIDI Learn Disk Monitor").on_press(
-                            Message::TrackMidiLearnClear {
-                                track_name: track_name_for_menu.clone(),
-                                target: TrackMidiLearnTarget::DiskMonitor,
-                            },
-                        ));
-                    }
-                    for master in &track_vca_candidates {
-                        menu = menu.push(button(text(format!("VCA -> {master}"))).on_press(
-                            Message::TrackSetVcaMaster {
-                                track_name: track_name_for_menu.clone(),
-                                master_track: Some(master.clone()),
-                            },
-                        ));
-                    }
-                    menu.into()
-                })
-                .into()
+                let track_name_for_menu = track.name.clone();
+                let track_name_for_hover = track_name_for_menu.clone();
+                let track_name_for_toggle = track_name_for_menu.clone();
+                mouse_area(track_with_drop)
+                    .on_move(move |position| Message::TrackContextMenuHover {
+                        track_name: track_name_for_hover.clone(),
+                        position,
+                    })
+                    .on_right_press(Message::TrackContextMenuToggle(track_name_for_toggle))
+                    .into()
             }
         }));
-        result.width(width).into()
+        let track_list: Element<'_, Message> = result.width(width).into();
+        if let Some((anchor, menu)) = context_menu_overlay {
+            Stack::new()
+                .push(track_list)
+                .push(pin(menu).position(Point::new(anchor.x.max(0.0), anchor.y.max(0.0))))
+                .width(width)
+                .into()
+        } else {
+            track_list
+        }
     }
 }

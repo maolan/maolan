@@ -224,6 +224,18 @@ pub struct ClipId {
 }
 
 #[derive(Debug, Clone)]
+pub struct ClipContextMenuState {
+    pub clip: ClipId,
+    pub anchor: Point,
+}
+
+#[derive(Debug, Clone)]
+pub struct TrackContextMenuState {
+    pub track_name: String,
+    pub anchor: Point,
+}
+
+#[derive(Debug, Clone)]
 pub enum Resizing {
     Clip {
         kind: Kind,
@@ -391,6 +403,9 @@ pub struct StateData {
     pub connections: Vec<Connection>,
     pub selected: HashSet<String>,
     pub selected_clips: HashSet<ClipId>,
+    pub clip_context_menu: Option<ClipContextMenuState>,
+    pub track_context_menu: Option<TrackContextMenuState>,
+    pub track_context_hover: Option<(String, Point)>,
     pub clip_click_consumed: bool,
     pub message: String,
     pub diagnostics_report: Option<String>,
@@ -400,6 +415,7 @@ pub struct StateData {
     pub hovering: Option<Hovering>,
     pub connection_view_selection: ConnectionViewSelection,
     pub cursor: Point,
+    pub editor_cursor: Option<Point>,
     pub mouse_left_down: bool,
     pub mouse_right_down: bool,
     pub clip_marquee_start: Option<Point>,
@@ -415,6 +431,7 @@ pub struct StateData {
     pub pending_track_positions: HashMap<String, Point>,
     pub pending_track_heights: HashMap<String, f32>,
     pub hovered_track_resize_handle: Option<String>,
+    pub hovered_clip_resize_handle: Option<(String, usize, Kind, bool)>,
     pub hw_loaded: bool,
     pub available_backends: Vec<AudioBackendOption>,
     pub selected_backend: AudioBackendOption,
@@ -621,6 +638,9 @@ impl Default for StateData {
             connections: vec![],
             selected: HashSet::new(),
             selected_clips: HashSet::new(),
+            clip_context_menu: None,
+            track_context_menu: None,
+            track_context_hover: None,
             clip_click_consumed: false,
             message: "Thank you for using Maolan!".to_string(),
             diagnostics_report: None,
@@ -630,6 +650,7 @@ impl Default for StateData {
             hovering: None,
             connection_view_selection: ConnectionViewSelection::None,
             cursor: Point::new(0.0, 0.0),
+            editor_cursor: None,
             mouse_left_down: false,
             mouse_right_down: false,
             clip_marquee_start: None,
@@ -645,6 +666,7 @@ impl Default for StateData {
             pending_track_positions: HashMap::new(),
             pending_track_heights: HashMap::new(),
             hovered_track_resize_handle: None,
+            hovered_clip_resize_handle: None,
             hw_loaded: false,
             available_backends,
             selected_backend,

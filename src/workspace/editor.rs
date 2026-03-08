@@ -5,12 +5,11 @@ use crate::{
 use iced::{
     Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Theme, gradient, mouse,
     widget::{
-        Space, Stack, button, canvas,
+        Space, Stack, canvas,
         canvas::{Frame, Geometry, Path},
         column, container, mouse_area, pin, row, text,
     },
 };
-use iced_aw::ContextMenu;
 use maolan_engine::kind::Kind;
 use std::{
     cell::Cell,
@@ -29,8 +28,6 @@ const MIDI_CLIP_BASE: Color = Color::from_rgb8(55, 90, 50);
 const MIDI_CLIP_SELECTED_BASE: Color = Color::from_rgb8(84, 133, 72);
 const MIDI_CLIP_BORDER: Color = Color::from_rgb8(148, 215, 118);
 const MIDI_CLIP_SELECTED_BORDER: Color = Color::from_rgb8(196, 255, 151);
-const AUDIO_CLIP_HANDLE: Color = Color::from_rgb8(52, 46, 25);
-const MIDI_CLIP_HANDLE: Color = Color::from_rgb8(34, 62, 38);
 struct TrackElementViewArgs<'a> {
     state: &'a StateData,
     track: Track,
@@ -1108,54 +1105,76 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             ((clip.length as f32 * pixels_per_sample) - CLIP_RESIZE_HANDLE_WIDTH * 2.0).max(12.0);
         let clip_height = (take_slot_height - 2.0).max(8.0);
         let display_clip_label = trim_label_to_width(&clip_label, clip_width);
+        let audio_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
+            |(track_idx, clip_idx, kind, is_right_side)| {
+                track_idx == &track_name_cloned
+                    && *clip_idx == index
+                    && *kind == Kind::Audio
+                    && !*is_right_side
+            },
+        );
+        let audio_right_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
+            |(track_idx, clip_idx, kind, is_right_side)| {
+                track_idx == &track_name_cloned
+                    && *clip_idx == index
+                    && *kind == Kind::Audio
+                    && *is_right_side
+            },
+        );
 
-        let left_handle = mouse_area(
-            container("")
+        let left_edge_zone = mouse_area(
+            Space::new()
                 .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
-                .height(Length::Fill)
-                .style(|_theme| {
-                    use container::Style;
-                    Style {
-                        background: Some(Background::Color(Color {
-                            r: AUDIO_CLIP_HANDLE.r,
-                            g: AUDIO_CLIP_HANDLE.g,
-                            b: AUDIO_CLIP_HANDLE.b,
-                            a: 0.9,
-                        })),
-                        ..Style::default()
-                    }
-                }),
+                .height(Length::Fill),
         )
-        .on_press(Message::ClipResizeStart(
-            Kind::Audio,
-            track_name_cloned.clone(),
-            index,
-            false,
-        ));
+            .interaction(mouse::Interaction::ResizingColumn)
+            .on_enter(Message::ClipResizeHandleHover {
+                kind: Kind::Audio,
+                track_idx: track_name_cloned.clone(),
+                clip_idx: index,
+                is_right_side: false,
+                hovered: true,
+            })
+            .on_exit(Message::ClipResizeHandleHover {
+                kind: Kind::Audio,
+                track_idx: track_name_cloned.clone(),
+                clip_idx: index,
+                is_right_side: false,
+                hovered: false,
+            })
+            .on_press(Message::ClipResizeStart(
+                Kind::Audio,
+                track_name_cloned.clone(),
+                index,
+                false,
+            ));
 
-        let right_handle = mouse_area(
-            container("")
+        let right_edge_zone = mouse_area(
+            Space::new()
                 .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
-                .height(Length::Fill)
-                .style(|_theme| {
-                    use container::Style;
-                    Style {
-                        background: Some(Background::Color(Color {
-                            r: AUDIO_CLIP_HANDLE.r,
-                            g: AUDIO_CLIP_HANDLE.g,
-                            b: AUDIO_CLIP_HANDLE.b,
-                            a: 0.9,
-                        })),
-                        ..Style::default()
-                    }
-                }),
+                .height(Length::Fill),
         )
-        .on_press(Message::ClipResizeStart(
-            Kind::Audio,
-            track_name_cloned.clone(),
-            index,
-            true,
-        ));
+            .interaction(mouse::Interaction::ResizingColumn)
+            .on_enter(Message::ClipResizeHandleHover {
+                kind: Kind::Audio,
+                track_idx: track_name_cloned.clone(),
+                clip_idx: index,
+                is_right_side: true,
+                hovered: true,
+            })
+            .on_exit(Message::ClipResizeHandleHover {
+                kind: Kind::Audio,
+                track_idx: track_name_cloned.clone(),
+                clip_idx: index,
+                is_right_side: true,
+                hovered: false,
+            })
+            .on_press(Message::ClipResizeStart(
+                Kind::Audio,
+                track_name_cloned.clone(),
+                index,
+                true,
+            ));
 
         let clip_content = container(Stack::with_children(vec![
             audio_waveform_overlay(
@@ -1191,7 +1210,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             }
         });
 
-        let clip_widget = container(row![left_handle, clip_content, right_handle])
+        let clip_widget = container(Stack::with_children(vec![
+            clip_content.into(),
+            pin(left_edge_zone).position(Point::new(0.0, 0.0)).into(),
+            pin(right_edge_zone)
+                .position(Point::new(clip_width - CLIP_RESIZE_HANDLE_WIDTH, 0.0))
+                .into(),
+        ]))
             .width(Length::Fixed(clip_width))
             .height(Length::Fixed(clip_height))
             .style(move |_theme| container::Style {
@@ -1347,7 +1372,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         if !dragged_to_other_track {
             let clip_with_mouse = {
-                let base = mouse_area(clip_with_fades).on_press(Message::SelectClip {
+                let base = mouse_area(clip_with_fades);
+                let base = if audio_left_handle_hovered || audio_right_handle_hovered {
+                    base.interaction(mouse::Interaction::ResizingColumn)
+                } else {
+                    base
+                };
+                let base = base.on_press(Message::SelectClip {
                     track_idx: track_name_cloned.clone(),
                     clip_idx: index,
                     kind: Kind::Audio,
@@ -1368,112 +1399,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 }
             };
 
-            let track_idx_for_menu = track_name_cloned.clone();
-            let index_for_menu = index;
-            let fade_enabled = clip.fade_enabled;
-            let muted_for_menu = clip_muted;
-            let pinned_for_menu = clip.take_lane_pinned;
-            let locked_for_menu = clip.take_lane_locked;
-            let clip_with_context = ContextMenu::new(clip_with_mouse, move || {
-                column![
-                    button("Rename").on_press(Message::ClipRenameShow {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::Audio,
-                    }),
-                    button("Set Active Take").on_press(Message::ClipSetActiveTake {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::Audio,
-                    }),
-                    button("Next Active Take").on_press(Message::ClipCycleActiveTake {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::Audio,
-                    }),
-                    button("Unmute All Takes").on_press(Message::ClipUnmuteTakesInRange {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::Audio,
-                    }),
-                    button(if pinned_for_menu {
-                        "Unpin Take Lane"
-                    } else {
-                        "Pin Take Lane"
-                    })
-                    .on_press(Message::ClipTakeLanePinToggle {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::Audio,
-                    }),
-                    button(if locked_for_menu {
-                        "Unlock Take Lane"
-                    } else {
-                        "Lock Take Lane"
-                    })
-                    .on_press(Message::ClipTakeLaneLockToggle {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::Audio,
-                    }),
-                    button("Take Lane Up").on_press(Message::ClipTakeLaneMove {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::Audio,
-                        delta: -1,
-                    }),
-                    button("Take Lane Down").on_press(Message::ClipTakeLaneMove {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::Audio,
-                        delta: 1,
-                    }),
-                    button(if muted_for_menu {
-                        "Unmute Take"
-                    } else {
-                        "Mute Take"
-                    })
-                    .on_press(Message::ClipSetMuted {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::Audio,
-                        muted: !muted_for_menu,
-                    }),
-                    button("Warp Reset").on_press(Message::ClipWarpReset {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                    }),
-                    button("Warp 0.5x").on_press(Message::ClipWarpHalfSpeed {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                    }),
-                    button("Warp 2.0x").on_press(Message::ClipWarpDoubleSpeed {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                    }),
-                    button("Warp Add Marker").on_press(Message::ClipWarpAddMarker {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                    }),
-                    button(if fade_enabled {
-                        "Disable Fade"
-                    } else {
-                        "Enable Fade"
-                    })
-                    .on_press(Message::ClipToggleFade {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::Audio,
-                    }),
-                ]
-                .into()
-            });
-
             clips.push(
-                pin(clip_with_context)
+                pin(clip_with_mouse)
                     .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                     .into(),
             );
+
         }
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
@@ -1598,57 +1529,79 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             ((clip.length as f32 * pixels_per_sample) - CLIP_RESIZE_HANDLE_WIDTH * 2.0).max(12.0);
         let clip_height = (take_slot_height - 2.0).max(8.0);
         let display_clip_label = trim_label_to_width(&clip_label, clip_width);
+        let midi_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
+            |(track_idx, clip_idx, kind, is_right_side)| {
+                track_idx == &track_name_cloned
+                    && *clip_idx == index
+                    && *kind == Kind::MIDI
+                    && !*is_right_side
+            },
+        );
+        let midi_right_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
+            |(track_idx, clip_idx, kind, is_right_side)| {
+                track_idx == &track_name_cloned
+                    && *clip_idx == index
+                    && *kind == Kind::MIDI
+                    && *is_right_side
+            },
+        );
         let midi_notes_for_clip = midi_clip_previews
             .and_then(|map| map.get(&(track_name_cloned.clone(), index)))
             .cloned();
 
-        let left_handle = mouse_area(
-            container("")
+        let left_edge_zone = mouse_area(
+            Space::new()
                 .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
-                .height(Length::Fill)
-                .style(|_theme| {
-                    use container::Style;
-                    Style {
-                        background: Some(Background::Color(Color {
-                            r: MIDI_CLIP_HANDLE.r,
-                            g: MIDI_CLIP_HANDLE.g,
-                            b: MIDI_CLIP_HANDLE.b,
-                            a: 0.9,
-                        })),
-                        ..Style::default()
-                    }
-                }),
+                .height(Length::Fill),
         )
-        .on_press(Message::ClipResizeStart(
-            Kind::MIDI,
-            track_name_cloned.clone(),
-            index,
-            false,
-        ));
+            .interaction(mouse::Interaction::ResizingColumn)
+            .on_enter(Message::ClipResizeHandleHover {
+                kind: Kind::MIDI,
+                track_idx: track_name_cloned.clone(),
+                clip_idx: index,
+                is_right_side: false,
+                hovered: true,
+            })
+            .on_exit(Message::ClipResizeHandleHover {
+                kind: Kind::MIDI,
+                track_idx: track_name_cloned.clone(),
+                clip_idx: index,
+                is_right_side: false,
+                hovered: false,
+            })
+            .on_press(Message::ClipResizeStart(
+                Kind::MIDI,
+                track_name_cloned.clone(),
+                index,
+                false,
+            ));
 
-        let right_handle = mouse_area(
-            container("")
+        let right_edge_zone = mouse_area(
+            Space::new()
                 .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
-                .height(Length::Fill)
-                .style(|_theme| {
-                    use container::Style;
-                    Style {
-                        background: Some(Background::Color(Color {
-                            r: MIDI_CLIP_HANDLE.r,
-                            g: MIDI_CLIP_HANDLE.g,
-                            b: MIDI_CLIP_HANDLE.b,
-                            a: 0.9,
-                        })),
-                        ..Style::default()
-                    }
-                }),
+                .height(Length::Fill),
         )
-        .on_press(Message::ClipResizeStart(
-            Kind::MIDI,
-            track_name_cloned.clone(),
-            index,
-            true,
-        ));
+            .interaction(mouse::Interaction::ResizingColumn)
+            .on_enter(Message::ClipResizeHandleHover {
+                kind: Kind::MIDI,
+                track_idx: track_name_cloned.clone(),
+                clip_idx: index,
+                is_right_side: true,
+                hovered: true,
+            })
+            .on_exit(Message::ClipResizeHandleHover {
+                kind: Kind::MIDI,
+                track_idx: track_name_cloned.clone(),
+                clip_idx: index,
+                is_right_side: true,
+                hovered: false,
+            })
+            .on_press(Message::ClipResizeStart(
+                Kind::MIDI,
+                track_name_cloned.clone(),
+                index,
+                true,
+            ));
 
         let mut clip_layers = Vec::with_capacity(2);
         if let Some(notes) = midi_notes_for_clip.as_ref() {
@@ -1687,7 +1640,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 }
             });
 
-        let clip_widget = container(row![left_handle, clip_content, right_handle])
+        let clip_widget = container(Stack::with_children(vec![
+            clip_content.into(),
+            pin(left_edge_zone).position(Point::new(0.0, 0.0)).into(),
+            pin(right_edge_zone)
+                .position(Point::new(clip_width - CLIP_RESIZE_HANDLE_WIDTH, 0.0))
+                .into(),
+        ]))
             .width(Length::Fixed(clip_width))
             .height(Length::Fixed(clip_height))
             .style(move |_theme| container::Style {
@@ -1843,7 +1802,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         if !dragged_to_other_track {
             let clip_with_mouse = {
-                let base = mouse_area(clip_with_fades)
+                let base = mouse_area(clip_with_fades);
+                let base = if midi_left_handle_hovered || midi_right_handle_hovered {
+                    base.interaction(mouse::Interaction::ResizingColumn)
+                } else {
+                    base
+                };
+                let base = base
                     .on_press(Message::SelectClip {
                         track_idx: track_name_cloned.clone(),
                         clip_idx: index,
@@ -1869,96 +1834,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 }
             };
 
-            let track_idx_for_menu = track_name_cloned.clone();
-            let index_for_menu = index;
-            let fade_enabled = clip.fade_enabled;
-            let muted_for_menu = clip_muted;
-            let pinned_for_menu = clip.take_lane_pinned;
-            let locked_for_menu = clip.take_lane_locked;
-            let clip_with_context = ContextMenu::new(clip_with_mouse, move || {
-                column![
-                    button("Rename").on_press(Message::ClipRenameShow {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::MIDI,
-                    }),
-                    button("Set Active Take").on_press(Message::ClipSetActiveTake {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::MIDI,
-                    }),
-                    button("Next Active Take").on_press(Message::ClipCycleActiveTake {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::MIDI,
-                    }),
-                    button("Unmute All Takes").on_press(Message::ClipUnmuteTakesInRange {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::MIDI,
-                    }),
-                    button(if pinned_for_menu {
-                        "Unpin Take Lane"
-                    } else {
-                        "Pin Take Lane"
-                    })
-                    .on_press(Message::ClipTakeLanePinToggle {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::MIDI,
-                    }),
-                    button(if locked_for_menu {
-                        "Unlock Take Lane"
-                    } else {
-                        "Lock Take Lane"
-                    })
-                    .on_press(Message::ClipTakeLaneLockToggle {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::MIDI,
-                    }),
-                    button("Take Lane Up").on_press(Message::ClipTakeLaneMove {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::MIDI,
-                        delta: -1,
-                    }),
-                    button("Take Lane Down").on_press(Message::ClipTakeLaneMove {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::MIDI,
-                        delta: 1,
-                    }),
-                    button(if muted_for_menu {
-                        "Unmute Take"
-                    } else {
-                        "Mute Take"
-                    })
-                    .on_press(Message::ClipSetMuted {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::MIDI,
-                        muted: !muted_for_menu,
-                    }),
-                    button(if fade_enabled {
-                        "Disable Fade"
-                    } else {
-                        "Enable Fade"
-                    })
-                    .on_press(Message::ClipToggleFade {
-                        track_idx: track_idx_for_menu.clone(),
-                        clip_idx: index_for_menu,
-                        kind: Kind::MIDI,
-                    }),
-                ]
-                .into()
-            });
-
             clips.push(
-                pin(clip_with_context)
+                pin(clip_with_mouse)
                     .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                     .into(),
             );
+
         }
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
@@ -2300,6 +2181,256 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     .into()
 }
 
+fn clip_context_menu_overlay(
+    state: &StateData,
+) -> Option<(Point, Element<'static, Message>)> {
+    let menu = state.clip_context_menu.as_ref()?;
+    let clip = &menu.clip;
+    let track = state.tracks.iter().find(|t| t.name == clip.track_idx)?;
+
+    let content: Element<'static, Message> = match clip.kind {
+        Kind::Audio => {
+            let clip_ref = track.audio.clips.get(clip.clip_idx)?;
+            let fade_enabled = clip_ref.fade_enabled;
+            let muted = clip_ref.muted;
+            let pinned = clip_ref.take_lane_pinned;
+            let locked = clip_ref.take_lane_locked;
+            let track_idx = clip.track_idx.clone();
+            let clip_idx = clip.clip_idx;
+            column![
+                crate::menu::menu_item(
+                    "Rename",
+                    Message::ClipRenameShow {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::Audio,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Set Active Take",
+                    Message::ClipSetActiveTake {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::Audio,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Next Active Take",
+                    Message::ClipCycleActiveTake {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::Audio,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Unmute All Takes",
+                    Message::ClipUnmuteTakesInRange {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::Audio,
+                    },
+                ),
+                crate::menu::menu_item(
+                    if pinned { "Unpin Take Lane" } else { "Pin Take Lane" },
+                    Message::ClipTakeLanePinToggle {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::Audio,
+                    },
+                ),
+                crate::menu::menu_item(
+                    if locked { "Unlock Take Lane" } else { "Lock Take Lane" },
+                    Message::ClipTakeLaneLockToggle {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::Audio,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Take Lane Up",
+                    Message::ClipTakeLaneMove {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::Audio,
+                        delta: -1,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Take Lane Down",
+                    Message::ClipTakeLaneMove {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::Audio,
+                        delta: 1,
+                    },
+                ),
+                crate::menu::menu_item(
+                    if muted { "Unmute Take" } else { "Mute Take" },
+                    Message::ClipSetMuted {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::Audio,
+                        muted: !muted,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Warp Reset",
+                    Message::ClipWarpReset {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Warp 0.5x",
+                    Message::ClipWarpHalfSpeed {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Warp 2.0x",
+                    Message::ClipWarpDoubleSpeed {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Warp Add Marker",
+                    Message::ClipWarpAddMarker {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                    },
+                ),
+                crate::menu::menu_item(
+                    if fade_enabled { "Disable Fade" } else { "Enable Fade" },
+                    Message::ClipToggleFade {
+                        track_idx,
+                        clip_idx,
+                        kind: Kind::Audio,
+                    },
+                ),
+            ]
+            .spacing(2)
+            .into()
+        }
+        Kind::MIDI => {
+            let clip_ref = track.midi.clips.get(clip.clip_idx)?;
+            let fade_enabled = clip_ref.fade_enabled;
+            let muted = clip_ref.muted;
+            let pinned = clip_ref.take_lane_pinned;
+            let locked = clip_ref.take_lane_locked;
+            let track_idx = clip.track_idx.clone();
+            let clip_idx = clip.clip_idx;
+            column![
+                crate::menu::menu_item(
+                    "Rename",
+                    Message::ClipRenameShow {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::MIDI,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Set Active Take",
+                    Message::ClipSetActiveTake {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::MIDI,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Next Active Take",
+                    Message::ClipCycleActiveTake {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::MIDI,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Unmute All Takes",
+                    Message::ClipUnmuteTakesInRange {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::MIDI,
+                    },
+                ),
+                crate::menu::menu_item(
+                    if pinned { "Unpin Take Lane" } else { "Pin Take Lane" },
+                    Message::ClipTakeLanePinToggle {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::MIDI,
+                    },
+                ),
+                crate::menu::menu_item(
+                    if locked { "Unlock Take Lane" } else { "Lock Take Lane" },
+                    Message::ClipTakeLaneLockToggle {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::MIDI,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Take Lane Up",
+                    Message::ClipTakeLaneMove {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::MIDI,
+                        delta: -1,
+                    },
+                ),
+                crate::menu::menu_item(
+                    "Take Lane Down",
+                    Message::ClipTakeLaneMove {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::MIDI,
+                        delta: 1,
+                    },
+                ),
+                crate::menu::menu_item(
+                    if muted { "Unmute Take" } else { "Mute Take" },
+                    Message::ClipSetMuted {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                        kind: Kind::MIDI,
+                        muted: !muted,
+                    },
+                ),
+                crate::menu::menu_item(
+                    if fade_enabled { "Disable Fade" } else { "Enable Fade" },
+                    Message::ClipToggleFade {
+                        track_idx,
+                        clip_idx,
+                        kind: Kind::MIDI,
+                    },
+                ),
+            ]
+            .spacing(2)
+            .into()
+        }
+    };
+
+    let panel = container(content)
+        .width(Length::Fixed(210.0))
+        .padding(6)
+        .style(|theme| {
+            let palette = theme.extended_palette();
+            container::Style {
+                background: Some(Background::Color(palette.background.weak.color)),
+                border: Border {
+                    color: palette.background.strong.color,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..container::Style::default()
+            }
+        })
+        .into();
+
+    Some((menu.anchor, panel))
+}
+
 #[derive(Debug)]
 pub struct Editor {
     state: State,
@@ -2460,6 +2591,13 @@ impl Editor {
                     }))
                 .position(Point::new(x, y))
                 .into(),
+            );
+        }
+        if let Some((anchor, menu)) = clip_context_menu_overlay(&state) {
+            layers.push(
+                pin(menu)
+                    .position(Point::new(anchor.x.max(0.0), anchor.y.max(0.0)))
+                    .into(),
             );
         }
         mouse_area(

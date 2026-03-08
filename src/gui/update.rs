@@ -2322,6 +2322,42 @@ impl Maolan {
         if !matches!(message, Message::WindowCloseRequested) {
             self.close_confirm_pending = false;
         }
+        if matches!(
+            message,
+            Message::ClipRenameShow { .. }
+                | Message::ClipToggleFade { .. }
+                | Message::ClipSetMuted { .. }
+                | Message::ClipWarpReset { .. }
+                | Message::ClipWarpHalfSpeed { .. }
+                | Message::ClipWarpDoubleSpeed { .. }
+                | Message::ClipWarpAddMarker { .. }
+                | Message::ClipSetActiveTake { .. }
+                | Message::ClipCycleActiveTake { .. }
+                | Message::ClipUnmuteTakesInRange { .. }
+                | Message::ClipTakeLanePinToggle { .. }
+                | Message::ClipTakeLaneLockToggle { .. }
+                | Message::ClipTakeLaneMove { .. }
+        ) {
+            self.state.blocking_write().clip_context_menu = None;
+        }
+        if matches!(
+            message,
+            Message::TrackAutomationAddLane { .. }
+                | Message::TrackRenameShow(_)
+                | Message::TrackAutomationToggle { .. }
+                | Message::TrackAutomationCycleMode { .. }
+                | Message::TrackTemplateSaveShow(_)
+                | Message::TrackFreezeToggle { .. }
+                | Message::TrackFreezeFlatten { .. }
+                | Message::TrackSetVcaMaster { .. }
+                | Message::TrackAuxSendLevelAdjust { .. }
+                | Message::TrackAuxSendPanAdjust { .. }
+                | Message::TrackAuxSendTogglePrePost { .. }
+                | Message::TrackMidiLearnArm { .. }
+                | Message::TrackMidiLearnClear { .. }
+        ) {
+            self.state.blocking_write().track_context_menu = None;
+        }
         match message {
             Message::None => {
                 return Task::none();
@@ -7028,6 +7064,7 @@ impl Maolan {
                 let track_name = name.clone();
                 let ctrl = self.state.blocking_read().ctrl;
                 let mut state = self.state.blocking_write();
+                state.track_context_menu = None;
                 if ctrl {
                     state.connections_last_track_click = None;
                 } else if let Some((last_track, last_time)) = &state.connections_last_track_click
@@ -7062,6 +7099,7 @@ impl Maolan {
             Message::SelectTrackFromMixer(ref name) => {
                 let ctrl = self.state.blocking_read().ctrl;
                 let mut state = self.state.blocking_write();
+                state.track_context_menu = None;
                 state.connections_last_track_click = None;
 
                 if ctrl {
@@ -8630,6 +8668,36 @@ impl Maolan {
                 self.state.blocking_write().track_template_save_dialog = None;
                 self.modal = None;
             }
+            Message::TrackContextMenuHover {
+                ref track_name,
+                position,
+            } => {
+                let mut state = self.state.blocking_write();
+                state.track_context_hover = Some((track_name.clone(), position));
+            }
+            Message::TrackContextMenuToggle(ref track_name) => {
+                let mut state = self.state.blocking_write();
+                if state
+                    .track_context_menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.track_name == *track_name)
+                {
+                    state.track_context_menu = None;
+                } else {
+                    let anchor = state
+                        .track_context_hover
+                        .as_ref()
+                        .filter(|(hover_track, _)| hover_track == track_name)
+                        .map(|(_, point)| *point)
+                        .unwrap_or(Point::new(8.0, 24.0));
+                    state.track_context_menu = Some(crate::state::TrackContextMenuState {
+                        track_name: track_name.clone(),
+                        anchor,
+                    });
+                }
+                state.clip_context_menu = None;
+                state.clip_click_consumed = true;
+            }
             Message::TemplateSaveConfirm => {
                 let dialog = self.state.blocking_read().template_save_dialog.clone();
                 let Some(dialog) = dialog else {
@@ -8658,6 +8726,7 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.selected.clear();
                 state.selected_clips.clear();
+                state.track_context_menu = None;
                 state.connection_view_selection = ConnectionViewSelection::None;
             }
             Message::DeselectClips => {
@@ -8671,6 +8740,8 @@ impl Maolan {
                     state.mouse_left_down = true;
                 }
                 state.mouse_right_down = false;
+                state.clip_context_menu = None;
+                state.track_context_menu = None;
                 state.clip_marquee_start = None;
                 state.clip_marquee_end = None;
                 state.comp_swipe_start = None;
@@ -8687,9 +8758,9 @@ impl Maolan {
                         let cursor = self.state.blocking_read().cursor;
                         return self.split_clip_at_position(cursor);
                     }
-                    let mut state = self.state.blocking_write();
                     match button {
                         mouse::Button::Left => {
+                            let mut state = self.state.blocking_write();
                             state.mouse_left_down = true;
                             state.clip_marquee_start = None;
                             state.clip_marquee_end = None;
@@ -8699,9 +8770,42 @@ impl Maolan {
                             }
                         }
                         mouse::Button::Right => {
-                            state.mouse_right_down = true;
-                            state.midi_clip_create_start = None;
-                            state.midi_clip_create_end = None;
+                            let cursor = {
+                                let state = self.state.blocking_read();
+                                state.editor_cursor.unwrap_or(state.cursor)
+                            };
+                            let clip_hit = self.clip_at_position(cursor);
+                            let anchor_for_hit = cursor;
+                            let mut state = self.state.blocking_write();
+                            if let Some((track_idx, kind, clip_idx)) = clip_hit {
+                                let id = crate::state::ClipId {
+                                    track_idx,
+                                    clip_idx,
+                                    kind,
+                                };
+                                if state
+                                    .clip_context_menu
+                                    .as_ref()
+                                    .is_some_and(|menu| menu.clip == id)
+                                {
+                                    state.clip_context_menu = None;
+                                } else {
+                                    state.clip_context_menu =
+                                        Some(crate::state::ClipContextMenuState {
+                                            clip: id,
+                                            anchor: anchor_for_hit,
+                                        });
+                                }
+                                state.mouse_right_down = false;
+                                state.midi_clip_create_start = None;
+                                state.midi_clip_create_end = None;
+                                state.clip_click_consumed = true;
+                            } else {
+                                state.mouse_right_down = true;
+                                state.midi_clip_create_start = None;
+                                state.midi_clip_create_end = None;
+                                state.clip_context_menu = None;
+                            }
                         }
                         _ => {}
                     }
@@ -8923,6 +9027,28 @@ impl Maolan {
                 } else if state.hovered_track_resize_handle.as_deref() == Some(track_name.as_str())
                 {
                     state.hovered_track_resize_handle = None;
+                }
+            }
+            Message::ClipResizeHandleHover {
+                ref kind,
+                ref track_idx,
+                clip_idx,
+                is_right_side,
+                hovered,
+            } => {
+                let mut state = self.state.blocking_write();
+                if hovered {
+                    state.hovered_clip_resize_handle =
+                        Some((track_idx.clone(), clip_idx, *kind, is_right_side));
+                } else if state.hovered_clip_resize_handle.as_ref().is_some_and(
+                    |(active_track, active_clip, active_kind, active_right)| {
+                        active_track == track_idx
+                            && *active_clip == clip_idx
+                            && *active_kind == *kind
+                            && *active_right == is_right_side
+                    },
+                ) {
+                    state.hovered_clip_resize_handle = None;
                 }
             }
             Message::TracksResizeStart => {
@@ -9259,6 +9385,8 @@ impl Maolan {
                 let resizing = self.state.blocking_read().resizing.clone();
                 let can_start_midi_drag = self.midi_lane_at_position(position).is_some();
                 let mut state = self.state.blocking_write();
+                state.cursor = position;
+                state.editor_cursor = Some(position);
                 if state.mouse_left_down
                     && !matches!(resizing, Some(Resizing::Clip { .. }))
                     && self.clip.is_none()
