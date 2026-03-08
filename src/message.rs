@@ -678,8 +678,6 @@ pub enum Message {
     TrackDropped(Point, Rectangle),
     HandleTrackZones(Vec<(Id, Rectangle)>),
 
-    StartMovingTrackAndSelect(crate::state::MovingTrack, String),
-
     MouseMoved(mouse::Event),
     EditorMouseMoved(Point),
     EditorScrollChanged {

@@ -10915,13 +10915,6 @@ impl Maolan {
             Message::HWSyncModeToggled(sync_mode) => {
                 self.state.blocking_write().oss_sync_mode = sync_mode;
             }
-            Message::StartMovingTrackAndSelect(moving_track, track_name) => {
-                let mut state = self.state.blocking_write();
-                state.moving_track = Some(moving_track);
-                return Task::perform(async {}, move |_| {
-                    Message::ConnectionViewSelectTrack(track_name)
-                });
-            }
             _ => {}
         }
         self.update_children(&message);

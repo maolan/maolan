@@ -611,11 +611,14 @@ impl Tracks {
                     ];
                     if track_freeze_supported {
                         menu = menu.push(
-                            button(if track_is_frozen { "Unfreeze" } else { "Freeze" }).on_press(
-                                Message::TrackFreezeToggle {
-                                    track_name: track_name_for_menu.clone(),
-                                },
-                            ),
+                            button(if track_is_frozen {
+                                "Unfreeze"
+                            } else {
+                                "Freeze"
+                            })
+                            .on_press(Message::TrackFreezeToggle {
+                                track_name: track_name_for_menu.clone(),
+                            }),
                         );
                         menu = menu.push(if track_is_frozen {
                             button("Flatten").on_press(Message::TrackFreezeFlatten {

@@ -178,10 +178,7 @@ impl HW {
         } else {
             sample_rate_options
                 .iter()
-                .min_by_key(|candidate| {
-                    ((*candidate).saturating_sub(sample_rate_hz))
-                        .abs()
-                })
+                .min_by_key(|candidate| ((*candidate).saturating_sub(sample_rate_hz)).abs())
                 .copied()
                 .unwrap_or(48_000)
         };

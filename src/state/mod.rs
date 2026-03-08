@@ -146,12 +146,7 @@ impl AudioDeviceOption {
         label: impl Into<String>,
         supported_bits: Vec<usize>,
     ) -> Self {
-        Self::with_supported_caps(
-            id,
-            label,
-            supported_bits,
-            Self::default_sample_rates(),
-        )
+        Self::with_supported_caps(id, label, supported_bits, Self::default_sample_rates())
     }
 
     #[cfg(target_os = "netbsd")]
@@ -160,12 +155,7 @@ impl AudioDeviceOption {
         label: impl Into<String>,
         supported_bits: Vec<usize>,
     ) -> Self {
-        Self::with_supported_caps(
-            id,
-            label,
-            supported_bits,
-            Self::default_sample_rates(),
-        )
+        Self::with_supported_caps(id, label, supported_bits, Self::default_sample_rates())
     }
 
     #[cfg(target_os = "openbsd")]
@@ -174,12 +164,7 @@ impl AudioDeviceOption {
         label: impl Into<String>,
         supported_bits: Vec<usize>,
     ) -> Self {
-        Self::with_supported_caps(
-            id,
-            label,
-            supported_bits,
-            Self::default_sample_rates(),
-        )
+        Self::with_supported_caps(id, label, supported_bits, Self::default_sample_rates())
     }
 
     pub fn preferred_bits(&self) -> Option<usize> {
@@ -1279,10 +1264,14 @@ fn probe_oss_supported_bits(devpath: &str) -> Vec<usize> {
 #[cfg(target_os = "freebsd")]
 fn probe_oss_supported_sample_rates(devpath: &str) -> Vec<i32> {
     const CANDIDATES: [i32; 12] = [
-        8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
-        192_000, 384_000,
+        8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
+        384_000,
     ];
-    let Ok(file) = std::fs::OpenOptions::new().read(true).write(true).open(devpath) else {
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(devpath)
+    else {
         return Vec::new();
     };
     let fd = file.as_raw_fd();

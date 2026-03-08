@@ -5,8 +5,8 @@ use crate::{
     connections::selection::is_bezier_hit,
     message::Message,
     state::{
-        Connecting, HW_IN_ID, HW_OUT_ID, Hovering, MIDI_HW_IN_ID, MIDI_HW_OUT_ID, MovingTrack,
-        State, StateData,
+        Connecting, ConnectionViewSelection, HW_IN_ID, HW_OUT_ID, Hovering, MIDI_HW_IN_ID,
+        MIDI_HW_OUT_ID, MovingTrack, State, StateData,
     },
     ui_timing::DOUBLE_CLICK,
 };
@@ -398,16 +398,18 @@ impl canvas::Program<Message> for Graph {
                                     Message::ConnectionViewSelectTrack(track_name.clone()),
                                 ));
                             } else {
-                                let moving_track_data = MovingTrack {
+                                data.moving_track = Some(MovingTrack {
                                     track_idx: track_name.clone(),
                                     offset_x: cursor_position.x - track_pos.x,
                                     offset_y: cursor_position.y - track_pos.y,
-                                };
-                                pending_action =
-                                    Some(Action::publish(Message::StartMovingTrackAndSelect(
-                                        moving_track_data,
-                                        track_name.clone(),
-                                    )));
+                                });
+                                let mut set = std::collections::HashSet::new();
+                                set.insert(track_name.clone());
+                                data.connection_view_selection =
+                                    ConnectionViewSelection::Tracks(set);
+                                data.selected.clear();
+                                data.selected.insert(track_name.clone());
+                                pending_action = Some(Action::capture());
                             }
                             break;
                         }
