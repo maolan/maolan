@@ -57,6 +57,8 @@ impl Mixer {
     const FADER_WIDTH: f32 = 14.0;
     const SCALE_WIDTH: f32 = 22.0;
     const PAN_ROW_HEIGHT: f32 = 12.0;
+    const STRIP_NAME_CHAR_PX: f32 = 6.3;
+    const STRIP_NAME_SIDE_PADDING: f32 = 4.0;
 
     pub fn new(state: State) -> Self {
         Self { state }
@@ -102,8 +104,18 @@ impl Mixer {
         }
     }
 
-    fn strip_name(name: String) -> Element<'static, Message> {
-        container(text(name).size(12))
+    fn trim_strip_name(name: &str, width: f32) -> String {
+        let usable_width = (width - (Self::STRIP_NAME_SIDE_PADDING * 2.0)).max(0.0);
+        let max_chars = (usable_width / Self::STRIP_NAME_CHAR_PX).floor() as usize;
+        if max_chars == 0 {
+            String::new()
+        } else {
+            name.chars().take(max_chars).collect()
+        }
+    }
+
+    fn strip_name(name: String, width: f32) -> Element<'static, Message> {
+        container(text(Self::trim_strip_name(&name, width)).size(12))
             .width(Length::Fill)
             .align_x(Alignment::Center)
             .padding([0, 2])
@@ -292,7 +304,7 @@ impl Mixer {
         content = content
             .push(bay)
             .push(Self::value_pill(level_label))
-            .push(Self::strip_name(name));
+            .push(Self::strip_name(name, width));
 
         container(content)
             .width(Length::Fixed(width))
