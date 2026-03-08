@@ -169,6 +169,7 @@ impl Maolan {
                 "loop_enabled": self.loop_enabled,
                 "punch_range_samples": self.punch_range_samples.map(|(start, end)| vec![start, end]),
                 "punch_enabled": self.punch_enabled,
+                "sample_rate_hz": state.hw_sample_rate_hz,
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
@@ -694,6 +695,7 @@ impl Maolan {
                 "loop_enabled": self.loop_enabled,
                 "punch_range_samples": self.punch_range_samples.map(|(start, end)| vec![start, end]),
                 "punch_enabled": self.punch_enabled,
+                "sample_rate_hz": state.hw_sample_rate_hz,
                 "tempo": state.tempo,
                 "time_signature_num": state.time_signature_num,
                 "time_signature_denom": state.time_signature_denom,
@@ -927,6 +929,10 @@ impl Maolan {
         let loaded_loop_enabled = parse_enabled("loop_enabled")?;
         let loaded_punch_range = parse_range("punch_range_samples")?;
         let loaded_punch_enabled = parse_enabled("punch_enabled")?;
+        let loaded_sample_rate_hz = transport
+            .get("sample_rate_hz")
+            .and_then(Value::as_i64)
+            .map(|v| v.max(1) as i32);
 
         self.loop_range_samples = loaded_loop_range;
         self.loop_enabled = loaded_loop_enabled;
@@ -937,6 +943,19 @@ impl Maolan {
         restore_actions.push(Action::SetLoopEnabled(loaded_loop_enabled));
         restore_actions.push(Action::SetPunchRange(loaded_punch_range));
         restore_actions.push(Action::SetPunchEnabled(loaded_punch_enabled));
+
+        if let Some(session_rate_hz) = loaded_sample_rate_hz {
+            let (hw_loaded, hw_rate_hz) = {
+                let st = self.state.blocking_read();
+                (st.hw_loaded, st.hw_sample_rate_hz.max(1))
+            };
+            if hw_loaded && hw_rate_hz != session_rate_hz {
+                warnings.push(format!(
+                    "Session sample rate is {} Hz, hardware is {} Hz",
+                    session_rate_hz, hw_rate_hz
+                ));
+            }
+        }
 
         // Load transport timing fields if present, with sensible defaults.
         let loaded_tempo = transport
