@@ -15,7 +15,7 @@ use iced::{
     widget::{Id, Space, Stack, column, container, mouse_area, pin, row, scrollable, slider},
 };
 use ruler::RulerViewArgs;
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 use tempo::TempoViewArgs;
 
 pub const EDITOR_SCROLL_ID: &str = "workspace.editor.scroll";
@@ -35,6 +35,7 @@ pub struct Workspace {
 }
 
 pub struct WorkspaceViewArgs<'a> {
+    pub session_root: Option<&'a PathBuf>,
     pub playhead_samples: Option<f64>,
     pub pixels_per_sample: f32,
     pub beat_pixels: f32,
@@ -92,6 +93,7 @@ impl Workspace {
 
     pub fn view(&self, args: WorkspaceViewArgs<'_>) -> Element<'_, Message> {
         let WorkspaceViewArgs {
+            session_root,
             playhead_samples,
             pixels_per_sample,
             beat_pixels,
@@ -187,6 +189,7 @@ impl Workspace {
         let editor_with_playhead = if let Some(x) = playhead_x {
             Stack::from_vec(vec![
                 self.editor.view(EditorViewArgs {
+                    session_root,
                     pixels_per_sample,
                     samples_per_bar,
                     snap_mode,
@@ -207,6 +210,7 @@ impl Workspace {
             .into()
         } else {
             self.editor.view(EditorViewArgs {
+                session_root,
                 pixels_per_sample,
                 samples_per_bar,
                 snap_mode,

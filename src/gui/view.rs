@@ -39,6 +39,7 @@ impl Maolan {
                 _ => {
                     let view = match state.view {
                         View::Workspace => self.workspace.view(WorkspaceViewArgs {
+                            session_root: self.session_dir.as_ref(),
                             playhead_samples: Some(self.transport_samples),
                             pixels_per_sample: self.pixels_per_sample(),
                             beat_pixels: self.beat_pixels(),
@@ -72,6 +73,7 @@ impl Maolan {
                         #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
                         View::TrackPlugins => self.track_plugins.view(),
                         View::Piano => self.workspace.piano_view(WorkspaceViewArgs {
+                            session_root: None,
                             playhead_samples: Some(self.transport_samples),
                             pixels_per_sample: self.pixels_per_sample(),
                             beat_pixels: self.beat_pixels(),

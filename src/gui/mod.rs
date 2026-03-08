@@ -592,15 +592,33 @@ impl Maolan {
         vec![PluginFormat::Clap, PluginFormat::Vst3]
     }
 
+    fn session_display_name_from_path(path: &Path) -> Option<String> {
+        let mut display_path = path;
+        if let Some(parent) = path.parent()
+            && parent
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n == "snapshots")
+            && parent
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n == ".maolan_autosave")
+            && let Some(session_root) = parent.parent().and_then(Path::parent)
+        {
+            display_path = session_root;
+        }
+        display_path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .filter(|name| !name.is_empty())
+    }
+
     pub fn title(&self) -> String {
         let session = self
             .session_dir
             .as_ref()
-            .and_then(|path| {
-                path.file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-            })
-            .filter(|name| !name.is_empty())
+            .and_then(|path| Self::session_display_name_from_path(path))
             .unwrap_or_else(|| "<New>".to_string());
         let dirty_suffix = if self.has_unsaved_changes { " *" } else { "" };
         format!("Maolan: {session}{dirty_suffix}")

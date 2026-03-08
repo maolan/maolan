@@ -16,7 +16,9 @@ use std::{
     cell::Cell,
     collections::HashMap,
     hash::{Hash, Hasher},
+    path::PathBuf,
 };
+use wavers::Wav;
 
 const CLIP_RESIZE_HANDLE_WIDTH: f32 = 5.0;
 const AUDIO_CLIP_BASE: Color = Color::from_rgb8(68, 88, 132);
@@ -32,6 +34,7 @@ const MIDI_CLIP_HANDLE: Color = Color::from_rgb8(34, 62, 38);
 struct TrackElementViewArgs<'a> {
     state: &'a StateData,
     track: Track,
+    session_root: Option<&'a PathBuf>,
     pixels_per_sample: f32,
     samples_per_bar: f32,
     snap_mode: SnapMode,
@@ -252,12 +255,18 @@ struct WaveformCanvasState {
 #[derive(Clone)]
 struct WaveformCanvas {
     peaks: ClipPeaks,
+    source_wav_path: Option<PathBuf>,
     clip_offset: usize,
     clip_length: usize,
     max_length: usize,
 }
 
 impl WaveformCanvas {
+    // Match Ardour's practical Cairo image-width ceiling so high zoom can keep
+    // near-1px waveform columns instead of widening after an artificial cap.
+    const MAX_RENDER_COLUMNS: usize = 32_767;
+    const RENDER_MARGIN_COLUMNS: usize = 2;
+
     fn shape_hash(&self, bounds: Rectangle) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         bounds.width.to_bits().hash(&mut hasher);
@@ -268,16 +277,94 @@ impl WaveformCanvas {
         self.peaks.len().hash(&mut hasher);
         for channel in self.peaks.iter() {
             channel.len().hash(&mut hasher);
-            if let Some(first) = channel.first() {
-                first[0].to_bits().hash(&mut hasher);
-                first[1].to_bits().hash(&mut hasher);
+            if channel.is_empty() {
+                continue;
             }
-            if let Some(last) = channel.last() {
-                last[0].to_bits().hash(&mut hasher);
-                last[1].to_bits().hash(&mut hasher);
+            // Sample multiple checkpoints so streamed peak updates invalidate cache quickly
+            // without hashing every bin.
+            const CHECKPOINTS: usize = 16;
+            for i in 0..CHECKPOINTS {
+                let idx = (i * channel.len()) / CHECKPOINTS;
+                let sample = channel[idx.min(channel.len() - 1)];
+                sample[0].to_bits().hash(&mut hasher);
+                sample[1].to_bits().hash(&mut hasher);
             }
         }
         hasher.finish()
+    }
+
+    fn aggregate_column_peak(
+        channel_peaks: &[[f32; 2]],
+        src_start: usize,
+        src_end: usize,
+    ) -> Option<(f32, f32)> {
+        if src_start >= src_end || src_end > channel_peaks.len() {
+            return None;
+        }
+        let mut min_val = 1.0_f32;
+        let mut max_val = -1.0_f32;
+        for pair in &channel_peaks[src_start..src_end] {
+            min_val = min_val.min(pair[0].clamp(-1.0, 1.0));
+            max_val = max_val.max(pair[1].clamp(-1.0, 1.0));
+        }
+        Some((min_val, max_val))
+    }
+
+    fn source_column_peaks(
+        source_wav_path: &PathBuf,
+        channel_count: usize,
+        source_start_sample: usize,
+        source_end_sample: usize,
+        total_columns: usize,
+    ) -> Option<Vec<Vec<[f32; 2]>>> {
+        if total_columns == 0 || source_end_sample <= source_start_sample || channel_count == 0 {
+            return None;
+        }
+        let mut wav = Wav::<f32>::from_path(source_wav_path).ok()?;
+        let wav_channels = wav.n_channels().max(1) as usize;
+        let use_channels = channel_count.min(wav_channels).max(1);
+        let total_frames = wav.n_samples() / wav_channels;
+        if source_start_sample >= total_frames {
+            return None;
+        }
+        let read_end = source_end_sample.min(total_frames);
+        let read_frames = read_end.saturating_sub(source_start_sample);
+        if read_frames == 0 {
+            return None;
+        }
+
+        wav.to_data().ok()?;
+        wav.seek_by_samples((source_start_sample.saturating_mul(wav_channels)) as u64)
+            .ok()?;
+        let chunk = wav.read_samples(read_frames.saturating_mul(wav_channels)).ok()?;
+        if chunk.is_empty() {
+            return None;
+        }
+
+        let mut out = vec![vec![[0.0_f32, 0.0_f32]; total_columns]; channel_count];
+        for col in 0..total_columns {
+            let frame_start = (col * read_frames) / total_columns;
+            let mut frame_end = ((col + 1) * read_frames) / total_columns;
+            if frame_end <= frame_start {
+                frame_end = (frame_start + 1).min(read_frames);
+            }
+            if frame_start >= frame_end {
+                continue;
+            }
+            for (ch, out_channel) in out.iter_mut().enumerate().take(use_channels) {
+                let mut min_val = 1.0_f32;
+                let mut max_val = -1.0_f32;
+                for frame_idx in frame_start..frame_end {
+                    let sample_idx = frame_idx.saturating_mul(wav_channels).saturating_add(ch);
+                    let s = chunk.get(sample_idx).copied().unwrap_or(0.0).clamp(-1.0, 1.0);
+                    min_val = min_val.min(s);
+                    max_val = max_val.max(s);
+                }
+                out_channel[col] = [min_val, max_val];
+            }
+        }
+
+        Some(out)
     }
 }
 
@@ -335,27 +422,163 @@ impl canvas::Program<Message> for WaveformCanvas {
                     if end_idx <= start_idx {
                         end_idx = (start_idx + 1).min(total_peaks);
                     }
-                    let bins = end_idx.saturating_sub(start_idx).max(1);
-                    let x_step = inner_w / bins as f32;
+                    let visible_bins = end_idx.saturating_sub(start_idx).max(1);
+                    let visible_columns = inner_w
+                        .ceil()
+                        .max(1.0)
+                        .min(Self::MAX_RENDER_COLUMNS as f32) as usize;
+                    let x_step = inner_w / visible_columns as f32;
+                    let margin_columns = Self::RENDER_MARGIN_COLUMNS;
+                    let total_columns = visible_columns + (margin_columns * 2);
+                    let margin_bins = ((visible_bins * margin_columns) / visible_columns).max(1);
+                    let render_start_idx = start_idx.saturating_sub(margin_bins);
+                    let render_end_idx = end_idx.saturating_add(margin_bins).min(total_peaks);
+                    let render_bins = render_end_idx.saturating_sub(render_start_idx).max(1);
+                    let stored_samples_per_bin = max_len as f32 / total_peaks.max(1) as f32;
+                    let visible_source_samples =
+                        clip_end_sample.saturating_sub(self.clip_offset).max(1);
+                    let required_samples_per_column =
+                        visible_source_samples as f32 / visible_columns.max(1) as f32;
+                    let high_zoom_source_mode = required_samples_per_column < 1.0;
+                    let trace_mode = high_zoom_source_mode
+                        || required_samples_per_column <= 4.0
+                        || visible_bins <= visible_columns.saturating_mul(2);
+                    let use_source_columns = self.source_wav_path.is_some()
+                        && required_samples_per_column + f32::EPSILON < stored_samples_per_bin;
+                    let mut source_mode_columns = total_columns;
+                    let mut source_mode_margin = margin_columns;
+                    let mut source_mode_x_step = x_step;
+                    let mut source_mode_bin_w = x_step.max(1.0);
+                    let source_columns = if use_source_columns {
+                        let source_margin_samples = if high_zoom_source_mode {
+                            margin_columns
+                        } else {
+                            ((visible_source_samples * margin_columns) / visible_columns).max(1)
+                        };
+                        if high_zoom_source_mode {
+                            source_mode_columns = visible_source_samples + (source_margin_samples * 2);
+                            source_mode_margin = source_margin_samples;
+                            source_mode_x_step = inner_w / visible_source_samples.max(1) as f32;
+                            source_mode_bin_w = 1.0;
+                        }
+                        let source_start = self.clip_offset.saturating_sub(source_margin_samples);
+                        let source_end = clip_end_sample
+                            .saturating_add(source_margin_samples)
+                            .min(self.max_length.max(1));
+                        self.source_wav_path.as_ref().and_then(|path| {
+                            Self::source_column_peaks(
+                                path,
+                                self.peaks.len(),
+                                source_start,
+                                source_end,
+                                source_mode_columns,
+                            )
+                        })
+                    } else {
+                        None
+                    };
 
                     frame.fill(
                         &Path::rectangle(Point::new(0.0, center_y), iced::Size::new(inner_w, 1.0)),
                         zero_line,
                     );
 
-                    for i in 0..bins {
-                        let src_idx = (start_idx + i).min(total_peaks.saturating_sub(1));
-                        let pair = channel_peaks[src_idx];
-                        let min_val = pair[0].clamp(-1.0, 1.0);
-                        let max_val = pair[1].clamp(-1.0, 1.0);
+                    let draw_columns = if source_columns.is_some() {
+                        source_mode_columns
+                    } else {
+                        total_columns
+                    };
+                    if trace_mode {
+                        let trace = Path::new(|builder| {
+                            let mut started = false;
+                            for col in 0..draw_columns {
+                                let pair = if let Some(columns) = source_columns.as_ref() {
+                                    columns
+                                        .get(channel_idx)
+                                        .and_then(|ch| ch.get(col))
+                                        .copied()
+                                        .unwrap_or([0.0, 0.0])
+                                } else {
+                                    let src_start = render_start_idx
+                                        + ((col * render_bins) / draw_columns).min(render_bins);
+                                    let mut src_end = render_start_idx
+                                        + (((col + 1) * render_bins) / draw_columns).min(render_bins);
+                                    if src_end <= src_start {
+                                        src_end = (src_start + 1).min(total_peaks);
+                                    }
+                                    let pair = Self::aggregate_column_peak(
+                                        channel_peaks,
+                                        src_start,
+                                        src_end,
+                                    )
+                                    .unwrap_or((0.0, 0.0));
+                                    [pair.0, pair.1]
+                                };
+                                let sample = ((pair[0] + pair[1]) * 0.5).clamp(-1.0, 1.0);
+                                let x = if source_columns.is_some() {
+                                    (col as f32 - source_mode_margin as f32) * source_mode_x_step
+                                } else {
+                                    (col as f32 - margin_columns as f32) * x_step
+                                };
+                                let y = (center_y - (sample * half_span))
+                                    .clamp(channel_top, channel_top + channel_h);
+                                if !started {
+                                    builder.move_to(Point::new(x, y));
+                                    started = true;
+                                } else {
+                                    builder.line_to(Point::new(x, y));
+                                }
+                            }
+                        });
+                        frame.stroke(
+                            &trace,
+                            canvas::Stroke::default()
+                                .with_color(waveform_edge)
+                                .with_width(1.0),
+                        );
+                        continue;
+                    }
+
+                    for col in 0..draw_columns {
+                        let (min_val, max_val) = if let Some(columns) = source_columns.as_ref() {
+                            let pair = columns
+                                .get(channel_idx)
+                                .and_then(|ch| ch.get(col))
+                                .copied()
+                                .unwrap_or([0.0, 0.0]);
+                            (pair[0], pair[1])
+                        } else {
+                            let src_start = render_start_idx
+                                + ((col * render_bins) / total_columns).min(render_bins);
+                            let mut src_end = render_start_idx
+                                + (((col + 1) * render_bins) / total_columns).min(render_bins);
+                            if src_end <= src_start {
+                                src_end = (src_start + 1).min(total_peaks);
+                            }
+                            let Some(pair) =
+                                Self::aggregate_column_peak(channel_peaks, src_start, src_end)
+                            else {
+                                continue;
+                            };
+                            pair
+                        };
                         let top = (center_y - (max_val * half_span))
                             .clamp(channel_top, channel_top + channel_h);
                         let bottom = (center_y - (min_val * half_span))
                             .clamp(channel_top, channel_top + channel_h);
                         let y = top.min(bottom);
                         let h = (bottom - top).abs().max(1.0);
-                        let x = i as f32 * x_step;
-                        let bin_w = x_step.max(1.0);
+                        let (x, bin_w) = if source_columns.is_some() {
+                            (
+                                (col as f32 - source_mode_margin as f32) * source_mode_x_step,
+                                source_mode_bin_w,
+                            )
+                        } else {
+                            (
+                                (col as f32 - margin_columns as f32) * x_step,
+                                x_step.max(1.0),
+                            )
+                        };
 
                         frame.fill(
                             &Path::rectangle(Point::new(x, y), iced::Size::new(bin_w, h)),
@@ -567,6 +790,7 @@ fn midi_clip_notes_overlay(
 
 fn audio_waveform_overlay(
     peaks: ClipPeaks,
+    source_wav_path: Option<PathBuf>,
     _clip_width: f32,
     _clip_height: f32,
     clip_offset: usize,
@@ -575,6 +799,7 @@ fn audio_waveform_overlay(
 ) -> Element<'static, Message> {
     canvas(WaveformCanvas {
         peaks,
+        source_wav_path,
         clip_offset,
         clip_length,
         max_length,
@@ -588,6 +813,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     let TrackElementViewArgs {
         state,
         track,
+        session_root,
         pixels_per_sample,
         samples_per_bar,
         snap_mode,
@@ -599,6 +825,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         recording_preview_peaks,
         midi_clip_previews,
     } = args;
+    let resolve_audio_clip_path = |clip_name: &str| -> Option<PathBuf> {
+        let path = PathBuf::from(clip_name);
+        if path.is_absolute() {
+            return Some(path);
+        }
+        session_root.map(|root| root.join(path))
+    };
     let snap_sample = |sample: f32| -> f32 {
         match snap_mode {
             SnapMode::NoSnap => sample.max(0.0),
@@ -927,6 +1160,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let clip_content = container(Stack::with_children(vec![
             audio_waveform_overlay(
                 clip_peaks.clone(),
+                resolve_audio_clip_path(&clip_name),
                 clip_width,
                 clip_height,
                 clip.offset,
@@ -1248,6 +1482,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let preview_content = container(Stack::with_children(vec![
                 audio_waveform_overlay(
                     clip_peaks,
+                    resolve_audio_clip_path(&clip_name),
                     clip_width,
                     clip_height,
                     clip.offset,
@@ -1828,6 +2063,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let preview_content = container(Stack::with_children(vec![
                             audio_waveform_overlay(
                                 source_clip.peaks.clone(),
+                                resolve_audio_clip_path(&source_clip.name),
                                 clip_width,
                                 clip_height,
                                 source_clip.offset,
@@ -1982,6 +2218,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             container(Stack::with_children(vec![
                 audio_waveform_overlay(
                     preview_peaks,
+                    None,
                     preview_width,
                     preview_height,
                     0,
@@ -2069,6 +2306,7 @@ pub struct Editor {
 }
 
 pub struct EditorViewArgs<'a> {
+    pub session_root: Option<&'a PathBuf>,
     pub pixels_per_sample: f32,
     pub samples_per_bar: f32,
     pub snap_mode: SnapMode,
@@ -2088,6 +2326,7 @@ impl Editor {
 
     pub fn view(&self, args: EditorViewArgs<'_>) -> Element<'_, Message> {
         let EditorViewArgs {
+            session_root,
             pixels_per_sample,
             samples_per_bar,
             snap_mode,
@@ -2105,6 +2344,7 @@ impl Editor {
             result = result.push(view_track_elements(TrackElementViewArgs {
                 state: &state,
                 track: track.clone(),
+                session_root,
                 pixels_per_sample,
                 samples_per_bar,
                 snap_mode,
