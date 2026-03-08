@@ -166,11 +166,17 @@ impl HW {
                 .map(|hw| hw.supported_sample_rates.clone())
                 .unwrap_or_default()
         };
+        #[cfg(target_os = "windows")]
+        let sample_rate_options = selected_hw
+            .as_ref()
+            .map(|hw| crate::state::discover_windows_output_sample_rates(hw))
+            .unwrap_or_else(|| fallback_sample_rates.clone());
         #[cfg(not(any(
             target_os = "linux",
             target_os = "freebsd",
             target_os = "netbsd",
-            target_os = "openbsd"
+            target_os = "openbsd",
+            target_os = "windows"
         )))]
         let sample_rate_options = fallback_sample_rates.clone();
         let chosen_sample_rate_hz = if sample_rate_options.contains(&sample_rate_hz) {
