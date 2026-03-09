@@ -585,6 +585,18 @@ pub enum Action {
         track_name: String,
         instance_id: usize,
     },
+    #[cfg(target_os = "windows")]
+    TrackGetVst3EditorHandle {
+        track_name: String,
+        instance_id: usize,
+    },
+    #[cfg(target_os = "windows")]
+    TrackVst3EditorHandle {
+        track_name: String,
+        instance_id: usize,
+        controller_handle: usize,
+        title: String,
+    },
     TrackGetVst3Graph {
         track_name: String,
     },

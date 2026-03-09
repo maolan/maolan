@@ -3708,6 +3708,35 @@ impl Engine {
                     }
                 }
             }
+            #[cfg(target_os = "windows")]
+            Action::TrackGetVst3EditorHandle {
+                ref track_name,
+                instance_id,
+            } => {
+                let track_handle = self.state.lock().tracks.get(track_name).cloned();
+                match track_handle {
+                    Some(track) => match track.lock().vst3_editor_handle_and_title(instance_id) {
+                        Ok((controller_handle, title)) => {
+                            self.notify_clients(Ok(Action::TrackVst3EditorHandle {
+                                track_name: track_name.clone(),
+                                instance_id,
+                                controller_handle,
+                                title,
+                            }))
+                            .await;
+                        }
+                        Err(e) => {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    },
+                    None => {
+                        self.notify_clients(Err(format!("Track not found: {track_name}")))
+                            .await;
+                        return;
+                    }
+                }
+            }
             Action::TrackGetVst3Graph { ref track_name } => {
                 let track_handle = self.state.lock().tracks.get(track_name).cloned();
                 match track_handle {
@@ -3731,6 +3760,8 @@ impl Engine {
             Action::TrackVst3Graph { .. } => {
                 // Response action, no handling needed
             }
+            #[cfg(target_os = "windows")]
+            Action::TrackVst3EditorHandle { .. } => {}
             Action::TrackSetVst3Parameter {
                 ref track_name,
                 instance_id,

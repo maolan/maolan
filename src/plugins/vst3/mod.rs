@@ -78,4 +78,22 @@ impl GuiVst3UiHost {
             )
         }
     }
+
+    #[cfg(target_os = "windows")]
+    pub fn open_editor_from_handle(
+        &mut self,
+        controller_handle: usize,
+        title: &str,
+    ) -> Result<(), String> {
+        let title = title.to_string();
+        std::thread::Builder::new()
+            .name("vst3-ui".to_string())
+            .spawn(move || {
+                if let Err(err) = win32::open_editor_from_handle_blocking(controller_handle, &title) {
+                    eprintln!("VST3 UI error: {err}");
+                }
+            })
+            .map_err(|e| format!("Failed to spawn VST3 UI thread: {e}"))?;
+        Ok(())
+    }
 }

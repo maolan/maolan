@@ -254,6 +254,28 @@ pub fn open_editor_blocking(
     result
 }
 
+pub fn open_editor_from_handle_blocking(controller_handle: usize, title: &str) -> Result<(), String> {
+    if controller_handle == 0 {
+        return Err("VST3 editor controller handle is null".to_string());
+    }
+    let coinit_hr = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
+    let did_init_com = coinit_hr == 0 || coinit_hr == 1;
+
+    let result = (|| {
+        let controller_ptr = controller_handle as *mut vst3::Steinberg::Vst::IEditController;
+        let controller = unsafe { vst3::ComPtr::from_raw(controller_ptr) }
+            .ok_or("Failed to adopt VST3 editor controller handle")?;
+        run_vst3_win32_editor(controller, title.to_string())
+    })();
+
+    if did_init_com {
+        unsafe {
+            CoUninitialize();
+        }
+    }
+    result
+}
+
 fn run_vst3_win32_editor(
     controller: vst3::ComPtr<vst3::Steinberg::Vst::IEditController>,
     title: String,

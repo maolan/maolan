@@ -4896,7 +4896,7 @@ impl Maolan {
                         audio_inputs,
                         audio_outputs,
                     );
-                    return self.send(Action::TrackOpenVst3Editor {
+                    return self.send(Action::TrackGetVst3EditorHandle {
                         track_name: track_name.clone(),
                         instance_id,
                     });
@@ -6375,6 +6375,20 @@ impl Maolan {
                                 self.state.blocking_write().message = e;
                             }
                             self.pending_vst3_ui_open = None;
+                        }
+                    }
+                    #[cfg(target_os = "windows")]
+                    Action::TrackVst3EditorHandle {
+                        track_name: _,
+                        instance_id: _,
+                        controller_handle,
+                        title,
+                    } => {
+                        if let Err(e) = self
+                            .vst3_ui_host
+                            .open_editor_from_handle(*controller_handle, title)
+                        {
+                            self.state.blocking_write().message = e;
                         }
                     }
                     #[cfg(target_os = "windows")]

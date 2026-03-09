@@ -189,6 +189,19 @@ impl Vst3Processor {
         super::editor_win32::open_editor_blocking(controller, &self.name)
     }
 
+    #[cfg(target_os = "windows")]
+    pub fn editor_controller_handle_and_title(&self) -> Result<(usize, String), String> {
+        let controller = self
+            .instance
+            .edit_controller
+            .clone()
+            .ok_or("VST3 plugin has no edit controller")?;
+        let handle = controller.as_ptr() as usize;
+        // Transfer one COM ref-counted ownership unit to caller.
+        std::mem::forget(controller);
+        Ok((handle, self.name.clone()))
+    }
+
     pub fn audio_inputs(&self) -> &[Arc<AudioIO>] {
         &self.audio_inputs
     }
