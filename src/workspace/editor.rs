@@ -1,5 +1,5 @@
 use crate::{
-    message::{DraggedClip, EditTool, Message, SnapMode},
+    message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, PianoNote, State, StateData, Track},
 };
 use iced::{
@@ -35,7 +35,6 @@ struct TrackElementViewArgs<'a> {
     pixels_per_sample: f32,
     samples_per_bar: f32,
     snap_mode: SnapMode,
-    edit_tool: EditTool,
     samples_per_beat: f64,
     active_clip_drag: Option<&'a DraggedClip>,
     active_target_track: Option<&'a str>,
@@ -185,7 +184,11 @@ where
     let mut order: Vec<usize> = (0..clips.len()).collect();
     order.sort_by_key(|idx| {
         let clip = &clips[*idx];
-        (base_lane(clip), start_sample(clip), *idx)
+        (
+            base_lane(clip),
+            start_sample(clip),
+            std::cmp::Reverse(*idx),
+        )
     });
 
     for idx in order {
@@ -814,7 +817,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         pixels_per_sample,
         samples_per_bar,
         snap_mode,
-        edit_tool,
         samples_per_beat,
         active_clip_drag,
         active_target_track,
@@ -1383,7 +1385,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     clip_idx: index,
                     kind: Kind::Audio,
                 });
-                if matches!(edit_tool, EditTool::Select) && !clip.take_lane_locked {
+                if !clip.take_lane_locked {
                     let track_name_for_drag_closure = track_name_cloned.clone();
                     base.on_move(move |point| {
                         let mut clip_data = DraggedClip::new(
@@ -1818,7 +1820,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         track_idx: track_name_cloned.clone(),
                         clip_idx: index,
                     });
-                if matches!(edit_tool, EditTool::Select) && !clip.take_lane_locked {
+                if !clip.take_lane_locked {
                     let track_name_for_drag_closure = track_name_cloned.clone();
                     base.on_move(move |point| {
                         let mut clip_data = DraggedClip::new(
@@ -2441,7 +2443,6 @@ pub struct EditorViewArgs<'a> {
     pub pixels_per_sample: f32,
     pub samples_per_bar: f32,
     pub snap_mode: SnapMode,
-    pub edit_tool: EditTool,
     pub samples_per_beat: f64,
     pub active_clip_drag: Option<&'a DraggedClip>,
     pub active_target_track: Option<&'a str>,
@@ -2461,7 +2462,6 @@ impl Editor {
             pixels_per_sample,
             samples_per_bar,
             snap_mode,
-            edit_tool,
             samples_per_beat,
             active_clip_drag,
             active_target_track,
@@ -2479,7 +2479,6 @@ impl Editor {
                 pixels_per_sample,
                 samples_per_bar,
                 snap_mode,
-                edit_tool,
                 samples_per_beat,
                 active_clip_drag,
                 active_target_track,
@@ -2527,38 +2526,6 @@ impl Editor {
                     .into(),
                 );
             }
-        }
-        if let (Some(start), Some(end)) = (state.comp_swipe_start, state.comp_swipe_end) {
-            let x = start.x.min(end.x).max(0.0);
-            let y = start.y.min(end.y).max(0.0);
-            let w = (start.x - end.x).abs().max(2.0);
-            let h = (start.y - end.y).abs().max(2.0);
-            layers.push(
-                pin(container("")
-                    .width(Length::Fixed(w))
-                    .height(Length::Fixed(h))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.95,
-                            g: 0.7,
-                            b: 0.2,
-                            a: 0.2,
-                        })),
-                        border: Border {
-                            color: Color {
-                                r: 1.0,
-                                g: 0.8,
-                                b: 0.2,
-                                a: 0.98,
-                            },
-                            width: 1.0,
-                            radius: 0.0.into(),
-                        },
-                        ..container::Style::default()
-                    }))
-                .position(Point::new(x, y))
-                .into(),
-            );
         }
         if let (Some(start), Some(end)) = (state.midi_clip_create_start, state.midi_clip_create_end)
         {

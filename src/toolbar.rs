@@ -1,4 +1,4 @@
-use crate::message::{EditTool, Message, SnapMode};
+use crate::message::{Message, SnapMode};
 use iced::{
     Background, Color, Length, Theme,
     widget::{button, pick_list, row, text_input},
@@ -31,7 +31,6 @@ pub struct ToolbarViewState {
     pub has_punch_range: bool,
     pub punch_enabled: bool,
     pub snap_mode: SnapMode,
-    pub edit_tool: EditTool,
     pub tempo_input: String,
     pub tsig_num_input: String,
     pub tsig_denom_input: String,
@@ -178,16 +177,6 @@ impl Toolbar {
                     Some(view_state.snap_mode),
                     Message::SetSnapMode
                 ),
-                button(match view_state.edit_tool {
-                    EditTool::Select => "SEL",
-                    EditTool::Comp => "COMP",
-                })
-                .style(Self::button_style(
-                    true,
-                    matches!(view_state.edit_tool, EditTool::Comp),
-                    Color::from_rgba(0.22, 0.72, 0.95, 0.35),
-                ))
-                .on_press(Message::ToggleCompTool),
                 text_input("BPM", &view_state.tempo_input)
                     .on_input(Message::TempoInputChanged)
                     .on_submit(Message::TempoInputCommit)

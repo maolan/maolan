@@ -357,7 +357,11 @@ impl Maolan {
         let mut order: Vec<usize> = (0..clips.len()).collect();
         order.sort_by_key(|idx| {
             let clip = &clips[*idx];
-            (base_lane(clip), start_sample(clip), *idx)
+            (
+                base_lane(clip),
+                start_sample(clip),
+                std::cmp::Reverse(*idx),
+            )
         });
 
         for idx in order {
@@ -1959,231 +1963,6 @@ impl Maolan {
         }
     }
 
-    fn comp_target_at_position(&self, position: Point) -> Option<(String, Kind, usize, usize)> {
-        let pps = self.pixels_per_sample().max(1.0e-6);
-        let sample = (position.x.max(0.0) / pps) as usize;
-        let state = self.state.blocking_read();
-        let mut y_offset = 0.0_f32;
-        for track in &state.tracks {
-            let track_top = y_offset;
-            let track_bottom = y_offset + track.height;
-            if position.y < track_top || position.y > track_bottom {
-                y_offset += track.height;
-                continue;
-            }
-            let local_y = (position.y - y_offset).max(0.0);
-            let layout = track.lane_layout();
-            let lane_clip_h = (layout.lane_height - 6.0).max(12.0);
-            if track.audio.ins > 0 {
-                let audio_top = track.lane_top(Kind::Audio, 0) + 3.0;
-                let audio_bottom = audio_top + lane_clip_h;
-                if local_y >= audio_top && local_y <= audio_bottom {
-                    let (take_idx, take_count) = Self::assign_take_lanes(
-                        &track.audio.clips,
-                        |_| 0,
-                        |clip| clip.start,
-                        |clip| clip.length,
-                        |clip| clip.take_lane_override,
-                    );
-                    let overlap = track
-                        .audio
-                        .clips
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, clip)| {
-                            let end = clip.start.saturating_add(clip.length);
-                            clip.start <= sample && sample < end
-                        })
-                        .map(|(idx, _)| idx)
-                        .collect::<Vec<_>>();
-                    let max_takes = overlap
-                        .iter()
-                        .filter_map(|idx| take_count.get(*idx).copied())
-                        .max()
-                        .unwrap_or(1)
-                        .max(1);
-                    let rel_y = (local_y - audio_top).max(0.0);
-                    let slot_h = (lane_clip_h / max_takes as f32).max(1.0);
-                    let desired_take = (rel_y / slot_h).floor() as usize;
-                    if let Some(found) = overlap
-                        .iter()
-                        .filter_map(|idx| take_idx.get(*idx).copied())
-                        .find(|idx| *idx == desired_take)
-                    {
-                        return Some((track.name.clone(), Kind::Audio, 0, found));
-                    }
-                    return Some((track.name.clone(), Kind::Audio, 0, desired_take));
-                }
-            }
-            if track.midi.ins > 0 {
-                let midi_lane = track
-                    .lane_index_at_y(Kind::MIDI, local_y)
-                    .min(track.midi.ins.saturating_sub(1));
-                let midi_top = track.lane_top(Kind::MIDI, midi_lane) + 3.0;
-                let midi_bottom = midi_top + lane_clip_h;
-                if local_y >= midi_top && local_y <= midi_bottom {
-                    let (take_idx, take_count) = Self::assign_take_lanes(
-                        &track.midi.clips,
-                        |clip| clip.input_channel.min(track.midi.ins.saturating_sub(1)),
-                        |clip| clip.start,
-                        |clip| clip.length,
-                        |clip| clip.take_lane_override,
-                    );
-                    let overlap = track
-                        .midi
-                        .clips
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, clip)| {
-                            let end = clip.start.saturating_add(clip.length);
-                            let base = clip.input_channel.min(track.midi.ins.saturating_sub(1));
-                            base == midi_lane && clip.start <= sample && sample < end
-                        })
-                        .map(|(idx, _)| idx)
-                        .collect::<Vec<_>>();
-                    let max_takes = overlap
-                        .iter()
-                        .filter_map(|idx| take_count.get(*idx).copied())
-                        .max()
-                        .unwrap_or(1)
-                        .max(1);
-                    let rel_y = (local_y - midi_top).max(0.0);
-                    let slot_h = (lane_clip_h / max_takes as f32).max(1.0);
-                    let desired_take = (rel_y / slot_h).floor() as usize;
-                    if let Some(found) = overlap
-                        .iter()
-                        .filter_map(|idx| take_idx.get(*idx).copied())
-                        .find(|idx| *idx == desired_take)
-                    {
-                        return Some((track.name.clone(), Kind::MIDI, midi_lane, found));
-                    }
-                    return Some((track.name.clone(), Kind::MIDI, midi_lane, desired_take));
-                }
-            }
-            return None;
-        }
-        None
-    }
-
-    fn comp_swipe_updates(
-        &self,
-        track_name: &str,
-        kind: Kind,
-        base_lane: usize,
-        take_lane: usize,
-        start_sample: usize,
-        end_sample: usize,
-    ) -> Vec<(usize, bool)> {
-        let state = self.state.blocking_read();
-        let Some(track) = state.tracks.iter().find(|t| t.name == track_name) else {
-            return Vec::new();
-        };
-        match kind {
-            Kind::Audio => {
-                let (take_idx, _) = Self::assign_take_lanes(
-                    &track.audio.clips,
-                    |_| 0,
-                    |clip| clip.start,
-                    |clip| clip.length,
-                    |clip| clip.take_lane_override,
-                );
-                track
-                    .audio
-                    .clips
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, clip)| {
-                        if clip.take_lane_locked {
-                            return None;
-                        }
-                        let end = clip.start.saturating_add(clip.length);
-                        if clip.start >= end_sample || end <= start_sample || base_lane != 0 {
-                            return None;
-                        }
-                        let should_mute = take_idx.get(idx).copied().unwrap_or(0) != take_lane;
-                        (clip.muted != should_mute).then_some((idx, should_mute))
-                    })
-                    .collect()
-            }
-            Kind::MIDI => {
-                let (take_idx, _) = Self::assign_take_lanes(
-                    &track.midi.clips,
-                    |clip| clip.input_channel.min(track.midi.ins.saturating_sub(1)),
-                    |clip| clip.start,
-                    |clip| clip.length,
-                    |clip| clip.take_lane_override,
-                );
-                track
-                    .midi
-                    .clips
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, clip)| {
-                        if clip.take_lane_locked {
-                            return None;
-                        }
-                        let end = clip.start.saturating_add(clip.length);
-                        let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
-                        if clip.start >= end_sample || end <= start_sample || lane != base_lane {
-                            return None;
-                        }
-                        let should_mute = take_idx.get(idx).copied().unwrap_or(0) != take_lane;
-                        (clip.muted != should_mute).then_some((idx, should_mute))
-                    })
-                    .collect()
-            }
-        }
-    }
-
-    fn apply_comp_swipe(&mut self) -> Task<Message> {
-        let (start, end) = {
-            let mut state = self.state.blocking_write();
-            let start = state.comp_swipe_start.take();
-            let end = state.comp_swipe_end.take();
-            (start, end)
-        };
-        let (Some(start), Some(end)) = (start, end) else {
-            return Task::none();
-        };
-        if (start.x - end.x).abs() <= 1.0 || (start.y - end.y).abs() <= 1.0 {
-            return Task::none();
-        }
-        let pps = self.pixels_per_sample().max(1.0e-6);
-        let swipe_start_sample = (start.x.min(end.x).max(0.0) / pps) as usize;
-        let swipe_end_sample = (start.x.max(end.x).max(0.0) / pps) as usize;
-        if swipe_end_sample <= swipe_start_sample {
-            return Task::none();
-        }
-        let target_pos = Point::new(start.x, (start.y + end.y) * 0.5);
-        let Some((track_name, kind, base_lane, take_lane)) =
-            self.comp_target_at_position(target_pos)
-        else {
-            return Task::none();
-        };
-        let updates = self.comp_swipe_updates(
-            &track_name,
-            kind,
-            base_lane,
-            take_lane,
-            swipe_start_sample,
-            swipe_end_sample,
-        );
-        if updates.is_empty() {
-            return Task::none();
-        }
-        let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
-        for (idx, muted) in updates {
-            tasks.push(self.send(Action::SetClipMuted {
-                track_name: track_name.clone(),
-                clip_index: idx,
-                kind,
-                muted,
-            }));
-        }
-        tasks.push(self.send(Action::EndHistoryGroup));
-        Task::batch(tasks)
-    }
-
     fn create_empty_midi_clip_from_drag(&mut self, start: Point, end: Point) -> Task<Message> {
         let Some((track_name, input_channel)) = self.midi_lane_at_position(start) else {
             return Task::none();
@@ -3511,17 +3290,6 @@ impl Maolan {
             }
             Message::SetSnapMode(mode) => {
                 self.snap_mode = mode;
-            }
-            Message::ToggleCompTool => {
-                self.edit_tool = match self.edit_tool {
-                    crate::message::EditTool::Select => crate::message::EditTool::Comp,
-                    crate::message::EditTool::Comp => crate::message::EditTool::Select,
-                };
-                if !matches!(self.edit_tool, crate::message::EditTool::Comp) {
-                    let mut state = self.state.blocking_write();
-                    state.comp_swipe_start = None;
-                    state.comp_swipe_end = None;
-                }
             }
             Message::RecordingPreviewTick => {
                 if self.playing
@@ -8744,8 +8512,6 @@ impl Maolan {
                 state.track_context_menu = None;
                 state.clip_marquee_start = None;
                 state.clip_marquee_end = None;
-                state.comp_swipe_start = None;
-                state.comp_swipe_end = None;
                 state.midi_clip_create_start = None;
                 state.midi_clip_create_end = None;
                 state.selected_clips.clear();
@@ -8764,10 +8530,6 @@ impl Maolan {
                             state.mouse_left_down = true;
                             state.clip_marquee_start = None;
                             state.clip_marquee_end = None;
-                            if matches!(self.edit_tool, crate::message::EditTool::Comp) {
-                                state.comp_swipe_start = Some(state.cursor);
-                                state.comp_swipe_end = Some(state.cursor);
-                            }
                         }
                         mouse::Button::Right => {
                             let cursor = {
@@ -9328,15 +9090,6 @@ impl Maolan {
                 }
                 let mouse_left_down = self.state.blocking_read().mouse_left_down;
                 if mouse_left_down && !matches!(resizing, Some(Resizing::Clip { .. })) {
-                    if matches!(self.edit_tool, crate::message::EditTool::Comp)
-                        && matches!(self.state.blocking_read().view, View::Workspace)
-                    {
-                        let mut state = self.state.blocking_write();
-                        if state.comp_swipe_start.is_some() {
-                            state.comp_swipe_end = Some(position);
-                        }
-                        return Task::none();
-                    }
                     if let Some(active) = self.clip.as_mut() {
                         active.end = position;
                         return iced_drop::zones_on_point(
@@ -9394,7 +9147,6 @@ impl Maolan {
                     && matches!(state.view, View::Workspace)
                     && self.modal.is_none()
                     && state.clip_marquee_start.is_none()
-                    && matches!(self.edit_tool, crate::message::EditTool::Select)
                 {
                     state.clip_marquee_start = Some(position);
                     state.clip_marquee_end = Some(position);
@@ -9414,21 +9166,6 @@ impl Maolan {
                 }
             }
             Message::MouseReleased => {
-                if matches!(self.edit_tool, crate::message::EditTool::Comp) {
-                    let had_swipe = {
-                        let mut state = self.state.blocking_write();
-                        state.mouse_left_down = false;
-                        state.mouse_right_down = false;
-                        state.clip_click_consumed = false;
-                        state.resizing = None;
-                        self.clip = None;
-                        state.comp_swipe_start.is_some() && state.comp_swipe_end.is_some()
-                    };
-                    if had_swipe {
-                        return self.apply_comp_swipe();
-                    }
-                    return Task::none();
-                }
                 let active = std::mem::take(&mut self.touch_active_keys);
                 for (track_name, keys) in active {
                     if let Some(values) = self.touch_automation_overrides.get_mut(&track_name) {
@@ -9447,8 +9184,6 @@ impl Maolan {
                     state.clip_click_consumed = false;
                     state.clip_marquee_start = None;
                     state.clip_marquee_end = None;
-                    state.comp_swipe_start = None;
-                    state.comp_swipe_end = None;
                     state.midi_clip_create_start = None;
                     state.midi_clip_create_end = None;
                     self.clip = None;
@@ -9602,9 +9337,6 @@ impl Maolan {
                 self.clip_preview_target_track = None;
             }
             Message::ClipDrag(ref clip) => {
-                if matches!(self.edit_tool, crate::message::EditTool::Comp) {
-                    return Task::none();
-                }
                 if !self.state.blocking_read().mouse_left_down {
                     return Task::none();
                 }

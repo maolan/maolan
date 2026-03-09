@@ -9,7 +9,7 @@ use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
     message::{
-        DraggedClip, EditTool, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
+        DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
         ExportRenderMode, Message, PluginFormat, Show, SnapMode,
     },
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
@@ -304,7 +304,6 @@ pub struct Maolan {
     punch_enabled: bool,
     punch_range_samples: Option<(usize, usize)>,
     snap_mode: SnapMode,
-    edit_tool: EditTool,
     zoom_visible_bars: f32,
     editor_scroll_x: f32,
     editor_scroll_y: f32,
@@ -510,7 +509,6 @@ impl Default for Maolan {
             punch_enabled: false,
             punch_range_samples: None,
             snap_mode: prefs.default_snap_mode,
-            edit_tool: EditTool::Select,
             zoom_visible_bars: 127.0,
             editor_scroll_x: 0.0,
             editor_scroll_y: 0.0,
