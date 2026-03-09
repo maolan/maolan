@@ -5,9 +5,7 @@ use std::path::PathBuf;
 use crate::state::AudioBackendOption;
 #[cfg(any(
     target_os = "linux",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+    target_os = "freebsd"
 ))]
 use crate::state::AudioDeviceOption;
 use std::fmt;
@@ -901,16 +899,12 @@ pub enum Message {
 
     #[cfg(any(
         target_os = "linux",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
+        target_os = "freebsd"
     ))]
     HWSelected(AudioDeviceOption),
     #[cfg(not(any(
         target_os = "linux",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
+        target_os = "freebsd"
     )))]
     HWSelected(String),
     #[cfg(any(target_os = "freebsd", target_os = "linux"))]

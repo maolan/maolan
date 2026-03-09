@@ -6,6 +6,7 @@ mod gui;
 mod hw;
 mod menu;
 mod message;
+mod platform_caps;
 mod plugins;
 mod state;
 mod style;
@@ -32,9 +33,7 @@ const ICON_BYTES: &[u8] = include_bytes!("../images/maolan.png");
 pub fn main() -> iced::Result {
     #[cfg(any(
         target_os = "linux",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
+        target_os = "freebsd"
     ))]
     prefer_x11_backend();
 
@@ -53,9 +52,7 @@ pub fn main() -> iced::Result {
 
 #[cfg(any(
     target_os = "linux",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
+    target_os = "freebsd"
 ))]
 fn prefer_x11_backend() {
     // winit picks Wayland whenever WAYLAND_DISPLAY exists and does not fallback to X11.

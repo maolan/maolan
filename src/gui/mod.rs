@@ -12,6 +12,7 @@ use crate::{
         DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
         ExportRenderMode, Message, PluginFormat, Show, SnapMode,
     },
+    platform_caps,
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{
         AudioClip, ClipPeaks, MIDIClip, MidiClipPreviewMap, PianoControllerPoint, PianoNote,
@@ -471,10 +472,7 @@ impl Default for Maolan {
             selected_vst3_plugins: BTreeSet::new(),
             clap_plugin_filter: String::new(),
             selected_clap_plugins: BTreeSet::new(),
-            #[cfg(all(unix, not(target_os = "macos")))]
-            plugin_format: PluginFormat::Lv2,
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
-            plugin_format: PluginFormat::Vst3,
+            plugin_format: Self::default_plugin_format(),
             session_dir: None,
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
@@ -586,14 +584,79 @@ impl Default for Maolan {
 }
 
 impl Maolan {
-    #[cfg(all(unix, not(target_os = "macos")))]
-    fn supported_plugin_formats() -> Vec<PluginFormat> {
-        vec![PluginFormat::Lv2, PluginFormat::Clap, PluginFormat::Vst3]
+    fn default_plugin_format() -> PluginFormat {
+        if platform_caps::SUPPORTS_LV2 {
+            PluginFormat::Lv2
+        } else {
+            PluginFormat::Vst3
+        }
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
     fn supported_plugin_formats() -> Vec<PluginFormat> {
-        vec![PluginFormat::Clap, PluginFormat::Vst3]
+        let mut formats = Vec::new();
+        if platform_caps::SUPPORTS_LV2 {
+            formats.push(PluginFormat::Lv2);
+        }
+        formats.push(PluginFormat::Clap);
+        formats.push(PluginFormat::Vst3);
+        formats
+    }
+
+    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+    fn loaded_graph_plugins_for_format(
+        state: &StateData,
+        track_name: &str,
+        plugin_format: &str,
+    ) -> Vec<(String, String)> {
+        state
+            .plugin_graphs_by_track
+            .get(track_name)
+            .map(|(plugins, _)| {
+                plugins
+                    .iter()
+                    .filter(|plugin| plugin.format.eq_ignore_ascii_case(plugin_format))
+                    .map(|plugin| (plugin.name.clone(), plugin.uri.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]
+    fn loaded_graph_plugins_for_format(
+        state: &StateData,
+        track_name: &str,
+        plugin_format: &str,
+    ) -> Vec<(String, String)> {
+        let _ = (state, track_name, plugin_format);
+        Vec::new()
+    }
+
+    fn loaded_vst3_automation_section(
+        &self,
+        state: &StateData,
+        track_name: &str,
+    ) -> iced::Element<'_, Message> {
+        let loaded_vst3 = Self::loaded_graph_plugins_for_format(state, track_name, "VST3");
+        let mut loaded_vst3_items = Vec::new();
+        for (name, path) in loaded_vst3 {
+            loaded_vst3_items.push(
+                row![
+                    text(name).width(Length::Fill),
+                    button("Auto").on_press(Message::TrackAutomationAddVst3Lanes {
+                        track_name: track_name.to_string(),
+                        plugin_path: path,
+                    }),
+                ]
+                .spacing(8)
+                .into(),
+            );
+        }
+        column![
+            text("Loaded VST3"),
+            scrollable(column(loaded_vst3_items)).height(Length::Fixed(72.0)),
+        ]
+        .spacing(6)
+        .into()
     }
 
     fn session_display_name_from_path(path: &Path) -> Option<String> {
@@ -2825,87 +2888,29 @@ impl Maolan {
             }
         };
 
-        let loaded_vst3_section: iced::Element<'_, Message> = {
-            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-            {
-                let loaded_vst3 = state
-                    .plugin_graphs_by_track
-                    .get(&title)
-                    .map(|(plugins, _)| {
-                        plugins
-                            .iter()
-                            .filter(|plugin| plugin.format.eq_ignore_ascii_case("VST3"))
-                            .map(|plugin| {
-                                (plugin.name.clone(), plugin.uri.clone(), plugin.instance_id)
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let mut loaded_vst3_items = Vec::new();
-                for (name, path, _) in loaded_vst3 {
-                    loaded_vst3_items.push(
-                        row![
-                            text(name).width(Length::Fill),
-                            button("Auto").on_press(Message::TrackAutomationAddVst3Lanes {
-                                track_name: title.clone(),
-                                plugin_path: path,
-                            }),
-                        ]
-                        .spacing(8)
-                        .into(),
-                    );
-                }
-                column![
-                    text("Loaded VST3"),
-                    scrollable(column(loaded_vst3_items)).height(Length::Fixed(72.0)),
-                ]
-                .spacing(6)
-                .into()
-            }
-            #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]
-            {
-                container("").into()
-            }
-        };
+        let loaded_vst3_section = self.loaded_vst3_automation_section(&state, &title);
         let loaded_lv2_section: iced::Element<'_, Message> = {
-            #[cfg(all(unix, not(target_os = "macos")))]
-            {
-                let loaded_lv2 = state
-                    .plugin_graphs_by_track
-                    .get(&title)
-                    .map(|(plugins, _)| {
-                        plugins
-                            .iter()
-                            .filter(|plugin| plugin.format.eq_ignore_ascii_case("LV2"))
-                            .map(|plugin| (plugin.name.clone(), plugin.uri.clone()))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let mut loaded_lv2_items = Vec::new();
-                for (name, uri) in loaded_lv2 {
-                    loaded_lv2_items.push(
-                        row![
-                            text(name).width(Length::Fill),
-                            button("Auto").on_press(Message::TrackAutomationAddLv2Lanes {
-                                track_name: title.clone(),
-                                plugin_uri: uri,
-                            }),
-                        ]
-                        .spacing(8)
-                        .into(),
-                    );
-                }
-                column![
-                    text("Loaded LV2"),
-                    scrollable(column(loaded_lv2_items)).height(Length::Fixed(72.0)),
-                ]
-                .spacing(6)
-                .into()
+            let loaded_lv2 = Self::loaded_graph_plugins_for_format(&state, &title, "LV2");
+            let mut loaded_lv2_items = Vec::new();
+            for (name, uri) in loaded_lv2 {
+                loaded_lv2_items.push(
+                    row![
+                        text(name).width(Length::Fill),
+                        button("Auto").on_press(Message::TrackAutomationAddLv2Lanes {
+                            track_name: title.clone(),
+                            plugin_uri: uri,
+                        }),
+                    ]
+                    .spacing(8)
+                    .into(),
+                );
             }
-            #[cfg(not(all(unix, not(target_os = "macos"))))]
-            {
-                container("").into()
-            }
+            column![
+                text("Loaded LV2"),
+                scrollable(column(loaded_lv2_items)).height(Length::Fixed(72.0)),
+            ]
+            .spacing(6)
+            .into()
         };
 
         let loaded_clap = state
@@ -3096,39 +3101,7 @@ impl Maolan {
             .spacing(10)
         };
 
-        let loaded_vst3_section: iced::Element<'_, Message> = {
-            let loaded_vst3 = state
-                .plugin_graphs_by_track
-                .get(&title)
-                .map(|(plugins, _)| {
-                    plugins
-                        .iter()
-                        .filter(|plugin| plugin.format.eq_ignore_ascii_case("VST3"))
-                        .map(|plugin| (plugin.name.clone(), plugin.uri.clone()))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let mut loaded_vst3_items = Vec::new();
-            for (name, path) in loaded_vst3 {
-                loaded_vst3_items.push(
-                    row![
-                        text(name).width(Length::Fill),
-                        button("Auto").on_press(Message::TrackAutomationAddVst3Lanes {
-                            track_name: title.clone(),
-                            plugin_path: path,
-                        }),
-                    ]
-                    .spacing(8)
-                    .into(),
-                );
-            }
-            column![
-                text("Loaded VST3"),
-                scrollable(column(loaded_vst3_items)).height(Length::Fixed(72.0)),
-            ]
-            .spacing(6)
-            .into()
-        };
+        let loaded_vst3_section = self.loaded_vst3_automation_section(&state, &title);
 
         let loaded_clap = state
             .clap_plugins_by_track

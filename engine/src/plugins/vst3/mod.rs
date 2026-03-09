@@ -18,6 +18,7 @@ pub use state::{MemoryStream, Vst3PluginState, ibstream_ptr};
 pub use processor::list_plugins;
 
 // Helper for VST3 search paths (moved from old vst3.rs)
+use crate::plugins::paths;
 use std::path::PathBuf;
 
 pub fn default_vst3_search_roots() -> Vec<PathBuf> {
@@ -31,34 +32,13 @@ pub fn default_vst3_search_roots() -> Vec<PathBuf> {
 
     #[cfg(target_os = "macos")]
     {
-        roots.push(PathBuf::from("/Library/Audio/Plug-Ins/VST3"));
-        roots.push(PathBuf::from(format!(
-            "{}/Library/Audio/Plug-Ins/VST3",
-            home_dir()
-        )));
+        paths::push_macos_audio_plugin_roots(&mut roots, "VST3");
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
-        roots.push(PathBuf::from("/usr/lib/vst3"));
-        roots.push(PathBuf::from("/usr/lib64/vst3"));
-        roots.push(PathBuf::from("/usr/local/lib/vst3"));
-        roots.push(PathBuf::from("/usr/local/lib64/vst3"));
-        roots.push(PathBuf::from(format!("{}/.vst3", home_dir())));
-        roots.push(PathBuf::from(format!("{}/.local/lib/vst3", home_dir())));
+        paths::push_unix_plugin_roots(&mut roots, "vst3");
     }
 
     roots
-}
-
-#[cfg(any(
-    target_os = "macos",
-    target_os = "linux",
-    target_os = "freebsd",
-    target_os = "netbsd"
-))]
-fn home_dir() -> String {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_default()
 }

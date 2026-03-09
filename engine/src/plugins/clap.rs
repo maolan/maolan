@@ -1,6 +1,7 @@
 use crate::audio::io::AudioIO;
 use crate::midi::io::MidiEvent;
 use crate::mutex::UnsafeMutex;
+use crate::plugins::paths;
 use libloading::Library;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1859,40 +1860,16 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
 
     #[cfg(target_os = "macos")]
     {
-        roots.push(PathBuf::from("/Library/Audio/Plug-Ins/CLAP"));
-        roots.push(PathBuf::from(format!(
-            "{}/Library/Audio/Plug-Ins/CLAP",
-            home_dir()
-        )));
+        paths::push_macos_audio_plugin_roots(&mut roots, "CLAP");
     }
 
     #[cfg(any(
         target_os = "linux",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
+        target_os = "freebsd"
     ))]
     {
-        roots.push(PathBuf::from("/usr/lib/clap"));
-        roots.push(PathBuf::from("/usr/lib64/clap"));
-        roots.push(PathBuf::from("/usr/local/lib/clap"));
-        roots.push(PathBuf::from("/usr/local/lib64/clap"));
-        roots.push(PathBuf::from(format!("{}/.clap", home_dir())));
-        roots.push(PathBuf::from(format!("{}/.local/lib/clap", home_dir())));
+        paths::push_unix_plugin_roots(&mut roots, "clap");
     }
 
     roots
-}
-
-#[cfg(any(
-    target_os = "macos",
-    target_os = "linux",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd"
-))]
-fn home_dir() -> String {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_default()
 }

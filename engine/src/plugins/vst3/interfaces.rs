@@ -795,9 +795,7 @@ unsafe extern "system" fn host_query_interface(
         .all(|(a, b)| (*a as u8) == *b);
     #[cfg(any(
         target_os = "linux",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
+        target_os = "freebsd"
     ))]
     let requested_run_loop = iid_bytes
         .iter()
@@ -805,9 +803,7 @@ unsafe extern "system" fn host_query_interface(
         .all(|(a, b)| (*a as u8) == *b);
     #[cfg(not(any(
         target_os = "linux",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd"
+        target_os = "freebsd"
     )))]
     let requested_run_loop = false;
     if !(requested_host || requested_unknown || requested_run_loop) {
@@ -1421,7 +1417,7 @@ fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         // Linux/FreeBSD: .vst3/Contents/x86_64-linux/plugin.so
         let module = bundle_path
@@ -1445,8 +1441,7 @@ fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
         target_os = "windows",
         target_os = "macos",
         target_os = "linux",
-        target_os = "freebsd",
-        target_os = "netbsd"
+        target_os = "freebsd"
     )))]
     {
         Err("Unsupported platform".to_string())

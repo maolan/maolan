@@ -10,6 +10,7 @@ use crate::{
         ExportNormalizeMode, ExportRenderMode, Message, Show, TrackAutomationMode,
         TrackAutomationTarget,
     },
+    platform_caps,
     state::{
         ConnectionViewSelection, HW, PianoData, PianoSysExPoint, Resizing, TempoPoint,
         TimeSignaturePoint, Track, TrackAutomationLane, TrackAutomationPoint, View,
@@ -21,10 +22,15 @@ use crate::{
         TRACKS_SCROLL_ID,
     },
 };
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd"
+))]
+use crate::state::AudioDeviceOption;
 use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
 #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-use maolan_engine::message::PluginGraphNode;
+use maolan_engine::message::{PluginGraphNode, PluginGraphPlugin};
 use maolan_engine::{
     history,
     kind::Kind,
@@ -78,6 +84,423 @@ struct AutomationTrackView {
 }
 
 impl Maolan {
+    fn reset_track_plugin_view_state(state: &mut crate::state::StateData) {
+        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+        {
+            state.plugin_graph_connecting = None;
+            state.plugin_graph_moving_plugin = None;
+        }
+        state.plugin_graph_last_plugin_click = None;
+        state.plugin_graph_selected_plugin = None;
+    }
+
+    fn open_track_plugins_followup(&self, track_name: String) -> Task<Message> {
+        if platform_caps::SUPPORTS_PLUGIN_GRAPH {
+            self.send(Action::TrackGetPluginGraph { track_name })
+        } else {
+            Task::perform(async {}, |_| {
+                Message::Show(crate::message::Show::TrackPluginList)
+            })
+        }
+    }
+
+    fn maybe_refresh_plugin_graph_for_track(&self, track_name: &str) -> Option<Task<Message>> {
+        if self.track_has_open_plugin_graph(track_name) {
+            Some(self.send(Action::TrackGetPluginGraph {
+                track_name: track_name.to_string(),
+            }))
+        } else {
+            None
+        }
+    }
+
+    fn track_has_open_plugin_graph(&self, track_name: &str) -> bool {
+        platform_caps::SUPPORTS_PLUGIN_GRAPH
+            && self.state.blocking_read().plugin_graph_track.as_deref() == Some(track_name)
+    }
+
+    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+    fn find_plugin_graph_instance_id(
+        &self,
+        track_name: &str,
+        plugin_format: &str,
+        plugin_ref: &str,
+    ) -> Option<usize> {
+        let state = self.state.blocking_read();
+        state
+            .plugin_graphs_by_track
+            .get(track_name)
+            .and_then(|(plugins, _)| {
+                plugins
+                    .iter()
+                    .find(|plugin| {
+                        plugin.format.eq_ignore_ascii_case(plugin_format)
+                            && (plugin.uri == plugin_ref || plugin.plugin_id == plugin_ref)
+                    })
+                    .map(|plugin| plugin.instance_id)
+            })
+    }
+
+    #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]
+    fn find_plugin_graph_instance_id(
+        &self,
+        track_name: &str,
+        plugin_format: &str,
+        plugin_ref: &str,
+    ) -> Option<usize> {
+        let _ = (track_name, plugin_format, plugin_ref);
+        None
+    }
+
+    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+    fn queue_pending_graph_automation_queries(
+        &mut self,
+        track_name: &str,
+        plugins: &[PluginGraphPlugin],
+    ) -> Vec<Task<Message>> {
+        let mut pending_queries: Vec<Task<Message>> = vec![];
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let pending_lv2_uris: Vec<(String, String)> = self
+                .pending_add_lv2_automation_uris
+                .iter()
+                .filter(|(name, _)| name == track_name)
+                .cloned()
+                .collect();
+            for (pending_track, pending_uri) in pending_lv2_uris {
+                if let Some(instance_id) = plugins
+                    .iter()
+                    .find(|plugin| {
+                        plugin.format.eq_ignore_ascii_case("LV2")
+                            && (plugin.uri == pending_uri || plugin.plugin_id == pending_uri)
+                    })
+                    .map(|plugin| plugin.instance_id)
+                {
+                    self.pending_add_lv2_automation_uris
+                        .remove(&(pending_track.clone(), pending_uri));
+                    self.pending_add_lv2_automation_instances
+                        .insert((pending_track.clone(), instance_id));
+                    pending_queries.push(self.send(Action::TrackGetLv2PluginControls {
+                        track_name: pending_track,
+                        instance_id,
+                    }));
+                }
+            }
+        }
+        let pending_vst3_paths: Vec<(String, String)> = self
+            .pending_add_vst3_automation_paths
+            .iter()
+            .filter(|(name, _)| name == track_name)
+            .cloned()
+            .collect();
+        for (pending_track, pending_path) in pending_vst3_paths {
+            if let Some(instance_id) = plugins
+                .iter()
+                .find(|plugin| {
+                    plugin.format.eq_ignore_ascii_case("VST3")
+                        && (plugin.uri == pending_path || plugin.plugin_id == pending_path)
+                })
+                .map(|plugin| plugin.instance_id)
+            {
+                self.pending_add_vst3_automation_paths
+                    .remove(&(pending_track.clone(), pending_path));
+                self.pending_add_vst3_automation_instances
+                    .insert((pending_track.clone(), instance_id));
+                pending_queries.push(self.send(Action::TrackGetVst3Parameters {
+                    track_name: pending_track,
+                    instance_id,
+                }));
+            }
+        }
+        let pending_paths: Vec<(String, String)> = self
+            .pending_add_clap_automation_paths
+            .iter()
+            .filter(|(name, _)| name == track_name)
+            .cloned()
+            .collect();
+        for (pending_track, pending_path) in pending_paths {
+            if let Some(instance_id) = plugins
+                .iter()
+                .find(|plugin| {
+                    plugin.format.eq_ignore_ascii_case("CLAP")
+                        && (plugin.uri == pending_path || plugin.plugin_id == pending_path)
+                })
+                .map(|plugin| plugin.instance_id)
+            {
+                self.pending_add_clap_automation_paths
+                    .remove(&(pending_track.clone(), pending_path));
+                self.pending_add_clap_automation_instances
+                    .insert((pending_track.clone(), instance_id));
+                pending_queries.push(self.send(Action::TrackGetClapParameters {
+                    track_name: pending_track,
+                    instance_id,
+                }));
+            }
+        }
+        pending_queries
+    }
+
+    fn pending_save_ready(&self) -> bool {
+        self.pending_save_tracks.is_empty() && self.pending_vst3_save_ready()
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    fn pending_vst3_save_ready(&self) -> bool {
+        !platform_caps::REQUIRE_VST3_STATE_FOR_SAVE || self.pending_save_vst3_states.is_empty()
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    fn pending_vst3_save_ready(&self) -> bool {
+        !platform_caps::REQUIRE_VST3_STATE_FOR_SAVE
+    }
+
+    fn rename_track_map_entry<T>(map: &mut HashMap<String, T>, old_name: &str, new_name: &str) {
+        if let Some(value) = map.remove(old_name) {
+            map.insert(new_name.to_string(), value);
+        }
+    }
+
+    fn open_lv2_plugin_ui_task(&self, track_name: &str, instance_id: usize) -> Task<Message> {
+        if platform_caps::SUPPORTS_LV2 {
+            self.send(Action::TrackGetLv2PluginControls {
+                track_name: track_name.to_string(),
+                instance_id,
+            })
+        } else {
+            Task::none()
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn pump_lv2_ui(&mut self) {
+        self.lv2_ui_host.pump();
+    }
+
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    fn pump_lv2_ui(&mut self) {}
+
+    fn request_plugin_automation_lanes(
+        &mut self,
+        track_name: &str,
+        plugin_ref: &str,
+        plugin_format: &str,
+    ) -> Task<Message> {
+        if !platform_caps::SUPPORTS_PLUGIN_GRAPH {
+            self.state.blocking_write().message = format!(
+                "{plugin_format} automation lanes are unavailable on this platform"
+            );
+            return Task::none();
+        }
+        if let Some(instance_id) =
+            self.find_plugin_graph_instance_id(track_name, plugin_format, plugin_ref)
+        {
+            match plugin_format {
+                "CLAP" => {
+                    self.pending_add_clap_automation_instances
+                        .insert((track_name.to_string(), instance_id));
+                    self.send(Action::TrackGetClapParameters {
+                        track_name: track_name.to_string(),
+                        instance_id,
+                    })
+                }
+                "VST3" => {
+                    self.pending_add_vst3_automation_instances
+                        .insert((track_name.to_string(), instance_id));
+                    self.send(Action::TrackGetVst3Parameters {
+                        track_name: track_name.to_string(),
+                        instance_id,
+                    })
+                }
+                _ => Task::none(),
+            }
+        } else {
+            match plugin_format {
+                "CLAP" => {
+                    self.pending_add_clap_automation_paths
+                        .insert((track_name.to_string(), plugin_ref.to_string()));
+                }
+                "VST3" => {
+                    self.pending_add_vst3_automation_paths
+                        .insert((track_name.to_string(), plugin_ref.to_string()));
+                }
+                _ => {}
+            }
+            self.maybe_refresh_plugin_graph_for_track(track_name)
+                .unwrap_or_else(Task::none)
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn apply_hw_selected(&self, hw: &AudioDeviceOption) {
+        let mut state = self.state.blocking_write();
+        let selected = Self::selected_output_device_for_platform(&mut state, hw);
+        state.selected_hw = Some(selected);
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    fn apply_hw_selected(&self, hw: &String) {
+        self.state.blocking_write().selected_hw = Some(hw.to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    fn apply_hw_input_selected(&self, hw: &String) {
+        self.state.blocking_write().selected_input_hw = Some(hw.to_string());
+    }
+
+    #[cfg(target_os = "freebsd")]
+    fn apply_hw_input_selected(&self, hw: &AudioDeviceOption) {
+        let mut state = self.state.blocking_write();
+        let selected = Self::select_refreshed_device(
+            &mut state.available_hw,
+            hw,
+            crate::state::discover_freebsd_audio_devices,
+        );
+        state.selected_input_hw = Some(selected.clone());
+        Self::update_bits_from_selected_device(&mut state, &selected);
+    }
+
+    #[cfg(target_os = "linux")]
+    fn apply_hw_input_selected(&self, hw: &AudioDeviceOption) {
+        let mut state = self.state.blocking_write();
+        let selected = Self::select_refreshed_device(
+            &mut state.available_input_hw,
+            hw,
+            crate::state::discover_alsa_input_devices,
+        );
+        state.selected_input_hw = Some(selected);
+        Self::update_bits_from_selected_device(&mut state, hw);
+    }
+
+    fn apply_hw_backend_selected(&self, backend: &crate::state::AudioBackendOption) {
+        let mut state = self.state.blocking_write();
+        state.selected_backend = backend.clone();
+        state.selected_hw = None;
+        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+        {
+            state.selected_input_hw = None;
+            state.oss_bits = 32;
+            Self::apply_backend_device_defaults(&mut state, backend);
+        }
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd"
+    ))]
+    fn select_refreshed_device(
+        available_devices: &mut Vec<AudioDeviceOption>,
+        current: &AudioDeviceOption,
+        discover: fn() -> Vec<AudioDeviceOption>,
+    ) -> AudioDeviceOption {
+        let refreshed = discover();
+        let selected = refreshed
+            .iter()
+            .find(|candidate| candidate.id == current.id)
+            .cloned()
+            .unwrap_or_else(|| current.clone());
+        if !refreshed.is_empty() {
+            *available_devices = refreshed;
+        }
+        selected
+    }
+
+    #[cfg(target_os = "freebsd")]
+    fn selected_output_device_for_platform(
+        state: &mut crate::state::StateData,
+        hw: &AudioDeviceOption,
+    ) -> AudioDeviceOption {
+        let selected =
+            Self::select_refreshed_device(&mut state.available_hw, hw, crate::state::discover_freebsd_audio_devices);
+        Self::update_bits_from_selected_device(state, &selected);
+        selected
+    }
+
+    #[cfg(target_os = "linux")]
+    fn selected_output_device_for_platform(
+        state: &mut crate::state::StateData,
+        hw: &AudioDeviceOption,
+    ) -> AudioDeviceOption {
+        Self::update_bits_from_selected_device(state, hw);
+        hw.clone()
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd"
+    ))]
+    fn update_bits_from_selected_device(
+        state: &mut crate::state::StateData,
+        selected: &AudioDeviceOption,
+    ) {
+        if let Some(bits) = selected.preferred_bits() {
+            state.oss_bits = bits;
+        }
+    }
+
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd"
+    ))]
+    fn select_first_backend_output_device(
+        state: &mut crate::state::StateData,
+        discover: fn() -> Vec<AudioDeviceOption>,
+    ) -> Option<AudioDeviceOption> {
+        let refreshed = discover();
+        let selected = refreshed.first().cloned();
+        if !refreshed.is_empty() {
+            state.available_hw = refreshed;
+        }
+        if let Some(selected_ref) = selected.as_ref() {
+            Self::update_bits_from_selected_device(state, selected_ref);
+        }
+        selected
+    }
+
+    #[cfg(target_os = "linux")]
+    fn select_first_backend_input_device(
+        state: &mut crate::state::StateData,
+        discover: fn() -> Vec<AudioDeviceOption>,
+    ) -> Option<AudioDeviceOption> {
+        let refreshed = discover();
+        let selected = refreshed.first().cloned();
+        if !refreshed.is_empty() {
+            state.available_input_hw = refreshed;
+        }
+        if let Some(selected_ref) = selected.as_ref() {
+            Self::update_bits_from_selected_device(state, selected_ref);
+        }
+        selected
+    }
+
+    #[cfg(target_os = "freebsd")]
+    fn apply_backend_device_defaults(
+        state: &mut crate::state::StateData,
+        backend: &crate::state::AudioBackendOption,
+    ) {
+        if !matches!(backend, crate::state::AudioBackendOption::Oss) {
+            return;
+        }
+        state.selected_hw = Self::select_first_backend_output_device(
+            state,
+            crate::state::discover_freebsd_audio_devices,
+        );
+        state.selected_input_hw = state.selected_hw.clone();
+    }
+
+    #[cfg(target_os = "linux")]
+    fn apply_backend_device_defaults(
+        state: &mut crate::state::StateData,
+        backend: &crate::state::AudioBackendOption,
+    ) {
+        if !matches!(backend, crate::state::AudioBackendOption::Alsa) {
+            return;
+        }
+        state.selected_hw =
+            Self::select_first_backend_output_device(state, crate::state::discover_alsa_output_devices);
+        state.selected_input_hw =
+            Self::select_first_backend_input_device(state, crate::state::discover_alsa_input_devices);
+    }
+
     fn autosave_snapshot_root(&self) -> Option<std::path::PathBuf> {
         self.session_dir
             .as_ref()
@@ -4866,19 +5289,14 @@ impl Maolan {
                     self.state.blocking_write().message = e;
                 }
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
             Message::OpenLv2PluginUi {
                 ref track_name,
                 instance_id,
             } => {
-                return self.send(Action::TrackGetLv2PluginControls {
-                    track_name: track_name.clone(),
-                    instance_id,
-                });
+                return self.open_lv2_plugin_ui_task(track_name, instance_id);
             }
-            #[cfg(all(unix, not(target_os = "macos")))]
             Message::PumpLv2Ui => {
-                self.lv2_ui_host.pump();
+                self.pump_lv2_ui();
             }
             Message::OpenVst3PluginUi {
                 ref track_name,
@@ -5478,12 +5896,7 @@ impl Maolan {
 
                     Action::OpenAudioDevice {
                         device,
-                        #[cfg(any(
-                            target_os = "windows",
-                            target_os = "freebsd",
-                            target_os = "linux"
-                        ))]
-                            input_device: _,
+                        input_device: _,
                         sample_rate_hz: _,
                         bits,
                         exclusive,
@@ -6145,15 +6558,8 @@ impl Maolan {
                         }
                         self.state.blocking_write().message =
                             format!("Loaded CLAP plugin '{plugin_name}' on track '{track_name}'");
-                        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-                        {
-                            let plugin_track =
-                                self.state.blocking_read().plugin_graph_track.clone();
-                            if plugin_track.as_deref() == Some(track_name.as_str()) {
-                                return self.send(Action::TrackGetPluginGraph {
-                                    track_name: track_name.clone(),
-                                });
-                            }
+                        if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                            return task;
                         }
                     }
                     Action::TrackUnloadClapPlugin {
@@ -6180,15 +6586,8 @@ impl Maolan {
                         self.state.blocking_write().message = format!(
                             "Unloaded CLAP plugin '{plugin_name}' from track '{track_name}'"
                         );
-                        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-                        {
-                            let plugin_track =
-                                self.state.blocking_read().plugin_graph_track.clone();
-                            if plugin_track.as_deref() == Some(track_name.as_str()) {
-                                return self.send(Action::TrackGetPluginGraph {
-                                    track_name: track_name.clone(),
-                                });
-                            }
+                        if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                            return task;
                         }
                     }
                     Action::TrackClapStateSnapshot {
@@ -6295,14 +6694,9 @@ impl Maolan {
                     #[cfg(any(target_os = "windows", target_os = "macos"))]
                     Action::TrackSnapshotAllClapStates { track_name: _ } => {}
                     Action::TrackClearDefaultPassthrough { track_name } => {
-                        let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
-                        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-                        if lv2_track.as_deref() == Some(track_name.as_str()) {
-                            return self.send(Action::TrackGetPluginGraph {
-                                track_name: track_name.clone(),
-                            });
+                        if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                            return task;
                         }
-                        let _ = (track_name, lv2_track);
                     }
                     #[cfg(all(unix, not(target_os = "macos")))]
                     Action::TrackLoadLv2Plugin { track_name, .. }
@@ -6315,11 +6709,8 @@ impl Maolan {
                     | Action::TrackDisconnectPluginAudio { track_name, .. }
                     | Action::TrackConnectPluginMidi { track_name, .. }
                     | Action::TrackDisconnectPluginMidi { track_name, .. } => {
-                        let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
-                        if lv2_track.as_deref() == Some(track_name.as_str()) {
-                            return self.send(Action::TrackGetPluginGraph {
-                                track_name: track_name.clone(),
-                            });
+                        if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                            return task;
                         }
                     }
                     Action::TrackVst3StateSnapshot {
@@ -6339,9 +6730,7 @@ impl Maolan {
                         if self.pending_save_path.is_some() {
                             self.pending_save_vst3_states
                                 .remove(&(track_name.clone(), *instance_id));
-                            if self.pending_save_tracks.is_empty()
-                                && self.pending_save_vst3_states.is_empty()
-                            {
+                            if self.pending_save_ready() {
                                 let path = self.pending_save_path.take().unwrap_or_default();
                                 let is_template = self.pending_save_is_template;
                                 self.pending_save_is_template = false;
@@ -6411,11 +6800,8 @@ impl Maolan {
                     | Action::TrackDisconnectPluginAudio { track_name, .. }
                     | Action::TrackConnectPluginMidi { track_name, .. }
                     | Action::TrackDisconnectPluginMidi { track_name, .. } => {
-                        let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
-                        if lv2_track.as_deref() == Some(track_name.as_str()) {
-                            return self.send(Action::TrackGetPluginGraph {
-                                track_name: track_name.clone(),
-                            });
+                        if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                            return task;
                         }
                     }
                     #[cfg(all(unix, not(target_os = "macos")))]
@@ -6530,102 +6916,15 @@ impl Maolan {
                         }
                         drop(state);
 
-                        let mut pending_queries: Vec<Task<Message>> = vec![];
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        let pending_lv2_uris: Vec<(String, String)> = self
-                            .pending_add_lv2_automation_uris
-                            .iter()
-                            .filter(|(name, _)| name == track_name)
-                            .cloned()
-                            .collect();
-                        #[cfg(all(unix, not(target_os = "macos")))]
-                        for (pending_track, pending_uri) in pending_lv2_uris {
-                            if let Some(instance_id) = plugins
-                                .iter()
-                                .find(|plugin| {
-                                    plugin.format.eq_ignore_ascii_case("LV2")
-                                        && (plugin.uri == pending_uri
-                                            || plugin.plugin_id == pending_uri)
-                                })
-                                .map(|plugin| plugin.instance_id)
-                            {
-                                self.pending_add_lv2_automation_uris
-                                    .remove(&(pending_track.clone(), pending_uri));
-                                self.pending_add_lv2_automation_instances
-                                    .insert((pending_track.clone(), instance_id));
-                                pending_queries.push(self.send(
-                                    Action::TrackGetLv2PluginControls {
-                                        track_name: pending_track,
-                                        instance_id,
-                                    },
-                                ));
-                            }
-                        }
-                        let pending_vst3_paths: Vec<(String, String)> = self
-                            .pending_add_vst3_automation_paths
-                            .iter()
-                            .filter(|(name, _)| name == track_name)
-                            .cloned()
-                            .collect();
-                        for (pending_track, pending_path) in pending_vst3_paths {
-                            if let Some(instance_id) = plugins
-                                .iter()
-                                .find(|plugin| {
-                                    plugin.format.eq_ignore_ascii_case("VST3")
-                                        && (plugin.uri == pending_path
-                                            || plugin.plugin_id == pending_path)
-                                })
-                                .map(|plugin| plugin.instance_id)
-                            {
-                                self.pending_add_vst3_automation_paths
-                                    .remove(&(pending_track.clone(), pending_path));
-                                self.pending_add_vst3_automation_instances
-                                    .insert((pending_track.clone(), instance_id));
-                                pending_queries.push(self.send(Action::TrackGetVst3Parameters {
-                                    track_name: pending_track,
-                                    instance_id,
-                                }));
-                            }
-                        }
-                        let pending_paths: Vec<(String, String)> = self
-                            .pending_add_clap_automation_paths
-                            .iter()
-                            .filter(|(name, _)| name == track_name)
-                            .cloned()
-                            .collect();
-                        for (pending_track, pending_path) in pending_paths {
-                            if let Some(instance_id) = plugins
-                                .iter()
-                                .find(|plugin| {
-                                    plugin.format.eq_ignore_ascii_case("CLAP")
-                                        && (plugin.uri == pending_path
-                                            || plugin.plugin_id == pending_path)
-                                })
-                                .map(|plugin| plugin.instance_id)
-                            {
-                                self.pending_add_clap_automation_paths
-                                    .remove(&(pending_track.clone(), pending_path));
-                                self.pending_add_clap_automation_instances
-                                    .insert((pending_track.clone(), instance_id));
-                                pending_queries.push(self.send(Action::TrackGetClapParameters {
-                                    track_name: pending_track,
-                                    instance_id,
-                                }));
-                            }
-                        }
+                        let pending_queries =
+                            self.queue_pending_graph_automation_queries(track_name, plugins);
                         if !pending_queries.is_empty() {
                             return Task::batch(pending_queries);
                         }
 
                         if self.pending_save_path.is_some() {
                             self.pending_save_tracks.remove(track_name);
-                            #[cfg(any(target_os = "windows", target_os = "macos"))]
-                            let ready_to_save =
-                                self.pending_save_tracks.is_empty()
-                                    && self.pending_save_vst3_states.is_empty();
-                            #[cfg(all(unix, not(target_os = "macos")))]
-                            let ready_to_save = self.pending_save_tracks.is_empty();
-                            if ready_to_save {
+                            if self.pending_save_ready() {
                                 let path = self.pending_save_path.take().unwrap_or_default();
                                 let is_template = self.pending_save_is_template;
                                 self.pending_save_is_template = false;
@@ -6691,22 +6990,26 @@ impl Maolan {
                         }
                         // Update LV2 graphs by track
                         #[cfg(all(unix, not(target_os = "macos")))]
-                        if let Some(graph) = state.plugin_graphs_by_track.remove(old_name) {
-                            state.plugin_graphs_by_track.insert(new_name.clone(), graph);
-                        }
-                        if let Some(clap) = state.clap_plugins_by_track.remove(old_name) {
-                            state.clap_plugins_by_track.insert(new_name.clone(), clap);
-                        }
-                        if let Some(clap_states) = state.clap_states_by_track.remove(old_name) {
-                            state
-                                .clap_states_by_track
-                                .insert(new_name.clone(), clap_states);
-                        }
-                        if let Some(vst3_states) = state.vst3_states_by_track.remove(old_name) {
-                            state
-                                .vst3_states_by_track
-                                .insert(new_name.clone(), vst3_states);
-                        }
+                        Self::rename_track_map_entry(
+                            &mut state.plugin_graphs_by_track,
+                            old_name,
+                            new_name,
+                        );
+                        Self::rename_track_map_entry(
+                            &mut state.clap_plugins_by_track,
+                            old_name,
+                            new_name,
+                        );
+                        Self::rename_track_map_entry(
+                            &mut state.clap_states_by_track,
+                            old_name,
+                            new_name,
+                        );
+                        Self::rename_track_map_entry(
+                            &mut state.vst3_states_by_track,
+                            old_name,
+                            new_name,
+                        );
                         for track in &mut state.tracks {
                             if track.vca_master.as_deref() == Some(old_name.as_str()) {
                                 track.vca_master = Some(new_name.clone());
@@ -7507,107 +7810,20 @@ impl Maolan {
                 ref track_name,
                 ref plugin_path,
             } => {
-                #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-                {
-                    let instance_id = {
-                        let state = self.state.blocking_read();
-                        state
-                            .plugin_graphs_by_track
-                            .get(track_name)
-                            .and_then(|(plugins, _)| {
-                                plugins
-                                    .iter()
-                                    .find(|plugin| {
-                                        plugin.format.eq_ignore_ascii_case("CLAP")
-                                            && (plugin.uri == *plugin_path
-                                                || plugin.plugin_id == *plugin_path)
-                                    })
-                                    .map(|plugin| plugin.instance_id)
-                            })
-                    };
-                    if let Some(instance_id) = instance_id {
-                        self.pending_add_clap_automation_instances
-                            .insert((track_name.clone(), instance_id));
-                        return self.send(Action::TrackGetClapParameters {
-                            track_name: track_name.clone(),
-                            instance_id,
-                        });
-                    }
-                    self.pending_add_clap_automation_paths
-                        .insert((track_name.clone(), plugin_path.clone()));
-                    return self.send(Action::TrackGetPluginGraph {
-                        track_name: track_name.clone(),
-                    });
-                }
-                #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]
-                {
-                    self.state.blocking_write().message =
-                        "CLAP automation lanes are unavailable on this platform".to_string();
-                }
+                return self.request_plugin_automation_lanes(track_name, plugin_path, "CLAP");
             }
             Message::TrackAutomationAddVst3Lanes {
                 ref track_name,
                 ref plugin_path,
             } => {
-                #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-                {
-                    let instance_id = {
-                        let state = self.state.blocking_read();
-                        state
-                            .plugin_graphs_by_track
-                            .get(track_name)
-                            .and_then(|(plugins, _)| {
-                                plugins
-                                    .iter()
-                                    .find(|plugin| {
-                                        plugin.format.eq_ignore_ascii_case("VST3")
-                                            && (plugin.uri == *plugin_path
-                                                || plugin.plugin_id == *plugin_path)
-                                    })
-                                    .map(|plugin| plugin.instance_id)
-                            })
-                    };
-                    if let Some(instance_id) = instance_id {
-                        self.pending_add_vst3_automation_instances
-                            .insert((track_name.clone(), instance_id));
-                        return self.send(Action::TrackGetVst3Parameters {
-                            track_name: track_name.clone(),
-                            instance_id,
-                        });
-                    }
-                    self.pending_add_vst3_automation_paths
-                        .insert((track_name.clone(), plugin_path.clone()));
-                    return self.send(Action::TrackGetPluginGraph {
-                        track_name: track_name.clone(),
-                    });
-                }
-                #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]
-                {
-                    self.state.blocking_write().message =
-                        "VST3 automation lanes are unavailable on this platform".to_string();
-                }
+                return self.request_plugin_automation_lanes(track_name, plugin_path, "VST3");
             }
             #[cfg(all(unix, not(target_os = "macos")))]
             Message::TrackAutomationAddLv2Lanes {
                 ref track_name,
                 ref plugin_uri,
             } => {
-                let instance_id = {
-                    let state = self.state.blocking_read();
-                    state
-                        .plugin_graphs_by_track
-                        .get(track_name)
-                        .and_then(|(plugins, _)| {
-                            plugins
-                                .iter()
-                                .find(|plugin| {
-                                    plugin.format.eq_ignore_ascii_case("LV2")
-                                        && (plugin.uri == *plugin_uri
-                                            || plugin.plugin_id == *plugin_uri)
-                                })
-                                .map(|plugin| plugin.instance_id)
-                        })
-                };
+                let instance_id = self.find_plugin_graph_instance_id(track_name, "LV2", plugin_uri);
                 if let Some(instance_id) = instance_id {
                     self.pending_add_lv2_automation_instances
                         .insert((track_name.clone(), instance_id));
@@ -7618,9 +7834,9 @@ impl Maolan {
                 }
                 self.pending_add_lv2_automation_uris
                     .insert((track_name.clone(), plugin_uri.clone()));
-                return self.send(Action::TrackGetPluginGraph {
-                    track_name: track_name.clone(),
-                });
+                return self
+                    .maybe_refresh_plugin_graph_for_track(track_name)
+                    .unwrap_or_else(Task::none);
             }
             Message::TrackAutomationLaneHover {
                 ref track_name,
@@ -10636,203 +10852,19 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     state.view = View::TrackPlugins;
                     state.plugin_graph_track = Some(track_name.clone());
-                    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-                    {
-                        state.plugin_graph_connecting = None;
-                        state.plugin_graph_moving_plugin = None;
-                    }
-                    state.plugin_graph_last_plugin_click = None;
-                    state.plugin_graph_selected_plugin = None;
+                    Self::reset_track_plugin_view_state(&mut state);
                 }
-                #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-                return self.send(Action::TrackGetPluginGraph {
-                    track_name: track_name.clone(),
-                });
-                #[cfg(target_os = "macos")]
-                return Task::perform(async {}, |_| {
-                    Message::Show(crate::message::Show::TrackPluginList)
-                });
+                return self.open_track_plugins_followup(track_name.clone());
             }
             Message::HWSelected(ref hw) => {
-                #[cfg(any(
-                    target_os = "linux",
-                    target_os = "freebsd",
-                    target_os = "netbsd",
-                    target_os = "openbsd"
-                ))]
-                {
-                    let mut state = self.state.blocking_write();
-                    #[cfg(target_os = "freebsd")]
-                    {
-                        let refreshed = crate::state::discover_freebsd_audio_devices();
-                        let selected = refreshed
-                            .iter()
-                            .find(|candidate| candidate.id == hw.id)
-                            .cloned()
-                            .unwrap_or_else(|| hw.clone());
-                        if !refreshed.is_empty() {
-                            state.available_hw = refreshed;
-                        }
-                        if let Some(bits) = selected.preferred_bits() {
-                            state.oss_bits = bits;
-                        }
-                        state.selected_hw = Some(selected);
-                    }
-                    #[cfg(target_os = "linux")]
-                    {
-                        if let Some(bits) = hw.preferred_bits() {
-                            state.oss_bits = bits;
-                        }
-                        state.selected_hw = Some(hw.clone());
-                    }
-                    #[cfg(target_os = "openbsd")]
-                    {
-                        let refreshed = crate::state::discover_openbsd_audio_devices();
-                        let selected = refreshed
-                            .iter()
-                            .find(|candidate| candidate.id == hw.id)
-                            .cloned()
-                            .unwrap_or_else(|| hw.clone());
-                        if !refreshed.is_empty() {
-                            state.available_hw = refreshed;
-                        }
-                        if let Some(bits) = selected.preferred_bits() {
-                            state.oss_bits = bits;
-                        }
-                        state.selected_hw = Some(selected);
-                    }
-                    #[cfg(target_os = "netbsd")]
-                    {
-                        let refreshed = crate::state::discover_netbsd_audio_devices();
-                        let selected = refreshed
-                            .iter()
-                            .find(|candidate| candidate.id == hw.id)
-                            .cloned()
-                            .unwrap_or_else(|| hw.clone());
-                        if !refreshed.is_empty() {
-                            state.available_hw = refreshed;
-                        }
-                        if let Some(bits) = selected.preferred_bits() {
-                            state.oss_bits = bits;
-                        }
-                        state.selected_hw = Some(selected);
-                    }
-                }
-                #[cfg(not(any(
-                    target_os = "linux",
-                    target_os = "freebsd",
-                    target_os = "netbsd",
-                    target_os = "openbsd"
-                )))]
-                {
-                    self.state.blocking_write().selected_hw = Some(hw.to_string());
-                }
+                self.apply_hw_selected(hw);
             }
-            #[cfg(target_os = "windows")]
+            #[cfg(any(target_os = "windows", target_os = "freebsd", target_os = "linux"))]
             Message::HWInputSelected(ref hw) => {
-                self.state.blocking_write().selected_input_hw = Some(hw.to_string());
-            }
-            #[cfg(target_os = "freebsd")]
-            Message::HWInputSelected(ref hw) => {
-                let mut state = self.state.blocking_write();
-                let refreshed = crate::state::discover_freebsd_audio_devices();
-                let selected = refreshed
-                    .iter()
-                    .find(|candidate| candidate.id == hw.id)
-                    .cloned()
-                    .unwrap_or_else(|| hw.clone());
-                if !refreshed.is_empty() {
-                    state.available_hw = refreshed;
-                }
-                if let Some(bits) = selected.preferred_bits() {
-                    state.oss_bits = bits;
-                }
-                state.selected_input_hw = Some(selected);
-            }
-            #[cfg(target_os = "linux")]
-            Message::HWInputSelected(ref hw) => {
-                let mut state = self.state.blocking_write();
-                let refreshed = crate::state::discover_alsa_input_devices();
-                let selected = refreshed
-                    .iter()
-                    .find(|candidate| candidate.id == hw.id)
-                    .cloned()
-                    .unwrap_or_else(|| hw.clone());
-                if !refreshed.is_empty() {
-                    state.available_input_hw = refreshed;
-                }
-                if let Some(bits) = selected.preferred_bits() {
-                    state.oss_bits = bits;
-                }
-                state.selected_input_hw = Some(selected);
+                self.apply_hw_input_selected(hw);
             }
             Message::HWBackendSelected(ref backend) => {
-                let mut state = self.state.blocking_write();
-                state.selected_backend = backend.clone();
-                state.selected_hw = None;
-                #[cfg(any(target_os = "freebsd", target_os = "linux"))]
-                {
-                    state.selected_input_hw = None;
-                }
-                #[cfg(any(
-                    target_os = "linux",
-                    target_os = "freebsd",
-                    target_os = "netbsd",
-                    target_os = "openbsd"
-                ))]
-                {
-                    state.oss_bits = 32;
-                    #[cfg(target_os = "freebsd")]
-                    if matches!(backend, crate::state::AudioBackendOption::Oss) {
-                        let refreshed = crate::state::discover_freebsd_audio_devices();
-                        if !refreshed.is_empty() {
-                            state.available_hw = refreshed.clone();
-                        }
-                        if let Some(selected) = refreshed.first().cloned() {
-                            if let Some(bits) = selected.preferred_bits() {
-                                state.oss_bits = bits;
-                            }
-                            state.selected_hw = Some(selected);
-                            state.selected_input_hw = state.selected_hw.clone();
-                        }
-                    }
-                    #[cfg(target_os = "netbsd")]
-                    if matches!(backend, crate::state::AudioBackendOption::Audio4) {
-                        let refreshed = crate::state::discover_netbsd_audio_devices();
-                        if !refreshed.is_empty() {
-                            state.available_hw = refreshed.clone();
-                        }
-                        if let Some(selected) = refreshed.first().cloned() {
-                            if let Some(bits) = selected.preferred_bits() {
-                                state.oss_bits = bits;
-                            }
-                            state.selected_hw = Some(selected);
-                        }
-                    }
-                    #[cfg(target_os = "linux")]
-                    if matches!(backend, crate::state::AudioBackendOption::Alsa) {
-                        let refreshed_out = crate::state::discover_alsa_output_devices();
-                        let refreshed_in = crate::state::discover_alsa_input_devices();
-                        if !refreshed_out.is_empty() {
-                            state.available_hw = refreshed_out.clone();
-                        }
-                        if !refreshed_in.is_empty() {
-                            state.available_input_hw = refreshed_in.clone();
-                        }
-                        if let Some(selected_out) = refreshed_out.first().cloned() {
-                            if let Some(bits) = selected_out.preferred_bits() {
-                                state.oss_bits = bits;
-                            }
-                            state.selected_hw = Some(selected_out);
-                        }
-                        if let Some(selected_in) = refreshed_in.first().cloned() {
-                            if let Some(bits) = selected_in.preferred_bits() {
-                                state.oss_bits = bits;
-                            }
-                            state.selected_input_hw = Some(selected_in);
-                        }
-                    }
-                }
+                self.apply_hw_backend_selected(backend);
             }
             Message::HWExclusiveToggled(exclusive) => {
                 self.state.blocking_write().oss_exclusive = exclusive;

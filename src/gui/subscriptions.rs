@@ -1,6 +1,7 @@
 use super::{CLIENT, Maolan};
 use crate::{
     message::{Message, Show},
+    platform_caps::SUPPORTS_METER_POLL,
     ui_timing::{
         PLAYHEAD_UPDATE_INTERVAL, RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL,
         RECORDING_PREVIEW_UPDATE_INTERVAL,
@@ -29,12 +30,17 @@ impl Maolan {
         fn listener() -> impl Stream<Item = Message> {
             stream::once(CLIENT.subscribe()).flat_map(|receiver| {
                 #[cfg(all(unix, not(target_os = "macos")))]
-                let initial = stream::once(async { Message::RefreshLv2Plugins });
-                #[cfg(all(unix, not(target_os = "macos")))]
-                let initial = initial.chain(stream::once(async { Message::RefreshVst3Plugins }));
+                let initial_messages = vec![
+                    Message::RefreshLv2Plugins,
+                    Message::RefreshVst3Plugins,
+                    Message::RefreshClapPlugins,
+                ];
                 #[cfg(any(target_os = "windows", target_os = "macos"))]
-                let initial = stream::once(async { Message::RefreshVst3Plugins });
-                let initial = initial.chain(stream::once(async { Message::RefreshClapPlugins }));
+                let initial_messages = vec![
+                    Message::RefreshVst3Plugins,
+                    Message::RefreshClapPlugins,
+                ];
+                let initial = stream::iter(initial_messages);
                 initial.chain(stream::unfold(
                     (
                         receiver,
@@ -198,9 +204,11 @@ impl Maolan {
         } else {
             Subscription::none()
         };
-        #[cfg(any(target_os = "windows", target_os = "freebsd", target_os = "linux"))]
-        let meter_poll_sub =
-            iced::time::every(Duration::from_millis(80)).map(|_| Message::MeterPollTick);
+        let meter_poll_sub = if SUPPORTS_METER_POLL {
+            iced::time::every(Duration::from_millis(80)).map(|_| Message::MeterPollTick)
+        } else {
+            Subscription::none()
+        };
         let recording_preview_sub = if self.playing
             && !self.paused
             && self.record_armed
@@ -239,7 +247,6 @@ impl Maolan {
             keyboard_sub,
             event_sub,
             playback_sub,
-            #[cfg(any(target_os = "windows", target_os = "freebsd", target_os = "linux"))]
             meter_poll_sub,
             autosave_sub,
             peak_rebuild_sub,

@@ -1544,53 +1544,86 @@ impl Track {
     }
 
     #[cfg(any(unix, target_os = "windows"))]
+    fn push_plugin_graph_plugin(
+        plugins: &mut Vec<PluginGraphPlugin>,
+        node: PluginGraphNode,
+        instance_id: usize,
+        format: &'static str,
+        uri: String,
+        plugin_id: String,
+        name: String,
+        audio_inputs: usize,
+        audio_outputs: usize,
+        midi_inputs: usize,
+        midi_outputs: usize,
+        state: Option<Lv2PluginState>,
+    ) {
+        plugins.push(PluginGraphPlugin {
+            node,
+            instance_id,
+            format: format.to_string(),
+            uri,
+            plugin_id,
+            name,
+            audio_inputs,
+            audio_outputs,
+            midi_inputs,
+            midi_outputs,
+            state,
+        });
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
     pub fn plugin_graph_plugins(&self) -> Vec<PluginGraphPlugin> {
         let mut plugins = Vec::new();
         #[cfg(all(unix, not(target_os = "macos")))]
         for instance in &self.lv2_processors {
-            plugins.push(PluginGraphPlugin {
-                node: PluginGraphNode::Lv2PluginInstance(instance.id),
-                instance_id: instance.id,
-                format: "LV2".to_string(),
-                uri: instance.processor.uri().to_string(),
-                plugin_id: String::new(),
-                name: instance.processor.name().to_string(),
-                audio_inputs: instance.processor.audio_input_count(),
-                audio_outputs: instance.processor.audio_output_count(),
-                midi_inputs: instance.processor.midi_input_count(),
-                midi_outputs: instance.processor.midi_output_count(),
-                state: Some(instance.processor.snapshot_state()),
-            });
+            Self::push_plugin_graph_plugin(
+                &mut plugins,
+                PluginGraphNode::Lv2PluginInstance(instance.id),
+                instance.id,
+                "LV2",
+                instance.processor.uri().to_string(),
+                String::new(),
+                instance.processor.name().to_string(),
+                instance.processor.audio_input_count(),
+                instance.processor.audio_output_count(),
+                instance.processor.midi_input_count(),
+                instance.processor.midi_output_count(),
+                Some(instance.processor.snapshot_state()),
+            );
         }
         for instance in &self.vst3_processors {
-            plugins.push(PluginGraphPlugin {
-                node: PluginGraphNode::Vst3PluginInstance(instance.id),
-                instance_id: instance.id,
-                format: "VST3".to_string(),
-                uri: instance.processor.path().to_string(),
-                plugin_id: instance.processor.plugin_id().to_string(),
-                name: instance.processor.name().to_string(),
-                audio_inputs: instance.processor.audio_inputs().len(),
-                audio_outputs: instance.processor.audio_outputs().len(),
-                midi_inputs: instance.processor.midi_input_count(),
-                midi_outputs: instance.processor.midi_output_count(),
-                state: None,
-            });
+            Self::push_plugin_graph_plugin(
+                &mut plugins,
+                PluginGraphNode::Vst3PluginInstance(instance.id),
+                instance.id,
+                "VST3",
+                instance.processor.path().to_string(),
+                instance.processor.plugin_id().to_string(),
+                instance.processor.name().to_string(),
+                instance.processor.audio_inputs().len(),
+                instance.processor.audio_outputs().len(),
+                instance.processor.midi_input_count(),
+                instance.processor.midi_output_count(),
+                None,
+            );
         }
         for instance in &self.clap_plugins {
-            plugins.push(PluginGraphPlugin {
-                node: PluginGraphNode::ClapPluginInstance(instance.id),
-                instance_id: instance.id,
-                format: "CLAP".to_string(),
-                uri: instance.processor.path().to_string(),
-                plugin_id: String::new(),
-                name: instance.processor.name().to_string(),
-                audio_inputs: instance.processor.audio_inputs().len(),
-                audio_outputs: instance.processor.audio_outputs().len(),
-                midi_inputs: instance.processor.midi_input_count(),
-                midi_outputs: instance.processor.midi_output_count(),
-                state: None,
-            });
+            Self::push_plugin_graph_plugin(
+                &mut plugins,
+                PluginGraphNode::ClapPluginInstance(instance.id),
+                instance.id,
+                "CLAP",
+                instance.processor.path().to_string(),
+                String::new(),
+                instance.processor.name().to_string(),
+                instance.processor.audio_inputs().len(),
+                instance.processor.audio_outputs().len(),
+                instance.processor.midi_input_count(),
+                instance.processor.midi_output_count(),
+                None,
+            );
         }
         plugins
     }
@@ -2599,6 +2632,153 @@ impl Track {
         }
     }
 
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    fn lv2_unsupported_error(instance_id: usize) -> String {
+        format!("LV2 instance {instance_id} is not supported on this platform")
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn lv2_audio_output_io(&self, instance_id: usize, port: usize) -> Result<Arc<AudioIO>, String> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            self.lv2_processors
+                .iter()
+                .find(|instance| instance.id == instance_id)
+                .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
+                .ok_or_else(|| format!("Plugin instance {instance_id} output port {port} missing"))
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
+            let _ = port;
+            Err(Self::lv2_unsupported_error(instance_id))
+        }
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn lv2_audio_input_io(&self, instance_id: usize, port: usize) -> Result<Arc<AudioIO>, String> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            self.lv2_processors
+                .iter()
+                .find(|instance| instance.id == instance_id)
+                .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
+                .ok_or_else(|| format!("Plugin instance {instance_id} input port {port} missing"))
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
+            let _ = port;
+            Err(Self::lv2_unsupported_error(instance_id))
+        }
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn lv2_validate_midi_output(&self, instance_id: usize, port: usize) -> Result<(), String> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            self.lv2_processors
+                .iter()
+                .find(|instance| instance.id == instance_id)
+                .and_then(|instance| (port < instance.processor.midi_output_count()).then_some(()))
+                .ok_or_else(|| {
+                    format!("Plugin instance {instance_id} MIDI output port {port} missing")
+                })
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
+            let _ = port;
+            Err(Self::lv2_unsupported_error(instance_id))
+        }
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn lv2_validate_midi_input(&self, instance_id: usize, port: usize) -> Result<(), String> {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            self.lv2_processors
+                .iter()
+                .find(|instance| instance.id == instance_id)
+                .and_then(|instance| (port < instance.processor.midi_input_count()).then_some(()))
+                .ok_or_else(|| format!("Plugin instance {instance_id} MIDI input port {port} missing"))
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
+            let _ = port;
+            Err(Self::lv2_unsupported_error(instance_id))
+        }
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn vst3_audio_output_io(&self, instance_id: usize, port: usize) -> Result<Arc<AudioIO>, String> {
+        self.vst3_processors
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
+            .ok_or_else(|| format!("VST3 instance {instance_id} output port {port} missing"))
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn vst3_audio_input_io(&self, instance_id: usize, port: usize) -> Result<Arc<AudioIO>, String> {
+        self.vst3_processors
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
+            .ok_or_else(|| format!("VST3 instance {instance_id} input port {port} missing"))
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn clap_audio_output_io(&self, instance_id: usize, port: usize) -> Result<Arc<AudioIO>, String> {
+        self.clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
+            .ok_or_else(|| format!("CLAP instance {instance_id} output port {port} missing"))
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn clap_audio_input_io(&self, instance_id: usize, port: usize) -> Result<Arc<AudioIO>, String> {
+        self.clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
+            .ok_or_else(|| format!("CLAP instance {instance_id} input port {port} missing"))
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn vst3_validate_midi_output(&self, instance_id: usize, port: usize) -> Result<(), String> {
+        self.vst3_processors
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .and_then(|instance| (port < instance.processor.midi_output_count()).then_some(()))
+            .ok_or_else(|| format!("VST3 instance {instance_id} MIDI output port {port} missing"))
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn clap_validate_midi_output(&self, instance_id: usize, port: usize) -> Result<(), String> {
+        self.clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .and_then(|instance| (port < instance.processor.midi_output_count()).then_some(()))
+            .ok_or_else(|| format!("CLAP instance {instance_id} MIDI output port {port} missing"))
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn vst3_validate_midi_input(&self, instance_id: usize, port: usize) -> Result<(), String> {
+        self.vst3_processors
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .and_then(|instance| (port < instance.processor.midi_input_count()).then_some(()))
+            .ok_or_else(|| format!("VST3 instance {instance_id} MIDI input port {port} missing"))
+    }
+
+    #[cfg(any(unix, target_os = "windows"))]
+    fn clap_validate_midi_input(&self, instance_id: usize, port: usize) -> Result<(), String> {
+        self.clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .and_then(|instance| (port < instance.processor.midi_input_count()).then_some(()))
+            .ok_or_else(|| format!("CLAP instance {instance_id} MIDI input port {port} missing"))
+    }
+
     #[cfg(any(unix, target_os = "windows"))]
     fn plugin_source_io(
         &self,
@@ -2614,41 +2794,14 @@ impl Track {
                 .ok_or_else(|| format!("Track input port {port} not found")),
             PluginGraphNode::TrackOutput => Err("Track output node cannot be source".to_string()),
             PluginGraphNode::Lv2PluginInstance(instance_id) => {
-                #[cfg(all(unix, not(target_os = "macos")))]
-                {
-                    self.lv2_processors
-                        .iter()
-                        .find(|instance| instance.id == *instance_id)
-                        .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
-                        .ok_or_else(|| {
-                            format!("Plugin instance {instance_id} output port {port} missing")
-                        })
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    Err(format!(
-                        "LV2 instance {instance_id} is not supported on macOS"
-                    ))
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    Err(format!(
-                        "LV2 instance {instance_id} is not supported on Windows"
-                    ))
-                }
+                self.lv2_audio_output_io(*instance_id, port)
             }
-            PluginGraphNode::Vst3PluginInstance(instance_id) => self
-                .vst3_processors
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
-                .ok_or_else(|| format!("VST3 instance {instance_id} output port {port} missing")),
-            PluginGraphNode::ClapPluginInstance(instance_id) => self
-                .clap_plugins
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
-                .ok_or_else(|| format!("CLAP instance {instance_id} output port {port} missing")),
+            PluginGraphNode::Vst3PluginInstance(instance_id) => {
+                self.vst3_audio_output_io(*instance_id, port)
+            }
+            PluginGraphNode::ClapPluginInstance(instance_id) => {
+                self.clap_audio_output_io(*instance_id, port)
+            }
         }
     }
 
@@ -2667,41 +2820,14 @@ impl Track {
                 .cloned()
                 .ok_or_else(|| format!("Track output port {port} not found")),
             PluginGraphNode::Lv2PluginInstance(instance_id) => {
-                #[cfg(all(unix, not(target_os = "macos")))]
-                {
-                    self.lv2_processors
-                        .iter()
-                        .find(|instance| instance.id == *instance_id)
-                        .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
-                        .ok_or_else(|| {
-                            format!("Plugin instance {instance_id} input port {port} missing")
-                        })
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    Err(format!(
-                        "LV2 instance {instance_id} is not supported on macOS"
-                    ))
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    Err(format!(
-                        "LV2 instance {instance_id} is not supported on Windows"
-                    ))
-                }
+                self.lv2_audio_input_io(*instance_id, port)
             }
-            PluginGraphNode::Vst3PluginInstance(instance_id) => self
-                .vst3_processors
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
-                .ok_or_else(|| format!("VST3 instance {instance_id} input port {port} missing")),
-            PluginGraphNode::ClapPluginInstance(instance_id) => self
-                .clap_plugins
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
-                .ok_or_else(|| format!("CLAP instance {instance_id} input port {port} missing")),
+            PluginGraphNode::Vst3PluginInstance(instance_id) => {
+                self.vst3_audio_input_io(*instance_id, port)
+            }
+            PluginGraphNode::ClapPluginInstance(instance_id) => {
+                self.clap_audio_input_io(*instance_id, port)
+            }
         }
     }
 
@@ -2722,47 +2848,14 @@ impl Track {
                 Err("Track output node cannot be MIDI source".to_string())
             }
             PluginGraphNode::Lv2PluginInstance(instance_id) => {
-                #[cfg(all(unix, not(target_os = "macos")))]
-                {
-                    self.lv2_processors
-                        .iter()
-                        .find(|instance| instance.id == *instance_id)
-                        .and_then(|instance| {
-                            (port < instance.processor.midi_output_count()).then_some(())
-                        })
-                        .ok_or_else(|| {
-                            format!("Plugin instance {instance_id} MIDI output port {port} missing")
-                        })
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    Err(format!(
-                        "LV2 instance {instance_id} is not supported on macOS"
-                    ))
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    Err(format!(
-                        "LV2 instance {instance_id} is not supported on Windows"
-                    ))
-                }
+                self.lv2_validate_midi_output(*instance_id, port)
             }
-            PluginGraphNode::Vst3PluginInstance(instance_id) => self
-                .vst3_processors
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| (port < instance.processor.midi_output_count()).then_some(()))
-                .ok_or_else(|| {
-                    format!("VST3 instance {instance_id} MIDI output port {port} missing")
-                }),
-            PluginGraphNode::ClapPluginInstance(instance_id) => self
-                .clap_plugins
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| (port < instance.processor.midi_output_count()).then_some(()))
-                .ok_or_else(|| {
-                    format!("CLAP instance {instance_id} MIDI output port {port} missing")
-                }),
+            PluginGraphNode::Vst3PluginInstance(instance_id) => {
+                self.vst3_validate_midi_output(*instance_id, port)
+            }
+            PluginGraphNode::ClapPluginInstance(instance_id) => {
+                self.clap_validate_midi_output(*instance_id, port)
+            }
         }
     }
 
@@ -2783,47 +2876,14 @@ impl Track {
                 .map(|_| ())
                 .ok_or_else(|| format!("Track MIDI output port {port} not found")),
             PluginGraphNode::Lv2PluginInstance(instance_id) => {
-                #[cfg(all(unix, not(target_os = "macos")))]
-                {
-                    self.lv2_processors
-                        .iter()
-                        .find(|instance| instance.id == *instance_id)
-                        .and_then(|instance| {
-                            (port < instance.processor.midi_input_count()).then_some(())
-                        })
-                        .ok_or_else(|| {
-                            format!("Plugin instance {instance_id} MIDI input port {port} missing")
-                        })
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    Err(format!(
-                        "LV2 instance {instance_id} is not supported on macOS"
-                    ))
-                }
-                #[cfg(target_os = "windows")]
-                {
-                    Err(format!(
-                        "LV2 instance {instance_id} is not supported on Windows"
-                    ))
-                }
+                self.lv2_validate_midi_input(*instance_id, port)
             }
-            PluginGraphNode::Vst3PluginInstance(instance_id) => self
-                .vst3_processors
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| (port < instance.processor.midi_input_count()).then_some(()))
-                .ok_or_else(|| {
-                    format!("VST3 instance {instance_id} MIDI input port {port} missing")
-                }),
-            PluginGraphNode::ClapPluginInstance(instance_id) => self
-                .clap_plugins
-                .iter()
-                .find(|instance| instance.id == *instance_id)
-                .and_then(|instance| (port < instance.processor.midi_input_count()).then_some(()))
-                .ok_or_else(|| {
-                    format!("CLAP instance {instance_id} MIDI input port {port} missing")
-                }),
+            PluginGraphNode::Vst3PluginInstance(instance_id) => {
+                self.vst3_validate_midi_input(*instance_id, port)
+            }
+            PluginGraphNode::ClapPluginInstance(instance_id) => {
+                self.clap_validate_midi_input(*instance_id, port)
+            }
         }
     }
 
