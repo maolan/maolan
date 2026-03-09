@@ -93,6 +93,7 @@ pub struct Track {
     pub tsig_num: u16,
     pub tsig_denom: u16,
     pub clip_playback_enabled: bool,
+    output_meter_linear_cache: Vec<f32>,
     pub record_tap_outs: Vec<Vec<f32>>,
     pub record_tap_midi_in: Vec<MidiEvent>,
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -159,6 +160,7 @@ impl Track {
             tsig_num: 4,
             tsig_denom: 4,
             clip_playback_enabled: true,
+            output_meter_linear_cache: vec![0.0; audio_outs],
             record_tap_outs: vec![vec![0.0; buffer_size]; audio_outs],
             record_tap_midi_in: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -681,6 +683,10 @@ impl Track {
         };
 
         self.ensure_audio_route_cache();
+        if self.output_meter_linear_cache.len() != self.audio.outs.len() {
+            self.output_meter_linear_cache
+                .resize(self.audio.outs.len(), 0.0);
+        }
         for out_idx in 0..self.audio.outs.len() {
             let audio_out = self.audio.outs[out_idx].clone();
             let out_samples = audio_out.buffer.lock();
@@ -749,6 +755,9 @@ impl Track {
                     tap.fill(0.0);
                 }
             }
+            self.output_meter_linear_cache[out_idx] = out_samples
+                .iter()
+                .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
             *audio_out.finished.lock() = true;
         }
 
@@ -846,22 +855,8 @@ impl Track {
         self.balance = balance.clamp(-1.0, 1.0);
     }
 
-    pub fn output_meter_db(&self) -> Vec<f32> {
-        self.audio
-            .outs
-            .iter()
-            .map(|audio_out| {
-                let buffer = audio_out.buffer.lock();
-                let peak = buffer
-                    .iter()
-                    .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
-                if peak <= 1.0e-6 {
-                    -90.0
-                } else {
-                    (20.0 * peak.log10()).clamp(-90.0, 20.0)
-                }
-            })
-            .collect()
+    pub fn output_meter_linear(&self) -> Vec<f32> {
+        self.output_meter_linear_cache.clone()
     }
 
     pub fn arm(&mut self) {

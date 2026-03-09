@@ -1656,6 +1656,25 @@ impl Maolan {
         }
     }
 
+    fn smooth_meter_db_levels(current: &mut Vec<f32>, target: &[f32]) {
+        const ATTACK_ALPHA: f32 = 0.60;
+        const RELEASE_ALPHA: f32 = 0.22;
+
+        if current.len() != target.len() {
+            *current = target.to_vec();
+            return;
+        }
+
+        for (cur, tgt) in current.iter_mut().zip(target.iter().copied()) {
+            let alpha = if tgt > *cur {
+                ATTACK_ALPHA
+            } else {
+                RELEASE_ALPHA
+            };
+            *cur = (*cur + (tgt - *cur) * alpha).clamp(-90.0, 20.0);
+        }
+    }
+
     fn midi_lane_at_position(&self, position: Point) -> Option<(String, usize)> {
         let state = self.state.blocking_read();
         let mut y_offset = 0.0f32;
@@ -5973,16 +5992,12 @@ impl Maolan {
                     } => {
                         if track_name == "hw:out" {
                             let mut state = self.state.blocking_write();
-                            if state.hw_out_meter_db != *output_db {
-                                state.hw_out_meter_db = output_db.clone();
-                            }
+                            Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, output_db);
                             return Task::none();
                         }
                         let mut state = self.state.blocking_write();
-                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                            && track.meter_out_db != *output_db
-                        {
-                            track.meter_out_db = output_db.clone();
+                        if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                            Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
                         }
                         return Task::none();
                     }

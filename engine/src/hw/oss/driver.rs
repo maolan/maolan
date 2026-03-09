@@ -118,8 +118,22 @@ impl HwDriver {
         self.playback.output_balance = balance;
     }
 
-    pub fn output_meter_db(&self, gain: f32, balance: f32) -> Vec<f32> {
-        common::output_meter_db(&self.playback.channels, gain, balance)
+    pub fn output_meter_linear(&self, gain: f32, balance: f32) -> Vec<f32> {
+        let ch_count = self.playback.channels.len();
+        let mut out = Vec::with_capacity(ch_count);
+        for (channel_idx, channel) in self.playback.channels.iter().enumerate() {
+            let balance_gain = common::channel_balance_gain(ch_count, channel_idx, balance);
+            let buf = channel.buffer.lock();
+            let mut peak = 0.0_f32;
+            for &sample in buf.iter() {
+                let v = sample.abs();
+                if v > peak {
+                    peak = v;
+                }
+            }
+            out.push(peak * gain * balance_gain);
+        }
+        out
     }
 
     pub fn start_input_trigger(&self) -> std::io::Result<()> {

@@ -293,10 +293,21 @@ impl Worker {
                     return;
                 }
                 Message::ProcessTrack(t) => {
-                    let track = t.lock();
-                    track.process();
-                    track.audio.processing = false;
-                    match self.tx.send(Message::Finished(self.id)).await {
+                    let (track_name, output_linear) = {
+                        let track = t.lock();
+                        track.process();
+                        track.audio.processing = false;
+                        (track.name.clone(), track.output_meter_linear())
+                    };
+                    match self
+                        .tx
+                        .send(Message::Finished {
+                            worker_id: self.id,
+                            track_name,
+                            output_linear,
+                        })
+                        .await
+                    {
                         Ok(_) => {}
                         Err(e) => {
                             println!("Error while sending Finished: {e}")

@@ -701,7 +701,11 @@ pub enum Action {
 #[derive(Clone, Debug)]
 pub enum Message {
     Ready(usize),
-    Finished(usize),
+    Finished {
+        worker_id: usize,
+        track_name: String,
+        output_linear: Vec<f32>,
+    },
     TracksFinished,
 
     ProcessTrack(Arc<UnsafeMutex<Box<Track>>>),

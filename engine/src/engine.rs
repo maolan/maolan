@@ -166,7 +166,13 @@ pub struct Engine {
     hw_out_balance: f32,
     hw_out_muted: bool,
     last_hw_out_meter_publish: Option<Instant>,
+    #[cfg(target_os = "freebsd")]
+    last_hw_out_meter_linear: Vec<f32>,
+    #[cfg(target_os = "freebsd")]
+    hw_out_meter_publish_phase: bool,
     last_track_meter_publish: Option<Instant>,
+    track_meter_linear_by_track: HashMap<String, Vec<f32>>,
+    track_meter_last_published_linear: HashMap<String, Vec<f32>>,
     history: History,
     history_group: Option<UndoEntry>,
     history_suspended: bool,
@@ -186,6 +192,14 @@ type MidiEditParseResult = (
 );
 
 impl Engine {
+    fn meter_linear_to_db(peak: f32) -> f32 {
+        if peak <= 1.0e-6 {
+            -90.0
+        } else {
+            (20.0 * peak.log10()).clamp(-90.0, 20.0)
+        }
+    }
+
     fn parse_midi_clip_for_edit(
         path: &Path,
         sample_rate: f64,
@@ -564,7 +578,10 @@ impl Engine {
         Ok(())
     }
 
-    const METER_PUBLISH_INTERVAL: Duration = Duration::from_millis(200);
+    const METER_PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
+    #[cfg(target_os = "freebsd")]
+    const HW_OUT_METER_LINEAR_EPSILON: f32 = 0.0025;
+    const TRACK_METER_LINEAR_EPSILON: f32 = 0.0025;
 
     #[cfg(all(unix, not(target_os = "macos")))]
     fn session_plugins_dir(&self) -> Option<PathBuf> {
@@ -743,7 +760,13 @@ impl Engine {
             hw_out_balance: 0.0,
             hw_out_muted: false,
             last_hw_out_meter_publish: None,
+            #[cfg(target_os = "freebsd")]
+            last_hw_out_meter_linear: vec![],
+            #[cfg(target_os = "freebsd")]
+            hw_out_meter_publish_phase: false,
             last_track_meter_publish: None,
+            track_meter_linear_by_track: HashMap::new(),
+            track_meter_last_published_linear: HashMap::new(),
             history: History::default(),
             history_group: None,
             history_suspended: false,
@@ -1874,7 +1897,33 @@ impl Engine {
                 let hw = oss.lock();
                 hw.set_output_gain_balance(gain, self.hw_out_balance);
             }
-            oss.lock().output_meter_db(gain, self.hw_out_balance)
+            let peaks_linear = oss.lock().output_meter_linear(gain, self.hw_out_balance);
+            #[cfg(target_os = "freebsd")]
+            {
+                // Decimate OSS meter publishes to every second eligible tick.
+                self.hw_out_meter_publish_phase = !self.hw_out_meter_publish_phase;
+                if !self.hw_out_meter_publish_phase {
+                    return;
+                }
+                // Skip identical/near-identical meter updates.
+                let changed = if self.last_hw_out_meter_linear.len() != peaks_linear.len() {
+                    true
+                } else {
+                    self.last_hw_out_meter_linear
+                        .iter()
+                        .zip(peaks_linear.iter())
+                        .any(|(prev, next)| (prev - next).abs() >= Self::HW_OUT_METER_LINEAR_EPSILON)
+                };
+                if !changed {
+                    return;
+                }
+                self.last_hw_out_meter_linear.clear();
+                self.last_hw_out_meter_linear.extend_from_slice(&peaks_linear);
+            }
+            peaks_linear
+                .into_iter()
+                .map(Self::meter_linear_to_db)
+                .collect()
         } else {
             #[cfg(unix)]
             {
@@ -1964,13 +2013,48 @@ impl Engine {
         if !self.should_publish_track_meters() {
             return;
         }
-        let meters: Vec<(String, Vec<f32>)> = self
+        let tracks: Vec<(String, Arc<UnsafeMutex<Box<Track>>>)> = self
             .state
             .lock()
             .tracks
             .iter()
-            .map(|(name, track)| (name.clone(), track.lock().output_meter_db()))
+            .map(|(name, track)| (name.clone(), track.clone()))
             .collect();
+        let mut active_track_names = std::collections::HashSet::with_capacity(tracks.len());
+        let meters: Vec<(String, Vec<f32>)> = tracks
+            .into_iter()
+            .filter_map(|(name, track)| {
+                active_track_names.insert(name.clone());
+                let linear = self
+                    .track_meter_linear_by_track
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_else(|| track.lock().output_meter_linear());
+                let changed = if let Some(prev) = self.track_meter_last_published_linear.get(&name)
+                {
+                    if prev.len() != linear.len() {
+                        true
+                    } else {
+                        prev.iter()
+                            .zip(linear.iter())
+                            .any(|(a, b)| (a - b).abs() >= Self::TRACK_METER_LINEAR_EPSILON)
+                    }
+                } else {
+                    true
+                };
+                if !changed {
+                    return None;
+                }
+                self.track_meter_last_published_linear
+                    .insert(name.clone(), linear.clone());
+                let output_db = linear.into_iter().map(Self::meter_linear_to_db).collect();
+                Some((name, output_db))
+            })
+            .collect();
+        self.track_meter_last_published_linear
+            .retain(|name, _| active_track_names.contains(name));
+        self.track_meter_linear_by_track
+            .retain(|name, _| active_track_names.contains(name));
 
         for (track_name, output_db) in meters {
             self.notify_clients(Ok(Action::TrackMeters {
@@ -4735,8 +4819,14 @@ impl Engine {
                 Message::Ready(id) => {
                     self.ready_workers.push(id);
                 }
-                Message::Finished(workid) => {
-                    self.ready_workers.push(workid);
+                Message::Finished {
+                    worker_id,
+                    track_name,
+                    output_linear,
+                } => {
+                    self.ready_workers.push(worker_id);
+                    self.track_meter_linear_by_track
+                        .insert(track_name, output_linear);
                     let all_finished = self.send_tracks().await;
                     if all_finished {
                         if self.hw_worker.is_some() {
