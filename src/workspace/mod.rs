@@ -47,6 +47,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub zoom_visible_bars: f32,
     pub tracks_resize_hovered: bool,
     pub mixer_resize_hovered: bool,
+    pub mixer_visible: bool,
     pub active_clip_drag: Option<&'a DraggedClip>,
     pub active_clip_target_track: Option<&'a str>,
     pub recording_preview_bounds: Option<(usize, usize)>,
@@ -104,6 +105,7 @@ impl Workspace {
             zoom_visible_bars,
             tracks_resize_hovered,
             mixer_resize_hovered,
+            mixer_visible,
             active_clip_drag,
             active_clip_target_track,
             recording_preview_bounds,
@@ -402,29 +404,33 @@ impl Workspace {
         ])
         .width(Length::Fill)
         .height(Length::Fill);
-        column![
-            workspace_with_footer,
-            mouse_area(
-                container("")
-                    .width(Length::Fill)
-                    .height(Length::Fixed(3.0))
-                    .style(move |_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.7,
-                            g: 0.7,
-                            b: 0.7,
-                            a: if mixer_resize_hovered { 0.95 } else { 0.6 },
-                        })),
-                        ..container::Style::default()
-                    }),
-            )
-            .on_enter(Message::MixerResizeHover(true))
-            .on_exit(Message::MixerResizeHover(false))
-            .on_press(Message::MixerResizeStart),
-            self.mixer.view(),
-        ]
-        .width(Length::Fill)
-        .into()
+        if mixer_visible {
+            column![
+                workspace_with_footer,
+                mouse_area(
+                    container("")
+                        .width(Length::Fill)
+                        .height(Length::Fixed(3.0))
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.7,
+                                g: 0.7,
+                                b: 0.7,
+                                a: if mixer_resize_hovered { 0.95 } else { 0.6 },
+                            })),
+                            ..container::Style::default()
+                        }),
+                )
+                .on_enter(Message::MixerResizeHover(true))
+                .on_exit(Message::MixerResizeHover(false))
+                .on_press(Message::MixerResizeStart),
+                self.mixer.view(),
+            ]
+            .width(Length::Fill)
+            .into()
+        } else {
+            column![workspace_with_footer].width(Length::Fill).into()
+        }
     }
 
     pub fn piano_view(&self, args: WorkspaceViewArgs<'_>) -> Element<'_, Message> {
@@ -436,6 +442,7 @@ impl Workspace {
             snap_mode,
             samples_per_beat,
             shift_pressed,
+            mixer_visible: _,
             selected_tempo_points,
             selected_time_signature_points,
             ..

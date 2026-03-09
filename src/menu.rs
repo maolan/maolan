@@ -105,7 +105,7 @@ impl Menu {
         self.available_templates = templates;
     }
 
-    pub fn view(&self) -> iced::Element<'_, Message> {
+    pub fn view(&self, mixer_visible: bool) -> iced::Element<'_, Message> {
         let menu_tpl = |items| IcedMenu::new(items).width(180.0).offset(15.0).spacing(5.0);
 
         // Build the "New" submenu dynamically from stored templates
@@ -169,6 +169,14 @@ impl Menu {
                 menu_tpl(menu_items!(
                     (menu_item("New", Message::Show(Show::AddTrack))),
                     (menu_item("Create Aux Return From Selection", Message::TrackCreateAuxReturnFromSelection)),
+                ))
+            }),
+            (menu_dropdown("View", Message::None), {
+                menu_tpl(menu_items!(
+                    (menu_item(
+                        if mixer_visible { "Mixer [x]" } else { "Mixer [ ]" },
+                        Message::ToggleMixerVisibility
+                    )),
                 ))
             }),
         )

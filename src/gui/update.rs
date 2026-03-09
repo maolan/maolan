@@ -10493,6 +10493,12 @@ impl Maolan {
                 drop(state);
                 return self.queue_midi_clip_preview_loads();
             }
+            Message::ToggleMixerVisibility => {
+                self.mixer_visible = !self.mixer_visible;
+                if !self.mixer_visible {
+                    self.mixer_resize_hovered = false;
+                }
+            }
             Message::Connections => {
                 let mut state = self.state.blocking_write();
                 state.view = View::Connections;
