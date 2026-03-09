@@ -15,7 +15,11 @@ use iced::{
     widget::{Id, Space, Stack, column, container, mouse_area, pin, row, scrollable, slider},
 };
 use ruler::RulerViewArgs;
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::OnceLock,
+};
 use tempo::TempoViewArgs;
 
 pub const EDITOR_SCROLL_ID: &str = "workspace.editor.scroll";
@@ -23,6 +27,25 @@ pub const EDITOR_H_SCROLL_ID: &str = "workspace.editor.h_scroll";
 pub const TRACKS_SCROLL_ID: &str = "workspace.tracks.scroll";
 pub const PIANO_TEMPO_SCROLL_ID: &str = "workspace.piano.tempo.scroll";
 pub const PIANO_RULER_SCROLL_ID: &str = "workspace.piano.ruler.scroll";
+
+fn ui_profile_disabled_sections() -> &'static HashSet<String> {
+    static DISABLED: OnceLock<HashSet<String>> = OnceLock::new();
+    DISABLED.get_or_init(|| {
+        std::env::var("MAOLAN_UI_DISABLE")
+            .ok()
+            .map(|raw| {
+                raw.split(',')
+                    .map(|name| name.trim().to_ascii_lowercase())
+                    .filter(|name| !name.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+fn ui_section_disabled(name: &str) -> bool {
+    ui_profile_disabled_sections().contains(name)
+}
 
 pub struct Workspace {
     state: State,
@@ -251,14 +274,76 @@ impl Workspace {
         .height(Length::Fixed(16.0));
 
         let editor_with_zoom = right_lanes_scrolled;
-        let tracks_scrolled = scrollable(self.tracks.view())
-            .id(Id::new(TRACKS_SCROLL_ID))
-            .direction(scrollable::Direction::Vertical(
-                scrollable::Scrollbar::hidden(),
-            ))
-            .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
-            .width(tracks_width)
-            .height(Length::Fixed(tracks_total_height));
+        let disable_tracks = ui_section_disabled("tracks");
+        let disable_tempo = ui_section_disabled("tempo");
+        let disable_ruler = ui_section_disabled("ruler");
+        let disable_editor = ui_section_disabled("editor");
+        let disable_footer = ui_section_disabled("footer");
+        let disable_mixer = ui_section_disabled("mixer");
+
+        let tracks_scrolled: Element<'_, Message> = if disable_tracks {
+            container("")
+                .width(tracks_width)
+                .height(Length::Fixed(tracks_total_height))
+                .into()
+        } else {
+            scrollable(self.tracks.view())
+                .id(Id::new(TRACKS_SCROLL_ID))
+                .direction(scrollable::Direction::Vertical(
+                    scrollable::Scrollbar::hidden(),
+                ))
+                .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
+                .width(tracks_width)
+                .height(Length::Fixed(tracks_total_height))
+                .into()
+        };
+
+        let tempo_panel: Element<'_, Message> = if disable_tempo {
+            container("").height(Length::Fixed(self.tempo.height())).into()
+        } else {
+            container(self.tempo.view(TempoViewArgs {
+                bpm: tempo,
+                time_signature,
+                pixels_per_sample,
+                playhead_x,
+                punch_range_samples,
+                snap_mode,
+                samples_per_beat,
+                samples_per_bar: samples_per_bar as f64,
+                content_width: editor_content_width,
+                tempo_points,
+                time_signature_points,
+                shift_pressed,
+                selected_tempo_points,
+                selected_time_signature_points,
+            }))
+            .height(Length::Fixed(self.tempo.height()))
+            .into()
+        };
+
+        let ruler_panel: Element<'_, Message> = if disable_ruler {
+            container("").height(Length::Fixed(self.ruler.height())).into()
+        } else {
+            container(self.ruler.view(RulerViewArgs {
+                playhead_x,
+                beat_pixels,
+                pixels_per_sample,
+                loop_range_samples,
+                snap_mode,
+                samples_per_beat,
+                content_width: editor_content_width,
+            }))
+            .height(Length::Fixed(self.ruler.height()))
+            .into()
+        };
+
+        let editor_panel: Element<'_, Message> = if disable_editor {
+            container("").height(Length::Fixed(tracks_total_height)).into()
+        } else {
+            container(editor_with_zoom)
+                .height(Length::Fixed(tracks_total_height))
+                .into()
+        };
 
         let shared_workspace = row![
             column![
@@ -331,34 +416,9 @@ impl Workspace {
             .on_exit(Message::TracksResizeHover(false))
             .on_press(Message::TracksResizeStart),
             column![
-                container(self.tempo.view(TempoViewArgs {
-                    bpm: tempo,
-                    time_signature,
-                    pixels_per_sample,
-                    playhead_x,
-                    punch_range_samples,
-                    snap_mode,
-                    samples_per_beat,
-                    samples_per_bar: samples_per_bar as f64,
-                    content_width: editor_content_width,
-                    tempo_points,
-                    time_signature_points,
-                    shift_pressed,
-                    selected_tempo_points,
-                    selected_time_signature_points,
-                }))
-                .height(Length::Fixed(self.tempo.height())),
-                container(self.ruler.view(RulerViewArgs {
-                    playhead_x,
-                    beat_pixels,
-                    pixels_per_sample,
-                    loop_range_samples,
-                    snap_mode,
-                    samples_per_beat,
-                    content_width: editor_content_width,
-                }))
-                .height(Length::Fixed(self.ruler.height())),
-                container(editor_with_zoom).height(Length::Fixed(tracks_total_height)),
+                tempo_panel,
+                ruler_panel,
+                editor_panel,
             ]
             .width(Length::Fill),
         ]
@@ -368,62 +428,70 @@ impl Workspace {
             .width(Length::Fill)
             .height(Length::Fill);
 
-        let editor_footer = container(
-            row![
-                Space::new().width(Length::Fixed(tracks_width_px + 3.0)),
-                container(
-                    row![
-                        h_scroll,
-                        slider(
-                            1.0..=256.0,
-                            zoom_visible_bars,
-                            Message::ZoomVisibleBarsChanged,
-                        )
-                        .width(Length::Fixed(105.0)),
-                    ]
-                    .spacing(8),
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(16.0))
-                .padding([0, 8]),
-            ]
+        let editor_footer: Element<'_, Message> = if disable_footer {
+            container("").width(Length::Fill).height(Length::Fill).into()
+        } else {
+            container(
+                row![
+                    Space::new().width(Length::Fixed(tracks_width_px + 3.0)),
+                    container(
+                        row![
+                            h_scroll,
+                            slider(
+                                1.0..=256.0,
+                                zoom_visible_bars,
+                                Message::ZoomVisibleBarsChanged,
+                            )
+                            .width(Length::Fixed(105.0)),
+                        ]
+                        .spacing(8),
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fixed(16.0))
+                    .padding([0, 8]),
+                ]
+                .height(Length::Fill)
+                .align_y(iced::alignment::Vertical::Bottom),
+            )
+            .width(Length::Fill)
             .height(Length::Fill)
-            .align_y(iced::alignment::Vertical::Bottom),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill);
+            .into()
+        };
 
         let workspace_with_footer = Stack::from_vec(vec![
             shared_workspace.into(),
-            container(editor_footer)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into(),
+            container(editor_footer).width(Length::Fill).height(Length::Fill).into(),
         ])
         .width(Length::Fill)
         .height(Length::Fill);
 
-        column![
-            workspace_with_footer,
-            mouse_area(
-                container("")
-                    .width(Length::Fill)
-                    .height(Length::Fixed(3.0))
-                    .style(move |_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.7,
-                            g: 0.7,
-                            b: 0.7,
-                            a: if mixer_resize_hovered { 0.95 } else { 0.6 },
-                        })),
-                        ..container::Style::default()
-                    }),
-            )
-            .on_enter(Message::MixerResizeHover(true))
-            .on_exit(Message::MixerResizeHover(false))
-            .on_press(Message::MixerResizeStart),
-            self.mixer.view(),
-        ]
+        let mixer_section: Element<'_, Message> = if disable_mixer {
+            container("").into()
+        } else {
+            column![
+                mouse_area(
+                    container("")
+                        .width(Length::Fill)
+                        .height(Length::Fixed(3.0))
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(Color {
+                                r: 0.7,
+                                g: 0.7,
+                                b: 0.7,
+                                a: if mixer_resize_hovered { 0.95 } else { 0.6 },
+                            })),
+                            ..container::Style::default()
+                        }),
+                )
+                .on_enter(Message::MixerResizeHover(true))
+                .on_exit(Message::MixerResizeHover(false))
+                .on_press(Message::MixerResizeStart),
+                self.mixer.view(),
+            ]
+            .into()
+        };
+
+        column![workspace_with_footer, mixer_section]
         .width(Length::Fill)
         .into()
     }

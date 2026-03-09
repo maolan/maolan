@@ -168,6 +168,16 @@ impl Mixer {
         .into()
     }
 
+    fn slider_plain<F>(value: f32, fader_height: f32, on_change: F) -> Element<'static, Message>
+    where
+        F: Fn(f32) -> Message + 'static,
+    {
+        Slider::new(Self::FADER_MIN_DB..=Self::FADER_MAX_DB, value, on_change)
+            .width(Length::Fixed(Self::FADER_WIDTH))
+            .height(Length::Fixed(fader_height))
+            .into()
+    }
+
     fn balance_slider<F>(value: f32, on_change: F) -> Element<'static, Message>
     where
         F: Fn(f32) -> Message + 'static,
@@ -272,14 +282,20 @@ impl Mixer {
         value: f32,
         fader_height: f32,
         tick_layout: &[(f32, &'static str)],
+        show_ticks: bool,
         on_change: F,
     ) -> Element<'static, Message>
     where
         F: Fn(f32) -> Message + 'static,
     {
+        let slider: Element<'static, Message> = if show_ticks {
+            Self::slider_with_ticks(value, fader_height, tick_layout, on_change)
+        } else {
+            Self::slider_plain(value, fader_height, on_change)
+        };
         container(
             row![
-                Self::slider_with_ticks(value, fader_height, tick_layout, on_change),
+                slider,
                 Self::vu_meter(channels, levels_db, fader_height),
             ]
             .spacing(8)
@@ -342,6 +358,7 @@ impl Mixer {
                 track.level,
                 fader_height,
                 &tick_layout,
+                false,
                 {
                     let name = track.name.clone();
                     move |new_val| Message::Request(Action::TrackLevel(name.clone(), new_val))
@@ -384,6 +401,7 @@ impl Mixer {
                 hw_out_level,
                 fader_height,
                 &tick_layout,
+                true,
                 move |new_val| Message::Request(Action::TrackLevel("hw:out".to_string(), new_val)),
             ),
             Self::format_level_db(hw_out_level),

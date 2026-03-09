@@ -36,26 +36,71 @@ impl Maolan {
                 let initial = stream::once(async { Message::RefreshVst3Plugins });
                 let initial = initial.chain(stream::once(async { Message::RefreshClapPlugins }));
                 initial.chain(stream::unfold(
-                    (receiver, HashMap::<String, Vec<f32>>::new()),
-                    |(mut rx, mut last_meters)| async move {
+                    (
+                        receiver,
+                        Vec::<f32>::new(),
+                        HashMap::<String, Vec<f32>>::new(),
+                    ),
+                    |(mut rx, mut last_hw_out, mut last_meters)| async move {
                         loop {
                             match rx.recv().await {
                                 Some(EngineMessage::Response(r)) => {
-                                    if let Ok(EngineAction::TrackMeters {
-                                        track_name,
-                                        output_db,
-                                    }) = &r
-                                    {
-                                        let should_forward = match last_meters.get(track_name) {
-                                            Some(prev) => meter_changed(prev, output_db),
-                                            None => true,
-                                        };
-                                        if !should_forward {
-                                            continue;
+                                    if let Ok(action) = &r {
+                                        match action {
+                                            EngineAction::TrackMeters {
+                                                track_name,
+                                                output_db,
+                                            } => {
+                                                let should_forward = match last_meters.get(track_name)
+                                                {
+                                                    Some(prev) => meter_changed(prev, output_db),
+                                                    None => true,
+                                                };
+                                                if !should_forward {
+                                                    continue;
+                                                }
+                                                last_meters
+                                                    .insert(track_name.clone(), output_db.clone());
+                                            }
+                                            EngineAction::MeterSnapshot {
+                                                hw_out_db,
+                                                track_meters,
+                                            } => {
+                                                let hw_changed = meter_changed(&last_hw_out, hw_out_db);
+                                                let tracks_changed = if last_meters.len()
+                                                    != track_meters.len()
+                                                {
+                                                    true
+                                                } else {
+                                                    track_meters.iter().any(|(track_name, output_db)| {
+                                                        match last_meters.get(track_name) {
+                                                            Some(prev) => {
+                                                                meter_changed(prev, output_db)
+                                                            }
+                                                            None => true,
+                                                        }
+                                                    })
+                                                };
+                                                if !hw_changed && !tracks_changed {
+                                                    continue;
+                                                }
+
+                                                last_hw_out.clear();
+                                                last_hw_out.extend_from_slice(hw_out_db);
+                                                last_meters.clear();
+                                                last_meters.reserve(track_meters.len());
+                                                for (track_name, output_db) in track_meters.iter() {
+                                                    last_meters
+                                                        .insert(track_name.clone(), output_db.clone());
+                                                }
+                                            }
+                                            _ => {}
                                         }
-                                        last_meters.insert(track_name.clone(), output_db.clone());
                                     }
-                                    return Some((Message::Response(r), (rx, last_meters)));
+                                    return Some((
+                                        Message::Response(r),
+                                        (rx, last_hw_out, last_meters),
+                                    ));
                                 }
                                 Some(_) => {}
                                 None => return None,
