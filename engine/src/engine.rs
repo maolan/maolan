@@ -166,13 +166,13 @@ pub struct Engine {
     hw_out_balance: f32,
     hw_out_muted: bool,
     last_hw_out_meter_publish: Option<Instant>,
-    #[cfg(target_os = "freebsd")]
+    #[cfg(any(target_os = "freebsd", target_os = "linux"))]
     last_hw_out_meter_linear: Vec<f32>,
-    #[cfg(target_os = "freebsd")]
+    #[cfg(any(target_os = "freebsd", target_os = "linux"))]
     hw_out_meter_publish_phase: bool,
     last_track_meter_publish: Option<Instant>,
     track_meter_linear_by_track: HashMap<String, Vec<f32>>,
-    #[cfg(not(target_os = "freebsd"))]
+    #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
     track_meter_last_published_linear: HashMap<String, Vec<f32>>,
     latest_hw_out_meter_db: Arc<Vec<f32>>,
     latest_track_meter_snapshot: Arc<Vec<(String, Vec<f32>)>>,
@@ -582,9 +582,9 @@ impl Engine {
     }
 
     const METER_PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
-    #[cfg(target_os = "freebsd")]
+    #[cfg(any(target_os = "freebsd", target_os = "linux"))]
     const HW_OUT_METER_LINEAR_EPSILON: f32 = 0.0025;
-    #[cfg(not(target_os = "freebsd"))]
+    #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
     const TRACK_METER_LINEAR_EPSILON: f32 = 0.0025;
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -764,13 +764,13 @@ impl Engine {
             hw_out_balance: 0.0,
             hw_out_muted: false,
             last_hw_out_meter_publish: None,
-            #[cfg(target_os = "freebsd")]
+            #[cfg(any(target_os = "freebsd", target_os = "linux"))]
             last_hw_out_meter_linear: vec![],
-            #[cfg(target_os = "freebsd")]
+            #[cfg(any(target_os = "freebsd", target_os = "linux"))]
             hw_out_meter_publish_phase: false,
             last_track_meter_publish: None,
             track_meter_linear_by_track: HashMap::new(),
-            #[cfg(not(target_os = "freebsd"))]
+            #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
             track_meter_last_published_linear: HashMap::new(),
             latest_hw_out_meter_db: Arc::new(Vec::new()),
             latest_track_meter_snapshot: Arc::new(Vec::new()),
@@ -1905,7 +1905,7 @@ impl Engine {
                 hw.set_output_gain_balance(gain, self.hw_out_balance);
             }
             let peaks_linear = oss.lock().output_meter_linear(gain, self.hw_out_balance);
-            #[cfg(target_os = "freebsd")]
+            #[cfg(any(target_os = "freebsd", target_os = "linux"))]
             {
                 // Decimate OSS meter publishes to every second eligible tick.
                 self.hw_out_meter_publish_phase = !self.hw_out_meter_publish_phase;
@@ -1981,11 +1981,11 @@ impl Engine {
             }
         };
         self.latest_hw_out_meter_db = Arc::new(meter_db.clone());
-        #[cfg(target_os = "freebsd")]
+        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
         {
             return;
         }
-        #[cfg(not(target_os = "freebsd"))]
+        #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
         {
             self.notify_clients(Ok(Action::TrackMeters {
                 track_name: "hw:out".to_string(),
@@ -2050,11 +2050,11 @@ impl Engine {
             snapshot.push((name.clone(), output_db));
         }
         self.latest_track_meter_snapshot = Arc::new(snapshot);
-        #[cfg(target_os = "freebsd")]
+        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
         {
             return;
         }
-        #[cfg(not(target_os = "freebsd"))]
+        #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
         {
         let mut active_track_names = std::collections::HashSet::with_capacity(tracks.len());
         let meters: Vec<(String, Vec<f32>)> = tracks

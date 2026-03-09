@@ -310,7 +310,7 @@ impl Worker {
                     {
                         Ok(_) => {}
                         Err(e) => {
-                            println!("Error while sending Finished: {e}")
+                            error!("Error while sending Finished: {}", e);
                         }
                     }
                 }

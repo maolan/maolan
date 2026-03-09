@@ -906,7 +906,12 @@ impl Track {
         self.vca_master.clone()
     }
     pub fn set_session_base_dir(&mut self, base_dir: Option<PathBuf>) {
-        self.session_base_dir = base_dir;
+        if self.session_base_dir != base_dir {
+            self.session_base_dir = base_dir;
+            // Clip names are relative in sessions; if base dir changes, cached buffers can go stale.
+            self.audio_clip_cache.clear();
+            self.midi_clip_cache.clear();
+        }
     }
 
     pub fn frozen(&self) -> bool {
@@ -992,10 +997,42 @@ impl Track {
         let clip_path = Path::new(clip_name);
         if clip_path.is_absolute() {
             clip_path.to_path_buf()
-        } else if let Some(base) = &self.session_base_dir {
-            base.join(clip_path)
         } else {
-            clip_path.to_path_buf()
+            if let Some(base) = &self.session_base_dir {
+                let candidate = base.join(clip_path);
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+
+            // Keep direct relative path support for runs started from the session directory.
+            let cwd_candidate = clip_path.to_path_buf();
+            if cwd_candidate.exists() {
+                return cwd_candidate;
+            }
+
+            // Allow explicit session root override for diagnostics/recovery scenarios.
+            if let Ok(session_root) = std::env::var("MAOLAN_SESSION_PATH") {
+                let candidate = Path::new(&session_root).join(clip_path);
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+
+            // Fallback to default recordings folder used by the app.
+            if let Ok(home) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+                let candidate = Path::new(&home).join("recordings").join(clip_path);
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+
+            // Preserve original behavior for missing files: if we know session root, keep it.
+            if let Some(base) = &self.session_base_dir {
+                base.join(clip_path)
+            } else {
+                cwd_candidate
+            }
         }
     }
 

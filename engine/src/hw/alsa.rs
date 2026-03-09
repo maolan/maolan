@@ -220,8 +220,8 @@ impl HwDriver {
         self.output_balance = balance.clamp(-1.0, 1.0);
     }
 
-    pub fn output_meter_db(&self, gain: f32, balance: f32) -> Vec<f32> {
-        common::output_meter_db(&self.audio_outs, gain, balance)
+    pub fn output_meter_linear(&self, gain: f32, balance: f32) -> Vec<f32> {
+        common::output_meter_linear(&self.audio_outs, gain, balance)
     }
 
     pub fn run_cycle(&mut self) -> Result<(), String> {
