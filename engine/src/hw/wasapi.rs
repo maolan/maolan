@@ -215,6 +215,10 @@ impl HwDriver {
         common::output_meter_db(&self.audio_outs, gain, balance)
     }
 
+    pub fn output_meter_linear(&self, gain: f32, balance: f32) -> Vec<f32> {
+        common::output_meter_linear(&self.audio_outs, gain, balance)
+    }
+
     pub fn run_cycle(&mut self) -> Result<(), String> {
         self.cycle_tick_rx
             .recv_timeout(Duration::from_millis(500))

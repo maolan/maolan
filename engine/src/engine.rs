@@ -1899,7 +1899,7 @@ impl Engine {
             }
             return;
         }
-        let meter_db = if let Some(oss) = self.hw_driver.clone() {
+        let meter_db: Vec<f32> = if let Some(oss) = self.hw_driver.clone() {
             {
                 let hw = oss.lock();
                 hw.set_output_gain_balance(gain, self.hw_out_balance);

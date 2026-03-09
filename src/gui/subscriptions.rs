@@ -198,7 +198,7 @@ impl Maolan {
         } else {
             Subscription::none()
         };
-        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+        #[cfg(any(target_os = "windows", target_os = "freebsd", target_os = "linux"))]
         let meter_poll_sub =
             iced::time::every(Duration::from_millis(80)).map(|_| Message::MeterPollTick);
         let recording_preview_sub = if self.playing
@@ -239,7 +239,7 @@ impl Maolan {
             keyboard_sub,
             event_sub,
             playback_sub,
-            #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+            #[cfg(any(target_os = "windows", target_os = "freebsd", target_os = "linux"))]
             meter_poll_sub,
             autosave_sub,
             peak_rebuild_sub,
