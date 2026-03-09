@@ -6,7 +6,7 @@ mod tracks;
 
 use crate::{
     message::{DraggedClip, Message, SnapMode},
-    state::{ClipPeaks, PianoNote, State},
+    state::{ClipPeaks, MidiClipPreviewMap, State},
     widget::piano,
 };
 use editor::EditorViewArgs;
@@ -52,7 +52,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub active_clip_target_track: Option<&'a str>,
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
-    pub midi_clip_previews: Option<&'a HashMap<(String, usize), Vec<PianoNote>>>,
+    pub midi_clip_previews: Option<&'a MidiClipPreviewMap>,
     pub shift_pressed: bool,
     pub selected_tempo_points: Vec<usize>,
     pub selected_time_signature_points: Vec<usize>,
@@ -73,7 +73,7 @@ impl Workspace {
         }
     }
 
-    pub fn update(&mut self, _message: Message) {}
+    pub fn update(&mut self, _message: &Message) {}
 
     fn playhead_line() -> Element<'static, Message> {
         container("")

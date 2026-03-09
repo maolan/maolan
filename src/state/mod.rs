@@ -395,6 +395,8 @@ pub struct PianoData {
     pub midnam_note_names: HashMap<u8, String>,
 }
 
+pub type MidiClipPreviewMap = HashMap<(String, usize), Arc<Vec<PianoNote>>>;
+
 #[derive(Debug)]
 pub struct StateData {
     pub shift: bool,

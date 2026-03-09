@@ -14,11 +14,11 @@ impl TrackTemplateSaveView {
         Self { state }
     }
 
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: &Message) {
         if let Message::TrackTemplateSaveInput(input) = message
             && let Some(dialog) = &mut self.state.blocking_write().track_template_save_dialog
         {
-            dialog.name = input;
+            dialog.name = input.clone();
         }
     }
 

@@ -1,6 +1,6 @@
 use crate::{
     message::{DraggedClip, Message, SnapMode},
-    state::{ClipPeaks, PianoNote, State, StateData, Track},
+    state::{ClipPeaks, MidiClipPreviewMap, PianoNote, State, StateData, Track},
 };
 use iced::{
     Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Theme, gradient, mouse,
@@ -13,9 +13,10 @@ use iced::{
 use maolan_engine::kind::Kind;
 use std::{
     cell::Cell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
     path::PathBuf,
+    sync::Arc,
 };
 use wavers::Wav;
 
@@ -30,7 +31,7 @@ const MIDI_CLIP_BORDER: Color = Color::from_rgb8(148, 215, 118);
 const MIDI_CLIP_SELECTED_BORDER: Color = Color::from_rgb8(196, 255, 151);
 struct TrackElementViewArgs<'a> {
     state: &'a StateData,
-    track: Track,
+    track: &'a Track,
     session_root: Option<&'a PathBuf>,
     pixels_per_sample: f32,
     samples_per_bar: f32,
@@ -40,7 +41,7 @@ struct TrackElementViewArgs<'a> {
     active_target_track: Option<&'a str>,
     recording_preview_bounds: Option<(usize, usize)>,
     recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
-    midi_clip_previews: Option<&'a HashMap<(String, usize), Vec<PianoNote>>>,
+    midi_clip_previews: Option<&'a MidiClipPreviewMap>,
 }
 
 fn clean_clip_name(name: &str) -> String {
@@ -643,7 +644,7 @@ struct MidiClipNotesCanvasState {
 
 #[derive(Clone)]
 struct MidiClipNotesCanvas {
-    notes: Vec<PianoNote>,
+    notes: Arc<Vec<PianoNote>>,
     clip_offset_samples: usize,
     clip_visible_length_samples: usize,
 }
@@ -742,7 +743,7 @@ impl canvas::Program<Message> for MidiClipNotesCanvas {
                         .with_width(1.0),
                 );
 
-                for note in &self.notes {
+                for note in self.notes.iter() {
                     let note_start = note.start_sample;
                     let note_end = note.start_sample.saturating_add(note.length_samples.max(1));
                     if note_end <= visible_start || note_start >= visible_end {
@@ -774,7 +775,7 @@ impl canvas::Program<Message> for MidiClipNotesCanvas {
 }
 
 fn midi_clip_notes_overlay(
-    notes: Vec<PianoNote>,
+    notes: Arc<Vec<PianoNote>>,
     clip_offset_samples: usize,
     clip_visible_length_samples: usize,
 ) -> Element<'static, Message> {
@@ -870,6 +871,23 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     let lane_height = layout.lane_height.max(12.0);
     let lane_clip_height = (lane_height - 6.0).max(12.0);
     let track_name_cloned = track.name.clone();
+    let mut selected_audio_indices = HashSet::new();
+    let mut selected_midi_indices = HashSet::new();
+    for selected in &state.selected_clips {
+        if selected.track_idx != track_name_cloned {
+            continue;
+        }
+        match selected.kind {
+            Kind::Audio => {
+                selected_audio_indices.insert(selected.clip_idx);
+            }
+            Kind::MIDI => {
+                selected_midi_indices.insert(selected.clip_idx);
+            }
+        }
+    }
+    let selected_audio_count = selected_audio_indices.len();
+    let selected_midi_count = selected_midi_indices.len();
     let (audio_take_idx, audio_take_count) = assign_take_lanes(
         &track.audio.clips,
         |_| 0,
@@ -1055,29 +1073,15 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         );
         let clip_peaks = clip.peaks.clone();
         let clip_muted = clip.muted;
-        let clip_id = crate::state::ClipId {
-            track_idx: track_name_cloned.clone(),
-            clip_idx: index,
-            kind: Kind::Audio,
-        };
-        let is_selected = state.selected_clips.contains(&clip_id);
+        let is_selected = selected_audio_indices.contains(&index);
         let active_drag = active_clip_drag.filter(|d| {
             d.kind == Kind::Audio && d.track_index == track_name_cloned && d.index == index
         });
         let group_drag = active_clip_drag.filter(|d| {
             d.kind == Kind::Audio
                 && d.track_index == track_name_cloned
-                && state.selected_clips.contains(&crate::state::ClipId {
-                    track_idx: track_name_cloned.clone(),
-                    clip_idx: d.index,
-                    kind: Kind::Audio,
-                })
-                && state
-                    .selected_clips
-                    .iter()
-                    .filter(|id| id.kind == Kind::Audio && id.track_idx == track_name_cloned)
-                    .count()
-                    > 1
+                && selected_audio_indices.contains(&d.index)
+                && selected_audio_count > 1
                 && is_selected
         });
         let drag_for_clip = group_drag.or(active_drag);
@@ -1480,29 +1484,15 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             if clip.take_lane_locked { " [L]" } else { "" }
         );
         let clip_muted = clip.muted;
-        let clip_id = crate::state::ClipId {
-            track_idx: track_name_cloned.clone(),
-            clip_idx: index,
-            kind: Kind::MIDI,
-        };
-        let is_selected = state.selected_clips.contains(&clip_id);
+        let is_selected = selected_midi_indices.contains(&index);
         let active_drag = active_clip_drag.filter(|d| {
             d.kind == Kind::MIDI && d.track_index == track_name_cloned && d.index == index
         });
         let group_drag = active_clip_drag.filter(|d| {
             d.kind == Kind::MIDI
                 && d.track_index == track_name_cloned
-                && state.selected_clips.contains(&crate::state::ClipId {
-                    track_idx: track_name_cloned.clone(),
-                    clip_idx: d.index,
-                    kind: Kind::MIDI,
-                })
-                && state
-                    .selected_clips
-                    .iter()
-                    .filter(|id| id.kind == Kind::MIDI && id.track_idx == track_name_cloned)
-                    .count()
-                    > 1
+                && selected_midi_indices.contains(&d.index)
+                && selected_midi_count > 1
                 && is_selected
         });
         let drag_for_clip = group_drag.or(active_drag);
@@ -2448,7 +2438,7 @@ pub struct EditorViewArgs<'a> {
     pub active_target_track: Option<&'a str>,
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
-    pub midi_clip_previews: Option<&'a HashMap<(String, usize), Vec<PianoNote>>>,
+    pub midi_clip_previews: Option<&'a MidiClipPreviewMap>,
 }
 
 impl Editor {
@@ -2474,7 +2464,7 @@ impl Editor {
         for track in state.tracks.iter() {
             result = result.push(view_track_elements(TrackElementViewArgs {
                 state: &state,
-                track: track.clone(),
+                track,
                 session_root,
                 pixels_per_sample,
                 samples_per_bar,

@@ -14,8 +14,8 @@ use crate::{
     },
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{
-        AudioClip, ClipPeaks, MIDIClip, PianoControllerPoint, PianoNote, PianoSysExPoint, State,
-        StateData,
+        AudioClip, ClipPeaks, MIDIClip, MidiClipPreviewMap, PianoControllerPoint, PianoNote,
+        PianoSysExPoint, State, StateData,
     },
     template_save, toolbar, track_rename, track_template_save, workspace,
 };
@@ -288,7 +288,7 @@ pub struct Maolan {
     pending_add_vst3_automation_instances: HashSet<(String, usize)>,
     pending_add_clap_automation_paths: HashSet<(String, String)>,
     pending_add_clap_automation_instances: HashSet<(String, usize)>,
-    midi_clip_previews: HashMap<(String, usize), Vec<PianoNote>>,
+    midi_clip_previews: MidiClipPreviewMap,
     pending_midi_clip_previews: HashSet<(String, usize, String)>,
     freeze_in_progress: bool,
     freeze_progress: f32,
@@ -3580,14 +3580,14 @@ impl Maolan {
     }
 
     fn update_children(&mut self, message: &Message) {
-        self.menu.update(message.clone());
-        self.toolbar.update(message.clone());
-        self.workspace.update(message.clone());
-        self.connections.update(message.clone());
+        self.menu.update(message);
+        self.toolbar.update(message);
+        self.workspace.update(message);
+        self.connections.update(message);
         #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-        self.track_plugins.update(message.clone());
-        self.add_track.update(message.clone());
-        self.clip_rename.update(message.clone());
-        self.track_rename.update(message.clone());
+        self.track_plugins.update(message);
+        self.add_track.update(message);
+        self.clip_rename.update(message);
+        self.track_rename.update(message);
     }
 }

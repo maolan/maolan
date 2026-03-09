@@ -2171,7 +2171,7 @@ impl Maolan {
                     return Task::none();
                 }
                 if self.playing && !self.paused {
-                    self.toolbar.update(message.clone());
+                    self.toolbar.update(&message);
                     self.playing = false;
                     self.paused = false;
                     self.last_playback_tick = None;
@@ -2186,7 +2186,7 @@ impl Maolan {
                     ]);
                 }
                 let was_playing = self.playing;
-                self.toolbar.update(message.clone());
+                self.toolbar.update(&message);
                 self.playing = true;
                 self.paused = false;
                 self.last_playback_tick = Some(Instant::now());
@@ -2481,7 +2481,7 @@ impl Maolan {
                 return Task::none();
             }
             Message::TransportPlay => {
-                self.toolbar.update(message.clone());
+                self.toolbar.update(&message);
                 let was_playing = self.playing;
                 self.playing = true;
                 self.paused = false;
@@ -2496,7 +2496,7 @@ impl Maolan {
                 return Task::batch(tasks);
             }
             Message::TransportPause => {
-                self.toolbar.update(message.clone());
+                self.toolbar.update(&message);
                 let was_playing = self.playing;
                 self.playing = true;
                 self.paused = true;
@@ -2509,7 +2509,7 @@ impl Maolan {
                 return Task::batch(tasks);
             }
             Message::TransportStop => {
-                self.toolbar.update(message.clone());
+                self.toolbar.update(&message);
                 self.playing = false;
                 self.paused = false;
                 self.last_playback_tick = None;
@@ -4673,7 +4673,7 @@ impl Maolan {
                 self.mixer_resize_hovered = hovered;
             }
             Message::TransportRecordToggle => {
-                self.toolbar.update(message.clone());
+                self.toolbar.update(&message);
                 if self.record_armed {
                     self.record_armed = false;
                     self.pending_record_after_save = false;
@@ -8407,7 +8407,7 @@ impl Maolan {
                 // Handled by TrackRenameView
             }
             Message::TemplateSaveInput(_) => {
-                self.template_save.update(message.clone());
+                self.template_save.update(&message);
             }
             Message::TrackRenameConfirm => {
                 let dialog = self.state.blocking_read().track_rename_dialog.clone();
@@ -8441,7 +8441,7 @@ impl Maolan {
                 self.modal = Some(Show::SaveTemplateAs);
             }
             Message::TrackTemplateSaveInput(_) => {
-                self.track_template_save.update(message.clone());
+                self.track_template_save.update(&message);
             }
             Message::TrackTemplateSaveConfirm => {
                 let dialog = self
@@ -10525,7 +10525,7 @@ impl Maolan {
                 };
                 if valid {
                     self.midi_clip_previews
-                        .insert((track_idx.clone(), clip_idx), notes.clone());
+                        .insert((track_idx.clone(), clip_idx), std::sync::Arc::new(notes.clone()));
                 }
             }
             Message::OpenMidiPiano {
@@ -10555,7 +10555,7 @@ impl Maolan {
                 match Self::parse_midi_clip_for_piano(&path, self.playback_rate_hz) {
                     Ok((notes, controllers, sysexes, parsed_len)) => {
                         self.midi_clip_previews
-                            .insert((track_idx.clone(), clip_idx), notes.clone());
+                            .insert((track_idx.clone(), clip_idx), std::sync::Arc::new(notes.clone()));
                         self.pending_midi_clip_previews.remove(&(
                             track_idx.clone(),
                             clip_idx,

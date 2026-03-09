@@ -42,7 +42,7 @@ impl Toolbar {
             latch: TransportLatch::Stop,
         }
     }
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: &Message) {
         match message {
             Message::TransportPlay => self.latch = TransportLatch::Play,
             Message::TransportPause => self.latch = TransportLatch::Pause,

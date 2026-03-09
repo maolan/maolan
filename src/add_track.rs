@@ -48,27 +48,27 @@ impl AddTrackView {
         Some((audio_ins, audio_outs, midi_ins, midi_outs))
     }
 
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: &Message) {
         if let Message::AddTrack(a) = message {
             match a {
                 AddTrack::Name(name) => {
-                    self.name = name;
+                    self.name = name.clone();
                 }
                 AddTrack::AudioIns(ins) => {
-                    self.audio_ins = ins;
+                    self.audio_ins = *ins;
                 }
                 AddTrack::MIDIIns(ins) => {
-                    self.midi_ins = ins;
+                    self.midi_ins = *ins;
                 }
                 AddTrack::AudioOuts(outs) => {
-                    self.audio_outs = outs;
+                    self.audio_outs = *outs;
                 }
                 AddTrack::MIDIOuts(outs) => {
-                    self.midi_outs = outs;
+                    self.midi_outs = *outs;
                 }
                 AddTrack::TemplateSelected(template) => {
                     if template == "empty" {
-                        self.selected_template = Some(template);
+                        self.selected_template = Some(template.clone());
                         // Reset to defaults when empty is selected
                         self.audio_ins = 1;
                         self.audio_outs = 1;
@@ -78,7 +78,7 @@ impl AddTrackView {
                         self.selected_template = Some(template.clone());
                         // Load template to get ins/outs
                         if let Some((audio_ins, audio_outs, midi_ins, midi_outs)) =
-                            Self::load_template_config(&template)
+                            Self::load_template_config(template)
                         {
                             self.audio_ins = audio_ins;
                             self.audio_outs = audio_outs;

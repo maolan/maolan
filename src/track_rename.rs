@@ -14,11 +14,11 @@ impl TrackRenameView {
         Self { state }
     }
 
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: &Message) {
         if let Message::TrackRenameInput(input) = message
             && let Some(dialog) = &mut self.state.blocking_write().track_rename_dialog
         {
-            dialog.new_name = input;
+            dialog.new_name = input.clone();
         }
     }
 

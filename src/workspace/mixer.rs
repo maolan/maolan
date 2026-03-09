@@ -12,7 +12,7 @@ use iced::{
     },
 };
 use maolan_engine::message::Action;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 #[derive(Debug, Default)]
 pub struct Mixer {
@@ -54,7 +54,7 @@ static BALANCE_LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
 #[derive(Clone)]
 struct VuMeterCanvas {
     channels: usize,
-    levels_qdb: Vec<u8>,
+    levels_qdb: Arc<[u8]>,
     meter_height: f32,
 }
 
@@ -314,10 +314,11 @@ impl Mixer {
         q as f32 - 90.0
     }
 
-    fn quantized_meter_levels(levels_db: &[f32], channels: usize) -> Vec<u8> {
+    fn quantized_meter_levels(levels_db: &[f32], channels: usize) -> Arc<[u8]> {
         (0..channels.max(1))
             .map(|idx| Self::level_to_qdb(levels_db.get(idx).copied().unwrap_or(-90.0)))
-            .collect()
+            .collect::<Vec<_>>()
+            .into()
     }
 
     fn pan_section_cached(track_name: String, value: f32) -> Element<'static, Message> {

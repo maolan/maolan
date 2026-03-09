@@ -99,7 +99,7 @@ pub struct Menu {
 }
 
 impl Menu {
-    pub fn update(&mut self, _message: Message) {}
+    pub fn update(&mut self, _message: &Message) {}
 
     pub fn update_templates(&mut self, templates: Vec<String>) {
         self.available_templates = templates;

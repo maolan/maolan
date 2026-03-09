@@ -14,11 +14,11 @@ impl ClipRenameView {
         Self { state }
     }
 
-    pub fn update(&mut self, message: Message) {
+    pub fn update(&mut self, message: &Message) {
         if let Message::ClipRenameInput(input) = message
             && let Some(dialog) = &mut self.state.blocking_write().clip_rename_dialog
         {
-            dialog.new_name = input;
+            dialog.new_name = input.clone();
         }
     }
 

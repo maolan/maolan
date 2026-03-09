@@ -13,7 +13,7 @@ impl<G> CanvasHost<G> {
         Self { graph }
     }
 
-    pub fn update(&mut self, _message: Message) {}
+    pub fn update(&mut self, _message: &Message) {}
 
     pub fn view(&self) -> Element<'_, Message>
     where
