@@ -316,8 +316,8 @@ pub enum Action {
     },
     RequestMeterSnapshot,
     MeterSnapshot {
-        hw_out_db: Vec<f32>,
-        track_meters: Vec<(String, Vec<f32>)>,
+        hw_out_db: Arc<Vec<f32>>,
+        track_meters: Arc<Vec<(String, Vec<f32>)>>,
     },
     TrackToggleArm(String),
     TrackToggleMute(String),

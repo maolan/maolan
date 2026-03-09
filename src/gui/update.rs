@@ -6013,7 +6013,7 @@ impl Maolan {
                     } => {
                         let mut state = self.state.blocking_write();
                         Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, hw_out_db);
-                        for (track_name, output_db) in track_meters {
+                        for (track_name, output_db) in track_meters.iter() {
                             if let Some(track) =
                                 state.tracks.iter_mut().find(|t| t.name == track_name.as_str())
                             {

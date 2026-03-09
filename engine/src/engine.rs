@@ -174,8 +174,8 @@ pub struct Engine {
     track_meter_linear_by_track: HashMap<String, Vec<f32>>,
     #[cfg(not(target_os = "freebsd"))]
     track_meter_last_published_linear: HashMap<String, Vec<f32>>,
-    latest_hw_out_meter_db: Vec<f32>,
-    latest_track_meter_db_by_track: HashMap<String, Vec<f32>>,
+    latest_hw_out_meter_db: Arc<Vec<f32>>,
+    latest_track_meter_snapshot: Arc<Vec<(String, Vec<f32>)>>,
     history: History,
     history_group: Option<UndoEntry>,
     history_suspended: bool,
@@ -772,8 +772,8 @@ impl Engine {
             track_meter_linear_by_track: HashMap::new(),
             #[cfg(not(target_os = "freebsd"))]
             track_meter_last_published_linear: HashMap::new(),
-            latest_hw_out_meter_db: Vec::new(),
-            latest_track_meter_db_by_track: HashMap::new(),
+            latest_hw_out_meter_db: Arc::new(Vec::new()),
+            latest_track_meter_snapshot: Arc::new(Vec::new()),
             history: History::default(),
             history_group: None,
             history_suspended: false,
@@ -1980,7 +1980,7 @@ impl Engine {
                 return;
             }
         };
-        self.latest_hw_out_meter_db = meter_db.clone();
+        self.latest_hw_out_meter_db = Arc::new(meter_db.clone());
         #[cfg(target_os = "freebsd")]
         {
             return;
@@ -2035,7 +2035,7 @@ impl Engine {
             .iter()
             .map(|(name, track)| (name.clone(), track.clone()))
             .collect();
-        self.latest_track_meter_db_by_track.clear();
+        let mut snapshot = Vec::with_capacity(tracks.len());
         for (name, track) in &tracks {
             let linear = self
                 .track_meter_linear_by_track
@@ -2047,9 +2047,9 @@ impl Engine {
                 .copied()
                 .map(Self::meter_linear_to_db)
                 .collect::<Vec<_>>();
-            self.latest_track_meter_db_by_track
-                .insert(name.clone(), output_db);
+            snapshot.push((name.clone(), output_db));
         }
+        self.latest_track_meter_snapshot = Arc::new(snapshot);
         #[cfg(target_os = "freebsd")]
         {
             return;
@@ -2676,23 +2676,9 @@ impl Engine {
                 }
             }
             Action::RequestMeterSnapshot => {
-                let tracks: Vec<(String, Vec<f32>)> = self
-                    .state
-                    .lock()
-                    .tracks
-                    .keys()
-                    .map(|name| {
-                        let meters = self
-                            .latest_track_meter_db_by_track
-                            .get(name)
-                            .cloned()
-                            .unwrap_or_default();
-                        (name.clone(), meters)
-                    })
-                    .collect();
                 self.notify_clients(Ok(Action::MeterSnapshot {
                     hw_out_db: self.latest_hw_out_meter_db.clone(),
-                    track_meters: tracks,
+                    track_meters: self.latest_track_meter_snapshot.clone(),
                 }))
                 .await;
                 return;
