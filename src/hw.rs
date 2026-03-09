@@ -15,7 +15,9 @@ impl HW {
     }
 
     pub fn audio_view(&self) -> iced::Element<'_, Message> {
-        let period_options = vec![64, 128, 256, 512, 1024, 2048, 4096, 8192];
+        let period_options = vec![
+            16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
+        ];
         let nperiod_options: Vec<usize> = (1..=16).collect();
         let fallback_sample_rates = vec![
             8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,

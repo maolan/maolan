@@ -1648,11 +1648,11 @@ impl Maolan {
     }
 
     fn normalize_period_frames(period_frames: usize) -> usize {
-        let v = period_frames.clamp(64, 8192);
+        let v = period_frames.clamp(16, 65536);
         if v.is_power_of_two() {
             v
         } else {
-            v.next_power_of_two().min(8192)
+            v.next_power_of_two().min(65536)
         }
     }
 
