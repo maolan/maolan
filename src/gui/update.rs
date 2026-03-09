@@ -2380,6 +2380,8 @@ impl Maolan {
                 self.pending_record_after_save = false;
                 self.pending_save_path = None;
                 self.pending_save_tracks.clear();
+                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                self.pending_save_vst3_states.clear();
                 self.pending_audio_peaks.clear();
                 self.pending_peak_file_loads.clear();
                 self.pending_peak_rebuilds.clear();
@@ -5006,6 +5008,7 @@ impl Maolan {
                             }
                             state.clap_plugins_by_track.remove(name);
                             state.clap_states_by_track.remove(name);
+                            state.vst3_states_by_track.remove(name);
                             for track in &mut state.tracks {
                                 if track.vca_master.as_deref() == Some(name.as_str()) {
                                     track.vca_master = None;
@@ -6290,37 +6293,7 @@ impl Maolan {
                         }
                     }
                     #[cfg(any(target_os = "windows", target_os = "macos"))]
-                    Action::TrackSnapshotAllClapStates { track_name } => {
-                        if self.pending_save_path.is_some() {
-                            self.pending_save_tracks.remove(track_name);
-                            if self.pending_save_tracks.is_empty() {
-                                let path = self.pending_save_path.take().unwrap_or_default();
-                                let is_template = self.pending_save_is_template;
-                                self.pending_save_is_template = false;
-                                if !path.is_empty() {
-                                    if is_template {
-                                        if let Err(e) = self.save_template(path.clone()) {
-                                            error!("{}", e);
-                                            self.state.blocking_write().message =
-                                                format!("Failed to save template: {}", e);
-                                        } else {
-                                            self.state.blocking_write().message =
-                                                "Template saved".to_string();
-                                            // Rescan templates and update menu
-                                            let templates = crate::gui::scan_templates();
-                                            self.state.blocking_write().available_templates =
-                                                templates.clone();
-                                            self.menu.update_templates(templates);
-                                        }
-                                    } else if let Err(e) = self.save(path.clone()) {
-                                        error!("{}", e);
-                                    } else {
-                                        return self.send(Action::SetSessionPath(path));
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    Action::TrackSnapshotAllClapStates { track_name: _ } => {}
                     Action::TrackClearDefaultPassthrough { track_name } => {
                         let lv2_track = self.state.blocking_read().plugin_graph_track.clone();
                         #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
@@ -6354,6 +6327,46 @@ impl Maolan {
                         instance_id,
                         state,
                     } => {
+                        {
+                            let mut gui_state = self.state.blocking_write();
+                            gui_state
+                                .vst3_states_by_track
+                                .entry(track_name.clone())
+                                .or_default()
+                                .insert(*instance_id, state.clone());
+                        }
+                        #[cfg(any(target_os = "windows", target_os = "macos"))]
+                        if self.pending_save_path.is_some() {
+                            self.pending_save_vst3_states
+                                .remove(&(track_name.clone(), *instance_id));
+                            if self.pending_save_tracks.is_empty()
+                                && self.pending_save_vst3_states.is_empty()
+                            {
+                                let path = self.pending_save_path.take().unwrap_or_default();
+                                let is_template = self.pending_save_is_template;
+                                self.pending_save_is_template = false;
+                                if !path.is_empty() {
+                                    if is_template {
+                                        if let Err(e) = self.save_template(path.clone()) {
+                                            error!("{}", e);
+                                            self.state.blocking_write().message =
+                                                format!("Failed to save template: {}", e);
+                                        } else {
+                                            self.state.blocking_write().message =
+                                                "Template saved".to_string();
+                                            let templates = crate::gui::scan_templates();
+                                            self.state.blocking_write().available_templates =
+                                                templates.clone();
+                                            self.menu.update_templates(templates);
+                                        }
+                                    } else if let Err(e) = self.save(path.clone()) {
+                                        error!("{}", e);
+                                    } else {
+                                        return self.send(Action::SetSessionPath(path));
+                                    }
+                                }
+                            }
+                        }
                         if let Some(pending) = self.pending_vst3_ui_open.clone()
                             && &pending.track_name == track_name
                             && pending.instance_id == *instance_id
@@ -6606,7 +6619,13 @@ impl Maolan {
 
                         if self.pending_save_path.is_some() {
                             self.pending_save_tracks.remove(track_name);
-                            if self.pending_save_tracks.is_empty() {
+                            #[cfg(any(target_os = "windows", target_os = "macos"))]
+                            let ready_to_save =
+                                self.pending_save_tracks.is_empty()
+                                    && self.pending_save_vst3_states.is_empty();
+                            #[cfg(all(unix, not(target_os = "macos")))]
+                            let ready_to_save = self.pending_save_tracks.is_empty();
+                            if ready_to_save {
                                 let path = self.pending_save_path.take().unwrap_or_default();
                                 let is_template = self.pending_save_is_template;
                                 self.pending_save_is_template = false;
@@ -6682,6 +6701,11 @@ impl Maolan {
                             state
                                 .clap_states_by_track
                                 .insert(new_name.clone(), clap_states);
+                        }
+                        if let Some(vst3_states) = state.vst3_states_by_track.remove(old_name) {
+                            state
+                                .vst3_states_by_track
+                                .insert(new_name.clone(), vst3_states);
                         }
                         for track in &mut state.tracks {
                             if track.vca_master.as_deref() == Some(old_name.as_str()) {

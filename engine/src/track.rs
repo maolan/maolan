@@ -2140,12 +2140,12 @@ impl Track {
 
     #[cfg(target_os = "windows")]
     pub fn vst3_editor_handle_and_title(
-        &self,
+        &mut self,
         instance_id: usize,
     ) -> Result<(usize, String), String> {
         let instance = self
             .vst3_processors
-            .iter()
+            .iter_mut()
             .find(|i| i.id == instance_id)
             .ok_or_else(|| format!("VST3 instance {} not found", instance_id))?;
         instance.processor.editor_controller_handle_and_title()

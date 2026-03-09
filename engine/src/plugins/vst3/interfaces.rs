@@ -409,7 +409,10 @@ impl PluginInstance {
         input_channels: i32,
         output_channels: i32,
     ) -> Result<(), String> {
-        use vst3::Steinberg::Vst::{IAudioProcessorTrait, SpeakerArr};
+        use vst3::Steinberg::Vst::{
+            BusDirections_, BusInfo, BusInfo_::BusFlags_ as BusFlags, BusTypes_,
+            IAudioProcessorTrait, IComponentTrait, MediaTypes_, SpeakerArr,
+        };
 
         let processor = self
             .audio_processor
@@ -424,45 +427,139 @@ impl PluginInstance {
             ));
         }
 
-        let (input_bus_count, output_bus_count) = self.audio_bus_counts();
-        if input_bus_count > 0 || output_bus_count > 0 {
-            let mut input_arrangements = vec![SpeakerArr::kEmpty; input_bus_count];
-            let mut output_arrangements = vec![SpeakerArr::kEmpty; output_bus_count];
+        let configure_audio_buses = |direction: i32, requested_channels: i32| {
+            let bus_count = unsafe { self.component.getBusCount(MediaTypes_::kAudio as i32, direction) }
+                .max(0) as usize;
+            if bus_count == 0 {
+                return Vec::new();
+            }
 
-            for (idx, arr) in input_arrangements.iter_mut().enumerate() {
+            let mut infos: Vec<BusInfo> = Vec::with_capacity(bus_count);
+            for idx in 0..bus_count {
+                let mut info: BusInfo = unsafe { std::mem::zeroed() };
                 let r = unsafe {
-                    processor.getBusArrangement(BusDirections_::kInput as i32, idx as i32, arr)
+                    self.component.getBusInfo(
+                        MediaTypes_::kAudio as i32,
+                        direction,
+                        idx as i32,
+                        &mut info,
+                    )
                 };
                 if r != kResultOk {
-                    *arr = if input_channels > 1 {
+                    info.channelCount = if idx == 0 { 2 } else { 0 };
+                    info.busType = if idx == 0 {
+                        BusTypes_::kMain as i32
+                    } else {
+                        BusTypes_::kAux as i32
+                    };
+                    info.flags = if idx == 0 { BusFlags::kDefaultActive as u32 } else { 0 };
+                }
+                infos.push(info);
+            }
+
+            let mut remaining = requested_channels.max(0);
+            let mut active = vec![false; bus_count];
+            let mut arrangements = vec![SpeakerArr::kEmpty; bus_count];
+
+            let mut ordered: Vec<usize> = (0..bus_count)
+                .filter(|&idx| infos[idx].busType == BusTypes_::kMain as i32)
+                .collect();
+            ordered.extend(
+                (0..bus_count).filter(|&idx| infos[idx].busType != BusTypes_::kMain as i32),
+            );
+
+            for idx in ordered {
+                if remaining <= 0 {
+                    break;
+                }
+                let bus_channels = infos[idx].channelCount.max(1);
+                let allocate = remaining.min(bus_channels);
+                if allocate > 0 {
+                    active[idx] = true;
+                    arrangements[idx] = if allocate > 1 {
                         SpeakerArr::kStereo
                     } else {
                         SpeakerArr::kMono
                     };
-                }
-            }
-            for (idx, arr) in output_arrangements.iter_mut().enumerate() {
-                let r = unsafe {
-                    processor.getBusArrangement(BusDirections_::kOutput as i32, idx as i32, arr)
-                };
-                if r != kResultOk {
-                    *arr = if output_channels > 1 {
-                        SpeakerArr::kStereo
-                    } else {
-                        SpeakerArr::kMono
-                    };
+                    remaining -= allocate;
                 }
             }
 
-            let set_arrangements = unsafe {
+            if requested_channels > 0 && !active.iter().any(|v| *v) {
+                active[0] = true;
+                arrangements[0] = if requested_channels > 1 {
+                    SpeakerArr::kStereo
+                } else {
+                    SpeakerArr::kMono
+                };
+            }
+
+            for idx in 0..bus_count {
+                let _ = unsafe {
+                    self.component.activateBus(
+                        MediaTypes_::kAudio as i32,
+                        direction,
+                        idx as i32,
+                        if active[idx] { 1 } else { 0 },
+                    )
+                };
+            }
+
+            arrangements
+        };
+
+        let mut input_arrangements =
+            configure_audio_buses(BusDirections_::kInput as i32, input_channels);
+        let mut output_arrangements =
+            configure_audio_buses(BusDirections_::kOutput as i32, output_channels);
+        if !input_arrangements.is_empty() || !output_arrangements.is_empty() {
+            let _ = unsafe {
                 processor.setBusArrangements(
-                    input_arrangements.as_mut_ptr(),
+                    if input_arrangements.is_empty() {
+                        std::ptr::null_mut()
+                    } else {
+                        input_arrangements.as_mut_ptr()
+                    },
                     input_arrangements.len() as i32,
-                    output_arrangements.as_mut_ptr(),
+                    if output_arrangements.is_empty() {
+                        std::ptr::null_mut()
+                    } else {
+                        output_arrangements.as_mut_ptr()
+                    },
                     output_arrangements.len() as i32,
                 )
             };
-            let _ = set_arrangements;
+        }
+
+        let event_in_buses = unsafe {
+            self.component
+                .getBusCount(MediaTypes_::kEvent as i32, BusDirections_::kInput as i32)
+        }
+        .max(0) as usize;
+        for idx in 0..event_in_buses {
+            let _ = unsafe {
+                self.component.activateBus(
+                    MediaTypes_::kEvent as i32,
+                    BusDirections_::kInput as i32,
+                    idx as i32,
+                    1,
+                )
+            };
+        }
+        let event_out_buses = unsafe {
+            self.component
+                .getBusCount(MediaTypes_::kEvent as i32, BusDirections_::kOutput as i32)
+        }
+        .max(0) as usize;
+        for idx in 0..event_out_buses {
+            let _ = unsafe {
+                self.component.activateBus(
+                    MediaTypes_::kEvent as i32,
+                    BusDirections_::kOutput as i32,
+                    idx as i32,
+                    1,
+                )
+            };
         }
 
         let mut setup = ProcessSetup {

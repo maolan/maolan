@@ -24,7 +24,7 @@ use maolan_engine::{
     clap::{ClapPluginInfo, ClapPluginState},
     kind::Kind,
     message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin},
-    vst3::Vst3PluginInfo,
+    vst3::{Vst3PluginInfo, Vst3PluginState},
 };
 #[cfg(target_os = "freebsd")]
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
@@ -502,6 +502,7 @@ pub struct StateData {
     pub clap_plugins_loaded: bool,
     pub clap_plugins_by_track: HashMap<String, Vec<String>>,
     pub clap_states_by_track: HashMap<String, HashMap<String, ClapPluginState>>,
+    pub vst3_states_by_track: HashMap<String, HashMap<usize, Vst3PluginState>>,
     pub plugin_graph_track: Option<String>,
     #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
     pub plugin_graph_plugins: Vec<PluginGraphPlugin>,
@@ -709,6 +710,7 @@ impl Default for StateData {
             clap_plugins_loaded: false,
             clap_plugins_by_track: HashMap::new(),
             clap_states_by_track: HashMap::new(),
+            vst3_states_by_track: HashMap::new(),
             plugin_graph_track: None,
             #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
             plugin_graph_plugins: vec![],

@@ -1,10 +1,11 @@
 use maolan_engine::plugins::vst3::interfaces::PluginFactory;
-use maolan_engine::vst3::MemoryStream;
+use maolan_engine::vst3::{MemoryStream, ibstream_ptr};
 use std::ffi::c_void;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use vst3::Interface;
 use vst3::Steinberg::IPlugViewTrait;
+use vst3::Steinberg::IPlugView;
 use vst3::Steinberg::Vst::IComponentTrait;
 use vst3::Steinberg::Vst::{IEditControllerTrait, ViewType};
 use vst3::Steinberg::kResultTrue;
@@ -12,27 +13,29 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow,
-    DispatchMessageW, GetClientRect, IDC_ARROW, IsWindow, LoadCursorW, MSG, MoveWindow, PM_REMOVE,
-    PeekMessageW, PostQuitMessage, RegisterClassW, SW_SHOWDEFAULT, ShowWindow, TranslateMessage,
-    WM_CLOSE, WM_DESTROY, WM_QUIT, WNDCLASSW, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    BringWindowToTop, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW,
+    DestroyWindow, DispatchMessageW, GetClientRect, GetParent, GetWindowRect, IDC_ARROW, IsWindow,
+    LoadCursorW, MSG, MoveWindow, PM_REMOVE, PeekMessageW, PostQuitMessage, RegisterClassW,
+    SW_SHOWDEFAULT, SetForegroundWindow, ShowWindow, TranslateMessage, WM_CLOSE, WM_DESTROY,
+    WM_QUIT, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW,
+    WS_VISIBLE,
 };
 
 #[repr(C)]
 struct HostPlugFrame {
     iface: vst3::Steinberg::IPlugFrame,
     ref_count: AtomicU32,
-    window: HWND,
+    embed_window: HWND,
 }
 
 impl HostPlugFrame {
-    fn new(window: HWND) -> Self {
+    fn new(embed_window: HWND) -> Self {
         Self {
             iface: vst3::Steinberg::IPlugFrame {
                 vtbl: &HOST_PLUG_FRAME_VTBL,
             },
             ref_count: AtomicU32::new(1),
-            window,
+            embed_window,
         }
     }
 }
@@ -97,8 +100,32 @@ unsafe extern "system" fn frame_resize_view(
     let width = unsafe { ((*new_size).right - (*new_size).left).max(1) };
     let height = unsafe { ((*new_size).bottom - (*new_size).top).max(1) };
     unsafe {
-        if !(*frame).window.is_null() {
-            let _ = MoveWindow((*frame).window, 120, 120, width + 20, height + 40, 1);
+        if !(*frame).embed_window.is_null() {
+            let _ = MoveWindow((*frame).embed_window, 0, 0, width, height, 1);
+
+            let host_window = GetParent((*frame).embed_window);
+            if !host_window.is_null() {
+                let mut wr: RECT = std::mem::zeroed();
+                let mut cr: RECT = std::mem::zeroed();
+                let _ = GetWindowRect(host_window, &mut wr);
+                let _ = GetClientRect(host_window, &mut cr);
+                let outer_w = (wr.right - wr.left).max(1);
+                let outer_h = (wr.bottom - wr.top).max(1);
+                let client_w = (cr.right - cr.left).max(1);
+                let client_h = (cr.bottom - cr.top).max(1);
+                let non_client_w = (outer_w - client_w).max(0);
+                let non_client_h = (outer_h - client_h).max(0);
+                let target_outer_w = width + non_client_w;
+                let target_outer_h = height + non_client_h;
+                let _ = MoveWindow(
+                    host_window,
+                    wr.left,
+                    wr.top,
+                    target_outer_w.max(1),
+                    target_outer_h.max(1),
+                    1,
+                );
+            }
         }
     }
     vst3::Steinberg::kResultOk
@@ -182,16 +209,6 @@ pub fn open_editor_blocking(
         eprintln!("[vst3-ui] instance created");
         instance.initialize(&factory)?;
         eprintln!("[vst3-ui] instance initialized");
-        if let Some(snapshot) = state.as_ref() {
-            if !snapshot.component_state.is_empty() {
-                let mut comp_stream = MemoryStream::from_bytes(&snapshot.component_state);
-                let _ = unsafe {
-                    instance
-                        .component
-                        .setState(comp_stream.as_ibstream_mut() as *mut _ as *mut _)
-                };
-            }
-        }
         let (input_buses, output_buses) = instance.audio_bus_counts();
         // Keep editor-host setup conservative: some plugins are sensitive to
         // unrealistic process settings and crash during UI bring-up.
@@ -218,6 +235,26 @@ pub fn open_editor_blocking(
             ui_audio_inputs.min(i32::MAX as usize) as i32,
             ui_audio_outputs.min(i32::MAX as usize) as i32,
         )?;
+        if let Some(snapshot) = state.as_ref() {
+            if !snapshot.component_state.is_empty() {
+                let comp_stream =
+                    vst3::ComWrapper::new(MemoryStream::from_bytes(&snapshot.component_state));
+                let _ = unsafe {
+                    instance
+                        .component
+                        .setState(ibstream_ptr(&comp_stream) as *mut _)
+                };
+            }
+            if !snapshot.controller_state.is_empty()
+                && let Some(controller) = instance.edit_controller.as_ref()
+            {
+                let ctrl_stream =
+                    vst3::ComWrapper::new(MemoryStream::from_bytes(&snapshot.controller_state));
+                let _ = unsafe {
+                    controller.setState(ibstream_ptr(&ctrl_stream) as *mut _)
+                };
+            }
+        }
         eprintln!(
             "[vst3-ui] processing setup sr={} block={} in={} out={} (requested in={} out={})",
             setup_sample_rate,
@@ -254,18 +291,18 @@ pub fn open_editor_blocking(
     result
 }
 
-pub fn open_editor_from_handle_blocking(controller_handle: usize, title: &str) -> Result<(), String> {
-    if controller_handle == 0 {
-        return Err("VST3 editor controller handle is null".to_string());
+pub fn open_editor_from_handle_blocking(view_handle: usize, title: &str) -> Result<(), String> {
+    if view_handle == 0 {
+        return Err("VST3 editor view handle is null".to_string());
     }
     let coinit_hr = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
     let did_init_com = coinit_hr == 0 || coinit_hr == 1;
 
     let result = (|| {
-        let controller_ptr = controller_handle as *mut vst3::Steinberg::Vst::IEditController;
-        let controller = unsafe { vst3::ComPtr::from_raw(controller_ptr) }
-            .ok_or("Failed to adopt VST3 editor controller handle")?;
-        run_vst3_win32_editor(controller, title.to_string())
+        let view_ptr = view_handle as *mut vst3::Steinberg::IPlugView;
+        let view = unsafe { vst3::ComPtr::from_raw(view_ptr) }
+            .ok_or("Failed to adopt VST3 editor view handle")?;
+        run_vst3_win32_editor_view(view, title.to_string())
     })();
 
     if did_init_com {
@@ -287,6 +324,13 @@ fn run_vst3_win32_editor(
     }
     let view = unsafe { vst3::ComPtr::from_raw(view_ptr) }
         .ok_or("Failed to manage VST3 editor view pointer")?;
+    run_vst3_win32_editor_view(view, title)
+}
+
+fn run_vst3_win32_editor_view(
+    view: vst3::ComPtr<IPlugView>,
+    title: String,
+) -> Result<(), String> {
     let hwnd_supported =
         unsafe { view.isPlatformTypeSupported(vst3::Steinberg::kPlatformTypeHWND) };
     if hwnd_supported != kResultTrue && hwnd_supported != vst3::Steinberg::kResultOk {
@@ -323,7 +367,7 @@ fn run_vst3_win32_editor(
             0,
             class_name.as_ptr(),
             title_w.as_ptr(),
-            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             width + 20,
@@ -343,7 +387,7 @@ fn run_vst3_win32_editor(
             0,
             static_class.as_ptr(),
             std::ptr::null(),
-            WS_CHILD | WS_VISIBLE,
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
             0,
             0,
             width,
@@ -362,28 +406,65 @@ fn run_vst3_win32_editor(
     }
     unsafe {
         let _ = ShowWindow(window, SW_SHOWDEFAULT);
+        let _ = BringWindowToTop(window);
+        let _ = SetForegroundWindow(window);
         let _ = MoveWindow(embed_window, 0, 0, width, height, 1);
     }
+    for _ in 0..4 {
+        let mut msg: MSG = unsafe { std::mem::zeroed() };
+        while unsafe { PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) } != 0 {
+            unsafe {
+                let _ = TranslateMessage(&msg);
+                let _ = DispatchMessageW(&msg);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let mut embed_client: RECT = unsafe { std::mem::zeroed() };
+    unsafe {
+        let _ = GetClientRect(embed_window, &mut embed_client);
+    }
+    let embed_w = (embed_client.right - embed_client.left).max(1);
+    let embed_h = (embed_client.bottom - embed_client.top).max(1);
+    if embed_w != width || embed_h != height {
+        unsafe {
+            let _ = MoveWindow(embed_window, 0, 0, embed_w, embed_h, 1);
+        }
+    }
 
+    let attach_parent = embed_window;
+    let mut frame = Box::new(HostPlugFrame::new(attach_parent));
+    let frame_ptr = &mut frame.iface as *mut vst3::Steinberg::IPlugFrame;
+    eprintln!("[vst3-ui] setFrame (pre-attach)");
+    let set_frame = unsafe { view.setFrame(frame_ptr) };
+    if set_frame != vst3::Steinberg::kResultOk && set_frame != vst3::Steinberg::kResultTrue {
+        unsafe {
+            let _ = DestroyWindow(window);
+        }
+        return Err(format!("VST3 editor setFrame failed (result: {set_frame})"));
+    }
     eprintln!("[vst3-ui] attached");
     let attached = unsafe {
         view.attached(
-            embed_window.cast::<c_void>(),
+            attach_parent.cast::<c_void>(),
             vst3::Steinberg::kPlatformTypeHWND,
         )
     };
     eprintln!("[vst3-ui] attached returned {attached}");
     if attached != vst3::Steinberg::kResultOk && attached != vst3::Steinberg::kResultTrue {
+        let _ = unsafe { view.setFrame(std::ptr::null_mut()) };
         unsafe {
             let _ = DestroyWindow(window);
         }
         return Err(format!("VST3 editor attach failed (result: {attached})"));
     }
-    let mut frame = Box::new(HostPlugFrame::new(embed_window));
-    let frame_ptr = &mut frame.iface as *mut vst3::Steinberg::IPlugFrame;
-    eprintln!("[vst3-ui] setFrame");
-    let _ = unsafe { view.setFrame(frame_ptr) };
-    // Keep attach lifecycle minimal for plugin compatibility.
+    let mut initial_rect = vst3::Steinberg::ViewRect {
+        left: 0,
+        top: 0,
+        right: width,
+        bottom: height,
+    };
+    let _ = unsafe { view.onSize(&mut initial_rect) };
 
     let mut last_w = width;
     let mut last_h = height;

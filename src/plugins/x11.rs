@@ -1,4 +1,4 @@
-use maolan_engine::plugins::vst3::MemoryStream;
+use maolan_engine::plugins::vst3::{MemoryStream, ibstream_ptr};
 use maolan_engine::plugins::vst3::interfaces::{PluginFactory, pump_host_run_loop};
 use std::ffi::{CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
 use std::path::Path;
@@ -438,11 +438,11 @@ pub fn open_editor_blocking(
     if let Some(snapshot) = state.as_ref()
         && !snapshot.component_state.is_empty()
     {
-        let mut comp_stream = MemoryStream::from_bytes(&snapshot.component_state);
+        let comp_stream = vst3::ComWrapper::new(MemoryStream::from_bytes(&snapshot.component_state));
         let _ = unsafe {
             instance
                 .component
-                .setState(comp_stream.as_ibstream_mut() as *mut _ as *mut _)
+                .setState(ibstream_ptr(&comp_stream) as *mut _)
         };
     }
 

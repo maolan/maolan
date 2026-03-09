@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::cell::UnsafeCell;
 use vst3::Steinberg::{IBStreamTrait, kResultFalse, kResultOk};
+use vst3::{Class, ComWrapper};
 
 type TResult = i32;
 
@@ -17,6 +18,10 @@ pub struct Vst3PluginState {
 pub struct MemoryStream {
     data: UnsafeCell<Vec<u8>>,
     position: UnsafeCell<usize>,
+}
+
+impl Class for MemoryStream {
+    type Interfaces = (vst3::Steinberg::IBStream,);
 }
 
 impl Default for MemoryStream {
@@ -40,12 +45,8 @@ impl MemoryStream {
         }
     }
 
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.data.into_inner()
-    }
-
-    pub fn as_ibstream_mut(&mut self) -> &mut dyn IBStreamTrait {
-        self as &mut dyn IBStreamTrait
+    pub fn bytes(&self) -> Vec<u8> {
+        unsafe { self.data_ref().clone() }
     }
 
     // Helper methods for safe access (used in unsafe blocks)
@@ -66,6 +67,13 @@ impl MemoryStream {
     unsafe fn position_ref(&self) -> &usize {
         unsafe { &*self.position.get() }
     }
+}
+
+pub fn ibstream_ptr(stream: &ComWrapper<MemoryStream>) -> *mut vst3::Steinberg::IBStream {
+    stream
+        .as_com_ref::<vst3::Steinberg::IBStream>()
+        .map(|r| r.as_ptr())
+        .unwrap_or(std::ptr::null_mut())
 }
 
 impl IBStreamTrait for MemoryStream {

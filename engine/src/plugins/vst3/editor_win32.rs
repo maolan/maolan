@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use vst3::ComPtr;
 use vst3::Interface;
 use vst3::Steinberg::IPlugViewTrait;
+use vst3::Steinberg::IPlugView;
 use vst3::Steinberg::Vst::{IEditController, IEditControllerTrait, ViewType};
 use vst3::Steinberg::kResultTrue;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -169,16 +170,23 @@ pub fn open_editor_blocking(
     controller: ComPtr<IEditController>,
     title: &str,
 ) -> Result<(), String> {
+    let view_ptr = unsafe { controller.createView(ViewType::kEditor) };
+    if view_ptr.is_null() {
+        return Err("VST3 plugin does not expose an editor view".to_string());
+    }
+    let view =
+        unsafe { ComPtr::from_raw(view_ptr) }.ok_or("Failed to manage VST3 editor view pointer")?;
+    open_editor_view_blocking(view, title)
+}
+
+pub fn open_editor_view_blocking(
+    view: ComPtr<IPlugView>,
+    title: &str,
+) -> Result<(), String> {
     let coinit_hr = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
     let did_init_com = coinit_hr == 0 || coinit_hr == 1;
 
     let result = (|| {
-        let view_ptr = unsafe { controller.createView(ViewType::kEditor) };
-        if view_ptr.is_null() {
-            return Err("VST3 plugin does not expose an editor view".to_string());
-        }
-        let view = unsafe { ComPtr::from_raw(view_ptr) }
-            .ok_or("Failed to manage VST3 editor view pointer")?;
         let hwnd_supported =
             unsafe { view.isPlatformTypeSupported(vst3::Steinberg::kPlatformTypeHWND) };
         if hwnd_supported != kResultTrue && hwnd_supported != vst3::Steinberg::kResultOk {

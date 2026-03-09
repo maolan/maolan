@@ -1,15 +1,21 @@
 use super::interfaces::PluginInstance;
 use super::midi::EventBuffer;
 use super::port::{BusInfo, ParameterInfo};
-use super::state::{MemoryStream, Vst3PluginState};
+use super::state::{MemoryStream, Vst3PluginState, ibstream_ptr};
 use crate::audio::io::AudioIO;
 use crate::midi::io::MidiEvent;
+use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+#[cfg(target_os = "windows")]
+use vst3::ComPtr;
+#[cfg(target_os = "windows")]
+use vst3::Steinberg::IPlugView;
+#[cfg(target_os = "windows")]
+use vst3::Steinberg::Vst::{IEditControllerTrait, ViewType};
 use vst3::Steinberg::Vst::ProcessModes_::kRealtime;
 use vst3::Steinberg::Vst::SymbolicSampleSizes_::kSample32;
 
-#[derive(Debug)]
 pub struct Vst3Processor {
     // Plugin identity
     path: String,
@@ -33,6 +39,27 @@ pub struct Vst3Processor {
     parameters: Vec<ParameterInfo>,
     scalar_values: Arc<Mutex<Vec<f32>>>,
     previous_values: Arc<Mutex<Vec<f32>>>,
+    processing_started: bool,
+    #[cfg(target_os = "windows")]
+    editor_view: Option<ComPtr<IPlugView>>,
+}
+
+impl fmt::Debug for Vst3Processor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Vst3Processor")
+            .field("path", &self.path)
+            .field("name", &self.name)
+            .field("plugin_id", &self.plugin_id)
+            .field("audio_inputs", &self.audio_inputs.len())
+            .field("audio_outputs", &self.audio_outputs.len())
+            .field("midi_input_ports", &self.midi_input_ports)
+            .field("midi_output_ports", &self.midi_output_ports)
+            .field("input_buses", &self.input_buses)
+            .field("output_buses", &self.output_buses)
+            .field("parameters", &self.parameters)
+            .field("processing_started", &self.processing_started)
+            .finish()
+    }
 }
 
 impl Vst3Processor {
@@ -139,9 +166,14 @@ impl Vst3Processor {
             },
         )?;
 
-        // Temporary workaround: some Linux VST3 plugins (notably lsp-plugins) crash
-        // inside setProcessing(1). We keep initialization stable and rely on process()
-        // calls without explicitly toggling processing state.
+        #[cfg(target_os = "windows")]
+        let processing_started = {
+            instance.start_processing()?;
+            true
+        };
+        #[cfg(not(target_os = "windows"))]
+        let processing_started = false;
+
         // Temporary workaround: querying IEditController parameters crashes on
         // some Linux VST3 plugins (e.g. lsp-plugins), so keep parameter list empty.
         let parameters = Vec::new();
@@ -164,6 +196,9 @@ impl Vst3Processor {
             parameters,
             scalar_values,
             previous_values,
+            processing_started,
+            #[cfg(target_os = "windows")]
+            editor_view: None,
         })
     }
 
@@ -181,25 +216,37 @@ impl Vst3Processor {
 
     #[cfg(target_os = "windows")]
     pub fn open_editor_blocking(&mut self) -> Result<(), String> {
-        let controller = self
-            .instance
-            .edit_controller
-            .clone()
-            .ok_or("VST3 plugin has no edit controller")?;
-        super::editor_win32::open_editor_blocking(controller, &self.name)
+        let view = self.ensure_editor_view()?;
+        super::editor_win32::open_editor_view_blocking(view, &self.name)
     }
 
     #[cfg(target_os = "windows")]
-    pub fn editor_controller_handle_and_title(&self) -> Result<(usize, String), String> {
+    pub fn editor_controller_handle_and_title(&mut self) -> Result<(usize, String), String> {
+        let view = self.ensure_editor_view()?;
+        let handle = view.as_ptr() as usize;
+        // Transfer one COM ref-counted ownership unit to caller.
+        std::mem::forget(view);
+        Ok((handle, self.name.clone()))
+    }
+
+    #[cfg(target_os = "windows")]
+    fn ensure_editor_view(&mut self) -> Result<ComPtr<IPlugView>, String> {
+        if let Some(view) = self.editor_view.as_ref() {
+            return Ok(view.clone());
+        }
         let controller = self
             .instance
             .edit_controller
             .clone()
             .ok_or("VST3 plugin has no edit controller")?;
-        let handle = controller.as_ptr() as usize;
-        // Transfer one COM ref-counted ownership unit to caller.
-        std::mem::forget(controller);
-        Ok((handle, self.name.clone()))
+        let view_ptr = unsafe { controller.createView(ViewType::kEditor) };
+        if view_ptr.is_null() {
+            return Err("VST3 plugin does not expose an editor view".to_string());
+        }
+        let view = unsafe { ComPtr::from_raw(view_ptr) }
+            .ok_or("Failed to manage VST3 editor view pointer")?;
+        self.editor_view = Some(view.clone());
+        Ok(view)
     }
 
     pub fn audio_inputs(&self) -> &[Arc<AudioIO>] {
@@ -441,21 +488,21 @@ impl Vst3Processor {
         let instance = &self.instance;
 
         // Save component state
-        let mut comp_stream = MemoryStream::new();
+        let comp_stream = vst3::ComWrapper::new(MemoryStream::new());
         unsafe {
             let result = instance
                 .component
-                .getState(comp_stream.as_ibstream_mut() as *mut _ as *mut _);
+                .getState(ibstream_ptr(&comp_stream) as *mut _);
             if result != vst3::Steinberg::kResultOk {
                 return Err("Failed to get component state".to_string());
             }
         }
 
         // Save controller state (if available)
-        let mut ctrl_stream = MemoryStream::new();
+        let ctrl_stream = vst3::ComWrapper::new(MemoryStream::new());
         if let Some(controller) = &instance.edit_controller {
             unsafe {
-                let result = controller.getState(ctrl_stream.as_ibstream_mut() as *mut _ as *mut _);
+                let result = controller.getState(ibstream_ptr(&ctrl_stream) as *mut _);
                 if result != vst3::Steinberg::kResultOk {
                     // Controller state is optional, so just log warning
                     eprintln!("Warning: Failed to get controller state");
@@ -465,8 +512,8 @@ impl Vst3Processor {
 
         Ok(Vst3PluginState {
             plugin_id: self.plugin_id.clone(),
-            component_state: comp_stream.into_bytes(),
-            controller_state: ctrl_stream.into_bytes(),
+            component_state: comp_stream.bytes(),
+            controller_state: ctrl_stream.bytes(),
         })
     }
 
@@ -485,11 +532,11 @@ impl Vst3Processor {
 
         // Restore component state
         if !state.component_state.is_empty() {
-            let mut comp_stream = MemoryStream::from_bytes(&state.component_state);
+            let comp_stream = vst3::ComWrapper::new(MemoryStream::from_bytes(&state.component_state));
             unsafe {
                 let result = instance
                     .component
-                    .setState(comp_stream.as_ibstream_mut() as *mut _ as *mut _);
+                    .setState(ibstream_ptr(&comp_stream) as *mut _);
                 if result != vst3::Steinberg::kResultOk {
                     return Err("Failed to set component state".to_string());
                 }
@@ -500,9 +547,10 @@ impl Vst3Processor {
         if !state.controller_state.is_empty()
             && let Some(controller) = &instance.edit_controller
         {
-            let mut ctrl_stream = MemoryStream::from_bytes(&state.controller_state);
+            let ctrl_stream =
+                vst3::ComWrapper::new(MemoryStream::from_bytes(&state.controller_state));
             unsafe {
-                let result = controller.setState(ctrl_stream.as_ibstream_mut() as *mut _ as *mut _);
+                let result = controller.setState(ibstream_ptr(&ctrl_stream) as *mut _);
                 if result != vst3::Steinberg::kResultOk {
                     eprintln!("Warning: Failed to set controller state");
                 }
@@ -522,8 +570,9 @@ impl Vst3Processor {
 
 impl Drop for Vst3Processor {
     fn drop(&mut self) {
-        // Keep symmetric with load workaround: avoid calling setProcessing(0)
-        // when we never called setProcessing(1).
+        if self.processing_started {
+            self.instance.stop_processing();
+        }
         let _ = self.instance.set_active(false);
         let _ = self.instance.terminate();
     }

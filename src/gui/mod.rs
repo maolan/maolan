@@ -26,7 +26,7 @@ use iced::{
     Length, Size, Task,
     widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
 };
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "windows"))]
 use maolan_engine::kind::Kind;
 use maolan_engine::{
     self as engine,
@@ -41,7 +41,7 @@ use mp3lame_encoder::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "windows"))]
 use serde_json::json;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -269,6 +269,8 @@ pub struct Maolan {
     session_dir: Option<PathBuf>,
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pending_save_vst3_states: HashSet<(String, usize)>,
     pending_save_is_template: bool,
     pending_audio_peaks: HashMap<AudioClipKey, ClipPeaks>,
     pending_peak_file_loads: HashMap<AudioClipKey, PathBuf>,
@@ -476,6 +478,8 @@ impl Default for Maolan {
             session_dir: None,
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            pending_save_vst3_states: HashSet::new(),
             pending_save_is_template: false,
             pending_audio_peaks: HashMap::new(),
             pending_peak_file_loads: HashMap::new(),
@@ -2488,7 +2492,7 @@ impl Maolan {
         Ok((rel, length.max(1)))
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(any(all(unix, not(target_os = "macos")), target_os = "windows"))]
     fn plugin_node_to_json(
         node: &maolan_engine::message::PluginGraphNode,
         id_to_index: &std::collections::HashMap<usize, usize>,
@@ -2501,11 +2505,18 @@ impl Maolan {
                 .get(id)
                 .copied()
                 .map(|idx| json!({"type":"plugin","plugin_index":idx})),
-            PluginGraphNode::Vst3PluginInstance(_) | PluginGraphNode::ClapPluginInstance(_) => None,
+            PluginGraphNode::Vst3PluginInstance(id) => id_to_index
+                .get(id)
+                .copied()
+                .map(|idx| json!({"type":"vst3_plugin","plugin_index":idx})),
+            PluginGraphNode::ClapPluginInstance(id) => id_to_index
+                .get(id)
+                .copied()
+                .map(|idx| json!({"type":"clap_plugin","plugin_index":idx})),
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[cfg(any(all(unix, not(target_os = "macos")), target_os = "windows"))]
     fn plugin_node_from_json(v: &Value) -> Option<maolan_engine::message::PluginGraphNode> {
         use maolan_engine::message::PluginGraphNode;
         let t = v["type"].as_str()?;
@@ -2515,11 +2526,17 @@ impl Maolan {
             "plugin" => Some(PluginGraphNode::Lv2PluginInstance(
                 v["plugin_index"].as_u64()? as usize,
             )),
+            "vst3_plugin" => Some(PluginGraphNode::Vst3PluginInstance(
+                v["plugin_index"].as_u64()? as usize,
+            )),
+            "clap_plugin" => Some(PluginGraphNode::ClapPluginInstance(
+                v["plugin_index"].as_u64()? as usize,
+            )),
             _ => None,
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn kind_to_json(kind: Kind) -> Value {
         match kind {
             Kind::Audio => json!("audio"),
@@ -2527,7 +2544,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     fn kind_from_json(v: &Value) -> Option<Kind> {
         match v.as_str()? {
             "audio" => Some(Kind::Audio),
