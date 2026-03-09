@@ -153,6 +153,9 @@ impl Maolan {
         } else {
             Subscription::none()
         };
+        #[cfg(target_os = "freebsd")]
+        let meter_poll_sub =
+            iced::time::every(Duration::from_millis(40)).map(|_| Message::MeterPollTick);
         let recording_preview_sub = if self.playing
             && !self.paused
             && self.record_armed
@@ -191,6 +194,8 @@ impl Maolan {
             keyboard_sub,
             event_sub,
             playback_sub,
+            #[cfg(target_os = "freebsd")]
+            meter_poll_sub,
             autosave_sub,
             peak_rebuild_sub,
             recording_preview_sub,

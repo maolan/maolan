@@ -314,6 +314,11 @@ pub enum Action {
         track_name: String,
         output_db: Vec<f32>,
     },
+    RequestMeterSnapshot,
+    MeterSnapshot {
+        hw_out_db: Vec<f32>,
+        track_meters: Vec<(String, Vec<f32>)>,
+    },
     TrackToggleArm(String),
     TrackToggleMute(String),
     TrackToggleSolo(String),

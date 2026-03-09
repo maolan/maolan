@@ -2474,6 +2474,12 @@ impl Maolan {
                 self.maybe_record_automation_from_request(a);
                 return self.send(a.clone());
             }
+            Message::MeterPollTick => {
+                let _ = CLIENT
+                    .sender
+                    .try_send(EngineMessage::Request(Action::RequestMeterSnapshot));
+                return Task::none();
+            }
             Message::TransportPlay => {
                 self.toolbar.update(message.clone());
                 let was_playing = self.playing;
@@ -5998,6 +6004,21 @@ impl Maolan {
                         let mut state = self.state.blocking_write();
                         if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
                             Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
+                        }
+                        return Task::none();
+                    }
+                    Action::MeterSnapshot {
+                        hw_out_db,
+                        track_meters,
+                    } => {
+                        let mut state = self.state.blocking_write();
+                        Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, hw_out_db);
+                        for (track_name, output_db) in track_meters {
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| t.name == track_name.as_str())
+                            {
+                                Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
+                            }
                         }
                         return Task::none();
                     }

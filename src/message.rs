@@ -689,6 +689,7 @@ pub enum Message {
     WindowResized(Size),
     WindowCloseRequested,
     PlaybackTick,
+    MeterPollTick,
     AutosaveSnapshotTick,
     RecordingPreviewTick,
     RecordingPreviewPeaksTick,

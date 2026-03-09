@@ -172,7 +172,10 @@ pub struct Engine {
     hw_out_meter_publish_phase: bool,
     last_track_meter_publish: Option<Instant>,
     track_meter_linear_by_track: HashMap<String, Vec<f32>>,
+    #[cfg(not(target_os = "freebsd"))]
     track_meter_last_published_linear: HashMap<String, Vec<f32>>,
+    latest_hw_out_meter_db: Vec<f32>,
+    latest_track_meter_db_by_track: HashMap<String, Vec<f32>>,
     history: History,
     history_group: Option<UndoEntry>,
     history_suspended: bool,
@@ -581,6 +584,7 @@ impl Engine {
     const METER_PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
     #[cfg(target_os = "freebsd")]
     const HW_OUT_METER_LINEAR_EPSILON: f32 = 0.0025;
+    #[cfg(not(target_os = "freebsd"))]
     const TRACK_METER_LINEAR_EPSILON: f32 = 0.0025;
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -766,7 +770,10 @@ impl Engine {
             hw_out_meter_publish_phase: false,
             last_track_meter_publish: None,
             track_meter_linear_by_track: HashMap::new(),
+            #[cfg(not(target_os = "freebsd"))]
             track_meter_last_published_linear: HashMap::new(),
+            latest_hw_out_meter_db: Vec::new(),
+            latest_track_meter_db_by_track: HashMap::new(),
             history: History::default(),
             history_group: None,
             history_suspended: false,
@@ -1973,11 +1980,19 @@ impl Engine {
                 return;
             }
         };
-        self.notify_clients(Ok(Action::TrackMeters {
-            track_name: "hw:out".to_string(),
-            output_db: meter_db,
-        }))
-        .await;
+        self.latest_hw_out_meter_db = meter_db.clone();
+        #[cfg(target_os = "freebsd")]
+        {
+            return;
+        }
+        #[cfg(not(target_os = "freebsd"))]
+        {
+            self.notify_clients(Ok(Action::TrackMeters {
+                track_name: "hw:out".to_string(),
+                output_db: meter_db,
+            }))
+            .await;
+        }
     }
 
     async fn send_tracks(&mut self) -> bool {
@@ -2020,6 +2035,27 @@ impl Engine {
             .iter()
             .map(|(name, track)| (name.clone(), track.clone()))
             .collect();
+        self.latest_track_meter_db_by_track.clear();
+        for (name, track) in &tracks {
+            let linear = self
+                .track_meter_linear_by_track
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| track.lock().output_meter_linear());
+            let output_db = linear
+                .iter()
+                .copied()
+                .map(Self::meter_linear_to_db)
+                .collect::<Vec<_>>();
+            self.latest_track_meter_db_by_track
+                .insert(name.clone(), output_db);
+        }
+        #[cfg(target_os = "freebsd")]
+        {
+            return;
+        }
+        #[cfg(not(target_os = "freebsd"))]
+        {
         let mut active_track_names = std::collections::HashSet::with_capacity(tracks.len());
         let meters: Vec<(String, Vec<f32>)> = tracks
             .into_iter()
@@ -2062,6 +2098,7 @@ impl Engine {
                 output_db,
             }))
             .await;
+        }
         }
     }
 
@@ -2638,7 +2675,30 @@ impl Engine {
                     }
                 }
             }
+            Action::RequestMeterSnapshot => {
+                let tracks: Vec<(String, Vec<f32>)> = self
+                    .state
+                    .lock()
+                    .tracks
+                    .keys()
+                    .map(|name| {
+                        let meters = self
+                            .latest_track_meter_db_by_track
+                            .get(name)
+                            .cloned()
+                            .unwrap_or_default();
+                        (name.clone(), meters)
+                    })
+                    .collect();
+                self.notify_clients(Ok(Action::MeterSnapshot {
+                    hw_out_db: self.latest_hw_out_meter_db.clone(),
+                    track_meters: tracks,
+                }))
+                .await;
+                return;
+            }
             Action::TrackMeters { .. } => {}
+            Action::MeterSnapshot { .. } => {}
             Action::TrackToggleArm(ref name) => {
                 if self.reject_if_track_frozen(name, "arming/disarming").await {
                     return;
@@ -4856,6 +4916,7 @@ impl Engine {
                     Action::OpenAudioDevice { .. }
                     | Action::OpenMidiInputDevice(_)
                     | Action::OpenMidiOutputDevice(_)
+                    | Action::RequestMeterSnapshot
                     | Action::Quit
                     | Action::Play
                     | Action::Stop
