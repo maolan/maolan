@@ -13,7 +13,7 @@ use maolan_engine::message::{Action as EngineAction, Message as EngineMessage};
 use std::collections::HashMap;
 use std::time::Duration;
 
-const METER_DIRTY_EPSILON_DB: f32 = 0.2;
+const METER_DIRTY_EPSILON_DB: f32 = 0.5;
 
 impl Maolan {
     pub fn subscription(&self) -> Subscription<Message> {
@@ -200,7 +200,7 @@ impl Maolan {
         };
         #[cfg(target_os = "freebsd")]
         let meter_poll_sub =
-            iced::time::every(Duration::from_millis(40)).map(|_| Message::MeterPollTick);
+            iced::time::every(Duration::from_millis(80)).map(|_| Message::MeterPollTick);
         let recording_preview_sub = if self.playing
             && !self.paused
             && self.record_armed

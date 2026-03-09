@@ -5,8 +5,11 @@ use crate::{
     widget::{horizontal_slider::HorizontalSlider, slider::Slider},
 };
 use iced::{
-    Alignment, Background, Color, Element, Length, Point,
-    widget::{Space, Stack, column, container, lazy, mouse_area, pin, row, scrollable, text},
+    Alignment, Background, Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse,
+    widget::{
+        Space, Stack, canvas, column, container, lazy, mouse_area, pin, row, scrollable, text,
+        canvas::{Geometry, Path},
+    },
 };
 use maolan_engine::message::Action;
 use std::sync::LazyLock;
@@ -48,6 +51,48 @@ static BALANCE_LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     labels
 });
 
+#[derive(Clone)]
+struct VuMeterCanvas {
+    channels: usize,
+    levels_qdb: Vec<u8>,
+    meter_height: f32,
+}
+
+impl canvas::Program<Message> for VuMeterCanvas {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return vec![];
+        }
+        let channels = self.channels.max(1);
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let bar_w = Mixer::METER_BAR_WIDTH;
+        let bar_gap = Mixer::METER_BAR_GAP;
+        let inner_h = self.meter_height.max(1.0);
+        for channel_idx in 0..channels {
+            let q = self.levels_qdb.get(channel_idx).copied().unwrap_or(0);
+            let db = Mixer::qdb_to_level(q);
+            let fill = Mixer::level_to_meter_fill(db);
+            let filled_h = (inner_h * fill).max(1.0);
+            let y = (inner_h - filled_h).max(0.0);
+            let x = channel_idx as f32 * (bar_w + bar_gap);
+            frame.fill(
+                &Path::rectangle(Point::new(x, y), iced::Size::new(bar_w, filled_h)),
+                Mixer::meter_fill_color(db),
+            );
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
 impl Mixer {
     const FADER_MIN_DB: f32 = -90.0;
     const FADER_MAX_DB: f32 = 20.0;
@@ -59,6 +104,10 @@ impl Mixer {
     const PAN_ROW_HEIGHT: f32 = 12.0;
     const STRIP_NAME_CHAR_PX: f32 = 6.3;
     const STRIP_NAME_SIDE_PADDING: f32 = 4.0;
+    const METER_BAR_WIDTH: f32 = 3.0;
+    const METER_BAR_GAP: f32 = 2.0;
+    const METER_PAD_X: f32 = 3.0;
+    const METER_PAD_Y: f32 = 3.0;
 
     pub fn new(state: State) -> Self {
         Self { state }
@@ -123,8 +172,16 @@ impl Mixer {
     }
 
     fn master_meter_width(channels: usize) -> f32 {
-        let channels = channels.max(1) as f32;
-        6.0 + channels * 2.5
+        Self::meter_total_width(channels)
+    }
+
+    fn meter_inner_width(channels: usize) -> f32 {
+        let channels = channels.max(1);
+        channels as f32 * Self::METER_BAR_WIDTH + (channels.saturating_sub(1) as f32 * Self::METER_BAR_GAP)
+    }
+
+    fn meter_total_width(channels: usize) -> f32 {
+        Self::meter_inner_width(channels) + (Self::METER_PAD_X * 2.0)
     }
 
     fn tick_scale_cached(fader_height: f32) -> Element<'static, Message> {
@@ -244,6 +301,25 @@ impl Mixer {
         (height.max(0.0) * 10.0).round().clamp(0.0, u16::MAX as f32) as u16
     }
 
+    fn level_to_qdb(level_db: f32) -> u8 {
+        (level_db
+            .clamp(Self::FADER_MIN_DB, Self::FADER_MAX_DB)
+            .round()
+            .max(Self::FADER_MIN_DB) as i16)
+            .saturating_add(90)
+            .clamp(0, 110) as u8
+    }
+
+    fn qdb_to_level(q: u8) -> f32 {
+        q as f32 - 90.0
+    }
+
+    fn quantized_meter_levels(levels_db: &[f32], channels: usize) -> Vec<u8> {
+        (0..channels.max(1))
+            .map(|idx| Self::level_to_qdb(levels_db.get(idx).copied().unwrap_or(-90.0)))
+            .collect()
+    }
+
     fn pan_section_cached(track_name: String, value: f32) -> Element<'static, Message> {
         let dep = (track_name, Self::quantized_balance_hundredths(value));
         lazy(dep, move |(track_name, value_hundredths)| -> Element<'static, Message> {
@@ -308,31 +384,33 @@ impl Mixer {
 
     fn vu_meter(channels: usize, levels_db: &[f32], meter_h: f32) -> Element<'static, Message> {
         let channels = channels.max(1);
-        let mut strips = row![].spacing(2).align_y(Alignment::End);
-
-        for channel_idx in 0..channels {
-            let db = levels_db.get(channel_idx).copied().unwrap_or(-90.0);
-            let fill = Self::level_to_meter_fill(db);
-            let filled_h = (meter_h * fill).max(1.0);
-            let empty_h = (meter_h - filled_h).max(0.0);
-            strips = strips.push(
-                column![
-                    Space::new().height(Length::Fixed(empty_h)),
-                    container("")
-                        .width(Length::Fixed(3.0))
-                        .height(Length::Fixed(filled_h))
-                        .style(move |_theme| iced::widget::container::Style {
-                            background: Some(Background::Color(Self::meter_fill_color(db))),
-                            ..iced::widget::container::Style::default()
-                        }),
-                ]
-                .spacing(0),
-            );
-        }
-
-        container(strips)
-            .padding([3, 3])
+        let inner_h = (meter_h - (Self::METER_PAD_Y * 2.0)).max(1.0);
+        let q_levels = Self::quantized_meter_levels(levels_db, channels);
+        let dep = (
+            channels as u16,
+            Self::quantized_height_tenths(inner_h),
+            q_levels,
+        );
+        let meter_canvas: Element<'static, Message> = lazy(
+            dep,
+            |(channels, inner_h_tenths, q_levels)| -> Element<'static, Message> {
+                let channels = *channels as usize;
+                let inner_h = *inner_h_tenths as f32 / 10.0;
+                canvas(VuMeterCanvas {
+                    channels,
+                    levels_qdb: q_levels.clone(),
+                    meter_height: inner_h,
+                })
+                .width(Length::Fixed(Self::meter_inner_width(channels)))
+                .height(Length::Fixed(inner_h))
+                .into()
+            },
+        )
+        .into();
+        container(meter_canvas)
+            .width(Length::Fixed(Self::meter_total_width(channels)))
             .height(Length::Fixed(meter_h))
+            .padding([Self::METER_PAD_Y as u16, Self::METER_PAD_X as u16])
             .style(|_theme| style::mixer::meter())
             .into()
     }
