@@ -82,6 +82,20 @@ impl Maolan {
                 Task::none()
             }
             Show::Preferences => {
+                #[cfg(target_os = "linux")]
+                {
+                    let prefs = super::super::super::load_preferences();
+                    let mut state = self.state.blocking_write();
+                    let refreshed_output = crate::state::discover_alsa_output_devices();
+                    if !refreshed_output.is_empty() {
+                        state.available_hw = refreshed_output;
+                    }
+                    let refreshed_input = crate::state::discover_alsa_input_devices();
+                    if !refreshed_input.is_empty() {
+                        state.available_input_hw = refreshed_input;
+                    }
+                    Self::apply_preferred_devices_to_state(&mut state, &prefs);
+                }
                 self.modal = Some(Show::Preferences);
                 Task::none()
             }
