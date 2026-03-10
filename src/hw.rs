@@ -1,6 +1,6 @@
 use crate::{
     message::Message,
-    platform_caps::{HAS_SEPARATE_AUDIO_INPUT_DEVICE, REQUIRE_SAMPLE_RATES_FOR_HW_READY, SUPPORTS_LV2},
+    platform_caps::{HAS_SEPARATE_AUDIO_INPUT_DEVICE, REQUIRE_SAMPLE_RATES_FOR_HW_READY},
     state::State,
 };
 use iced::{
@@ -66,9 +66,12 @@ impl HW {
     fn plugins_loaded(&self) -> bool {
         let state = self.state.blocking_read();
         let core_plugins_loaded = state.vst3_plugins_loaded && state.clap_plugins_loaded;
-        if SUPPORTS_LV2 {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
             core_plugins_loaded && state.lv2_plugins_loaded
-        } else {
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
             core_plugins_loaded
         }
     }

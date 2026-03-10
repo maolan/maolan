@@ -18,6 +18,7 @@ pub use state::{MemoryStream, Vst3PluginState, ibstream_ptr};
 pub use processor::list_plugins;
 
 // Helper for VST3 search paths (moved from old vst3.rs)
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
 use crate::plugins::paths;
 use std::path::PathBuf;
 

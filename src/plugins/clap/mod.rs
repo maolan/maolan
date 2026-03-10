@@ -19,18 +19,19 @@ use std::ffi::{c_int, c_long, c_uint};
 
 #[cfg(target_os = "windows")]
 #[repr(C)]
+#[allow(clippy::upper_case_acronyms)]
 struct MSG {
     hwnd: *mut c_void,
     message: u32,
     w_param: usize,
     l_param: isize,
     time: u32,
-    pt: POINT,
+    pt: Point,
 }
 
 #[cfg(target_os = "windows")]
 #[repr(C)]
-struct POINT {
+struct Point {
     x: i32,
     y: i32,
 }

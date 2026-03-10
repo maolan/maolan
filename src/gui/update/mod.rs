@@ -133,34 +133,7 @@ impl Maolan {
         plugins: &[PluginGraphPlugin],
     ) -> Vec<Task<Message>> {
         let mut pending_queries: Vec<Task<Message>> = vec![];
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            let pending_lv2_uris: Vec<(String, String)> = self
-                .pending_add_lv2_automation_uris
-                .iter()
-                .filter(|(name, _)| name == track_name)
-                .cloned()
-                .collect();
-            for (pending_track, pending_uri) in pending_lv2_uris {
-                if let Some(instance_id) = plugins
-                    .iter()
-                    .find(|plugin| {
-                        plugin.format.eq_ignore_ascii_case("LV2")
-                            && (plugin.uri == pending_uri || plugin.plugin_id == pending_uri)
-                    })
-                    .map(|plugin| plugin.instance_id)
-                {
-                    self.pending_add_lv2_automation_uris
-                        .remove(&(pending_track.clone(), pending_uri));
-                    self.pending_add_lv2_automation_instances
-                        .insert((pending_track.clone(), instance_id));
-                    pending_queries.push(self.send(Action::TrackGetLv2PluginControls {
-                        track_name: pending_track,
-                        instance_id,
-                    }));
-                }
-            }
-        }
+        self.queue_pending_lv2_automation_queries(track_name, plugins, &mut pending_queries);
         let pending_vst3_paths: Vec<(String, String)> = self
             .pending_add_vst3_automation_paths
             .iter()
@@ -214,6 +187,49 @@ impl Maolan {
         pending_queries
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn queue_pending_lv2_automation_queries(
+        &mut self,
+        track_name: &str,
+        plugins: &[PluginGraphPlugin],
+        pending_queries: &mut Vec<Task<Message>>,
+    ) {
+        let pending_lv2_uris: Vec<(String, String)> = self
+            .pending_add_lv2_automation_uris
+            .iter()
+            .filter(|(name, _)| name == track_name)
+            .cloned()
+            .collect();
+        for (pending_track, pending_uri) in pending_lv2_uris {
+            if let Some(instance_id) = plugins
+                .iter()
+                .find(|plugin| {
+                    plugin.format.eq_ignore_ascii_case("LV2")
+                        && (plugin.uri == pending_uri || plugin.plugin_id == pending_uri)
+                })
+                .map(|plugin| plugin.instance_id)
+            {
+                self.pending_add_lv2_automation_uris
+                    .remove(&(pending_track.clone(), pending_uri));
+                self.pending_add_lv2_automation_instances
+                    .insert((pending_track.clone(), instance_id));
+                pending_queries.push(self.send(Action::TrackGetLv2PluginControls {
+                    track_name: pending_track,
+                    instance_id,
+                }));
+            }
+        }
+    }
+
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    fn queue_pending_lv2_automation_queries(
+        &mut self,
+        _track_name: &str,
+        _plugins: &[PluginGraphPlugin],
+        _pending_queries: &mut Vec<Task<Message>>,
+    ) {
+    }
+
     fn pending_save_ready(&self) -> bool {
         self.pending_save_tracks.is_empty() && self.pending_vst3_save_ready()
     }
@@ -234,24 +250,18 @@ impl Maolan {
         }
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn open_lv2_plugin_ui_task(&self, track_name: &str, instance_id: usize) -> Task<Message> {
-        if platform_caps::SUPPORTS_LV2 {
-            self.send(Action::TrackGetLv2PluginControls {
-                track_name: track_name.to_string(),
-                instance_id,
-            })
-        } else {
-            Task::none()
-        }
+        self.send(Action::TrackGetLv2PluginControls {
+            track_name: track_name.to_string(),
+            instance_id,
+        })
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     fn pump_lv2_ui(&mut self) {
         self.lv2_ui_host.pump();
     }
-
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
-    fn pump_lv2_ui(&mut self) {}
 
     fn request_plugin_automation_lanes(
         &mut self,

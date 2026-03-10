@@ -167,39 +167,46 @@ fn to_wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-pub fn open_editor_blocking(
-    plugin_path: &str,
-    plugin_name: &str,
-    plugin_id: &str,
-    sample_rate_hz: f64,
-    block_size: usize,
-    audio_inputs: usize,
-    audio_outputs: usize,
-    state: Option<maolan_engine::vst3::Vst3PluginState>,
-) -> Result<(), String> {
+pub struct EditorOpenRequest {
+    pub plugin_path: String,
+    pub plugin_name: String,
+    pub plugin_id: String,
+    pub sample_rate_hz: f64,
+    pub block_size: usize,
+    pub audio_inputs: usize,
+    pub audio_outputs: usize,
+    pub state: Option<maolan_engine::vst3::Vst3PluginState>,
+}
+
+pub fn open_editor_blocking(request: EditorOpenRequest) -> Result<(), String> {
     let coinit_hr = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
     let did_init_com = coinit_hr == 0 || coinit_hr == 1;
 
     let result = (|| {
         eprintln!("[vst3-ui] open_editor_blocking: begin");
-        let path = Path::new(plugin_path);
+        let path = Path::new(&request.plugin_path);
         let factory = PluginFactory::from_module(path)?;
         let class_count = factory.count_classes();
         if class_count <= 0 {
             return Err("No VST3 classes found".to_string());
         }
-        let class_info = if !plugin_id.is_empty() {
+        let class_info = if !request.plugin_id.is_empty() {
             let mut found = None;
             for i in 0..class_count {
                 if let Some(ci) = factory.get_class_info(i) {
                     let cid = format!("{:02X?}", ci.cid);
-                    if cid == plugin_id {
+                    if cid == request.plugin_id {
                         found = Some(ci);
                         break;
                     }
                 }
             }
-            found.ok_or_else(|| format!("Failed to find VST3 class for plugin id: {plugin_id}"))?
+            found.ok_or_else(|| {
+                format!(
+                    "Failed to find VST3 class for plugin id: {}",
+                    request.plugin_id
+                )
+            })?
         } else {
             factory
                 .get_class_info(0)
@@ -212,21 +219,22 @@ pub fn open_editor_blocking(
         let (input_buses, output_buses) = instance.audio_bus_counts();
         // Keep editor-host setup conservative: some plugins are sensitive to
         // unrealistic process settings and crash during UI bring-up.
-        let setup_sample_rate = if sample_rate_hz.is_finite() && sample_rate_hz > 1.0 {
-            sample_rate_hz
+        let setup_sample_rate = if request.sample_rate_hz.is_finite() && request.sample_rate_hz > 1.0
+        {
+            request.sample_rate_hz
         } else {
             48_000.0
         };
-        let setup_block_size = block_size.clamp(64, 8192);
+        let setup_block_size = request.block_size.clamp(64, 8192);
         let ui_audio_inputs = if input_buses == 0 {
             0
         } else {
-            audio_inputs.max(1)
+            request.audio_inputs.max(1)
         };
         let ui_audio_outputs = if output_buses == 0 {
             0
         } else {
-            audio_outputs.max(1)
+            request.audio_outputs.max(1)
         };
         instance.set_active(true)?;
         instance.setup_processing(
@@ -235,7 +243,7 @@ pub fn open_editor_blocking(
             ui_audio_inputs.min(i32::MAX as usize) as i32,
             ui_audio_outputs.min(i32::MAX as usize) as i32,
         )?;
-        if let Some(snapshot) = state.as_ref() {
+        if let Some(snapshot) = request.state.as_ref() {
             if !snapshot.component_state.is_empty() {
                 let comp_stream =
                     vst3::ComWrapper::new(MemoryStream::from_bytes(&snapshot.component_state));
@@ -261,18 +269,18 @@ pub fn open_editor_blocking(
             setup_block_size,
             ui_audio_inputs,
             ui_audio_outputs,
-            audio_inputs,
-            audio_outputs
+            request.audio_inputs,
+            request.audio_outputs
         );
 
         let controller = instance
             .edit_controller
             .clone()
             .ok_or("VST3 plugin has no edit controller")?;
-        let title = if plugin_name.is_empty() {
+        let title = if request.plugin_name.is_empty() {
             class_info.name
         } else {
-            plugin_name.to_string()
+            request.plugin_name.clone()
         };
         eprintln!("[vst3-ui] opening editor window");
         let result = run_vst3_win32_editor(controller, title);

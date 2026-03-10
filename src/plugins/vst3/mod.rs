@@ -82,16 +82,17 @@ impl GuiVst3UiHost {
             std::thread::Builder::new()
                 .name("vst3-ui".to_string())
                 .spawn(move || {
-                    if let Err(err) = win32::open_editor_blocking(
-                        &plugin_path,
-                        &plugin_name,
-                        &plugin_id,
+                    let request = win32::EditorOpenRequest {
+                        plugin_path,
+                        plugin_name,
+                        plugin_id,
                         sample_rate_hz,
                         block_size,
                         audio_inputs,
                         audio_outputs,
                         state,
-                    ) {
+                    };
+                    if let Err(err) = win32::open_editor_blocking(request) {
                         eprintln!("VST3 UI error: {err}");
                     }
                 })

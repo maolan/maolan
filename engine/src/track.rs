@@ -5,7 +5,9 @@ use crate::clap::{ClapProcessor, ClapTransportInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::lv2::{Lv2Processor, Lv2TransportInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
-use crate::message::{Lv2ControlPortInfo, Lv2PluginState};
+use crate::message::Lv2ControlPortInfo;
+#[cfg(any(unix, target_os = "windows"))]
+use crate::message::Lv2PluginState;
 #[cfg(any(unix, target_os = "windows"))]
 use crate::message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin};
 use crate::mutex::UnsafeMutex;

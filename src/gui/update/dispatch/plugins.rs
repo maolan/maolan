@@ -178,14 +178,17 @@ impl Maolan {
                 }
                 None
             }
+            #[cfg(all(unix, not(target_os = "macos")))]
             Message::OpenLv2PluginUi {
                 ref track_name,
                 instance_id,
             } => Some(self.open_lv2_plugin_ui_task(track_name, instance_id)),
+            #[cfg(all(unix, not(target_os = "macos")))]
             Message::PumpLv2Ui => {
                 self.pump_lv2_ui();
                 None
             }
+            #[cfg(target_os = "windows")]
             Message::OpenVst3PluginUi {
                 ref track_name,
                 instance_id,
@@ -195,40 +198,44 @@ impl Maolan {
                 audio_inputs,
                 audio_outputs,
             } => {
-                #[cfg(target_os = "windows")]
-                {
-                    let _ = (
-                        plugin_path,
-                        plugin_name,
-                        plugin_id,
-                        audio_inputs,
-                        audio_outputs,
-                    );
-                    return Some(self.send(Action::TrackGetVst3EditorHandle {
-                        track_name: track_name.clone(),
-                        instance_id,
-                    }));
-                }
-
-                #[cfg(not(target_os = "windows"))]
-                {
-                    let _ = (track_name, instance_id);
-                    let (sample_rate_hz, block_size) = {
-                        let st = self.state.blocking_read();
-                        (self.playback_rate_hz.max(1.0), st.oss_period_frames.max(1))
-                    };
-                    if let Err(e) = self.vst3_ui_host.open_editor(
-                        plugin_path,
-                        plugin_name,
-                        plugin_id,
-                        sample_rate_hz,
-                        block_size,
-                        audio_inputs,
-                        audio_outputs,
-                        None,
-                    ) {
-                        self.state.blocking_write().message = e;
-                    }
+                let _ = (
+                    plugin_path,
+                    plugin_name,
+                    plugin_id,
+                    audio_inputs,
+                    audio_outputs,
+                );
+                Some(self.send(Action::TrackGetVst3EditorHandle {
+                    track_name: track_name.clone(),
+                    instance_id,
+                }))
+            }
+            #[cfg(not(target_os = "windows"))]
+            Message::OpenVst3PluginUi {
+                ref track_name,
+                instance_id,
+                ref plugin_path,
+                ref plugin_name,
+                ref plugin_id,
+                audio_inputs,
+                audio_outputs,
+            } => {
+                let _ = (track_name, instance_id);
+                let (sample_rate_hz, block_size) = {
+                    let st = self.state.blocking_read();
+                    (self.playback_rate_hz.max(1.0), st.oss_period_frames.max(1))
+                };
+                if let Err(e) = self.vst3_ui_host.open_editor(
+                    plugin_path,
+                    plugin_name,
+                    plugin_id,
+                    sample_rate_hz,
+                    block_size,
+                    audio_inputs,
+                    audio_outputs,
+                    None,
+                ) {
+                    self.state.blocking_write().message = e;
                 }
                 None
             }

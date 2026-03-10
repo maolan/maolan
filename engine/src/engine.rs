@@ -156,7 +156,9 @@ pub struct Engine {
     hw_out_balance: f32,
     hw_out_muted: bool,
     last_hw_out_meter_publish: Option<Instant>,
+    #[cfg(any(target_os = "freebsd", target_os = "linux"))]
     last_hw_out_meter_linear: Vec<f32>,
+    #[cfg(any(target_os = "freebsd", target_os = "linux"))]
     hw_out_meter_publish_phase: bool,
     last_track_meter_publish: Option<Instant>,
     track_meter_linear_by_track: HashMap<String, Vec<f32>>,
@@ -697,7 +699,9 @@ impl Engine {
             hw_out_balance: 0.0,
             hw_out_muted: false,
             last_hw_out_meter_publish: None,
+            #[cfg(any(target_os = "freebsd", target_os = "linux"))]
             last_hw_out_meter_linear: vec![],
+            #[cfg(any(target_os = "freebsd", target_os = "linux"))]
             hw_out_meter_publish_phase: false,
             last_track_meter_publish: None,
             track_meter_linear_by_track: HashMap::new(),
