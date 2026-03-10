@@ -11,6 +11,7 @@ use iced_aw::{
 use iced_fonts::lucide::chevron_right;
 use maolan_engine as engine;
 use maolan_engine::message::GlobalMidiLearnTarget;
+use std::path::{Path, PathBuf};
 
 pub(crate) fn base_button<'a>(
     content: impl Into<Element<'a, Message>>,
@@ -96,6 +97,7 @@ pub(crate) fn submenu(
 #[derive(Default)]
 pub struct Menu {
     available_templates: Vec<String>,
+    recent_session_paths: Vec<String>,
 }
 
 impl Menu {
@@ -103,6 +105,18 @@ impl Menu {
 
     pub fn update_templates(&mut self, templates: Vec<String>) {
         self.available_templates = templates;
+    }
+
+    pub fn update_recent_sessions(&mut self, recent_session_paths: Vec<String>) {
+        self.recent_session_paths = recent_session_paths;
+    }
+
+    fn recent_session_label(path: &str) -> String {
+        let base = Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(path);
+        format!("{base}  ({path})")
     }
 
     pub fn view(&self, mixer_visible: bool) -> iced::Element<'_, Message> {
@@ -121,6 +135,21 @@ impl Menu {
             .width(180.0)
             .offset(15.0)
             .spacing(5.0);
+        let mut recent_menu_items: Vec<Item<'_, Message, _, _>> = Vec::new();
+        if self.recent_session_paths.is_empty() {
+            recent_menu_items.push(Item::new(menu_item("No Recent Sessions", Message::None)));
+        } else {
+            for path in &self.recent_session_paths {
+                recent_menu_items.push(Item::new(menu_item(
+                    Self::recent_session_label(path),
+                    Message::OpenFolderSelected(Some(PathBuf::from(path))),
+                )));
+            }
+        }
+        let recent_submenu = IcedMenu::new(recent_menu_items)
+            .width(420.0)
+            .offset(15.0)
+            .spacing(5.0);
 
         #[rustfmt::skip]
         let mb = menu_bar!(
@@ -128,6 +157,7 @@ impl Menu {
                 menu_tpl(menu_items!(
                     (submenu("New", Message::None), new_submenu),
                     (menu_item("Open", Message::Show(Show::Open))),
+                    (submenu("Recent", Message::None), recent_submenu),
                     (menu_item("Recover Autosave Snapshot", Message::RecoverAutosaveSnapshot)),
                     (menu_item("Recover Older Autosave Snapshot", Message::RecoverOlderAutosaveSnapshot)),
                     (menu_item("Save", Message::Show(Show::Save))),

@@ -90,13 +90,6 @@ impl Maolan {
         }
     }
 
-    pub(super) fn write_last_session_hint(path: &str) {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-        let config_dir = std::path::PathBuf::from(home).join(".config/maolan");
-        let _ = fs::create_dir_all(&config_dir);
-        let _ = fs::write(config_dir.join("last_session_path"), path);
-    }
-
     pub(super) fn export_diagnostics_bundle(&self) -> Result<std::path::PathBuf, String> {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)

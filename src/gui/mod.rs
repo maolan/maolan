@@ -150,6 +150,7 @@ struct AppPreferences {
     default_snap_mode: SnapMode,
     default_output_device_id: Option<String>,
     default_input_device_id: Option<String>,
+    recent_session_paths: Vec<String>,
 }
 
 impl Default for AppPreferences {
@@ -159,6 +160,7 @@ impl Default for AppPreferences {
             default_snap_mode: SnapMode::Bar,
             default_output_device_id: None,
             default_input_device_id: None,
+            recent_session_paths: Vec::new(),
         }
     }
 }
@@ -390,6 +392,7 @@ fn load_preferences() -> AppPreferences {
         default_snap_mode: cfg.default_snap_mode,
         default_output_device_id: cfg.default_output_device_id,
         default_input_device_id: cfg.default_input_device_id,
+        recent_session_paths: cfg.recent_session_paths,
     }
 }
 
@@ -446,6 +449,9 @@ impl Default for Maolan {
         let state = Arc::new(RwLock::new(state_data));
         let mut menu = menu::Menu::default();
         menu.update_templates(scan_templates());
+        menu.update_recent_sessions(Self::normalize_recent_session_paths(
+            prefs.recent_session_paths.clone(),
+        ));
         Self {
             clip: None,
             clip_preview_target_track: None,
@@ -591,6 +597,40 @@ impl Default for Maolan {
 }
 
 impl Maolan {
+    const MAX_RECENT_SESSIONS: usize = 12;
+
+    fn normalize_recent_session_paths(paths: Vec<String>) -> Vec<String> {
+        let mut normalized = Vec::new();
+        let mut seen = HashSet::new();
+        for path in paths {
+            let trimmed = path.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if seen.insert(trimmed.to_string()) {
+                normalized.push(trimmed.to_string());
+            }
+            if normalized.len() >= Self::MAX_RECENT_SESSIONS {
+                break;
+            }
+        }
+        normalized
+    }
+
+    fn remember_recent_session_path(&mut self, path: &Path) {
+        let current = path.to_string_lossy().to_string();
+        if current.trim().is_empty() {
+            return;
+        }
+        let mut cfg = config::Config::load().unwrap_or_default();
+        let mut recent = vec![current.clone()];
+        recent.extend(cfg.recent_session_paths.into_iter().filter(|p| p != &current));
+        let recent = Self::normalize_recent_session_paths(recent);
+        cfg.recent_session_paths = recent.clone();
+        let _ = cfg.save();
+        self.menu.update_recent_sessions(recent);
+    }
+
     fn default_plugin_format() -> PluginFormat {
         if platform_caps::SUPPORTS_LV2 {
             PluginFormat::Lv2

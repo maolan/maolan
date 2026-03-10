@@ -11,8 +11,8 @@ impl Maolan {
                 self.last_autosave_snapshot = None;
                 self.pending_autosave_recovery = None;
                 self.pending_open_session_dir = None;
-                if let Some(path) = &self.session_dir {
-                    Self::write_last_session_hint(&path.to_string_lossy());
+                if let Some(path) = self.session_dir.clone() {
+                    self.remember_recent_session_path(&path);
                 }
                 if let Some(autosave_root) = self.autosave_snapshot_root()
                     && autosave_root.exists()

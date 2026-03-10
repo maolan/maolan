@@ -5782,6 +5782,7 @@ impl Maolan {
                     default_snap_mode: cfg.default_snap_mode,
                     default_output_device_id: cfg.default_output_device_id.clone(),
                     default_input_device_id: cfg.default_input_device_id.clone(),
+                    recent_session_paths: cfg.recent_session_paths.clone(),
                 };
                 match cfg.save().map_err(|e| e.to_string()) {
                     Ok(()) => {

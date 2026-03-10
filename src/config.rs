@@ -13,6 +13,7 @@ pub struct Config {
     pub default_snap_mode: SnapMode,
     pub default_output_device_id: Option<String>,
     pub default_input_device_id: Option<String>,
+    pub recent_session_paths: Vec<String>,
 }
 
 impl Default for Config {
@@ -25,6 +26,7 @@ impl Default for Config {
             default_snap_mode: SnapMode::Bar,
             default_output_device_id: None,
             default_input_device_id: None,
+            recent_session_paths: Vec::new(),
         }
     }
 }
