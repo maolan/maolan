@@ -13,7 +13,6 @@ use tracing::error;
 const MIDI_IN_PREFIX: &str = "winmidi:in:";
 const MIDI_OUT_PREFIX: &str = "winmidi:out:";
 const WASAPI_PREFIX: &str = "wasapi:";
-const ASIO_PREFIX: &str = "asio:";
 
 impl Default for HwOptions {
     fn default() -> Self {
@@ -294,11 +293,7 @@ fn select_output_device(host: &cpal::Host, requested: &str) -> Option<cpal::Devi
 }
 
 fn select_input_device(host: &cpal::Host, requested: &str) -> Option<cpal::Device> {
-    let requested = requested
-        .strip_prefix(WASAPI_PREFIX)
-        .or_else(|| requested.strip_prefix(ASIO_PREFIX))
-        .unwrap_or(requested)
-        .trim();
+    let requested = requested.strip_prefix(WASAPI_PREFIX).unwrap_or(requested).trim();
     if requested.eq_ignore_ascii_case("default") || requested.is_empty() {
         return host.default_input_device();
     }
@@ -324,11 +319,6 @@ fn select_input_device(host: &cpal::Host, requested: &str) -> Option<cpal::Devic
 }
 
 fn select_backend_host_and_device(device: &str) -> Result<(Host, &str, &'static str), String> {
-    if let Some(name) = device.strip_prefix(ASIO_PREFIX) {
-        let host = cpal::host_from_id(HostId::Asio)
-            .map_err(|e| format!("ASIO host is not available: {e}"))?;
-        return Ok((host, name.trim(), "ASIO"));
-    }
     let requested = device.strip_prefix(WASAPI_PREFIX).unwrap_or(device).trim();
     let host = cpal::host_from_id(HostId::Wasapi).unwrap_or_else(|_| cpal::default_host());
     Ok((host, requested, "WASAPI"))

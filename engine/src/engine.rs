@@ -764,11 +764,7 @@ impl Engine {
     fn hw_profile_backend_label(device: &str) -> &'static str {
         let _ = device;
         #[cfg(target_os = "windows")]
-        let label = if device.to_ascii_lowercase().starts_with("asio:") {
-            "ASIO"
-        } else {
-            "WASAPI"
-        };
+        let label = "WASAPI";
         #[cfg(target_os = "linux")]
         let label = "ALSA";
         #[cfg(target_os = "freebsd")]

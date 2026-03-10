@@ -55,8 +55,6 @@ pub enum AudioBackendOption {
     Alsa,
     #[cfg(target_os = "windows")]
     Wasapi,
-    #[cfg(target_os = "windows")]
-    Asio,
     #[cfg(target_os = "macos")]
     CoreAudio,
 }
@@ -72,8 +70,6 @@ impl std::fmt::Display for AudioBackendOption {
             Self::Alsa => "ALSA",
             #[cfg(target_os = "windows")]
             Self::Wasapi => "WASAPI",
-            #[cfg(target_os = "windows")]
-            Self::Asio => "ASIO",
             #[cfg(target_os = "macos")]
             Self::CoreAudio => "CoreAudio",
         };
@@ -776,8 +772,6 @@ fn supported_audio_backends() -> Vec<AudioBackendOption> {
         Some(AudioBackendOption::Alsa),
         #[cfg(target_os = "windows")]
         Some(AudioBackendOption::Wasapi),
-        #[cfg(target_os = "windows")]
-        Some(AudioBackendOption::Asio),
         #[cfg(target_os = "macos")]
         Some(AudioBackendOption::CoreAudio),
     ]
@@ -798,8 +792,6 @@ fn audio_backend_preference_rank(backend: &AudioBackendOption) -> usize {
         AudioBackendOption::CoreAudio => 0,
         #[cfg(unix)]
         AudioBackendOption::Jack => 1,
-        #[cfg(target_os = "windows")]
-        AudioBackendOption::Asio => 2,
     }
 }
 

@@ -9,11 +9,8 @@ enum WindowsDeviceDirection {
 
 #[cfg(target_os = "windows")]
 fn discover_windows_devices(direction: WindowsDeviceDirection) -> Vec<String> {
-    let mut out = vec!["wasapi:default".to_string(), "asio:default".to_string()];
-    for (host_id, prefix) in [
-        (cpal::HostId::Wasapi, "wasapi"),
-        (cpal::HostId::Asio, "asio"),
-    ] {
+    let mut out = vec!["wasapi:default".to_string()];
+    for (host_id, prefix) in [(cpal::HostId::Wasapi, "wasapi")] {
         let Ok(host) = cpal::host_from_id(host_id) else {
             continue;
         };
@@ -54,8 +51,6 @@ pub(crate) fn discover_windows_output_sample_rates(device_id: &str) -> Vec<i32> 
 
     let (host_id, requested_name) = if let Some(name) = device_id.strip_prefix("wasapi:") {
         (cpal::HostId::Wasapi, name)
-    } else if let Some(name) = device_id.strip_prefix("asio:") {
-        (cpal::HostId::Asio, name)
     } else {
         return fallback_sample_rates;
     };

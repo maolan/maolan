@@ -359,7 +359,6 @@ impl HW {
             .into_iter()
             .filter(|hw| match selected_backend {
                 crate::state::AudioBackendOption::Wasapi => hw.starts_with("wasapi:"),
-                crate::state::AudioBackendOption::Asio => hw.starts_with("asio:"),
             })
             .collect();
         #[cfg(target_os = "windows")]
@@ -367,7 +366,6 @@ impl HW {
             .into_iter()
             .filter(|hw| match selected_backend {
                 crate::state::AudioBackendOption::Wasapi => hw.starts_with("wasapi:"),
-                crate::state::AudioBackendOption::Asio => hw.starts_with("asio:"),
             })
             .collect();
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]

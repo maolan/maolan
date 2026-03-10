@@ -3598,9 +3598,7 @@ impl Maolan {
         }
         #[cfg(target_os = "windows")]
         if let Some(selected) = state.selected_hw.as_ref() {
-            if selected.starts_with("asio:") {
-                state.selected_backend = crate::state::AudioBackendOption::Asio;
-            } else if selected.starts_with("wasapi:") {
+            if selected.starts_with("wasapi:") {
                 state.selected_backend = crate::state::AudioBackendOption::Wasapi;
             }
         }
