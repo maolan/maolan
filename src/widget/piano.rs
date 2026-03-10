@@ -1,5 +1,5 @@
 use crate::{
-    menu::{menu_dropdown, menu_item, submenu},
+    menu::{menu_dropdown, menu_item},
     message::{
         Message, PianoChordKind, PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoScaleRoot,
         PianoVelocityKind,
@@ -38,8 +38,17 @@ pub const CTRL_SCROLL_ID: &str = "piano.ctrl.scroll";
 pub const H_SCROLL_ID: &str = "piano.h.scroll";
 pub const V_SCROLL_ID: &str = "piano.v.scroll";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ControllerKindOption(u8);
+
+impl std::fmt::Display for ControllerKindOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CC{:03} {}", self.0, Piano::cc_name(self.0))
+    }
+}
+
 impl Piano {
-    pub const KEYBOARD_WIDTH: f32 = 84.0;
+    pub const KEYBOARD_WIDTH: f32 = 128.0;
     const H_ZOOM_MIN: f32 = 1.0;
     const H_ZOOM_MAX: f32 = 127.0;
     const OCTAVES: usize = 10;
@@ -195,10 +204,6 @@ impl Piano {
         }
     }
 
-    fn cc_label(cc: u8) -> String {
-        format!("CC{cc:03} {}", Self::cc_name(cc))
-    }
-
     fn controller_lane_line_count(lane: PianoControllerLane) -> usize {
         match lane {
             PianoControllerLane::Controller => 128,
@@ -255,22 +260,6 @@ impl Piano {
         PianoNrpnKind::ALL
             .iter()
             .position(|kind| Self::nrpn_param(*kind) == (msb, lsb))
-    }
-
-    fn selected_lane_number(state: &crate::state::StateData) -> Option<u16> {
-        match state.piano_controller_lane {
-            PianoControllerLane::Controller => Some(u16::from(state.piano_controller_kind)),
-            PianoControllerLane::Rpn => {
-                let (msb, lsb) = Self::rpn_param(state.piano_rpn_kind);
-                Some(u16::from(msb) * 128 + u16::from(lsb))
-            }
-            PianoControllerLane::Nrpn => {
-                let (msb, lsb) = Self::nrpn_param(state.piano_nrpn_kind);
-                Some(u16::from(msb) * 128 + u16::from(lsb))
-            }
-            PianoControllerLane::Velocity => None,
-            PianoControllerLane::SysEx => None,
-        }
     }
 
     fn sysex_preview(data: &[u8]) -> String {
@@ -356,7 +345,6 @@ impl Piano {
         let state = self.state.blocking_read();
         let zoom_x = state.piano_zoom_x;
         let zoom_y = state.piano_zoom_y;
-        let quantize_strength = state.piano_quantize_strength.clamp(0.0, 1.0);
         let humanize_time_amount = state.piano_humanize_time_amount.clamp(0.0, 1.0);
         let humanize_velocity_amount = state.piano_humanize_velocity_amount.clamp(0.0, 1.0);
         let groove_amount = state.piano_groove_amount.clamp(0.0, 1.0);
@@ -733,92 +721,137 @@ impl Piano {
         let piano_note_keys = keyboard
             .width(Length::Fixed(Self::KEYBOARD_WIDTH))
             .height(Length::Fill);
-        let lane_label = state.piano_controller_lane.to_string();
-        let selected_number = Self::selected_lane_number(&state);
-        let menu_tpl = |items| IcedMenu::new(items).width(220.0).offset(15.0).spacing(5.0);
-        let controller_submenu = IcedMenu::new(
-            (0u8..=127)
-                .map(|cc| {
-                    Item::new(menu_item(
-                        Self::cc_label(cc),
-                        Message::PianoControllerKindSelected(cc),
-                    ))
-                })
-                .collect::<Vec<_>>(),
+        let controller_picker = pick_list(
+            vec![
+                PianoControllerLane::Controller,
+                PianoControllerLane::Velocity,
+                PianoControllerLane::Rpn,
+                PianoControllerLane::Nrpn,
+                PianoControllerLane::SysEx,
+            ],
+            Some(state.piano_controller_lane),
+            Message::PianoControllerLaneSelected,
         )
-        .width(240.0)
-        .offset(15.0)
-        .spacing(5.0);
-        let velocity_submenu = IcedMenu::new(
-            PianoVelocityKind::ALL
-                .into_iter()
-                .map(|kind| {
-                    Item::new(menu_item(
-                        kind.to_string(),
-                        Message::PianoVelocityKindSelected(kind),
-                    ))
-                })
-                .collect::<Vec<_>>(),
-        )
-        .width(240.0)
-        .offset(15.0)
-        .spacing(5.0);
-        let rpn_submenu = IcedMenu::new(
-            PianoRpnKind::ALL
-                .into_iter()
-                .map(|kind| {
-                    Item::new(menu_item(
-                        kind.to_string(),
-                        Message::PianoRpnKindSelected(kind),
-                    ))
-                })
-                .collect::<Vec<_>>(),
-        )
-        .width(240.0)
-        .offset(15.0)
-        .spacing(5.0);
-        let nrpn_submenu = IcedMenu::new(
-            PianoNrpnKind::ALL
-                .into_iter()
-                .map(|kind| {
-                    Item::new(menu_item(
-                        kind.to_string(),
-                        Message::PianoNrpnKindSelected(kind),
-                    ))
-                })
-                .collect::<Vec<_>>(),
-        )
-        .width(240.0)
-        .offset(15.0)
-        .spacing(5.0);
-        #[rustfmt::skip]
-        let controller_picker = menu_bar!(
-            (menu_dropdown(lane_label, Message::None), {
-                menu_tpl(menu_items!(
-                    (submenu("Controller", Message::PianoControllerLaneSelected(PianoControllerLane::Controller)), controller_submenu),
-                    (submenu("Velocity", Message::PianoControllerLaneSelected(PianoControllerLane::Velocity)), velocity_submenu),
-                    (submenu("RPN", Message::PianoControllerLaneSelected(PianoControllerLane::Rpn)), rpn_submenu),
-                    (submenu("NRPN", Message::PianoControllerLaneSelected(PianoControllerLane::Nrpn)), nrpn_submenu),
-                    (menu_item("SysEx", Message::PianoControllerLaneSelected(PianoControllerLane::SysEx))),
-                ))
-            })
-        )
-        .draw_path(DrawPath::Backdrop)
-        .close_on_item_click_global(true)
         .width(Length::Fill);
-        let controller_header = if let Some(number) = selected_number {
-            column![
-                controller_picker,
-                text(number.to_string()).size(10).style(|_theme| {
-                    iced::widget::text::Style {
-                        color: Some(Color::from_rgb(0.86, 0.86, 0.9)),
-                    }
-                }),
-            ]
-            .spacing(2)
-        } else {
-            column![controller_picker]
+        let controller_number_picker: Element<'_, Message> = match state.piano_controller_lane {
+            PianoControllerLane::Controller => {
+                let selected = format!("CC{:03} \u{25BE}", state.piano_controller_kind);
+                let cc_menu = IcedMenu::new(
+                    (0u8..=127)
+                        .map(|cc| {
+                            Item::new(menu_item(
+                                ControllerKindOption(cc).to_string(),
+                                Message::PianoControllerKindSelected(cc),
+                            ))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .width(320.0)
+                .offset(10.0)
+                .spacing(4.0);
+                #[rustfmt::skip]
+                let picker = menu_bar!(
+                    (menu_dropdown(selected, Message::None), {
+                        cc_menu
+                    })
+                )
+                .draw_path(DrawPath::Backdrop)
+                .close_on_item_click_global(true)
+                .width(Length::Fill);
+                picker.into()
+            }
+            PianoControllerLane::Velocity => {
+                let selected = format!("{} \u{25BE}", state.piano_velocity_kind);
+                let velocity_menu = IcedMenu::new(
+                    PianoVelocityKind::ALL
+                        .iter()
+                        .copied()
+                        .map(|kind| {
+                            Item::new(menu_item(
+                                kind.to_string(),
+                                Message::PianoVelocityKindSelected(kind),
+                            ))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .width(280.0)
+                .offset(10.0)
+                .spacing(4.0);
+                #[rustfmt::skip]
+                let picker = menu_bar!(
+                    (menu_dropdown(selected, Message::None), {
+                        velocity_menu
+                    })
+                )
+                .draw_path(DrawPath::Backdrop)
+                .close_on_item_click_global(true)
+                .width(Length::Fill);
+                picker.into()
+            }
+            PianoControllerLane::Rpn => {
+                let selected = format!("{} \u{25BE}", state.piano_rpn_kind);
+                let rpn_menu = IcedMenu::new(
+                    PianoRpnKind::ALL
+                        .iter()
+                        .copied()
+                        .map(|kind| {
+                            Item::new(menu_item(
+                                kind.to_string(),
+                                Message::PianoRpnKindSelected(kind),
+                            ))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .width(300.0)
+                .offset(10.0)
+                .spacing(4.0);
+                #[rustfmt::skip]
+                let picker = menu_bar!(
+                    (menu_dropdown(selected, Message::None), {
+                        rpn_menu
+                    })
+                )
+                .draw_path(DrawPath::Backdrop)
+                .close_on_item_click_global(true)
+                .width(Length::Fill);
+                picker.into()
+            }
+            PianoControllerLane::Nrpn => {
+                let selected = format!("{} \u{25BE}", state.piano_nrpn_kind);
+                let nrpn_menu = IcedMenu::new(
+                    PianoNrpnKind::ALL
+                        .iter()
+                        .copied()
+                        .map(|kind| {
+                            Item::new(menu_item(
+                                kind.to_string(),
+                                Message::PianoNrpnKindSelected(kind),
+                            ))
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .width(300.0)
+                .offset(10.0)
+                .spacing(4.0);
+                #[rustfmt::skip]
+                let picker = menu_bar!(
+                    (menu_dropdown(selected, Message::None), {
+                        nrpn_menu
+                    })
+                )
+                .draw_path(DrawPath::Backdrop)
+                .close_on_item_click_global(true)
+                .width(Length::Fill);
+                picker.into()
+            }
+            PianoControllerLane::SysEx => text("SysEx events")
+                .size(10)
+                .style(|_theme| iced::widget::text::Style {
+                    color: Some(Color::from_rgb(0.86, 0.86, 0.9)),
+                })
+                .into(),
         };
+        let controller_header = column![controller_picker, controller_number_picker].spacing(2);
         let controller_key = container(controller_header)
             .width(Length::Fixed(Self::KEYBOARD_WIDTH))
             .height(Length::Fixed(ctrl_h))
@@ -985,17 +1018,97 @@ impl Piano {
             background: Some(Background::Color(Color::from_rgba(0.11, 0.11, 0.13, 1.0))),
             ..container::Style::default()
         });
-        let mut layout = row![
+        let edit_tools_strip = container(
             column![
-                row![keyboard_scroll, note_scroll]
-                    .height(Length::Fill)
-                    .width(Length::Fill),
-                row![controller_key, ctrl_scroll],
+                text("MIDI Tools").size(12),
                 row![
-                    container("")
-                        .width(Length::Fixed(Self::KEYBOARD_WIDTH))
-                        .height(Length::Fixed(16.0)),
-                    column![
+                    button(text("Scale").size(11)).on_press(Message::PianoScaleSelectedNotes),
+                    pick_list(
+                        PianoScaleRoot::ALL.to_vec(),
+                        Some(scale_root),
+                        Message::PianoScaleRootSelected
+                    )
+                    .width(Length::Fixed(62.0)),
+                    checkbox(scale_minor)
+                        .label("Min")
+                        .on_toggle(Message::PianoScaleMinorToggled),
+                ]
+                .spacing(6),
+                row![
+                    button(text("Chord").size(11)).on_press(Message::PianoChordSelectedNotes),
+                    pick_list(
+                        PianoChordKind::ALL.to_vec(),
+                        Some(chord_kind),
+                        Message::PianoChordKindSelected
+                    )
+                    .width(Length::Fixed(86.0)),
+                ]
+                .spacing(6),
+                button(text("Legato").size(11)).on_press(Message::PianoLegatoSelectedNotes),
+                row![
+                    button(text("VelShape").size(11))
+                        .on_press(Message::PianoVelocityShapeSelectedNotes),
+                    slider(
+                        0.0..=1.0,
+                        velocity_shape_amount,
+                        Message::PianoVelocityShapeAmountChanged
+                    )
+                    .step(0.01)
+                    .width(Length::Fill),
+                ]
+                .spacing(6),
+                button(text("Quantize").size(11)).on_press(Message::PianoQuantizeSelectedNotes),
+                row![
+                    button(text("Humanize").size(11)).on_press(Message::PianoHumanizeSelectedNotes),
+                    text("T").size(10),
+                    slider(
+                        0.0..=1.0,
+                        humanize_time_amount,
+                        Message::PianoHumanizeTimeAmountChanged,
+                    )
+                    .step(0.01)
+                    .width(Length::Fill),
+                    text("V").size(10),
+                    slider(
+                        0.0..=1.0,
+                        humanize_velocity_amount,
+                        Message::PianoHumanizeVelocityAmountChanged,
+                    )
+                    .step(0.01)
+                    .width(Length::Fill),
+                ]
+                .spacing(6),
+                row![
+                    button(text("Groove").size(11)).on_press(Message::PianoGrooveSelectedNotes),
+                    slider(0.0..=1.0, groove_amount, Message::PianoGrooveAmountChanged)
+                        .step(0.01)
+                        .width(Length::Fill),
+                ]
+                .spacing(6),
+            ]
+            .spacing(8)
+            .width(Length::Fill),
+        )
+        .width(Length::Fixed(248.0))
+        .height(Length::Fill)
+        .padding([8, 8])
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.10, 0.10, 0.12, 1.0))),
+            ..container::Style::default()
+        });
+
+        let mut layout = row![
+            row![
+                edit_tools_strip,
+                column![
+                    row![keyboard_scroll, note_scroll]
+                        .height(Length::Fill)
+                        .width(Length::Fill),
+                    row![controller_key, ctrl_scroll],
+                    row![
+                        container("")
+                            .width(Length::Fixed(Self::KEYBOARD_WIDTH))
+                            .height(Length::Fixed(16.0)),
                         row![
                             h_scroll,
                             slider(
@@ -1005,79 +1118,18 @@ impl Piano {
                             )
                             .step(0.1)
                             .width(Length::Fixed(100.0)),
-                            button(text("Quantize").size(11))
-                                .on_press(Message::PianoQuantizeSelectedNotes),
-                            slider(
-                                0.0..=1.0,
-                                quantize_strength,
-                                Message::PianoQuantizeStrengthChanged
-                            )
-                            .step(0.01)
-                            .width(Length::Fixed(72.0)),
-                            button(text("Humanize").size(11))
-                                .on_press(Message::PianoHumanizeSelectedNotes),
-                            slider(
-                                0.0..=1.0,
-                                humanize_time_amount,
-                                Message::PianoHumanizeTimeAmountChanged,
-                            )
-                            .step(0.01)
-                            .width(Length::Fixed(58.0)),
-                            slider(
-                                0.0..=1.0,
-                                humanize_velocity_amount,
-                                Message::PianoHumanizeVelocityAmountChanged,
-                            )
-                            .step(0.01)
-                            .width(Length::Fixed(58.0)),
-                            button(text("Groove").size(11))
-                                .on_press(Message::PianoGrooveSelectedNotes),
-                            slider(0.0..=1.0, groove_amount, Message::PianoGrooveAmountChanged)
-                                .step(0.01)
-                                .width(Length::Fixed(72.0)),
-                        ]
-                        .spacing(8)
-                        .width(Length::Fill),
-                        row![
-                            button(text("Scale").size(11))
-                                .on_press(Message::PianoScaleSelectedNotes),
-                            pick_list(
-                                PianoScaleRoot::ALL.to_vec(),
-                                Some(scale_root),
-                                Message::PianoScaleRootSelected
-                            )
-                            .width(Length::Fixed(62.0)),
-                            checkbox(scale_minor)
-                                .label("Min")
-                                .on_toggle(Message::PianoScaleMinorToggled),
-                            button(text("Chord").size(11))
-                                .on_press(Message::PianoChordSelectedNotes),
-                            pick_list(
-                                PianoChordKind::ALL.to_vec(),
-                                Some(chord_kind),
-                                Message::PianoChordKindSelected
-                            )
-                            .width(Length::Fixed(74.0)),
-                            button(text("Legato").size(11))
-                                .on_press(Message::PianoLegatoSelectedNotes),
-                            button(text("VelShape").size(11))
-                                .on_press(Message::PianoVelocityShapeSelectedNotes),
-                            slider(
-                                0.0..=1.0,
-                                velocity_shape_amount,
-                                Message::PianoVelocityShapeAmountChanged
-                            )
-                            .step(0.01)
-                            .width(Length::Fixed(72.0)),
                         ]
                         .spacing(8)
                         .width(Length::Fill),
                     ]
-                    .spacing(4)
-                    .width(Length::Fill),
                 ]
+                .spacing(3)
+                .width(Length::Fill)
+                .height(Length::Fill),
             ]
-            .spacing(3),
+            .spacing(3)
+            .width(Length::Fill)
+            .height(Length::Fill),
             column![
                 v_scroll,
                 vertical_slider(1.0..=8.0, zoom_y, Message::PianoZoomYChanged)

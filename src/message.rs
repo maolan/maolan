@@ -867,7 +867,6 @@ pub enum Message {
     PianoQuantizeSelectedNotes,
     PianoHumanizeSelectedNotes,
     PianoGrooveSelectedNotes,
-    PianoQuantizeStrengthChanged(f32),
     PianoHumanizeTimeAmountChanged(f32),
     PianoHumanizeVelocityAmountChanged(f32),
     PianoGrooveAmountChanged(f32),

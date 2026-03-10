@@ -1225,22 +1225,18 @@ impl Maolan {
             }
             Message::PianoQuantizeSelectedNotes => {
                 let interval = self.snap_interval_samples().max(1);
-                let strength = self
-                    .state
-                    .blocking_read()
-                    .piano_quantize_strength
-                    .clamp(0.0, 1.0);
                 return self.selected_piano_notes_edit(move |_idx, note| {
-                    let snapped =
+                    let snapped_start =
                         ((note.start_sample.saturating_add(interval / 2)) / interval) * interval;
+                    let end_sample = note.start_sample.saturating_add(note.length_samples);
+                    let mut snapped_end =
+                        ((end_sample.saturating_add(interval / 2)) / interval) * interval;
                     let mut out = note.clone();
-                    if strength >= 0.999 {
-                        out.start_sample = snapped;
-                    } else {
-                        let cur = note.start_sample as f32;
-                        let dst = snapped as f32;
-                        out.start_sample = (cur + (dst - cur) * strength).round().max(0.0) as usize;
+                    if snapped_end <= snapped_start {
+                        snapped_end = snapped_start.saturating_add(interval);
                     }
+                    out.start_sample = snapped_start;
+                    out.length_samples = snapped_end.saturating_sub(snapped_start).max(1);
                     out
                 });
             }
@@ -1440,9 +1436,6 @@ impl Maolan {
                     };
                     out
                 });
-            }
-            Message::PianoQuantizeStrengthChanged(value) => {
-                self.state.blocking_write().piano_quantize_strength = value.clamp(0.0, 1.0);
             }
             Message::PianoHumanizeTimeAmountChanged(value) => {
                 self.state.blocking_write().piano_humanize_time_amount = value.clamp(0.0, 1.0);
