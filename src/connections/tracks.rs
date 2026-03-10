@@ -997,9 +997,9 @@ impl canvas::Program<Message> for Graph {
         let node_border = rgb8(78, 93, 130);
         let node_hover = rgb8(106, 122, 158);
         let node_selected = rgb8(123, 173, 240);
-        let midi_box_fill = rgb8(28, 24, 14);
-        let midi_box_selected_fill = rgb8(45, 40, 20);
-        let midi_box_border = Color::from_rgb(0.45, 0.28, 0.12);
+        let midi_box_fill = rgb8(55, 90, 50);
+        let midi_box_selected_fill = rgb8(84, 133, 72);
+        let midi_box_border = rgb8(148, 215, 118);
         let conn_audio = Color::from_rgb(0.36, 0.66, 0.98);
         let conn_midi = Color::from_rgb(0.98, 0.68, 0.34);
         let conn_selected = Color::from_rgb(0.72, 0.90, 1.0);
