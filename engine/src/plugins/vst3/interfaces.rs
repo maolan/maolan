@@ -316,6 +316,44 @@ impl PluginInstance {
         (input_count, output_count)
     }
 
+    pub fn main_audio_channel_counts(&self) -> (usize, usize) {
+        use vst3::Steinberg::Vst::{BusDirections_, BusTypes_, IComponentTrait, MediaTypes_};
+
+        let main_channels_for_direction = |direction: i32| -> usize {
+            let bus_count = unsafe { self.component.getBusCount(MediaTypes_::kAudio as i32, direction) }
+                .max(0) as usize;
+            if bus_count == 0 {
+                return 0;
+            }
+
+            let mut first_nonzero = 0usize;
+            for idx in 0..bus_count {
+                let mut info: vst3::Steinberg::Vst::BusInfo = unsafe { std::mem::zeroed() };
+                let result = unsafe {
+                    self.component
+                        .getBusInfo(MediaTypes_::kAudio as i32, direction, idx as i32, &mut info)
+                };
+                if result != kResultOk {
+                    continue;
+                }
+                let channels = info.channelCount.max(0) as usize;
+                if channels > 0 && first_nonzero == 0 {
+                    first_nonzero = channels;
+                }
+                if info.busType == BusTypes_::kMain as i32 {
+                    return channels.max(1);
+                }
+            }
+
+            first_nonzero.max(1)
+        };
+
+        (
+            main_channels_for_direction(BusDirections_::kInput as i32),
+            main_channels_for_direction(BusDirections_::kOutput as i32),
+        )
+    }
+
     /// Initialize the component
     pub fn initialize(&mut self, factory: &PluginFactory) -> Result<(), String> {
         use vst3::Steinberg::IPluginBaseTrait;

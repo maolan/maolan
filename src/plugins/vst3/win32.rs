@@ -217,6 +217,7 @@ pub fn open_editor_blocking(request: EditorOpenRequest) -> Result<(), String> {
         instance.initialize(&factory)?;
         eprintln!("[vst3-ui] instance initialized");
         let (input_buses, output_buses) = instance.audio_bus_counts();
+        let (main_in_channels, main_out_channels) = instance.main_audio_channel_counts();
         // Keep editor-host setup conservative: some plugins are sensitive to
         // unrealistic process settings and crash during UI bring-up.
         let setup_sample_rate = if request.sample_rate_hz.is_finite() && request.sample_rate_hz > 1.0
@@ -229,20 +230,20 @@ pub fn open_editor_blocking(request: EditorOpenRequest) -> Result<(), String> {
         let ui_audio_inputs = if input_buses == 0 {
             0
         } else {
-            request.audio_inputs.max(1)
+            request.audio_inputs.max(1).min(main_in_channels.max(1))
         };
         let ui_audio_outputs = if output_buses == 0 {
             0
         } else {
-            request.audio_outputs.max(1)
+            request.audio_outputs.max(1).min(main_out_channels.max(1))
         };
-        instance.set_active(true)?;
         instance.setup_processing(
             setup_sample_rate,
             setup_block_size.min(i32::MAX as usize) as i32,
             ui_audio_inputs.min(i32::MAX as usize) as i32,
             ui_audio_outputs.min(i32::MAX as usize) as i32,
         )?;
+        instance.set_active(true)?;
         if let Some(snapshot) = request.state.as_ref() {
             if !snapshot.component_state.is_empty() {
                 let comp_stream =

@@ -39,6 +39,7 @@ pub struct Vst3Processor {
     parameters: Vec<ParameterInfo>,
     scalar_values: Arc<Mutex<Vec<f32>>>,
     previous_values: Arc<Mutex<Vec<f32>>>,
+    max_samples_per_block: usize,
     processing_started: bool,
     #[cfg(target_os = "windows")]
     editor_view: Option<ComPtr<IPlugView>>,
@@ -57,23 +58,13 @@ impl fmt::Debug for Vst3Processor {
             .field("input_buses", &self.input_buses)
             .field("output_buses", &self.output_buses)
             .field("parameters", &self.parameters)
+            .field("max_samples_per_block", &self.max_samples_per_block)
             .field("processing_started", &self.processing_started)
             .finish()
     }
 }
 
 impl Vst3Processor {
-    /// Create a new VST3 processor (simplified constructor for backward compatibility)
-    pub fn new(
-        sample_frames: usize,
-        path: &str,
-        audio_inputs: usize,
-        audio_outputs: usize,
-    ) -> Result<Self, String> {
-        // Use default sample rate
-        Self::new_with_sample_rate(44100.0, sample_frames, path, audio_inputs, audio_outputs)
-    }
-
     /// Create a new VST3 processor with explicit sample rate
     pub fn new_with_sample_rate(
         sample_rate: f64,
@@ -111,14 +102,43 @@ impl Vst3Processor {
         instance.initialize(&factory)?;
 
         let (plugin_input_buses, plugin_output_buses) = instance.audio_bus_counts();
+        let (plugin_main_in_channels, plugin_main_out_channels) =
+            instance.main_audio_channel_counts();
         let (midi_input_ports, midi_output_ports) = instance.event_bus_counts();
+
+        let requested_inputs = if plugin_input_buses > 0 {
+            audio_inputs
+                .max(1)
+                .min(plugin_main_in_channels.max(1))
+                .min(i32::MAX as usize)
+        } else {
+            0
+        };
+        let requested_outputs = if plugin_output_buses > 0 {
+            audio_outputs
+                .max(1)
+                .min(plugin_main_out_channels.max(1))
+                .min(i32::MAX as usize)
+        } else {
+            0
+        };
+        if requested_inputs != audio_inputs.max(1) || requested_outputs != audio_outputs.max(1) {
+            eprintln!(
+                "[vst3] Capping '{}' I/O channels to plugin main bus: requested in/out={}/{} -> configured in/out={}/{}",
+                name,
+                audio_inputs.max(1),
+                audio_outputs.max(1),
+                requested_inputs,
+                requested_outputs
+            );
+        }
 
         // Query buses (for now, use the provided counts)
         let input_buses = if plugin_input_buses > 0 {
             vec![BusInfo {
                 index: 0,
                 name: "Input".to_string(),
-                channel_count: audio_inputs.max(1),
+                channel_count: requested_inputs.max(1),
                 is_active: true,
             }]
         } else {
@@ -129,7 +149,7 @@ impl Vst3Processor {
             vec![BusInfo {
                 index: 0,
                 name: "Output".to_string(),
-                channel_count: audio_outputs.max(1),
+                channel_count: requested_outputs.max(1),
                 is_active: true,
             }]
         } else {
@@ -138,33 +158,24 @@ impl Vst3Processor {
 
         // Create AudioIO for each channel
         let mut audio_input_ios = Vec::new();
-        for _ in 0..audio_inputs.max(1) {
+        for _ in 0..requested_inputs {
             audio_input_ios.push(Arc::new(AudioIO::new(buffer_size)));
         }
 
         let mut audio_output_ios = Vec::new();
-        for _ in 0..audio_outputs.max(1) {
+        for _ in 0..requested_outputs {
             audio_output_ios.push(Arc::new(AudioIO::new(buffer_size)));
         }
 
-        // Activate component before entering processing state.
-        instance.set_active(true)?;
-
-        // Setup processing after activation (VST3 lifecycle requirement).
+        // Configure processing before activation so plugins see the final
+        // host sample rate/block size when they enter active state.
         instance.setup_processing(
             sample_rate,
             buffer_size as i32,
-            if plugin_input_buses > 0 {
-                audio_inputs.max(1) as i32
-            } else {
-                0
-            },
-            if plugin_output_buses > 0 {
-                audio_outputs.max(1) as i32
-            } else {
-                0
-            },
+            requested_inputs as i32,
+            requested_outputs as i32,
         )?;
+        instance.set_active(true)?;
 
         #[cfg(target_os = "windows")]
         let processing_started = {
@@ -196,6 +207,7 @@ impl Vst3Processor {
             parameters,
             scalar_values,
             previous_values,
+            max_samples_per_block: buffer_size,
             processing_started,
             #[cfg(target_os = "windows")]
             editor_view: None,
@@ -370,6 +382,12 @@ impl Vst3Processor {
             .min()
             .unwrap_or(frames);
         let num_frames = frames.min(max_input_frames).min(max_output_frames);
+        if frames > self.max_samples_per_block {
+            eprintln!(
+                "[vst3] Requested {} frames exceeds setup max {}, clamping to {}",
+                frames, self.max_samples_per_block, num_frames
+            );
+        }
         if num_frames == 0 {
             return Ok(EventBuffer::new());
         }

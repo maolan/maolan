@@ -1723,7 +1723,13 @@ impl Track {
             .max(1);
         let input_count = self.audio.ins.len().max(1);
         let output_count = self.audio.outs.len().max(1);
-        let processor = Vst3Processor::new(buffer_size, plugin_path, input_count, output_count)?;
+        let processor = Vst3Processor::new_with_sample_rate(
+            self.sample_rate,
+            buffer_size,
+            plugin_path,
+            input_count,
+            output_count,
+        )?;
         let id = self.alloc_plugin_instance_id();
         self.next_vst3_instance_id = self.next_vst3_instance_id.max(id.saturating_add(1));
         self.vst3_processors.push(Vst3Instance { id, processor });
