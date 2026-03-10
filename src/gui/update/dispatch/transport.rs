@@ -96,7 +96,8 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     let (bpm, num, den) = Self::timing_at_sample(&state, now_sample);
                     let tempo_changed = (state.tempo - bpm).abs() > 0.0001;
-                    let ts_changed = state.time_signature_num != num || state.time_signature_denom != den;
+                    let ts_changed =
+                        state.time_signature_num != num || state.time_signature_denom != den;
                     if tempo_changed || ts_changed {
                         state.tempo = bpm;
                         state.time_signature_num = num;
@@ -193,13 +194,25 @@ impl Maolan {
                 Task::none()
             }
             Message::SetLoopRange(range) => {
-                let normalized = range.and_then(|(start, end)| if end > start { Some((start, end)) } else { None });
+                let normalized = range.and_then(|(start, end)| {
+                    if end > start {
+                        Some((start, end))
+                    } else {
+                        None
+                    }
+                });
                 self.loop_enabled = normalized.is_some();
                 self.loop_range_samples = normalized;
                 self.send(Action::SetLoopRange(normalized))
             }
             Message::SetPunchRange(range) => {
-                let normalized = range.and_then(|(start, end)| if end > start { Some((start, end)) } else { None });
+                let normalized = range.and_then(|(start, end)| {
+                    if end > start {
+                        Some((start, end))
+                    } else {
+                        None
+                    }
+                });
                 self.punch_enabled = normalized.is_some();
                 self.punch_range_samples = normalized;
                 self.send(Action::SetPunchRange(normalized))

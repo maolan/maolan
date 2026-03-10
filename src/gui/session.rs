@@ -1727,9 +1727,10 @@ impl Maolan {
                         track_name: track_name.clone(),
                         plugin_path: uri.to_string(),
                     });
-                    if let Ok(snapshot) = serde_json::from_value::<maolan_engine::vst3::Vst3PluginState>(
-                        p["state"].clone(),
-                    ) {
+                    if let Ok(snapshot) = serde_json::from_value::<
+                        maolan_engine::vst3::Vst3PluginState,
+                    >(p["state"].clone())
+                    {
                         restore_actions.push(Action::TrackVst3RestoreState {
                             track_name: track_name.clone(),
                             instance_id: plugin_index,

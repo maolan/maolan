@@ -11,6 +11,8 @@ use self::types::{
 };
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 use crate::message::PluginFormat;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use crate::state::AudioDeviceOption;
 use crate::{
     connections,
     message::{
@@ -29,11 +31,6 @@ use crate::{
         TRACKS_SCROLL_ID,
     },
 };
-#[cfg(any(
-    target_os = "linux",
-    target_os = "freebsd"
-))]
-use crate::state::AudioDeviceOption;
 use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
 #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
@@ -270,9 +267,8 @@ impl Maolan {
         plugin_format: &str,
     ) -> Task<Message> {
         if !platform_caps::SUPPORTS_PLUGIN_GRAPH {
-            self.state.blocking_write().message = format!(
-                "{plugin_format} automation lanes are unavailable on this platform"
-            );
+            self.state.blocking_write().message =
+                format!("{plugin_format} automation lanes are unavailable on this platform");
             return Task::none();
         }
         if let Some(instance_id) =
@@ -386,11 +382,7 @@ impl Maolan {
         let mut order: Vec<usize> = (0..clips.len()).collect();
         order.sort_by_key(|idx| {
             let clip = &clips[*idx];
-            (
-                base_lane(clip),
-                start_sample(clip),
-                std::cmp::Reverse(*idx),
-            )
+            (base_lane(clip), start_sample(clip), std::cmp::Reverse(*idx))
         });
 
         for idx in order {
@@ -2144,5 +2136,4 @@ impl Maolan {
         });
         Some(Task::none())
     }
-
 }

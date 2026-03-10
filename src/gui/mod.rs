@@ -7,8 +7,7 @@ mod view;
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
-    add_track, clip_rename, connections, hw, menu,
-    config,
+    add_track, clip_rename, config, connections, hw, menu,
     message::{
         DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
         ExportRenderMode, Message, PluginFormat, PreferencesDeviceOption, Show, SnapMode,
@@ -630,7 +629,11 @@ impl Maolan {
         }
         let mut cfg = config::Config::load().unwrap_or_default();
         let mut recent = vec![current.clone()];
-        recent.extend(cfg.recent_session_paths.into_iter().filter(|p| p != &current));
+        recent.extend(
+            cfg.recent_session_paths
+                .into_iter()
+                .filter(|p| p != &current),
+        );
         let recent = Self::normalize_recent_session_paths(recent);
         cfg.recent_session_paths = recent.clone();
         let _ = cfg.save();

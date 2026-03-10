@@ -243,11 +243,7 @@ impl HW {
         }
     }
 
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "windows"
-    )))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
     fn selected_bits(_selected_is_jack: bool, _chosen_bits: usize) -> i32 {
         32
     }
@@ -452,11 +448,7 @@ impl HW {
         } else {
             bit_options.first().copied().unwrap_or(32)
         };
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "freebsd",
-            target_os = "windows"
-        )))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
         let chosen_bits = 32usize;
         let plugins_loaded = self.plugins_loaded();
         let mut submit = button("Open Audio");

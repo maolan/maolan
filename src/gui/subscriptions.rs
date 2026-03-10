@@ -36,10 +36,8 @@ impl Maolan {
                     Message::RefreshClapPlugins,
                 ];
                 #[cfg(any(target_os = "windows", target_os = "macos"))]
-                let initial_messages = vec![
-                    Message::RefreshVst3Plugins,
-                    Message::RefreshClapPlugins,
-                ];
+                let initial_messages =
+                    vec![Message::RefreshVst3Plugins, Message::RefreshClapPlugins];
                 let initial = stream::iter(initial_messages);
                 initial.chain(stream::unfold(
                     (
@@ -57,7 +55,8 @@ impl Maolan {
                                                 track_name,
                                                 output_db,
                                             } => {
-                                                let should_forward = match last_meters.get(track_name)
+                                                let should_forward = match last_meters
+                                                    .get(track_name)
                                                 {
                                                     Some(prev) => meter_changed(prev, output_db),
                                                     None => true,
@@ -72,21 +71,23 @@ impl Maolan {
                                                 hw_out_db,
                                                 track_meters,
                                             } => {
-                                                let hw_changed = meter_changed(&last_hw_out, hw_out_db);
-                                                let tracks_changed = if last_meters.len()
-                                                    != track_meters.len()
-                                                {
-                                                    true
-                                                } else {
-                                                    track_meters.iter().any(|(track_name, output_db)| {
-                                                        match last_meters.get(track_name) {
-                                                            Some(prev) => {
-                                                                meter_changed(prev, output_db)
-                                                            }
-                                                            None => true,
-                                                        }
-                                                    })
-                                                };
+                                                let hw_changed =
+                                                    meter_changed(&last_hw_out, hw_out_db);
+                                                let tracks_changed =
+                                                    if last_meters.len() != track_meters.len() {
+                                                        true
+                                                    } else {
+                                                        track_meters.iter().any(
+                                                            |(track_name, output_db)| {
+                                                                match last_meters.get(track_name) {
+                                                                    Some(prev) => meter_changed(
+                                                                        prev, output_db,
+                                                                    ),
+                                                                    None => true,
+                                                                }
+                                                            },
+                                                        )
+                                                    };
                                                 if !hw_changed && !tracks_changed {
                                                     continue;
                                                 }
@@ -96,8 +97,10 @@ impl Maolan {
                                                 last_meters.clear();
                                                 last_meters.reserve(track_meters.len());
                                                 for (track_name, output_db) in track_meters.iter() {
-                                                    last_meters
-                                                        .insert(track_name.clone(), output_db.clone());
+                                                    last_meters.insert(
+                                                        track_name.clone(),
+                                                        output_db.clone(),
+                                                    );
                                                 }
                                             }
                                             _ => {}

@@ -348,6 +348,7 @@ impl Workspace {
                     shift_pressed,
                     selected_tempo_points,
                     selected_time_signature_points,
+                    timeline_left_inset_px: 5.5,
                 }))
                 .height(Length::Fixed(self.tempo.height())),
                 container(self.ruler.view(RulerViewArgs {
@@ -358,6 +359,7 @@ impl Workspace {
                     snap_mode,
                     samples_per_beat,
                     content_width: editor_content_width,
+                    timeline_left_inset_px: 5.5,
                 }))
                 .height(Length::Fixed(self.ruler.height())),
                 container(editor_with_zoom).height(Length::Fixed(tracks_total_height)),
@@ -487,12 +489,15 @@ impl Workspace {
             playhead_samples.map(|sample| (sample as f32 * horizontal_pixels_per_sample).max(0.0));
 
         let piano_content = self.piano.view(pixels_per_sample, samples_per_bar);
+        let piano_timeline_x_offset = piano::Piano::TOOLS_STRIP_WIDTH
+            + piano::Piano::MAIN_SPLIT_SPACING
+            + piano::Piano::KEYBOARD_WIDTH;
 
         let piano_with_playhead = if let Some(x) = playhead_x {
             Stack::from_vec(vec![
                 piano_content,
                 pin(Self::playhead_line())
-                    .position(Point::new(x.max(0.0), 0.0))
+                    .position(Point::new((piano_timeline_x_offset + x).max(0.0), 0.0))
                     .into(),
             ])
             .width(Length::Fill)
@@ -504,6 +509,11 @@ impl Workspace {
 
         column![
             row![
+                container("")
+                    .width(Length::Fixed(
+                        piano::Piano::TOOLS_STRIP_WIDTH + piano::Piano::MAIN_SPLIT_SPACING,
+                    ))
+                    .height(Length::Fill),
                 container("")
                     .width(Length::Fixed(piano::Piano::KEYBOARD_WIDTH))
                     .height(Length::Fill),
@@ -522,6 +532,7 @@ impl Workspace {
                     shift_pressed,
                     selected_tempo_points,
                     selected_time_signature_points,
+                    timeline_left_inset_px: 0.0,
                 })))
                 .id(Id::new(PIANO_TEMPO_SCROLL_ID))
                 .direction(scrollable::Direction::Horizontal(
@@ -530,10 +541,18 @@ impl Workspace {
                 .on_scroll(|viewport| Message::PianoScrollXChanged(viewport.relative_offset().x))
                 .width(Length::Fill)
                 .height(Length::Fill),
+                container("")
+                    .width(Length::Fixed(piano::Piano::RIGHT_SCROLL_GUTTER_WIDTH))
+                    .height(Length::Fill),
             ]
             .width(Length::Fill)
             .height(Length::Fixed(self.tempo.height())),
             row![
+                container("")
+                    .width(Length::Fixed(
+                        piano::Piano::TOOLS_STRIP_WIDTH + piano::Piano::MAIN_SPLIT_SPACING,
+                    ))
+                    .height(Length::Fill),
                 container("")
                     .width(Length::Fixed(piano::Piano::KEYBOARD_WIDTH))
                     .height(Length::Fill),
@@ -545,6 +564,7 @@ impl Workspace {
                     snap_mode,
                     samples_per_beat,
                     content_width: timeline_content_width,
+                    timeline_left_inset_px: 0.0,
                 })))
                 .id(Id::new(PIANO_RULER_SCROLL_ID))
                 .direction(scrollable::Direction::Horizontal(
@@ -553,6 +573,9 @@ impl Workspace {
                 .on_scroll(|viewport| Message::PianoScrollXChanged(viewport.relative_offset().x))
                 .width(Length::Fill)
                 .height(Length::Fill),
+                container("")
+                    .width(Length::Fixed(piano::Piano::RIGHT_SCROLL_GUTTER_WIDTH))
+                    .height(Length::Fill),
             ]
             .width(Length::Fill)
             .height(Length::Fixed(self.ruler.height())),

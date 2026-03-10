@@ -16,7 +16,6 @@ const BEATS_PER_BAR: usize = 4;
 const BARS_TO_DRAW: usize = 256;
 const MIN_TICK_SPACING_PX: f32 = 8.0;
 const MIN_LABEL_SPACING_PX: f32 = 64.0;
-const TIMELINE_LEFT_INSET_PX: f32 = 5.5;
 
 #[derive(Debug, Default)]
 pub struct Ruler;
@@ -52,6 +51,7 @@ struct RulerCanvas {
     loop_range_samples: Option<(usize, usize)>,
     snap_mode: SnapMode,
     samples_per_beat: f64,
+    timeline_left_inset_px: f32,
 }
 
 pub struct RulerViewArgs {
@@ -62,6 +62,7 @@ pub struct RulerViewArgs {
     pub snap_mode: SnapMode,
     pub samples_per_beat: f64,
     pub content_width: f32,
+    pub timeline_left_inset_px: f32,
 }
 
 impl Ruler {
@@ -105,6 +106,7 @@ impl Ruler {
             snap_mode,
             samples_per_beat,
             content_width,
+            timeline_left_inset_px,
         } = args;
         canvas(RulerCanvas {
             playhead_x,
@@ -113,6 +115,7 @@ impl Ruler {
             loop_range_samples,
             snap_mode,
             samples_per_beat,
+            timeline_left_inset_px,
         })
         .width(Length::Fixed(content_width.max(1.0)))
         .height(Length::Fill)
@@ -290,6 +293,7 @@ impl canvas::Program<Message> for RulerCanvas {
         self.beat_pixels.to_bits().hash(&mut hasher);
         self.pixels_per_sample.to_bits().hash(&mut hasher);
         self.samples_per_beat.to_bits().hash(&mut hasher);
+        self.timeline_left_inset_px.to_bits().hash(&mut hasher);
         self.loop_range_samples.hash(&mut hasher);
         Ruler::snap_mode_key(self.snap_mode).hash(&mut hasher);
         self.playhead_x.map(f32::to_bits).hash(&mut hasher);
@@ -377,7 +381,7 @@ impl canvas::Program<Message> for RulerCanvas {
                 let total_beats = BARS_TO_DRAW * BEATS_PER_BAR;
 
                 for beat_idx in (0..=total_beats).step_by(tick_step_beats) {
-                    let x = TIMELINE_LEFT_INSET_PX + beat_idx as f32 * self.beat_pixels;
+                    let x = self.timeline_left_inset_px + beat_idx as f32 * self.beat_pixels;
                     let is_bar = beat_idx % BEATS_PER_BAR == 0;
                     let is_numbered_bar =
                         is_bar && ((beat_idx / BEATS_PER_BAR).is_multiple_of(label_step_bars));
@@ -396,7 +400,7 @@ impl canvas::Program<Message> for RulerCanvas {
                 }
 
                 for bar in (0..BARS_TO_DRAW).step_by(label_step_bars) {
-                    let x = TIMELINE_LEFT_INSET_PX
+                    let x = self.timeline_left_inset_px
                         + bar as f32 * BEATS_PER_BAR as f32 * self.beat_pixels;
                     frame.fill_text(Text {
                         content: bar.to_string(),

@@ -301,13 +301,7 @@ fn track_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'stat
         })
         .into();
 
-    Some((
-        Point::new(
-            0.0,
-            (top + menu_state.anchor.y).max(0.0),
-        ),
-        panel,
-    ))
+    Some((Point::new(0.0, (top + menu_state.anchor.y).max(0.0)), panel))
 }
 
 impl Tracks {

@@ -17,7 +17,6 @@ const TIME_SIG_HIT_X_SPLIT: f32 = 36.0;
 const LEFT_HIT_WIDTH: f32 = 84.0;
 const CONTEXT_MENU_WIDTH: f32 = 132.0;
 const CONTEXT_MENU_ITEM_HEIGHT: f32 = 16.0;
-const TIMELINE_LEFT_INSET_PX: f32 = 5.5;
 
 #[derive(Debug, Default)]
 pub struct Tempo;
@@ -84,6 +83,7 @@ struct TempoCanvas {
     time_signature_points: Vec<(usize, u8, u8)>,
     selected_tempo_points: Vec<usize>,
     selected_time_signature_points: Vec<usize>,
+    timeline_left_inset_px: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +102,7 @@ pub struct TempoViewArgs {
     pub time_signature_points: Vec<(usize, u8, u8)>,
     pub selected_tempo_points: Vec<usize>,
     pub selected_time_signature_points: Vec<usize>,
+    pub timeline_left_inset_px: f32,
 }
 
 impl Tempo {
@@ -147,6 +148,7 @@ impl Tempo {
             time_signature_points: args.time_signature_points,
             selected_tempo_points: args.selected_tempo_points,
             selected_time_signature_points: args.selected_time_signature_points,
+            timeline_left_inset_px: args.timeline_left_inset_px,
         })
         .width(Length::Fixed(args.content_width.max(1.0)))
         .height(Length::Fill)
@@ -169,7 +171,7 @@ impl canvas::Program<Message> for TempoCanvas {
             if self.pixels_per_sample <= 1.0e-9 {
                 0_usize
             } else {
-                ((x - TIMELINE_LEFT_INSET_PX).max(0.0) / self.pixels_per_sample)
+                ((x - self.timeline_left_inset_px).max(0.0) / self.pixels_per_sample)
                     .round()
                     .max(0.0) as usize
             }
@@ -196,15 +198,15 @@ impl canvas::Program<Message> for TempoCanvas {
                 .filter(|(sample, _)| *sample > 0)
                 .map(|(sample, _)| *sample)
                 .min_by(|a, b| {
-                    let ax = TIMELINE_LEFT_INSET_PX + *a as f32 * self.pixels_per_sample;
-                    let bx = TIMELINE_LEFT_INSET_PX + *b as f32 * self.pixels_per_sample;
+                    let ax = self.timeline_left_inset_px + *a as f32 * self.pixels_per_sample;
+                    let bx = self.timeline_left_inset_px + *b as f32 * self.pixels_per_sample;
                     (ax - x)
                         .abs()
                         .partial_cmp(&(bx - x).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .filter(|sample| {
-                    let sx = TIMELINE_LEFT_INSET_PX + *sample as f32 * self.pixels_per_sample;
+                    let sx = self.timeline_left_inset_px + *sample as f32 * self.pixels_per_sample;
                     (sx - x).abs() <= 6.0
                 })
         };
@@ -214,15 +216,15 @@ impl canvas::Program<Message> for TempoCanvas {
                 .filter(|(sample, _, _)| *sample > 0)
                 .map(|(sample, _, _)| *sample)
                 .min_by(|a, b| {
-                    let ax = TIMELINE_LEFT_INSET_PX + *a as f32 * self.pixels_per_sample;
-                    let bx = TIMELINE_LEFT_INSET_PX + *b as f32 * self.pixels_per_sample;
+                    let ax = self.timeline_left_inset_px + *a as f32 * self.pixels_per_sample;
+                    let bx = self.timeline_left_inset_px + *b as f32 * self.pixels_per_sample;
                     (ax - x)
                         .abs()
                         .partial_cmp(&(bx - x).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .filter(|sample| {
-                    let sx = TIMELINE_LEFT_INSET_PX + *sample as f32 * self.pixels_per_sample;
+                    let sx = self.timeline_left_inset_px + *sample as f32 * self.pixels_per_sample;
                     (sx - x).abs() <= 6.0
                 })
         };
@@ -673,6 +675,7 @@ impl canvas::Program<Message> for TempoCanvas {
         Tempo::snap_mode_key(self.snap_mode).hash(&mut hasher);
         self.samples_per_beat.to_bits().hash(&mut hasher);
         self.samples_per_bar.to_bits().hash(&mut hasher);
+        self.timeline_left_inset_px.to_bits().hash(&mut hasher);
         self.shift_pressed.hash(&mut hasher);
         self.tempo_points.len().hash(&mut hasher);
         for (sample, bpm) in &self.tempo_points {
@@ -726,8 +729,9 @@ impl canvas::Program<Message> for TempoCanvas {
         let geom = state
             .cache
             .draw(renderer, bounds.size(), |frame: &mut Frame| {
-                let sample_to_x =
-                    |sample: usize| TIMELINE_LEFT_INSET_PX + sample as f32 * self.pixels_per_sample;
+                let sample_to_x = |sample: usize| {
+                    self.timeline_left_inset_px + sample as f32 * self.pixels_per_sample
+                };
                 frame.fill(
                     &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
                     Color::from_rgba(0.12, 0.12, 0.12, 1.0),

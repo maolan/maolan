@@ -66,7 +66,10 @@ impl Maolan {
                 self.session_dir = Some(path.clone());
                 self.stop_recording_preview();
                 match self.load(path.to_string_lossy().to_string()) {
-                    Ok(task) => Some(Task::batch(vec![task, self.queue_midi_clip_preview_loads()])),
+                    Ok(task) => Some(Task::batch(vec![
+                        task,
+                        self.queue_midi_clip_preview_loads(),
+                    ])),
                     Err(e) => {
                         error!("{}", e);
                         self.state.blocking_write().message =
@@ -91,8 +94,10 @@ impl Maolan {
                         .get(pending.selected_index)
                         .cloned()
                         .unwrap_or_else(|| pending.snapshots[0].clone());
-                    let preview =
-                        Self::autosave_recovery_preview_summary(&pending.session_dir, &selected_snapshot);
+                    let preview = Self::autosave_recovery_preview_summary(
+                        &pending.session_dir,
+                        &selected_snapshot,
+                    );
                     if !pending.confirm_armed {
                         pending.confirm_armed = true;
                         self.state.blocking_write().message = format!(
@@ -119,10 +124,13 @@ impl Maolan {
                         .get(pending.selected_index)
                         .cloned()
                         .unwrap_or_else(|| pending.snapshots[0].clone());
-                    let preview =
-                        Self::autosave_recovery_preview_summary(&pending.session_dir, &selected_snapshot);
-                    self.state.blocking_write().message =
-                        format!("{preview}. Run Recover Autosave Snapshot to apply this selection.");
+                    let preview = Self::autosave_recovery_preview_summary(
+                        &pending.session_dir,
+                        &selected_snapshot,
+                    );
+                    self.state.blocking_write().message = format!(
+                        "{preview}. Run Recover Autosave Snapshot to apply this selection."
+                    );
                 }
                 Some(Task::none())
             }

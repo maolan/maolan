@@ -220,7 +220,8 @@ impl Maolan {
                 self.selected_time_signature_points.clear();
                 self.selected_time_signature_points.insert(sample);
                 self.selected_tempo_points.clear();
-                self.timing_selection_lane = Some(super::super::super::TimingSelectionLane::TimeSignature);
+                self.timing_selection_lane =
+                    Some(super::super::super::TimingSelectionLane::TimeSignature);
                 drop(state);
                 self.sync_timing_inputs_from_selection();
                 return self.update(Message::PlaybackTick);
@@ -292,7 +293,8 @@ impl Maolan {
                 self.selected_time_signature_points.clear();
                 self.selected_time_signature_points.extend(to_samples);
                 self.selected_tempo_points.clear();
-                self.timing_selection_lane = Some(super::super::super::TimingSelectionLane::TimeSignature);
+                self.timing_selection_lane =
+                    Some(super::super::super::TimingSelectionLane::TimeSignature);
                 self.sync_timing_inputs_from_selection();
                 return self.update(Message::PlaybackTick);
             }
@@ -337,7 +339,8 @@ impl Maolan {
                 self.selected_time_signature_points.clear();
                 self.selected_time_signature_points.extend(inserted);
                 self.selected_tempo_points.clear();
-                self.timing_selection_lane = Some(super::super::super::TimingSelectionLane::TimeSignature);
+                self.timing_selection_lane =
+                    Some(super::super::super::TimingSelectionLane::TimeSignature);
                 self.sync_timing_inputs_from_selection();
                 return self.update(Message::PlaybackTick);
             }

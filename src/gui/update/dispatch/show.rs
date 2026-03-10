@@ -3,7 +3,10 @@ use super::*;
 impl Maolan {
     pub(super) fn handle_show_message(&mut self, show: &Show) -> Task<Message> {
         if !self.state.blocking_read().hw_loaded
-            && matches!(show, Show::Save | Show::SaveAs | Show::SaveTemplateAs | Show::Open)
+            && matches!(
+                show,
+                Show::Save | Show::SaveAs | Show::SaveTemplateAs | Show::Open
+            )
         {
             return Task::none();
         }

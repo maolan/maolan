@@ -26,7 +26,9 @@ impl Maolan {
                         Self::compute_audio_clip_peaks(&render_path).unwrap_or_default();
                     {
                         let mut state = self.state.blocking_write();
-                        if let Some(track_mut) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                        if let Some(track_mut) =
+                            state.tracks.iter_mut().find(|t| t.name == *track_name)
+                        {
                             track_mut.frozen_audio_backup = pending.backup_audio.clone();
                             track_mut.frozen_midi_backup = pending.backup_midi.clone();
                             track_mut.frozen_render_clip = Some(pending.rendered_clip_rel.clone());
@@ -103,7 +105,8 @@ impl Maolan {
                 self.freeze_progress = 0.0;
                 self.freeze_cancel_requested = false;
                 self.pending_track_freeze_bounce.remove(track_name);
-                self.state.blocking_write().message = format!("Freeze canceled for '{}'", track_name);
+                self.state.blocking_write().message =
+                    format!("Freeze canceled for '{}'", track_name);
                 Some(Task::none())
             }
             Action::TrackMeters {
@@ -128,7 +131,11 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, hw_out_db);
                 for (track_name, output_db) in track_meters.iter() {
-                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name.as_str()) {
+                    if let Some(track) = state
+                        .tracks
+                        .iter_mut()
+                        .find(|t| t.name == track_name.as_str())
+                    {
                         Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
                     }
                 }

@@ -4,8 +4,8 @@ use std::ffi::c_void;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering};
 use vst3::Interface;
-use vst3::Steinberg::IPlugViewTrait;
 use vst3::Steinberg::IPlugView;
+use vst3::Steinberg::IPlugViewTrait;
 use vst3::Steinberg::Vst::IComponentTrait;
 use vst3::Steinberg::Vst::{IEditControllerTrait, ViewType};
 use vst3::Steinberg::kResultTrue;
@@ -220,12 +220,12 @@ pub fn open_editor_blocking(request: EditorOpenRequest) -> Result<(), String> {
         let (main_in_channels, main_out_channels) = instance.main_audio_channel_counts();
         // Keep editor-host setup conservative: some plugins are sensitive to
         // unrealistic process settings and crash during UI bring-up.
-        let setup_sample_rate = if request.sample_rate_hz.is_finite() && request.sample_rate_hz > 1.0
-        {
-            request.sample_rate_hz
-        } else {
-            48_000.0
-        };
+        let setup_sample_rate =
+            if request.sample_rate_hz.is_finite() && request.sample_rate_hz > 1.0 {
+                request.sample_rate_hz
+            } else {
+                48_000.0
+            };
         let setup_block_size = request.block_size.clamp(64, 8192);
         let ui_audio_inputs = if input_buses == 0 {
             0
@@ -259,9 +259,7 @@ pub fn open_editor_blocking(request: EditorOpenRequest) -> Result<(), String> {
             {
                 let ctrl_stream =
                     vst3::ComWrapper::new(MemoryStream::from_bytes(&snapshot.controller_state));
-                let _ = unsafe {
-                    controller.setState(ibstream_ptr(&ctrl_stream) as *mut _)
-                };
+                let _ = unsafe { controller.setState(ibstream_ptr(&ctrl_stream) as *mut _) };
             }
         }
         eprintln!(
@@ -336,10 +334,7 @@ fn run_vst3_win32_editor(
     run_vst3_win32_editor_view(view, title)
 }
 
-fn run_vst3_win32_editor_view(
-    view: vst3::ComPtr<IPlugView>,
-    title: String,
-) -> Result<(), String> {
+fn run_vst3_win32_editor_view(view: vst3::ComPtr<IPlugView>, title: String) -> Result<(), String> {
     let hwnd_supported =
         unsafe { view.isPlatformTypeSupported(vst3::Steinberg::kPlatformTypeHWND) };
     if hwnd_supported != kResultTrue && hwnd_supported != vst3::Steinberg::kResultOk {

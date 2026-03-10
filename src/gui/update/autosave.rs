@@ -137,7 +137,10 @@ impl Maolan {
         Ok(root)
     }
 
-    pub(super) fn prepare_pending_autosave_recovery(&mut self, select_older: bool) -> Result<(), String> {
+    pub(super) fn prepare_pending_autosave_recovery(
+        &mut self,
+        select_older: bool,
+    ) -> Result<(), String> {
         if let Some(pending) = self.pending_autosave_recovery.as_mut() {
             if select_older {
                 if pending.selected_index + 1 < pending.snapshots.len() {

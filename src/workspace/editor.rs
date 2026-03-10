@@ -185,11 +185,7 @@ where
     let mut order: Vec<usize> = (0..clips.len()).collect();
     order.sort_by_key(|idx| {
         let clip = &clips[*idx];
-        (
-            base_lane(clip),
-            start_sample(clip),
-            std::cmp::Reverse(*idx),
-        )
+        (base_lane(clip), start_sample(clip), std::cmp::Reverse(*idx))
     });
 
     for idx in order {
@@ -337,7 +333,9 @@ impl WaveformCanvas {
         wav.to_data().ok()?;
         wav.seek_by_samples((source_start_sample.saturating_mul(wav_channels)) as u64)
             .ok()?;
-        let chunk = wav.read_samples(read_frames.saturating_mul(wav_channels)).ok()?;
+        let chunk = wav
+            .read_samples(read_frames.saturating_mul(wav_channels))
+            .ok()?;
         if chunk.is_empty() {
             return None;
         }
@@ -357,7 +355,11 @@ impl WaveformCanvas {
                 let mut max_val = -1.0_f32;
                 for frame_idx in frame_start..frame_end {
                     let sample_idx = frame_idx.saturating_mul(wav_channels).saturating_add(ch);
-                    let s = chunk.get(sample_idx).copied().unwrap_or(0.0).clamp(-1.0, 1.0);
+                    let s = chunk
+                        .get(sample_idx)
+                        .copied()
+                        .unwrap_or(0.0)
+                        .clamp(-1.0, 1.0);
                     min_val = min_val.min(s);
                     max_val = max_val.max(s);
                 }
@@ -424,10 +426,8 @@ impl canvas::Program<Message> for WaveformCanvas {
                         end_idx = (start_idx + 1).min(total_peaks);
                     }
                     let visible_bins = end_idx.saturating_sub(start_idx).max(1);
-                    let visible_columns = inner_w
-                        .ceil()
-                        .max(1.0)
-                        .min(Self::MAX_RENDER_COLUMNS as f32) as usize;
+                    let visible_columns =
+                        inner_w.ceil().max(1.0).min(Self::MAX_RENDER_COLUMNS as f32) as usize;
                     let x_step = inner_w / visible_columns as f32;
                     let margin_columns = Self::RENDER_MARGIN_COLUMNS;
                     let total_columns = visible_columns + (margin_columns * 2);
@@ -457,7 +457,8 @@ impl canvas::Program<Message> for WaveformCanvas {
                             ((visible_source_samples * margin_columns) / visible_columns).max(1)
                         };
                         if high_zoom_source_mode {
-                            source_mode_columns = visible_source_samples + (source_margin_samples * 2);
+                            source_mode_columns =
+                                visible_source_samples + (source_margin_samples * 2);
                             source_mode_margin = source_margin_samples;
                             source_mode_x_step = inner_w / visible_source_samples.max(1) as f32;
                             source_mode_bin_w = 1.0;
@@ -503,7 +504,8 @@ impl canvas::Program<Message> for WaveformCanvas {
                                     let src_start = render_start_idx
                                         + ((col * render_bins) / draw_columns).min(render_bins);
                                     let mut src_end = render_start_idx
-                                        + (((col + 1) * render_bins) / draw_columns).min(render_bins);
+                                        + (((col + 1) * render_bins) / draw_columns)
+                                            .min(render_bins);
                                     if src_end <= src_start {
                                         src_end = (src_start + 1).min(total_peaks);
                                     }
@@ -1187,54 +1189,54 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
                 .height(Length::Fill),
         )
-            .interaction(mouse::Interaction::ResizingColumn)
-            .on_enter(Message::ClipResizeHandleHover {
-                kind: Kind::Audio,
-                track_idx: track_name_cloned.clone(),
-                clip_idx: index,
-                is_right_side: false,
-                hovered: true,
-            })
-            .on_exit(Message::ClipResizeHandleHover {
-                kind: Kind::Audio,
-                track_idx: track_name_cloned.clone(),
-                clip_idx: index,
-                is_right_side: false,
-                hovered: false,
-            })
-            .on_press(Message::ClipResizeStart(
-                Kind::Audio,
-                track_name_cloned.clone(),
-                index,
-                false,
-            ));
+        .interaction(mouse::Interaction::ResizingColumn)
+        .on_enter(Message::ClipResizeHandleHover {
+            kind: Kind::Audio,
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            is_right_side: false,
+            hovered: true,
+        })
+        .on_exit(Message::ClipResizeHandleHover {
+            kind: Kind::Audio,
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            is_right_side: false,
+            hovered: false,
+        })
+        .on_press(Message::ClipResizeStart(
+            Kind::Audio,
+            track_name_cloned.clone(),
+            index,
+            false,
+        ));
 
         let right_edge_zone = mouse_area(
             Space::new()
                 .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
                 .height(Length::Fill),
         )
-            .interaction(mouse::Interaction::ResizingColumn)
-            .on_enter(Message::ClipResizeHandleHover {
-                kind: Kind::Audio,
-                track_idx: track_name_cloned.clone(),
-                clip_idx: index,
-                is_right_side: true,
-                hovered: true,
-            })
-            .on_exit(Message::ClipResizeHandleHover {
-                kind: Kind::Audio,
-                track_idx: track_name_cloned.clone(),
-                clip_idx: index,
-                is_right_side: true,
-                hovered: false,
-            })
-            .on_press(Message::ClipResizeStart(
-                Kind::Audio,
-                track_name_cloned.clone(),
-                index,
-                true,
-            ));
+        .interaction(mouse::Interaction::ResizingColumn)
+        .on_enter(Message::ClipResizeHandleHover {
+            kind: Kind::Audio,
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            is_right_side: true,
+            hovered: true,
+        })
+        .on_exit(Message::ClipResizeHandleHover {
+            kind: Kind::Audio,
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            is_right_side: true,
+            hovered: false,
+        })
+        .on_press(Message::ClipResizeStart(
+            Kind::Audio,
+            track_name_cloned.clone(),
+            index,
+            true,
+        ));
 
         let clip_content = container(Stack::with_children(vec![
             audio_waveform_overlay(
@@ -1277,21 +1279,21 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .position(Point::new(clip_width - CLIP_RESIZE_HANDLE_WIDTH, 0.0))
                 .into(),
         ]))
-            .width(Length::Fixed(clip_width))
-            .height(Length::Fixed(clip_height))
-            .style(move |_theme| container::Style {
-                background: None,
-                border: Border {
-                    color: if is_selected {
-                        AUDIO_CLIP_SELECTED_BORDER
-                    } else {
-                        AUDIO_CLIP_BORDER
-                    },
-                    width: if is_selected { 2.0 } else { 1.0 },
-                    radius: 3.0.into(),
+        .width(Length::Fixed(clip_width))
+        .height(Length::Fixed(clip_height))
+        .style(move |_theme| container::Style {
+            background: None,
+            border: Border {
+                color: if is_selected {
+                    AUDIO_CLIP_SELECTED_BORDER
+                } else {
+                    AUDIO_CLIP_BORDER
                 },
-                ..container::Style::default()
-            });
+                width: if is_selected { 2.0 } else { 1.0 },
+                radius: 3.0.into(),
+            },
+            ..container::Style::default()
+        });
 
         // Add fade handles if fades are enabled
         let clip_with_fades: Element<'_, Message> = if clip.fade_enabled {
@@ -1464,7 +1466,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                     .into(),
             );
-
         }
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
@@ -1600,54 +1601,54 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
                 .height(Length::Fill),
         )
-            .interaction(mouse::Interaction::ResizingColumn)
-            .on_enter(Message::ClipResizeHandleHover {
-                kind: Kind::MIDI,
-                track_idx: track_name_cloned.clone(),
-                clip_idx: index,
-                is_right_side: false,
-                hovered: true,
-            })
-            .on_exit(Message::ClipResizeHandleHover {
-                kind: Kind::MIDI,
-                track_idx: track_name_cloned.clone(),
-                clip_idx: index,
-                is_right_side: false,
-                hovered: false,
-            })
-            .on_press(Message::ClipResizeStart(
-                Kind::MIDI,
-                track_name_cloned.clone(),
-                index,
-                false,
-            ));
+        .interaction(mouse::Interaction::ResizingColumn)
+        .on_enter(Message::ClipResizeHandleHover {
+            kind: Kind::MIDI,
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            is_right_side: false,
+            hovered: true,
+        })
+        .on_exit(Message::ClipResizeHandleHover {
+            kind: Kind::MIDI,
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            is_right_side: false,
+            hovered: false,
+        })
+        .on_press(Message::ClipResizeStart(
+            Kind::MIDI,
+            track_name_cloned.clone(),
+            index,
+            false,
+        ));
 
         let right_edge_zone = mouse_area(
             Space::new()
                 .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
                 .height(Length::Fill),
         )
-            .interaction(mouse::Interaction::ResizingColumn)
-            .on_enter(Message::ClipResizeHandleHover {
-                kind: Kind::MIDI,
-                track_idx: track_name_cloned.clone(),
-                clip_idx: index,
-                is_right_side: true,
-                hovered: true,
-            })
-            .on_exit(Message::ClipResizeHandleHover {
-                kind: Kind::MIDI,
-                track_idx: track_name_cloned.clone(),
-                clip_idx: index,
-                is_right_side: true,
-                hovered: false,
-            })
-            .on_press(Message::ClipResizeStart(
-                Kind::MIDI,
-                track_name_cloned.clone(),
-                index,
-                true,
-            ));
+        .interaction(mouse::Interaction::ResizingColumn)
+        .on_enter(Message::ClipResizeHandleHover {
+            kind: Kind::MIDI,
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            is_right_side: true,
+            hovered: true,
+        })
+        .on_exit(Message::ClipResizeHandleHover {
+            kind: Kind::MIDI,
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            is_right_side: true,
+            hovered: false,
+        })
+        .on_press(Message::ClipResizeStart(
+            Kind::MIDI,
+            track_name_cloned.clone(),
+            index,
+            true,
+        ));
 
         let mut clip_layers = Vec::with_capacity(2);
         if let Some(notes) = midi_notes_for_clip.as_ref() {
@@ -1693,21 +1694,21 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .position(Point::new(clip_width - CLIP_RESIZE_HANDLE_WIDTH, 0.0))
                 .into(),
         ]))
-            .width(Length::Fixed(clip_width))
-            .height(Length::Fixed(clip_height))
-            .style(move |_theme| container::Style {
-                background: None,
-                border: Border {
-                    color: if is_selected {
-                        MIDI_CLIP_SELECTED_BORDER
-                    } else {
-                        MIDI_CLIP_BORDER
-                    },
-                    width: if is_selected { 2.2 } else { 1.4 },
-                    radius: 8.0.into(),
+        .width(Length::Fixed(clip_width))
+        .height(Length::Fixed(clip_height))
+        .style(move |_theme| container::Style {
+            background: None,
+            border: Border {
+                color: if is_selected {
+                    MIDI_CLIP_SELECTED_BORDER
+                } else {
+                    MIDI_CLIP_BORDER
                 },
-                ..container::Style::default()
-            });
+                width: if is_selected { 2.2 } else { 1.4 },
+                radius: 8.0.into(),
+            },
+            ..container::Style::default()
+        });
 
         // Add fade handles if fades are enabled (MIDI clips)
         let clip_with_fades: Element<'_, Message> = if clip.fade_enabled {
@@ -1885,7 +1886,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                     .into(),
             );
-
         }
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
@@ -2227,9 +2227,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     .into()
 }
 
-fn clip_context_menu_overlay(
-    state: &StateData,
-) -> Option<(Point, Element<'static, Message>)> {
+fn clip_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'static, Message>)> {
     let menu = state.clip_context_menu.as_ref()?;
     let clip = &menu.clip;
     let track = state.tracks.iter().find(|t| t.name == clip.track_idx)?;
@@ -2277,7 +2275,11 @@ fn clip_context_menu_overlay(
                     },
                 ),
                 crate::menu::menu_item(
-                    if pinned { "Unpin Take Lane" } else { "Pin Take Lane" },
+                    if pinned {
+                        "Unpin Take Lane"
+                    } else {
+                        "Pin Take Lane"
+                    },
                     Message::ClipTakeLanePinToggle {
                         track_idx: track_idx.clone(),
                         clip_idx,
@@ -2285,7 +2287,11 @@ fn clip_context_menu_overlay(
                     },
                 ),
                 crate::menu::menu_item(
-                    if locked { "Unlock Take Lane" } else { "Lock Take Lane" },
+                    if locked {
+                        "Unlock Take Lane"
+                    } else {
+                        "Lock Take Lane"
+                    },
                     Message::ClipTakeLaneLockToggle {
                         track_idx: track_idx.clone(),
                         clip_idx,
@@ -2348,7 +2354,11 @@ fn clip_context_menu_overlay(
                     },
                 ),
                 crate::menu::menu_item(
-                    if fade_enabled { "Disable Fade" } else { "Enable Fade" },
+                    if fade_enabled {
+                        "Disable Fade"
+                    } else {
+                        "Enable Fade"
+                    },
                     Message::ClipToggleFade {
                         track_idx,
                         clip_idx,
@@ -2401,7 +2411,11 @@ fn clip_context_menu_overlay(
                     },
                 ),
                 crate::menu::menu_item(
-                    if pinned { "Unpin Take Lane" } else { "Pin Take Lane" },
+                    if pinned {
+                        "Unpin Take Lane"
+                    } else {
+                        "Pin Take Lane"
+                    },
                     Message::ClipTakeLanePinToggle {
                         track_idx: track_idx.clone(),
                         clip_idx,
@@ -2409,7 +2423,11 @@ fn clip_context_menu_overlay(
                     },
                 ),
                 crate::menu::menu_item(
-                    if locked { "Unlock Take Lane" } else { "Lock Take Lane" },
+                    if locked {
+                        "Unlock Take Lane"
+                    } else {
+                        "Lock Take Lane"
+                    },
                     Message::ClipTakeLaneLockToggle {
                         track_idx: track_idx.clone(),
                         clip_idx,
@@ -2444,7 +2462,11 @@ fn clip_context_menu_overlay(
                     },
                 ),
                 crate::menu::menu_item(
-                    if fade_enabled { "Disable Fade" } else { "Enable Fade" },
+                    if fade_enabled {
+                        "Disable Fade"
+                    } else {
+                        "Enable Fade"
+                    },
                     Message::ClipToggleFade {
                         track_idx,
                         clip_idx,

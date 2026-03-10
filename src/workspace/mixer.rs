@@ -7,8 +7,9 @@ use crate::{
 use iced::{
     Alignment, Background, Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse,
     widget::{
-        Space, Stack, canvas, column, container, lazy, mouse_area, pin, row, scrollable, text,
+        Space, Stack, canvas,
         canvas::{Geometry, Path},
+        column, container, lazy, mouse_area, pin, row, scrollable, text,
     },
 };
 use maolan_engine::message::Action;
@@ -177,7 +178,8 @@ impl Mixer {
 
     fn meter_inner_width(channels: usize) -> f32 {
         let channels = channels.max(1);
-        channels as f32 * Self::METER_BAR_WIDTH + (channels.saturating_sub(1) as f32 * Self::METER_BAR_GAP)
+        channels as f32 * Self::METER_BAR_WIDTH
+            + (channels.saturating_sub(1) as f32 * Self::METER_BAR_GAP)
     }
 
     fn meter_total_width(channels: usize) -> f32 {
@@ -214,7 +216,11 @@ impl Mixer {
         .into()
     }
 
-    fn slider_with_ticks<F>(value: f32, fader_height: f32, on_change: F) -> Element<'static, Message>
+    fn slider_with_ticks<F>(
+        value: f32,
+        fader_height: f32,
+        on_change: F,
+    ) -> Element<'static, Message>
     where
         F: Fn(f32) -> Message + 'static,
     {
@@ -323,13 +329,18 @@ impl Mixer {
 
     fn pan_section_cached(track_name: String, value: f32) -> Element<'static, Message> {
         let dep = (track_name, Self::quantized_balance_hundredths(value));
-        lazy(dep, move |(track_name, value_hundredths)| -> Element<'static, Message> {
-            let value = (*value_hundredths as f32) / 100.0;
-            Self::pan_section(value, {
-                let track_name = track_name.clone();
-                move |new_val| Message::Request(Action::TrackBalance(track_name.clone(), new_val))
-            })
-        })
+        lazy(
+            dep,
+            move |(track_name, value_hundredths)| -> Element<'static, Message> {
+                let value = (*value_hundredths as f32) / 100.0;
+                Self::pan_section(value, {
+                    let track_name = track_name.clone();
+                    move |new_val| {
+                        Message::Request(Action::TrackBalance(track_name.clone(), new_val))
+                    }
+                })
+            },
+        )
         .into()
     }
 
@@ -426,12 +437,9 @@ impl Mixer {
     ) -> Element<'static, Message> {
         let slider = Self::slider_cached(track_name, value, fader_height, show_ticks);
         container(
-            row![
-                slider,
-                Self::vu_meter(channels, levels_db, fader_height),
-            ]
-            .spacing(8)
-            .align_y(Alignment::End),
+            row![slider, Self::vu_meter(channels, levels_db, fader_height),]
+                .spacing(8)
+                .align_y(Alignment::End),
         )
         .width(Length::Fill)
         .padding([8, 7])
@@ -513,7 +521,10 @@ impl Mixer {
             master_selected,
             master_strip_width,
             if hw_out_channels == 2 {
-                Some(Self::pan_section_cached("hw:out".to_string(), hw_out_balance))
+                Some(Self::pan_section_cached(
+                    "hw:out".to_string(),
+                    hw_out_balance,
+                ))
             } else {
                 None
             },
@@ -542,7 +553,9 @@ impl Mixer {
         .height(height);
 
         mouse_area(
-            row![track_strips, master_strip].height(height).align_y(Alignment::Start),
+            row![track_strips, master_strip]
+                .height(height)
+                .align_y(Alignment::Start),
         )
         .on_press(Message::DeselectAll)
         .into()

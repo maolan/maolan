@@ -56,7 +56,9 @@ impl Maolan {
 
                 if ctrl {
                     state.selected.insert(name.clone());
-                    if let ConnectionViewSelection::Tracks(set) = &mut state.connection_view_selection {
+                    if let ConnectionViewSelection::Tracks(set) =
+                        &mut state.connection_view_selection
+                    {
                         set.insert(name.clone());
                     } else {
                         let mut set = std::collections::HashSet::new();
@@ -80,7 +82,9 @@ impl Maolan {
 
                 if ctrl {
                     state.selected.insert(name.clone());
-                    if let ConnectionViewSelection::Tracks(set) = &mut state.connection_view_selection {
+                    if let ConnectionViewSelection::Tracks(set) =
+                        &mut state.connection_view_selection
+                    {
                         set.insert(name.clone());
                     } else {
                         let mut set = std::collections::HashSet::new();

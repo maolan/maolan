@@ -160,9 +160,13 @@ impl Maolan {
         if !matches!(backend, crate::state::AudioBackendOption::Alsa) {
             return;
         }
-        state.selected_hw =
-            Self::select_first_backend_output_device(state, crate::state::discover_alsa_output_devices);
-        state.selected_input_hw =
-            Self::select_first_backend_input_device(state, crate::state::discover_alsa_input_devices);
+        state.selected_hw = Self::select_first_backend_output_device(
+            state,
+            crate::state::discover_alsa_output_devices,
+        );
+        state.selected_input_hw = Self::select_first_backend_input_device(
+            state,
+            crate::state::discover_alsa_input_devices,
+        );
     }
 }

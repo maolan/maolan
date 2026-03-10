@@ -24,6 +24,15 @@ use maolan_engine::{
     message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin, PluginGraphSnapshot},
     vst3::{Vst3PluginInfo, Vst3PluginState},
 };
+#[cfg(target_os = "windows")]
+pub(crate) use platform::{
+    discover_windows_audio_devices, discover_windows_input_devices,
+    discover_windows_output_bit_depths, discover_windows_output_sample_rates,
+};
+#[cfg(target_os = "freebsd")]
+pub(crate) use platform_freebsd::discover_freebsd_audio_devices;
+#[cfg(target_os = "linux")]
+pub(crate) use platform_linux::{discover_alsa_input_devices, discover_alsa_output_devices};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -31,15 +40,6 @@ use std::{
 };
 use tokio::sync::RwLock;
 pub use track::{AuxSend, Track, TrackAutomationLane, TrackAutomationPoint, TrackLaneLayout};
-#[cfg(target_os = "windows")]
-pub(crate) use platform::{
-    discover_windows_audio_devices, discover_windows_input_devices, discover_windows_output_bit_depths,
-    discover_windows_output_sample_rates,
-};
-#[cfg(target_os = "freebsd")]
-pub(crate) use platform_freebsd::discover_freebsd_audio_devices;
-#[cfg(target_os = "linux")]
-pub(crate) use platform_linux::{discover_alsa_input_devices, discover_alsa_output_devices};
 
 pub const HW_IN_ID: &str = "hw:in";
 pub const HW_OUT_ID: &str = "hw:out";
@@ -78,10 +78,7 @@ impl std::fmt::Display for AudioBackendOption {
     }
 }
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "freebsd"
-))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[derive(Clone, Debug)]
 pub struct AudioDeviceOption {
     pub id: String,
@@ -90,10 +87,7 @@ pub struct AudioDeviceOption {
     pub supported_sample_rates: Vec<i32>,
 }
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "freebsd"
-))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl AudioDeviceOption {
     fn normalize_sample_rates(mut rates: Vec<i32>) -> Vec<i32> {
         rates.retain(|r| *r > 0);
@@ -132,10 +126,7 @@ impl AudioDeviceOption {
     }
 }
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "freebsd"
-))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl std::fmt::Display for AudioDeviceOption {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.supported_bits.is_empty() {
@@ -151,26 +142,17 @@ impl std::fmt::Display for AudioDeviceOption {
     }
 }
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "freebsd"
-))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl PartialEq for AudioDeviceOption {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "freebsd"
-))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl Eq for AudioDeviceOption {}
 
-#[cfg(any(
-    target_os = "linux",
-    target_os = "freebsd"
-))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 impl std::hash::Hash for AudioDeviceOption {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
@@ -753,9 +735,7 @@ fn initial_selected_input_hw() -> Option<InputAudioDevice> {
 }
 
 #[cfg(target_os = "freebsd")]
-fn initial_selected_input_hw(
-    selected_hw: &Option<OutputAudioDevice>,
-) -> Option<InputAudioDevice> {
+fn initial_selected_input_hw(selected_hw: &Option<OutputAudioDevice>) -> Option<InputAudioDevice> {
     selected_hw.clone()
 }
 

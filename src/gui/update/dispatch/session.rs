@@ -27,8 +27,10 @@ impl Maolan {
             }
             Message::NewFromTemplate(ref template_name) => {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                let template_path =
-                    format!("{}/.config/maolan/session_templates/{}", home, template_name);
+                let template_path = format!(
+                    "{}/.config/maolan/session_templates/{}",
+                    home, template_name
+                );
                 self.state.blocking_write().message =
                     format!("Loading template '{}'...", template_name);
                 Task::perform(

@@ -49,6 +49,9 @@ impl std::fmt::Display for ControllerKindOption {
 
 impl Piano {
     pub const KEYBOARD_WIDTH: f32 = 128.0;
+    pub const RIGHT_SCROLL_GUTTER_WIDTH: f32 = 16.0;
+    pub const TOOLS_STRIP_WIDTH: f32 = 248.0;
+    pub const MAIN_SPLIT_SPACING: f32 = 3.0;
     const H_ZOOM_MIN: f32 = 1.0;
     const H_ZOOM_MAX: f32 = 127.0;
     const OCTAVES: usize = 10;
@@ -960,7 +963,7 @@ impl Piano {
         .id(Id::new(V_SCROLL_ID))
         .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::new()))
         .on_scroll(|viewport| Message::PianoScrollYChanged(viewport.relative_offset().y))
-        .width(Length::Fixed(16.0))
+        .width(Length::Fixed(Self::RIGHT_SCROLL_GUTTER_WIDTH))
         .height(Length::Fill);
 
         let selected_sysex = state.piano_selected_sysex;
@@ -1089,7 +1092,7 @@ impl Piano {
             .spacing(8)
             .width(Length::Fill),
         )
-        .width(Length::Fixed(248.0))
+        .width(Length::Fixed(Self::TOOLS_STRIP_WIDTH))
         .height(Length::Fill)
         .padding([8, 8])
         .style(|_theme| container::Style {
@@ -1127,7 +1130,7 @@ impl Piano {
                 .width(Length::Fill)
                 .height(Length::Fill),
             ]
-            .spacing(3)
+            .spacing(Self::MAIN_SPLIT_SPACING)
             .width(Length::Fill)
             .height(Length::Fill),
             column![
