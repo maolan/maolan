@@ -96,9 +96,14 @@ impl HW {
         available_input_hw: Vec<crate::state::AudioDeviceOption>,
         selected_input_hw: Option<crate::state::AudioDeviceOption>,
     ) -> iced::widget::Column<'static, Message> {
-        Self::device_rows(available_hw, selected_hw, available_input_hw, selected_input_hw)
-            .into_iter()
-            .fold(content, |content, row| content.push(row))
+        Self::device_rows(
+            available_hw,
+            selected_hw,
+            available_input_hw,
+            selected_input_hw,
+        )
+        .into_iter()
+        .fold(content, |content, row| content.push(row))
     }
 
     #[cfg(target_os = "windows")]
@@ -109,9 +114,14 @@ impl HW {
         available_input_hw: Vec<String>,
         selected_input_hw: Option<String>,
     ) -> iced::widget::Column<'static, Message> {
-        Self::device_rows(available_hw, selected_hw, available_input_hw, selected_input_hw)
-            .into_iter()
-            .fold(content, |content, row| content.push(row))
+        Self::device_rows(
+            available_hw,
+            selected_hw,
+            available_input_hw,
+            selected_input_hw,
+        )
+        .into_iter()
+        .fold(content, |content, row| content.push(row))
     }
 
     #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "windows")))]
@@ -213,14 +223,14 @@ impl HW {
         )]
     }
 
-    fn selected_device_id<T: DeviceId>(
-        selected_is_jack: bool,
-        selected_hw: &Option<T>,
-    ) -> String {
+    fn selected_device_id<T: DeviceId>(selected_is_jack: bool, selected_hw: &Option<T>) -> String {
         if selected_is_jack {
             "jack".to_string()
         } else {
-            selected_hw.as_ref().map(DeviceId::device_id).unwrap_or_default()
+            selected_hw
+                .as_ref()
+                .map(DeviceId::device_id)
+                .unwrap_or_default()
         }
     }
 
@@ -277,10 +287,7 @@ impl HW {
             8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
             192_000, 384_000,
         ];
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "freebsd"
-        ))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let fallback_bits = vec![32, 24, 16, 8];
         let (
             available_backends,
@@ -324,15 +331,9 @@ impl HW {
         };
         #[cfg(target_os = "freebsd")]
         let mut selected_input_hw = self.state.blocking_read().selected_input_hw.clone();
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "freebsd"
-        ))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let selected_bits = self.state.blocking_read().oss_bits;
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "freebsd"
-        ))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let available_hw: Vec<crate::state::AudioDeviceOption> = available_hw
             .into_iter()
             .filter(|hw| match selected_backend {
@@ -369,10 +370,7 @@ impl HW {
                 crate::state::AudioBackendOption::Asio => hw.starts_with("asio:"),
             })
             .collect();
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "freebsd"
-        ))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
             selected_hw = selected_hw.filter(|s| available_hw.iter().any(|hw| hw.id == s.id));
         }
@@ -396,10 +394,7 @@ impl HW {
         let selected_is_jack = matches!(selected_backend, crate::state::AudioBackendOption::Jack);
         #[cfg(not(unix))]
         let selected_is_jack = false;
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "freebsd"
-        ))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let sample_rate_options = if selected_is_jack {
             fallback_sample_rates.clone()
         } else {
@@ -413,11 +408,7 @@ impl HW {
             .as_ref()
             .map(|hw| crate::state::discover_windows_output_sample_rates(hw))
             .unwrap_or_else(|| fallback_sample_rates.clone());
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "freebsd",
-            target_os = "windows"
-        )))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]
         let sample_rate_options = fallback_sample_rates.clone();
         let chosen_sample_rate_hz = if sample_rate_options.contains(&sample_rate_hz) {
             sample_rate_hz
@@ -433,10 +424,7 @@ impl HW {
         } else {
             Some(chosen_sample_rate_hz)
         };
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "freebsd"
-        ))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let bit_options = if selected_is_jack {
             fallback_bits.clone()
         } else {
@@ -451,10 +439,7 @@ impl HW {
                 })
                 .unwrap_or_else(|| fallback_bits.clone())
         };
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "freebsd"
-        ))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let chosen_bits = if bit_options.contains(&selected_bits) {
             selected_bits
         } else {
@@ -508,7 +493,8 @@ impl HW {
         if !selected_is_jack {
             #[cfg(target_os = "freebsd")]
             {
-                content = Self::append_device_rows(content, available_hw, selected_hw, selected_input_hw);
+                content =
+                    Self::append_device_rows(content, available_hw, selected_hw, selected_input_hw);
             }
             #[cfg(target_os = "linux")]
             {
@@ -549,10 +535,7 @@ impl HW {
                 ]
                 .spacing(10),
             );
-            #[cfg(any(
-                target_os = "linux",
-                target_os = "freebsd"
-            ))]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             {
                 content = content.push(
                     row![

@@ -3,10 +3,7 @@ use maolan_engine::{kind::Kind, message::Action};
 use std::path::PathBuf;
 
 use crate::state::AudioBackendOption;
-#[cfg(any(
-    target_os = "linux",
-    target_os = "freebsd"
-))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use crate::state::AudioDeviceOption;
 use std::fmt;
 
@@ -76,6 +73,18 @@ impl SnapMode {
         SnapMode::ThirtySecond,
         SnapMode::SixtyFourth,
     ];
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PreferencesDeviceOption {
+    pub id: String,
+    pub label: String,
+}
+
+impl fmt::Display for PreferencesDeviceOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -633,6 +642,8 @@ pub enum Message {
     },
     PreferencesSampleRateSelected(u32),
     PreferencesSnapModeSelected(SnapMode),
+    PreferencesOutputDeviceSelected(PreferencesDeviceOption),
+    PreferencesInputDeviceSelected(PreferencesDeviceOption),
     PreferencesSave,
     SessionMetadataAuthorInput(String),
     SessionMetadataAlbumInput(String),
@@ -897,15 +908,9 @@ pub enum Message {
         audio_outputs: usize,
     },
 
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "freebsd"
-    ))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     HWSelected(AudioDeviceOption),
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "freebsd"
-    )))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     HWSelected(String),
     #[cfg(any(target_os = "freebsd", target_os = "linux"))]
     HWInputSelected(AudioDeviceOption),
@@ -997,7 +1002,10 @@ pub enum Message {
     TrackTemplateSaveInput(String),
     TrackTemplateSaveConfirm,
     TrackTemplateSaveCancel,
-    TrackContextMenuHover { track_name: String, position: Point },
+    TrackContextMenuHover {
+        track_name: String,
+        position: Point,
+    },
     TrackContextMenuToggle(String),
 
     TemplateSaveInput(String),

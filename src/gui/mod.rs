@@ -8,9 +8,10 @@ mod view;
 use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, connections, hw, menu,
+    config,
     message::{
         DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
-        ExportRenderMode, Message, PluginFormat, Show, SnapMode,
+        ExportRenderMode, Message, PluginFormat, PreferencesDeviceOption, Show, SnapMode,
     },
     platform_caps,
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
@@ -40,7 +41,6 @@ use midly::{
 use mp3lame_encoder::{
     Bitrate as Mp3Bitrate, Builder as Mp3Builder, FlushNoGap, InterleavedPcm, Quality as Mp3Quality,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(any(unix, target_os = "windows"))]
 use serde_json::json;
@@ -63,6 +63,7 @@ use wavers::Wav;
 
 static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
 const MIN_CLIP_WIDTH_PX: f32 = 12.0;
+const PREF_DEVICE_AUTO_ID: &str = "__auto__";
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
 type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
 type PianoParseResult = (
@@ -143,10 +144,12 @@ struct ExportWriteRequest<'a> {
     metadata: &'a ExportMetadata,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct AppPreferences {
     default_export_sample_rate_hz: u32,
     default_snap_mode: SnapMode,
+    default_output_device_id: Option<String>,
+    default_input_device_id: Option<String>,
 }
 
 impl Default for AppPreferences {
@@ -154,6 +157,8 @@ impl Default for AppPreferences {
         Self {
             default_export_sample_rate_hz: 48_000,
             default_snap_mode: SnapMode::Bar,
+            default_output_device_id: None,
+            default_input_device_id: None,
         }
     }
 }
@@ -374,19 +379,18 @@ pub struct Maolan {
     diagnostics_bundle_wait_midi_report: bool,
     prefs_export_sample_rate_hz: u32,
     prefs_snap_mode: SnapMode,
-}
-
-fn preferences_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".config/maolan/preferences.json")
+    prefs_default_output_device_id: Option<String>,
+    prefs_default_input_device_id: Option<String>,
 }
 
 fn load_preferences() -> AppPreferences {
-    let path = preferences_path();
-    let Ok(file) = File::open(path) else {
-        return AppPreferences::default();
-    };
-    serde_json::from_reader(file).unwrap_or_default()
+    let cfg = config::Config::load().unwrap_or_default();
+    AppPreferences {
+        default_export_sample_rate_hz: cfg.default_export_sample_rate_hz,
+        default_snap_mode: cfg.default_snap_mode,
+        default_output_device_id: cfg.default_output_device_id,
+        default_input_device_id: cfg.default_input_device_id,
+    }
 }
 
 fn scan_templates() -> Vec<String> {
@@ -433,14 +437,15 @@ fn scan_track_templates() -> Vec<String> {
 
 impl Default for Maolan {
     fn default() -> Self {
-        let state_data = StateData {
+        let prefs = load_preferences();
+        let mut state_data = StateData {
             available_templates: scan_templates(),
             ..StateData::default()
         };
+        Self::apply_preferred_devices_to_state(&mut state_data, &prefs);
         let state = Arc::new(RwLock::new(state_data));
         let mut menu = menu::Menu::default();
         menu.update_templates(scan_templates());
-        let prefs = load_preferences();
         Self {
             clip: None,
             clip_preview_target_track: None,
@@ -579,6 +584,8 @@ impl Default for Maolan {
             diagnostics_bundle_wait_midi_report: false,
             prefs_export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             prefs_snap_mode: prefs.default_snap_mode,
+            prefs_default_output_device_id: prefs.default_output_device_id,
+            prefs_default_input_device_id: prefs.default_input_device_id,
         }
     }
 }
@@ -3431,7 +3438,145 @@ impl Maolan {
         .into()
     }
 
+    fn preferences_auto_device_option() -> PreferencesDeviceOption {
+        PreferencesDeviceOption {
+            id: PREF_DEVICE_AUTO_ID.to_string(),
+            label: "Auto".to_string(),
+        }
+    }
+
+    fn preferences_selected_device_option(
+        options: &[PreferencesDeviceOption],
+        selected_id: Option<&str>,
+    ) -> Option<PreferencesDeviceOption> {
+        let selected_id = selected_id.unwrap_or(PREF_DEVICE_AUTO_ID);
+        options.iter().find(|opt| opt.id == selected_id).cloned()
+    }
+
+    fn preferences_output_device_options(&self) -> Vec<PreferencesDeviceOption> {
+        let mut options = vec![Self::preferences_auto_device_option()];
+        let state = self.state.blocking_read();
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            options.extend(state.available_hw.iter().map(|hw| PreferencesDeviceOption {
+                id: hw.id.clone(),
+                label: hw.label.clone(),
+            }));
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        {
+            options.extend(state.available_hw.iter().map(|hw| PreferencesDeviceOption {
+                id: hw.clone(),
+                label: hw.clone(),
+            }));
+        }
+        options
+    }
+
+    fn preferences_input_device_options(&self) -> Vec<PreferencesDeviceOption> {
+        let mut options = vec![Self::preferences_auto_device_option()];
+        let state = self.state.blocking_read();
+        #[cfg(target_os = "freebsd")]
+        {
+            options.extend(state.available_hw.iter().map(|hw| PreferencesDeviceOption {
+                id: hw.id.clone(),
+                label: hw.label.clone(),
+            }));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            options.extend(
+                state
+                    .available_input_hw
+                    .iter()
+                    .map(|hw| PreferencesDeviceOption {
+                        id: hw.id.clone(),
+                        label: hw.label.clone(),
+                    }),
+            );
+        }
+        #[cfg(target_os = "windows")]
+        {
+            options.extend(
+                state
+                    .available_input_hw
+                    .iter()
+                    .map(|hw| PreferencesDeviceOption {
+                        id: hw.clone(),
+                        label: hw.clone(),
+                    }),
+            );
+        }
+        options
+    }
+
+    fn apply_preferred_devices_to_state(state: &mut StateData, prefs: &AppPreferences) {
+        if let Some(device_id) = prefs.default_output_device_id.as_deref() {
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            if let Some(selected) = state
+                .available_hw
+                .iter()
+                .find(|hw| hw.id == device_id)
+                .cloned()
+            {
+                state.selected_hw = Some(selected);
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+            if state.available_hw.iter().any(|hw| hw == device_id) {
+                state.selected_hw = Some(device_id.to_string());
+            }
+        }
+        if let Some(device_id) = prefs.default_input_device_id.as_deref() {
+            #[cfg(target_os = "freebsd")]
+            if let Some(selected) = state
+                .available_hw
+                .iter()
+                .find(|hw| hw.id == device_id)
+                .cloned()
+            {
+                state.selected_input_hw = Some(selected);
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(selected) = state
+                .available_input_hw
+                .iter()
+                .find(|hw| hw.id == device_id)
+                .cloned()
+            {
+                state.selected_input_hw = Some(selected);
+            }
+            #[cfg(target_os = "windows")]
+            if state.available_input_hw.iter().any(|hw| hw == device_id) {
+                state.selected_input_hw = Some(device_id.to_string());
+            }
+        }
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        if let Some(selected) = state.selected_hw.as_ref()
+            && let Some(bits) = selected.preferred_bits()
+        {
+            state.oss_bits = bits;
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(selected) = state.selected_hw.as_ref() {
+            if selected.starts_with("asio:") {
+                state.selected_backend = crate::state::AudioBackendOption::Asio;
+            } else if selected.starts_with("wasapi:") {
+                state.selected_backend = crate::state::AudioBackendOption::Wasapi;
+            }
+        }
+    }
+
     fn preferences_view(&self) -> iced::Element<'_, Message> {
+        let output_options = self.preferences_output_device_options();
+        let selected_output = Self::preferences_selected_device_option(
+            &output_options,
+            self.prefs_default_output_device_id.as_deref(),
+        );
+        let input_options = self.preferences_input_device_options();
+        let selected_input = Self::preferences_selected_device_option(
+            &input_options,
+            self.prefs_default_input_device_id.as_deref(),
+        );
         container(
             column![
                 text("Preferences").size(16),
@@ -3459,6 +3604,34 @@ impl Maolan {
                 ]
                 .spacing(10)
                 .align_y(iced::Alignment::Center),
+                row![
+                    text("Default output device:"),
+                    pick_list(
+                        output_options,
+                        selected_output,
+                        Message::PreferencesOutputDeviceSelected
+                    )
+                    .placeholder("Choose output device")
+                    .width(Length::Fixed(320.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                if platform_caps::HAS_SEPARATE_AUDIO_INPUT_DEVICE {
+                    row![
+                        text("Default input device:"),
+                        pick_list(
+                            input_options,
+                            selected_input,
+                            Message::PreferencesInputDeviceSelected
+                        )
+                        .placeholder("Choose input device")
+                        .width(Length::Fixed(320.0)),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center)
+                } else {
+                    row![text("")].spacing(10).align_y(iced::Alignment::Center)
+                },
                 row![
                     button("Save").on_press(Message::PreferencesSave),
                     button("Cancel")
