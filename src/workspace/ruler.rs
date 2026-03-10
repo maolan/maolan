@@ -16,6 +16,7 @@ const BEATS_PER_BAR: usize = 4;
 const BARS_TO_DRAW: usize = 256;
 const MIN_TICK_SPACING_PX: f32 = 8.0;
 const MIN_LABEL_SPACING_PX: f32 = 64.0;
+const TIMELINE_LEFT_INSET_PX: f32 = 5.5;
 
 #[derive(Debug, Default)]
 pub struct Ruler;
@@ -225,7 +226,9 @@ impl canvas::Program<Message> for RulerCanvas {
 
                     let drag_delta = (state.last_x - state.drag_start_x).abs();
                     if drag_delta < 3.0 {
-                        return Some(CanvasAction::publish(Message::SetLoopRange(None)).and_capture());
+                        return Some(
+                            CanvasAction::publish(Message::SetLoopRange(None)).and_capture(),
+                        );
                     }
 
                     let snap_interval = match self.snap_mode {
@@ -374,7 +377,7 @@ impl canvas::Program<Message> for RulerCanvas {
                 let total_beats = BARS_TO_DRAW * BEATS_PER_BAR;
 
                 for beat_idx in (0..=total_beats).step_by(tick_step_beats) {
-                    let x = beat_idx as f32 * self.beat_pixels;
+                    let x = TIMELINE_LEFT_INSET_PX + beat_idx as f32 * self.beat_pixels;
                     let is_bar = beat_idx % BEATS_PER_BAR == 0;
                     let is_numbered_bar =
                         is_bar && ((beat_idx / BEATS_PER_BAR).is_multiple_of(label_step_bars));
@@ -393,7 +396,8 @@ impl canvas::Program<Message> for RulerCanvas {
                 }
 
                 for bar in (0..BARS_TO_DRAW).step_by(label_step_bars) {
-                    let x = bar as f32 * BEATS_PER_BAR as f32 * self.beat_pixels;
+                    let x = TIMELINE_LEFT_INSET_PX
+                        + bar as f32 * BEATS_PER_BAR as f32 * self.beat_pixels;
                     frame.fill_text(Text {
                         content: bar.to_string(),
                         position: Point::new(x + 4.0, 2.0),

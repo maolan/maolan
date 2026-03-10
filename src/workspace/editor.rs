@@ -810,6 +810,52 @@ fn audio_waveform_overlay(
     .into()
 }
 
+#[derive(Clone)]
+struct TrackBarGridCanvas {
+    bar_pixels: f32,
+}
+
+impl canvas::Program<Message> for TrackBarGridCanvas {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return vec![];
+        }
+        let mut frame = Frame::new(renderer, bounds.size());
+        let step = self.bar_pixels.max(1.0);
+        let color = Color::from_rgba(0.86, 0.96, 0.74, 0.14);
+        let mut x = 0.0_f32;
+        while x <= bounds.width + 1.0 {
+            frame.stroke(
+                &Path::line(Point::new(x, 0.0), Point::new(x, bounds.height)),
+                canvas::Stroke::default().with_color(color).with_width(1.0),
+            );
+            x += step;
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
+fn track_bar_grid_overlay(
+    height: f32,
+    samples_per_bar: f32,
+    pixels_per_sample: f32,
+) -> Element<'static, Message> {
+    let bar_pixels = (samples_per_bar.max(1.0) * pixels_per_sample).max(1.0);
+    canvas(TrackBarGridCanvas { bar_pixels })
+        .width(Length::Fill)
+        .height(Length::Fixed(height))
+        .into()
+}
+
 fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Message> {
     let TrackElementViewArgs {
         state,
@@ -903,7 +949,15 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         |clip| clip.take_lane_override,
     );
 
-    clips.push(pin(container("")).position(Point::new(0.0, 0.0)).into());
+    clips.push(
+        pin(track_bar_grid_overlay(
+            height,
+            samples_per_bar,
+            pixels_per_sample,
+        ))
+        .position(Point::new(0.0, 0.0))
+        .into(),
+    );
 
     for lane in 0..track.audio.ins {
         let y = track.lane_top(Kind::Audio, lane);

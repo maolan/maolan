@@ -17,6 +17,7 @@ const TIME_SIG_HIT_X_SPLIT: f32 = 36.0;
 const LEFT_HIT_WIDTH: f32 = 84.0;
 const CONTEXT_MENU_WIDTH: f32 = 132.0;
 const CONTEXT_MENU_ITEM_HEIGHT: f32 = 16.0;
+const TIMELINE_LEFT_INSET_PX: f32 = 5.5;
 
 #[derive(Debug, Default)]
 pub struct Tempo;
@@ -168,7 +169,9 @@ impl canvas::Program<Message> for TempoCanvas {
             if self.pixels_per_sample <= 1.0e-9 {
                 0_usize
             } else {
-                (x.max(0.0) / self.pixels_per_sample).round().max(0.0) as usize
+                ((x - TIMELINE_LEFT_INSET_PX).max(0.0) / self.pixels_per_sample)
+                    .round()
+                    .max(0.0) as usize
             }
         };
         let snap_sample = |sample: usize| {
@@ -193,15 +196,15 @@ impl canvas::Program<Message> for TempoCanvas {
                 .filter(|(sample, _)| *sample > 0)
                 .map(|(sample, _)| *sample)
                 .min_by(|a, b| {
-                    let ax = *a as f32 * self.pixels_per_sample;
-                    let bx = *b as f32 * self.pixels_per_sample;
+                    let ax = TIMELINE_LEFT_INSET_PX + *a as f32 * self.pixels_per_sample;
+                    let bx = TIMELINE_LEFT_INSET_PX + *b as f32 * self.pixels_per_sample;
                     (ax - x)
                         .abs()
                         .partial_cmp(&(bx - x).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .filter(|sample| {
-                    let sx = *sample as f32 * self.pixels_per_sample;
+                    let sx = TIMELINE_LEFT_INSET_PX + *sample as f32 * self.pixels_per_sample;
                     (sx - x).abs() <= 6.0
                 })
         };
@@ -211,15 +214,15 @@ impl canvas::Program<Message> for TempoCanvas {
                 .filter(|(sample, _, _)| *sample > 0)
                 .map(|(sample, _, _)| *sample)
                 .min_by(|a, b| {
-                    let ax = *a as f32 * self.pixels_per_sample;
-                    let bx = *b as f32 * self.pixels_per_sample;
+                    let ax = TIMELINE_LEFT_INSET_PX + *a as f32 * self.pixels_per_sample;
+                    let bx = TIMELINE_LEFT_INSET_PX + *b as f32 * self.pixels_per_sample;
                     (ax - x)
                         .abs()
                         .partial_cmp(&(bx - x).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .filter(|sample| {
-                    let sx = *sample as f32 * self.pixels_per_sample;
+                    let sx = TIMELINE_LEFT_INSET_PX + *sample as f32 * self.pixels_per_sample;
                     (sx - x).abs() <= 6.0
                 })
         };
@@ -548,7 +551,9 @@ impl canvas::Program<Message> for TempoCanvas {
 
                         let drag_delta = (last_x - drag_start_x).abs();
                         if drag_delta < 3.0 {
-                            return Some(CanvasAction::publish(Message::SetPunchRange(None)).and_capture());
+                            return Some(
+                                CanvasAction::publish(Message::SetPunchRange(None)).and_capture(),
+                            );
                         }
 
                         let snap_interval = match self.snap_mode {
@@ -721,12 +726,14 @@ impl canvas::Program<Message> for TempoCanvas {
         let geom = state
             .cache
             .draw(renderer, bounds.size(), |frame: &mut Frame| {
+                let sample_to_x =
+                    |sample: usize| TIMELINE_LEFT_INSET_PX + sample as f32 * self.pixels_per_sample;
                 frame.fill(
                     &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
                     Color::from_rgba(0.12, 0.12, 0.12, 1.0),
                 );
                 for (sample, bpm) in self.tempo_points.iter().filter(|(sample, _)| *sample > 0) {
-                    let x = *sample as f32 * self.pixels_per_sample;
+                    let x = sample_to_x(*sample);
                     let selected = self.selected_tempo_points.contains(sample);
                     frame.stroke(
                         &Path::line(Point::new(x, 0.0), Point::new(x, TEMPO_HIT_HEIGHT)),
@@ -751,7 +758,7 @@ impl canvas::Program<Message> for TempoCanvas {
                     .iter()
                     .filter(|(sample, _, _)| *sample > 0)
                 {
-                    let x = *sample as f32 * self.pixels_per_sample;
+                    let x = sample_to_x(*sample);
                     let selected = self.selected_time_signature_points.contains(sample);
                     frame.stroke(
                         &Path::line(
@@ -780,8 +787,8 @@ impl canvas::Program<Message> for TempoCanvas {
                     && self.pixels_per_sample > 1.0e-9
                     && punch_end > punch_start
                 {
-                    let start_x = punch_start as f32 * self.pixels_per_sample;
-                    let end_x = punch_end as f32 * self.pixels_per_sample;
+                    let start_x = sample_to_x(punch_start);
+                    let end_x = sample_to_x(punch_end);
                     frame.fill(
                         &Path::rectangle(
                             Point::new(start_x.max(0.0), 0.0),
@@ -849,7 +856,7 @@ impl canvas::Program<Message> for TempoCanvas {
                         let delta = *current_sample as i64 - *start_sample as i64;
                         for sample in original_samples {
                             let moved_sample = (*sample as i64 + delta).max(1) as usize;
-                            let x = moved_sample as f32 * self.pixels_per_sample;
+                            let x = sample_to_x(moved_sample);
                             let (y0, y1, color) = match lane {
                                 MarkerLane::Tempo => (
                                     0.0,
@@ -944,15 +951,15 @@ impl canvas::Program<Message> for TempoCanvas {
                             .iter()
                             .filter(|(sample, _)| *sample > 0)
                             .min_by(|(sa, _), (sb, _)| {
-                                let ax = *sa as f32 * self.pixels_per_sample;
-                                let bx = *sb as f32 * self.pixels_per_sample;
+                                let ax = sample_to_x(*sa);
+                                let bx = sample_to_x(*sb);
                                 (ax - pos.x)
                                     .abs()
                                     .partial_cmp(&(bx - pos.x).abs())
                                     .unwrap_or(std::cmp::Ordering::Equal)
                             })
                             .and_then(|(sample, bpm)| {
-                                let x = *sample as f32 * self.pixels_per_sample;
+                                let x = sample_to_x(*sample);
                                 if (x - pos.x).abs() <= 6.0 {
                                     Some(format!("s:{}  {:.2} BPM", sample, bpm))
                                 } else {
@@ -964,15 +971,15 @@ impl canvas::Program<Message> for TempoCanvas {
                             .iter()
                             .filter(|(sample, _, _)| *sample > 0)
                             .min_by(|(sa, _, _), (sb, _, _)| {
-                                let ax = *sa as f32 * self.pixels_per_sample;
-                                let bx = *sb as f32 * self.pixels_per_sample;
+                                let ax = sample_to_x(*sa);
+                                let bx = sample_to_x(*sb);
                                 (ax - pos.x)
                                     .abs()
                                     .partial_cmp(&(bx - pos.x).abs())
                                     .unwrap_or(std::cmp::Ordering::Equal)
                             })
                             .and_then(|(sample, n, d)| {
-                                let x = *sample as f32 * self.pixels_per_sample;
+                                let x = sample_to_x(*sample);
                                 if (x - pos.x).abs() <= 6.0 {
                                     Some(format!("s:{}  {}/{}", sample, n, d))
                                 } else {
