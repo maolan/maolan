@@ -642,6 +642,7 @@ pub enum Message {
     },
     PreferencesSampleRateSelected(u32),
     PreferencesSnapModeSelected(SnapMode),
+    PreferencesBitDepthSelected(usize),
     PreferencesOutputDeviceSelected(PreferencesDeviceOption),
     PreferencesInputDeviceSelected(PreferencesDeviceOption),
     PreferencesSave,
@@ -918,7 +919,7 @@ pub enum Message {
     HWInputSelected(String),
     HWBackendSelected(AudioBackendOption),
     HWExclusiveToggled(bool),
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     HWBitsChanged(usize),
     HWSampleRateChanged(i32),
     HWPeriodFramesChanged(usize),

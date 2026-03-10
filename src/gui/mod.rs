@@ -148,6 +148,7 @@ struct ExportWriteRequest<'a> {
 struct AppPreferences {
     default_export_sample_rate_hz: u32,
     default_snap_mode: SnapMode,
+    default_audio_bit_depth: usize,
     default_output_device_id: Option<String>,
     default_input_device_id: Option<String>,
     recent_session_paths: Vec<String>,
@@ -158,6 +159,7 @@ impl Default for AppPreferences {
         Self {
             default_export_sample_rate_hz: 48_000,
             default_snap_mode: SnapMode::Bar,
+            default_audio_bit_depth: 32,
             default_output_device_id: None,
             default_input_device_id: None,
             recent_session_paths: Vec::new(),
@@ -381,6 +383,7 @@ pub struct Maolan {
     diagnostics_bundle_wait_midi_report: bool,
     prefs_export_sample_rate_hz: u32,
     prefs_snap_mode: SnapMode,
+    prefs_audio_bit_depth: usize,
     prefs_default_output_device_id: Option<String>,
     prefs_default_input_device_id: Option<String>,
 }
@@ -390,6 +393,7 @@ fn load_preferences() -> AppPreferences {
     AppPreferences {
         default_export_sample_rate_hz: cfg.default_export_sample_rate_hz,
         default_snap_mode: cfg.default_snap_mode,
+        default_audio_bit_depth: cfg.default_audio_bit_depth,
         default_output_device_id: cfg.default_output_device_id,
         default_input_device_id: cfg.default_input_device_id,
         recent_session_paths: cfg.recent_session_paths,
@@ -590,6 +594,7 @@ impl Default for Maolan {
             diagnostics_bundle_wait_midi_report: false,
             prefs_export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             prefs_snap_mode: prefs.default_snap_mode,
+            prefs_audio_bit_depth: prefs.default_audio_bit_depth,
             prefs_default_output_device_id: prefs.default_output_device_id,
             prefs_default_input_device_id: prefs.default_input_device_id,
         }
@@ -598,6 +603,7 @@ impl Default for Maolan {
 
 impl Maolan {
     const MAX_RECENT_SESSIONS: usize = 12;
+    const AUDIO_BIT_DEPTH_OPTIONS: [usize; 4] = [32, 24, 16, 8];
 
     fn normalize_recent_session_paths(paths: Vec<String>) -> Vec<String> {
         let mut normalized = Vec::new();
@@ -3551,6 +3557,26 @@ impl Maolan {
     }
 
     fn apply_preferred_devices_to_state(state: &mut StateData, prefs: &AppPreferences) {
+        #[cfg(target_os = "windows")]
+        {
+            let refreshed_output = crate::state::discover_windows_audio_devices();
+            if !refreshed_output.is_empty() {
+                state.available_hw = refreshed_output;
+            }
+            let refreshed_input = crate::state::discover_windows_input_devices();
+            if !refreshed_input.is_empty() {
+                state.available_input_hw = refreshed_input;
+            }
+        }
+        #[cfg(any(unix, target_os = "windows"))]
+        {
+            let bits = if Self::AUDIO_BIT_DEPTH_OPTIONS.contains(&prefs.default_audio_bit_depth) {
+                prefs.default_audio_bit_depth
+            } else {
+                32
+            };
+            state.oss_bits = bits;
+        }
         if let Some(device_id) = prefs.default_output_device_id.as_deref() {
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             if let Some(selected) = state
@@ -3638,6 +3664,19 @@ impl Maolan {
                         Message::PreferencesSnapModeSelected
                     )
                     .placeholder("Choose snap mode")
+                    .width(Length::Fixed(220.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                #[cfg(any(unix, target_os = "windows"))]
+                row![
+                    text("Default bit depth:"),
+                    pick_list(
+                        Self::AUDIO_BIT_DEPTH_OPTIONS.to_vec(),
+                        Some(self.prefs_audio_bit_depth),
+                        Message::PreferencesBitDepthSelected
+                    )
+                    .placeholder("Choose bit depth")
                     .width(Length::Fixed(220.0)),
                 ]
                 .spacing(10)

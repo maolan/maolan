@@ -1,5 +1,7 @@
 #[cfg(target_os = "windows")]
 use cpal::traits::{DeviceTrait, HostTrait};
+#[cfg(target_os = "windows")]
+use cpal::{SampleFormat, SupportedStreamConfigRange};
 
 #[cfg(target_os = "windows")]
 enum WindowsDeviceDirection {
@@ -95,4 +97,68 @@ pub(crate) fn discover_windows_output_sample_rates(device_id: &str) -> Vec<i32> 
     } else {
         rates
     }
+}
+
+#[cfg(target_os = "windows")]
+fn bit_depth_from_sample_format(format: SampleFormat) -> Option<usize> {
+    match format {
+        SampleFormat::I8 | SampleFormat::U8 => Some(8),
+        SampleFormat::I16 | SampleFormat::U16 => Some(16),
+        SampleFormat::I32
+        | SampleFormat::U32
+        | SampleFormat::F32
+        | SampleFormat::I64
+        | SampleFormat::U64
+        | SampleFormat::F64 => Some(32),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn collect_supported_output_bit_depths(
+    configs: impl Iterator<Item = SupportedStreamConfigRange>,
+) -> Vec<usize> {
+    let mut bits = Vec::new();
+    for cfg in configs {
+        if let Some(depth) = bit_depth_from_sample_format(cfg.sample_format()) {
+            bits.push(depth);
+        }
+    }
+    bits.sort_by(|a, b| b.cmp(a));
+    bits.dedup();
+    bits
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn discover_windows_output_bit_depths(device_id: &str) -> Vec<usize> {
+    let fallback_bits = vec![32, 24, 16, 8];
+    let requested_name = if let Some(name) = device_id.strip_prefix("wasapi:") {
+        name
+    } else {
+        return fallback_bits;
+    };
+
+    let Ok(host) = cpal::host_from_id(cpal::HostId::Wasapi) else {
+        return fallback_bits;
+    };
+
+    let device = if requested_name == "default" {
+        host.default_output_device()
+    } else {
+        let Ok(mut devices) = host.output_devices() else {
+            return fallback_bits;
+        };
+        devices.find(|dev| dev.name().is_ok_and(|name| name == requested_name))
+    };
+
+    let Some(device) = device else {
+        return fallback_bits;
+    };
+
+    let Ok(configs) = device.supported_output_configs() else {
+        return fallback_bits;
+    };
+
+    let bits = collect_supported_output_bit_depths(configs);
+    if bits.is_empty() { fallback_bits } else { bits }
 }

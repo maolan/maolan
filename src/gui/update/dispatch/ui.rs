@@ -141,7 +141,7 @@ impl Maolan {
                 self.state.blocking_write().oss_exclusive = *exclusive;
                 true
             }
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "windows"))]
             Message::HWBitsChanged(bits) => {
                 self.state.blocking_write().oss_bits = *bits;
                 true

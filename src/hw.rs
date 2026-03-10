@@ -234,7 +234,7 @@ impl HW {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
     fn selected_bits(selected_is_jack: bool, chosen_bits: usize) -> i32 {
         if selected_is_jack {
             32
@@ -243,7 +243,11 @@ impl HW {
         }
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "windows"
+    )))]
     fn selected_bits(_selected_is_jack: bool, _chosen_bits: usize) -> i32 {
         32
     }
@@ -287,7 +291,7 @@ impl HW {
             8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
             192_000, 384_000,
         ];
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
         let fallback_bits = vec![32, 24, 16, 8];
         let (
             available_backends,
@@ -331,7 +335,7 @@ impl HW {
         };
         #[cfg(target_os = "freebsd")]
         let mut selected_input_hw = self.state.blocking_read().selected_input_hw.clone();
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
         let selected_bits = self.state.blocking_read().oss_bits;
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let available_hw: Vec<crate::state::AudioDeviceOption> = available_hw
@@ -437,13 +441,22 @@ impl HW {
                 })
                 .unwrap_or_else(|| fallback_bits.clone())
         };
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(target_os = "windows")]
+        let bit_options = selected_hw
+            .as_ref()
+            .map(|hw| crate::state::discover_windows_output_bit_depths(hw))
+            .unwrap_or_else(|| fallback_bits.clone());
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
         let chosen_bits = if bit_options.contains(&selected_bits) {
             selected_bits
         } else {
             bit_options.first().copied().unwrap_or(32)
         };
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "windows"
+        )))]
         let chosen_bits = 32usize;
         let plugins_loaded = self.plugins_loaded();
         let mut submit = button("Open Audio");
@@ -533,7 +546,7 @@ impl HW {
                 ]
                 .spacing(10),
             );
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
             {
                 content = content.push(
                     row![

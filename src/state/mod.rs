@@ -33,7 +33,8 @@ use tokio::sync::RwLock;
 pub use track::{AuxSend, Track, TrackAutomationLane, TrackAutomationPoint, TrackLaneLayout};
 #[cfg(target_os = "windows")]
 pub(crate) use platform::{
-    discover_windows_audio_devices, discover_windows_input_devices, discover_windows_output_sample_rates,
+    discover_windows_audio_devices, discover_windows_input_devices, discover_windows_output_bit_depths,
+    discover_windows_output_sample_rates,
 };
 #[cfg(target_os = "freebsd")]
 pub(crate) use platform_freebsd::discover_freebsd_audio_devices;
@@ -417,7 +418,7 @@ pub struct StateData {
     pub selected_input_hw: Option<InputAudioDevice>,
     pub hw_sample_rate_hz: i32,
     pub oss_exclusive: bool,
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     pub oss_bits: usize,
     pub oss_period_frames: usize,
     pub oss_nperiods: usize,
@@ -577,8 +578,8 @@ impl Default for StateData {
             selected_input_hw: initial_hw.selected_input_hw,
             hw_sample_rate_hz: 48_000,
             oss_exclusive: true,
-            #[cfg(unix)]
-            oss_bits: 32,
+            #[cfg(any(unix, target_os = "windows"))]
+            oss_bits: cfg.default_audio_bit_depth,
             oss_period_frames: 1024,
             oss_nperiods: 1,
             oss_sync_mode: false,

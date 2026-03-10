@@ -5763,6 +5763,9 @@ impl Maolan {
             Message::PreferencesSnapModeSelected(mode) => {
                 self.prefs_snap_mode = mode;
             }
+            Message::PreferencesBitDepthSelected(bits) => {
+                self.prefs_audio_bit_depth = bits;
+            }
             Message::PreferencesOutputDeviceSelected(ref device) => {
                 self.prefs_default_output_device_id =
                     (device.id != super::super::PREF_DEVICE_AUTO_ID).then(|| device.id.clone());
@@ -5775,11 +5778,13 @@ impl Maolan {
                 let mut cfg = crate::config::Config::load().unwrap_or_default();
                 cfg.default_export_sample_rate_hz = self.prefs_export_sample_rate_hz;
                 cfg.default_snap_mode = self.prefs_snap_mode;
+                cfg.default_audio_bit_depth = self.prefs_audio_bit_depth;
                 cfg.default_output_device_id = self.prefs_default_output_device_id.clone();
                 cfg.default_input_device_id = self.prefs_default_input_device_id.clone();
                 let prefs = super::super::AppPreferences {
                     default_export_sample_rate_hz: cfg.default_export_sample_rate_hz,
                     default_snap_mode: cfg.default_snap_mode,
+                    default_audio_bit_depth: cfg.default_audio_bit_depth,
                     default_output_device_id: cfg.default_output_device_id.clone(),
                     default_input_device_id: cfg.default_input_device_id.clone(),
                     recent_session_paths: cfg.recent_session_paths.clone(),
