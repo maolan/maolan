@@ -1620,22 +1620,6 @@ impl Engine {
             .collect()
     }
 
-    fn vca_would_create_cycle(&self, track_name: &str, candidate_master: &str) -> bool {
-        let mut current = Some(candidate_master.to_string());
-        while let Some(name) = current {
-            if name == track_name {
-                return true;
-            }
-            current = self
-                .state
-                .lock()
-                .tracks
-                .get(&name)
-                .and_then(|track| track.lock().vca_master());
-        }
-        false
-    }
-
     fn apply_mute_solo_policy(&self) {
         let tracks = &self.state.lock().tracks;
         let any_soloed = tracks.values().any(|t| t.lock().soloed);
@@ -3468,16 +3452,6 @@ impl Engine {
                 if let Some(master_name) = master_track {
                     if master_name == track_name {
                         self.notify_clients(Err("Track cannot be its own VCA master".to_string()))
-                            .await;
-                        return;
-                    }
-                    if !self.state.lock().tracks.contains_key(master_name) {
-                        self.notify_clients(Err(format!("VCA master not found: {master_name}")))
-                            .await;
-                        return;
-                    }
-                    if self.vca_would_create_cycle(track_name, master_name) {
-                        self.notify_clients(Err("VCA assignment would create a cycle".to_string()))
                             .await;
                         return;
                     }

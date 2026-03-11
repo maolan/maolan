@@ -58,6 +58,7 @@ impl Maolan {
             message,
             Message::TrackAutomationAddLane { .. }
                 | Message::TrackRenameShow(_)
+                | Message::TrackGroupShow { .. }
                 | Message::TrackAutomationToggle { .. }
                 | Message::TrackAutomationCycleMode { .. }
                 | Message::TrackTemplateSaveShow(_)
@@ -3791,6 +3792,64 @@ impl Maolan {
             }
             Message::TrackRenameCancel => {
                 self.state.blocking_write().track_rename_dialog = None;
+            }
+            Message::TrackGroupShow { ref track_name } => {
+                let mut state = self.state.blocking_write();
+                let selected_tracks = state
+                    .tracks
+                    .iter()
+                    .filter(|track| state.selected.contains(track.name.as_str()))
+                    .map(|track| track.name.clone())
+                    .collect::<Vec<_>>();
+                if selected_tracks.len() <= 1
+                    || !selected_tracks.iter().any(|name| name == track_name)
+                {
+                    return Task::none();
+                }
+                state.track_group_dialog = Some(crate::state::TrackGroupDialog {
+                    selected_tracks,
+                    name: String::new(),
+                });
+            }
+            Message::TrackGroupInput(_) => {
+                // Handled by TrackGroupView
+            }
+            Message::TrackGroupConfirm => {
+                let dialog = self.state.blocking_read().track_group_dialog.clone();
+                let Some(dialog) = dialog else {
+                    return Task::none();
+                };
+
+                let group_name = dialog.name.trim().to_string();
+                if group_name.is_empty() || dialog.selected_tracks.len() <= 1 {
+                    return Task::none();
+                }
+                if self
+                    .state
+                    .blocking_read()
+                    .tracks
+                    .iter()
+                    .any(|track| track.name == group_name)
+                {
+                    self.state.blocking_write().message =
+                        format!("A track named '{group_name}' already exists");
+                    return Task::none();
+                }
+
+                self.state.blocking_write().track_group_dialog = None;
+
+                let mut actions = vec![Action::BeginHistoryGroup];
+                for track_name in dialog.selected_tracks {
+                    actions.push(Action::TrackSetVcaMaster {
+                        track_name,
+                        master_track: Some(group_name.clone()),
+                    });
+                }
+                actions.push(Action::EndHistoryGroup);
+                return Self::restore_actions_task(actions);
+            }
+            Message::TrackGroupCancel => {
+                self.state.blocking_write().track_group_dialog = None;
             }
             Message::TrackTemplateSaveShow(ref track_name) => {
                 let mut state = self.state.blocking_write();

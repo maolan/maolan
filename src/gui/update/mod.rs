@@ -1177,18 +1177,24 @@ impl Maolan {
         let Some(track) = state.tracks.iter().find(|t| t.name == track_name) else {
             return vec![track_name.to_string()];
         };
-        let master = track
-            .vca_master
-            .clone()
-            .unwrap_or_else(|| track.name.clone());
-        let mut members = vec![master.clone()];
-        members.extend(
+        let mut members = if let Some(group_name) = track.vca_master.as_deref() {
             state
                 .tracks
                 .iter()
-                .filter(|t| t.vca_master.as_deref() == Some(master.as_str()))
-                .map(|t| t.name.clone()),
-        );
+                .filter(|t| t.vca_master.as_deref() == Some(group_name))
+                .map(|t| t.name.clone())
+                .collect::<Vec<_>>()
+        } else {
+            let mut members = vec![track.name.clone()];
+            members.extend(
+                state
+                    .tracks
+                    .iter()
+                    .filter(|t| t.vca_master.as_deref() == Some(track.name.as_str()))
+                    .map(|t| t.name.clone()),
+            );
+            members
+        };
         members.sort();
         members.dedup();
         members

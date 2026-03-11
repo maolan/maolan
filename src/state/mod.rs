@@ -288,6 +288,12 @@ pub struct TrackRenameDialog {
 }
 
 #[derive(Debug, Clone)]
+pub struct TrackGroupDialog {
+    pub selected_tracks: Vec<String>,
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct TemplateSaveDialog {
     pub name: String,
 }
@@ -446,6 +452,7 @@ pub struct StateData {
     pub connections_last_track_click: Option<(String, Instant)>,
     pub clip_rename_dialog: Option<ClipRenameDialog>,
     pub track_rename_dialog: Option<TrackRenameDialog>,
+    pub track_group_dialog: Option<TrackGroupDialog>,
     pub track_template_save_dialog: Option<TrackTemplateSaveDialog>,
     pub template_save_dialog: Option<TemplateSaveDialog>,
     pub pending_track_template_load: Option<(String, String)>, // (track_name, template_name)
@@ -606,6 +613,7 @@ impl Default for StateData {
             connections_last_track_click: None,
             clip_rename_dialog: None,
             track_rename_dialog: None,
+            track_group_dialog: None,
             track_template_save_dialog: None,
             template_save_dialog: None,
             pending_track_template_load: None,

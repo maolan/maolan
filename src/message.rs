@@ -925,6 +925,12 @@ pub enum Message {
     TrackRenameInput(String),
     TrackRenameConfirm,
     TrackRenameCancel,
+    TrackGroupShow {
+        track_name: String,
+    },
+    TrackGroupInput(String),
+    TrackGroupConfirm,
+    TrackGroupCancel,
 
     TrackTemplateSaveShow(String),
     TrackTemplateSaveInput(String),

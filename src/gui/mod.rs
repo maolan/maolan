@@ -28,7 +28,7 @@ use crate::{
         AudioClip, ClipPeaks, MIDIClip, MidiClipPreviewMap, PianoControllerPoint, PianoNote,
         PianoSysExPoint, State, StateData,
     },
-    template_save, toolbar, track_rename, track_template_save, workspace,
+    template_save, toolbar, track_group, track_rename, track_template_save, workspace,
 };
 use ebur128::{EbuR128, Mode as LoudnessMode};
 use flacenc::component::BitRepr;
@@ -281,6 +281,7 @@ pub struct Maolan {
     add_track: add_track::AddTrackView,
     clip_rename: clip_rename::ClipRenameView,
     track_rename: track_rename::TrackRenameView,
+    track_group: track_group::TrackGroupView,
     track_template_save: track_template_save::TrackTemplateSaveView,
     template_save: template_save::TemplateSaveView,
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -496,6 +497,7 @@ impl Default for Maolan {
             add_track: add_track::AddTrackView::default(),
             clip_rename: clip_rename::ClipRenameView::new(state.clone()),
             track_rename: track_rename::TrackRenameView::new(state.clone()),
+            track_group: track_group::TrackGroupView::new(state.clone()),
             track_template_save: track_template_save::TrackTemplateSaveView::new(state.clone()),
             template_save: template_save::TemplateSaveView::new(state.clone()),
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -3925,6 +3927,7 @@ impl Maolan {
         self.add_track.update(message);
         self.clip_rename.update(message);
         self.track_rename.update(message);
+        self.track_group.update(message);
     }
 }
 

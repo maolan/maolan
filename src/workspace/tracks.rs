@@ -156,9 +156,27 @@ pub(super) fn track_context_menu_overlay(
         }
     }
 
+    let selected_tracks: Vec<_> = state
+        .tracks
+        .iter()
+        .filter(|candidate| state.selected.contains(candidate.name.as_str()))
+        .map(|candidate| candidate.name.clone())
+        .collect();
+    let can_group_selected =
+        selected_tracks.len() > 1 && selected_tracks.iter().any(|name| name == &track.name);
+
+    if can_group_selected {
+        items.push(menu::menu_item(
+            "Group",
+            Message::TrackGroupShow {
+                track_name: track_name.clone(),
+            },
+        ));
+    }
+
     if let Some(master) = track.vca_master.as_ref() {
         items.push(menu::menu_item(
-            format!("VCA: Unassign ({master})"),
+            format!("Group: Ungroup ({master})"),
             Message::TrackSetVcaMaster {
                 track_name: track_name.clone(),
                 master_track: None,
@@ -226,20 +244,6 @@ pub(super) fn track_context_menu_overlay(
             Message::TrackMidiLearnClear {
                 track_name: track_name.clone(),
                 target: TrackMidiLearnTarget::DiskMonitor,
-            },
-        ));
-    }
-
-    for candidate in state
-        .tracks
-        .iter()
-        .filter(|candidate| candidate.name != track.name && candidate.name != METRONOME_TRACK_ID)
-    {
-        items.push(menu::menu_item(
-            format!("VCA -> {}", candidate.name),
-            Message::TrackSetVcaMaster {
-                track_name: track_name.clone(),
-                master_track: Some(candidate.name.clone()),
             },
         ));
     }
@@ -485,12 +489,6 @@ impl Tracks {
             if learn_count > 0 {
                 title_badges =
                     title_badges.push(Self::info_badge(format!("CC {}", learn_count), false));
-            }
-            if let Some(master) = vca_master_label.as_ref() {
-                title_badges = title_badges.push(Self::info_badge(
-                    format!("VCA {}", Self::trim_with_ellipsis(master, 8)),
-                    false,
-                ));
             }
 
             let header = mouse_area(
