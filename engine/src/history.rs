@@ -1088,3 +1088,339 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
 
     create_inverse_action(action, state).map(|a| vec![a])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::clip::AudioClip;
+    use crate::kind::Kind;
+    use crate::message::{MidiLearnBinding, TrackMidiLearnTarget};
+    use crate::mutex::UnsafeMutex;
+    use crate::track::Track;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    use crate::message::Lv2PluginState;
+    use crate::vst3::Vst3PluginState;
+    use std::sync::Arc;
+
+    fn make_state_with_track(track: Track) -> State {
+        let mut state = State::default();
+        state.tracks.insert(
+            track.name.clone(),
+            Arc::new(UnsafeMutex::new(Box::new(track))),
+        );
+        state
+    }
+
+    fn binding(cc: u8) -> MidiLearnBinding {
+        MidiLearnBinding {
+            device: Some("midi".to_string()),
+            channel: 1,
+            cc,
+        }
+    }
+
+    #[test]
+    fn history_record_limits_size_and_clears_redo_on_new_entry() {
+        let mut history = History::new(2);
+        let a = UndoEntry {
+            forward_actions: vec![Action::SetTempo(120.0)],
+            inverse_actions: vec![Action::SetTempo(110.0)],
+        };
+        let b = UndoEntry {
+            forward_actions: vec![Action::SetLoopEnabled(true)],
+            inverse_actions: vec![Action::SetLoopEnabled(false)],
+        };
+        let c = UndoEntry {
+            forward_actions: vec![Action::SetMetronomeEnabled(true)],
+            inverse_actions: vec![Action::SetMetronomeEnabled(false)],
+        };
+
+        history.record(a);
+        history.record(b.clone());
+        history.record(c.clone());
+
+        let undo = history.undo().unwrap();
+        assert!(matches!(undo.as_slice(), [Action::SetMetronomeEnabled(false)]));
+
+        let redo = history.redo().unwrap();
+        assert!(matches!(redo.as_slice(), [Action::SetMetronomeEnabled(true)]));
+
+        history.undo();
+        history.record(UndoEntry {
+            forward_actions: vec![Action::SetClipPlaybackEnabled(true)],
+            inverse_actions: vec![Action::SetClipPlaybackEnabled(false)],
+        });
+
+        assert!(history.redo().is_none());
+        let undo = history.undo().unwrap();
+        assert!(matches!(
+            undo.as_slice(),
+            [Action::SetClipPlaybackEnabled(false)]
+        ));
+        let undo = history.undo().unwrap();
+        assert!(matches!(undo.as_slice(), [Action::SetLoopEnabled(false)]));
+        assert!(history.undo().is_none());
+    }
+
+    #[test]
+    fn should_record_covers_recent_transport_and_lv2_actions() {
+        assert!(should_record(&Action::SetLoopEnabled(true)));
+        assert!(should_record(&Action::SetLoopRange(Some((64, 128)))));
+        assert!(should_record(&Action::SetPunchEnabled(true)));
+        assert!(should_record(&Action::SetPunchRange(Some((32, 96)))));
+        assert!(should_record(&Action::SetMetronomeEnabled(true)));
+        assert!(should_record(&Action::SetClipPlaybackEnabled(false)));
+        assert!(should_record(&Action::SetRecordEnabled(true)));
+        assert!(should_record(&Action::TrackLoadVst3Plugin {
+            track_name: "t".to_string(),
+            plugin_path: "/tmp/test.vst3".to_string(),
+        }));
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            assert!(should_record(&Action::TrackLoadLv2Plugin {
+                track_name: "t".to_string(),
+                plugin_uri: "urn:test".to_string(),
+            }));
+            assert!(should_record(&Action::TrackSetLv2ControlValue {
+                track_name: "t".to_string(),
+                instance_id: 0,
+                index: 1,
+                value: 0.5,
+            }));
+            assert!(!should_record(&Action::TrackSetLv2PluginState {
+                track_name: "t".to_string(),
+                instance_id: 0,
+                state: Lv2PluginState {
+                    port_values: vec![],
+                    properties: vec![],
+                },
+            }));
+        }
+        assert!(!should_record(&Action::TrackVst3RestoreState {
+            track_name: "t".to_string(),
+            instance_id: 0,
+            state: Vst3PluginState {
+                plugin_id: "id".to_string(),
+                component_state: vec![],
+                controller_state: vec![],
+            },
+        }));
+    }
+
+    #[test]
+    fn create_inverse_action_for_add_clip_targets_next_clip_index() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        track.audio.clips.push(AudioClip::new("existing".to_string(), 0, 16));
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::AddClip {
+                name: "new".to_string(),
+                track_name: "t".to_string(),
+                start: 32,
+                length: 16,
+                offset: 0,
+                input_channel: 0,
+                muted: false,
+                kind: Kind::Audio,
+                fade_enabled: false,
+                fade_in_samples: 0,
+                fade_out_samples: 0,
+                warp_markers: vec![],
+            },
+            &state,
+        )
+        .unwrap();
+
+        match inverse {
+            Action::RemoveClip {
+                track_name,
+                kind,
+                clip_indices,
+            } => {
+                assert_eq!(track_name, "t");
+                assert_eq!(kind, Kind::Audio);
+                assert_eq!(clip_indices, vec![1]);
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_action_for_track_midi_binding_restores_previous_binding() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        track.midi_learn_volume = Some(binding(7));
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::TrackSetMidiLearnBinding {
+                track_name: "t".to_string(),
+                target: TrackMidiLearnTarget::Volume,
+                binding: Some(binding(9)),
+            },
+            &state,
+        )
+        .unwrap();
+
+        match inverse {
+            Action::TrackSetMidiLearnBinding {
+                track_name,
+                target,
+                binding,
+            } => {
+                assert_eq!(track_name, "t");
+                assert_eq!(target, TrackMidiLearnTarget::Volume);
+                assert_eq!(binding.unwrap().cc, 7);
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_action_for_vst3_load_uses_next_runtime_instance_id() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        track.next_plugin_instance_id = 42;
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::TrackLoadVst3Plugin {
+                track_name: "t".to_string(),
+                plugin_path: "/tmp/test.vst3".to_string(),
+            },
+            &state,
+        )
+        .unwrap();
+
+        match inverse {
+            Action::TrackUnloadVst3PluginInstance {
+                track_name,
+                instance_id,
+            } => {
+                assert_eq!(track_name, "t");
+                assert_eq!(instance_id, 42);
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn create_inverse_action_for_lv2_load_uses_next_runtime_instance_id() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        track.next_lv2_instance_id = 5;
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::TrackLoadLv2Plugin {
+                track_name: "t".to_string(),
+                plugin_uri: "urn:test".to_string(),
+            },
+            &state,
+        )
+        .unwrap();
+
+        match inverse {
+            Action::TrackUnloadLv2PluginInstance {
+                track_name,
+                instance_id,
+            } => {
+                assert_eq!(track_name, "t");
+                assert_eq!(instance_id, 5);
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_actions_for_clear_all_midi_learn_bindings_restores_only_existing_bindings() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        track.midi_learn_volume = Some(binding(7));
+        track.midi_learn_disk_monitor = Some(binding(64));
+        let state = make_state_with_track(track);
+
+        let inverses = create_inverse_actions(&Action::ClearAllMidiLearnBindings, &state).unwrap();
+
+        assert_eq!(inverses.len(), 2);
+        assert!(inverses.iter().any(|action| {
+            matches!(
+                action,
+                Action::TrackSetMidiLearnBinding {
+                    target: TrackMidiLearnTarget::Volume,
+                    binding: Some(MidiLearnBinding { cc: 7, .. }),
+                    ..
+                }
+            )
+        }));
+        assert!(inverses.iter().any(|action| {
+            matches!(
+                action,
+                Action::TrackSetMidiLearnBinding {
+                    target: TrackMidiLearnTarget::DiskMonitor,
+                    binding: Some(MidiLearnBinding { cc: 64, .. }),
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn create_inverse_actions_for_remove_track_restores_io_flags_and_bindings() {
+        let mut track = Track::new("t".to_string(), 1, 1, 1, 1, 64, 48_000.0);
+        track.level = -3.0;
+        track.balance = 0.25;
+        track.armed = true;
+        track.muted = true;
+        track.soloed = true;
+        track.input_monitor = true;
+        track.disk_monitor = false;
+        track.midi_learn_volume = Some(binding(10));
+        track.vca_master = Some("bus".to_string());
+        track.audio.ins.push(Arc::new(AudioIO::new(64)));
+        track.audio.outs.push(Arc::new(AudioIO::new(64)));
+        let state = make_state_with_track(track);
+
+        let inverses = create_inverse_actions(&Action::RemoveTrack("t".to_string()), &state).unwrap();
+
+        assert!(matches!(
+            inverses.first(),
+            Some(Action::AddTrack {
+                name,
+                audio_ins: 1,
+                audio_outs: 1,
+                midi_ins: 1,
+                midi_outs: 1,
+            }) if name == "t"
+        ));
+        assert!(inverses
+            .iter()
+            .any(|action| matches!(action, Action::TrackAddAudioInput(name) if name == "t")));
+        assert!(inverses
+            .iter()
+            .any(|action| matches!(action, Action::TrackAddAudioOutput(name) if name == "t")));
+        assert!(inverses
+            .iter()
+            .any(|action| matches!(action, Action::TrackToggleInputMonitor(name) if name == "t")));
+        assert!(inverses
+            .iter()
+            .any(|action| matches!(action, Action::TrackToggleDiskMonitor(name) if name == "t")));
+        assert!(inverses.iter().any(|action| {
+            matches!(
+                action,
+                Action::TrackSetMidiLearnBinding {
+                    target: TrackMidiLearnTarget::Volume,
+                    binding: Some(MidiLearnBinding { cc: 10, .. }),
+                    ..
+                }
+            )
+        }));
+        assert!(inverses.iter().any(|action| {
+            matches!(
+                action,
+                Action::TrackSetVcaMaster {
+                    track_name,
+                    master_track: Some(master),
+                } if track_name == "t" && master == "bus"
+            )
+        }));
+    }
+}

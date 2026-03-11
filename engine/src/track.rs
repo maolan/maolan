@@ -3424,10 +3424,9 @@ mod tests {
         let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 8, 48_000.0);
         track.input_monitor = false;
         track.disk_monitor = true;
-        track
-            .audio
-            .clips
-            .push(AudioClip::new("clip".to_string(), 0, 4));
+        let mut clip = AudioClip::new("clip".to_string(), 0, 4);
+        clip.fade_enabled = false;
+        track.audio.clips.push(clip);
         track.audio_clip_cache.insert(
             "clip".to_string(),
             Arc::new(AudioClipBuffer {
@@ -3436,6 +3435,33 @@ mod tests {
             }),
         );
 
+        track.process();
+        let out = track.audio.outs[0].buffer.lock().to_vec();
+        assert_eq!(out[0], 0.8);
+    }
+
+    #[test]
+    fn clip_playback_respects_clip_playback_enabled_flag() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 8, 48_000.0);
+        track.input_monitor = false;
+        track.disk_monitor = true;
+        track.clip_playback_enabled = false;
+        let mut clip = AudioClip::new("clip".to_string(), 0, 4);
+        clip.fade_enabled = false;
+        track.audio.clips.push(clip);
+        track.audio_clip_cache.insert(
+            "clip".to_string(),
+            Arc::new(AudioClipBuffer {
+                channels: 1,
+                samples: vec![0.8, 0.0, 0.0, 0.0],
+            }),
+        );
+
+        track.process();
+        let out = track.audio.outs[0].buffer.lock().to_vec();
+        assert_eq!(out[0], 0.0);
+
+        track.clip_playback_enabled = true;
         track.process();
         let out = track.audio.outs[0].buffer.lock().to_vec();
         assert_eq!(out[0], 0.8);
@@ -3473,5 +3499,81 @@ mod tests {
         let out_r = track.audio.outs[1].buffer.lock().to_vec();
         assert_eq!(out_l[0], 0.25);
         assert_eq!(out_r[0], 0.0);
+    }
+
+    #[test]
+    fn transport_timing_and_loop_config_clamp_invalid_values() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 8, 48_000.0);
+
+        track.set_transport_timing(0.0, 0, 0);
+        assert_eq!(track.tempo_bpm, 1.0);
+        assert_eq!(track.tsig_num, 1);
+        assert_eq!(track.tsig_denom, 1);
+
+        track.set_loop_config(true, Some((128, 256)));
+        assert!(track.loop_enabled);
+        assert_eq!(track.loop_range_samples, Some((128, 256)));
+    }
+
+    #[test]
+    fn cycle_segments_wrap_across_loop_boundary() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 8, 48_000.0);
+        track.transport_sample = 14;
+        track.loop_enabled = true;
+        track.loop_range_samples = Some((10, 16));
+
+        let segments = track.cycle_segments(6);
+        assert_eq!(segments, vec![(14, 16, 0), (10, 14, 2)]);
+    }
+
+    #[test]
+    fn warped_source_sample_interpolates_between_markers() {
+        use crate::message::AudioWarpMarker;
+
+        let markers = vec![
+            AudioWarpMarker {
+                timeline_sample: 25,
+                source_sample: 10,
+            },
+            AudioWarpMarker {
+                timeline_sample: 75,
+                source_sample: 90,
+            },
+        ];
+
+        assert_eq!(Track::warped_source_sample_for_output(100, 0, &markers), 0);
+        assert_eq!(Track::warped_source_sample_for_output(100, 25, &markers), 10);
+        assert_eq!(Track::warped_source_sample_for_output(100, 50, &markers), 50);
+        assert_eq!(Track::warped_source_sample_for_output(100, 75, &markers), 90);
+        assert_eq!(Track::warped_source_sample_for_output(100, 100, &markers), 100);
+    }
+
+    #[test]
+    fn offline_bounce_restores_transport_and_monitor_state() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 8, 48_000.0);
+        track.transport_sample = 123;
+        track.disk_monitor = false;
+        track.input_monitor = true;
+        track.clip_playback_enabled = false;
+        track.output_enabled = false;
+        track.loop_enabled = true;
+        track.loop_range_samples = Some((32, 64));
+        track.armed = true;
+        track.pending_hw_midi_out_events
+            .push(crate::midi::io::MidiEvent::new(0, vec![0x90, 60, 100]));
+
+        let (channels, rendered) = track.offline_bounce_interleaved(0, 4);
+        assert_eq!(channels, 1);
+        assert_eq!(rendered.len(), 4);
+
+        assert_eq!(track.transport_sample, 123);
+        assert!(!track.disk_monitor);
+        assert!(track.input_monitor);
+        assert!(!track.clip_playback_enabled);
+        assert!(!track.output_enabled);
+        assert!(track.loop_enabled);
+        assert_eq!(track.loop_range_samples, Some((32, 64)));
+        assert!(track.armed);
+        assert_eq!(track.pending_hw_midi_out_events.len(), 1);
     }
 }

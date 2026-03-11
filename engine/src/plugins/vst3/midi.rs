@@ -604,12 +604,12 @@ mod tests {
         impl IMidiMappingTrait for TestMidiMapping {
             unsafe fn getMidiControllerAssignment(
                 &self,
-                _busIndex: i32,
+                _bus_index: i32,
                 _channel: i16,
-                midiControllerNumber: CtrlNumber,
+                midi_controller_number: CtrlNumber,
                 id: *mut ParamID,
             ) -> i32 {
-                if midiControllerNumber == 74 {
+                if midi_controller_number == 74 {
                     unsafe {
                         *id = 1234;
                     }
