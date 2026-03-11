@@ -631,7 +631,7 @@ mod tests {
         .unwrap();
         assert_eq!(unsafe { changes.getParameterCount() }, 1);
         let queue_ptr = unsafe { changes.getParameterData(0) };
-        let queue = unsafe { ComPtr::from_raw(queue_ptr) }.unwrap();
+        let queue = unsafe { vst3::ComRef::from_raw(queue_ptr) }.unwrap();
         assert_eq!(unsafe { queue.getParameterId() }, 1234);
         assert_eq!(unsafe { queue.getPointCount() }, 1);
     }
