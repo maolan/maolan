@@ -95,6 +95,8 @@ pub struct ClapProcessor {
     audio_outputs: Vec<Arc<AudioIO>>,
     midi_input_ports: usize,
     midi_output_ports: usize,
+    main_audio_inputs: usize,
+    main_audio_outputs: usize,
     host_runtime: Arc<HostRuntime>,
     plugin_handle: Arc<PluginHandle>,
     param_infos: Arc<Vec<ClapParameterInfo>>,
@@ -111,6 +113,8 @@ impl fmt::Debug for ClapProcessor {
             .field("audio_outputs", &self.audio_outputs.len())
             .field("midi_input_ports", &self.midi_input_ports)
             .field("midi_output_ports", &self.midi_output_ports)
+            .field("main_audio_inputs", &self.main_audio_inputs)
+            .field("main_audio_outputs", &self.main_audio_outputs)
             .finish()
     }
 }
@@ -140,6 +144,16 @@ impl ClapProcessor {
         let (discovered_midi_inputs, discovered_midi_outputs) = plugin_handle.note_port_layout();
         let resolved_inputs = discovered_inputs.unwrap_or(input_count).max(1);
         let resolved_outputs = discovered_outputs.unwrap_or(output_count).max(1);
+        let main_audio_inputs = if discovered_inputs.is_some() {
+            usize::from(resolved_inputs > 0)
+        } else {
+            input_count.max(1)
+        };
+        let main_audio_outputs = if discovered_outputs.is_some() {
+            usize::from(resolved_outputs > 0)
+        } else {
+            output_count.max(1)
+        };
         let audio_inputs = (0..resolved_inputs)
             .map(|_| Arc::new(AudioIO::new(buffer_size)))
             .collect();
@@ -158,6 +172,8 @@ impl ClapProcessor {
             audio_outputs,
             midi_input_ports: discovered_midi_inputs.unwrap_or(1).max(1),
             midi_output_ports: discovered_midi_outputs.unwrap_or(1).max(1),
+            main_audio_inputs,
+            main_audio_outputs,
             host_runtime,
             plugin_handle,
             param_infos,
@@ -277,6 +293,14 @@ impl ClapProcessor {
 
     pub fn audio_outputs(&self) -> &[Arc<AudioIO>] {
         &self.audio_outputs
+    }
+
+    pub fn main_audio_input_count(&self) -> usize {
+        self.main_audio_inputs
+    }
+
+    pub fn main_audio_output_count(&self) -> usize {
+        self.main_audio_outputs
     }
 
     pub fn midi_input_count(&self) -> usize {

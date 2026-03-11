@@ -32,6 +32,8 @@ pub struct Vst3Processor {
     audio_outputs: Vec<Arc<AudioIO>>,
     midi_input_ports: usize,
     midi_output_ports: usize,
+    main_audio_inputs: usize,
+    main_audio_outputs: usize,
     input_buses: Vec<BusInfo>,
     output_buses: Vec<BusInfo>,
 
@@ -55,6 +57,8 @@ impl fmt::Debug for Vst3Processor {
             .field("audio_outputs", &self.audio_outputs.len())
             .field("midi_input_ports", &self.midi_input_ports)
             .field("midi_output_ports", &self.midi_output_ports)
+            .field("main_audio_inputs", &self.main_audio_inputs)
+            .field("main_audio_outputs", &self.main_audio_outputs)
             .field("input_buses", &self.input_buses)
             .field("output_buses", &self.output_buses)
             .field("parameters", &self.parameters)
@@ -202,6 +206,8 @@ impl Vst3Processor {
             audio_outputs: audio_output_ios,
             midi_input_ports,
             midi_output_ports,
+            main_audio_inputs: requested_inputs,
+            main_audio_outputs: requested_outputs,
             input_buses,
             output_buses,
             parameters,
@@ -267,6 +273,14 @@ impl Vst3Processor {
 
     pub fn audio_outputs(&self) -> &[Arc<AudioIO>] {
         &self.audio_outputs
+    }
+
+    pub fn main_audio_input_count(&self) -> usize {
+        self.main_audio_inputs
+    }
+
+    pub fn main_audio_output_count(&self) -> usize {
+        self.main_audio_outputs
     }
 
     pub fn midi_input_count(&self) -> usize {

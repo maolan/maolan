@@ -128,6 +128,8 @@ pub struct Lv2Processor {
     scalar_values: Arc<Mutex<Vec<f32>>>,
     audio_inputs: Vec<Arc<AudioIO>>,
     audio_outputs: Vec<Arc<AudioIO>>,
+    main_audio_inputs: usize,
+    main_audio_outputs: usize,
     atom_inputs: Vec<AtomBuffer>,
     atom_outputs: Vec<AtomBuffer>,
     atom_sequence_urid: LV2Urid,
@@ -361,6 +363,8 @@ impl fmt::Debug for Lv2Processor {
             .field("uri", &self.uri)
             .field("audio_inputs", &self.audio_inputs.len())
             .field("audio_outputs", &self.audio_outputs.len())
+            .field("main_audio_inputs", &self.main_audio_inputs)
+            .field("main_audio_outputs", &self.main_audio_outputs)
             .finish()
     }
 }
@@ -397,6 +401,11 @@ impl Lv2Processor {
         let toggled_property = world.new_uri("http://lv2plug.in/ns/lv2core#toggled");
         let integer_property = world.new_uri("http://lv2plug.in/ns/lv2core#integer");
         let enumeration_property = world.new_uri("http://lv2plug.in/ns/lv2core#enumeration");
+        let port_group_predicate = world.new_uri("http://lv2plug.in/ns/ext/port-groups#group");
+        let main_input_group_predicate =
+            world.new_uri("http://lv2plug.in/ns/ext/port-groups#mainInput");
+        let main_output_group_predicate =
+            world.new_uri("http://lv2plug.in/ns/ext/port-groups#mainOutput");
         let atom_port = world.new_uri("http://lv2plug.in/ns/ext/atom#AtomPort");
         let event_port = world.new_uri("http://lv2plug.in/ns/ext/event#EventPort");
 
@@ -425,6 +434,30 @@ impl Lv2Processor {
         let time_bar_beat_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BARBEAT);
         let time_beats_per_bar_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BEATSPERBAR);
         let time_beat_unit_urid = urid_feature.map_uri(lv2_raw::LV2_TIME__BEATUNIT);
+        let declared_audio_inputs = plugin
+            .iter_ports()
+            .filter(|port| port.is_a(&audio_port) && port.is_a(&input_port))
+            .count();
+        let declared_audio_outputs = plugin
+            .iter_ports()
+            .filter(|port| port.is_a(&audio_port) && port.is_a(&output_port))
+            .count();
+        let main_audio_inputs = count_main_audio_ports(
+            &plugin,
+            &main_input_group_predicate,
+            &port_group_predicate,
+            &audio_port,
+            &input_port,
+        )
+        .unwrap_or(declared_audio_inputs);
+        let main_audio_outputs = count_main_audio_ports(
+            &plugin,
+            &main_output_group_predicate,
+            &port_group_predicate,
+            &audio_port,
+            &output_port,
+        )
+        .unwrap_or(declared_audio_outputs);
 
         for port in plugin.iter_ports() {
             let index = port.index();
@@ -546,6 +579,8 @@ impl Lv2Processor {
             scalar_values: Arc::new(Mutex::new(scalar_values)),
             audio_inputs,
             audio_outputs,
+            main_audio_inputs,
+            main_audio_outputs,
             atom_inputs,
             atom_outputs,
             atom_sequence_urid,
@@ -595,6 +630,14 @@ impl Lv2Processor {
 
     pub fn audio_output_count(&self) -> usize {
         self.audio_outputs.len()
+    }
+
+    pub fn main_audio_input_count(&self) -> usize {
+        self.main_audio_inputs
+    }
+
+    pub fn main_audio_output_count(&self) -> usize {
+        self.main_audio_outputs
     }
 
     pub fn midi_input_count(&self) -> usize {
@@ -2217,6 +2260,30 @@ fn plugin_port_counts(
     }
 
     (audio_inputs, audio_outputs, midi_inputs, midi_outputs)
+}
+
+fn count_main_audio_ports(
+    plugin: &Plugin,
+    main_group_predicate: &Node,
+    port_group_predicate: &Node,
+    audio_port: &Node,
+    direction_port: &Node,
+) -> Option<usize> {
+    let main_groups: Vec<Node> = plugin.value(main_group_predicate).iter().collect();
+    if main_groups.is_empty() {
+        return None;
+    }
+
+    let count = plugin
+        .iter_ports()
+        .filter(|port| port.is_a(audio_port) && port.is_a(direction_port))
+        .filter(|port| {
+            port.get(port_group_predicate)
+                .is_some_and(|group| main_groups.iter().any(|main| *main == group))
+        })
+        .count();
+
+    Some(count)
 }
 
 fn infer_missing_control_default(

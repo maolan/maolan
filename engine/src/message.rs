@@ -118,6 +118,8 @@ pub struct PluginGraphPlugin {
     pub uri: String,
     pub plugin_id: String,
     pub name: String,
+    pub main_audio_inputs: usize,
+    pub main_audio_outputs: usize,
     pub audio_inputs: usize,
     pub audio_outputs: usize,
     pub midi_inputs: usize,

@@ -205,6 +205,22 @@ impl Graph {
             audio_port_color()
         }
     }
+
+    fn plugin_input_port_color(plugin: &PluginGraphPlugin, port: usize) -> Color {
+        if port >= plugin.main_audio_inputs {
+            aux_port_color()
+        } else {
+            audio_port_color()
+        }
+    }
+
+    fn plugin_output_port_color(plugin: &PluginGraphPlugin, port: usize) -> Color {
+        if port >= plugin.main_audio_outputs {
+            aux_port_color()
+        } else {
+            audio_port_color()
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -949,7 +965,7 @@ impl canvas::Program<Message> for Graph {
                             Point::new(pos.x, py),
                             hover_radius(AUDIO_PORT_RADIUS, can_highlight),
                         ),
-                        audio_port_color(),
+                        Self::plugin_input_port_color(plugin, port),
                     );
                 }
                 for port in 0..plugin.audio_outputs {
@@ -976,7 +992,7 @@ impl canvas::Program<Message> for Graph {
                             Point::new(pos.x + PLUGIN_W, py),
                             hover_radius(AUDIO_PORT_RADIUS, can_highlight),
                         ),
-                        audio_port_color(),
+                        Self::plugin_output_port_color(plugin, port),
                     );
                 }
                 for port in 0..plugin.midi_inputs {
