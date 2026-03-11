@@ -1,6 +1,29 @@
 use super::*;
 
 impl Maolan {
+    fn ensure_tempo_anchor_at_zero(state: &mut crate::state::StateData) {
+        if state.tempo_points.iter().all(|p| p.sample != 0) {
+            state.tempo_points.push(TempoPoint {
+                sample: 0,
+                bpm: state.tempo.clamp(20.0, 300.0),
+            });
+            state.tempo_points.sort_unstable_by_key(|p| p.sample);
+        }
+    }
+
+    fn ensure_time_signature_anchor_at_zero(state: &mut crate::state::StateData) {
+        if state.time_signature_points.iter().all(|p| p.sample != 0) {
+            state.time_signature_points.push(TimeSignaturePoint {
+                sample: 0,
+                numerator: state.time_signature_num.max(1),
+                denominator: state.time_signature_denom.max(1),
+            });
+            state
+                .time_signature_points
+                .sort_unstable_by_key(|p| p.sample);
+        }
+    }
+
     pub(super) fn handle_timing_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TempoAdjust(delta) => {
@@ -39,7 +62,16 @@ impl Maolan {
                     state.tempo_points.push(TempoPoint { sample, bpm: tempo });
                 }
                 state.tempo_points.sort_unstable_by_key(|p| p.sample);
-                state.tempo = tempo;
+                let updates_global = if selected_samples.is_empty() {
+                    sample == 0
+                } else {
+                    selected_samples.contains(&0)
+                };
+                if updates_global {
+                    state.tempo = tempo;
+                } else {
+                    Self::ensure_tempo_anchor_at_zero(&mut state);
+                }
                 self.tempo_input = format!("{:.2}", tempo);
                 drop(state);
                 self.last_sent_tempo_bpm = Some(tempo as f64);
@@ -198,6 +230,9 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state
                     .tempo_points
+                    .retain(|p| p.sample == 0 || selected.binary_search(&p.sample).is_err());
+                state
+                    .time_signature_points
                     .retain(|p| p.sample == 0 || selected.binary_search(&p.sample).is_err());
                 drop(state);
                 self.selected_tempo_points.clear();
@@ -398,6 +433,9 @@ impl Maolan {
                 state
                     .time_signature_points
                     .retain(|p| p.sample == 0 || selected.binary_search(&p.sample).is_err());
+                state
+                    .tempo_points
+                    .retain(|p| p.sample == 0 || selected.binary_search(&p.sample).is_err());
                 drop(state);
                 self.selected_time_signature_points.clear();
                 self.timing_selection_lane = None;
@@ -456,8 +494,17 @@ impl Maolan {
                 state
                     .time_signature_points
                     .sort_unstable_by_key(|p| p.sample);
-                state.time_signature_num = next;
-                let numerator = state.time_signature_num as u16;
+                let updates_global = if selected_samples.is_empty() {
+                    sample == 0
+                } else {
+                    selected_samples.contains(&0)
+                };
+                if updates_global {
+                    state.time_signature_num = next;
+                } else {
+                    Self::ensure_time_signature_anchor_at_zero(&mut state);
+                }
+                let numerator = next as u16;
                 let denominator = state.time_signature_denom as u16;
                 self.time_signature_num_input = numerator.to_string();
                 drop(state);
@@ -518,9 +565,18 @@ impl Maolan {
                 state
                     .time_signature_points
                     .sort_unstable_by_key(|p| p.sample);
-                state.time_signature_denom = next;
+                let updates_global = if selected_samples.is_empty() {
+                    sample == 0
+                } else {
+                    selected_samples.contains(&0)
+                };
+                if updates_global {
+                    state.time_signature_denom = next;
+                } else {
+                    Self::ensure_time_signature_anchor_at_zero(&mut state);
+                }
                 let numerator = state.time_signature_num as u16;
-                let denominator = state.time_signature_denom as u16;
+                let denominator = next as u16;
                 self.time_signature_denom_input = denominator.to_string();
                 drop(state);
                 self.last_sent_time_signature = Some((numerator, denominator));
@@ -561,7 +617,11 @@ impl Maolan {
                 state
                     .time_signature_points
                     .sort_unstable_by_key(|p| p.sample);
-                state.tempo = bpm;
+                if sample == 0 {
+                    state.tempo = bpm;
+                } else {
+                    Self::ensure_tempo_anchor_at_zero(&mut state);
+                }
                 self.tempo_input = format!("{:.2}", bpm);
                 drop(state);
                 self.selected_tempo_points.clear();
@@ -620,8 +680,12 @@ impl Maolan {
                     .time_signature_points
                     .sort_unstable_by_key(|p| p.sample);
                 state.tempo_points.sort_unstable_by_key(|p| p.sample);
-                state.time_signature_num = numerator;
-                state.time_signature_denom = denominator;
+                if sample == 0 {
+                    state.time_signature_num = numerator;
+                    state.time_signature_denom = denominator;
+                } else {
+                    Self::ensure_time_signature_anchor_at_zero(&mut state);
+                }
                 self.time_signature_num_input = numerator.to_string();
                 self.time_signature_denom_input = denominator.to_string();
                 drop(state);

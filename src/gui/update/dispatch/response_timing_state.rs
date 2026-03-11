@@ -46,7 +46,9 @@ impl Maolan {
             }
             Action::SetTempo(bpm) => {
                 let bpm = (*bpm as f32).clamp(20.0, 300.0);
-                self.state.blocking_write().tempo = bpm;
+                let mut state = self.state.blocking_write();
+                let (base_bpm, _, _) = Self::timing_at_sample(&state, 0);
+                state.tempo = base_bpm;
                 self.tempo_input = format!("{:.2}", bpm);
                 self.last_sent_tempo_bpm = Some(bpm as f64);
                 true
@@ -56,19 +58,22 @@ impl Maolan {
                 denominator,
             } => {
                 let mut state = self.state.blocking_write();
-                state.time_signature_num = (*numerator).clamp(1, 16) as u8;
-                state.time_signature_denom = match *denominator {
+                let incoming_num = (*numerator).clamp(1, 16) as u8;
+                let incoming_den = match *denominator {
                     2 => 2,
                     4 => 4,
                     8 => 8,
                     16 => 16,
                     _ => 4,
                 };
-                self.time_signature_num_input = state.time_signature_num.to_string();
-                self.time_signature_denom_input = state.time_signature_denom.to_string();
+                let (_, base_num, base_den) = Self::timing_at_sample(&state, 0);
+                state.time_signature_num = base_num;
+                state.time_signature_denom = base_den;
+                self.time_signature_num_input = incoming_num.to_string();
+                self.time_signature_denom_input = incoming_den.to_string();
                 self.last_sent_time_signature = Some((
-                    state.time_signature_num as u16,
-                    state.time_signature_denom as u16,
+                    incoming_num as u16,
+                    incoming_den as u16,
                 ));
                 true
             }

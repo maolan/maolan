@@ -319,7 +319,6 @@ impl canvas::Program<Message> for TempoCanvas {
                     if pos.y <= TEMPO_HIT_HEIGHT
                         && let Some(sample) = nearest_tempo_point_at_x(pos.x)
                     {
-                        let sample = snap_sample(sample);
                         let sample_selected = self.selected_tempo_points.contains(&sample);
                         let mut originals = if sample_selected && !self.shift_pressed {
                             self.selected_tempo_points.to_vec()
@@ -348,7 +347,6 @@ impl canvas::Program<Message> for TempoCanvas {
                     if pos.y > TEMPO_HIT_HEIGHT
                         && let Some(sample) = nearest_tsig_point_at_x(pos.x)
                     {
-                        let sample = snap_sample(sample);
                         let sample_selected = self.selected_time_signature_points.contains(&sample);
                         let mut originals = if sample_selected && !self.shift_pressed {
                             self.selected_time_signature_points.to_vec()
@@ -511,7 +509,6 @@ impl canvas::Program<Message> for TempoCanvas {
                     if pos.y <= TEMPO_HIT_HEIGHT
                         && let Some(sample) = nearest_tempo_point_at_x(pos.x)
                     {
-                        let sample = snap_sample(sample);
                         state.context_menu = Some(ContextMenuState {
                             lane: MarkerLane::Tempo,
                             x: pos.x.min((bounds.width - CONTEXT_MENU_WIDTH).max(0.0)),
@@ -530,7 +527,6 @@ impl canvas::Program<Message> for TempoCanvas {
                     if pos.y > TEMPO_HIT_HEIGHT
                         && let Some(sample) = nearest_tsig_point_at_x(pos.x)
                     {
-                        let sample = snap_sample(sample);
                         state.context_menu = Some(ContextMenuState {
                             lane: MarkerLane::TimeSignature,
                             x: pos.x.min((bounds.width - CONTEXT_MENU_WIDTH).max(0.0)),

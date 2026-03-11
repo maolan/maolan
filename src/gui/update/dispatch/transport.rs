@@ -93,16 +93,18 @@ impl Maolan {
                 }
                 let mut tasks = Vec::new();
                 {
-                    let mut state = self.state.blocking_write();
+                    let state = self.state.blocking_read();
                     let (bpm, num, den) = Self::timing_at_sample(&state, now_sample);
-                    let tempo_changed = (state.tempo - bpm).abs() > 0.0001;
-                    let ts_changed =
-                        state.time_signature_num != num || state.time_signature_denom != den;
-                    if tempo_changed || ts_changed {
-                        state.tempo = bpm;
-                        state.time_signature_num = num;
-                        state.time_signature_denom = den;
+                    let tempo_changed = self
+                        .last_sent_tempo_bpm
+                        .is_none_or(|prev| (prev - bpm as f64).abs() > 0.0001);
+                    let ts_changed = self
+                        .last_sent_time_signature
+                        .is_none_or(|prev| prev != (num as u16, den as u16));
+                    if tempo_changed {
                         self.tempo_input = format!("{:.2}", bpm);
+                    }
+                    if ts_changed {
                         self.time_signature_num_input = num.to_string();
                         self.time_signature_denom_input = den.to_string();
                     }
