@@ -129,14 +129,24 @@ impl Maolan {
                 track_meters,
             } => {
                 let mut state = self.state.blocking_write();
-                Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, hw_out_db);
-                for (track_name, output_db) in track_meters.iter() {
-                    if let Some(track) = state
-                        .tracks
-                        .iter_mut()
-                        .find(|t| t.name == track_name.as_str())
+                let has_input_monitor = state.tracks.iter().any(|track| track.input_monitor);
+                let allow_live_hw_out = self.playing && (!self.paused || has_input_monitor);
+                if (!allow_live_hw_out || hw_out_db.is_empty()) && !state.hw_out_meter_db.is_empty()
+                {
+                    let silence = vec![-90.0; state.hw_out_meter_db.len()];
+                    Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, &silence);
+                } else {
+                    Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, hw_out_db);
+                }
+                for track in &mut state.tracks {
+                    if let Some((_, output_db)) = track_meters
+                        .iter()
+                        .find(|(track_name, _)| track_name.as_str() == track.name.as_str())
                     {
                         Self::smooth_meter_db_levels(&mut track.meter_out_db, output_db);
+                    } else if !track.meter_out_db.is_empty() {
+                        let silence = vec![-90.0; track.meter_out_db.len()];
+                        Self::smooth_meter_db_levels(&mut track.meter_out_db, &silence);
                     }
                 }
                 Some(Task::none())
