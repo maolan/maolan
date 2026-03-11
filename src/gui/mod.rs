@@ -99,6 +99,7 @@ struct ExportSessionOptions {
     sample_rate: i32,
     formats: Vec<ExportFormat>,
     render_mode: ExportRenderMode,
+    selected_hw_out_ports: Vec<usize>,
     realtime_fallback: bool,
     bit_depth: ExportBitDepth,
     mp3_mode: ExportMp3Mode,
@@ -146,6 +147,17 @@ struct ExportWriteRequest<'a> {
     format: ExportFormat,
     codec: ExportCodecSettings,
     metadata: &'a ExportMetadata,
+}
+
+#[derive(Clone)]
+struct ExportTrackData {
+    name: String,
+    level: f32,
+    balance: f32,
+    muted: bool,
+    soloed: bool,
+    output_ports: usize,
+    clips: Vec<crate::state::AudioClip>,
 }
 
 #[derive(Debug, Clone)]
@@ -353,6 +365,7 @@ pub struct Maolan {
     export_mp3_bitrate_kbps: u16,
     export_ogg_quality_input: String,
     export_render_mode: ExportRenderMode,
+    export_hw_out_ports: BTreeSet<usize>,
     export_realtime_fallback: bool,
     export_normalize: bool,
     export_normalize_mode: ExportNormalizeMode,
@@ -566,6 +579,7 @@ impl Default for Maolan {
             export_mp3_bitrate_kbps: 320,
             export_ogg_quality_input: "0.6".to_string(),
             export_render_mode: ExportRenderMode::Mixdown,
+            export_hw_out_ports: [0_usize, 1].into_iter().collect(),
             export_realtime_fallback: false,
             export_normalize: false,
             export_normalize_mode: ExportNormalizeMode::Peak,
@@ -1924,31 +1938,82 @@ impl Maolan {
         Ok(())
     }
 
-    fn mix_track_clips_to_stereo(
+    fn available_export_hw_out_ports(&self) -> Vec<usize> {
+        let channels = self
+            .state
+            .blocking_read()
+            .hw_out
+            .as_ref()
+            .map(|hw| hw.channels)
+            .unwrap_or(0);
+        (0..channels).collect()
+    }
+
+    fn default_export_hw_out_ports(&self) -> BTreeSet<usize> {
+        self.available_export_hw_out_ports()
+            .into_iter()
+            .take(2)
+            .collect()
+    }
+
+    fn normalize_export_hw_out_ports(&mut self) {
+        let available: BTreeSet<usize> = self.available_export_hw_out_ports().into_iter().collect();
+        self.export_hw_out_ports.retain(|port| available.contains(port));
+        if self.export_hw_out_ports.is_empty() {
+            self.export_hw_out_ports = self.default_export_hw_out_ports();
+        }
+    }
+
+    fn export_max_channels_for_current_settings(&self) -> usize {
+        if matches!(self.export_render_mode, ExportRenderMode::Mixdown) {
+            return self.export_hw_out_ports.len();
+        }
+
+        let state = self.state.blocking_read();
+        state
+            .tracks
+            .iter()
+            .filter(|track| state.selected.contains(&track.name))
+            .map(|track| track.audio.outs.max(1))
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn export_mp3_supported_for_current_settings(&self) -> bool {
+        self.export_max_channels_for_current_settings() <= 2
+    }
+
+    fn mix_track_clips_to_channels(
         clips: &[crate::state::AudioClip],
         session_root: &Path,
         total_length: usize,
+        output_channels: usize,
         level_db: f32,
         balance: f32,
         apply_fader: bool,
     ) -> io::Result<Vec<f32>> {
-        let output_channels = 2usize;
+        let output_channels = output_channels.max(1);
         let mut mixed = vec![0.0_f32; total_length * output_channels];
-        let (left_gain, right_gain) = if apply_fader {
+        let channel_gains = if apply_fader {
             let level_amp = 10.0_f32.powf(level_db / 20.0);
-            let left = if balance <= 0.0 {
-                level_amp
+            if output_channels == 2 {
+                vec![
+                    if balance <= 0.0 {
+                        level_amp
+                    } else {
+                        level_amp * (1.0 - balance)
+                    },
+                    if balance >= 0.0 {
+                        level_amp
+                    } else {
+                        level_amp * (1.0 + balance)
+                    },
+                ]
             } else {
-                level_amp * (1.0 - balance)
-            };
-            let right = if balance >= 0.0 {
-                level_amp
-            } else {
-                level_amp * (1.0 + balance)
-            };
-            (left, right)
+                vec![level_amp; output_channels]
+            }
         } else {
-            (1.0, 1.0)
+            vec![1.0; output_channels]
         };
 
         for clip in clips {
@@ -1986,17 +2051,16 @@ impl Maolan {
                 if src_idx + clip_channels > samples.len() {
                     break;
                 }
-                let left_sample = samples[src_idx];
-                let right_sample = if clip_channels == 1 {
-                    samples[src_idx]
-                } else if clip_channels >= 2 {
-                    samples[src_idx + 1]
-                } else {
-                    left_sample
-                };
                 let dst_idx = dst_frame * output_channels;
-                mixed[dst_idx] += left_sample * left_gain;
-                mixed[dst_idx + 1] += right_sample * right_gain;
+                for out_ch in 0..output_channels {
+                    let source_sample = if clip_channels == 1 {
+                        samples[src_idx]
+                    } else {
+                        let source_ch = out_ch.min(clip_channels.saturating_sub(1));
+                        samples[src_idx + source_ch]
+                    };
+                    mixed[dst_idx + out_ch] += source_sample * channel_gains[out_ch];
+                }
             }
         }
 
@@ -2044,13 +2108,14 @@ impl Maolan {
             genre: metadata_genre,
         };
         let render_mode = options.render_mode;
+        let selected_hw_out_ports = options.selected_hw_out_ports.clone();
         let state = options.state.clone();
         let session_root = options.session_root.as_path();
 
         progress_callback(0.0, Some("Analyzing tracks".to_string()));
         tokio::task::yield_now().await;
 
-        let (tracks, total_length, selected_tracks) = {
+        let (tracks, connections, total_length, selected_tracks) = {
             let state = state.read().await;
             let mut max_length = 0_usize;
             let tracks_data: Vec<_> = state
@@ -2063,18 +2128,20 @@ impl Maolan {
                         track_max = track_max.max(clip_end);
                     }
                     max_length = max_length.max(track_max);
-                    (
-                        track.name.clone(),
-                        track.level,
-                        track.balance,
-                        track.muted,
-                        track.soloed,
-                        track.audio.clips.clone(),
-                    )
+                    ExportTrackData {
+                        name: track.name.clone(),
+                        level: track.level,
+                        balance: track.balance,
+                        muted: track.muted,
+                        soloed: track.soloed,
+                        output_ports: track.audio.outs.max(1),
+                        clips: track.audio.clips.clone(),
+                    }
                 })
                 .collect();
             (
                 tracks_data,
+                state.connections.clone(),
                 max_length,
                 state.selected.iter().cloned().collect::<HashSet<String>>(),
             )
@@ -2089,53 +2156,98 @@ impl Maolan {
             return Err(io::Error::other("Select at least one export format"));
         }
 
-        let has_solo = tracks.iter().any(|(_, _, _, _, soloed, _)| *soloed);
+        let has_solo = tracks.iter().any(|track| track.soloed);
         if !matches!(render_mode, ExportRenderMode::Mixdown) && selected_tracks.is_empty() {
             return Err(io::Error::other(
                 "Stem export requires at least one selected track",
             ));
         }
-        let output_channels = 2;
-        let normalize_params = ExportNormalizeParams {
-            mode: normalize_mode,
-            target_dbfs: normalize_target_dbfs,
-            target_lufs: normalize_target_lufs,
-            true_peak_dbtp: normalize_true_peak_dbtp,
-            tp_limiter: normalize_tp_limiter,
-            sample_rate,
-            output_channels,
-        };
         progress_callback(0.1, Some("Loading and mixing tracks".to_string()));
         tokio::task::yield_now().await;
         if matches!(render_mode, ExportRenderMode::Mixdown) {
+            let output_ports = if selected_hw_out_ports.is_empty() {
+                let mut routed_ports: Vec<usize> = connections
+                    .iter()
+                    .filter(|conn| conn.kind == Kind::Audio && conn.to_track == "hw:out")
+                    .map(|conn| conn.to_port)
+                    .collect();
+                routed_ports.sort_unstable();
+                routed_ports.dedup();
+                routed_ports
+            } else {
+                selected_hw_out_ports
+            };
+            if output_ports.is_empty() {
+                return Err(io::Error::other(
+                    "Mixdown export requires at least one selected hw:out port",
+                ));
+            }
+            let output_channels = output_ports.len();
+            let normalize_params = ExportNormalizeParams {
+                mode: normalize_mode,
+                target_dbfs: normalize_target_dbfs,
+                target_lufs: normalize_target_lufs,
+                true_peak_dbtp: normalize_true_peak_dbtp,
+                tp_limiter: normalize_tp_limiter,
+                sample_rate,
+                output_channels,
+            };
+            let hw_out_channel_map: HashMap<usize, usize> = output_ports
+                .iter()
+                .enumerate()
+                .map(|(channel_idx, port)| (*port, channel_idx))
+                .collect();
             let mut mixed_buffer = vec![0.0_f32; total_length * output_channels];
-            for (track_idx, (track_name, level, balance, muted, soloed, clips)) in
-                tracks.iter().enumerate()
-            {
-                if *muted || (has_solo && !soloed) {
+            for (track_idx, track) in tracks.iter().enumerate() {
+                if track.muted || (has_solo && !track.soloed) {
                     continue;
                 }
                 let track_progress_start = 0.1 + (track_idx as f32 / tracks.len() as f32) * 0.7;
                 let track_progress_span = 0.7 / tracks.len() as f32;
                 progress_callback(
                     track_progress_start,
-                    Some(format!("Processing track: {}", track_name)),
+                    Some(format!("Processing track: {}", track.name)),
                 );
                 tokio::task::yield_now().await;
-                let mixed = Self::mix_track_clips_to_stereo(
-                    clips,
+                let routed_ports: Vec<(usize, usize)> = connections
+                    .iter()
+                    .filter(|conn| {
+                        conn.kind == Kind::Audio
+                            && conn.from_track == track.name
+                            && conn.to_track == "hw:out"
+                    })
+                    .filter_map(|conn| {
+                        hw_out_channel_map
+                            .get(&conn.to_port)
+                            .map(|dest_idx| (conn.from_port, *dest_idx))
+                    })
+                    .collect();
+                if routed_ports.is_empty() {
+                    continue;
+                }
+                let track_buffer = Self::mix_track_clips_to_channels(
+                    &track.clips,
                     session_root,
                     total_length,
-                    *level,
-                    *balance,
+                    track.output_ports,
+                    track.level,
+                    track.balance,
                     true,
                 )?;
-                for (dst, src) in mixed_buffer.iter_mut().zip(mixed.iter()) {
-                    *dst += *src;
+                for frame in 0..total_length {
+                    let track_base = frame * track.output_ports;
+                    let mixed_base = frame * output_channels;
+                    for (source_port, dest_channel) in &routed_ports {
+                        if *source_port >= track.output_ports {
+                            continue;
+                        }
+                        mixed_buffer[mixed_base + *dest_channel] +=
+                            track_buffer[track_base + *source_port];
+                    }
                 }
                 progress_callback(
                     track_progress_start + track_progress_span,
-                    Some(format!("Finished: {}", track_name)),
+                    Some(format!("Finished: {}", track.name)),
                 );
                 tokio::task::yield_now().await;
             }
@@ -2196,8 +2308,8 @@ impl Maolan {
 
         let selected_tracks: Vec<_> = tracks
             .iter()
-            .filter(|(name, _, _, muted, soloed, _)| {
-                selected_tracks.contains(name) && !*muted && (!has_solo || *soloed)
+            .filter(|track| {
+                selected_tracks.contains(&track.name) && !track.muted && (!has_solo || track.soloed)
             })
             .collect();
         if selected_tracks.is_empty() {
@@ -2206,16 +2318,27 @@ impl Maolan {
             ));
         }
 
-        for (idx, (track_name, level, balance, _, _, clips)) in selected_tracks.iter().enumerate() {
+        for (idx, track) in selected_tracks.iter().enumerate() {
             let start = 0.1 + (idx as f32 / selected_tracks.len() as f32) * 0.75;
-            progress_callback(start, Some(format!("Rendering stem: {}", track_name)));
+            progress_callback(start, Some(format!("Rendering stem: {}", track.name)));
             tokio::task::yield_now().await;
-            let mut stem_buffer = Self::mix_track_clips_to_stereo(
-                clips,
+            let output_channels = track.output_ports.max(1);
+            let normalize_params = ExportNormalizeParams {
+                mode: normalize_mode,
+                target_dbfs: normalize_target_dbfs,
+                target_lufs: normalize_target_lufs,
+                true_peak_dbtp: normalize_true_peak_dbtp,
+                tp_limiter: normalize_tp_limiter,
+                sample_rate,
+                output_channels,
+            };
+            let mut stem_buffer = Self::mix_track_clips_to_channels(
+                &track.clips,
                 session_root,
                 total_length,
-                *level,
-                *balance,
+                output_channels,
+                track.level,
+                track.balance,
                 matches!(render_mode, ExportRenderMode::StemsPostFader),
             )?;
             if normalize {
@@ -2232,7 +2355,7 @@ impl Maolan {
             for format in &export_formats {
                 let stem_file = stem_dir.join(format!(
                     "{}_{}.{}",
-                    Self::sanitize_export_component(track_name),
+                    Self::sanitize_export_component(&track.name),
                     stem_mode_label,
                     Self::export_format_extension(*format)
                 ));
@@ -3159,8 +3282,21 @@ impl Maolan {
     }
 
     fn export_settings_view(&self) -> iced::Element<'_, Message> {
+        let last_message = self.state.blocking_read().message.clone();
         let selected_formats = self.selected_export_formats();
         let bit_depth_options = Self::export_bit_depth_options(&selected_formats);
+        let available_hw_out_ports = self.available_export_hw_out_ports();
+        let mp3_supported = self.export_mp3_supported_for_current_settings();
+        let hw_out_column_count = if available_hw_out_ports.len() > 16 {
+            4
+        } else if available_hw_out_ports.len() > 8 {
+            2
+        } else {
+            1
+        };
+        let hw_out_rows_per_column = available_hw_out_ports
+            .len()
+            .div_ceil(hw_out_column_count.max(1));
         let selected_bit_depth = if bit_depth_options.contains(&self.export_bit_depth) {
             self.export_bit_depth
         } else {
@@ -3170,191 +3306,273 @@ impl Maolan {
                 .unwrap_or(ExportBitDepth::Int24)
         };
 
-        container(
-            column![
-                text("Export session").size(16),
-                row![
-                    text("Formats:"),
-                    checkbox(self.export_format_wav)
-                        .label("WAV")
-                        .on_toggle(Message::ExportFormatWavToggled),
-                    checkbox(self.export_format_mp3)
-                        .label("MP3")
-                        .on_toggle(Message::ExportFormatMp3Toggled),
-                    checkbox(self.export_format_ogg)
-                        .label("OGG")
-                        .on_toggle(Message::ExportFormatOggToggled),
-                    checkbox(self.export_format_flac)
-                        .label("FLAC")
-                        .on_toggle(Message::ExportFormatFlacToggled),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-                row![
-                    text("Sample rate (Hz):"),
-                    pick_list(
-                        STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
-                        Some(self.export_sample_rate_hz),
-                        Message::ExportSampleRateSelected
-                    )
-                    .placeholder("Choose sample rate")
-                    .width(Length::Fixed(220.0)),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-                if selected_formats
-                    .iter()
-                    .any(|f| matches!(f, ExportFormat::Wav | ExportFormat::Flac))
-                {
-                    row![
-                        text("Bit depth:"),
-                        pick_list(
-                            bit_depth_options,
-                            Some(selected_bit_depth),
-                            Message::ExportBitDepthSelected
-                        )
-                        .placeholder("Choose bit depth"),
-                    ]
-                    .spacing(10)
-                    .align_y(iced::Alignment::Center)
-                } else {
-                    row![text("Bit depth: codec-managed (lossy formats)")]
+        let body = container(
+            scrollable(
+                container(
+                    column![
+                        text("Export session").size(16),
+                        row![
+                            text("Formats:"),
+                            checkbox(self.export_format_wav)
+                                .label("WAV")
+                                .on_toggle(Message::ExportFormatWavToggled),
+                            if mp3_supported {
+                                checkbox(self.export_format_mp3)
+                                    .label("MP3")
+                                    .on_toggle(Message::ExportFormatMp3Toggled)
+                            } else {
+                                checkbox(false).label("MP3 (mono/stereo only)")
+                            },
+                            checkbox(self.export_format_ogg)
+                                .label("OGG")
+                                .on_toggle(Message::ExportFormatOggToggled),
+                            checkbox(self.export_format_flac)
+                                .label("FLAC")
+                                .on_toggle(Message::ExportFormatFlacToggled),
+                        ]
                         .spacing(10)
-                        .align_y(iced::Alignment::Center)
-                },
-                if self.export_format_mp3 {
-                    row![
-                        text("MP3 mode:"),
-                        pick_list(
-                            EXPORT_MP3_MODE_ALL.to_vec(),
-                            Some(self.export_mp3_mode),
-                            Message::ExportMp3ModeSelected
-                        )
-                        .placeholder("Choose MP3 mode")
-                        .width(Length::Fixed(160.0)),
-                        text("Bitrate (kbps):"),
-                        pick_list(
-                            vec![96_u16, 128, 160, 192, 224, 256, 320],
-                            Some(self.export_mp3_bitrate_kbps),
-                            Message::ExportMp3BitrateSelected
-                        )
-                        .placeholder("Bitrate")
-                        .width(Length::Fixed(140.0)),
-                    ]
-                    .spacing(10)
-                    .align_y(iced::Alignment::Center)
-                } else {
-                    row![text("")].spacing(10).align_y(iced::Alignment::Center)
-                },
-                if self.export_format_ogg {
-                    row![
-                        text("OGG quality (-0.1..1.0):"),
-                        text_input("0.6", &self.export_ogg_quality_input)
-                            .on_input(Message::ExportOggQualityInput)
-                            .width(Length::Fixed(140.0)),
-                    ]
-                    .spacing(10)
-                    .align_y(iced::Alignment::Center)
-                } else {
-                    row![text("")].spacing(10).align_y(iced::Alignment::Center)
-                },
-                row![
-                    text("Render mode:"),
-                    pick_list(
-                        EXPORT_RENDER_MODE_ALL.to_vec(),
-                        Some(self.export_render_mode),
-                        Message::ExportRenderModeSelected
-                    )
-                    .placeholder("Choose render mode")
-                    .width(Length::Fixed(220.0)),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-                checkbox(self.export_realtime_fallback)
-                    .label("Real-time fallback render")
-                    .on_toggle(Message::ExportRealtimeFallbackToggled),
-                row![
-                    checkbox(self.export_master_limiter)
-                        .label("Master limiter")
-                        .on_toggle(Message::ExportMasterLimiterToggled),
-                    text("Ceiling (dBTP):"),
-                    text_input("-1.0", &self.export_master_limiter_ceiling_input)
-                        .on_input(Message::ExportMasterLimiterCeilingInput)
-                        .width(Length::Fixed(110.0)),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-                checkbox(self.export_normalize)
-                    .label("Normalize")
-                    .on_toggle(Message::ExportNormalizeToggled),
-                if self.export_normalize {
-                    container(
-                        column![
+                        .align_y(iced::Alignment::Center),
+                        row![
+                            text("Sample rate (Hz):"),
+                            pick_list(
+                                STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
+                                Some(self.export_sample_rate_hz),
+                                Message::ExportSampleRateSelected
+                            )
+                            .placeholder("Choose sample rate")
+                            .width(Length::Fixed(220.0)),
+                        ]
+                        .spacing(10)
+                        .align_y(iced::Alignment::Center),
+                        if selected_formats
+                            .iter()
+                            .any(|f| matches!(f, ExportFormat::Wav | ExportFormat::Flac))
+                        {
                             row![
-                                text("Mode:"),
+                                text("Bit depth:"),
                                 pick_list(
-                                    EXPORT_NORMALIZE_MODE_ALL.to_vec(),
-                                    Some(self.export_normalize_mode),
-                                    Message::ExportNormalizeModeSelected
+                                    bit_depth_options,
+                                    Some(selected_bit_depth),
+                                    Message::ExportBitDepthSelected
                                 )
-                                .placeholder("Choose mode")
-                                .width(Length::Fixed(180.0)),
+                                .placeholder("Choose bit depth"),
                             ]
                             .spacing(10)
-                            .align_y(iced::Alignment::Center),
-                            if matches!(self.export_normalize_mode, ExportNormalizeMode::Peak) {
-                                row![
-                                    text("Target (dBFS):"),
-                                    text_input("0.0", &self.export_normalize_dbfs_input)
-                                        .on_input(Message::ExportNormalizeDbfsInput)
-                                        .width(Length::Fixed(120.0)),
-                                ]
+                            .align_y(iced::Alignment::Center)
+                        } else {
+                            row![text("Bit depth: codec-managed (lossy formats)")]
                                 .spacing(10)
                                 .align_y(iced::Alignment::Center)
-                            } else {
-                                row![
-                                    text("Target (LUFS):"),
-                                    text_input("-23.0", &self.export_normalize_lufs_input)
-                                        .on_input(Message::ExportNormalizeLufsInput)
-                                        .width(Length::Fixed(120.0)),
-                                    text("TP ceiling (dBTP):"),
-                                    text_input("-1.0", &self.export_normalize_dbtp_input)
-                                        .on_input(Message::ExportNormalizeDbtpInput)
-                                        .width(Length::Fixed(120.0)),
-                                ]
-                                .spacing(10)
-                                .align_y(iced::Alignment::Center)
-                            },
-                            if matches!(self.export_normalize_mode, ExportNormalizeMode::Loudness) {
-                                checkbox(self.export_normalize_tp_limiter)
-                                    .label("Use true-peak limiter")
-                                    .on_toggle(Message::ExportNormalizeLimiterToggled)
-                            } else {
-                                checkbox(false).label("")
-                            }
+                        },
+                        if self.export_format_mp3 {
+                            row![
+                                text("MP3 mode:"),
+                                pick_list(
+                                    EXPORT_MP3_MODE_ALL.to_vec(),
+                                    Some(self.export_mp3_mode),
+                                    Message::ExportMp3ModeSelected
+                                )
+                                .placeholder("Choose MP3 mode")
+                                .width(Length::Fixed(160.0)),
+                                text("Bitrate (kbps):"),
+                                pick_list(
+                                    vec![96_u16, 128, 160, 192, 224, 256, 320],
+                                    Some(self.export_mp3_bitrate_kbps),
+                                    Message::ExportMp3BitrateSelected
+                                )
+                                .placeholder("Bitrate")
+                                .width(Length::Fixed(140.0)),
+                            ]
+                            .spacing(10)
+                            .align_y(iced::Alignment::Center)
+                        } else {
+                            row![text("")].spacing(10).align_y(iced::Alignment::Center)
+                        },
+                        if self.export_format_ogg {
+                            row![
+                                text("OGG quality (-0.1..1.0):"),
+                                text_input("0.6", &self.export_ogg_quality_input)
+                                    .on_input(Message::ExportOggQualityInput)
+                                    .width(Length::Fixed(140.0)),
+                            ]
+                            .spacing(10)
+                            .align_y(iced::Alignment::Center)
+                        } else {
+                            row![text("")].spacing(10).align_y(iced::Alignment::Center)
+                        },
+                        row![
+                            text("Render mode:"),
+                            pick_list(
+                                EXPORT_RENDER_MODE_ALL.to_vec(),
+                                Some(self.export_render_mode),
+                                Message::ExportRenderModeSelected
+                            )
+                            .placeholder("Choose render mode")
+                            .width(Length::Fixed(220.0)),
                         ]
-                        .spacing(8),
-                    )
-                } else {
-                    container(row![text("")])
-                },
-                row![
-                    button("Export").on_press(Message::ExportSettingsConfirm),
-                    button("Cancel")
-                        .on_press(Message::Cancel)
-                        .style(button::secondary),
-                ]
-                .spacing(10),
-                text("Use standard sample rates for broad compatibility."),
-            ]
-            .align_x(iced::Alignment::Start)
-            .spacing(12),
+                        .spacing(10)
+                        .align_y(iced::Alignment::Center),
+                        if matches!(self.export_render_mode, ExportRenderMode::Mixdown) {
+                            container(
+                                column![
+                                    text("Export hw:out ports:"),
+                                    if available_hw_out_ports.is_empty() {
+                                        iced::Element::from(text(
+                                            "No hardware output ports are available.",
+                                        ))
+                                    } else {
+                                        iced::Element::from(row(
+                                            available_hw_out_ports
+                                                .chunks(hw_out_rows_per_column.max(1))
+                                                .map(|ports| {
+                                                    column(
+                                                        ports
+                                                            .iter()
+                                                            .map(|port| {
+                                                                checkbox(
+                                                                    self.export_hw_out_ports
+                                                                        .contains(port),
+                                                                )
+                                                                .label(format!(
+                                                                    "hw:out {}",
+                                                                    port + 1
+                                                                ))
+                                                                .on_toggle({
+                                                                    let port = *port;
+                                                                    move |enabled| {
+                                                                        Message::ExportHwOutPortToggled(
+                                                                            port, enabled,
+                                                                        )
+                                                                    }
+                                                                })
+                                                                .into()
+                                                            })
+                                                            .collect::<Vec<
+                                                                iced::Element<'_, Message>,
+                                                            >>(),
+                                                    )
+                                                    .spacing(6)
+                                                    .width(Length::FillPortion(1))
+                                                    .into()
+                                                })
+                                                .collect::<Vec<iced::Element<'_, Message>>>(),
+                                        )
+                                        .spacing(24)
+                                        .width(Length::Fill))
+                                    }
+                                ]
+                                .spacing(8),
+                            )
+                        } else {
+                            container(text(
+                                "Stem export writes one channel per track output port.",
+                            ))
+                        },
+                        checkbox(self.export_realtime_fallback)
+                            .label("Real-time fallback render")
+                            .on_toggle(Message::ExportRealtimeFallbackToggled),
+                        row![
+                            checkbox(self.export_master_limiter)
+                                .label("Master limiter")
+                                .on_toggle(Message::ExportMasterLimiterToggled),
+                            text("Ceiling (dBTP):"),
+                            text_input("-1.0", &self.export_master_limiter_ceiling_input)
+                                .on_input(Message::ExportMasterLimiterCeilingInput)
+                                .width(Length::Fixed(110.0)),
+                        ]
+                        .spacing(10)
+                        .align_y(iced::Alignment::Center),
+                        checkbox(self.export_normalize)
+                            .label("Normalize")
+                            .on_toggle(Message::ExportNormalizeToggled),
+                        if self.export_normalize {
+                            container(
+                                column![
+                                    row![
+                                        text("Mode:"),
+                                        pick_list(
+                                            EXPORT_NORMALIZE_MODE_ALL.to_vec(),
+                                            Some(self.export_normalize_mode),
+                                            Message::ExportNormalizeModeSelected
+                                        )
+                                        .placeholder("Choose mode")
+                                        .width(Length::Fixed(180.0)),
+                                    ]
+                                    .spacing(10)
+                                    .align_y(iced::Alignment::Center),
+                                    if matches!(
+                                        self.export_normalize_mode,
+                                        ExportNormalizeMode::Peak
+                                    ) {
+                                        row![
+                                            text("Target (dBFS):"),
+                                            text_input("0.0", &self.export_normalize_dbfs_input)
+                                                .on_input(Message::ExportNormalizeDbfsInput)
+                                                .width(Length::Fixed(120.0)),
+                                        ]
+                                        .spacing(10)
+                                        .align_y(iced::Alignment::Center)
+                                    } else {
+                                        row![
+                                            text("Target (LUFS):"),
+                                            text_input("-23.0", &self.export_normalize_lufs_input)
+                                                .on_input(Message::ExportNormalizeLufsInput)
+                                                .width(Length::Fixed(120.0)),
+                                            text("TP ceiling (dBTP):"),
+                                            text_input("-1.0", &self.export_normalize_dbtp_input)
+                                                .on_input(Message::ExportNormalizeDbtpInput)
+                                                .width(Length::Fixed(120.0)),
+                                        ]
+                                        .spacing(10)
+                                        .align_y(iced::Alignment::Center)
+                                    },
+                                    if matches!(
+                                        self.export_normalize_mode,
+                                        ExportNormalizeMode::Loudness
+                                    ) {
+                                        checkbox(self.export_normalize_tp_limiter)
+                                            .label("Use true-peak limiter")
+                                            .on_toggle(Message::ExportNormalizeLimiterToggled)
+                                    } else {
+                                        checkbox(false).label("")
+                                    }
+                                ]
+                                .spacing(8),
+                            )
+                        } else {
+                            container(row![text("")])
+                        },
+                        row![
+                            button("Export").on_press(Message::ExportSettingsConfirm),
+                            button("Cancel")
+                                .on_press(Message::Cancel)
+                                .style(button::secondary),
+                        ]
+                        .spacing(10),
+                        text("Use standard sample rates for broad compatibility."),
+                    ]
+                    .align_x(iced::Alignment::Start)
+                    .spacing(12),
+                )
+                .width(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill),
         )
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(iced::Alignment::Center)
-        .align_y(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center);
+
+        column![
+            body,
+            container(text(format!("Last message: {}", last_message)))
+                .width(Length::Fill)
+                .padding([0, 20]),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
         .into()
     }
 

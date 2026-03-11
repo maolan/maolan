@@ -18,6 +18,12 @@ impl Maolan {
         }
     }
 
+    fn clamp_export_mp3_if_needed(&mut self) {
+        if !self.export_mp3_supported_for_current_settings() {
+            self.export_format_mp3 = false;
+        }
+    }
+
     fn handle_export_settings_ui_message(&mut self, message: &Message) -> bool {
         match message {
             Message::ExportSampleRateSelected(rate) => {
@@ -30,7 +36,7 @@ impl Maolan {
                 true
             }
             Message::ExportFormatMp3Toggled(enabled) => {
-                self.export_format_mp3 = *enabled;
+                self.export_format_mp3 = *enabled && self.export_mp3_supported_for_current_settings();
                 self.adjust_export_bit_depth_if_needed();
                 true
             }
@@ -68,6 +74,18 @@ impl Maolan {
                 if !matches!(mode, ExportRenderMode::Mixdown) {
                     self.export_normalize = false;
                 }
+                self.clamp_export_mp3_if_needed();
+                self.adjust_export_bit_depth_if_needed();
+                true
+            }
+            Message::ExportHwOutPortToggled(port, enabled) => {
+                if *enabled {
+                    self.export_hw_out_ports.insert(*port);
+                } else {
+                    self.export_hw_out_ports.remove(port);
+                }
+                self.clamp_export_mp3_if_needed();
+                self.adjust_export_bit_depth_if_needed();
                 true
             }
             Message::ExportRealtimeFallbackToggled(enabled) => {

@@ -17,6 +17,82 @@ use std::{
 use tracing::error;
 
 impl Maolan {
+    fn export_render_mode_to_json(mode: crate::message::ExportRenderMode) -> Value {
+        Value::String(
+            match mode {
+                crate::message::ExportRenderMode::Mixdown => "mixdown",
+                crate::message::ExportRenderMode::StemsPostFader => "stems_post_fader",
+                crate::message::ExportRenderMode::StemsPreFader => "stems_pre_fader",
+            }
+            .to_string(),
+        )
+    }
+
+    fn export_render_mode_from_json(value: Option<&Value>) -> crate::message::ExportRenderMode {
+        match value.and_then(Value::as_str) {
+            Some("stems_post_fader") => crate::message::ExportRenderMode::StemsPostFader,
+            Some("stems_pre_fader") => crate::message::ExportRenderMode::StemsPreFader,
+            _ => crate::message::ExportRenderMode::Mixdown,
+        }
+    }
+
+    fn export_bit_depth_to_json(depth: crate::message::ExportBitDepth) -> Value {
+        Value::String(
+            match depth {
+                crate::message::ExportBitDepth::Int16 => "int16",
+                crate::message::ExportBitDepth::Int24 => "int24",
+                crate::message::ExportBitDepth::Int32 => "int32",
+                crate::message::ExportBitDepth::Float32 => "float32",
+            }
+            .to_string(),
+        )
+    }
+
+    fn export_bit_depth_from_json(value: Option<&Value>) -> crate::message::ExportBitDepth {
+        match value.and_then(Value::as_str) {
+            Some("int16") => crate::message::ExportBitDepth::Int16,
+            Some("int32") => crate::message::ExportBitDepth::Int32,
+            Some("float32") => crate::message::ExportBitDepth::Float32,
+            _ => crate::message::ExportBitDepth::Int24,
+        }
+    }
+
+    fn export_mp3_mode_to_json(mode: crate::message::ExportMp3Mode) -> Value {
+        Value::String(
+            match mode {
+                crate::message::ExportMp3Mode::Cbr => "cbr",
+                crate::message::ExportMp3Mode::Vbr => "vbr",
+            }
+            .to_string(),
+        )
+    }
+
+    fn export_mp3_mode_from_json(value: Option<&Value>) -> crate::message::ExportMp3Mode {
+        match value.and_then(Value::as_str) {
+            Some("vbr") => crate::message::ExportMp3Mode::Vbr,
+            _ => crate::message::ExportMp3Mode::Cbr,
+        }
+    }
+
+    fn export_normalize_mode_to_json(mode: crate::message::ExportNormalizeMode) -> Value {
+        Value::String(
+            match mode {
+                crate::message::ExportNormalizeMode::Peak => "peak",
+                crate::message::ExportNormalizeMode::Loudness => "loudness",
+            }
+            .to_string(),
+        )
+    }
+
+    fn export_normalize_mode_from_json(
+        value: Option<&Value>,
+    ) -> crate::message::ExportNormalizeMode {
+        match value.and_then(Value::as_str) {
+            Some("loudness") => crate::message::ExportNormalizeMode::Loudness,
+            _ => crate::message::ExportNormalizeMode::Peak,
+        }
+    }
+
     pub(super) fn restore_actions_task(actions: Vec<Action>) -> Task<Message> {
         Task::perform(
             async move {
@@ -202,6 +278,7 @@ impl Maolan {
         );
         let metadata_year = state.session_year.trim().parse::<u64>().ok();
         let metadata_track_number = state.session_track_number.trim().parse::<u64>().ok();
+        let export_hw_out_ports: Vec<usize> = self.export_hw_out_ports.iter().copied().collect();
 
         let result = json!({
             "tracks": tracks_json,
@@ -245,6 +322,28 @@ impl Maolan {
             "ui": {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
+            },
+            "export": {
+                "sample_rate_hz": self.export_sample_rate_hz,
+                "format_wav": self.export_format_wav,
+                "format_mp3": self.export_format_mp3,
+                "format_ogg": self.export_format_ogg,
+                "format_flac": self.export_format_flac,
+                "bit_depth": Self::export_bit_depth_to_json(self.export_bit_depth),
+                "mp3_mode": Self::export_mp3_mode_to_json(self.export_mp3_mode),
+                "mp3_bitrate_kbps": self.export_mp3_bitrate_kbps,
+                "ogg_quality_input": self.export_ogg_quality_input,
+                "render_mode": Self::export_render_mode_to_json(self.export_render_mode),
+                "hw_out_ports": export_hw_out_ports,
+                "realtime_fallback": self.export_realtime_fallback,
+                "normalize": self.export_normalize,
+                "normalize_mode": Self::export_normalize_mode_to_json(self.export_normalize_mode),
+                "normalize_dbfs_input": self.export_normalize_dbfs_input,
+                "normalize_lufs_input": self.export_normalize_lufs_input,
+                "normalize_dbtp_input": self.export_normalize_dbtp_input,
+                "normalize_tp_limiter": self.export_normalize_tp_limiter,
+                "master_limiter": self.export_master_limiter,
+                "master_limiter_ceiling_input": self.export_master_limiter_ceiling_input,
             },
             "midi_learn_global": {
                 "play_pause": state.global_midi_learn_play_pause,
@@ -822,6 +921,7 @@ impl Maolan {
         );
         let metadata_year = state.session_year.trim().parse::<u64>().ok();
         let metadata_track_number = state.session_track_number.trim().parse::<u64>().ok();
+        let export_hw_out_ports: Vec<usize> = self.export_hw_out_ports.iter().copied().collect();
         let result = json!({
             "tracks": tracks_json,
             "connections": &state.connections,
@@ -864,6 +964,28 @@ impl Maolan {
             "ui": {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
+            },
+            "export": {
+                "sample_rate_hz": self.export_sample_rate_hz,
+                "format_wav": self.export_format_wav,
+                "format_mp3": self.export_format_mp3,
+                "format_ogg": self.export_format_ogg,
+                "format_flac": self.export_format_flac,
+                "bit_depth": Self::export_bit_depth_to_json(self.export_bit_depth),
+                "mp3_mode": Self::export_mp3_mode_to_json(self.export_mp3_mode),
+                "mp3_bitrate_kbps": self.export_mp3_bitrate_kbps,
+                "ogg_quality_input": self.export_ogg_quality_input,
+                "render_mode": Self::export_render_mode_to_json(self.export_render_mode),
+                "hw_out_ports": export_hw_out_ports,
+                "realtime_fallback": self.export_realtime_fallback,
+                "normalize": self.export_normalize,
+                "normalize_mode": Self::export_normalize_mode_to_json(self.export_normalize_mode),
+                "normalize_dbfs_input": self.export_normalize_dbfs_input,
+                "normalize_lufs_input": self.export_normalize_lufs_input,
+                "normalize_dbtp_input": self.export_normalize_dbtp_input,
+                "normalize_tp_limiter": self.export_normalize_tp_limiter,
+                "master_limiter": self.export_master_limiter,
+                "master_limiter_ceiling_input": self.export_master_limiter_ceiling_input,
             },
             "midi_learn_global": {
                 "play_pause": state.global_midi_learn_play_pause,
@@ -1015,6 +1137,97 @@ impl Maolan {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
+        }
+        if let Some(export) = session.get("export").and_then(Value::as_object) {
+            self.export_sample_rate_hz = export
+                .get("sample_rate_hz")
+                .and_then(Value::as_u64)
+                .map(|v| v.max(1) as u32)
+                .unwrap_or(self.export_sample_rate_hz);
+            self.export_format_wav = export
+                .get("format_wav")
+                .and_then(Value::as_bool)
+                .unwrap_or(self.export_format_wav);
+            self.export_format_mp3 = export
+                .get("format_mp3")
+                .and_then(Value::as_bool)
+                .unwrap_or(self.export_format_mp3);
+            self.export_format_ogg = export
+                .get("format_ogg")
+                .and_then(Value::as_bool)
+                .unwrap_or(self.export_format_ogg);
+            self.export_format_flac = export
+                .get("format_flac")
+                .and_then(Value::as_bool)
+                .unwrap_or(self.export_format_flac);
+            self.export_bit_depth = Self::export_bit_depth_from_json(export.get("bit_depth"));
+            self.export_mp3_mode = Self::export_mp3_mode_from_json(export.get("mp3_mode"));
+            self.export_mp3_bitrate_kbps = export
+                .get("mp3_bitrate_kbps")
+                .and_then(Value::as_u64)
+                .map(|v| v.clamp(8, u16::MAX as u64) as u16)
+                .unwrap_or(self.export_mp3_bitrate_kbps);
+            self.export_ogg_quality_input = export
+                .get("ogg_quality_input")
+                .and_then(Value::as_str)
+                .unwrap_or(&self.export_ogg_quality_input)
+                .to_string();
+            self.export_render_mode = Self::export_render_mode_from_json(export.get("render_mode"));
+            self.export_hw_out_ports = export
+                .get("hw_out_ports")
+                .and_then(Value::as_array)
+                .map(|ports| {
+                    ports
+                        .iter()
+                        .filter_map(Value::as_u64)
+                        .map(|port| port as usize)
+                        .collect()
+                })
+                .unwrap_or_else(|| self.default_export_hw_out_ports());
+            self.export_realtime_fallback = export
+                .get("realtime_fallback")
+                .and_then(Value::as_bool)
+                .unwrap_or(self.export_realtime_fallback);
+            self.export_normalize = export
+                .get("normalize")
+                .and_then(Value::as_bool)
+                .unwrap_or(self.export_normalize);
+            self.export_normalize_mode =
+                Self::export_normalize_mode_from_json(export.get("normalize_mode"));
+            self.export_normalize_dbfs_input = export
+                .get("normalize_dbfs_input")
+                .and_then(Value::as_str)
+                .unwrap_or(&self.export_normalize_dbfs_input)
+                .to_string();
+            self.export_normalize_lufs_input = export
+                .get("normalize_lufs_input")
+                .and_then(Value::as_str)
+                .unwrap_or(&self.export_normalize_lufs_input)
+                .to_string();
+            self.export_normalize_dbtp_input = export
+                .get("normalize_dbtp_input")
+                .and_then(Value::as_str)
+                .unwrap_or(&self.export_normalize_dbtp_input)
+                .to_string();
+            self.export_normalize_tp_limiter = export
+                .get("normalize_tp_limiter")
+                .and_then(Value::as_bool)
+                .unwrap_or(self.export_normalize_tp_limiter);
+            self.export_master_limiter = export
+                .get("master_limiter")
+                .and_then(Value::as_bool)
+                .unwrap_or(self.export_master_limiter);
+            self.export_master_limiter_ceiling_input = export
+                .get("master_limiter_ceiling_input")
+                .and_then(Value::as_str)
+                .unwrap_or(&self.export_master_limiter_ceiling_input)
+                .to_string();
+        } else {
+            self.export_hw_out_ports = self.default_export_hw_out_ports();
+        }
+        self.normalize_export_hw_out_ports();
+        if !self.export_mp3_supported_for_current_settings() {
+            self.export_format_mp3 = false;
         }
 
         let transport = session.get("transport").ok_or_else(|| {

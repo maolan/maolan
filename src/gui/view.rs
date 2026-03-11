@@ -402,18 +402,29 @@ impl Maolan {
                     if let Some(diag) = state.diagnostics_report.as_ref() {
                         content = content.push(text(format!("Diagnostics: {}", diag)));
                     }
-                    content = content.push(text(format!("Last message: {}", state.message)));
-                    container(content)
+                    let status_bar = container(text(format!("Last message: {}", state.message)))
                         .width(Length::Fill)
-                        .height(Length::Fill)
-                        .into()
+                        .padding(8);
+                    column![
+                        container(content).width(Length::Fill).height(Length::Fill),
+                        status_bar,
+                    ]
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
                 }
             }
         } else {
             column![
-                self.hw.audio_view(),
-                text(format!("Last message: {}", state.message)),
+                container(self.hw.audio_view())
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+                container(text(format!("Last message: {}", state.message)))
+                    .width(Length::Fill)
+                    .padding(8),
             ]
+            .width(Length::Fill)
+            .height(Length::Fill)
             .into()
         }
     }

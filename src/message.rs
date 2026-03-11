@@ -553,6 +553,7 @@ pub enum Message {
     ExportMp3BitrateSelected(u16),
     ExportOggQualityInput(String),
     ExportRenderModeSelected(ExportRenderMode),
+    ExportHwOutPortToggled(usize, bool),
     ExportRealtimeFallbackToggled(bool),
     ExportBitDepthSelected(ExportBitDepth),
     ExportNormalizeToggled(bool),

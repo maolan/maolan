@@ -5322,6 +5322,9 @@ impl Maolan {
                     .copied()
                     .unwrap_or(48_000);
                 self.export_sample_rate_hz = nearest_rate;
+                self.normalize_export_hw_out_ports();
+                self.export_format_mp3 = self.export_format_mp3
+                    && self.export_mp3_supported_for_current_settings();
                 self.modal = Some(crate::message::Show::ExportSettings);
             }
             Message::ExportDiagnosticsBundleRequest => {
@@ -5428,6 +5431,18 @@ impl Maolan {
                         "Select at least one export format".to_string();
                     return Task::none();
                 }
+                if self.export_format_mp3 && !self.export_mp3_supported_for_current_settings() {
+                    self.state.blocking_write().message =
+                        "MP3 export supports only mono or stereo".to_string();
+                    return Task::none();
+                }
+                if matches!(self.export_render_mode, ExportRenderMode::Mixdown)
+                    && self.export_hw_out_ports.is_empty()
+                {
+                    self.state.blocking_write().message =
+                        "Select at least one hw:out port for mixdown export".to_string();
+                    return Task::none();
+                }
                 if self.export_format_ogg {
                     let ogg_quality = self.export_ogg_quality_input.parse::<f32>().ok();
                     let Some(ogg_quality) = ogg_quality else {
@@ -5495,6 +5510,11 @@ impl Maolan {
                         "Select at least one export format".to_string();
                     return Task::none();
                 }
+                if self.export_format_mp3 && !self.export_mp3_supported_for_current_settings() {
+                    self.state.blocking_write().message =
+                        "MP3 export supports only mono or stereo".to_string();
+                    return Task::none();
+                }
                 let export_path = Self::export_base_path(path.clone());
                 let export_mp3_mode = self.export_mp3_mode;
                 let export_mp3_bitrate_kbps = self.export_mp3_bitrate_kbps;
@@ -5503,6 +5523,7 @@ impl Maolan {
                     .parse::<f32>()
                     .ok()
                     .unwrap_or(0.6);
+                let selected_hw_out_ports = self.export_hw_out_ports.iter().copied().collect();
                 let state_clone = self.state.clone();
                 let render_mode = self.export_render_mode;
                 let (
@@ -5555,6 +5576,7 @@ impl Maolan {
                                 sample_rate,
                                 formats: export_formats,
                                 render_mode,
+                                selected_hw_out_ports,
                                 realtime_fallback: export_realtime_fallback,
                                 bit_depth: export_bit_depth,
                                 mp3_mode: export_mp3_mode,
