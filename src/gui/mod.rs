@@ -3704,3 +3704,135 @@ impl Maolan {
         self.track_rename.update(message);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[cfg(any(unix, target_os = "windows"))]
+    use maolan_engine::message::PluginGraphNode;
+
+    #[test]
+    fn normalize_recent_session_paths_trims_deduplicates_and_limits() {
+        let paths = vec![
+            "  /a  ".to_string(),
+            "".to_string(),
+            "/b".to_string(),
+            "/a".to_string(),
+            "   ".to_string(),
+        ];
+
+        let normalized = Maolan::normalize_recent_session_paths(paths);
+        assert_eq!(normalized, vec!["/a".to_string(), "/b".to_string()]);
+        assert!(normalized.len() <= crate::consts::gui_mod::MAX_RECENT_SESSIONS);
+    }
+
+    #[test]
+    #[cfg(any(unix, target_os = "windows"))]
+    fn kind_json_roundtrip_rejects_unknown_values() {
+        assert_eq!(
+            Maolan::kind_from_json(&Maolan::kind_to_json(Kind::Audio)),
+            Some(Kind::Audio)
+        );
+        assert_eq!(
+            Maolan::kind_from_json(&Maolan::kind_to_json(Kind::MIDI)),
+            Some(Kind::MIDI)
+        );
+        assert_eq!(Maolan::kind_from_json(&Value::String("other".to_string())), None);
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn saved_unix_plugin_format_prefers_explicit_format_and_falls_back_to_clap_paths() {
+        let clap_paths = vec!["/plugins/a.clap".to_string()];
+
+        assert_eq!(
+            Maolan::saved_unix_plugin_format(
+                &json!({"format": "CLAP", "uri": "ignored"}),
+                &clap_paths
+            ),
+            Some("CLAP")
+        );
+        assert_eq!(
+            Maolan::saved_unix_plugin_format(
+                &json!({"format": "LV2", "uri": "/plugins/a.clap"}),
+                &clap_paths
+            ),
+            Some("LV2")
+        );
+        assert_eq!(
+            Maolan::saved_unix_plugin_format(&json!({"uri": "/plugins/a.clap"}), &clap_paths),
+            Some("CLAP")
+        );
+        assert_eq!(
+            Maolan::saved_unix_plugin_format(&json!({"uri": "urn:lv2:test"}), &clap_paths),
+            Some("LV2")
+        );
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn plugin_node_from_json_with_runtime_nodes_maps_only_matching_runtime_formats() {
+        let runtime_nodes = vec![
+            PluginGraphNode::Lv2PluginInstance(10),
+            PluginGraphNode::ClapPluginInstance(11),
+        ];
+
+        assert_eq!(
+            Maolan::plugin_node_from_json_with_runtime_nodes(
+                &json!({"type": "plugin", "plugin_index": 0}),
+                &runtime_nodes
+            ),
+            Some(PluginGraphNode::Lv2PluginInstance(10))
+        );
+        assert_eq!(
+            Maolan::plugin_node_from_json_with_runtime_nodes(
+                &json!({"type": "clap_plugin", "plugin_index": 1}),
+                &runtime_nodes
+            ),
+            Some(PluginGraphNode::ClapPluginInstance(11))
+        );
+        assert_eq!(
+            Maolan::plugin_node_from_json_with_runtime_nodes(
+                &json!({"type": "plugin", "plugin_index": 1}),
+                &runtime_nodes
+            ),
+            None
+        );
+        assert_eq!(
+            Maolan::plugin_node_from_json_with_runtime_nodes(
+                &json!({"type": "clap_plugin", "plugin_index": 0}),
+                &runtime_nodes
+            ),
+            None
+        );
+    }
+
+    #[test]
+    #[cfg(any(unix, target_os = "windows"))]
+    fn plugin_node_to_json_serializes_track_and_plugin_nodes() {
+        let mut id_to_index = std::collections::HashMap::new();
+        id_to_index.insert(7usize, 2usize);
+
+        assert_eq!(
+            Maolan::plugin_node_to_json(&PluginGraphNode::TrackInput, &id_to_index),
+            Some(json!({"type":"track_input"}))
+        );
+        assert_eq!(
+            Maolan::plugin_node_to_json(&PluginGraphNode::TrackOutput, &id_to_index),
+            Some(json!({"type":"track_output"}))
+        );
+        #[cfg(all(unix, not(target_os = "macos")))]
+        assert_eq!(
+            Maolan::plugin_node_to_json(&PluginGraphNode::Lv2PluginInstance(7), &id_to_index),
+            Some(json!({"type":"plugin","plugin_index":2}))
+        );
+        assert_eq!(
+            Maolan::plugin_node_to_json(&PluginGraphNode::Vst3PluginInstance(7), &id_to_index),
+            Some(json!({"type":"vst3_plugin","plugin_index":2}))
+        );
+        assert_eq!(
+            Maolan::plugin_node_to_json(&PluginGraphNode::ClapPluginInstance(7), &id_to_index),
+            Some(json!({"type":"clap_plugin","plugin_index":2}))
+        );
+    }
+}
