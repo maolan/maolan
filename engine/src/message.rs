@@ -239,6 +239,7 @@ pub enum Action {
     SetLoopRange(Option<(usize, usize)>),
     SetPunchEnabled(bool),
     SetPunchRange(Option<(usize, usize)>),
+    SetMetronomeEnabled(bool),
     SetTempo(f64),
     SetTimeSignature {
         numerator: u16,

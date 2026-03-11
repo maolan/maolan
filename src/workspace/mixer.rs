@@ -1,5 +1,6 @@
 use crate::{
     consts::{
+        state_ids::METRONOME_TRACK_ID,
         workspace::{TICK_LABELS, TICK_VALUES},
         workspace_mixer::*,
     },
@@ -468,8 +469,13 @@ impl Mixer {
         let hw_out_balance = state.hw_out_balance;
         let master_selected = state.selected.contains("hw:out");
         let fader_height = Self::fader_height_from_panel(height);
+        let metronome_enabled = state.metronome_enabled;
+        let mut metronome_strip = None;
 
         for track in &state.tracks {
+            if track.name == METRONOME_TRACK_ID && !metronome_enabled {
+                continue;
+            }
             let strip_name = track.name.clone();
             let select_name = track.name.clone();
             let pan = if track.audio.outs == 2 {
@@ -485,22 +491,26 @@ impl Mixer {
                 fader_height,
                 true,
             );
-            strips = strips.push(
-                mouse_area(Self::strip_shell(
-                    strip_name,
-                    state.selected.contains(track.name.as_str()),
-                    STRIP_WIDTH,
-                    pan,
-                    bay,
-                    StripReadout {
-                        track_name: track.name.clone(),
-                        editing: editing_track == Some(track.name.as_str()),
-                        edit_input: editing_input,
-                        level_label: Self::format_level_db(track.level),
-                    },
-                ))
-                .on_press(Message::SelectTrackFromMixer(select_name)),
-            );
+            let strip = mouse_area(Self::strip_shell(
+                strip_name,
+                state.selected.contains(track.name.as_str()),
+                STRIP_WIDTH,
+                pan,
+                bay,
+                StripReadout {
+                    track_name: track.name.clone(),
+                    editing: editing_track == Some(track.name.as_str()),
+                    edit_input: editing_input,
+                    level_label: Self::format_level_db(track.level),
+                },
+            ))
+            .on_press(Message::SelectTrackFromMixer(select_name));
+
+            if track.name == METRONOME_TRACK_ID {
+                metronome_strip = Some(strip);
+            } else {
+                strips = strips.push(strip);
+            }
         }
 
         let master_strip_width = (FADER_WIDTH
@@ -538,6 +548,11 @@ impl Mixer {
             },
         ))
         .on_press(Message::SelectTrackFromMixer("hw:out".to_string()));
+        let mut output_strips = row![].spacing(2).align_y(Alignment::Start);
+        if let Some(strip) = metronome_strip {
+            output_strips = output_strips.push(strip);
+        }
+        output_strips = output_strips.push(master_strip);
 
         let track_strips = scrollable(
             row![strips, Space::new().width(Length::Fill)]
@@ -552,7 +567,7 @@ impl Mixer {
         .height(height);
 
         mouse_area(
-            row![track_strips, master_strip]
+            row![track_strips, output_strips]
                 .height(height)
                 .align_y(Alignment::Start),
         )

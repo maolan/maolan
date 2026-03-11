@@ -1,5 +1,6 @@
 use super::Maolan;
 use crate::{
+    consts::state_ids::METRONOME_TRACK_ID,
     message::{Message, Show},
     state::View,
     toolbar::ToolbarViewState,
@@ -193,6 +194,7 @@ impl Maolan {
                     let has_session_end = state
                         .tracks
                         .iter()
+                        .filter(|track| track.name != METRONOME_TRACK_ID)
                         .any(|track| !track.audio.clips.is_empty() || !track.midi.clips.is_empty());
                     let playhead_sample = self.transport_samples.max(0.0) as usize;
                     let playhead_seconds = playhead_sample as f64 / self.playback_rate_hz.max(1.0);
@@ -209,6 +211,7 @@ impl Maolan {
                             playing: self.playing,
                             paused: self.paused,
                             recording: self.record_armed,
+                            metronome_enabled: self.metronome_enabled,
                             has_session_end,
                             has_loop_range: self.loop_range_samples.is_some(),
                             loop_enabled: self.loop_enabled,

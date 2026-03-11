@@ -9,6 +9,7 @@ use iced::{
 };
 use iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind, square,
+    triangle,
 };
 #[derive(Debug, Default)]
 pub struct Toolbar;
@@ -18,6 +19,7 @@ pub struct ToolbarViewState {
     pub playing: bool,
     pub paused: bool,
     pub recording: bool,
+    pub metronome_enabled: bool,
     pub has_session_end: bool,
     pub has_loop_range: bool,
     pub loop_enabled: bool,
@@ -72,6 +74,7 @@ impl Toolbar {
         let pause_active = view_state.playing && view_state.paused;
         let stop_active = !view_state.playing && !view_state.paused;
         let rec_active = view_state.recording;
+        let metronome_active = view_state.metronome_enabled;
         let loop_active = view_state.has_loop_range && view_state.loop_enabled;
         let punch_active = view_state.has_punch_range && view_state.punch_enabled;
         let loop_button = if view_state.has_loop_range {
@@ -116,6 +119,13 @@ impl Toolbar {
         };
         row![
             row![
+                button(triangle())
+                    .style(Self::button_style(
+                        true,
+                        metronome_active,
+                        Color::from_rgba(0.15, 0.65, 0.9, 0.35)
+                    ))
+                    .on_press(Message::ToggleMetronome),
                 button(rewind())
                     .style(Self::button_style(true, false, Color::TRANSPARENT))
                     .on_press(Message::JumpToStart),

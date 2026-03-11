@@ -136,6 +136,7 @@ pub struct Engine {
     transport_sample: usize,
     loop_enabled: bool,
     loop_range_samples: Option<(usize, usize)>,
+    metronome_enabled: bool,
     tempo_bpm: f64,
     tsig_num: u16,
     tsig_denom: u16,
@@ -155,6 +156,7 @@ pub struct Engine {
     last_hw_out_meter_publish: Option<Instant>,
     #[cfg(any(target_os = "freebsd", target_os = "linux"))]
     last_hw_out_meter_linear: Vec<f32>,
+    hw_out_peak_hold_linear: Vec<f32>,
     #[cfg(any(target_os = "freebsd", target_os = "linux"))]
     hw_out_meter_publish_phase: bool,
     last_track_meter_publish: Option<Instant>,
@@ -181,6 +183,9 @@ type MidiEditParseResult = (
 );
 
 impl Engine {
+    const METRONOME_TRACK: &'static str = "metronome";
+    const METRONOME_DEFAULT_LEVEL_DB: f32 = -10.0;
+
     fn meter_linear_to_db(peak: f32) -> f32 {
         if peak <= 1.0e-6 {
             -90.0
@@ -679,6 +684,7 @@ impl Engine {
             transport_sample: 0,
             loop_enabled: false,
             loop_range_samples: None,
+            metronome_enabled: false,
             tempo_bpm: 120.0,
             tsig_num: 4,
             tsig_denom: 4,
@@ -698,6 +704,7 @@ impl Engine {
             last_hw_out_meter_publish: None,
             #[cfg(any(target_os = "freebsd", target_os = "linux"))]
             last_hw_out_meter_linear: vec![],
+            hw_out_peak_hold_linear: vec![],
             #[cfg(any(target_os = "freebsd", target_os = "linux"))]
             hw_out_meter_publish_phase: false,
             last_track_meter_publish: None,
@@ -736,6 +743,68 @@ impl Engine {
         self.hw_driver_cycle_samples()
             .or_else(|| self.jack_cycle_samples())
             .unwrap_or(0)
+    }
+
+    async fn ensure_metronome_track(&mut self) {
+        if self.state.lock().tracks.contains_key(Self::METRONOME_TRACK) {
+            return;
+        }
+        let (cycle_samples, sample_rate_hz, output_channels) = if let Some(hw) = &self.hw_driver {
+            let hw = hw.lock();
+            (hw.cycle_samples(), hw.sample_rate() as f64, hw.output_channels())
+        } else {
+            #[cfg(unix)]
+            {
+                if let Some(jack) = &self.jack_runtime {
+                    let jack = jack.lock();
+                    (jack.buffer_size, jack.sample_rate as f64, jack.audio_outs.len())
+                } else {
+                    return;
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                return;
+            }
+        };
+        if output_channels == 0 {
+            return;
+        }
+        self.state.lock().tracks.insert(
+            Self::METRONOME_TRACK.to_string(),
+            Arc::new(UnsafeMutex::new(Box::new(Track::new(
+                Self::METRONOME_TRACK.to_string(),
+                0,
+                1,
+                0,
+                0,
+                cycle_samples.max(1),
+                sample_rate_hz.max(1.0),
+            )))),
+        );
+        if let Some(track) = self
+            .state
+            .lock()
+            .tracks
+            .get(Self::METRONOME_TRACK)
+            .cloned()
+        {
+            track.lock().set_level(Self::METRONOME_DEFAULT_LEVEL_DB);
+            track.lock().set_metronome_enabled(self.metronome_enabled);
+        }
+        self.notify_clients(Ok(Action::AddTrack {
+            name: Self::METRONOME_TRACK.to_string(),
+            audio_ins: 0,
+            midi_ins: 0,
+            audio_outs: 1,
+            midi_outs: 0,
+        }))
+        .await;
+        self.notify_clients(Ok(Action::TrackLevel(
+            Self::METRONOME_TRACK.to_string(),
+            Self::METRONOME_DEFAULT_LEVEL_DB,
+        )))
+        .await;
     }
 
     fn open_hw_driver(
@@ -1130,6 +1199,9 @@ impl Engine {
 
     async fn finalize_open_audio_device(&mut self) {
         self.maybe_start_freebsd_sync_group();
+        if self.metronome_enabled {
+            self.ensure_metronome_track().await;
+        }
         if self.hw_worker.is_none() && self.hw_driver.is_some() {
             self.ensure_hw_worker_running().await;
             self.request_hw_cycle().await;
@@ -2392,33 +2464,13 @@ impl Engine {
         } else {
             10.0_f32.powf(self.hw_out_level_db / 20.0)
         };
-        if !self.should_publish_hw_out_meters() {
-            if let Some(oss) = self.hw_driver.clone() {
-                let hw = oss.lock();
-                hw.set_output_gain_balance(gain, self.hw_out_balance);
-            }
-            #[cfg(unix)]
-            {
-                if let Some(jack) = self.jack_runtime.clone() {
-                    jack.lock().set_output_gain_linear(gain);
-                    jack.lock().set_output_balance(self.hw_out_balance);
-                }
-            }
-            return;
-        }
-        let meter_db: Vec<f32> = if let Some(oss) = self.hw_driver.clone() {
+        let should_notify_interval = self.should_publish_hw_out_meters();
+        let peaks_linear = if let Some(oss) = self.hw_driver.clone() {
             {
                 let hw = oss.lock();
                 hw.set_output_gain_balance(gain, self.hw_out_balance);
             }
-            let peaks_linear = oss.lock().output_meter_linear(gain, self.hw_out_balance);
-            if !self.should_publish_hw_out_linear(&peaks_linear) {
-                return;
-            }
-            peaks_linear
-                .into_iter()
-                .map(Self::meter_linear_to_db)
-                .collect()
+            oss.lock().output_meter_linear(gain, self.hw_out_balance)
         } else {
             #[cfg(unix)]
             {
@@ -2432,7 +2484,7 @@ impl Engine {
                     } else {
                         0.0
                     };
-                    let mut meters = Vec::with_capacity(out_count);
+                    let mut meters_linear = Vec::with_capacity(out_count);
                     for (channel_idx, channel) in outs.iter().enumerate() {
                         let balance_gain = if out_count == 2 {
                             if channel_idx == 0 {
@@ -2452,13 +2504,9 @@ impl Engine {
                             }
                         }
                         let peak = peak * gain * balance_gain;
-                        meters.push(if peak <= 1.0e-6 {
-                            -90.0
-                        } else {
-                            (20.0 * peak.log10()).clamp(-90.0, 20.0)
-                        });
+                        meters_linear.push(peak);
                     }
-                    meters
+                    meters_linear
                 } else {
                     return;
                 }
@@ -2468,8 +2516,25 @@ impl Engine {
                 return;
             }
         };
+        if self.hw_out_peak_hold_linear.len() != peaks_linear.len() {
+            self.hw_out_peak_hold_linear.resize(peaks_linear.len(), 0.0);
+        }
+        let mut held_peaks = Vec::with_capacity(peaks_linear.len());
+        for (idx, peak_now) in peaks_linear.iter().copied().enumerate() {
+            let held = self.hw_out_peak_hold_linear[idx] * 0.92;
+            let next = peak_now.max(held);
+            self.hw_out_peak_hold_linear[idx] = next;
+            held_peaks.push(next);
+        }
+        let should_notify = should_notify_interval && self.should_publish_hw_out_linear(&held_peaks);
+        let meter_db: Vec<f32> = held_peaks
+            .into_iter()
+            .map(Self::meter_linear_to_db)
+            .collect();
         self.latest_hw_out_meter_db = Arc::new(meter_db.clone());
-        self.maybe_notify_hw_out_meter(meter_db).await;
+        if should_notify {
+            self.maybe_notify_hw_out_meter(meter_db).await;
+        }
     }
 
     async fn send_tracks(&mut self) -> bool {
@@ -2797,6 +2862,21 @@ impl Engine {
                     }
                 });
                 self.punch_enabled = self.punch_range_samples.is_some();
+            }
+            Action::SetMetronomeEnabled(enabled) => {
+                self.metronome_enabled = enabled;
+                if enabled {
+                    self.ensure_metronome_track().await;
+                }
+                if let Some(track) = self
+                    .state
+                    .lock()
+                    .tracks
+                    .get(Self::METRONOME_TRACK)
+                    .cloned()
+                {
+                    track.lock().set_metronome_enabled(enabled);
+                }
             }
             Action::SetTempo(bpm) => {
                 self.tempo_bpm = bpm.max(1.0);
@@ -4969,6 +5049,7 @@ impl Engine {
                     | Action::SetLoopRange(_)
                     | Action::SetPunchEnabled(_)
                     | Action::SetPunchRange(_)
+                    | Action::SetMetronomeEnabled(_)
                     | Action::SetTempo(_)
                     | Action::SetTimeSignature { .. }
                     | Action::SetClipPlaybackEnabled(_)

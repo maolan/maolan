@@ -98,6 +98,7 @@ pub mod workspace_ids {
 pub mod state_ids {
     pub const HW_IN_ID: &str = "hw:in";
     pub const HW_OUT_ID: &str = "hw:out";
+    pub const METRONOME_TRACK_ID: &str = "metronome";
     pub const MIDI_HW_IN_ID: &str = "midi:hw:in";
     pub const MIDI_HW_OUT_ID: &str = "midi:hw:out";
 }

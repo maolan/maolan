@@ -55,6 +55,10 @@ impl Maolan {
                 self.punch_enabled = enabled;
                 Some(self.send(Action::SetPunchEnabled(enabled)))
             }
+            Message::ToggleMetronome => {
+                self.metronome_enabled = !self.metronome_enabled;
+                Some(self.send(Action::SetMetronomeEnabled(self.metronome_enabled)))
+            }
             Message::WindowResized(size) => {
                 self.size = *size;
                 Some(self.sync_editor_scrollbars())

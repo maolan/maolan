@@ -186,7 +186,7 @@ impl Maolan {
             Subscription::none()
         };
         let meter_poll_sub = if SUPPORTS_METER_POLL {
-            iced::time::every(Duration::from_millis(80)).map(|_| Message::MeterPollTick)
+            iced::time::every(Duration::from_millis(40)).map(|_| Message::MeterPollTick)
         } else {
             Subscription::none()
         };

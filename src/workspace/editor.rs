@@ -1,5 +1,6 @@
 use crate::{
     consts::{
+        state_ids::METRONOME_TRACK_ID,
         workspace::{
             AUDIO_CLIP_BASE, AUDIO_CLIP_BORDER, AUDIO_CLIP_SELECTED_BASE,
             AUDIO_CLIP_SELECTED_BORDER, CLIP_RESIZE_HANDLE_WIDTH, MIDI_CLIP_BASE, MIDI_CLIP_BORDER,
@@ -2535,7 +2536,11 @@ impl Editor {
         } = args;
         let mut result = column![];
         let state = self.state.blocking_read();
-        for track in state.tracks.iter() {
+        for track in state
+            .tracks
+            .iter()
+            .filter(|track| track.name != METRONOME_TRACK_ID)
+        {
             result = result.push(view_track_elements(TrackElementViewArgs {
                 state: &state,
                 track,

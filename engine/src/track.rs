@@ -95,7 +95,9 @@ pub struct Track {
     pub tsig_num: u16,
     pub tsig_denom: u16,
     pub clip_playback_enabled: bool,
+    pub metronome_enabled: bool,
     output_meter_linear_cache: Vec<f32>,
+    meter_peak_hold_linear: Vec<f32>,
     pub record_tap_outs: Vec<Vec<f32>>,
     pub record_tap_midi_in: Vec<MidiEvent>,
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -106,12 +108,15 @@ pub struct Track {
     midi_clip_cache: HashMap<String, MidiClipEvents>,
     internal_output_routes_cache: Vec<Vec<Arc<AudioIO>>>,
     audio_route_cache_dirty: bool,
+    metronome_source: Option<Arc<AudioIO>>,
     midi_input_to_out_routes_cache: Vec<Vec<usize>>,
     midi_out_external_targets_cache: Vec<Vec<Arc<UnsafeMutex<Box<MIDIIO>>>>>,
     midi_route_cache_dirty: bool,
 }
 
 impl Track {
+    const METRONOME_DEFAULT_LEVEL_DB: f32 = -10.0;
+
     pub fn new(
         name: String,
         audio_ins: usize,
@@ -162,7 +167,9 @@ impl Track {
             tsig_num: 4,
             tsig_denom: 4,
             clip_playback_enabled: true,
+            metronome_enabled: false,
             output_meter_linear_cache: vec![0.0; audio_outs],
+            meter_peak_hold_linear: vec![0.0; audio_outs],
             record_tap_outs: vec![vec![0.0; buffer_size]; audio_outs],
             record_tap_midi_in: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -173,6 +180,7 @@ impl Track {
             midi_clip_cache: HashMap::new(),
             internal_output_routes_cache: Vec::new(),
             audio_route_cache_dirty: true,
+            metronome_source: None,
             midi_input_to_out_routes_cache: Vec::new(),
             midi_out_external_targets_cache: Vec::new(),
             midi_route_cache_dirty: true,
@@ -340,6 +348,82 @@ impl Track {
             .fold(0.0_f32, |acc, sample| acc.max(sample.abs()))
     }
 
+    fn ensure_metronome_source(&mut self, frames: usize) -> Option<Arc<AudioIO>> {
+        if self.name != "metronome" || self.audio.outs.is_empty() {
+            return None;
+        }
+        let needed = frames.max(1);
+        let needs_new = self
+            .metronome_source
+            .as_ref()
+            .map_or(true, |src| src.buffer.lock().len() < needed);
+        if needs_new {
+            self.metronome_source = Some(Arc::new(AudioIO::new(needed)));
+            self.invalidate_audio_route_cache();
+        }
+        let Some(src) = self.metronome_source.clone() else {
+            return None;
+        };
+        let mut route_changed = false;
+        for out in &self.audio.outs {
+            if !out.connections.lock().iter().any(|conn| Arc::ptr_eq(conn, &src)) {
+                Self::connect_directed_audio(&src, out);
+                route_changed = true;
+            }
+        }
+        if route_changed {
+            self.invalidate_audio_route_cache();
+        }
+        Some(src)
+    }
+
+    fn synthesize_metronome_into(&mut self, dst: &Arc<AudioIO>, frames: usize) {
+        let buf = dst.buffer.lock();
+        buf.fill(0.0);
+        if !self.metronome_enabled || !self.clip_playback_enabled || frames == 0 {
+            return;
+        }
+        let metronome_gain = 10.0_f32.powf((-Self::METRONOME_DEFAULT_LEVEL_DB) / 20.0);
+        let sample_rate = self.sample_rate.max(1.0);
+        let denom = self.tsig_denom.max(1) as f64;
+        let beats_per_bar = self.tsig_num.max(1) as u64;
+        let samples_per_beat = ((sample_rate * 60.0) / self.tempo_bpm.max(1.0)) * (4.0 / denom);
+        if !samples_per_beat.is_finite() || samples_per_beat <= 1.0 {
+            return;
+        }
+        let segments = self.cycle_segments(frames);
+        for (seg_start, seg_end, frame_offset) in segments {
+            if seg_end <= seg_start {
+                continue;
+            }
+            let mut beat_idx = ((seg_start as f64) / samples_per_beat).ceil() as u64;
+            loop {
+                let beat_sample = (beat_idx as f64 * samples_per_beat).round() as usize;
+                if beat_sample >= seg_end {
+                    break;
+                }
+                if beat_sample >= seg_start {
+                    let hit_frame = frame_offset + (beat_sample - seg_start);
+                    if hit_frame < frames {
+                        let accented = beat_idx % beats_per_bar == 0;
+                        let freq = if accented { 1_760.0_f32 } else { 1_320.0_f32 };
+                        let amp = if accented { 0.30_f32 } else { 0.22_f32 } * metronome_gain;
+                        let click_len = ((sample_rate as usize) / 50).max(64);
+                        let phase_step = core::f32::consts::TAU * (freq / sample_rate as f32);
+                        let end = (hit_frame + click_len).min(frames).min(buf.len());
+                        for n in hit_frame..end {
+                            let t = (n - hit_frame) as f32;
+                            let env = (-t / (click_len as f32 * 0.28)).exp();
+                            let s = (t * phase_step).sin() * amp * env;
+                            buf[n] = (buf[n] + s).clamp(-1.0, 1.0);
+                        }
+                    }
+                }
+                beat_idx = beat_idx.saturating_add(1);
+            }
+        }
+    }
+
     pub fn process(&mut self) {
         for audio_in in &self.audio.ins {
             audio_in.process();
@@ -356,6 +440,9 @@ impl Track {
                     .map(|audio_out| audio_out.buffer.lock().len())
             })
             .unwrap_or(0);
+        if let Some(source) = self.ensure_metronome_source(frames) {
+            self.synthesize_metronome_into(&source, frames);
+        }
         let clip_playback_active = self.disk_monitor && self.clip_playback_enabled;
         if clip_playback_active {
             self.preload_audio_clip_cache();
@@ -689,6 +776,9 @@ impl Track {
             self.output_meter_linear_cache
                 .resize(self.audio.outs.len(), 0.0);
         }
+        if self.meter_peak_hold_linear.len() != self.audio.outs.len() {
+            self.meter_peak_hold_linear.resize(self.audio.outs.len(), 0.0);
+        }
         for out_idx in 0..self.audio.outs.len() {
             let audio_out = self.audio.outs[out_idx].clone();
             let out_samples = audio_out.buffer.lock();
@@ -757,9 +847,14 @@ impl Track {
                     tap.fill(0.0);
                 }
             }
-            self.output_meter_linear_cache[out_idx] = out_samples
+            let peak_now = out_samples
                 .iter()
                 .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
+            // Peak-hold with decay gives stable, readable VU behavior for short transients.
+            let held = self.meter_peak_hold_linear[out_idx] * 0.92;
+            let next = peak_now.max(held);
+            self.meter_peak_hold_linear[out_idx] = next;
+            self.output_meter_linear_cache[out_idx] = next;
             *audio_out.finished.lock() = true;
         }
 
@@ -882,6 +977,9 @@ impl Track {
     }
     pub fn set_clip_playback_enabled(&mut self, enabled: bool) {
         self.clip_playback_enabled = enabled;
+    }
+    pub fn set_metronome_enabled(&mut self, enabled: bool) {
+        self.metronome_enabled = enabled;
     }
     pub fn set_record_tap_enabled(&mut self, enabled: bool) {
         self.record_tap_enabled = enabled;
@@ -2613,6 +2711,9 @@ impl Track {
 
     fn internal_audio_sources(&self) -> Vec<Arc<AudioIO>> {
         let mut sources = self.audio.ins.clone();
+        if let Some(src) = &self.metronome_source {
+            sources.push(src.clone());
+        }
         #[cfg(all(unix, not(target_os = "macos")))]
         for instance in &self.lv2_processors {
             sources.extend(instance.processor.audio_outputs().iter().cloned());

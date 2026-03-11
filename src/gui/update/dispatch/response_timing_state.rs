@@ -46,6 +46,11 @@ impl Maolan {
                 self.punch_enabled = range.is_some();
                 true
             }
+            Action::SetMetronomeEnabled(enabled) => {
+                self.metronome_enabled = *enabled;
+                self.state.blocking_write().metronome_enabled = *enabled;
+                true
+            }
             Action::SetTempo(bpm) => {
                 let bpm = (*bpm as f32).clamp(20.0, 300.0);
                 let mut state = self.state.blocking_write();

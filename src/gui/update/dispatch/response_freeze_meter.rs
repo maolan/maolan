@@ -139,7 +139,11 @@ impl Maolan {
                     Self::smooth_meter_db_levels(&mut state.hw_out_meter_db, hw_out_db);
                 }
                 for track in &mut state.tracks {
-                    if let Some((_, output_db)) = track_meters
+                    let allow_live_track_out = self.playing && (!self.paused || track.input_monitor);
+                    if !allow_live_track_out || track_meters.is_empty() {
+                        let silence = vec![-90.0; track.meter_out_db.len()];
+                        Self::smooth_meter_db_levels(&mut track.meter_out_db, &silence);
+                    } else if let Some((_, output_db)) = track_meters
                         .iter()
                         .find(|(track_name, _)| track_name.as_str() == track.name.as_str())
                     {

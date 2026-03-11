@@ -1,4 +1,5 @@
 use crate::{
+    consts::state_ids::METRONOME_TRACK_ID,
     menu,
     message::{Message, TrackAutomationTarget},
     state::{State, StateData, TrackLaneLayout},
@@ -26,7 +27,11 @@ fn track_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'stat
         .find(|track| track.name == menu_state.track_name)?;
 
     let mut top = 0.0_f32;
-    for t in &state.tracks {
+    for t in state
+        .tracks
+        .iter()
+        .filter(|track| track.name != METRONOME_TRACK_ID)
+    {
         if t.name == track.name {
             break;
         }
@@ -404,6 +409,7 @@ impl Tracks {
             let tracks = state
                 .tracks
                 .iter()
+                .filter(|track| track.name != METRONOME_TRACK_ID)
                 .map(|track| TrackViewData {
                     name: track.name.clone(),
                     height: track.height,

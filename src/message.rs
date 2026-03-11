@@ -691,6 +691,7 @@ pub enum Message {
     SetLoopRange(Option<(usize, usize)>),
     TogglePunch,
     SetPunchRange(Option<(usize, usize)>),
+    ToggleMetronome,
     TempoAdjust(f32),
     TempoPointAdd(usize),
     TempoPointSelect {
