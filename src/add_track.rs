@@ -1,9 +1,9 @@
 use crate::message::{AddTrack, Message};
+use crate::widget::numeric_input::number_input;
 use iced::{
     Alignment, Element, Length,
     widget::{button, column, container, pick_list, row, text, text_input},
 };
-use iced_aw::number_input;
 use maolan_engine::message::Action;
 
 #[derive(Debug)]
