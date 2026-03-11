@@ -1,5 +1,5 @@
 use super::interfaces::PluginInstance;
-use super::midi::EventBuffer;
+use super::midi::{EventBuffer, ParameterChanges};
 use super::port::{BusInfo, ParameterInfo};
 use super::state::{MemoryStream, Vst3PluginState, ibstream_ptr};
 use crate::audio::io::AudioIO;
@@ -9,6 +9,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 #[cfg(target_os = "windows")]
 use vst3::ComPtr;
+use vst3::ComWrapper;
 #[cfg(target_os = "windows")]
 use vst3::Steinberg::IPlugView;
 use vst3::Steinberg::Vst::ProcessModes_::kRealtime;
@@ -316,7 +317,7 @@ impl Vst3Processor {
         };
 
         // Call real VST3 processing (no MIDI)
-        if let Err(e) = self.process_vst3(processor, frames) {
+        if let Err(e) = self.process_vst3(processor, frames, &[]) {
             eprintln!("VST3 processing error: {e}, producing silence");
             self.process_silence();
         }
@@ -329,10 +330,6 @@ impl Vst3Processor {
             input.process();
         }
 
-        if !input_events.is_empty() {
-            // MIDI event list wiring into VST3 ProcessData is not implemented yet.
-        }
-
         // Get the audio processor
         let processor = match &self.instance.audio_processor {
             Some(proc) => proc,
@@ -343,7 +340,7 @@ impl Vst3Processor {
         };
 
         // Call real VST3 processing with MIDI
-        match self.process_vst3(processor, frames) {
+        match self.process_vst3(processor, frames, input_events) {
             Ok(output_buffer) => {
                 // Convert output events back to MIDI
                 output_buffer.to_midi_events()
@@ -360,6 +357,7 @@ impl Vst3Processor {
         &self,
         processor: &vst3::ComPtr<vst3::Steinberg::Vst::IAudioProcessor>,
         frames: usize,
+        input_events: &[MidiEvent],
     ) -> Result<EventBuffer, String> {
         use vst3::Steinberg::Vst::IAudioProcessorTrait;
         use vst3::Steinberg::Vst::*;
@@ -430,6 +428,25 @@ impl Vst3Processor {
 
         // Create ProcessData
         let mut process_context: ProcessContext = unsafe { std::mem::zeroed() };
+        let input_event_list = if self.midi_input_ports > 0 {
+            Some(ComWrapper::new(EventBuffer::from_midi_events(input_events, 0)))
+        } else {
+            None
+        };
+        let midi_mapping = self
+            .instance
+            .edit_controller
+            .as_ref()
+            .and_then(|controller| controller.cast::<IMidiMapping>());
+        let input_parameter_changes = midi_mapping.as_ref().and_then(|mapping| {
+            ParameterChanges::from_midi_events(input_events, mapping, 0)
+                .map(ComWrapper::new)
+        });
+        let output_event_list = if self.midi_output_ports > 0 {
+            Some(ComWrapper::new(EventBuffer::new()))
+        } else {
+            None
+        };
         let mut process_data = ProcessData {
             processMode: kRealtime as i32,
             symbolicSampleSize: kSample32 as i32,
@@ -446,10 +463,19 @@ impl Vst3Processor {
             } else {
                 output_buses.as_mut_ptr()
             },
-            inputParameterChanges: std::ptr::null_mut(),
+            inputParameterChanges: input_parameter_changes
+                .as_ref()
+                .map(ParameterChanges::changes_ptr)
+                .unwrap_or(std::ptr::null_mut()),
             outputParameterChanges: std::ptr::null_mut(),
-            inputEvents: std::ptr::null_mut(),
-            outputEvents: std::ptr::null_mut(),
+            inputEvents: input_event_list
+                .as_ref()
+                .map(EventBuffer::event_list_ptr)
+                .unwrap_or(std::ptr::null_mut()),
+            outputEvents: output_event_list
+                .as_ref()
+                .map(EventBuffer::event_list_ptr)
+                .unwrap_or(std::ptr::null_mut()),
             processContext: &mut process_context,
         };
 
@@ -465,11 +491,10 @@ impl Vst3Processor {
             *output.finished.lock() = true;
         }
 
-        // For now, return empty output events
-        // Full IEventList implementation would go here
-        let output_events = EventBuffer::new();
-
-        Ok(output_events)
+        Ok(output_event_list
+            .as_ref()
+            .map(|events| EventBuffer::from_midi_events(&events.to_midi_events(), 0))
+            .unwrap_or_default())
     }
 
     fn process_silence(&self) {

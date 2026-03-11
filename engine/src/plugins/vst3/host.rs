@@ -99,32 +99,63 @@ fn collect_vst3_plugins(root: &Path, out: &mut Vec<Vst3PluginInfo>) {
 }
 
 fn scan_vst3_bundle(bundle_path: &Path) -> Option<Vst3PluginInfo> {
-    // Try to load the plugin factory
     let factory = PluginFactory::from_module(bundle_path).ok()?;
-
     let class_count = factory.count_classes();
     if class_count == 0 {
         return None;
     }
 
-    // Get the first class (most plugins have just one)
-    let class_info = factory.get_class_info(0)?;
+    let mut fallback = None;
+    for index in 0..class_count {
+        let Some(class_info) = factory.get_class_info(index) else {
+            continue;
+        };
+        if fallback.is_none() {
+            fallback = Some(class_info_to_plugin_info(&class_info, bundle_path, None));
+        }
 
-    // Convert TUID to string
-    let id = tuid_to_string(&class_info.cid);
+        let Ok(mut instance) = factory.create_instance(&class_info.cid) else {
+            continue;
+        };
+        let capabilities = match instance.initialize(&factory) {
+            Ok(()) => {
+                let (audio_inputs, audio_outputs) = instance.main_audio_channel_counts();
+                let (midi_inputs, midi_outputs) = instance.event_bus_counts();
+                let _ = instance.terminate();
+                Some((audio_inputs, audio_outputs, midi_inputs > 0, midi_outputs > 0))
+            }
+            Err(_) => None,
+        };
+        return Some(class_info_to_plugin_info(
+            &class_info,
+            bundle_path,
+            capabilities,
+        ));
+    }
 
-    Some(Vst3PluginInfo {
-        id,
-        name: class_info.name,
-        vendor: String::new(), // We'd need IPluginFactory2 for vendor
+    fallback
+}
+
+fn class_info_to_plugin_info(
+    class_info: &super::interfaces::ClassInfo,
+    bundle_path: &Path,
+    capabilities: Option<(usize, usize, bool, bool)>,
+) -> Vst3PluginInfo {
+    let (audio_inputs, audio_outputs, has_midi_input, has_midi_output) =
+        capabilities.unwrap_or((0, 0, false, false));
+
+    Vst3PluginInfo {
+        id: tuid_to_string(&class_info.cid),
+        name: class_info.name.clone(),
+        vendor: String::new(),
         path: bundle_path.to_string_lossy().to_string(),
-        category: class_info.category,
-        version: String::new(), // We'd need to parse class_info.version
-        audio_inputs: 0,        // TODO: Query bus info
-        audio_outputs: 0,       // TODO: Query bus info
-        has_midi_input: false,  // TODO: Query event bus info
-        has_midi_output: false, // TODO: Query event bus info
-    })
+        category: class_info.category.clone(),
+        version: String::new(),
+        audio_inputs,
+        audio_outputs,
+        has_midi_input,
+        has_midi_output,
+    }
 }
 
 fn tuid_to_string(tuid: &[i8; 16]) -> String {
