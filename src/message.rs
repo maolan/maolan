@@ -503,19 +503,6 @@ pub enum Message {
         track_name: String,
         target: TrackAutomationTarget,
     },
-    TrackAutomationAddClapLanes {
-        track_name: String,
-        plugin_path: String,
-    },
-    TrackAutomationAddVst3Lanes {
-        track_name: String,
-        plugin_path: String,
-    },
-    #[cfg(all(unix, not(target_os = "macos")))]
-    TrackAutomationAddLv2Lanes {
-        track_name: String,
-        plugin_uri: String,
-    },
     TrackAutomationLaneHover {
         track_name: String,
         target: TrackAutomationTarget,
@@ -834,12 +821,10 @@ pub enum Message {
     SelectVst3Plugin(String),
     LoadSelectedVst3Plugins,
     RefreshClapPlugins,
-    ToggleClapCapabilityScanning(bool),
     FilterClapPlugin(String),
     SelectClapPlugin(String),
     LoadSelectedClapPlugins,
     PluginFormatSelected(PluginFormat),
-    UnloadClapPlugin(String),
     ShowClapPluginUi(String),
     OpenVst3PluginUi {
         track_name: String,

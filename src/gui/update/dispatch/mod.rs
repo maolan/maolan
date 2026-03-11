@@ -2944,38 +2944,6 @@ impl Maolan {
                     track.height = track.min_height_for_layout().max(60.0);
                 }
             }
-            Message::TrackAutomationAddClapLanes {
-                ref track_name,
-                ref plugin_path,
-            } => {
-                return self.request_plugin_automation_lanes(track_name, plugin_path, "CLAP");
-            }
-            Message::TrackAutomationAddVst3Lanes {
-                ref track_name,
-                ref plugin_path,
-            } => {
-                return self.request_plugin_automation_lanes(track_name, plugin_path, "VST3");
-            }
-            #[cfg(all(unix, not(target_os = "macos")))]
-            Message::TrackAutomationAddLv2Lanes {
-                ref track_name,
-                ref plugin_uri,
-            } => {
-                let instance_id = self.find_plugin_graph_instance_id(track_name, "LV2", plugin_uri);
-                if let Some(instance_id) = instance_id {
-                    self.pending_add_lv2_automation_instances
-                        .insert((track_name.clone(), instance_id));
-                    return self.send(Action::TrackGetLv2PluginControls {
-                        track_name: track_name.clone(),
-                        instance_id,
-                    });
-                }
-                self.pending_add_lv2_automation_uris
-                    .insert((track_name.clone(), plugin_uri.clone()));
-                return self
-                    .maybe_refresh_plugin_graph_for_track(track_name)
-                    .unwrap_or_else(Task::none);
-            }
             Message::TrackAutomationLaneHover {
                 ref track_name,
                 target,

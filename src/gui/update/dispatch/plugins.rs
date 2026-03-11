@@ -6,21 +6,7 @@ impl Maolan {
             #[cfg(all(unix, not(target_os = "macos")))]
             Message::RefreshLv2Plugins => Some(self.send(Action::ListLv2Plugins)),
             Message::RefreshVst3Plugins => Some(self.send(Action::ListVst3Plugins)),
-            Message::RefreshClapPlugins => {
-                if self.scan_clap_capabilities {
-                    Some(self.send(Action::ListClapPluginsWithCapabilities))
-                } else {
-                    Some(self.send(Action::ListClapPlugins))
-                }
-            }
-            Message::ToggleClapCapabilityScanning(enabled) => {
-                self.scan_clap_capabilities = enabled;
-                if self.scan_clap_capabilities {
-                    Some(self.send(Action::ListClapPluginsWithCapabilities))
-                } else {
-                    Some(self.send(Action::ListClapPlugins))
-                }
-            }
+            Message::RefreshClapPlugins => Some(self.send(Action::ListClapPlugins)),
             #[cfg(all(unix, not(target_os = "macos")))]
             Message::FilterLv2Plugins(ref query) => {
                 self.plugin_filter = query.clone();
@@ -152,24 +138,6 @@ impl Maolan {
                     format
                 };
                 self.plugin_format = format;
-                None
-            }
-            Message::UnloadClapPlugin(ref plugin_path) => {
-                let track_name = {
-                    let state = self.state.blocking_read();
-                    state
-                        .plugin_graph_track
-                        .clone()
-                        .or_else(|| state.selected.iter().next().cloned())
-                };
-                if let Some(track_name) = track_name {
-                    return Some(self.send(Action::TrackUnloadClapPlugin {
-                        track_name,
-                        plugin_path: plugin_path.clone(),
-                    }));
-                }
-                self.state.blocking_write().message =
-                    "Select a track before unloading CLAP plugin".to_string();
                 None
             }
             Message::ShowClapPluginUi(ref plugin_path) => {

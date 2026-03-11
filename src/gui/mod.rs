@@ -367,7 +367,6 @@ pub struct Maolan {
     lv2_ui_host: GuiLv2UiHost,
     vst3_ui_host: GuiVst3UiHost,
     pending_vst3_ui_open: Option<PendingVst3UiOpen>,
-    scan_clap_capabilities: bool,
     tempo_input: String,
     time_signature_num_input: String,
     time_signature_denom_input: String,
@@ -581,7 +580,6 @@ impl Default for Maolan {
             lv2_ui_host: GuiLv2UiHost::new(),
             vst3_ui_host: GuiVst3UiHost::new(),
             pending_vst3_ui_open: None,
-            scan_clap_capabilities: false,
             tempo_input: "120".to_string(),
             time_signature_num_input: "4".to_string(),
             time_signature_denom_input: "4".to_string(),
@@ -664,63 +662,6 @@ impl Maolan {
         formats.push(PluginFormat::Clap);
         formats.push(PluginFormat::Vst3);
         formats
-    }
-
-    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-    fn loaded_graph_plugins_for_format(
-        state: &StateData,
-        track_name: &str,
-        plugin_format: &str,
-    ) -> Vec<(String, String)> {
-        state
-            .plugin_graphs_by_track
-            .get(track_name)
-            .map(|(plugins, _)| {
-                plugins
-                    .iter()
-                    .filter(|plugin| plugin.format.eq_ignore_ascii_case(plugin_format))
-                    .map(|plugin| (plugin.name.clone(), plugin.uri.clone()))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
-    }
-
-    #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]
-    fn loaded_graph_plugins_for_format(
-        state: &StateData,
-        track_name: &str,
-        plugin_format: &str,
-    ) -> Vec<(String, String)> {
-        let _ = (state, track_name, plugin_format);
-        Vec::new()
-    }
-
-    fn loaded_vst3_automation_section(
-        &self,
-        state: &StateData,
-        track_name: &str,
-    ) -> iced::Element<'_, Message> {
-        let loaded_vst3 = Self::loaded_graph_plugins_for_format(state, track_name, "VST3");
-        let mut loaded_vst3_items = Vec::new();
-        for (name, path) in loaded_vst3 {
-            loaded_vst3_items.push(
-                row![
-                    text(name).width(Length::Fill),
-                    button("Auto").on_press(Message::TrackAutomationAddVst3Lanes {
-                        track_name: track_name.to_string(),
-                        plugin_path: path,
-                    }),
-                ]
-                .spacing(8)
-                .into(),
-            );
-        }
-        column![
-            text("Loaded VST3"),
-            scrollable(column(loaded_vst3_items)).height(Length::Fixed(72.0)),
-        ]
-        .spacing(6)
-        .into()
     }
 
     fn session_display_name_from_path(path: &Path) -> Option<String> {
@@ -2910,9 +2851,6 @@ impl Maolan {
                     text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
                         .on_input(Message::FilterClapPlugin)
                         .width(Length::Fill),
-                    checkbox(self.scan_clap_capabilities)
-                        .label("Scan capabilities (GUI, params, etc.)")
-                        .on_toggle(Message::ToggleClapCapabilityScanning),
                     scrollable(clap_list).height(Length::Fill),
                     row![
                         load,
@@ -2928,66 +2866,10 @@ impl Maolan {
             }
         };
 
-        let loaded_vst3_section = self.loaded_vst3_automation_section(&state, &title);
-        let loaded_lv2_section: iced::Element<'_, Message> = {
-            let loaded_lv2 = Self::loaded_graph_plugins_for_format(&state, &title, "LV2");
-            let mut loaded_lv2_items = Vec::new();
-            for (name, uri) in loaded_lv2 {
-                loaded_lv2_items.push(
-                    row![
-                        text(name).width(Length::Fill),
-                        button("Auto").on_press(Message::TrackAutomationAddLv2Lanes {
-                            track_name: title.clone(),
-                            plugin_uri: uri,
-                        }),
-                    ]
-                    .spacing(8)
-                    .into(),
-                );
-            }
-            column![
-                text("Loaded LV2"),
-                scrollable(column(loaded_lv2_items)).height(Length::Fixed(72.0)),
-            ]
-            .spacing(6)
-            .into()
-        };
-
-        let loaded_clap = state
-            .clap_plugins_by_track
-            .get(&title)
-            .cloned()
-            .unwrap_or_default();
-        let mut loaded_clap_items = Vec::new();
-        for path in loaded_clap {
-            let name = std::path::Path::new(&path)
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.clone());
-            loaded_clap_items.push(
-                row![
-                    text(name).width(Length::Fill),
-                    button("Auto").on_press(Message::TrackAutomationAddClapLanes {
-                        track_name: title.clone(),
-                        plugin_path: path.clone(),
-                    }),
-                    button("UI").on_press(Message::ShowClapPluginUi(path.clone())),
-                    button("Unload").on_press(Message::UnloadClapPlugin(path)),
-                ]
-                .spacing(8)
-                .into(),
-            );
-        }
-        let loaded_clap_list = column(loaded_clap_items);
-
         container(
             column![
                 text(format!("Track Plugins: {title}")),
                 plugin_controls,
-                loaded_lv2_section,
-                loaded_vst3_section,
-                text("Loaded CLAP"),
-                scrollable(loaded_clap_list).height(Length::Fixed(100.0)),
                 row![
                     button("Close")
                         .on_press(Message::Cancel)
@@ -3101,10 +2983,7 @@ impl Maolan {
                 text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
                     .on_input(Message::FilterClapPlugin)
                     .width(Length::Fill),
-                checkbox(self.scan_clap_capabilities)
-                    .label("Scan capabilities (GUI, params, etc.)")
-                    .on_toggle(Message::ToggleClapCapabilityScanning),
-                scrollable(clap_list).height(Length::Fill),
+                    scrollable(clap_list).height(Length::Fill),
                 row![
                     load,
                     pick_list(
@@ -3141,41 +3020,10 @@ impl Maolan {
             .spacing(10)
         };
 
-        let loaded_vst3_section = self.loaded_vst3_automation_section(&state, &title);
-
-        let loaded_clap = state
-            .clap_plugins_by_track
-            .get(&title)
-            .cloned()
-            .unwrap_or_default();
-        let mut loaded_clap_items = Vec::new();
-        for path in loaded_clap {
-            let name = std::path::Path::new(&path)
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.clone());
-            loaded_clap_items.push(
-                row![
-                    text(name).width(Length::Fill),
-                    button("Auto").on_press(Message::TrackAutomationAddClapLanes {
-                        track_name: title.clone(),
-                        plugin_path: path.clone(),
-                    }),
-                    button("UI").on_press(Message::ShowClapPluginUi(path.clone())),
-                    button("Unload").on_press(Message::UnloadClapPlugin(path)),
-                ]
-                .spacing(8)
-                .into(),
-            );
-        }
-        let loaded_clap_list = column(loaded_clap_items);
         container(
             column![
                 text(format!("Track Plugins: {title}")),
                 plugin_controls,
-                loaded_vst3_section,
-                text("Loaded CLAP"),
-                scrollable(loaded_clap_list).height(Length::Fixed(100.0)),
                 row![
                     button("Close")
                         .on_press(Message::Cancel)

@@ -92,39 +92,6 @@ impl Maolan {
     }
 
     #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
-    fn find_plugin_graph_instance_id(
-        &self,
-        track_name: &str,
-        plugin_format: &str,
-        plugin_ref: &str,
-    ) -> Option<usize> {
-        let state = self.state.blocking_read();
-        state
-            .plugin_graphs_by_track
-            .get(track_name)
-            .and_then(|(plugins, _)| {
-                plugins
-                    .iter()
-                    .find(|plugin| {
-                        plugin.format.eq_ignore_ascii_case(plugin_format)
-                            && (plugin.uri == plugin_ref || plugin.plugin_id == plugin_ref)
-                    })
-                    .map(|plugin| plugin.instance_id)
-            })
-    }
-
-    #[cfg(not(any(target_os = "windows", all(unix, not(target_os = "macos")))))]
-    fn find_plugin_graph_instance_id(
-        &self,
-        track_name: &str,
-        plugin_format: &str,
-        plugin_ref: &str,
-    ) -> Option<usize> {
-        let _ = (track_name, plugin_format, plugin_ref);
-        None
-    }
-
-    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
     fn queue_pending_graph_automation_queries(
         &mut self,
         track_name: &str,
@@ -259,56 +226,6 @@ impl Maolan {
     #[cfg(all(unix, not(target_os = "macos")))]
     fn pump_lv2_ui(&mut self) {
         self.lv2_ui_host.pump();
-    }
-
-    fn request_plugin_automation_lanes(
-        &mut self,
-        track_name: &str,
-        plugin_ref: &str,
-        plugin_format: &str,
-    ) -> Task<Message> {
-        if !platform_caps::SUPPORTS_PLUGIN_GRAPH {
-            self.state.blocking_write().message =
-                format!("{plugin_format} automation lanes are unavailable on this platform");
-            return Task::none();
-        }
-        if let Some(instance_id) =
-            self.find_plugin_graph_instance_id(track_name, plugin_format, plugin_ref)
-        {
-            match plugin_format {
-                "CLAP" => {
-                    self.pending_add_clap_automation_instances
-                        .insert((track_name.to_string(), instance_id));
-                    self.send(Action::TrackGetClapParameters {
-                        track_name: track_name.to_string(),
-                        instance_id,
-                    })
-                }
-                "VST3" => {
-                    self.pending_add_vst3_automation_instances
-                        .insert((track_name.to_string(), instance_id));
-                    self.send(Action::TrackGetVst3Parameters {
-                        track_name: track_name.to_string(),
-                        instance_id,
-                    })
-                }
-                _ => Task::none(),
-            }
-        } else {
-            match plugin_format {
-                "CLAP" => {
-                    self.pending_add_clap_automation_paths
-                        .insert((track_name.to_string(), plugin_ref.to_string()));
-                }
-                "VST3" => {
-                    self.pending_add_vst3_automation_paths
-                        .insert((track_name.to_string(), plugin_ref.to_string()));
-                }
-                _ => {}
-            }
-            self.maybe_refresh_plugin_graph_for_track(track_name)
-                .unwrap_or_else(Task::none)
-        }
     }
 
     fn rebuild_midi_mappings_report_lines_from_state(&mut self) {
