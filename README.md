@@ -2,7 +2,29 @@
 
 # Maolan
 
-Maolan is a Rust DAW focused on recording, editing, routing, and plugin hosting.
+Maolan is a Rust DAW focused on recording, editing, routing, automation, export, and plugin hosting.
+
+## Current Scope
+
+Maolan currently includes:
+
+- Audio and MIDI tracks with timeline editing
+- Piano roll editing with note/controller/SysEx tools
+- Track and plugin automation
+- Plugin hosting for:
+  - CLAP
+  - VST3
+  - LV2 on Unix
+- Per-track plugin graph routing, including sidechains and MIDI paths
+- Freeze, flatten, offline bounce, and export workflows
+- Session templates, track templates, autosave recovery, and diagnostics
+
+## Platform Notes
+
+- Unix builds support CLAP, VST3, and LV2.
+- Windows builds support CLAP and VST3.
+- Current keyboard handling is `Ctrl`-based across platforms.
+- Plugin compatibility is host-dependent and should be treated as evolving rather than guaranteed.
 
 ## Build
 
@@ -25,34 +47,18 @@ cargo run --release
 cargo run --release -- --debug
 ```
 
-### Package release artifact
-
-```bash
-cargo build --release
-./scripts/package-release.sh
-```
-
-The script creates a `dist/maolan-<timestamp>-<target>.tar.gz` bundle with the release binary and core docs.
-
-### Audit undo/redo coverage
-
-```bash
-./scripts/audit-history-coverage.sh
-```
-
-Prints mutating `engine::message::Action` candidates not currently included in history `should_record`.
-See [docs/HISTORY_AUDIT.md](docs/HISTORY_AUDIT.md) for the latest audit notes and decisions.
-
 ## Documentation
 
 - [Features](docs/FEATURES.md)
 - [Shortcuts and Mouse Gestures](docs/SHORTCUTS.md)
+- [Plugin Routing and Sidechains](docs/PLUGIN_ROUTING.md)
 - [History Audit Notes](docs/HISTORY_AUDIT.md)
 
 ## Project Notes
 
 - Session templates are stored under `~/.config/maolan/session_templates/`.
 - Track templates are stored under `~/.config/maolan/track_templates/`.
+- Autosave snapshots are stored under `<session>/.maolan_autosave/snapshots/`.
 
 ## Status
 

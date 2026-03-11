@@ -1,9 +1,9 @@
 # Maolan Shortcuts and Gestures
 
-Last updated: 2026-03-05
+Last updated: 2026-03-11
 
 ## Keyboard Shortcuts
-## Global / Session
+### Global / Session
 - `Ctrl+N`: New session
 - `Ctrl+O`: Open session
 - `Ctrl+S`: Save session
@@ -16,17 +16,17 @@ Last updated: 2026-03-05
 - `Ctrl+Y`: Redo
 - `Delete` or `Backspace`: Remove selected item(s)
 
-## Transport
+### Transport
 - `Space`: Toggle play/pause
 - `Shift+Space`: Pause
 
-## Piano Tools
+### Piano Tools
 - `Q`: Quantize selected notes
 - `H`: Humanize selected notes
 - `G`: Groove selected notes
 
 ## Mouse Actions and Gestures
-## Workspace / Track List
+### Workspace / Track List
 - `Left click track`: Select track
 - `Double click track`: Open track plugin view
 - `Right click track`: Open track context menu
@@ -40,7 +40,7 @@ Last updated: 2026-03-05
 - `Drag track` (grab track body): Reorder track
 - `Drag bottom track edge`: Resize track height
 
-## Timeline Clips
+### Timeline Clips
 - `Left click clip`: Select clip
 - `Left click empty editor`: Deselect clips
 - `Left drag clip`: Drag/move clip (or group if multi-selected)
@@ -56,20 +56,20 @@ Last updated: 2026-03-05
   - Fade enable/disable
   - Audio warp actions (audio clips)
 
-## Selection Gestures
+### Selection Gestures
 - `Left drag on empty editor`: Marquee clip selection rectangle
 - `Right drag on MIDI lane`: Create empty MIDI clip
 
-## Comp Tool
+### Comp Tool
 - In Comp tool mode:
   - `Left drag across takes`: Swipe comp (promote active take/mute others in range)
 
-## Ruler (Top Timeline)
+### Ruler (Top Timeline)
 - `Left click`: Move transport playhead
 - `Left drag`: Set loop range (snap-aware)
 - `Right click`: Clear loop range
 
-## Tempo / Time Signature Lane
+### Tempo / Time Signature Lane
 - `Left click marker`: Select marker
 - `Shift+Left click marker`: Add/remove marker from selection
 - `Left drag selected marker(s)`: Move marker(s) in time
@@ -80,12 +80,19 @@ Last updated: 2026-03-05
 - `Middle click` on time-signature lane: Add time-signature point
 - `Mouse wheel` over left control zone: Adjust tempo or time-signature values
 
-## Piano Roll (Mouse)
+### Piano Roll (Mouse)
 - `Click/drag notes`: Select and move notes
 - `Drag note edge`: Resize note start/end
 - `Drag rectangle`: Box-select notes
 - `Drag in empty area`: Create notes
 - `Controller/SysEx interactions`: Insert/edit/move/delete according to active lane/tools
+
+### Plugin Graph
+- `Double click track`: Open the track plugin/routing graph
+- `Drag plugin node`: Move plugin node in graph
+- `Drag from port to port`: Create audio or MIDI connection
+- `Select connection + delete`: Remove selected graph connection
+- Sidechain / auxiliary audio ports are rendered separately from main ports
 
 ## Notes
 - Current keyboard handling is `Ctrl`-based in code paths (including on macOS builds).

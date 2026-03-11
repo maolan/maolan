@@ -1,12 +1,13 @@
 # Maolan Features
 
-Last updated: 2026-03-05
+Last updated: 2026-03-11
 
 ## Core DAW Workflow
 - Multi-track audio + MIDI session editing
 - Track selection, reordering, resizing, and rename
 - Track templates and session templates
 - Session save/open/save-as
+- Recent session tracking
 - Session metadata editing:
   - Author
   - Album
@@ -24,6 +25,7 @@ Last updated: 2026-03-05
 - Clip rename
 - Clip middle-click split at cursor/snap point
 - MIDI clip double-click opens piano roll
+- Audio warp markers with reset / half-speed / double-speed helpers
 
 ## Take Lanes and Comping
 - Overlap-based take lane stacking
@@ -51,6 +53,8 @@ Last updated: 2026-03-05
   - Touch
   - Latch
   - Write
+- Automation writeback from manual control changes
+- Plugin automation lane creation from loaded plugin parameters
 
 ## Piano Roll / MIDI Tools
 - Note editing and selection
@@ -71,6 +75,8 @@ Last updated: 2026-03-05
 - Play/pause/stop/record transport control
 - Loop range set/clear
 - Punch range set/clear
+- Metronome enable/disable
+- Clip playback enable/disable at transport level
 
 ## Freeze / Commit / Flatten
 - Per-track freeze/unfreeze
@@ -92,12 +98,19 @@ Last updated: 2026-03-05
   - Pan adjust
   - Pre/Post fader toggle
 - VCA-like master assignment/unassignment for tracks
+- Track audio/MIDI passthrough defaults
+- Per-track plugin graph routing for:
+  - Audio
+  - MIDI
+  - Sidechain / auxiliary plugin ports
 
 ## Plugins and Integration
-- CLAP plugin scan/load/unload/UI
-- VST3 plugin scan/load/UI
-- LV2 plugin scan/load/UI (Unix)
+- CLAP plugin scan/load/unload/state restore/UI
+- VST3 plugin scan/load/unload/state restore/UI
+- LV2 plugin scan/load/unload/state restore/UI (Unix)
 - Plugin graph and per-track routing management
+- Mixed plugin graph session/template restore
+- Plugin parameter automation for loaded plugins
 - Offline plugin bounce path for freeze/export workflows
 
 ## Export and Render
@@ -130,6 +143,7 @@ Last updated: 2026-03-05
 - Recover latest or older autosave snapshot
 - Recovery preview summary
 - Fallback to older snapshots on recovery failure
+- Startup recovery hint from last opened session
 
 ## Diagnostics and Tooling
 - Session diagnostics report
@@ -156,4 +170,10 @@ Last updated: 2026-03-05
 - Collision/conflict protection
 
 ## Platform Notes
-- MIDI 2.0 roadmap item is marked N/A on FreeBSD in current project roadmap.
+- Unix builds support CLAP, VST3, and LV2.
+- Windows builds support CLAP and VST3.
+- FreeBSD roadmap notes still mark MIDI 2.0 as N/A.
+
+## Known Boundaries
+- Plugin compatibility is still a real-world host-interop concern, especially across unusual plugins.
+- Many core behaviors are unit-tested, but editor-hosting and plugin-integration paths are still more integration-heavy than fixture-heavy.
