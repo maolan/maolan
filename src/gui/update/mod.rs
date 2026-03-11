@@ -14,6 +14,7 @@ use crate::message::PluginFormat;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use crate::state::AudioDeviceOption;
 use crate::{
+    consts::gui::AUTOSAVE_SNAPSHOT_INTERVAL,
     connections,
     message::{
         ExportNormalizeMode, ExportRenderMode, Message, Show, TrackAutomationMode,
@@ -27,8 +28,9 @@ use crate::{
     ui_timing::DOUBLE_CLICK,
     widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
     workspace::{
-        EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID, PIANO_RULER_SCROLL_ID, PIANO_TEMPO_SCROLL_ID,
-        TRACKS_SCROLL_ID,
+        EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID, EDITOR_TIMELINE_SCROLL_ID, PIANO_RULER_SCROLL_ID,
+        PIANO_TEMPO_SCROLL_ID, TRACKS_SCROLL_ID, WORKSPACE_RULER_SCROLL_ID,
+        WORKSPACE_TEMPO_SCROLL_ID,
     },
 };
 use iced::widget::{Id, operation};
@@ -51,8 +53,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tracing::error;
-
-const AUTOSAVE_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(60);
 
 impl Maolan {
     fn reset_track_plugin_view_state(state: &mut crate::state::StateData) {
@@ -1586,12 +1586,33 @@ impl Maolan {
             operation::snap_to(
                 Id::new(EDITOR_SCROLL_ID),
                 operation::RelativeOffset {
-                    x: Some(x),
+                    x: None,
                     y: Some(y),
                 },
             ),
             operation::snap_to(
+                Id::new(EDITOR_TIMELINE_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: Some(x),
+                    y: None,
+                },
+            ),
+            operation::snap_to(
                 Id::new(EDITOR_H_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: Some(x),
+                    y: None,
+                },
+            ),
+            operation::snap_to(
+                Id::new(WORKSPACE_TEMPO_SCROLL_ID),
+                operation::RelativeOffset {
+                    x: Some(x),
+                    y: None,
+                },
+            ),
+            operation::snap_to(
+                Id::new(WORKSPACE_RULER_SCROLL_ID),
                 operation::RelativeOffset {
                     x: Some(x),
                     y: None,

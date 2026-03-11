@@ -1,4 +1,8 @@
+use super::timeline_x_to_sample_f32;
 use crate::message::{Message, SnapMode};
+use crate::consts::workspace::{
+    BARS_TO_DRAW, BEATS_PER_BAR, MIN_LABEL_SPACING_PX, MIN_TICK_SPACING_PX, RULER_HEIGHT,
+};
 use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
     event::Event,
@@ -10,12 +14,6 @@ use maolan_engine::message::Action as EngineAction;
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-
-const RULER_HEIGHT: f32 = 28.0;
-const BEATS_PER_BAR: usize = 4;
-const BARS_TO_DRAW: usize = 256;
-const MIN_TICK_SPACING_PX: f32 = 8.0;
-const MIN_LABEL_SPACING_PX: f32 = 64.0;
 
 #[derive(Debug, Default)]
 pub struct Ruler;
@@ -137,6 +135,26 @@ impl canvas::Program<Message> for RulerCanvas {
         let cursor_x = cursor
             .position()
             .map(|pos| (pos.x - bounds.x).clamp(0.0, bounds.width.max(0.0)));
+        let sample_at_x = |x: f32| {
+            timeline_x_to_sample_f32(x, self.pixels_per_sample, self.timeline_left_inset_px)
+                as usize
+        };
+        let snap_sample = |sample: usize| {
+            let interval = match self.snap_mode {
+                SnapMode::NoSnap => 1.0,
+                SnapMode::Bar => (self.samples_per_beat * 4.0).max(1.0),
+                SnapMode::Beat => self.samples_per_beat.max(1.0),
+                SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
+                SnapMode::Sixteenth => (self.samples_per_beat / 4.0).max(1.0),
+                SnapMode::ThirtySecond => (self.samples_per_beat / 8.0).max(1.0),
+                SnapMode::SixtyFourth => (self.samples_per_beat / 16.0).max(1.0),
+            };
+            if matches!(self.snap_mode, SnapMode::NoSnap) {
+                sample
+            } else {
+                ((sample as f64 / interval).round() * interval).max(0.0) as usize
+            }
+        };
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -176,7 +194,7 @@ impl canvas::Program<Message> for RulerCanvas {
 
                     let drag_delta = (state.last_x - state.drag_start_x).abs();
                     if drag_delta < 3.0 {
-                        let sample = (state.last_x / self.pixels_per_sample).max(0.0) as usize;
+                        let sample = snap_sample(sample_at_x(state.last_x));
                         return Some(CanvasAction::publish(Message::Request(
                             EngineAction::TransportPosition(sample),
                         )));
@@ -418,7 +436,7 @@ impl canvas::Program<Message> for RulerCanvas {
                     );
                     frame.stroke(
                         &path,
-                        Stroke::default().with_width(2.0).with_color(Color {
+                        Stroke::default().with_width(1.5).with_color(Color {
                             r: 0.95,
                             g: 0.18,
                             b: 0.14,

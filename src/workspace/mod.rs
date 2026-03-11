@@ -5,6 +5,7 @@ mod tempo;
 mod tracks;
 
 use crate::{
+    consts::workspace::{MIN_TIMELINE_BARS, PLAYHEAD_WIDTH_PX, TIMELINE_LEFT_INSET_PX},
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State},
     widget::piano,
@@ -19,10 +20,29 @@ use std::{collections::HashMap, path::PathBuf};
 use tempo::TempoViewArgs;
 
 pub const EDITOR_SCROLL_ID: &str = "workspace.editor.scroll";
+pub const EDITOR_TIMELINE_SCROLL_ID: &str = "workspace.editor.timeline.scroll";
 pub const EDITOR_H_SCROLL_ID: &str = "workspace.editor.h_scroll";
 pub const TRACKS_SCROLL_ID: &str = "workspace.tracks.scroll";
+pub const WORKSPACE_TEMPO_SCROLL_ID: &str = "workspace.tempo.scroll";
+pub const WORKSPACE_RULER_SCROLL_ID: &str = "workspace.ruler.scroll";
 pub const PIANO_TEMPO_SCROLL_ID: &str = "workspace.piano.tempo.scroll";
 pub const PIANO_RULER_SCROLL_ID: &str = "workspace.piano.ruler.scroll";
+
+pub(crate) fn timeline_sample_to_x_f64(sample: f64, pixels_per_sample: f32, inset_px: f32) -> f32 {
+    inset_px + (sample as f32 * pixels_per_sample).max(0.0)
+}
+
+pub(crate) fn timeline_sample_to_x(sample: usize, pixels_per_sample: f32, inset_px: f32) -> f32 {
+    timeline_sample_to_x_f64(sample as f64, pixels_per_sample, inset_px)
+}
+
+pub(crate) fn timeline_x_to_sample_f32(x: f32, pixels_per_sample: f32, inset_px: f32) -> f32 {
+    if pixels_per_sample <= 1.0e-9 {
+        0.0
+    } else {
+        ((x - inset_px).max(0.0) / pixels_per_sample).max(0.0)
+    }
+}
 
 pub struct Workspace {
     state: State,
@@ -59,8 +79,6 @@ pub struct WorkspaceViewArgs<'a> {
 }
 
 impl Workspace {
-    const MIN_TIMELINE_BARS: f32 = 256.0;
-
     pub fn new(state: State) -> Self {
         Self {
             state: state.clone(),
@@ -77,7 +95,7 @@ impl Workspace {
 
     fn playhead_line() -> Element<'static, Message> {
         container("")
-            .width(Length::Fixed(2.0))
+            .width(Length::Fixed(PLAYHEAD_WIDTH_PX))
             .height(Length::Fill)
             .style(|_theme| container::Style {
                 background: Some(Background::Color(Color {
@@ -176,17 +194,17 @@ impl Workspace {
             )
         };
         let min_visible_samples = (samples_per_bar * zoom_visible_bars).max(1.0) as usize;
-        let min_timeline_samples = (samples_per_bar * Self::MIN_TIMELINE_BARS).max(1.0) as usize;
+        let min_timeline_samples = (samples_per_bar * MIN_TIMELINE_BARS).max(1.0) as usize;
         let timeline_samples = max_end_samples
             .max(min_visible_samples)
             .max(min_timeline_samples);
         let editor_content_width = (timeline_samples as f32 * pixels_per_sample).max(1.0);
         let workspace_content_height =
             self.tempo.height() + self.ruler.height() + tracks_total_height;
-        let playhead_x =
-            playhead_samples.map(|sample| (sample as f32 * pixels_per_sample).max(0.0));
+        let playhead_x_timeline = playhead_samples
+            .map(|sample| timeline_sample_to_x_f64(sample, pixels_per_sample, TIMELINE_LEFT_INSET_PX));
 
-        let editor_with_playhead = if let Some(x) = playhead_x {
+        let editor_with_playhead = if let Some(x) = playhead_x_timeline {
             Stack::from_vec(vec![
                 self.editor.view(EditorViewArgs {
                     session_root,
@@ -222,20 +240,23 @@ impl Workspace {
             })
         };
 
-        let right_lanes_scrolled = scrollable(
+        let editor_timeline_scrolled = scrollable(
             container(editor_with_playhead)
                 .width(Length::Fixed(editor_content_width))
                 .height(Length::Fixed(tracks_total_height)),
         )
+        .id(Id::new(EDITOR_TIMELINE_SCROLL_ID))
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::hidden(),
+        ))
+        .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
+        .width(Length::Fill)
+        .height(Length::Fixed(tracks_total_height));
+
+        let right_lanes_scrolled = scrollable(editor_timeline_scrolled)
         .id(Id::new(EDITOR_SCROLL_ID))
-        .direction(scrollable::Direction::Both {
-            vertical: scrollable::Scrollbar::new(),
-            horizontal: scrollable::Scrollbar::hidden(),
-        })
-        .on_scroll(|viewport| Message::EditorScrollChanged {
-            x: viewport.relative_offset().x,
-            y: viewport.relative_offset().y,
-        })
+        .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::new()))
+        .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
         .width(Length::Fill)
         .height(Length::Fill);
 
@@ -333,11 +354,11 @@ impl Workspace {
             .on_exit(Message::TracksResizeHover(false))
             .on_press(Message::TracksResizeStart),
             column![
-                container(self.tempo.view(TempoViewArgs {
+                scrollable(self.tempo.view(TempoViewArgs {
                     bpm: tempo,
                     time_signature,
                     pixels_per_sample,
-                    playhead_x,
+                    playhead_x: playhead_x_timeline,
                     punch_range_samples,
                     snap_mode,
                     samples_per_beat,
@@ -348,19 +369,29 @@ impl Workspace {
                     shift_pressed,
                     selected_tempo_points,
                     selected_time_signature_points,
-                    timeline_left_inset_px: 5.5,
+                    timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
                 }))
+                .id(Id::new(WORKSPACE_TEMPO_SCROLL_ID))
+                .direction(scrollable::Direction::Horizontal(
+                    scrollable::Scrollbar::hidden(),
+                ))
+                .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
                 .height(Length::Fixed(self.tempo.height())),
-                container(self.ruler.view(RulerViewArgs {
-                    playhead_x,
+                scrollable(self.ruler.view(RulerViewArgs {
+                    playhead_x: playhead_x_timeline,
                     beat_pixels,
                     pixels_per_sample,
                     loop_range_samples,
                     snap_mode,
                     samples_per_beat,
                     content_width: editor_content_width,
-                    timeline_left_inset_px: 5.5,
+                    timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
                 }))
+                .id(Id::new(WORKSPACE_RULER_SCROLL_ID))
+                .direction(scrollable::Direction::Horizontal(
+                    scrollable::Scrollbar::hidden(),
+                ))
+                .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
                 .height(Length::Fixed(self.ruler.height())),
                 container(editor_with_zoom).height(Length::Fixed(tracks_total_height)),
             ]

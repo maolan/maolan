@@ -1,4 +1,9 @@
+use super::{timeline_sample_to_x, timeline_x_to_sample_f32};
 use crate::message::{Message, SnapMode};
+use crate::consts::workspace::{
+    CONTEXT_MENU_ITEM_HEIGHT, CONTEXT_MENU_WIDTH, LEFT_HIT_WIDTH, TEMPO_HEIGHT,
+    TEMPO_HIT_HEIGHT, TIME_SIG_HIT_X_SPLIT,
+};
 use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
     event::Event,
@@ -10,13 +15,6 @@ use maolan_engine::message::Action as EngineAction;
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-
-const TEMPO_HEIGHT: f32 = 28.0;
-const TEMPO_HIT_HEIGHT: f32 = 14.0;
-const TIME_SIG_HIT_X_SPLIT: f32 = 36.0;
-const LEFT_HIT_WIDTH: f32 = 84.0;
-const CONTEXT_MENU_WIDTH: f32 = 132.0;
-const CONTEXT_MENU_ITEM_HEIGHT: f32 = 16.0;
 
 #[derive(Debug, Default)]
 pub struct Tempo;
@@ -168,13 +166,9 @@ impl canvas::Program<Message> for TempoCanvas {
     ) -> Option<CanvasAction<Message>> {
         let signed_step = |v: f32| if v >= 0.0 { 1_i8 } else { -1_i8 };
         let sample_at_x = |x: f32| {
-            if self.pixels_per_sample <= 1.0e-9 {
-                0_usize
-            } else {
-                ((x - self.timeline_left_inset_px).max(0.0) / self.pixels_per_sample)
-                    .round()
-                    .max(0.0) as usize
-            }
+            timeline_x_to_sample_f32(x, self.pixels_per_sample, self.timeline_left_inset_px)
+                .round()
+                .max(0.0) as usize
         };
         let snap_sample = |sample: usize| {
             let interval = match self.snap_mode {
@@ -198,15 +192,16 @@ impl canvas::Program<Message> for TempoCanvas {
                 .filter(|(sample, _)| *sample > 0)
                 .map(|(sample, _)| *sample)
                 .min_by(|a, b| {
-                    let ax = self.timeline_left_inset_px + *a as f32 * self.pixels_per_sample;
-                    let bx = self.timeline_left_inset_px + *b as f32 * self.pixels_per_sample;
+                    let ax = timeline_sample_to_x(*a, self.pixels_per_sample, self.timeline_left_inset_px);
+                    let bx = timeline_sample_to_x(*b, self.pixels_per_sample, self.timeline_left_inset_px);
                     (ax - x)
                         .abs()
                         .partial_cmp(&(bx - x).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .filter(|sample| {
-                    let sx = self.timeline_left_inset_px + *sample as f32 * self.pixels_per_sample;
+                    let sx =
+                        timeline_sample_to_x(*sample, self.pixels_per_sample, self.timeline_left_inset_px);
                     (sx - x).abs() <= 6.0
                 })
         };
@@ -216,15 +211,16 @@ impl canvas::Program<Message> for TempoCanvas {
                 .filter(|(sample, _, _)| *sample > 0)
                 .map(|(sample, _, _)| *sample)
                 .min_by(|a, b| {
-                    let ax = self.timeline_left_inset_px + *a as f32 * self.pixels_per_sample;
-                    let bx = self.timeline_left_inset_px + *b as f32 * self.pixels_per_sample;
+                    let ax = timeline_sample_to_x(*a, self.pixels_per_sample, self.timeline_left_inset_px);
+                    let bx = timeline_sample_to_x(*b, self.pixels_per_sample, self.timeline_left_inset_px);
                     (ax - x)
                         .abs()
                         .partial_cmp(&(bx - x).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .filter(|sample| {
-                    let sx = self.timeline_left_inset_px + *sample as f32 * self.pixels_per_sample;
+                    let sx =
+                        timeline_sample_to_x(*sample, self.pixels_per_sample, self.timeline_left_inset_px);
                     (sx - x).abs() <= 6.0
                 })
         };
@@ -395,7 +391,7 @@ impl canvas::Program<Message> for TempoCanvas {
 
                         let drag_delta = (last_x - drag_start_x).abs();
                         if drag_delta < 3.0 {
-                            let sample = (last_x / self.pixels_per_sample).max(0.0) as usize;
+                            let sample = snap_sample(sample_at_x(last_x));
                             return Some(CanvasAction::publish(Message::Request(
                                 EngineAction::TransportPosition(sample),
                             )));
@@ -728,10 +724,9 @@ impl canvas::Program<Message> for TempoCanvas {
 
         let geom = state
             .cache
-            .draw(renderer, bounds.size(), |frame: &mut Frame| {
-                let sample_to_x = |sample: usize| {
-                    self.timeline_left_inset_px + sample as f32 * self.pixels_per_sample
-                };
+                .draw(renderer, bounds.size(), |frame: &mut Frame| {
+                let sample_to_x =
+                    |sample: usize| timeline_sample_to_x(sample, self.pixels_per_sample, self.timeline_left_inset_px);
                 frame.fill(
                     &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
                     Color::from_rgba(0.12, 0.12, 0.12, 1.0),
@@ -1018,7 +1013,7 @@ impl canvas::Program<Message> for TempoCanvas {
                     );
                     frame.stroke(
                         &path,
-                        Stroke::default().with_width(2.0).with_color(Color {
+                        Stroke::default().with_width(1.5).with_color(Color {
                             r: 0.95,
                             g: 0.18,
                             b: 0.14,

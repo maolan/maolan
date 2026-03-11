@@ -142,6 +142,9 @@ impl Maolan {
                 Task::batch(tasks)
             }
             Message::Request(ref a) => {
+                if let Action::TransportPosition(sample) = a {
+                    self.transport_samples = *sample as f64;
+                }
                 if let Some(expanded) = self.expand_request_to_vca_group(a) {
                     let mut tasks = Vec::with_capacity(expanded.len());
                     for action in expanded {

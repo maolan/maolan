@@ -180,17 +180,6 @@ impl Maolan {
                 self.zoom_visible_bars = value.clamp(1.0, 256.0);
                 return self.sync_editor_scrollbars();
             }
-            Message::EditorScrollChanged { x, y } => {
-                let x = x.clamp(0.0, 1.0);
-                let y = y.clamp(0.0, 1.0);
-                let x_changed = (self.editor_scroll_x - x).abs() > 0.0005;
-                let y_changed = (self.editor_scroll_y - y).abs() > 0.0005;
-                if x_changed || y_changed {
-                    self.editor_scroll_x = x;
-                    self.editor_scroll_y = y;
-                    return self.sync_editor_scrollbars();
-                }
-            }
             Message::EditorScrollXChanged(value) => {
                 let x = value.clamp(0.0, 1.0);
                 if (self.editor_scroll_x - x).abs() > 0.0005 {

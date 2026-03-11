@@ -1,4 +1,9 @@
 use crate::{
+    consts::workspace::{
+        AUDIO_CLIP_BASE, AUDIO_CLIP_BORDER, AUDIO_CLIP_SELECTED_BASE, AUDIO_CLIP_SELECTED_BORDER,
+        CLIP_RESIZE_HANDLE_WIDTH, MIDI_CLIP_BASE, MIDI_CLIP_BORDER, MIDI_CLIP_SELECTED_BASE,
+        MIDI_CLIP_SELECTED_BORDER,
+    },
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, PianoNote, State, StateData, Track},
 };
@@ -19,16 +24,6 @@ use std::{
     sync::Arc,
 };
 use wavers::Wav;
-
-const CLIP_RESIZE_HANDLE_WIDTH: f32 = 5.0;
-const AUDIO_CLIP_BASE: Color = Color::from_rgb8(68, 88, 132);
-const AUDIO_CLIP_SELECTED_BASE: Color = Color::from_rgb8(96, 126, 186);
-const AUDIO_CLIP_BORDER: Color = Color::from_rgb8(78, 93, 130);
-const AUDIO_CLIP_SELECTED_BORDER: Color = Color::from_rgb8(176, 218, 255);
-const MIDI_CLIP_BASE: Color = Color::from_rgb8(55, 90, 50);
-const MIDI_CLIP_SELECTED_BASE: Color = Color::from_rgb8(84, 133, 72);
-const MIDI_CLIP_BORDER: Color = Color::from_rgb8(148, 215, 118);
-const MIDI_CLIP_SELECTED_BORDER: Color = Color::from_rgb8(196, 255, 151);
 struct TrackElementViewArgs<'a> {
     state: &'a StateData,
     track: &'a Track,
@@ -817,12 +812,28 @@ struct TrackBarGridCanvas {
     bar_pixels: f32,
 }
 
+#[derive(Default)]
+struct TrackBarGridCanvasState {
+    cache: canvas::Cache,
+    last_hash: Cell<u64>,
+}
+
+impl TrackBarGridCanvas {
+    fn shape_hash(&self, bounds: Rectangle) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bounds.width.to_bits().hash(&mut hasher);
+        bounds.height.to_bits().hash(&mut hasher);
+        self.bar_pixels.to_bits().hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
 impl canvas::Program<Message> for TrackBarGridCanvas {
-    type State = ();
+    type State = TrackBarGridCanvasState;
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
@@ -831,18 +842,28 @@ impl canvas::Program<Message> for TrackBarGridCanvas {
         if bounds.width <= 0.0 || bounds.height <= 0.0 {
             return vec![];
         }
-        let mut frame = Frame::new(renderer, bounds.size());
-        let step = self.bar_pixels.max(1.0);
-        let color = Color::from_rgba(0.86, 0.96, 0.74, 0.14);
-        let mut x = 0.0_f32;
-        while x <= bounds.width + 1.0 {
-            frame.stroke(
-                &Path::line(Point::new(x, 0.0), Point::new(x, bounds.height)),
-                canvas::Stroke::default().with_color(color).with_width(1.0),
-            );
-            x += step;
+
+        let hash = self.shape_hash(bounds);
+        if state.last_hash.get() != hash {
+            state.cache.clear();
+            state.last_hash.set(hash);
         }
-        vec![frame.into_geometry()]
+
+        let geom = state
+            .cache
+            .draw(renderer, bounds.size(), |frame: &mut Frame| {
+                let step = self.bar_pixels.max(1.0);
+                let color = Color::from_rgba(0.86, 0.96, 0.74, 0.14);
+                let mut x = 0.0_f32;
+                while x <= bounds.width + 1.0 {
+                    frame.stroke(
+                        &Path::line(Point::new(x, 0.0), Point::new(x, bounds.height)),
+                        canvas::Stroke::default().with_color(color).with_width(1.0),
+                    );
+                    x += step;
+                }
+            });
+        vec![geom]
     }
 }
 
@@ -2204,7 +2225,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     .id(track_name_cloned)
     .width(Length::Fill)
     .height(Length::Fixed(height))
-    .padding(5)
     .style(|_theme| container::Style {
         background: Some(Background::Color(Color {
             r: 0.0,

@@ -8,6 +8,7 @@ mod view;
 use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, config, connections, hw, menu,
+    consts::gui as gui_consts,
     message::{
         DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
         ExportRenderMode, Message, PluginFormat, PreferencesDeviceOption, Show, SnapMode,
@@ -61,8 +62,7 @@ use vorbis_rs::{VorbisBitrateManagementStrategy, VorbisEncoderBuilder};
 use wavers::Wav;
 
 static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
-const MIN_CLIP_WIDTH_PX: f32 = 12.0;
-const PREF_DEVICE_AUTO_ID: &str = "__auto__";
+pub(crate) use gui_consts::{MIN_CLIP_WIDTH_PX, PREF_DEVICE_AUTO_ID};
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
 type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
 type PianoParseResult = (

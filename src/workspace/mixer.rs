@@ -1,4 +1,5 @@
 use crate::{
+    consts::workspace::{TICK_LABELS, TICK_VALUES},
     message::Message,
     state::State,
     style,
@@ -19,13 +20,6 @@ use std::sync::{Arc, LazyLock};
 pub struct Mixer {
     state: State,
 }
-
-const TICK_VALUES: [f32; 13] = [
-    20.0, 12.0, 6.0, 0.0, -6.0, -12.0, -18.0, -24.0, -36.0, -48.0, -60.0, -72.0, -90.0,
-];
-const TICK_LABELS: [&str; 13] = [
-    "+20", "+12", "+6", "0", "-6", "-12", "-18", "-24", "-36", "-48", "-60", "-72", "-90",
-];
 
 static LEVEL_LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     let mut labels = Vec::with_capacity(1101);

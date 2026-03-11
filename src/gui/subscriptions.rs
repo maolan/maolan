@@ -1,5 +1,6 @@
 use super::{CLIENT, Maolan};
 use crate::{
+    consts::gui::METER_DIRTY_EPSILON_DB,
     message::{Message, Show},
     platform_caps::SUPPORTS_METER_POLL,
     ui_timing::{
@@ -13,8 +14,6 @@ use iced::{Subscription, event, keyboard, mouse, window};
 use maolan_engine::message::{Action as EngineAction, Message as EngineMessage};
 use std::collections::HashMap;
 use std::time::Duration;
-
-const METER_DIRTY_EPSILON_DB: f32 = 0.5;
 
 impl Maolan {
     pub fn subscription(&self) -> Subscription<Message> {

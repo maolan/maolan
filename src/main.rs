@@ -1,6 +1,7 @@
 mod add_track;
 mod clip_rename;
 mod config;
+mod consts;
 mod connections;
 mod gui;
 mod hw;
