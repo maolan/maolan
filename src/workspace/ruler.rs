@@ -1,8 +1,8 @@
 use super::timeline_x_to_sample_f32;
-use crate::message::{Message, SnapMode};
 use crate::consts::workspace::{
     BARS_TO_DRAW, BEATS_PER_BAR, MIN_LABEL_SPACING_PX, MIN_TICK_SPACING_PX, RULER_HEIGHT,
 };
+use crate::message::{Message, SnapMode};
 use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
     event::Event,

@@ -1,7 +1,7 @@
 use crate::message::{Message, SnapMode};
 use iced::{
     Background, Color, Length, Theme,
-    widget::{button, pick_list, row, text_input},
+    widget::{button, container, pick_list, row, text, text_input},
 };
 use iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind, square,
@@ -34,6 +34,8 @@ pub struct ToolbarViewState {
     pub tempo_input: String,
     pub tsig_num_input: String,
     pub tsig_denom_input: String,
+    pub playhead_time_label: String,
+    pub playhead_measure_label: String,
 }
 
 impl Toolbar {
@@ -191,7 +193,16 @@ impl Toolbar {
                     .width(Length::Fixed(44.0)),
                 button("TS")
                     .style(Self::button_style(true, false, Color::TRANSPARENT))
-                    .on_press(Message::TimeSignatureInputCommit)
+                    .on_press(Message::TimeSignatureInputCommit),
+                container(
+                    row![
+                        text(view_state.playhead_time_label).size(13),
+                        text("·").size(13),
+                        text(view_state.playhead_measure_label).size(13),
+                    ]
+                    .spacing(6),
+                )
+                .padding([0, 8])
             ]
             .spacing(3)
             .width(Length::Fill),

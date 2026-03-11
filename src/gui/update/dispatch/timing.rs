@@ -31,7 +31,9 @@ impl Maolan {
                             point.bpm = tempo;
                         }
                     }
-                } else if let Some(point) = state.tempo_points.iter_mut().find(|p| p.sample == sample) {
+                } else if let Some(point) =
+                    state.tempo_points.iter_mut().find(|p| p.sample == sample)
+                {
                     point.bpm = tempo;
                 } else {
                     state.tempo_points.push(TempoPoint { sample, bpm: tempo });
@@ -141,9 +143,7 @@ impl Maolan {
                     else {
                         continue;
                     };
-                    let new_sample = sample
-                        .saturating_add(beat_step)
-                        .max(1);
+                    let new_sample = sample.saturating_add(beat_step).max(1);
                     if let Some(existing) = state
                         .tempo_points
                         .iter_mut()
@@ -325,9 +325,7 @@ impl Maolan {
                     else {
                         continue;
                     };
-                    let new_sample = sample
-                        .saturating_add(beat_step)
-                        .max(1);
+                    let new_sample = sample.saturating_add(beat_step).max(1);
                     if let Some(existing) = state
                         .time_signature_points
                         .iter_mut()

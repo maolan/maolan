@@ -1,9 +1,9 @@
 use super::{timeline_sample_to_x, timeline_x_to_sample_f32};
-use crate::message::{Message, SnapMode};
 use crate::consts::workspace::{
-    CONTEXT_MENU_ITEM_HEIGHT, CONTEXT_MENU_WIDTH, LEFT_HIT_WIDTH, TEMPO_HEIGHT,
-    TEMPO_HIT_HEIGHT, TIME_SIG_HIT_X_SPLIT,
+    CONTEXT_MENU_ITEM_HEIGHT, CONTEXT_MENU_WIDTH, LEFT_HIT_WIDTH, TEMPO_HEIGHT, TEMPO_HIT_HEIGHT,
+    TIME_SIG_HIT_X_SPLIT,
 };
+use crate::message::{Message, SnapMode};
 use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Theme,
     event::Event,
@@ -192,16 +192,27 @@ impl canvas::Program<Message> for TempoCanvas {
                 .filter(|(sample, _)| *sample > 0)
                 .map(|(sample, _)| *sample)
                 .min_by(|a, b| {
-                    let ax = timeline_sample_to_x(*a, self.pixels_per_sample, self.timeline_left_inset_px);
-                    let bx = timeline_sample_to_x(*b, self.pixels_per_sample, self.timeline_left_inset_px);
+                    let ax = timeline_sample_to_x(
+                        *a,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
+                    let bx = timeline_sample_to_x(
+                        *b,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
                     (ax - x)
                         .abs()
                         .partial_cmp(&(bx - x).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .filter(|sample| {
-                    let sx =
-                        timeline_sample_to_x(*sample, self.pixels_per_sample, self.timeline_left_inset_px);
+                    let sx = timeline_sample_to_x(
+                        *sample,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
                     (sx - x).abs() <= 6.0
                 })
         };
@@ -211,16 +222,27 @@ impl canvas::Program<Message> for TempoCanvas {
                 .filter(|(sample, _, _)| *sample > 0)
                 .map(|(sample, _, _)| *sample)
                 .min_by(|a, b| {
-                    let ax = timeline_sample_to_x(*a, self.pixels_per_sample, self.timeline_left_inset_px);
-                    let bx = timeline_sample_to_x(*b, self.pixels_per_sample, self.timeline_left_inset_px);
+                    let ax = timeline_sample_to_x(
+                        *a,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
+                    let bx = timeline_sample_to_x(
+                        *b,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
                     (ax - x)
                         .abs()
                         .partial_cmp(&(bx - x).abs())
                         .unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .filter(|sample| {
-                    let sx =
-                        timeline_sample_to_x(*sample, self.pixels_per_sample, self.timeline_left_inset_px);
+                    let sx = timeline_sample_to_x(
+                        *sample,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    );
                     (sx - x).abs() <= 6.0
                 })
         };
@@ -724,9 +746,14 @@ impl canvas::Program<Message> for TempoCanvas {
 
         let geom = state
             .cache
-                .draw(renderer, bounds.size(), |frame: &mut Frame| {
-                let sample_to_x =
-                    |sample: usize| timeline_sample_to_x(sample, self.pixels_per_sample, self.timeline_left_inset_px);
+            .draw(renderer, bounds.size(), |frame: &mut Frame| {
+                let sample_to_x = |sample: usize| {
+                    timeline_sample_to_x(
+                        sample,
+                        self.pixels_per_sample,
+                        self.timeline_left_inset_px,
+                    )
+                };
                 frame.fill(
                     &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
                     Color::from_rgba(0.12, 0.12, 0.12, 1.0),

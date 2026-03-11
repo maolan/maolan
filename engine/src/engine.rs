@@ -3,10 +3,7 @@ use midly::{
     live::LiveEvent,
     num::{u15, u24, u28},
 };
-#[cfg(any(
-    target_os = "freebsd",
-    target_os = "linux"
-))]
+#[cfg(any(target_os = "freebsd", target_os = "linux"))]
 use std::fs::read_dir;
 use std::{
     collections::{HashMap, VecDeque},
@@ -907,8 +904,10 @@ impl Engine {
         if !device.eq_ignore_ascii_case("jack") {
             return None;
         }
-        self.notify_clients(Err("JACK backend is not available on this platform build".to_string()))
-            .await;
+        self.notify_clients(Err(
+            "JACK backend is not available on this platform build".to_string()
+        ))
+        .await;
         Some(())
     }
 
@@ -2022,13 +2021,20 @@ impl Engine {
         self.state.lock().tracks.get(track_name).cloned()
     }
 
-    fn track_handle_or_err(&self, track_name: &str) -> Result<Arc<UnsafeMutex<Box<Track>>>, String> {
+    fn track_handle_or_err(
+        &self,
+        track_name: &str,
+    ) -> Result<Arc<UnsafeMutex<Box<Track>>>, String> {
         self.track_handle_by_name(track_name)
             .ok_or_else(|| format!("Track not found: {track_name}"))
     }
 
     #[cfg(target_os = "windows")]
-    fn open_vst3_editor_for_track(&self, track_name: &str, instance_id: usize) -> Result<(), String> {
+    fn open_vst3_editor_for_track(
+        &self,
+        track_name: &str,
+        instance_id: usize,
+    ) -> Result<(), String> {
         let track = self.track_handle_or_err(track_name)?;
         track.lock().open_vst3_editor(instance_id)
     }
@@ -2116,7 +2122,13 @@ impl Engine {
         }
     }
 
-    fn rename_clip_references(&self, track_name: &str, kind: Kind, clip_index: usize, new_name: &str) {
+    fn rename_clip_references(
+        &self,
+        track_name: &str,
+        kind: Kind,
+        clip_index: usize,
+        new_name: &str,
+    ) {
         let Some(track) = self.state.lock().tracks.get(track_name) else {
             return;
         };
@@ -2297,7 +2309,8 @@ impl Engine {
                 return false;
             }
             self.last_hw_out_meter_linear.clear();
-            self.last_hw_out_meter_linear.extend_from_slice(peaks_linear);
+            self.last_hw_out_meter_linear
+                .extend_from_slice(peaks_linear);
             return true;
         }
         #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
@@ -3512,13 +3525,14 @@ impl Engine {
                         return;
                     }
                 };
-                let (controls, instance_access_handle) = match track.lock().lv2_plugin_controls(instance_id) {
-                    Ok(result) => result,
-                    Err(e) => {
-                        self.notify_clients(Err(e)).await;
-                        return;
-                    }
-                };
+                let (controls, instance_access_handle) =
+                    match track.lock().lv2_plugin_controls(instance_id) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    };
                 self.notify_clients(Ok(Action::TrackLv2PluginControls {
                     track_name: track_name.clone(),
                     instance_id,
@@ -3900,60 +3914,56 @@ impl Engine {
             Action::TrackGetClapParameters {
                 ref track_name,
                 instance_id,
-            } => {
-                match self.track_handle_or_err(track_name) {
-                    Ok(track) => match track.lock().get_clap_parameters(instance_id) {
-                        Ok(parameters) => {
-                            self.notify_clients(Ok(Action::TrackClapParameters {
+            } => match self.track_handle_or_err(track_name) {
+                Ok(track) => match track.lock().get_clap_parameters(instance_id) {
+                    Ok(parameters) => {
+                        self.notify_clients(Ok(Action::TrackClapParameters {
+                            track_name: track_name.clone(),
+                            instance_id,
+                            parameters,
+                        }))
+                        .await;
+                    }
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                    }
+                },
+                Err(e) => {
+                    self.notify_clients(Err(e)).await;
+                }
+            },
+            Action::TrackClapParameters { .. } => {}
+            Action::TrackClapSnapshotState {
+                ref track_name,
+                instance_id,
+            } => match self.track_handle_or_err(track_name) {
+                Ok(track) => {
+                    let plugin_path = track
+                        .lock()
+                        .loaded_clap_instances()
+                        .into_iter()
+                        .find(|(id, _, _)| *id == instance_id)
+                        .map(|(_, path, _)| path)
+                        .unwrap_or_default();
+                    match track.lock().clap_snapshot_state(instance_id) {
+                        Ok(state) => {
+                            self.notify_clients(Ok(Action::TrackClapStateSnapshot {
                                 track_name: track_name.clone(),
                                 instance_id,
-                                parameters,
+                                plugin_path,
+                                state,
                             }))
                             .await;
                         }
                         Err(e) => {
                             self.notify_clients(Err(e)).await;
                         }
-                    },
-                    Err(e) => {
-                        self.notify_clients(Err(e)).await;
                     }
                 }
-            }
-            Action::TrackClapParameters { .. } => {}
-            Action::TrackClapSnapshotState {
-                ref track_name,
-                instance_id,
-            } => {
-                match self.track_handle_or_err(track_name) {
-                    Ok(track) => {
-                        let plugin_path = track
-                            .lock()
-                            .loaded_clap_instances()
-                            .into_iter()
-                            .find(|(id, _, _)| *id == instance_id)
-                            .map(|(_, path, _)| path)
-                            .unwrap_or_default();
-                        match track.lock().clap_snapshot_state(instance_id) {
-                            Ok(state) => {
-                                self.notify_clients(Ok(Action::TrackClapStateSnapshot {
-                                    track_name: track_name.clone(),
-                                    instance_id,
-                                    plugin_path,
-                                    state,
-                                }))
-                                .await;
-                            }
-                            Err(e) => {
-                                self.notify_clients(Err(e)).await;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        self.notify_clients(Err(e)).await;
-                    }
+                Err(e) => {
+                    self.notify_clients(Err(e)).await;
                 }
-            }
+            },
             Action::TrackClapStateSnapshot { .. } => {}
             Action::TrackClapRestoreState {
                 ref track_name,
@@ -4054,15 +4064,13 @@ impl Engine {
             Action::TrackGetVst3EditorHandle {
                 ref track_name,
                 instance_id,
-            } => {
-                match self.vst3_editor_handle_action_for_track(track_name, instance_id) {
-                    Ok(action) => self.notify_clients(Ok(action)).await,
-                    Err(e) => {
-                        self.notify_clients(Err(e)).await;
-                        return;
-                    }
+            } => match self.vst3_editor_handle_action_for_track(track_name, instance_id) {
+                Ok(action) => self.notify_clients(Ok(action)).await,
+                Err(e) => {
+                    self.notify_clients(Err(e)).await;
+                    return;
                 }
-            }
+            },
             Action::TrackGetVst3Graph { ref track_name } => {
                 match self.track_handle_or_err(track_name) {
                     Ok(track) => {
@@ -4118,52 +4126,48 @@ impl Engine {
             Action::TrackGetVst3Parameters {
                 ref track_name,
                 instance_id,
-            } => {
-                match self.track_handle_or_err(track_name) {
-                    Ok(track) => match track.lock().get_vst3_parameters(instance_id) {
-                        Ok(parameters) => {
-                            self.notify_clients(Ok(Action::TrackVst3Parameters {
-                                track_name: track_name.clone(),
-                                instance_id,
-                                parameters,
-                            }))
-                            .await;
-                        }
-                        Err(e) => {
-                            self.notify_clients(Err(e)).await;
-                        }
-                    },
+            } => match self.track_handle_or_err(track_name) {
+                Ok(track) => match track.lock().get_vst3_parameters(instance_id) {
+                    Ok(parameters) => {
+                        self.notify_clients(Ok(Action::TrackVst3Parameters {
+                            track_name: track_name.clone(),
+                            instance_id,
+                            parameters,
+                        }))
+                        .await;
+                    }
                     Err(e) => {
                         self.notify_clients(Err(e)).await;
                     }
+                },
+                Err(e) => {
+                    self.notify_clients(Err(e)).await;
                 }
-            }
+            },
             Action::TrackVst3Parameters { .. } => {
                 // Response action, no handling needed
             }
             Action::TrackVst3SnapshotState {
                 ref track_name,
                 instance_id,
-            } => {
-                match self.track_handle_or_err(track_name) {
-                    Ok(track) => match track.lock().vst3_snapshot_state(instance_id) {
-                        Ok(state) => {
-                            self.notify_clients(Ok(Action::TrackVst3StateSnapshot {
-                                track_name: track_name.clone(),
-                                instance_id,
-                                state,
-                            }))
-                            .await;
-                        }
-                        Err(e) => {
-                            self.notify_clients(Err(e)).await;
-                        }
-                    },
+            } => match self.track_handle_or_err(track_name) {
+                Ok(track) => match track.lock().vst3_snapshot_state(instance_id) {
+                    Ok(state) => {
+                        self.notify_clients(Ok(Action::TrackVst3StateSnapshot {
+                            track_name: track_name.clone(),
+                            instance_id,
+                            state,
+                        }))
+                        .await;
+                    }
                     Err(e) => {
                         self.notify_clients(Err(e)).await;
                     }
+                },
+                Err(e) => {
+                    self.notify_clients(Err(e)).await;
                 }
-            }
+            },
             Action::TrackVst3StateSnapshot { .. } => {
                 // Response action, no handling needed
             }
@@ -4171,20 +4175,18 @@ impl Engine {
                 ref track_name,
                 instance_id,
                 ref state,
-            } => {
-                match self.track_handle_or_err(track_name) {
-                    Ok(track) => {
-                        if let Err(e) = track.lock().vst3_restore_state(instance_id, state) {
-                            self.notify_clients(Err(e)).await;
-                            return;
-                        }
-                        self.notify_clients(Ok(a.clone())).await;
-                    }
-                    Err(e) => {
+            } => match self.track_handle_or_err(track_name) {
+                Ok(track) => {
+                    if let Err(e) = track.lock().vst3_restore_state(instance_id, state) {
                         self.notify_clients(Err(e)).await;
+                        return;
                     }
+                    self.notify_clients(Ok(a.clone())).await;
                 }
-            }
+                Err(e) => {
+                    self.notify_clients(Err(e)).await;
+                }
+            },
             Action::TrackConnectVst3Audio {
                 ref track_name,
                 ref from_node,
@@ -4385,7 +4387,8 @@ impl Engine {
                 clip_index,
                 ref warp_markers,
             } => {
-                if let Err(e) = self.set_audio_clip_warp_markers(track_name, clip_index, warp_markers)
+                if let Err(e) =
+                    self.set_audio_clip_warp_markers(track_name, clip_index, warp_markers)
                 {
                     self.notify_clients(Err(e)).await;
                     return;
@@ -4701,13 +4704,15 @@ impl Engine {
                     return;
                 }
                 let hw_opts = Self::build_hw_options(exclusive, period_frames, nperiods, sync_mode);
-                let open_result = self.open_non_jack_audio_device(
-                    device,
-                    input_device.as_deref(),
-                    sample_rate_hz,
-                    bits,
-                    hw_opts,
-                ).await;
+                let open_result = self
+                    .open_non_jack_audio_device(
+                        device,
+                        input_device.as_deref(),
+                        sample_rate_hz,
+                        bits,
+                        hw_opts,
+                    )
+                    .await;
                 match open_result {
                     Ok(()) => {}
                     Err(e) => {

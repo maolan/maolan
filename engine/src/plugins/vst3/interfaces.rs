@@ -320,8 +320,11 @@ impl PluginInstance {
         use vst3::Steinberg::Vst::{BusDirections_, BusTypes_, IComponentTrait, MediaTypes_};
 
         let main_channels_for_direction = |direction: i32| -> usize {
-            let bus_count = unsafe { self.component.getBusCount(MediaTypes_::kAudio as i32, direction) }
-                .max(0) as usize;
+            let bus_count = unsafe {
+                self.component
+                    .getBusCount(MediaTypes_::kAudio as i32, direction)
+            }
+            .max(0) as usize;
             if bus_count == 0 {
                 return 0;
             }
@@ -330,8 +333,12 @@ impl PluginInstance {
             for idx in 0..bus_count {
                 let mut info: vst3::Steinberg::Vst::BusInfo = unsafe { std::mem::zeroed() };
                 let result = unsafe {
-                    self.component
-                        .getBusInfo(MediaTypes_::kAudio as i32, direction, idx as i32, &mut info)
+                    self.component.getBusInfo(
+                        MediaTypes_::kAudio as i32,
+                        direction,
+                        idx as i32,
+                        &mut info,
+                    )
                 };
                 if result != kResultOk {
                     continue;
@@ -466,8 +473,11 @@ impl PluginInstance {
         }
 
         let configure_audio_buses = |direction: i32, requested_channels: i32| {
-            let bus_count = unsafe { self.component.getBusCount(MediaTypes_::kAudio as i32, direction) }
-                .max(0) as usize;
+            let bus_count = unsafe {
+                self.component
+                    .getBusCount(MediaTypes_::kAudio as i32, direction)
+            }
+            .max(0) as usize;
             if bus_count == 0 {
                 return Vec::new();
             }
@@ -490,7 +500,11 @@ impl PluginInstance {
                     } else {
                         BusTypes_::kAux as i32
                     };
-                    info.flags = if idx == 0 { BusFlags::kDefaultActive as u32 } else { 0 };
+                    info.flags = if idx == 0 {
+                        BusFlags::kDefaultActive as u32
+                    } else {
+                        0
+                    };
                 }
                 infos.push(info);
             }
@@ -831,18 +845,12 @@ unsafe extern "system" fn host_query_interface(
         .iter()
         .zip(FUnknown::IID.iter())
         .all(|(a, b)| (*a as u8) == *b);
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "freebsd"
-    ))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     let requested_run_loop = iid_bytes
         .iter()
         .zip(Linux::IRunLoop::IID.iter())
         .all(|(a, b)| (*a as u8) == *b);
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "freebsd"
-    )))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     let requested_run_loop = false;
     if !(requested_host || requested_unknown || requested_run_loop) {
         if !obj.is_null() {

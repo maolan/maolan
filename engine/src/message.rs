@@ -736,5 +736,7 @@ pub enum Message {
     HWMidiEvents(Vec<HwMidiEvent>),
     HWMidiOutEvents(Vec<HwMidiEvent>),
     HWFinished,
-    OfflineBounceFinished { result: Result<Action, String> },
+    OfflineBounceFinished {
+        result: Result<Action, String>,
+    },
 }

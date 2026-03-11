@@ -11,10 +11,10 @@ use std::sync::{Arc, Mutex};
 use vst3::ComPtr;
 #[cfg(target_os = "windows")]
 use vst3::Steinberg::IPlugView;
-#[cfg(target_os = "windows")]
-use vst3::Steinberg::Vst::{IEditControllerTrait, ViewType};
 use vst3::Steinberg::Vst::ProcessModes_::kRealtime;
 use vst3::Steinberg::Vst::SymbolicSampleSizes_::kSample32;
+#[cfg(target_os = "windows")]
+use vst3::Steinberg::Vst::{IEditControllerTrait, ViewType};
 
 pub struct Vst3Processor {
     // Plugin identity
@@ -550,7 +550,8 @@ impl Vst3Processor {
 
         // Restore component state
         if !state.component_state.is_empty() {
-            let comp_stream = vst3::ComWrapper::new(MemoryStream::from_bytes(&state.component_state));
+            let comp_stream =
+                vst3::ComWrapper::new(MemoryStream::from_bytes(&state.component_state));
             unsafe {
                 let result = instance
                     .component

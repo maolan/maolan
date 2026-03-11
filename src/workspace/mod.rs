@@ -201,8 +201,9 @@ impl Workspace {
         let editor_content_width = (timeline_samples as f32 * pixels_per_sample).max(1.0);
         let workspace_content_height =
             self.tempo.height() + self.ruler.height() + tracks_total_height;
-        let playhead_x_timeline = playhead_samples
-            .map(|sample| timeline_sample_to_x_f64(sample, pixels_per_sample, TIMELINE_LEFT_INSET_PX));
+        let playhead_x_timeline = playhead_samples.map(|sample| {
+            timeline_sample_to_x_f64(sample, pixels_per_sample, TIMELINE_LEFT_INSET_PX)
+        });
 
         let editor_with_playhead = if let Some(x) = playhead_x_timeline {
             Stack::from_vec(vec![
@@ -254,11 +255,11 @@ impl Workspace {
         .height(Length::Fixed(tracks_total_height));
 
         let right_lanes_scrolled = scrollable(editor_timeline_scrolled)
-        .id(Id::new(EDITOR_SCROLL_ID))
-        .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::new()))
-        .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
-        .width(Length::Fill)
-        .height(Length::Fill);
+            .id(Id::new(EDITOR_SCROLL_ID))
+            .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::new()))
+            .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
+            .width(Length::Fill)
+            .height(Length::Fill);
 
         let h_scroll = scrollable(
             container("")

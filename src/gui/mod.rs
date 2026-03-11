@@ -7,8 +7,9 @@ mod view;
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
-    add_track, clip_rename, config, connections, hw, menu,
+    add_track, clip_rename, config, connections,
     consts::gui as gui_consts,
+    hw, menu,
     message::{
         DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
         ExportRenderMode, Message, PluginFormat, PreferencesDeviceOption, Show, SnapMode,

@@ -2,8 +2,8 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicU32, Ordering};
 use vst3::ComPtr;
 use vst3::Interface;
-use vst3::Steinberg::IPlugViewTrait;
 use vst3::Steinberg::IPlugView;
+use vst3::Steinberg::IPlugViewTrait;
 use vst3::Steinberg::Vst::{IEditController, IEditControllerTrait, ViewType};
 use vst3::Steinberg::kResultTrue;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -179,10 +179,7 @@ pub fn open_editor_blocking(
     open_editor_view_blocking(view, title)
 }
 
-pub fn open_editor_view_blocking(
-    view: ComPtr<IPlugView>,
-    title: &str,
-) -> Result<(), String> {
+pub fn open_editor_view_blocking(view: ComPtr<IPlugView>, title: &str) -> Result<(), String> {
     let coinit_hr = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
     let did_init_com = coinit_hr == 0 || coinit_hr == 1;
 

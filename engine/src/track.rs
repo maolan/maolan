@@ -2706,7 +2706,9 @@ impl Track {
                 .iter()
                 .find(|instance| instance.id == instance_id)
                 .and_then(|instance| (port < instance.processor.midi_input_count()).then_some(()))
-                .ok_or_else(|| format!("Plugin instance {instance_id} MIDI input port {port} missing"))
+                .ok_or_else(|| {
+                    format!("Plugin instance {instance_id} MIDI input port {port} missing")
+                })
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         {
@@ -2716,7 +2718,11 @@ impl Track {
     }
 
     #[cfg(any(unix, target_os = "windows"))]
-    fn vst3_audio_output_io(&self, instance_id: usize, port: usize) -> Result<Arc<AudioIO>, String> {
+    fn vst3_audio_output_io(
+        &self,
+        instance_id: usize,
+        port: usize,
+    ) -> Result<Arc<AudioIO>, String> {
         self.vst3_processors
             .iter()
             .find(|instance| instance.id == instance_id)
@@ -2734,7 +2740,11 @@ impl Track {
     }
 
     #[cfg(any(unix, target_os = "windows"))]
-    fn clap_audio_output_io(&self, instance_id: usize, port: usize) -> Result<Arc<AudioIO>, String> {
+    fn clap_audio_output_io(
+        &self,
+        instance_id: usize,
+        port: usize,
+    ) -> Result<Arc<AudioIO>, String> {
         self.clap_plugins
             .iter()
             .find(|instance| instance.id == instance_id)

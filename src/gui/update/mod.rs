@@ -14,8 +14,8 @@ use crate::message::PluginFormat;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use crate::state::AudioDeviceOption;
 use crate::{
-    consts::gui::AUTOSAVE_SNAPSHOT_INTERVAL,
     connections,
+    consts::gui::AUTOSAVE_SNAPSHOT_INTERVAL,
     message::{
         ExportNormalizeMode, ExportRenderMode, Message, Show, TrackAutomationMode,
         TrackAutomationTarget,

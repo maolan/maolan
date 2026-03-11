@@ -1864,10 +1864,7 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
         paths::push_macos_audio_plugin_roots(&mut roots, "CLAP");
     }
 
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "freebsd"
-    ))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         paths::push_unix_plugin_roots(&mut roots, "clap");
     }

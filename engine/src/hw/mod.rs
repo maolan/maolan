@@ -9,10 +9,7 @@ pub mod error_fmt;
 #[cfg(unix)]
 pub mod jack;
 pub mod latency;
-#[cfg(any(
-    target_os = "linux",
-    target_os = "freebsd"
-))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub mod midi_hub;
 pub mod options;
 #[cfg(target_os = "freebsd")]

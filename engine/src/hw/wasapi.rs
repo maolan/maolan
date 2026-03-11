@@ -293,7 +293,10 @@ fn select_output_device(host: &cpal::Host, requested: &str) -> Option<cpal::Devi
 }
 
 fn select_input_device(host: &cpal::Host, requested: &str) -> Option<cpal::Device> {
-    let requested = requested.strip_prefix(WASAPI_PREFIX).unwrap_or(requested).trim();
+    let requested = requested
+        .strip_prefix(WASAPI_PREFIX)
+        .unwrap_or(requested)
+        .trim();
     if requested.eq_ignore_ascii_case("default") || requested.is_empty() {
         return host.default_input_device();
     }

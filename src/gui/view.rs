@@ -11,6 +11,87 @@ use iced::{
 };
 
 impl Maolan {
+    fn playhead_bar_beat(&self, state: &crate::state::StateData, sample: usize) -> (u64, u64) {
+        let mut bpm = state
+            .tempo_points
+            .iter()
+            .filter(|p| p.sample == 0)
+            .next_back()
+            .map(|p| p.bpm)
+            .unwrap_or(state.tempo)
+            .clamp(20.0, 300.0);
+        let (mut numerator, mut denominator) = state
+            .time_signature_points
+            .iter()
+            .filter(|p| p.sample == 0)
+            .next_back()
+            .map(|p| (p.numerator.max(1), p.denominator.max(1)))
+            .unwrap_or((
+                state.time_signature_num.max(1),
+                state.time_signature_denom.max(1),
+            ));
+
+        let mut tempo_idx = state.tempo_points.partition_point(|p| p.sample == 0);
+        let mut tsig_idx = state
+            .time_signature_points
+            .partition_point(|p| p.sample == 0);
+
+        let mut cursor = 0usize;
+        let mut bar_number = 1u64;
+        let mut bar_progress_quarters = 0.0_f64;
+
+        while cursor < sample {
+            let next_tempo = state
+                .tempo_points
+                .get(tempo_idx)
+                .map(|p| p.sample)
+                .unwrap_or(usize::MAX);
+            let next_tsig = state
+                .time_signature_points
+                .get(tsig_idx)
+                .map(|p| p.sample)
+                .unwrap_or(usize::MAX);
+            let next_change = next_tempo.min(next_tsig).min(sample);
+            let segment_len = next_change.saturating_sub(cursor);
+
+            if segment_len > 0 {
+                let samples_per_quarter =
+                    (self.playback_rate_hz.max(1.0) * 60.0 / bpm.max(1.0) as f64).max(1.0);
+                let segment_quarters = segment_len as f64 / samples_per_quarter;
+                let quarters_per_bar =
+                    (numerator.max(1) as f64 * (4.0 / denominator.max(1) as f64)).max(1.0e-9);
+                let total_quarters = bar_progress_quarters + segment_quarters;
+                let advanced_bars = (total_quarters / quarters_per_bar).floor() as u64;
+                bar_number = bar_number.saturating_add(advanced_bars);
+                bar_progress_quarters = total_quarters - advanced_bars as f64 * quarters_per_bar;
+            }
+
+            cursor = next_change;
+
+            while let Some(point) = state.tempo_points.get(tempo_idx) {
+                if point.sample != cursor {
+                    break;
+                }
+                bpm = point.bpm.clamp(20.0, 300.0);
+                tempo_idx += 1;
+            }
+            while let Some(point) = state.time_signature_points.get(tsig_idx) {
+                if point.sample != cursor {
+                    break;
+                }
+                numerator = point.numerator.max(1);
+                denominator = point.denominator.max(1);
+                tsig_idx += 1;
+            }
+        }
+
+        let beat_len_quarters = (4.0 / denominator.max(1) as f64).max(1.0e-9);
+        let beat = ((bar_progress_quarters / beat_len_quarters).floor() as u64)
+            .min(numerator.max(1) as u64 - 1)
+            + 1;
+        (bar_number, beat)
+    }
+
     pub fn view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         if state.hw_loaded {
@@ -111,6 +192,14 @@ impl Maolan {
                         .tracks
                         .iter()
                         .any(|track| !track.audio.clips.is_empty() || !track.midi.clips.is_empty());
+                    let playhead_sample = self.transport_samples.max(0.0) as usize;
+                    let playhead_seconds = playhead_sample as f64 / self.playback_rate_hz.max(1.0);
+                    let minutes = (playhead_seconds / 60.0).floor() as u64;
+                    let seconds = (playhead_seconds % 60.0).floor() as u64;
+                    let millis = (playhead_seconds.fract() * 1000.0) as u64;
+                    let playhead_time_label = format!("{minutes:02}:{seconds:02}.{millis:03}");
+                    let (bar, beat) = self.playhead_bar_beat(&state, playhead_sample);
+                    let playhead_measure_label = format!("Bar {bar} Beat {beat}");
 
                     let mut content = column![
                         self.menu.view(self.mixer_visible),
@@ -127,6 +216,8 @@ impl Maolan {
                             tempo_input: self.tempo_input.clone(),
                             tsig_num_input: self.time_signature_num_input.clone(),
                             tsig_denom_input: self.time_signature_denom_input.clone(),
+                            playhead_time_label,
+                            playhead_measure_label,
                         })
                     ];
                     if matches!(state.view, View::TrackPlugins) {
