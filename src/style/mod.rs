@@ -5,7 +5,15 @@ pub mod mixer;
 pub mod mute;
 pub mod solo;
 
-use iced::{Background, Border, Color, Theme, widget::button::Style};
+use crate::consts::APP_BACKGROUND_COLOR;
+use iced::{Background, Border, Color, Theme, widget::{button::Style, container}};
+
+pub fn app_background() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(APP_BACKGROUND_COLOR)),
+        ..container::Style::default()
+    }
+}
 
 fn track_toggle_button_style(theme: &Theme, active: bool, accent: Color) -> Style {
     let palette = theme.extended_palette();

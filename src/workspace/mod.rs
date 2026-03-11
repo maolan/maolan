@@ -456,7 +456,7 @@ impl Workspace {
         ])
         .width(Length::Fill)
         .height(Length::Fill);
-        if mixer_visible {
+        let workspace_body: Element<'_, Message> = if mixer_visible {
             column![
                 workspace_with_footer,
                 mouse_area(
@@ -483,7 +483,12 @@ impl Workspace {
             .into()
         } else {
             column![workspace_with_footer].width(Length::Fill).into()
-        }
+        };
+        container(workspace_body)
+            .style(|_theme| crate::style::app_background())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     pub fn piano_view<'a>(&'a self, args: WorkspaceViewArgs<'a>) -> Element<'a, Message> {
@@ -556,7 +561,7 @@ impl Workspace {
             piano_content
         };
 
-        column![
+        container(column![
             row![
                 container("")
                     .width(Length::Fixed(TOOLS_STRIP_WIDTH + MAIN_SPLIT_SPACING,))
@@ -626,6 +631,9 @@ impl Workspace {
             .height(Length::Fixed(self.ruler.height())),
             piano_with_playhead,
         ]
+        .width(Length::Fill)
+        .height(Length::Fill))
+        .style(|_theme| crate::style::app_background())
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

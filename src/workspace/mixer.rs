@@ -566,12 +566,15 @@ impl Mixer {
         .width(Length::Fill)
         .height(height);
 
-        mouse_area(
+        container(mouse_area(
             row![track_strips, output_strips]
                 .height(height)
                 .align_y(Alignment::Start),
         )
-        .on_press(Message::DeselectAll)
+        .on_press(Message::DeselectAll))
+        .style(|_theme| crate::style::app_background())
+        .width(Length::Fill)
+        .height(height)
         .into()
     }
 }

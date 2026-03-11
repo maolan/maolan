@@ -2,6 +2,8 @@ use iced::Color;
 use maolan_engine as engine;
 use std::{sync::LazyLock, time::Duration};
 
+pub const APP_BACKGROUND_COLOR: Color = Color::from_rgb8(23, 31, 48);
+
 pub mod gui {
     use super::Duration;
 

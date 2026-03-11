@@ -822,6 +822,9 @@ impl Tracks {
                     .into()
             }
         }));
-        result.width(width).into()
+        container(result.width(width))
+            .style(|_theme| crate::style::app_background())
+            .width(width)
+            .into()
     }
 }

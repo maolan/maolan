@@ -3045,6 +3045,7 @@ impl Maolan {
             ]
             .spacing(10),
         )
+        .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -3559,6 +3560,7 @@ impl Maolan {
             .width(Length::Fill)
             .height(Length::Fill),
         )
+        .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -3812,6 +3814,7 @@ impl Maolan {
             .align_x(iced::Alignment::Start)
             .spacing(12),
         )
+        .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -3872,6 +3875,7 @@ impl Maolan {
             .align_x(iced::Alignment::Start)
             .spacing(12),
         )
+        .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -3902,6 +3906,7 @@ impl Maolan {
             .align_x(iced::Alignment::Start)
             .spacing(12),
         )
+        .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)

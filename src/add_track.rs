@@ -208,6 +208,7 @@ impl AddTrackView {
         );
 
         container(col.align_x(Alignment::End).spacing(10))
+            .style(|_theme| crate::style::app_background())
             .padding(20)
             .width(Length::Fill)
             .height(Length::Fill)

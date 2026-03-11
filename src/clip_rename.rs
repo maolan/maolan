@@ -88,6 +88,7 @@ impl ClipRenameView {
             .align_x(Alignment::End)
             .spacing(15),
         )
+        .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
         .height(Length::Fill)

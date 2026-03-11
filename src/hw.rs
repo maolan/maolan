@@ -593,6 +593,7 @@ impl HW {
         content = content.push(submit);
 
         container(content)
+            .style(|_theme| crate::style::app_background())
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(Alignment::Center)
