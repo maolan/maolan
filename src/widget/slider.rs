@@ -28,7 +28,7 @@ impl<'a, Message> Slider<'a, Message> {
             on_change: Box::new(on_change),
             width: Length::Fixed(14.0),
             height: Length::Fixed(300.0),
-            handle_height: 10.0,
+            handle_height: 2.0,
         }
     }
 
@@ -86,122 +86,72 @@ where
         _viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let rgb = |r: u8, g: u8, b: u8| {
-            Color::from_rgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
-        };
-
         let border_width = 1.0;
-        let handle_height = self.handle_height.min((bounds.height - 10.0).max(8.0));
-        let slot_width = (bounds.width - 8.0).clamp(5.0, 7.0);
-        let slot_x = (bounds.x + (bounds.width - slot_width) * 0.5).round();
-        let slot_y = bounds.y + 3.0;
-        let slot_height = (bounds.height - 6.0).max(12.0);
+        let twice_border = border_width * 2.0;
+        let value_bounds_y = bounds.y + (self.handle_height / 2.0);
+        let value_bounds_height = bounds.height - self.handle_height;
         let normalized =
             (self.value - self.range.start()) / (self.range.end() - self.range.start());
-        let travel_height = (slot_height - handle_height).max(1.0);
-        let handle_offset = (slot_y + travel_height * (1.0 - normalized)).round();
+        let handle_offset =
+            (value_bounds_y + (value_bounds_height - twice_border) * (1.0 - normalized)).round();
 
-        let rail_dark = rgb(24, 28, 40);
-        let rail_light = rgb(78, 88, 111);
-        let slot_color = rgb(56, 64, 83);
-        let slot_inner = rgb(93, 104, 130);
-        let slot_shadow = rgb(18, 22, 32);
-        let filled_color = Color {
-            r: 0.78,
-            g: 0.82,
-            b: 0.90,
-            a: 0.12,
-        };
-        let handle_color = rgb(124, 136, 160);
-        let handle_border = rgb(71, 79, 98);
-        let handle_shadow = rgb(53, 60, 76);
-        let handle_highlight = rgb(210, 218, 233);
+        let back_color = Color::from_rgb(
+            0x42 as f32 / 255.0,
+            0x46 as f32 / 255.0,
+            0x4D as f32 / 255.0,
+        );
+        let border_color = Color::from_rgb(
+            0x30 as f32 / 255.0,
+            0x33 as f32 / 255.0,
+            0x3C as f32 / 255.0,
+        );
+        let filled_color = Color::from_rgb(
+            0x29 as f32 / 255.0,
+            0x66 as f32 / 255.0,
+            0xA3 as f32 / 255.0,
+        );
+        let handle_color = Color::from_rgb(
+            0x75 as f32 / 255.0,
+            0xC2 as f32 / 255.0,
+            0xFF as f32 / 255.0,
+        );
 
-        let slot_bounds = Rectangle {
-            x: slot_x,
-            y: slot_y,
-            width: slot_width,
-            height: slot_height,
-        };
+        let border_radius = 2.0;
+        let handle_filled_gap = 1.0;
 
         renderer.fill_quad(
             renderer::Quad {
                 bounds: Rectangle {
-                    x: slot_x - 1.0,
-                    y: slot_y - 1.0,
-                    width: 1.0,
-                    height: slot_height + 2.0,
+                    x: bounds.x,
+                    y: bounds.y,
+                    width: bounds.width,
+                    height: bounds.height,
                 },
                 border: Border {
-                    radius: 0.0.into(),
-                    width: 0.0,
-                    color: Color::TRANSPARENT,
-                },
-                ..Default::default()
-            },
-            rail_light,
-        );
-
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: Rectangle {
-                    x: slot_x + slot_width,
-                    y: slot_y - 1.0,
-                    width: 1.0,
-                    height: slot_height + 2.0,
-                },
-                border: Border {
-                    radius: 0.0.into(),
-                    width: 0.0,
-                    color: Color::TRANSPARENT,
-                },
-                ..Default::default()
-            },
-            rail_dark,
-        );
-
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: slot_bounds,
-                border: Border {
-                    radius: 2.0.into(),
+                    radius: border_radius.into(),
                     width: border_width,
-                    color: slot_shadow,
+                    color: border_color,
                 },
                 ..Default::default()
             },
-            slot_color,
+            back_color,
         );
 
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: Rectangle {
-                    x: slot_x + 1.0,
-                    y: slot_y + 1.0,
-                    width: (slot_width - 2.0).max(1.0),
-                    height: 1.0,
-                },
-                border: Border::default(),
-                ..Default::default()
-            },
-            slot_inner,
-        );
-
-        let filled_y_start = (handle_offset + handle_height * 0.6).min(slot_y + slot_height);
-        let filled_height = (slot_y + slot_height - filled_y_start).max(0.0);
+        let filled_y_start = handle_offset + self.handle_height + handle_filled_gap;
+        let filled_height = bounds.y + bounds.height - filled_y_start;
 
         if filled_height > 0.0 {
             renderer.fill_quad(
                 renderer::Quad {
                     bounds: Rectangle {
-                        x: slot_x + 1.0,
+                        x: bounds.x,
                         y: filled_y_start,
-                        width: (slot_width - 2.0).max(1.0),
+                        width: bounds.width,
                         height: filled_height,
                     },
                     border: Border {
-                        radius: 2.0.into(),
-                        width: 0.0,
+                        radius: border_radius.into(),
+                        width: border_width,
                         color: Color::TRANSPARENT,
                     },
                     ..Default::default()
@@ -216,44 +166,16 @@ where
                     x: bounds.x,
                     y: handle_offset,
                     width: bounds.width,
-                    height: handle_height,
+                    height: self.handle_height + twice_border,
                 },
                 border: Border {
-                    radius: 3.0.into(),
+                    radius: border_radius.into(),
                     width: border_width,
-                    color: handle_border,
+                    color: Color::TRANSPARENT,
                 },
                 ..Default::default()
             },
             handle_color,
-        );
-
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: Rectangle {
-                    x: bounds.x + 1.0,
-                    y: handle_offset + 1.0,
-                    width: (bounds.width - 2.0).max(2.0),
-                    height: 1.0,
-                },
-                border: Border::default(),
-                ..Default::default()
-            },
-            handle_highlight,
-        );
-
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: Rectangle {
-                    x: bounds.x + 1.0,
-                    y: handle_offset + handle_height - 2.0,
-                    width: (bounds.width - 2.0).max(2.0),
-                    height: 1.0,
-                },
-                border: Border::default(),
-                ..Default::default()
-            },
-            handle_shadow,
         );
     }
 
