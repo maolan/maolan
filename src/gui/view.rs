@@ -37,7 +37,7 @@ impl Maolan {
             .partition_point(|p| p.sample == 0);
 
         let mut cursor = 0usize;
-        let mut bar_number = 1u64;
+        let mut bar_number = 0u64;
         let mut bar_progress_quarters = 0.0_f64;
 
         while cursor < sample {
@@ -198,8 +198,8 @@ impl Maolan {
                     let seconds = (playhead_seconds % 60.0).floor() as u64;
                     let millis = (playhead_seconds.fract() * 1000.0) as u64;
                     let playhead_time_label = format!("{minutes:02}:{seconds:02}.{millis:03}");
-                    let (bar, beat) = self.playhead_bar_beat(&state, playhead_sample);
-                    let playhead_measure_label = format!("Bar {bar} Beat {beat}");
+                    let (playhead_bar, playhead_beat) =
+                        self.playhead_bar_beat(&state, playhead_sample);
 
                     let mut content = column![
                         self.menu.view(self.mixer_visible),
@@ -217,7 +217,8 @@ impl Maolan {
                             tsig_num_input: self.time_signature_num_input.clone(),
                             tsig_denom_input: self.time_signature_denom_input.clone(),
                             playhead_time_label,
-                            playhead_measure_label,
+                            playhead_bar,
+                            playhead_beat,
                         })
                     ];
                     if matches!(state.view, View::TrackPlugins) {

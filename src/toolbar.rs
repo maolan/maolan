@@ -1,6 +1,9 @@
-use crate::message::{Message, SnapMode};
+use crate::{
+    consts::workspace::MIDI_CLIP_BORDER,
+    message::{Message, SnapMode},
+};
 use iced::{
-    Background, Color, Length, Theme,
+    Alignment, Background, Border, Color, Length, Theme,
     widget::{button, container, pick_list, row, text, text_input},
 };
 use iced_fonts::lucide::{
@@ -35,7 +38,8 @@ pub struct ToolbarViewState {
     pub tsig_num_input: String,
     pub tsig_denom_input: String,
     pub playhead_time_label: String,
-    pub playhead_measure_label: String,
+    pub playhead_bar: u64,
+    pub playhead_beat: u64,
 }
 
 impl Toolbar {
@@ -128,6 +132,16 @@ impl Toolbar {
                 Color::from_rgba(0.85, 0.25, 0.25, 0.4),
             ))
         };
+        let readout_style = |_theme: &Theme| container::Style {
+            text_color: Some(Color::from_rgb(0.92, 0.92, 0.92)),
+            background: Some(Background::Color(Color::from_rgba(0.10, 0.10, 0.10, 1.0))),
+            border: Border {
+                color: Color::from_rgba(0.28, 0.28, 0.28, 1.0),
+                width: 1.0,
+                radius: 2.0.into(),
+            },
+            ..container::Style::default()
+        };
         row![
             row![
                 button(rewind())
@@ -191,20 +205,33 @@ impl Toolbar {
                     .on_input(Message::TimeSignatureDenominatorInputChanged)
                     .on_submit(Message::TimeSignatureInputCommit)
                     .width(Length::Fixed(44.0)),
-                button("TS")
-                    .style(Self::button_style(true, false, Color::TRANSPARENT))
-                    .on_press(Message::TimeSignatureInputCommit),
                 container(
                     row![
-                        text(view_state.playhead_time_label).size(13),
-                        text("·").size(13),
-                        text(view_state.playhead_measure_label).size(13),
+                        text(view_state.playhead_time_label)
+                            .size(16)
+                            .color(MIDI_CLIP_BORDER),
                     ]
-                    .spacing(6),
+                    .spacing(4),
                 )
-                .padding([0, 8])
+                .padding([5, 8])
+                .style(readout_style),
+                container(
+                    row![
+                        text(view_state.playhead_bar.to_string())
+                            .size(16)
+                            .color(MIDI_CLIP_BORDER),
+                        text(" / ").size(16),
+                        text(view_state.playhead_beat.to_string())
+                            .size(16)
+                            .color(MIDI_CLIP_BORDER),
+                    ]
+                    .spacing(0),
+                )
+                .padding([5, 8])
+                .style(readout_style)
             ]
             .spacing(3)
+            .align_y(Alignment::Center)
             .width(Length::Fill),
             button(audio_lines())
                 .style(Self::button_style(true, false, Color::TRANSPARENT))
@@ -213,6 +240,7 @@ impl Toolbar {
                 .style(Self::button_style(true, false, Color::TRANSPARENT))
                 .on_press(Message::Connections),
         ]
+        .align_y(Alignment::Center)
         .into()
     }
 }
