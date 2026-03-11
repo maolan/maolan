@@ -535,7 +535,6 @@ pub enum Message {
     OpenFolderSelected(Option<PathBuf>),
     LoadSessionPath(PathBuf),
     RecoverAutosaveSnapshot,
-    RecoverOlderAutosaveSnapshot,
     RecoverAutosaveIgnore,
     OpenExporter,
     ExportDiagnosticsBundleRequest,

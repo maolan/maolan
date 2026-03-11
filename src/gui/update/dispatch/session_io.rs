@@ -80,7 +80,7 @@ impl Maolan {
             }
             Message::RecoverAutosaveSnapshot => {
                 let startup_modal_flow = matches!(self.modal, Some(Show::AutosaveRecovery));
-                if let Err(e) = self.prepare_pending_autosave_recovery(false) {
+                if let Err(e) = self.prepare_pending_autosave_recovery() {
                     self.state.blocking_write().message = e;
                     return Some(Task::none());
                 }
@@ -101,38 +101,12 @@ impl Maolan {
                     if !pending.confirm_armed {
                         pending.confirm_armed = true;
                         self.state.blocking_write().message = format!(
-                            "{preview}. Run Recover Autosave Snapshot again to apply. Use Recover Older Autosave Snapshot to pick an older one."
+                            "{preview}. Run Recover Autosave Snapshot again to apply."
                         );
                         return Some(Task::none());
                     }
                 }
                 Some(self.apply_pending_autosave_recovery())
-            }
-            Message::RecoverOlderAutosaveSnapshot => {
-                let startup_modal_flow = matches!(self.modal, Some(Show::AutosaveRecovery));
-                if let Err(e) = self.prepare_pending_autosave_recovery(true) {
-                    self.state.blocking_write().message = e;
-                    return Some(Task::none());
-                }
-                if startup_modal_flow {
-                    self.modal = None;
-                    return Some(self.apply_pending_autosave_recovery());
-                }
-                if let Some(pending) = self.pending_autosave_recovery.as_mut() {
-                    let selected_snapshot = pending
-                        .snapshots
-                        .get(pending.selected_index)
-                        .cloned()
-                        .unwrap_or_else(|| pending.snapshots[0].clone());
-                    let preview = Self::autosave_recovery_preview_summary(
-                        &pending.session_dir,
-                        &selected_snapshot,
-                    );
-                    self.state.blocking_write().message = format!(
-                        "{preview}. Run Recover Autosave Snapshot to apply this selection."
-                    );
-                }
-                Some(Task::none())
             }
             Message::RecoverAutosaveIgnore => {
                 let deferred_open = self.pending_open_session_dir.clone();

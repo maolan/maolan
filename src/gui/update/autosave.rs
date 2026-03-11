@@ -137,18 +137,8 @@ impl Maolan {
         Ok(root)
     }
 
-    pub(super) fn prepare_pending_autosave_recovery(
-        &mut self,
-        select_older: bool,
-    ) -> Result<(), String> {
+    pub(super) fn prepare_pending_autosave_recovery(&mut self) -> Result<(), String> {
         if let Some(pending) = self.pending_autosave_recovery.as_mut() {
-            if select_older {
-                if pending.selected_index + 1 < pending.snapshots.len() {
-                    pending.selected_index += 1;
-                } else {
-                    return Err("No older autosave snapshot available".to_string());
-                }
-            }
             pending.confirm_armed = false;
             return Ok(());
         }
@@ -162,19 +152,10 @@ impl Maolan {
         if snapshots.is_empty() {
             return Err("No autosave snapshot found for this session".to_string());
         }
-        let selected_index = if select_older {
-            if snapshots.len() >= 2 {
-                1
-            } else {
-                return Err("No older autosave snapshot available".to_string());
-            }
-        } else {
-            0
-        };
         self.pending_autosave_recovery = Some(super::super::PendingAutosaveRecovery {
             session_dir: base_session_dir,
             snapshots,
-            selected_index,
+            selected_index: 0,
             confirm_armed: false,
         });
         Ok(())

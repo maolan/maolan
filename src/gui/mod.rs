@@ -3634,7 +3634,6 @@ impl Maolan {
                 )),
                 row![
                     button("Recover Latest").on_press(Message::RecoverAutosaveSnapshot),
-                    button("Recover Older").on_press(Message::RecoverOlderAutosaveSnapshot),
                     button("Ignore").on_press(Message::RecoverAutosaveIgnore),
                 ]
                 .spacing(10),

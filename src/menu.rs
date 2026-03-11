@@ -158,18 +158,12 @@ impl Menu {
                     (submenu("New", Message::None), new_submenu),
                     (menu_item("Open", Message::Show(Show::Open))),
                     (submenu("Recent", Message::None), recent_submenu),
-                    (menu_item("Recover Autosave Snapshot", Message::RecoverAutosaveSnapshot)),
-                    (menu_item("Recover Older Autosave Snapshot", Message::RecoverOlderAutosaveSnapshot)),
                     (menu_item("Save", Message::Show(Show::Save))),
                     (menu_item("Save as", Message::Show(Show::SaveAs))),
                     (menu_item("Session Metadata", Message::Show(Show::SessionMetadata))),
                     (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
                     (menu_item("Import", Message::OpenFileImporter)),
                     (menu_item("Export", Message::OpenExporter)),
-                    // (submenu("Open Recent", Message::None), menu_tpl(menu_items!(
-                    //     (menu_item("First", Message::None)),
-                    //     (menu_item("Second", Message::None)),
-                    // ))),
                     (menu_item("Quit", Message::Request(Action::Quit))),
                 ))
             }),
