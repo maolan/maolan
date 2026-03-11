@@ -8,7 +8,7 @@ use crate::{
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Point, Theme,
     alignment::Horizontal,
-    widget::{Column, Space, Stack, button, column, container, mouse_area, pin, row, text},
+    widget::{Column, Space, button, column, container, mouse_area, row, text},
 };
 use iced_drop::droppable;
 use iced_fonts::lucide::{audio_waveform, disc};
@@ -19,7 +19,9 @@ pub struct Tracks {
     state: State,
 }
 
-fn track_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'static, Message>)> {
+pub(super) fn track_context_menu_overlay(
+    state: &StateData,
+) -> Option<(Point, Element<'static, Message>)> {
     let menu_state = state.track_context_menu.as_ref()?;
     let track = state
         .tracks
@@ -306,7 +308,7 @@ fn track_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'stat
         })
         .into();
 
-    Some((Point::new(0.0, (top + menu_state.anchor.y).max(0.0)), panel))
+    Some((Point::new(menu_state.anchor.x.max(0.0), (top + menu_state.anchor.y).max(0.0)), panel))
 }
 
 impl Tracks {
@@ -403,7 +405,7 @@ impl Tracks {
             vca_master: Option<String>,
         }
 
-        let (tracks, width, context_menu_overlay) = {
+        let (tracks, width) = {
             let state = self.state.blocking_read();
             let hovered_resize_track = state.hovered_track_resize_handle.as_deref();
             let tracks = state
@@ -447,11 +449,7 @@ impl Tracks {
                     vca_master: track.vca_master.clone(),
                 })
                 .collect::<Vec<_>>();
-            (
-                tracks,
-                state.tracks_width,
-                track_context_menu_overlay(&state),
-            )
+            (tracks, state.tracks_width)
         };
         let track_width_px = match width {
             Length::Fixed(v) => v,
@@ -861,15 +859,6 @@ impl Tracks {
                     .into()
             }
         }));
-        let track_list: Element<'_, Message> = result.width(width).into();
-        if let Some((anchor, menu)) = context_menu_overlay {
-            Stack::new()
-                .push(track_list)
-                .push(pin(menu).position(Point::new(anchor.x.max(0.0), anchor.y.max(0.0))))
-                .width(width)
-                .into()
-        } else {
-            track_list
-        }
+        result.width(width).into()
     }
 }

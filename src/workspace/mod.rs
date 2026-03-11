@@ -206,6 +206,10 @@ impl Workspace {
         let editor_content_width = (timeline_samples as f32 * pixels_per_sample).max(1.0);
         let workspace_content_height =
             self.tempo.height() + self.ruler.height() + tracks_total_height;
+        let track_context_menu_overlay = {
+            let state = self.state.blocking_read();
+            tracks::track_context_menu_overlay(&state)
+        };
         let playhead_x_timeline = playhead_samples.map(|sample| {
             timeline_sample_to_x_f64(sample, pixels_per_sample, TIMELINE_LEFT_INSET_PX)
         });
@@ -405,9 +409,18 @@ impl Workspace {
         ]
         .height(Length::Fixed(workspace_content_height));
 
-        let shared_workspace = container(shared_workspace)
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let shared_workspace: Element<'_, Message> =
+            if let Some((anchor, menu)) = track_context_menu_overlay {
+                Stack::new()
+                    .push(shared_workspace)
+                    .push(pin(menu).position(Point::new(
+                        anchor.x.max(0.0),
+                        self.tempo.height() + self.ruler.height() + anchor.y.max(0.0),
+                    )))
+                    .into()
+            } else {
+                container(shared_workspace).into()
+            };
 
         let editor_footer = container(
             row![
@@ -435,7 +448,7 @@ impl Workspace {
         .height(Length::Fill);
 
         let workspace_with_footer = Stack::from_vec(vec![
-            shared_workspace.into(),
+            shared_workspace,
             container(editor_footer)
                 .width(Length::Fill)
                 .height(Length::Fill)
