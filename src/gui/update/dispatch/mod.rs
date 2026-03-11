@@ -1492,6 +1492,20 @@ impl Maolan {
                 let handled_response_state = self.handle_response_engine_state_action(a);
                 let handled_response_track = self.handle_response_track_action(a);
                 let handled_response_timing = self.handle_response_timing_state_action(a);
+                if handled_response_track {
+                    match a {
+                        Action::TrackAddAudioInput(track_name)
+                        | Action::TrackAddAudioOutput(track_name)
+                        | Action::TrackRemoveAudioInput(track_name)
+                        | Action::TrackRemoveAudioOutput(track_name) => {
+                            if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name)
+                            {
+                                return task;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 if !handled_response_state && !handled_response_track && !handled_response_timing {
                     match a {
                         Action::Quit => {
@@ -2542,6 +2556,14 @@ impl Maolan {
                     track_name: track_name.clone(),
                     master_track: master_track.clone(),
                 });
+            }
+            Message::TrackAddReturn(ref track_name) => {
+                self.state.blocking_write().track_context_menu = None;
+                return self.send(Action::TrackAddAudioInput(track_name.clone()));
+            }
+            Message::TrackAddSend(ref track_name) => {
+                self.state.blocking_write().track_context_menu = None;
+                return self.send(Action::TrackAddAudioOutput(track_name.clone()));
             }
             Message::TrackMidiLearnArm {
                 ref track_name,

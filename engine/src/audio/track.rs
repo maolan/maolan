@@ -96,4 +96,16 @@ impl AudioTrack {
         }
         true
     }
+
+    pub fn add_input(&mut self, buffer_size: usize) -> Arc<AudioIO> {
+        let io = Arc::new(AudioIO::new(buffer_size));
+        self.ins.push(io.clone());
+        io
+    }
+
+    pub fn add_output(&mut self, buffer_size: usize) -> Arc<AudioIO> {
+        let io = Arc::new(AudioIO::new(buffer_size));
+        self.outs.push(io.clone());
+        io
+    }
 }

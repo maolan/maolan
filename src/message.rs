@@ -480,6 +480,8 @@ pub enum Message {
         track_name: String,
         master_track: Option<String>,
     },
+    TrackAddReturn(String),
+    TrackAddSend(String),
     TrackMidiLearnArm {
         track_name: String,
         target: maolan_engine::message::TrackMidiLearnTarget,

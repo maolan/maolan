@@ -129,6 +129,69 @@ impl Maolan {
                 }
                 true
             }
+            Action::TrackAddAudioInput(name) => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
+                    track.audio.ins = track.audio.ins.saturating_add(1);
+                    track.height = track.height.max(track.min_height_for_layout().max(60.0));
+                }
+                true
+            }
+            Action::TrackAddAudioOutput(name) => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
+                    track.audio.outs = track.audio.outs.saturating_add(1);
+                    if track.meter_out_db.len() < track.audio.outs {
+                        track.meter_out_db.resize(track.audio.outs, -90.0);
+                    }
+                }
+                true
+            }
+            Action::TrackRemoveAudioInput(name) => {
+                let mut state = self.state.blocking_write();
+                let removed_port = state
+                    .tracks
+                    .iter()
+                    .find(|t| t.name == *name)
+                    .and_then(|track| {
+                        (track.audio.ins > track.primary_audio_ins()).then_some(track.audio.ins - 1)
+                    });
+                if let Some(removed_port) = removed_port {
+                    state.connections.retain(|conn| {
+                        !(conn.kind == maolan_engine::kind::Kind::Audio
+                            && conn.to_track == *name
+                            && conn.to_port == removed_port)
+                    });
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
+                        track.audio.ins -= 1;
+                        track.height = track.height.max(track.min_height_for_layout().max(60.0));
+                    }
+                }
+                true
+            }
+            Action::TrackRemoveAudioOutput(name) => {
+                let mut state = self.state.blocking_write();
+                let removed_port = state
+                    .tracks
+                    .iter()
+                    .find(|t| t.name == *name)
+                    .and_then(|track| {
+                        (track.audio.outs > track.primary_audio_outs())
+                            .then_some(track.audio.outs - 1)
+                    });
+                if let Some(removed_port) = removed_port {
+                    state.connections.retain(|conn| {
+                        !(conn.kind == maolan_engine::kind::Kind::Audio
+                            && conn.from_track == *name
+                            && conn.from_port == removed_port)
+                    });
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
+                        track.audio.outs -= 1;
+                        track.meter_out_db.truncate(track.audio.outs);
+                    }
+                }
+                true
+            }
             Action::TrackArmMidiLearn { track_name, target } => {
                 self.state.blocking_write().message = format!(
                     "MIDI learn armed for '{}' ({:?}). Move a hardware MIDI CC control.",

@@ -101,6 +101,10 @@ pub struct Track {
     #[serde(default)]
     pub frozen: bool,
     pub height: f32,
+    #[serde(default)]
+    pub primary_audio_ins: usize,
+    #[serde(default)]
+    pub primary_audio_outs: usize,
     pub audio: AudioData,
     pub midi: MIDIData,
     #[serde(default)]
@@ -152,6 +156,8 @@ impl Track {
             frozen: false,
             audio: AudioData::new(audio_ins, audio_outs),
             midi: MIDIData::new(midi_ins, midi_outs),
+            primary_audio_ins: audio_ins,
+            primary_audio_outs: audio_outs,
             frozen_audio_backup: vec![],
             frozen_midi_backup: vec![],
             frozen_render_clip: None,
@@ -167,6 +173,30 @@ impl Track {
     pub fn audio_lane_count(&self) -> usize {
         // Always return 1 audio lane if we have any audio inputs
         if self.audio.ins > 0 { 1 } else { 0 }
+    }
+
+    pub fn primary_audio_ins(&self) -> usize {
+        if self.primary_audio_ins == 0 && self.audio.ins > 0 {
+            self.audio.ins
+        } else {
+            self.primary_audio_ins.min(self.audio.ins)
+        }
+    }
+
+    pub fn primary_audio_outs(&self) -> usize {
+        if self.primary_audio_outs == 0 && self.audio.outs > 0 {
+            self.audio.outs
+        } else {
+            self.primary_audio_outs.min(self.audio.outs)
+        }
+    }
+
+    pub fn return_count(&self) -> usize {
+        self.audio.ins.saturating_sub(self.primary_audio_ins())
+    }
+
+    pub fn send_count(&self) -> usize {
+        self.audio.outs.saturating_sub(self.primary_audio_outs())
     }
 
     pub fn midi_lane_count(&self) -> usize {

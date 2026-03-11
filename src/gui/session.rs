@@ -1273,13 +1273,29 @@ impl Maolan {
                         ));
                     }
                 };
+                let primary_audio_ins = track
+                    .get("primary_audio_ins")
+                    .and_then(|value| value.as_u64())
+                    .map(|value| value as usize)
+                    .unwrap_or(audio_ins);
+                let primary_audio_outs = track
+                    .get("primary_audio_outs")
+                    .and_then(|value| value.as_u64())
+                    .map(|value| value as usize)
+                    .unwrap_or(audio_outs);
                 restore_actions.push(Action::AddTrack {
                     name: name.clone(),
-                    audio_ins,
-                    audio_outs,
+                    audio_ins: primary_audio_ins.min(audio_ins),
+                    audio_outs: primary_audio_outs.min(audio_outs),
                     midi_ins,
                     midi_outs,
                 });
+                for _ in primary_audio_ins.min(audio_ins)..audio_ins {
+                    restore_actions.push(Action::TrackAddAudioInput(name.clone()));
+                }
+                for _ in primary_audio_outs.min(audio_outs)..audio_outs {
+                    restore_actions.push(Action::TrackAddAudioOutput(name.clone()));
+                }
                 if let Some(value) = track["level"].as_f64()
                     && value.is_finite()
                 {

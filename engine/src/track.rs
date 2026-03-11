@@ -72,6 +72,8 @@ pub struct Track {
     pub midi_learn_disk_monitor: Option<crate::message::MidiLearnBinding>,
     pub vca_master: Option<String>,
     pub frozen: bool,
+    primary_audio_ins: usize,
+    primary_audio_outs: usize,
     pub audio: AudioTrack,
     pub midi: MIDITrack,
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -144,6 +146,8 @@ impl Track {
             midi_learn_disk_monitor: None,
             vca_master: None,
             frozen: false,
+            primary_audio_ins: audio_ins,
+            primary_audio_outs: audio_outs,
             audio: AudioTrack::new(audio_ins, audio_outs, buffer_size),
             midi: MIDITrack::new(midi_ins, midi_outs),
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -221,6 +225,14 @@ impl Track {
 
     fn invalidate_audio_route_cache(&mut self) {
         self.audio_route_cache_dirty = true;
+    }
+
+    pub fn primary_audio_ins(&self) -> usize {
+        self.primary_audio_ins.min(self.audio.ins.len())
+    }
+
+    pub fn primary_audio_outs(&self) -> usize {
+        self.primary_audio_outs.min(self.audio.outs.len())
     }
 
     fn ensure_audio_route_cache(&mut self) {
@@ -2435,6 +2447,76 @@ impl Track {
         }
         self.invalidate_audio_route_cache();
         self.invalidate_midi_route_cache();
+    }
+
+    fn current_buffer_size(&self) -> usize {
+        self.audio
+            .ins
+            .first()
+            .map(|io| io.buffer.lock().len())
+            .or_else(|| self.audio.outs.first().map(|io| io.buffer.lock().len()))
+            .unwrap_or(0)
+    }
+
+    pub fn add_audio_input(&mut self) -> Result<(), String> {
+        let buffer_size = self.current_buffer_size();
+        if buffer_size == 0 {
+            return Err(format!("Track '{}' has no audio buffer size", self.name));
+        }
+        let _ = self.audio.add_input(buffer_size);
+        self.invalidate_audio_route_cache();
+        Ok(())
+    }
+
+    pub fn add_audio_output(&mut self) -> Result<(), String> {
+        let buffer_size = self.current_buffer_size();
+        if buffer_size == 0 {
+            return Err(format!("Track '{}' has no audio buffer size", self.name));
+        }
+        let _ = self.audio.add_output(buffer_size);
+        self.record_tap_outs.push(vec![0.0; buffer_size]);
+        self.output_meter_linear_cache.push(0.0);
+        self.meter_peak_hold_linear.push(0.0);
+        self.invalidate_audio_route_cache();
+        Ok(())
+    }
+
+    pub fn remove_audio_input(&mut self) -> Result<(), String> {
+        if self.audio.ins.len() <= self.primary_audio_ins() {
+            return Err(format!("Track '{}' has no removable return inputs", self.name));
+        }
+        if let Some(input) = self.audio.ins.pop() {
+            Self::disconnect_all(&input);
+            for output in &self.audio.outs {
+                let conns = output.connections.lock();
+                conns.retain(|source| !Arc::ptr_eq(source, &input));
+            }
+            self.invalidate_audio_route_cache();
+            Ok(())
+        } else {
+            Err(format!("Track '{}' input removal failed", self.name))
+        }
+    }
+
+    pub fn remove_audio_output(
+        &mut self,
+        hw_outputs: &[Arc<AudioIO>],
+        track_inputs: &[Arc<AudioIO>],
+    ) -> Result<(), String> {
+        if self.audio.outs.len() <= self.primary_audio_outs() {
+            return Err(format!("Track '{}' has no removable send outputs", self.name));
+        }
+        let Some(output) = self.audio.outs.pop() else {
+            return Err(format!("Track '{}' output removal failed", self.name));
+        };
+        for target in hw_outputs.iter().chain(track_inputs.iter()) {
+            let _ = AudioIO::disconnect(&output, target);
+        }
+        self.record_tap_outs.truncate(self.audio.outs.len());
+        self.output_meter_linear_cache.truncate(self.audio.outs.len());
+        self.meter_peak_hold_linear.truncate(self.audio.outs.len());
+        self.invalidate_audio_route_cache();
+        Ok(())
     }
 
     #[cfg(any(unix, target_os = "windows"))]

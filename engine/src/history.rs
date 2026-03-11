@@ -87,6 +87,10 @@ pub fn should_record(action: &Action) -> bool {
             | Action::SetGlobalMidiLearnBinding { .. }
             | Action::TrackSetVcaMaster { .. }
             | Action::TrackSetFrozen { .. }
+            | Action::TrackAddAudioInput(_)
+            | Action::TrackAddAudioOutput(_)
+            | Action::TrackRemoveAudioInput(_)
+            | Action::TrackRemoveAudioOutput(_)
             | Action::AddClip { .. }
             | Action::RemoveClip { .. }
             | Action::RenameClip { .. }
@@ -131,9 +135,9 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             let track_lock = track.lock();
             Some(Action::AddTrack {
                 name: track_lock.name.clone(),
-                audio_ins: track_lock.audio.ins.len(),
+                audio_ins: track_lock.primary_audio_ins(),
                 midi_ins: track_lock.midi.ins.len(),
-                audio_outs: track_lock.audio.outs.len(),
+                audio_outs: track_lock.primary_audio_outs(),
                 midi_outs: track_lock.midi.outs.len(),
             })
         }
@@ -208,6 +212,10 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                 frozen: track_lock.frozen(),
             })
         }
+        Action::TrackAddAudioInput(name) => Some(Action::TrackRemoveAudioInput(name.clone())),
+        Action::TrackAddAudioOutput(name) => Some(Action::TrackRemoveAudioOutput(name.clone())),
+        Action::TrackRemoveAudioInput(name) => Some(Action::TrackAddAudioInput(name.clone())),
+        Action::TrackRemoveAudioOutput(name) => Some(Action::TrackAddAudioOutput(name.clone())),
 
         Action::AddClip {
             track_name, kind, ..
@@ -768,11 +776,17 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
             let track = track.lock();
             actions.push(Action::AddTrack {
                 name: track.name.clone(),
-                audio_ins: track.audio.ins.len(),
+                audio_ins: track.primary_audio_ins(),
                 midi_ins: track.midi.ins.len(),
-                audio_outs: track.audio.outs.len(),
+                audio_outs: track.primary_audio_outs(),
                 midi_outs: track.midi.outs.len(),
             });
+            for _ in track.primary_audio_ins()..track.audio.ins.len() {
+                actions.push(Action::TrackAddAudioInput(track.name.clone()));
+            }
+            for _ in track.primary_audio_outs()..track.audio.outs.len() {
+                actions.push(Action::TrackAddAudioOutput(track.name.clone()));
+            }
 
             if track.level != 0.0 {
                 actions.push(Action::TrackLevel(track.name.clone(), track.level));

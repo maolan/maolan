@@ -1,7 +1,7 @@
 #![cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
 
 use crate::{
-    connections::colors::{audio_port_color, midi_port_color},
+    connections::colors::{audio_port_color, aux_port_color, midi_port_color},
     connections::port_kind::{can_connect_kinds, should_highlight_port},
     connections::ports::hover_radius,
     connections::selection::is_bezier_hit,
@@ -188,6 +188,22 @@ impl Graph {
             kind,
             port,
         )
+    }
+
+    fn track_input_port_color(track: &crate::state::Track, port: usize) -> Color {
+        if port >= track.primary_audio_ins() {
+            aux_port_color()
+        } else {
+            audio_port_color()
+        }
+    }
+
+    fn track_output_port_color(track: &crate::state::Track, port: usize) -> Color {
+        if port >= track.primary_audio_outs() {
+            aux_port_color()
+        } else {
+            audio_port_color()
+        }
     }
 }
 
@@ -723,7 +739,7 @@ impl canvas::Program<Message> for Graph {
         let node_border = rgb8(78, 93, 130);
         let node_selected = rgb8(123, 173, 240);
         let conn_audio = Color::from_rgb(0.36, 0.66, 0.98);
-        let conn_midi = Color::from_rgb(0.98, 0.68, 0.34);
+        let conn_midi = Color::from_rgb(0.30, 0.82, 0.38);
         let conn_selected = Color::from_rgb(0.72, 0.90, 1.0);
         frame.fill(&Path::rectangle(Point::new(0.0, 0.0), bounds.size()), bg);
         draw_grid(&mut frame, bounds.width, bounds.height);
@@ -805,7 +821,7 @@ impl canvas::Program<Message> for Graph {
                         Point::new(in_rect.x + in_rect.width, py),
                         hover_radius(5.0, can_highlight),
                     ),
-                    audio_port_color(),
+                    Self::track_input_port_color(track, port),
                 );
             }
             for port in 0..track.midi.ins {
@@ -852,7 +868,7 @@ impl canvas::Program<Message> for Graph {
                 };
                 frame.fill(
                     &Path::circle(Point::new(out_rect.x, py), hover_radius(5.0, can_highlight)),
-                    audio_port_color(),
+                    Self::track_output_port_color(track, port),
                 );
             }
             for port in 0..track.midi.outs {

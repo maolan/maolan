@@ -86,6 +86,8 @@ pub(super) fn track_context_menu_overlay(
             "Save as template",
             Message::TrackTemplateSaveShow(track_name.clone()),
         ),
+        menu::menu_item("Add Return", Message::TrackAddReturn(track_name.clone())),
+        menu::menu_item("Add Send", Message::TrackAddSend(track_name.clone())),
         menu::menu_item(
             "MIDI Learn Volume",
             Message::TrackMidiLearnArm {
@@ -341,6 +343,8 @@ impl Tracks {
             disk_monitor: bool,
             audio_ins: usize,
             audio_outs: usize,
+            primary_audio_ins: usize,
+            primary_audio_outs: usize,
             midi_ins: usize,
             midi_outs: usize,
             balance: f32,
@@ -377,6 +381,8 @@ impl Tracks {
                     disk_monitor: track.disk_monitor,
                     audio_ins: track.audio.ins,
                     audio_outs: track.audio.outs,
+                    primary_audio_ins: track.primary_audio_ins(),
+                    primary_audio_outs: track.primary_audio_outs(),
                     midi_ins: track.midi.ins,
                     midi_outs: track.midi.outs,
                     balance: track.balance,
@@ -629,7 +635,11 @@ impl Tracks {
             }
 
             let audio_io = format!("A {}/{}", track.audio_ins, track.audio_outs);
+            let return_io =
+                format!("RET {}", track.audio_ins.saturating_sub(track.primary_audio_ins));
             let midi_io = format!("M {}/{}", track.midi_ins, track.midi_outs);
+            let send_io =
+                format!("SND {}", track.audio_outs.saturating_sub(track.primary_audio_outs));
             let mode_label = track.automation_mode.clone();
             let balance_label = Self::format_balance(track.balance);
             let automation_hint = if has_visible_automation { "AUTO" } else { "" };
@@ -639,7 +649,9 @@ impl Tracks {
                 column![
                     row![
                         Self::info_badge(audio_io, false),
+                        Self::info_badge(return_io, false),
                         Self::info_badge(midi_io, false),
+                        Self::info_badge(send_io, false),
                         Self::info_badge(mode_label, false),
                         Self::info_badge(balance_label, false),
                         container(text(automation_hint).size(9))

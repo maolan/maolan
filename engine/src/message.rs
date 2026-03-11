@@ -260,6 +260,10 @@ pub enum Action {
         audio_outs: usize,
         midi_outs: usize,
     },
+    TrackAddAudioInput(String),
+    TrackAddAudioOutput(String),
+    TrackRemoveAudioInput(String),
+    TrackRemoveAudioOutput(String),
     AddClip {
         name: String,
         track_name: String,

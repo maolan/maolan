@@ -1221,6 +1221,20 @@ impl Engine {
             .or_else(|| self.jack_output_audio_port(to_port))
     }
 
+    fn all_hw_output_audio_ports(&self) -> Vec<Arc<AudioIO>> {
+        if let Some(driver) = &self.hw_driver {
+            let count = driver.lock().output_channels();
+            return (0..count)
+                .filter_map(|idx| self.hw_driver_output_audio_port(idx))
+                .collect();
+        }
+        #[cfg(unix)]
+        if let Some(jack) = &self.jack_runtime {
+            return jack.lock().audio_outs.clone();
+        }
+        Vec::new()
+    }
+
     fn midi_hw_in_device(track: &str) -> Option<&str> {
         track.strip_prefix("midi:hw:in:")
     }
@@ -3038,6 +3052,72 @@ impl Engine {
                         "Engine needs to open audio device before adding audio track".to_string(),
                     ))
                     .await;
+                }
+            }
+            Action::TrackAddAudioInput(ref name) => {
+                let track = match self.track_handle_or_err(name) {
+                    Ok(track) => track,
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                        return;
+                    }
+                };
+                if let Err(e) = track.lock().add_audio_input() {
+                    self.notify_clients(Err(e)).await;
+                    return;
+                }
+            }
+            Action::TrackAddAudioOutput(ref name) => {
+                let track = match self.track_handle_or_err(name) {
+                    Ok(track) => track,
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                        return;
+                    }
+                };
+                if let Err(e) = track.lock().add_audio_output() {
+                    self.notify_clients(Err(e)).await;
+                    return;
+                }
+            }
+            Action::TrackRemoveAudioInput(ref name) => {
+                let track = match self.track_handle_or_err(name) {
+                    Ok(track) => track,
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                        return;
+                    }
+                };
+                if let Err(e) = track.lock().remove_audio_input() {
+                    self.notify_clients(Err(e)).await;
+                    return;
+                }
+            }
+            Action::TrackRemoveAudioOutput(ref name) => {
+                let track = match self.track_handle_or_err(name) {
+                    Ok(track) => track,
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                        return;
+                    }
+                };
+                let (hw_outputs, track_inputs) = {
+                    let state = self.state.lock();
+                    let hw_outputs = self.all_hw_output_audio_ports();
+                    let track_inputs = state
+                        .tracks
+                        .iter()
+                        .filter(|(track_name, _)| *track_name != name)
+                        .flat_map(|(_, handle)| handle.lock().audio.ins.clone())
+                        .collect::<Vec<_>>();
+                    (hw_outputs, track_inputs)
+                };
+                if let Err(e) = track
+                    .lock()
+                    .remove_audio_output(&hw_outputs, &track_inputs)
+                {
+                    self.notify_clients(Err(e)).await;
+                    return;
                 }
             }
             Action::RenameTrack {
