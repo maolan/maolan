@@ -20,8 +20,10 @@ impl Maolan {
                 true
             }
             Action::TransportPosition(sample) => {
-                self.transport_samples = *sample as f64;
+                // While paused/stopped we treat UI transport position as user-driven.
+                // Ignore late engine transport echoes to prevent pause->stop jump-forward.
                 if self.playing && !self.paused {
+                    self.transport_samples = *sample as f64;
                     self.last_playback_tick = Some(Instant::now());
                 }
                 true
