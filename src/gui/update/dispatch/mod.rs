@@ -64,9 +64,6 @@ impl Maolan {
                 | Message::TrackFreezeToggle { .. }
                 | Message::TrackFreezeFlatten { .. }
                 | Message::TrackSetVcaMaster { .. }
-                | Message::TrackAuxSendLevelAdjust { .. }
-                | Message::TrackAuxSendPanAdjust { .. }
-                | Message::TrackAuxSendTogglePrePost { .. }
                 | Message::TrackMidiLearnArm { .. }
                 | Message::TrackMidiLearnClear { .. }
         ) {
@@ -1579,7 +1576,6 @@ impl Maolan {
                                     if track.vca_master.as_deref() == Some(name.as_str()) {
                                         track.vca_master = None;
                                     }
-                                    track.aux_sends.retain(|send| send.aux_track != *name);
                                 }
                             }
                         }
@@ -2546,153 +2542,6 @@ impl Maolan {
                     track_name: track_name.clone(),
                     master_track: master_track.clone(),
                 });
-            }
-            Message::TrackCreateAuxReturnFromSelection => {
-                let (selected_tracks, max_outs, max_midi_outs, existing_names) = {
-                    let state = self.state.blocking_read();
-                    let selected = state.selected.iter().cloned().collect::<Vec<_>>();
-                    let mut audio_outs = 2usize;
-                    let mut midi_outs = 0usize;
-                    for track in &state.tracks {
-                        if state.selected.contains(&track.name) {
-                            audio_outs = audio_outs.max(track.audio.outs.max(1));
-                            midi_outs = midi_outs.max(track.midi.outs);
-                        }
-                    }
-                    (
-                        selected,
-                        audio_outs.max(1),
-                        midi_outs,
-                        state
-                            .tracks
-                            .iter()
-                            .map(|t| t.name.clone())
-                            .collect::<std::collections::HashSet<_>>(),
-                    )
-                };
-                if selected_tracks.is_empty() {
-                    self.state.blocking_write().message =
-                        "Select one or more tracks first".to_string();
-                    return Task::none();
-                }
-                let mut idx = 1usize;
-                let aux_name = loop {
-                    let candidate = format!("Aux Return {idx}");
-                    if !existing_names.contains(&candidate) {
-                        break candidate;
-                    }
-                    idx = idx.saturating_add(1);
-                };
-                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
-                tasks.push(self.send(Action::AddTrack {
-                    name: aux_name.clone(),
-                    audio_ins: max_outs,
-                    midi_ins: 0,
-                    audio_outs: max_outs,
-                    midi_outs: max_midi_outs,
-                }));
-                for track_name in &selected_tracks {
-                    tasks.push(self.send(Action::Connect {
-                        from_track: track_name.clone(),
-                        from_port: 0,
-                        to_track: aux_name.clone(),
-                        to_port: 0,
-                        kind: Kind::Audio,
-                    }));
-                }
-                tasks.push(self.send(Action::Connect {
-                    from_track: aux_name.clone(),
-                    from_port: 0,
-                    to_track: "hw:out".to_string(),
-                    to_port: 0,
-                    kind: Kind::Audio,
-                }));
-                tasks.push(self.send(Action::EndHistoryGroup));
-                {
-                    let mut state = self.state.blocking_write();
-                    for track in &mut state.tracks {
-                        if selected_tracks.iter().any(|name| name == &track.name)
-                            && !track.aux_sends.iter().any(|s| s.aux_track == aux_name)
-                        {
-                            track.aux_sends.push(crate::state::AuxSend {
-                                aux_track: aux_name.clone(),
-                                level_db: 0.0,
-                                pan: 0.0,
-                                pre_fader: false,
-                            });
-                        }
-                    }
-                }
-                self.state.blocking_write().message = format!(
-                    "Created '{}' and connected selected tracks as sends",
-                    aux_name
-                );
-                return Task::batch(tasks);
-            }
-            Message::TrackAuxSendLevelAdjust {
-                ref track_name,
-                ref aux_track,
-                delta_db,
-            } => {
-                let mut state = self.state.blocking_write();
-                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                    && let Some(send) = track
-                        .aux_sends
-                        .iter_mut()
-                        .find(|s| s.aux_track == *aux_track)
-                {
-                    send.level_db = (send.level_db + delta_db).clamp(-60.0, 12.0);
-                    state.message = format!(
-                        "Aux send {} -> {} level {:.1} dB",
-                        track_name, aux_track, send.level_db
-                    );
-                }
-                return Task::none();
-            }
-            Message::TrackAuxSendPanAdjust {
-                ref track_name,
-                ref aux_track,
-                delta,
-            } => {
-                let mut state = self.state.blocking_write();
-                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                    && let Some(send) = track
-                        .aux_sends
-                        .iter_mut()
-                        .find(|s| s.aux_track == *aux_track)
-                {
-                    send.pan = (send.pan + delta).clamp(-1.0, 1.0);
-                    state.message = format!(
-                        "Aux send {} -> {} pan {:.2}",
-                        track_name, aux_track, send.pan
-                    );
-                }
-                return Task::none();
-            }
-            Message::TrackAuxSendTogglePrePost {
-                ref track_name,
-                ref aux_track,
-            } => {
-                let mut state = self.state.blocking_write();
-                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
-                    && let Some(send) = track
-                        .aux_sends
-                        .iter_mut()
-                        .find(|s| s.aux_track == *aux_track)
-                {
-                    send.pre_fader = !send.pre_fader;
-                    state.message = format!(
-                        "Aux send {} -> {} mode {}",
-                        track_name,
-                        aux_track,
-                        if send.pre_fader {
-                            "Pre-Fader"
-                        } else {
-                            "Post-Fader"
-                        }
-                    );
-                }
-                return Task::none();
             }
             Message::TrackMidiLearnArm {
                 ref track_name,

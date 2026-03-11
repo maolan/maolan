@@ -39,7 +39,7 @@ use std::{
     time::Instant,
 };
 use tokio::sync::RwLock;
-pub use track::{AuxSend, Track, TrackAutomationLane, TrackAutomationPoint, TrackLaneLayout};
+pub use track::{Track, TrackAutomationLane, TrackAutomationPoint, TrackLaneLayout};
 
 pub use crate::consts::state_ids::{HW_IN_ID, HW_OUT_ID, MIDI_HW_IN_ID, MIDI_HW_OUT_ID};
 

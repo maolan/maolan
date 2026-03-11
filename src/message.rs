@@ -480,21 +480,6 @@ pub enum Message {
         track_name: String,
         master_track: Option<String>,
     },
-    TrackCreateAuxReturnFromSelection,
-    TrackAuxSendLevelAdjust {
-        track_name: String,
-        aux_track: String,
-        delta_db: f32,
-    },
-    TrackAuxSendPanAdjust {
-        track_name: String,
-        aux_track: String,
-        delta: f32,
-    },
-    TrackAuxSendTogglePrePost {
-        track_name: String,
-        aux_track: String,
-    },
     TrackMidiLearnArm {
         track_name: String,
         target: maolan_engine::message::TrackMidiLearnTarget,

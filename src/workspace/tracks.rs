@@ -163,55 +163,6 @@ pub(super) fn track_context_menu_overlay(
             },
         ));
     }
-    for send in &track.aux_sends {
-        items.push(menu::menu_item(
-            format!("Send {} Level -1dB ({:.1})", send.aux_track, send.level_db),
-            Message::TrackAuxSendLevelAdjust {
-                track_name: track_name.clone(),
-                aux_track: send.aux_track.clone(),
-                delta_db: -1.0,
-            },
-        ));
-        items.push(menu::menu_item(
-            format!("Send {} Level +1dB ({:.1})", send.aux_track, send.level_db),
-            Message::TrackAuxSendLevelAdjust {
-                track_name: track_name.clone(),
-                aux_track: send.aux_track.clone(),
-                delta_db: 1.0,
-            },
-        ));
-        items.push(menu::menu_item(
-            format!("Send {} Pan L ({:.2})", send.aux_track, send.pan),
-            Message::TrackAuxSendPanAdjust {
-                track_name: track_name.clone(),
-                aux_track: send.aux_track.clone(),
-                delta: -0.1,
-            },
-        ));
-        items.push(menu::menu_item(
-            format!("Send {} Pan R ({:.2})", send.aux_track, send.pan),
-            Message::TrackAuxSendPanAdjust {
-                track_name: track_name.clone(),
-                aux_track: send.aux_track.clone(),
-                delta: 0.1,
-            },
-        ));
-        items.push(menu::menu_item(
-            format!(
-                "Send {} Mode: {}",
-                send.aux_track,
-                if send.pre_fader {
-                    "Pre-Fader"
-                } else {
-                    "Post-Fader"
-                }
-            ),
-            Message::TrackAuxSendTogglePrePost {
-                track_name: track_name.clone(),
-                aux_track: send.aux_track.clone(),
-            },
-        ));
-    }
 
     if track.midi_learn_volume.is_some() {
         items.push(menu::menu_item(
