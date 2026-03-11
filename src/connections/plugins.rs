@@ -5,6 +5,7 @@ use crate::{
     connections::port_kind::{can_connect_kinds, should_highlight_port},
     connections::ports::hover_radius,
     connections::selection::is_bezier_hit,
+    consts::connections_plugins::*,
     message::Message,
     state::{MovingPlugin, PluginConnecting, State},
     ui_timing::DOUBLE_CLICK,
@@ -23,17 +24,6 @@ use iced::{
 use maolan_engine::kind::Kind;
 use maolan_engine::message::{Action as EngineAction, PluginGraphNode, PluginGraphPlugin};
 use std::time::Instant;
-
-const PLUGIN_W: f32 = 170.0;
-const MIN_PLUGIN_H: f32 = 96.0;
-const AUDIO_PORT_RADIUS: f32 = 4.5;
-const MIDI_PORT_RADIUS: f32 = 3.5;
-const MIN_PORT_GAP: f32 = 2.0;
-const PORT_HIT_RADIUS: f32 = AUDIO_PORT_RADIUS + 2.0;
-const MIDI_HIT_RADIUS: f32 = MIDI_PORT_RADIUS + 2.0;
-const TRACK_IO_W: f32 = 86.0;
-const TRACK_IO_H: f32 = 200.0;
-const TRACK_IO_MARGIN_X: f32 = 24.0;
 
 pub struct Graph {
     state: State,

@@ -9,6 +9,14 @@ use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, config, connections,
     consts::gui as gui_consts,
+    consts::gui_mod::{
+        AUDIO_BIT_DEPTH_OPTIONS, BINS_PER_UPDATE, CHUNK_FRAMES, CLIENT, MAX_PEAK_BINS,
+        MAX_RECENT_SESSIONS, STANDARD_EXPORT_SAMPLE_RATES,
+    },
+    consts::message_lists::{
+        EXPORT_BIT_DEPTH_ALL, EXPORT_MP3_MODE_ALL, EXPORT_NORMALIZE_MODE_ALL,
+        EXPORT_RENDER_MODE_ALL, SNAP_MODE_ALL,
+    },
     hw, menu,
     message::{
         DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
@@ -31,10 +39,7 @@ use iced::{
 };
 #[cfg(any(unix, target_os = "windows"))]
 use maolan_engine::kind::Kind;
-use maolan_engine::{
-    self as engine,
-    message::{Action, Message as EngineMessage},
-};
+use maolan_engine::message::{Action, Message as EngineMessage};
 use midly::{
     Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
     num::{u15, u24, u28},
@@ -62,7 +67,6 @@ use tokio::sync::RwLock;
 use vorbis_rs::{VorbisBitrateManagementStrategy, VorbisEncoderBuilder};
 use wavers::Wav;
 
-static CLIENT: LazyLock<engine::client::Client> = LazyLock::new(engine::client::Client::default);
 pub(crate) use gui_consts::{MIN_CLIP_WIDTH_PX, PREF_DEVICE_AUTO_ID};
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
 type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
@@ -602,9 +606,6 @@ impl Default for Maolan {
 }
 
 impl Maolan {
-    const MAX_RECENT_SESSIONS: usize = 12;
-    const AUDIO_BIT_DEPTH_OPTIONS: [usize; 4] = [32, 24, 16, 8];
-
     fn normalize_recent_session_paths(paths: Vec<String>) -> Vec<String> {
         let mut normalized = Vec::new();
         let mut seen = HashSet::new();
@@ -616,7 +617,7 @@ impl Maolan {
             if seen.insert(trimmed.to_string()) {
                 normalized.push(trimmed.to_string());
             }
-            if normalized.len() >= Self::MAX_RECENT_SESSIONS {
+            if normalized.len() >= MAX_RECENT_SESSIONS {
                 break;
             }
         }
@@ -932,7 +933,6 @@ impl Maolan {
         }
 
         // High-resolution, but bounded to avoid huge startup stalls and massive peak files.
-        const MAX_PEAK_BINS: usize = 32_768;
         let target_bins = per_channel
             .iter()
             .map(Vec::len)
@@ -1083,7 +1083,6 @@ impl Maolan {
             return Ok(());
         }
 
-        const BINS_PER_UPDATE: usize = 2048;
         let mut bin_start = 0usize;
         while bin_start < target_bins {
             let end = (bin_start + BINS_PER_UPDATE).min(target_bins);
@@ -1158,8 +1157,6 @@ impl Maolan {
             return Ok(());
         }
 
-        const MAX_PEAK_BINS: usize = 32_768;
-        const CHUNK_FRAMES: usize = 16_384;
         let target_bins = total_frames.clamp(1024, MAX_PEAK_BINS);
         let mut accum = vec![vec![[0.0_f32, 0.0_f32]; target_bins]; channels];
         let mut touched = vec![vec![false; target_bins]; channels];
@@ -3198,10 +3195,6 @@ impl Maolan {
         )
     }
 
-    const STANDARD_EXPORT_SAMPLE_RATES: [u32; 12] = [
-        8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000, 384000,
-    ];
-
     fn selected_export_formats(&self) -> Vec<ExportFormat> {
         let mut formats = Vec::new();
         if self.export_format_wav {
@@ -3224,7 +3217,7 @@ impl Maolan {
             .iter()
             .any(|f| matches!(f, ExportFormat::Wav | ExportFormat::Flac))
         {
-            ExportBitDepth::ALL.to_vec()
+            EXPORT_BIT_DEPTH_ALL.to_vec()
         } else {
             vec![ExportBitDepth::Float32]
         }
@@ -3303,7 +3296,7 @@ impl Maolan {
                 row![
                     text("Sample rate (Hz):"),
                     pick_list(
-                        Self::STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
+                        STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
                         Some(self.export_sample_rate_hz),
                         Message::ExportSampleRateSelected
                     )
@@ -3336,7 +3329,7 @@ impl Maolan {
                     row![
                         text("MP3 mode:"),
                         pick_list(
-                            ExportMp3Mode::ALL.to_vec(),
+                            EXPORT_MP3_MODE_ALL.to_vec(),
                             Some(self.export_mp3_mode),
                             Message::ExportMp3ModeSelected
                         )
@@ -3371,7 +3364,7 @@ impl Maolan {
                 row![
                     text("Render mode:"),
                     pick_list(
-                        ExportRenderMode::ALL.to_vec(),
+                        EXPORT_RENDER_MODE_ALL.to_vec(),
                         Some(self.export_render_mode),
                         Message::ExportRenderModeSelected
                     )
@@ -3403,7 +3396,7 @@ impl Maolan {
                             row![
                                 text("Mode:"),
                                 pick_list(
-                                    ExportNormalizeMode::ALL.to_vec(),
+                                    EXPORT_NORMALIZE_MODE_ALL.to_vec(),
                                     Some(self.export_normalize_mode),
                                     Message::ExportNormalizeModeSelected
                                 )
@@ -3554,7 +3547,7 @@ impl Maolan {
         }
         #[cfg(any(unix, target_os = "windows"))]
         {
-            let bits = if Self::AUDIO_BIT_DEPTH_OPTIONS.contains(&prefs.default_audio_bit_depth) {
+            let bits = if AUDIO_BIT_DEPTH_OPTIONS.contains(&prefs.default_audio_bit_depth) {
                 prefs.default_audio_bit_depth
             } else {
                 32
@@ -3631,7 +3624,7 @@ impl Maolan {
                 row![
                     text("Default export sample rate (Hz):"),
                     pick_list(
-                        Self::STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
+                        STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
                         Some(self.prefs_export_sample_rate_hz),
                         Message::PreferencesSampleRateSelected
                     )
@@ -3643,7 +3636,7 @@ impl Maolan {
                 row![
                     text("Default snap mode:"),
                     pick_list(
-                        SnapMode::ALL.to_vec(),
+                        SNAP_MODE_ALL.to_vec(),
                         Some(self.prefs_snap_mode),
                         Message::PreferencesSnapModeSelected
                     )
@@ -3656,7 +3649,7 @@ impl Maolan {
                 row![
                     text("Default bit depth:"),
                     pick_list(
-                        Self::AUDIO_BIT_DEPTH_OPTIONS.to_vec(),
+                        AUDIO_BIT_DEPTH_OPTIONS.to_vec(),
                         Some(self.prefs_audio_bit_depth),
                         Message::PreferencesBitDepthSelected
                     )

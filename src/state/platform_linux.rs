@@ -60,10 +60,6 @@ fn probe_alsa_supported_bits(device: &str, direction: Direction) -> Vec<usize> {
 }
 
 fn probe_alsa_supported_sample_rates(device: &str, direction: Direction) -> Vec<i32> {
-    const CANDIDATES: [u32; 12] = [
-        8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
-        384_000,
-    ];
     let Ok(pcm) = PCM::new(device, direction, false) else {
         return Vec::new();
     };
@@ -75,7 +71,7 @@ fn probe_alsa_supported_sample_rates(device: &str, direction: Direction) -> Vec<
     }
 
     let mut supported = Vec::new();
-    for rate in CANDIDATES {
+    for rate in crate::consts::state_platform_linux::SAMPLE_RATE_CANDIDATES {
         if hwp.test_rate(rate).is_ok() {
             supported.push(rate as i32);
         }

@@ -1,3 +1,7 @@
+use crate::consts::plugins_x11::{
+    CLIENT_MESSAGE, DESTROY_NOTIFY, EXPOSURE_MASK, STRUCTURE_NOTIFY_MASK, XEMBED_EMBEDDED_NOTIFY,
+    XEMBED_FOCUS_CURRENT, XEMBED_FOCUS_IN, XEMBED_WINDOW_ACTIVATE,
+};
 use maolan_engine::plugins::vst3::interfaces::{PluginFactory, pump_host_run_loop};
 use maolan_engine::plugins::vst3::{MemoryStream, ibstream_ptr};
 use std::ffi::{CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
@@ -9,15 +13,6 @@ use vst3::Steinberg::IPlugViewTrait;
 use vst3::Steinberg::Vst::IComponentTrait;
 use vst3::Steinberg::Vst::{IEditControllerTrait, ViewType};
 use vst3::Steinberg::kResultTrue;
-
-const CLIENT_MESSAGE: i32 = 33;
-const DESTROY_NOTIFY: i32 = 17;
-const STRUCTURE_NOTIFY_MASK: i64 = 1 << 17;
-const EXPOSURE_MASK: i64 = 1 << 15;
-const XEMBED_EMBEDDED_NOTIFY: c_long = 0;
-const XEMBED_WINDOW_ACTIVATE: c_long = 1;
-const XEMBED_FOCUS_IN: c_long = 4;
-const XEMBED_FOCUS_CURRENT: c_long = 0;
 
 static X11_THREADS_INIT: OnceLock<bool> = OnceLock::new();
 

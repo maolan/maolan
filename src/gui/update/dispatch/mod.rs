@@ -5430,7 +5430,7 @@ impl Maolan {
                         "Export requires an opened/saved session".to_string();
                     return Task::none();
                 }
-                let nearest_rate = Self::STANDARD_EXPORT_SAMPLE_RATES
+                let nearest_rate = crate::consts::gui_mod::STANDARD_EXPORT_SAMPLE_RATES
                     .iter()
                     .min_by_key(|rate| {
                         (i64::from(**rate) - self.playback_rate_hz.round() as i64).abs()

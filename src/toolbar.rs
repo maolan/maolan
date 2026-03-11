@@ -1,4 +1,5 @@
 use crate::{
+    consts::message_lists::SNAP_MODE_ALL,
     consts::workspace::MIDI_CLIP_BORDER,
     message::{Message, SnapMode},
 };
@@ -160,7 +161,7 @@ impl Toolbar {
                     ))
                 },
                 pick_list(
-                    &SnapMode::ALL[..],
+                    &SNAP_MODE_ALL[..],
                     Some(view_state.snap_mode),
                     Message::SetSnapMode
                 ),

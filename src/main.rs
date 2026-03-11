@@ -29,8 +29,6 @@ use tracing_subscriber::{
     prelude::*,
 };
 
-const ICON_BYTES: &[u8] = include_bytes!("../images/maolan.png");
-
 pub fn main() -> iced::Result {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     prefer_x11_backend();
@@ -60,7 +58,7 @@ fn prefer_x11_backend() {
 fn run_app() -> iced::Result {
     let config = config::Config::load().unwrap_or_default();
 
-    let icon = window::icon::from_file_data(ICON_BYTES, None).ok();
+    let icon = window::icon::from_file_data(crate::consts::main::ICON_BYTES, None).ok();
 
     let settings = Settings {
         default_text_size: Pixels(config.font_size),

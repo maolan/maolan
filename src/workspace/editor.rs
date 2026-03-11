@@ -1,8 +1,11 @@
 use crate::{
-    consts::workspace::{
-        AUDIO_CLIP_BASE, AUDIO_CLIP_BORDER, AUDIO_CLIP_SELECTED_BASE, AUDIO_CLIP_SELECTED_BORDER,
-        CLIP_RESIZE_HANDLE_WIDTH, MIDI_CLIP_BASE, MIDI_CLIP_BORDER, MIDI_CLIP_SELECTED_BASE,
-        MIDI_CLIP_SELECTED_BORDER,
+    consts::{
+        workspace::{
+            AUDIO_CLIP_BASE, AUDIO_CLIP_BORDER, AUDIO_CLIP_SELECTED_BASE,
+            AUDIO_CLIP_SELECTED_BORDER, CLIP_RESIZE_HANDLE_WIDTH, MIDI_CLIP_BASE, MIDI_CLIP_BORDER,
+            MIDI_CLIP_SELECTED_BASE, MIDI_CLIP_SELECTED_BORDER,
+        },
+        workspace_editor::{CHECKPOINTS, MAX_RENDER_COLUMNS, RENDER_MARGIN_COLUMNS},
     },
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, PianoNote, State, StateData, Track},
@@ -254,11 +257,6 @@ struct WaveformCanvas {
 }
 
 impl WaveformCanvas {
-    // Match Ardour's practical Cairo image-width ceiling so high zoom can keep
-    // near-1px waveform columns instead of widening after an artificial cap.
-    const MAX_RENDER_COLUMNS: usize = 32_767;
-    const RENDER_MARGIN_COLUMNS: usize = 2;
-
     fn shape_hash(&self, bounds: Rectangle) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         bounds.width.to_bits().hash(&mut hasher);
@@ -274,7 +272,6 @@ impl WaveformCanvas {
             }
             // Sample multiple checkpoints so streamed peak updates invalidate cache quickly
             // without hashing every bin.
-            const CHECKPOINTS: usize = 16;
             for i in 0..CHECKPOINTS {
                 let idx = (i * channel.len()) / CHECKPOINTS;
                 let sample = channel[idx.min(channel.len() - 1)];
@@ -422,9 +419,9 @@ impl canvas::Program<Message> for WaveformCanvas {
                     }
                     let visible_bins = end_idx.saturating_sub(start_idx).max(1);
                     let visible_columns =
-                        inner_w.ceil().max(1.0).min(Self::MAX_RENDER_COLUMNS as f32) as usize;
+                        inner_w.ceil().max(1.0).min(MAX_RENDER_COLUMNS as f32) as usize;
                     let x_step = inner_w / visible_columns as f32;
-                    let margin_columns = Self::RENDER_MARGIN_COLUMNS;
+                    let margin_columns = RENDER_MARGIN_COLUMNS;
                     let total_columns = visible_columns + (margin_columns * 2);
                     let margin_bins = ((visible_bins * margin_columns) / visible_columns).max(1);
                     let render_start_idx = start_idx.saturating_sub(margin_bins);

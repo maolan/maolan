@@ -41,10 +41,7 @@ use std::{
 use tokio::sync::RwLock;
 pub use track::{AuxSend, Track, TrackAutomationLane, TrackAutomationPoint, TrackLaneLayout};
 
-pub const HW_IN_ID: &str = "hw:in";
-pub const HW_OUT_ID: &str = "hw:out";
-pub const MIDI_HW_IN_ID: &str = "midi:hw:in";
-pub const MIDI_HW_OUT_ID: &str = "midi:hw:out";
+pub use crate::consts::state_ids::{HW_IN_ID, HW_OUT_ID, MIDI_HW_IN_ID, MIDI_HW_OUT_ID};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AudioBackendOption {

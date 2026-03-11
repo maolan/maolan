@@ -1,9 +1,17 @@
 use crate::{
-    menu::{menu_dropdown, menu_item},
-    message::{
-        Message, PianoChordKind, PianoControllerLane, PianoNrpnKind, PianoRpnKind, PianoScaleRoot,
-        PianoVelocityKind,
+    consts::{
+        message_lists::{
+            PIANO_CHORD_KIND_ALL, PIANO_NRPN_KIND_ALL, PIANO_RPN_KIND_ALL, PIANO_SCALE_ROOT_ALL,
+            PIANO_VELOCITY_KIND_ALL,
+        },
+        widget_piano::{
+            H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, MIDI_CHANNELS,
+            NOTES_PER_OCTAVE, OCTAVES, PITCH_MAX, RIGHT_SCROLL_GUTTER_WIDTH, TOOLS_STRIP_WIDTH,
+            WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
+        },
     },
+    menu::{menu_dropdown, menu_item},
+    message::{Message, PianoControllerLane, PianoNrpnKind, PianoRpnKind},
     state::State,
 };
 use iced::{
@@ -25,18 +33,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MIDI_CHANNELS: usize = 16;
-
 #[derive(Debug)]
 pub struct Piano {
     state: State,
 }
 
-pub const KEYS_SCROLL_ID: &str = "piano.keys.scroll";
-pub const NOTES_SCROLL_ID: &str = "piano.notes.scroll";
-pub const CTRL_SCROLL_ID: &str = "piano.ctrl.scroll";
-pub const H_SCROLL_ID: &str = "piano.h.scroll";
-pub const V_SCROLL_ID: &str = "piano.v.scroll";
+pub use crate::consts::widget_piano::{
+    CTRL_SCROLL_ID, H_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ControllerKindOption(u8);
@@ -48,18 +52,6 @@ impl std::fmt::Display for ControllerKindOption {
 }
 
 impl Piano {
-    pub const KEYBOARD_WIDTH: f32 = 128.0;
-    pub const RIGHT_SCROLL_GUTTER_WIDTH: f32 = 16.0;
-    pub const TOOLS_STRIP_WIDTH: f32 = 248.0;
-    pub const MAIN_SPLIT_SPACING: f32 = 3.0;
-    const H_ZOOM_MIN: f32 = 1.0;
-    const H_ZOOM_MAX: f32 = 127.0;
-    const OCTAVES: usize = 10;
-    const WHITE_KEYS_PER_OCTAVE: usize = 7;
-    const NOTES_PER_OCTAVE: usize = 12;
-    const PITCH_MAX: u8 = (Self::OCTAVES as u8 * Self::NOTES_PER_OCTAVE as u8) - 1;
-    const WHITE_KEY_HEIGHT: f32 = 14.0;
-
     pub fn new(state: State) -> Self {
         Self { state }
     }
@@ -121,12 +113,11 @@ impl Piano {
     }
 
     fn zoom_x_to_slider(zoom_x: f32) -> f32 {
-        (Self::H_ZOOM_MIN + Self::H_ZOOM_MAX - zoom_x).clamp(Self::H_ZOOM_MIN, Self::H_ZOOM_MAX)
+        (H_ZOOM_MIN + H_ZOOM_MAX - zoom_x).clamp(H_ZOOM_MIN, H_ZOOM_MAX)
     }
 
     fn slider_to_zoom_x(slider_value: f32) -> f32 {
-        (Self::H_ZOOM_MIN + Self::H_ZOOM_MAX - slider_value)
-            .clamp(Self::H_ZOOM_MIN, Self::H_ZOOM_MAX)
+        (H_ZOOM_MIN + H_ZOOM_MAX - slider_value).clamp(H_ZOOM_MIN, H_ZOOM_MAX)
     }
 
     fn cc_name(cc: u8) -> &'static str {
@@ -211,8 +202,8 @@ impl Piano {
         match lane {
             PianoControllerLane::Controller => 128,
             PianoControllerLane::Velocity => 128,
-            PianoControllerLane::Rpn => PianoRpnKind::ALL.len(),
-            PianoControllerLane::Nrpn => PianoNrpnKind::ALL.len(),
+            PianoControllerLane::Rpn => PIANO_RPN_KIND_ALL.len(),
+            PianoControllerLane::Nrpn => PIANO_NRPN_KIND_ALL.len(),
             PianoControllerLane::SysEx => 1,
         }
     }
@@ -254,13 +245,13 @@ impl Piano {
     }
 
     fn rpn_row_for_param(msb: u8, lsb: u8) -> Option<usize> {
-        PianoRpnKind::ALL
+        PIANO_RPN_KIND_ALL
             .iter()
             .position(|kind| Self::rpn_param(*kind) == (msb, lsb))
     }
 
     fn nrpn_row_for_param(msb: u8, lsb: u8) -> Option<usize> {
-        PianoNrpnKind::ALL
+        PIANO_NRPN_KIND_ALL
             .iter()
             .position(|kind| Self::nrpn_param(*kind) == (msb, lsb))
     }
@@ -364,9 +355,8 @@ impl Piano {
                 .into();
         };
 
-        let pitch_count = Self::OCTAVES * Self::NOTES_PER_OCTAVE;
-        let row_h = ((Self::WHITE_KEY_HEIGHT * Self::WHITE_KEYS_PER_OCTAVE as f32
-            / Self::NOTES_PER_OCTAVE as f32)
+        let pitch_count = OCTAVES * NOTES_PER_OCTAVE;
+        let row_h = ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
             * zoom_y)
             .max(1.0);
         let notes_h = pitch_count as f32 * row_h;
@@ -380,7 +370,7 @@ impl Piano {
 
         let mut note_layers: Vec<Element<'_, Message>> = vec![];
         for i in 0..pitch_count {
-            let pitch = Self::PITCH_MAX.saturating_sub(i as u8);
+            let pitch = PITCH_MAX.saturating_sub(i as u8);
             let is_black = Self::is_black_key(pitch);
             note_layers.push(
                 pin(container("")
@@ -496,10 +486,10 @@ impl Piano {
         }
 
         for note in &roll.notes {
-            if note.pitch > Self::PITCH_MAX {
+            if note.pitch > PITCH_MAX {
                 continue;
             }
-            let y_idx = usize::from(Self::PITCH_MAX.saturating_sub(note.pitch));
+            let y_idx = usize::from(PITCH_MAX.saturating_sub(note.pitch));
             let y = y_idx as f32 * row_h + 1.0;
             let x = note.start_sample as f32 * pps_notes;
             let w = (note.length_samples as f32 * pps_notes).max(2.0);
@@ -711,18 +701,18 @@ impl Piano {
             .width(Length::Fixed(ctrl_w))
             .height(Length::Fixed(ctrl_h));
 
-        let octave_h = (notes_h / Self::OCTAVES as f32).max(1.0);
+        let octave_h = (notes_h / OCTAVES as f32).max(1.0);
         let midnam_note_names = roll.midnam_note_names.clone();
-        let keyboard = (0..Self::OCTAVES).fold(column![], |col, octave_idx| {
-            let octave = (Self::OCTAVES - 1 - octave_idx) as u8;
+        let keyboard = (0..OCTAVES).fold(column![], |col, octave_idx| {
+            let octave = (OCTAVES - 1 - octave_idx) as u8;
             col.push(
                 iced::widget::canvas(OctaveKeyboard::new(octave, midnam_note_names.clone()))
-                    .width(Length::Fixed(Self::KEYBOARD_WIDTH))
+                    .width(Length::Fixed(KEYBOARD_WIDTH))
                     .height(Length::Fixed(octave_h)),
             )
         });
         let piano_note_keys = keyboard
-            .width(Length::Fixed(Self::KEYBOARD_WIDTH))
+            .width(Length::Fixed(KEYBOARD_WIDTH))
             .height(Length::Fill);
         let controller_picker = pick_list(
             vec![
@@ -766,7 +756,7 @@ impl Piano {
             PianoControllerLane::Velocity => {
                 let selected = format!("{} \u{25BE}", state.piano_velocity_kind);
                 let velocity_menu = IcedMenu::new(
-                    PianoVelocityKind::ALL
+                    PIANO_VELOCITY_KIND_ALL
                         .iter()
                         .copied()
                         .map(|kind| {
@@ -794,7 +784,7 @@ impl Piano {
             PianoControllerLane::Rpn => {
                 let selected = format!("{} \u{25BE}", state.piano_rpn_kind);
                 let rpn_menu = IcedMenu::new(
-                    PianoRpnKind::ALL
+                    PIANO_RPN_KIND_ALL
                         .iter()
                         .copied()
                         .map(|kind| {
@@ -822,7 +812,7 @@ impl Piano {
             PianoControllerLane::Nrpn => {
                 let selected = format!("{} \u{25BE}", state.piano_nrpn_kind);
                 let nrpn_menu = IcedMenu::new(
-                    PianoNrpnKind::ALL
+                    PIANO_NRPN_KIND_ALL
                         .iter()
                         .copied()
                         .map(|kind| {
@@ -856,7 +846,7 @@ impl Piano {
         };
         let controller_header = column![controller_picker, controller_number_picker].spacing(2);
         let controller_key = container(controller_header)
-            .width(Length::Fixed(Self::KEYBOARD_WIDTH))
+            .width(Length::Fixed(KEYBOARD_WIDTH))
             .height(Length::Fixed(ctrl_h))
             .padding([4, 3])
             .style(|_theme| container::Style {
@@ -871,7 +861,7 @@ impl Piano {
 
         let keyboard_scroll = scrollable(
             container(piano_note_keys)
-                .width(Length::Fixed(Self::KEYBOARD_WIDTH))
+                .width(Length::Fixed(KEYBOARD_WIDTH))
                 .height(Length::Fixed(notes_h))
                 .style(|_theme| container::Style {
                     background: Some(Background::Color(Color {
@@ -888,7 +878,7 @@ impl Piano {
             scrollable::Scrollbar::hidden(),
         ))
         .on_scroll(|viewport| Message::PianoScrollYChanged(viewport.relative_offset().y))
-        .width(Length::Fixed(Self::KEYBOARD_WIDTH))
+        .width(Length::Fixed(KEYBOARD_WIDTH))
         .height(Length::Fill);
 
         let note_scroll = scrollable(
@@ -963,7 +953,7 @@ impl Piano {
         .id(Id::new(V_SCROLL_ID))
         .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::new()))
         .on_scroll(|viewport| Message::PianoScrollYChanged(viewport.relative_offset().y))
-        .width(Length::Fixed(Self::RIGHT_SCROLL_GUTTER_WIDTH))
+        .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
         .height(Length::Fill);
 
         let selected_sysex = state.piano_selected_sysex;
@@ -1027,7 +1017,7 @@ impl Piano {
                 row![
                     button(text("Scale").size(11)).on_press(Message::PianoScaleSelectedNotes),
                     pick_list(
-                        PianoScaleRoot::ALL.to_vec(),
+                        PIANO_SCALE_ROOT_ALL.to_vec(),
                         Some(scale_root),
                         Message::PianoScaleRootSelected
                     )
@@ -1040,7 +1030,7 @@ impl Piano {
                 row![
                     button(text("Chord").size(11)).on_press(Message::PianoChordSelectedNotes),
                     pick_list(
-                        PianoChordKind::ALL.to_vec(),
+                        PIANO_CHORD_KIND_ALL.to_vec(),
                         Some(chord_kind),
                         Message::PianoChordKindSelected
                     )
@@ -1092,7 +1082,7 @@ impl Piano {
             .spacing(8)
             .width(Length::Fill),
         )
-        .width(Length::Fixed(Self::TOOLS_STRIP_WIDTH))
+        .width(Length::Fixed(TOOLS_STRIP_WIDTH))
         .height(Length::Fill)
         .padding([8, 8])
         .style(|_theme| container::Style {
@@ -1110,12 +1100,12 @@ impl Piano {
                     row![controller_key, ctrl_scroll],
                     row![
                         container("")
-                            .width(Length::Fixed(Self::KEYBOARD_WIDTH))
+                            .width(Length::Fixed(KEYBOARD_WIDTH))
                             .height(Length::Fixed(16.0)),
                         row![
                             h_scroll,
                             slider(
-                                Self::H_ZOOM_MIN..=Self::H_ZOOM_MAX,
+                                H_ZOOM_MIN..=H_ZOOM_MAX,
                                 Self::zoom_x_to_slider(zoom_x),
                                 |value| Message::PianoZoomXChanged(Self::slider_to_zoom_x(value)),
                             )
@@ -1130,7 +1120,7 @@ impl Piano {
                 .width(Length::Fill)
                 .height(Length::Fill),
             ]
-            .spacing(Self::MAIN_SPLIT_SPACING)
+            .spacing(MAIN_SPLIT_SPACING)
             .width(Length::Fill)
             .height(Length::Fill),
             column![
@@ -1553,10 +1543,10 @@ impl Program<Message> for ControllerRollInteraction {
             PianoControllerLane::Controller => Some(usize::from(
                 127_u8.saturating_sub(app_state.piano_controller_kind),
             )),
-            PianoControllerLane::Rpn => PianoRpnKind::ALL
+            PianoControllerLane::Rpn => PIANO_RPN_KIND_ALL
                 .iter()
                 .position(|kind| *kind == app_state.piano_rpn_kind),
-            PianoControllerLane::Nrpn => PianoNrpnKind::ALL
+            PianoControllerLane::Nrpn => PIANO_NRPN_KIND_ALL
                 .iter()
                 .position(|kind| *kind == app_state.piano_nrpn_kind),
             PianoControllerLane::Velocity => None,
@@ -1949,10 +1939,8 @@ impl Program<Message> for ControllerRollInteraction {
 mod controllers_lane {
     use iced::{Point, Rectangle};
 
+    use crate::consts::message_lists::{PIANO_NRPN_KIND_ALL, PIANO_RPN_KIND_ALL};
     use crate::message::{PianoControllerEditData, PianoNrpnKind, PianoRpnKind};
-
-    const MAX_RPN_NRPN_POINTS: usize = 4096;
-    const MIDI_DIN_BYTES_PER_SEC: f64 = 3125.0;
 
     #[derive(Debug, Clone, Copy)]
     pub struct DrawContext {
@@ -1972,7 +1960,9 @@ mod controllers_lane {
     ) -> usize {
         let span_samples = end_sample.saturating_sub(start_sample).max(1) as f64;
         let duration_sec = span_samples / sample_rate_hz.max(1.0);
-        let bytes_budget = (duration_sec * MIDI_DIN_BYTES_PER_SEC - fixed_bytes).max(0.0);
+        let bytes_budget = (duration_sec * crate::consts::widget_piano::MIDI_DIN_BYTES_PER_SEC
+            - fixed_bytes)
+            .max(0.0);
         let point_budget = (bytes_budget / bytes_per_point).floor() as usize;
         point_budget.saturating_add(1).max(2)
     }
@@ -2006,7 +1996,7 @@ mod controllers_lane {
     }
 
     fn rpn_param(row: usize) -> (u8, u8) {
-        let kind = PianoRpnKind::ALL
+        let kind = PIANO_RPN_KIND_ALL
             .get(row)
             .copied()
             .unwrap_or(PianoRpnKind::PitchBendSensitivity);
@@ -2018,7 +2008,7 @@ mod controllers_lane {
     }
 
     fn nrpn_param(row: usize) -> (u8, u8) {
-        let kind = PianoNrpnKind::ALL
+        let kind = PIANO_NRPN_KIND_ALL
             .get(row)
             .copied()
             .unwrap_or(PianoNrpnKind::Brightness);
@@ -2104,7 +2094,7 @@ mod controllers_lane {
                     .min(max_by_span)
                     .min(max_by_rate)
                     .min(max_by_snap)
-                    .min(MAX_RPN_NRPN_POINTS);
+                    .min(crate::consts::widget_piano::MAX_RPN_NRPN_POINTS);
                 let (msb, lsb) = rpn_param(row);
                 out.push(PianoControllerEditData {
                     sample: start_sample,
@@ -2161,7 +2151,7 @@ mod controllers_lane {
                     .min(max_by_span)
                     .min(max_by_rate)
                     .min(max_by_snap)
-                    .min(MAX_RPN_NRPN_POINTS);
+                    .min(crate::consts::widget_piano::MAX_RPN_NRPN_POINTS);
                 let (msb, lsb) = nrpn_param(row);
                 out.push(PianoControllerEditData {
                     sample: start_sample,
@@ -2228,10 +2218,11 @@ impl PianoRollInteraction {
         notes: &[crate::state::PianoNote],
     ) -> Option<usize> {
         for (idx, note) in notes.iter().enumerate() {
-            if note.pitch > Piano::PITCH_MAX {
+            if note.pitch > crate::consts::widget_piano::PITCH_MAX {
                 continue;
             }
-            let y_idx = usize::from(Piano::PITCH_MAX.saturating_sub(note.pitch));
+            let y_idx =
+                usize::from(crate::consts::widget_piano::PITCH_MAX.saturating_sub(note.pitch));
             let y = y_idx as f32 * row_h + 1.0;
             let x = note.start_sample as f32 * pps;
             let w = (note.length_samples as f32 * pps).max(2.0);
@@ -2288,8 +2279,9 @@ impl Program<Message> for PianoRollInteraction {
 
         let zoom_x = app_state.piano_zoom_x;
         let zoom_y = app_state.piano_zoom_y;
-        let row_h = ((Piano::WHITE_KEY_HEIGHT * Piano::WHITE_KEYS_PER_OCTAVE as f32
-            / Piano::NOTES_PER_OCTAVE as f32)
+        let row_h = ((crate::consts::widget_piano::WHITE_KEY_HEIGHT
+            * crate::consts::widget_piano::WHITE_KEYS_PER_OCTAVE as f32
+            / crate::consts::widget_piano::NOTES_PER_OCTAVE as f32)
             * zoom_y)
             .max(1.0);
         let pps = (self.pixels_per_sample * zoom_x).max(0.0001);
@@ -2468,8 +2460,9 @@ impl Program<Message> for PianoRollInteraction {
         let resizing_note = app_state.piano_resizing_note.as_ref();
         let creating_note = app_state.piano_creating_note;
 
-        let row_h = ((Piano::WHITE_KEY_HEIGHT * Piano::WHITE_KEYS_PER_OCTAVE as f32
-            / Piano::NOTES_PER_OCTAVE as f32)
+        let row_h = ((crate::consts::widget_piano::WHITE_KEY_HEIGHT
+            * crate::consts::widget_piano::WHITE_KEYS_PER_OCTAVE as f32
+            / crate::consts::widget_piano::NOTES_PER_OCTAVE as f32)
             * zoom_y)
             .max(1.0);
         let pps = (self.pixels_per_sample * zoom_x).max(0.0001);
@@ -2479,10 +2472,11 @@ impl Program<Message> for PianoRollInteraction {
         // Draw selection highlights for selected notes
         for &note_idx in selected_notes {
             if let Some(note) = roll.notes.get(note_idx) {
-                if note.pitch > Piano::PITCH_MAX {
+                if note.pitch > crate::consts::widget_piano::PITCH_MAX {
                     continue;
                 }
-                let y_idx = usize::from(Piano::PITCH_MAX.saturating_sub(note.pitch));
+                let y_idx =
+                    usize::from(crate::consts::widget_piano::PITCH_MAX.saturating_sub(note.pitch));
                 let y = y_idx as f32 * row_h + 1.0;
                 let x = note.start_sample as f32 * pps;
                 let w = (note.length_samples as f32 * pps).max(2.0);
@@ -2514,10 +2508,11 @@ impl Program<Message> for PianoRollInteraction {
             let delta_y = dragging.current_point.y - dragging.start_point.y;
 
             for note in &dragging.original_notes {
-                if note.pitch > Piano::PITCH_MAX {
+                if note.pitch > crate::consts::widget_piano::PITCH_MAX {
                     continue;
                 }
-                let y_idx = usize::from(Piano::PITCH_MAX.saturating_sub(note.pitch));
+                let y_idx =
+                    usize::from(crate::consts::widget_piano::PITCH_MAX.saturating_sub(note.pitch));
                 let y = y_idx as f32 * row_h + 1.0 + delta_y;
                 let x = note.start_sample as f32 * pps + delta_x;
                 let w = (note.length_samples as f32 * pps).max(2.0);
@@ -2604,8 +2599,10 @@ impl Program<Message> for PianoRollInteraction {
                 )
             };
 
-            if original.pitch <= Piano::PITCH_MAX {
-                let y_idx = usize::from(Piano::PITCH_MAX.saturating_sub(original.pitch));
+            if original.pitch <= crate::consts::widget_piano::PITCH_MAX {
+                let y_idx = usize::from(
+                    crate::consts::widget_piano::PITCH_MAX.saturating_sub(original.pitch),
+                );
                 let y = y_idx as f32 * row_h + 1.0;
                 let x = preview_start as f32 * pps;
                 let w = (preview_len as f32 * pps).max(2.0);

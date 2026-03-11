@@ -64,16 +64,6 @@ impl fmt::Display for SnapMode {
 }
 
 impl SnapMode {
-    pub const ALL: [SnapMode; 7] = [
-        SnapMode::NoSnap,
-        SnapMode::Bar,
-        SnapMode::Beat,
-        SnapMode::Eighth,
-        SnapMode::Sixteenth,
-        SnapMode::ThirtySecond,
-        SnapMode::SixtyFourth,
-    ];
-
     pub fn interval_samples(self, samples_per_beat: f64, samples_per_bar: f64) -> f64 {
         match self {
             SnapMode::NoSnap => 1.0,
@@ -216,13 +206,6 @@ pub enum PianoVelocityKind {
     ReleaseVelocity,
 }
 
-impl PianoVelocityKind {
-    pub const ALL: [PianoVelocityKind; 2] = [
-        PianoVelocityKind::NoteVelocity,
-        PianoVelocityKind::ReleaseVelocity,
-    ];
-}
-
 impl fmt::Display for PianoVelocityKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -237,14 +220,6 @@ pub enum PianoRpnKind {
     PitchBendSensitivity,
     FineTuning,
     CoarseTuning,
-}
-
-impl PianoRpnKind {
-    pub const ALL: [PianoRpnKind; 3] = [
-        PianoRpnKind::PitchBendSensitivity,
-        PianoRpnKind::FineTuning,
-        PianoRpnKind::CoarseTuning,
-    ];
 }
 
 impl fmt::Display for PianoRpnKind {
@@ -281,21 +256,6 @@ pub enum PianoScaleRoot {
 }
 
 impl PianoScaleRoot {
-    pub const ALL: [PianoScaleRoot; 12] = [
-        PianoScaleRoot::C,
-        PianoScaleRoot::CSharp,
-        PianoScaleRoot::D,
-        PianoScaleRoot::DSharp,
-        PianoScaleRoot::E,
-        PianoScaleRoot::F,
-        PianoScaleRoot::FSharp,
-        PianoScaleRoot::G,
-        PianoScaleRoot::GSharp,
-        PianoScaleRoot::A,
-        PianoScaleRoot::ASharp,
-        PianoScaleRoot::B,
-    ];
-
     pub fn semitone(self) -> u8 {
         match self {
             PianoScaleRoot::C => 0,
@@ -343,14 +303,6 @@ pub enum PianoChordKind {
 }
 
 impl PianoChordKind {
-    pub const ALL: [PianoChordKind; 5] = [
-        PianoChordKind::MajorTriad,
-        PianoChordKind::MinorTriad,
-        PianoChordKind::Dominant7,
-        PianoChordKind::Major7,
-        PianoChordKind::Minor7,
-    ];
-
     pub fn intervals(self) -> &'static [u8] {
         match self {
             PianoChordKind::MajorTriad => &[4, 7],
@@ -372,14 +324,6 @@ impl fmt::Display for PianoChordKind {
             PianoChordKind::Minor7 => write!(f, "Min7"),
         }
     }
-}
-
-impl PianoNrpnKind {
-    pub const ALL: [PianoNrpnKind; 3] = [
-        PianoNrpnKind::Brightness,
-        PianoNrpnKind::VibratoRate,
-        PianoNrpnKind::VibratoDepth,
-    ];
 }
 
 impl fmt::Display for PianoNrpnKind {
@@ -427,23 +371,6 @@ pub enum ExportRenderMode {
     StemsPreFader,
 }
 
-impl ExportNormalizeMode {
-    pub const ALL: [ExportNormalizeMode; 2] =
-        [ExportNormalizeMode::Peak, ExportNormalizeMode::Loudness];
-}
-
-impl ExportMp3Mode {
-    pub const ALL: [ExportMp3Mode; 2] = [ExportMp3Mode::Cbr, ExportMp3Mode::Vbr];
-}
-
-impl ExportRenderMode {
-    pub const ALL: [ExportRenderMode; 3] = [
-        ExportRenderMode::Mixdown,
-        ExportRenderMode::StemsPostFader,
-        ExportRenderMode::StemsPreFader,
-    ];
-}
-
 impl fmt::Display for ExportNormalizeMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -481,15 +408,6 @@ impl fmt::Display for ExportRenderMode {
             ExportRenderMode::StemsPreFader => write!(f, "Stems (Pre-Fader)"),
         }
     }
-}
-
-impl ExportBitDepth {
-    pub const ALL: [ExportBitDepth; 4] = [
-        ExportBitDepth::Int16,
-        ExportBitDepth::Int24,
-        ExportBitDepth::Int32,
-        ExportBitDepth::Float32,
-    ];
 }
 
 impl fmt::Display for ExportBitDepth {

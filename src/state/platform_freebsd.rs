@@ -1,4 +1,7 @@
 use super::AudioDeviceOption;
+use crate::consts::state_platform_freebsd::{
+    AFMT_S8, AFMT_S16_BE, AFMT_S16_LE, AFMT_S24_BE, AFMT_S24_LE, AFMT_S32_BE, AFMT_S32_LE,
+};
 use nvtree::{Nvtree, Nvtvalue, nvtree_find, nvtree_unpack};
 use std::{ffi::c_void, fs::File, os::fd::AsRawFd};
 
@@ -109,14 +112,6 @@ fn parse_sndstat_nvlist(buf: &[u8]) -> Option<Vec<AudioDeviceOption>> {
     (!out.is_empty()).then_some(out)
 }
 
-const AFMT_S16_LE: u64 = 0x00000010;
-const AFMT_S16_BE: u64 = 0x00000020;
-const AFMT_S8: u64 = 0x00000040;
-const AFMT_S32_LE: u64 = 0x00001000;
-const AFMT_S32_BE: u64 = 0x00002000;
-const AFMT_S24_LE: u64 = 0x00010000;
-const AFMT_S24_BE: u64 = 0x00020000;
-
 fn decode_supported_bits_from_dsp(dsp: &Nvtree) -> Vec<usize> {
     fn parse_number_text(s: &str) -> Option<u64> {
         let trimmed = s.trim();
@@ -144,16 +139,7 @@ fn decode_supported_bits_from_dsp(dsp: &Nvtree) -> Vec<usize> {
     }
 
     fn format_mask_from_tree(tree: &Nvtree) -> Option<u64> {
-        const DIRECT_KEYS: [&str; 7] = [
-            "formats",
-            "iformats",
-            "oformats",
-            "pformats",
-            "rformats",
-            "playformats",
-            "recformats",
-        ];
-        for key in DIRECT_KEYS {
+        for key in crate::consts::state_platform_freebsd_lists::DIRECT_KEYS {
             if let Some(pair) = nvtree_find(tree, key)
                 && let Some(mask) = format_mask_from_value(&pair.value)
             {
@@ -232,17 +218,7 @@ fn decode_supported_sample_rates_from_dsp(dsp: &Nvtree) -> Vec<i32> {
     }
 
     fn collect_rates_from_tree(tree: &Nvtree, rates: &mut BTreeSet<i32>) {
-        const RATE_KEYS: [&str; 8] = [
-            "rates",
-            "rate",
-            "irates",
-            "orates",
-            "playrates",
-            "recrates",
-            "playback_rates",
-            "capture_rates",
-        ];
-        for key in RATE_KEYS {
+        for key in crate::consts::state_platform_freebsd_lists::RATE_KEYS {
             if let Some(pair) = nvtree_find(tree, key) {
                 collect_rates_from_value(&pair.value, rates);
             }
@@ -275,10 +251,6 @@ fn probe_oss_supported_bits(devpath: &str) -> Vec<usize> {
 }
 
 fn probe_oss_supported_sample_rates(devpath: &str) -> Vec<i32> {
-    const CANDIDATES: [i32; 12] = [
-        8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
-        384_000,
-    ];
     let Ok(file) = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -288,7 +260,7 @@ fn probe_oss_supported_sample_rates(devpath: &str) -> Vec<i32> {
     };
     let fd = file.as_raw_fd();
     let mut supported = std::collections::BTreeSet::new();
-    for candidate in CANDIDATES {
+    for candidate in crate::consts::state_platform_freebsd_lists::SAMPLE_RATE_CANDIDATES {
         let mut rate = candidate;
         let ok = unsafe { oss_set_speed(fd, &mut rate).is_ok() };
         if ok && rate > 0 {

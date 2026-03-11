@@ -1,5 +1,8 @@
 use crate::{
-    consts::workspace::{TICK_LABELS, TICK_VALUES},
+    consts::{
+        workspace::{TICK_LABELS, TICK_VALUES},
+        workspace_mixer::*,
+    },
     message::Message,
     state::State,
     style,
@@ -14,37 +17,12 @@ use iced::{
     },
 };
 use maolan_engine::message::Action;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 #[derive(Debug, Default)]
 pub struct Mixer {
     state: State,
 }
-
-static LEVEL_LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    let mut labels = Vec::with_capacity(1101);
-    for i in 0..=1100 {
-        let level = -90.0 + (i as f32) * 0.1;
-        let s: &'static str = Box::leak(format!("{:+.1} dB", level).into_boxed_str());
-        labels.push(s);
-    }
-    labels
-});
-
-static BALANCE_LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    let mut labels = Vec::with_capacity(201);
-    for i in -100..=100 {
-        let s: &'static str = if i == 0 {
-            "C"
-        } else if i < 0 {
-            Box::leak(format!("L{}", -i).into_boxed_str())
-        } else {
-            Box::leak(format!("R{}", i).into_boxed_str())
-        };
-        labels.push(s);
-    }
-    labels
-});
 
 #[derive(Clone)]
 struct VuMeterCanvas {
@@ -69,8 +47,8 @@ impl canvas::Program<Message> for VuMeterCanvas {
         }
         let channels = self.channels.max(1);
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let bar_w = Mixer::METER_BAR_WIDTH;
-        let bar_gap = Mixer::METER_BAR_GAP;
+        let bar_w = METER_BAR_WIDTH;
+        let bar_gap = METER_BAR_GAP;
         let inner_h = self.meter_height.max(1.0);
         for channel_idx in 0..channels {
             let q = self.levels_qdb.get(channel_idx).copied().unwrap_or(0);
@@ -89,28 +67,12 @@ impl canvas::Program<Message> for VuMeterCanvas {
 }
 
 impl Mixer {
-    const FADER_MIN_DB: f32 = -90.0;
-    const FADER_MAX_DB: f32 = 20.0;
-    const STRIP_WIDTH: f32 = 96.0;
-    const PAN_SLIDER_WIDTH: f32 = 52.0;
-    const READOUT_WIDTH: f32 = 72.0;
-    const FADER_WIDTH: f32 = 14.0;
-    const SCALE_WIDTH: f32 = 22.0;
-    const PAN_ROW_HEIGHT: f32 = 12.0;
-    const STRIP_NAME_CHAR_PX: f32 = 6.3;
-    const STRIP_NAME_SIDE_PADDING: f32 = 4.0;
-    const METER_BAR_WIDTH: f32 = 3.0;
-    const METER_BAR_GAP: f32 = 2.0;
-    const METER_PAD_X: f32 = 3.0;
-    const METER_PAD_Y: f32 = 3.0;
-
     pub fn new(state: State) -> Self {
         Self { state }
     }
 
     fn level_to_meter_fill(level_db: f32) -> f32 {
-        ((level_db - Self::FADER_MIN_DB) / (Self::FADER_MAX_DB - Self::FADER_MIN_DB))
-            .clamp(0.0, 1.0)
+        ((level_db - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB)).clamp(0.0, 1.0)
     }
 
     fn fader_height_from_panel(height: Length) -> f32 {
@@ -121,8 +83,7 @@ impl Mixer {
     }
 
     fn db_to_y(db: f32, fader_height: f32) -> f32 {
-        let normalized =
-            ((db - Self::FADER_MIN_DB) / (Self::FADER_MAX_DB - Self::FADER_MIN_DB)).clamp(0.0, 1.0);
+        let normalized = ((db - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB)).clamp(0.0, 1.0);
         fader_height * (1.0 - normalized)
     }
 
@@ -149,8 +110,8 @@ impl Mixer {
     }
 
     fn trim_strip_name(name: &str, width: f32) -> String {
-        let usable_width = (width - (Self::STRIP_NAME_SIDE_PADDING * 2.0)).max(0.0);
-        let max_chars = (usable_width / Self::STRIP_NAME_CHAR_PX).floor() as usize;
+        let usable_width = (width - (STRIP_NAME_SIDE_PADDING * 2.0)).max(0.0);
+        let max_chars = (usable_width / STRIP_NAME_CHAR_PX).floor() as usize;
         if max_chars == 0 {
             String::new()
         } else {
@@ -172,12 +133,11 @@ impl Mixer {
 
     fn meter_inner_width(channels: usize) -> f32 {
         let channels = channels.max(1);
-        channels as f32 * Self::METER_BAR_WIDTH
-            + (channels.saturating_sub(1) as f32 * Self::METER_BAR_GAP)
+        channels as f32 * METER_BAR_WIDTH + (channels.saturating_sub(1) as f32 * METER_BAR_GAP)
     }
 
     fn meter_total_width(channels: usize) -> f32 {
-        Self::meter_inner_width(channels) + (Self::METER_PAD_X * 2.0)
+        Self::meter_inner_width(channels) + (METER_PAD_X * 2.0)
     }
 
     fn tick_scale_cached(fader_height: f32) -> Element<'static, Message> {
@@ -203,7 +163,7 @@ impl Mixer {
             }
 
             Stack::from_vec(marks)
-                .width(Length::Fixed(Self::SCALE_WIDTH))
+                .width(Length::Fixed(SCALE_WIDTH))
                 .height(Length::Fixed(fader_height))
                 .into()
         })
@@ -219,8 +179,8 @@ impl Mixer {
         F: Fn(f32) -> Message + 'static,
     {
         row![
-            Slider::new(Self::FADER_MIN_DB..=Self::FADER_MAX_DB, value, on_change)
-                .width(Length::Fixed(Self::FADER_WIDTH))
+            Slider::new(FADER_MIN_DB..=FADER_MAX_DB, value, on_change)
+                .width(Length::Fixed(FADER_WIDTH))
                 .height(Length::Fixed(fader_height)),
             Self::tick_scale_cached(fader_height),
         ]
@@ -233,8 +193,8 @@ impl Mixer {
     where
         F: Fn(f32) -> Message + 'static,
     {
-        Slider::new(Self::FADER_MIN_DB..=Self::FADER_MAX_DB, value, on_change)
-            .width(Length::Fixed(Self::FADER_WIDTH))
+        Slider::new(FADER_MIN_DB..=FADER_MAX_DB, value, on_change)
+            .width(Length::Fixed(FADER_WIDTH))
             .height(Length::Fixed(fader_height))
             .into()
     }
@@ -244,17 +204,17 @@ impl Mixer {
         F: Fn(f32) -> Message + 'static,
     {
         HorizontalSlider::new(-1.0..=1.0, value.clamp(-1.0, 1.0), on_change)
-            .width(Length::Fixed(Self::PAN_SLIDER_WIDTH))
-            .height(Length::Fixed(Self::PAN_ROW_HEIGHT))
+            .width(Length::Fixed(PAN_SLIDER_WIDTH))
+            .height(Length::Fixed(PAN_ROW_HEIGHT))
             .into()
     }
 
     fn format_level_db(level: f32) -> &'static str {
-        if level <= Self::FADER_MIN_DB {
+        if level <= FADER_MIN_DB {
             "-inf dB"
         } else {
-            let clamped = level.clamp(Self::FADER_MIN_DB, Self::FADER_MAX_DB);
-            let idx = ((clamped - Self::FADER_MIN_DB) * 10.0).round() as usize;
+            let clamped = level.clamp(FADER_MIN_DB, FADER_MAX_DB);
+            let idx = ((clamped - FADER_MIN_DB) * 10.0).round() as usize;
             LEVEL_LABELS[idx.min(LEVEL_LABELS.len() - 1)]
         }
     }
@@ -267,7 +227,7 @@ impl Mixer {
 
     fn value_pill(content: &'static str) -> Element<'static, Message> {
         container(text(content).size(11))
-            .width(Length::Fixed(Self::READOUT_WIDTH))
+            .width(Length::Fixed(READOUT_WIDTH))
             .padding([4, 6])
             .align_x(Alignment::Center)
             .style(|_theme| style::mixer::readout())
@@ -290,7 +250,7 @@ impl Mixer {
     }
 
     fn quantized_db_tenths(level: f32) -> i16 {
-        (level.clamp(Self::FADER_MIN_DB, Self::FADER_MAX_DB) * 10.0).round() as i16
+        (level.clamp(FADER_MIN_DB, FADER_MAX_DB) * 10.0).round() as i16
     }
 
     fn quantized_balance_hundredths(balance: f32) -> i16 {
@@ -303,9 +263,9 @@ impl Mixer {
 
     fn level_to_qdb(level_db: f32) -> u8 {
         (level_db
-            .clamp(Self::FADER_MIN_DB, Self::FADER_MAX_DB)
+            .clamp(FADER_MIN_DB, FADER_MAX_DB)
             .round()
-            .max(Self::FADER_MIN_DB) as i16)
+            .max(FADER_MIN_DB) as i16)
             .saturating_add(90)
             .clamp(0, 110) as u8
     }
@@ -374,7 +334,7 @@ impl Mixer {
     fn pan_placeholder() -> Element<'static, Message> {
         Space::new()
             .width(Length::Fill)
-            .height(Length::Fixed(Self::PAN_ROW_HEIGHT))
+            .height(Length::Fixed(PAN_ROW_HEIGHT))
             .into()
     }
 
@@ -390,7 +350,7 @@ impl Mixer {
 
     fn vu_meter(channels: usize, levels_db: &[f32], meter_h: f32) -> Element<'static, Message> {
         let channels = channels.max(1);
-        let inner_h = (meter_h - (Self::METER_PAD_Y * 2.0)).max(1.0);
+        let inner_h = (meter_h - (METER_PAD_Y * 2.0)).max(1.0);
         let q_levels = Self::quantized_meter_levels(levels_db, channels);
         let dep = (
             channels as u16,
@@ -416,7 +376,7 @@ impl Mixer {
         container(meter_canvas)
             .width(Length::Fixed(Self::meter_total_width(channels)))
             .height(Length::Fixed(meter_h))
-            .padding([Self::METER_PAD_Y as u16, Self::METER_PAD_X as u16])
+            .padding([METER_PAD_Y as u16, METER_PAD_X as u16])
             .style(|_theme| style::mixer::meter())
             .into()
     }
@@ -494,7 +454,7 @@ impl Mixer {
                 mouse_area(Self::strip_shell(
                     strip_name,
                     state.selected.contains(track.name.as_str()),
-                    Self::STRIP_WIDTH,
+                    STRIP_WIDTH,
                     pan,
                     bay,
                     Self::format_level_db(track.level),
@@ -503,13 +463,13 @@ impl Mixer {
             );
         }
 
-        let master_strip_width = (Self::FADER_WIDTH
-            + Self::SCALE_WIDTH
+        let master_strip_width = (FADER_WIDTH
+            + SCALE_WIDTH
             + 3.0
             + 8.0
             + Self::master_meter_width(hw_out_channels.max(1))
             + 16.0)
-            .max(Self::STRIP_WIDTH);
+            .max(STRIP_WIDTH);
         let master_strip = mouse_area(Self::strip_shell(
             "Master".to_string(),
             master_selected,

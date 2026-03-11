@@ -5,7 +5,12 @@ mod tempo;
 mod tracks;
 
 use crate::{
-    consts::workspace::{MIN_TIMELINE_BARS, PLAYHEAD_WIDTH_PX, TIMELINE_LEFT_INSET_PX},
+    consts::{
+        widget_piano::{
+            KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, RIGHT_SCROLL_GUTTER_WIDTH, TOOLS_STRIP_WIDTH,
+        },
+        workspace::{MIN_TIMELINE_BARS, PLAYHEAD_WIDTH_PX, TIMELINE_LEFT_INSET_PX},
+    },
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State},
     widget::piano,
@@ -19,14 +24,10 @@ use ruler::RulerViewArgs;
 use std::{collections::HashMap, path::PathBuf};
 use tempo::TempoViewArgs;
 
-pub const EDITOR_SCROLL_ID: &str = "workspace.editor.scroll";
-pub const EDITOR_TIMELINE_SCROLL_ID: &str = "workspace.editor.timeline.scroll";
-pub const EDITOR_H_SCROLL_ID: &str = "workspace.editor.h_scroll";
-pub const TRACKS_SCROLL_ID: &str = "workspace.tracks.scroll";
-pub const WORKSPACE_TEMPO_SCROLL_ID: &str = "workspace.tempo.scroll";
-pub const WORKSPACE_RULER_SCROLL_ID: &str = "workspace.ruler.scroll";
-pub const PIANO_TEMPO_SCROLL_ID: &str = "workspace.piano.tempo.scroll";
-pub const PIANO_RULER_SCROLL_ID: &str = "workspace.piano.ruler.scroll";
+pub use crate::consts::workspace_ids::{
+    EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID, EDITOR_TIMELINE_SCROLL_ID, PIANO_RULER_SCROLL_ID,
+    PIANO_TEMPO_SCROLL_ID, TRACKS_SCROLL_ID, WORKSPACE_RULER_SCROLL_ID, WORKSPACE_TEMPO_SCROLL_ID,
+};
 
 pub(crate) fn timeline_sample_to_x_f64(sample: f64, pixels_per_sample: f32, inset_px: f32) -> f32 {
     inset_px + (sample as f32 * pixels_per_sample).max(0.0)
@@ -521,9 +522,7 @@ impl Workspace {
             playhead_samples.map(|sample| (sample as f32 * horizontal_pixels_per_sample).max(0.0));
 
         let piano_content = self.piano.view(pixels_per_sample, samples_per_bar);
-        let piano_timeline_x_offset = piano::Piano::TOOLS_STRIP_WIDTH
-            + piano::Piano::MAIN_SPLIT_SPACING
-            + piano::Piano::KEYBOARD_WIDTH;
+        let piano_timeline_x_offset = TOOLS_STRIP_WIDTH + MAIN_SPLIT_SPACING + KEYBOARD_WIDTH;
 
         let piano_with_playhead = if let Some(x) = playhead_x {
             Stack::from_vec(vec![
@@ -542,12 +541,10 @@ impl Workspace {
         column![
             row![
                 container("")
-                    .width(Length::Fixed(
-                        piano::Piano::TOOLS_STRIP_WIDTH + piano::Piano::MAIN_SPLIT_SPACING,
-                    ))
+                    .width(Length::Fixed(TOOLS_STRIP_WIDTH + MAIN_SPLIT_SPACING,))
                     .height(Length::Fill),
                 container("")
-                    .width(Length::Fixed(piano::Piano::KEYBOARD_WIDTH))
+                    .width(Length::Fixed(KEYBOARD_WIDTH))
                     .height(Length::Fill),
                 scrollable(container(self.tempo.view(TempoViewArgs {
                     bpm: tempo,
@@ -574,19 +571,17 @@ impl Workspace {
                 .width(Length::Fill)
                 .height(Length::Fill),
                 container("")
-                    .width(Length::Fixed(piano::Piano::RIGHT_SCROLL_GUTTER_WIDTH))
+                    .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
                     .height(Length::Fill),
             ]
             .width(Length::Fill)
             .height(Length::Fixed(self.tempo.height())),
             row![
                 container("")
-                    .width(Length::Fixed(
-                        piano::Piano::TOOLS_STRIP_WIDTH + piano::Piano::MAIN_SPLIT_SPACING,
-                    ))
+                    .width(Length::Fixed(TOOLS_STRIP_WIDTH + MAIN_SPLIT_SPACING,))
                     .height(Length::Fill),
                 container("")
-                    .width(Length::Fixed(piano::Piano::KEYBOARD_WIDTH))
+                    .width(Length::Fixed(KEYBOARD_WIDTH))
                     .height(Length::Fill),
                 scrollable(container(self.ruler.view(RulerViewArgs {
                     playhead_x,
@@ -606,7 +601,7 @@ impl Workspace {
                 .width(Length::Fill)
                 .height(Length::Fill),
                 container("")
-                    .width(Length::Fixed(piano::Piano::RIGHT_SCROLL_GUTTER_WIDTH))
+                    .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
                     .height(Length::Fill),
             ]
             .width(Length::Fill)

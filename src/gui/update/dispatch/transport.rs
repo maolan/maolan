@@ -178,10 +178,13 @@ impl Maolan {
                             .as_ref()
                             .map(|path| Self::list_autosave_snapshots_for(path))
                             .unwrap_or_default();
-                        const AUTOSAVE_KEEP_COUNT: usize = 10;
-                        if snapshots.len() > AUTOSAVE_KEEP_COUNT {
+                        if snapshots.len()
+                            > crate::consts::gui_update_dispatch_transport::AUTOSAVE_KEEP_COUNT
+                        {
                             snapshots.sort();
-                            let remove_count = snapshots.len().saturating_sub(AUTOSAVE_KEEP_COUNT);
+                            let remove_count = snapshots.len().saturating_sub(
+                                crate::consts::gui_update_dispatch_transport::AUTOSAVE_KEEP_COUNT,
+                            );
                             for stale in snapshots.into_iter().take(remove_count) {
                                 let _ = fs::remove_dir_all(stale);
                             }

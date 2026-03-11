@@ -15,16 +15,14 @@ impl Maolan {
         let mut bpm = state
             .tempo_points
             .iter()
-            .filter(|p| p.sample == 0)
-            .next_back()
+            .rfind(|p| p.sample == 0)
             .map(|p| p.bpm)
             .unwrap_or(state.tempo)
             .clamp(20.0, 300.0);
         let (mut numerator, mut denominator) = state
             .time_signature_points
             .iter()
-            .filter(|p| p.sample == 0)
-            .next_back()
+            .rfind(|p| p.sample == 0)
             .map(|p| (p.numerator.max(1), p.denominator.max(1)))
             .unwrap_or((
                 state.time_signature_num.max(1),

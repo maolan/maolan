@@ -1,4 +1,10 @@
 #[cfg(all(unix, not(target_os = "macos")))]
+use crate::consts::plugins_lv2::{
+    GTK_WINDOW_TOPLEVEL, LV2_INSTANCE_ACCESS, LV2_UI_GTK, LV2_UI_GTK3, LV2_UI_HIDE_INTERFACE,
+    LV2_UI_IDLE_INTERFACE, LV2_UI_PARENT, LV2_UI_QT4, LV2_UI_QT5, LV2_UI_QT6, LV2_UI_RESIZE,
+    LV2_UI_SHOW_INTERFACE, LV2_UI_X11, LV2_URID_MAP, LV2_URID_MAP_TYPO_COMPAT, LV2_URID_UNMAP,
+};
+#[cfg(all(unix, not(target_os = "macos")))]
 use lilv::{World, plugin::Plugin};
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::client::Client;
@@ -12,39 +18,6 @@ use std::ffi::{CStr, CString, c_char, c_uint, c_ulong, c_void};
 use std::sync::mpsc;
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::thread;
-
-#[cfg(all(unix, not(target_os = "macos")))]
-const GTK_WINDOW_TOPLEVEL: i32 = 0;
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_URID_MAP: &str = "http://lv2plug.in/ns/ext/urid#map";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_URID_MAP_TYPO_COMPAT: &str = "http://lv2plug.in/ns//ext/urid#map";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_URID_UNMAP: &str = "http://lv2plug.in/ns/ext/urid#unmap";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_UI_GTK3: &str = "http://lv2plug.in/ns/extensions/ui#Gtk3UI";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_UI_GTK: &str = "http://lv2plug.in/ns/extensions/ui#GtkUI";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_UI_X11: &str = "http://lv2plug.in/ns/extensions/ui#X11UI";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_UI_QT4: &str = "http://lv2plug.in/ns/extensions/ui#Qt4UI";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_UI_QT5: &str = "http://lv2plug.in/ns/extensions/ui#Qt5UI";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_UI_QT6: &str = "http://lv2plug.in/ns/extensions/ui#Qt6UI";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_UI_PARENT: &str = "http://lv2plug.in/ns/extensions/ui#parent";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_UI_RESIZE: &str = "http://lv2plug.in/ns/extensions/ui#resize";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_UI_IDLE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#idleInterface";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_UI_SHOW_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#showInterface";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_UI_HIDE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#hideInterface";
-#[cfg(all(unix, not(target_os = "macos")))]
-const LV2_INSTANCE_ACCESS: &str = "http://lv2plug.in/ns/ext/instance-access";
 
 #[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

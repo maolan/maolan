@@ -1,3 +1,6 @@
+use crate::consts::plugins_clap::{CLIENT_MESSAGE, DESTROY_NOTIFY, STRUCTURE_NOTIFY_MASK};
+#[cfg(target_os = "windows")]
+use crate::consts::plugins_clap::{PM_REMOVE, WM_QUIT};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::plugins::x11::{
     XBlackPixel, XCloseDisplay, XCreateSimpleWindow, XDefaultScreen, XDestroyWindow, XEvent,
@@ -15,7 +18,7 @@ use std::time::{Duration, Instant};
 use std::ffi::c_int;
 
 #[cfg(all(unix, not(target_os = "macos")))]
-use std::ffi::{c_int, c_long, c_uint};
+use std::ffi::{c_int, c_uint};
 
 #[cfg(target_os = "windows")]
 #[repr(C)]
@@ -37,11 +40,6 @@ struct Point {
 }
 
 #[cfg(target_os = "windows")]
-const WM_QUIT: u32 = 0x0012;
-#[cfg(target_os = "windows")]
-const PM_REMOVE: u32 = 0x0001;
-
-#[cfg(target_os = "windows")]
 #[link(name = "user32")]
 unsafe extern "system" {
     fn PeekMessageW(
@@ -54,13 +52,6 @@ unsafe extern "system" {
     fn TranslateMessage(lpMsg: *const MSG) -> c_int;
     fn DispatchMessageW(lpMsg: *const MSG) -> isize;
 }
-
-#[cfg(all(unix, not(target_os = "macos")))]
-const DESTROY_NOTIFY: c_int = 17;
-#[cfg(all(unix, not(target_os = "macos")))]
-const CLIENT_MESSAGE: c_int = 33;
-#[cfg(all(unix, not(target_os = "macos")))]
-const STRUCTURE_NOTIFY_MASK: c_long = 1 << 17;
 
 // Platform-specific event handling for macOS
 #[cfg(target_os = "macos")]
@@ -98,11 +89,13 @@ struct ClapVersion {
     revision: u32,
 }
 
-const CLAP_VERSION: ClapVersion = ClapVersion {
-    major: 1,
-    minor: 2,
-    revision: 0,
-};
+fn clap_version() -> ClapVersion {
+    ClapVersion {
+        major: crate::consts::plugins_clap_version::MAJOR,
+        minor: crate::consts::plugins_clap_version::MINOR,
+        revision: crate::consts::plugins_clap_version::REVISION,
+    }
+}
 
 #[repr(C)]
 struct ClapHost {
@@ -746,7 +739,7 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
         timers: Mutex::new(Vec::new()),
     });
     let host = ClapHost {
-        clap_version: CLAP_VERSION,
+        clap_version: clap_version(),
         host_data: (&mut *host_state as *mut UiHostState).cast::<c_void>(),
         name: c"Maolan".as_ptr(),
         vendor: c"Maolan".as_ptr(),

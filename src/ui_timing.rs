@@ -1,6 +1,4 @@
-use std::time::Duration;
-
-pub const DOUBLE_CLICK: Duration = Duration::from_millis(350);
-pub const PLAYHEAD_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
-pub const RECORDING_PREVIEW_UPDATE_INTERVAL: Duration = Duration::from_secs(1);
-pub const RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL: Duration = Duration::from_secs(2);
+pub use crate::consts::ui_timing::{
+    DOUBLE_CLICK, PLAYHEAD_UPDATE_INTERVAL, RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL,
+    RECORDING_PREVIEW_UPDATE_INTERVAL,
+};

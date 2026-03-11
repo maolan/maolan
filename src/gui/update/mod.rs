@@ -16,6 +16,7 @@ use crate::state::AudioDeviceOption;
 use crate::{
     connections,
     consts::gui::AUTOSAVE_SNAPSHOT_INTERVAL,
+    consts::gui_update_mod::{ATTACK_ALPHA, RELEASE_ALPHA},
     message::{
         ExportNormalizeMode, ExportRenderMode, Message, Show, TrackAutomationMode,
         TrackAutomationTarget,
@@ -1699,9 +1700,6 @@ impl Maolan {
     }
 
     fn smooth_meter_db_levels(current: &mut Vec<f32>, target: &[f32]) {
-        const ATTACK_ALPHA: f32 = 0.60;
-        const RELEASE_ALPHA: f32 = 0.22;
-
         if current.len() != target.len() {
             *current = target.to_vec();
             return;

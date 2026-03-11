@@ -3,9 +3,9 @@ use crate::message::{TrackAutomationMode, TrackAutomationTarget};
 use iced::Point;
 use serde::{Deserialize, Serialize};
 
-pub const TRACK_FOLDER_HEADER_HEIGHT: f32 = 24.0;
-pub const TRACK_SUBTRACK_GAP: f32 = 2.0;
-pub const TRACK_SUBTRACK_MIN_HEIGHT: f32 = 40.0;
+pub use crate::consts::state_track::{
+    TRACK_FOLDER_HEADER_HEIGHT, TRACK_SUBTRACK_GAP, TRACK_SUBTRACK_MIN_HEIGHT,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct TrackLaneLayout {
