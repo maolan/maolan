@@ -620,6 +620,9 @@ pub enum Message {
     },
     TracksResizeStart,
     MixerResizeStart,
+    MixerLevelEditStart(String),
+    MixerLevelEditInput(String),
+    MixerLevelEditCommit,
     ClipResizeStart(Kind, String, usize, bool),
     FadeResizeStart {
         kind: Kind,

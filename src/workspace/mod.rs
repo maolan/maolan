@@ -77,6 +77,8 @@ pub struct WorkspaceViewArgs<'a> {
     pub shift_pressed: bool,
     pub selected_tempo_points: Vec<usize>,
     pub selected_time_signature_points: Vec<usize>,
+    pub mixer_level_edit_track: Option<&'a str>,
+    pub mixer_level_edit_input: &'a str,
 }
 
 impl Workspace {
@@ -110,7 +112,7 @@ impl Workspace {
             .into()
     }
 
-    pub fn view(&self, args: WorkspaceViewArgs<'_>) -> Element<'_, Message> {
+    pub fn view<'a>(&'a self, args: WorkspaceViewArgs<'a>) -> Element<'a, Message> {
         let WorkspaceViewArgs {
             session_root,
             playhead_samples,
@@ -133,6 +135,8 @@ impl Workspace {
             shift_pressed,
             selected_tempo_points,
             selected_time_signature_points,
+            mixer_level_edit_track,
+            mixer_level_edit_input,
         } = args;
         let (
             tracks_width,
@@ -459,7 +463,8 @@ impl Workspace {
                 .on_enter(Message::MixerResizeHover(true))
                 .on_exit(Message::MixerResizeHover(false))
                 .on_press(Message::MixerResizeStart),
-                self.mixer.view(),
+                self.mixer
+                    .view(mixer_level_edit_track, mixer_level_edit_input),
             ]
             .width(Length::Fill)
             .into()
@@ -468,7 +473,7 @@ impl Workspace {
         }
     }
 
-    pub fn piano_view(&self, args: WorkspaceViewArgs<'_>) -> Element<'_, Message> {
+    pub fn piano_view<'a>(&'a self, args: WorkspaceViewArgs<'a>) -> Element<'a, Message> {
         let WorkspaceViewArgs {
             playhead_samples,
             pixels_per_sample,

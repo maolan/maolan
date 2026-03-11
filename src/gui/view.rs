@@ -147,6 +147,8 @@ impl Maolan {
                                 .iter()
                                 .copied()
                                 .collect(),
+                            mixer_level_edit_track: self.mixer_level_edit_track.as_deref(),
+                            mixer_level_edit_input: &self.mixer_level_edit_input,
                         }),
                         View::Connections => self.connections.view(),
                         #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
@@ -181,6 +183,8 @@ impl Maolan {
                                 .iter()
                                 .copied()
                                 .collect(),
+                            mixer_level_edit_track: None,
+                            mixer_level_edit_input: "",
                         }),
                         #[cfg(target_os = "macos")]
                         View::TrackPlugins => self.connections.view(),

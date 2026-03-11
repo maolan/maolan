@@ -13,7 +13,7 @@ use iced::{
     widget::{
         Space, Stack, canvas,
         canvas::{Geometry, Path},
-        column, container, lazy, mouse_area, pin, row, scrollable, text,
+        column, container, lazy, mouse_area, pin, row, scrollable, text, text_input,
     },
 };
 use maolan_engine::message::Action;
@@ -29,6 +29,13 @@ struct VuMeterCanvas {
     channels: usize,
     levels_qdb: Arc<[u8]>,
     meter_height: f32,
+}
+
+struct StripReadout<'a> {
+    track_name: String,
+    editing: bool,
+    edit_input: &'a str,
+    level_label: &'static str,
 }
 
 impl canvas::Program<Message> for VuMeterCanvas {
@@ -225,13 +232,34 @@ impl Mixer {
         BALANCE_LABELS[idx]
     }
 
-    fn value_pill(content: &'static str) -> Element<'static, Message> {
-        container(text(content).size(11))
+    fn value_pill<'a>(
+        track_name: String,
+        content: &'static str,
+        editing: bool,
+        edit_input: &'a str,
+    ) -> Element<'a, Message> {
+        if editing {
+            container(
+                text_input("dB", edit_input)
+                    .on_input(Message::MixerLevelEditInput)
+                    .on_submit(Message::MixerLevelEditCommit)
+                    .padding([2, 4])
+                    .size(11),
+            )
             .width(Length::Fixed(READOUT_WIDTH))
-            .padding([4, 6])
-            .align_x(Alignment::Center)
             .style(|_theme| style::mixer::readout())
             .into()
+        } else {
+            mouse_area(
+                container(text(content).size(11))
+                    .width(Length::Fixed(READOUT_WIDTH))
+                    .padding([4, 6])
+                    .align_x(Alignment::Center)
+                    .style(|_theme| style::mixer::readout()),
+            )
+            .on_press(Message::MixerLevelEditStart(track_name))
+            .into()
+        }
     }
 
     fn pan_section<F>(value: f32, on_change: F) -> Element<'static, Message>
@@ -401,20 +429,23 @@ impl Mixer {
         .into()
     }
 
-    fn strip_shell(
+    fn strip_shell<'a>(
         name: String,
         selected: bool,
         width: f32,
         pan_section: Option<Element<'static, Message>>,
         bay: Element<'static, Message>,
-        level_label: &'static str,
-    ) -> Element<'static, Message> {
+        readout: StripReadout<'a>,
+    ) -> Element<'a, Message> {
         let mut content = column![].spacing(8).width(Length::Fill);
         content = content.push(pan_section.unwrap_or_else(Self::pan_placeholder));
-        content = content
-            .push(bay)
-            .push(Self::value_pill(level_label))
-            .push(Self::strip_name(name, width));
+        content = content.push(bay).push(Self::value_pill(
+            readout.track_name,
+            readout.level_label,
+            readout.editing,
+            readout.edit_input,
+        ));
+        content = content.push(Self::strip_name(name, width));
 
         container(content)
             .width(Length::Fixed(width))
@@ -424,7 +455,11 @@ impl Mixer {
             .into()
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view<'a>(
+        &'a self,
+        editing_track: Option<&'a str>,
+        editing_input: &'a str,
+    ) -> Element<'a, Message> {
         let mut strips = row![].spacing(2).align_y(Alignment::Start);
         let state = self.state.blocking_read();
         let height = state.mixer_height;
@@ -457,7 +492,12 @@ impl Mixer {
                     STRIP_WIDTH,
                     pan,
                     bay,
-                    Self::format_level_db(track.level),
+                    StripReadout {
+                        track_name: track.name.clone(),
+                        editing: editing_track == Some(track.name.as_str()),
+                        edit_input: editing_input,
+                        level_label: Self::format_level_db(track.level),
+                    },
                 ))
                 .on_press(Message::SelectTrackFromMixer(select_name)),
             );
@@ -490,7 +530,12 @@ impl Mixer {
                 fader_height,
                 true,
             ),
-            Self::format_level_db(hw_out_level),
+            StripReadout {
+                track_name: "hw:out".to_string(),
+                editing: editing_track == Some("hw:out"),
+                edit_input: editing_input,
+                level_label: Self::format_level_db(hw_out_level),
+            },
         ))
         .on_press(Message::SelectTrackFromMixer("hw:out".to_string()));
 

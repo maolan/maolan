@@ -4394,6 +4394,54 @@ impl Maolan {
                 self.state.blocking_write().resizing =
                     Some(Resizing::Mixer(initial_height, initial_mouse_y));
             }
+            Message::MixerLevelEditStart(ref track_name) => {
+                let level = {
+                    let state = self.state.blocking_read();
+                    if track_name == "hw:out" {
+                        state.hw_out_level
+                    } else {
+                        state
+                            .tracks
+                            .iter()
+                            .find(|t| t.name == *track_name)
+                            .map(|t| t.level)
+                            .unwrap_or(0.0)
+                    }
+                };
+                self.mixer_level_edit_track = Some(track_name.clone());
+                self.mixer_level_edit_input = if level <= -90.0 {
+                    "-inf".to_string()
+                } else {
+                    format!("{level:+.1}")
+                };
+            }
+            Message::MixerLevelEditInput(ref value) => {
+                self.mixer_level_edit_input = value.clone();
+            }
+            Message::MixerLevelEditCommit => {
+                let Some(track_name) = self.mixer_level_edit_track.clone() else {
+                    return Task::none();
+                };
+                let mut value = self.mixer_level_edit_input.trim().to_ascii_lowercase();
+                if value.ends_with("db") {
+                    value.truncate(value.len().saturating_sub(2));
+                }
+                let value = value.trim();
+                let parsed = if value == "-inf" || value == "-infinity" {
+                    Some(-90.0)
+                } else {
+                    value.parse::<f32>().ok()
+                };
+                if let Some(level_db) = parsed {
+                    self.mixer_level_edit_track = None;
+                    self.mixer_level_edit_input.clear();
+                    return self.send(Action::TrackLevel(
+                        track_name,
+                        level_db.clamp(-90.0, 20.0),
+                    ));
+                }
+                self.state.blocking_write().message = "Invalid mixer level value".to_string();
+            }
             Message::ClipResizeStart(ref kind, ref track_name, clip_index, is_right_side) => {
                 self.clip = None;
                 let mut state = self.state.blocking_write();
