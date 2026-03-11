@@ -73,6 +73,44 @@ impl SnapMode {
         SnapMode::ThirtySecond,
         SnapMode::SixtyFourth,
     ];
+
+    pub fn interval_samples(self, samples_per_beat: f64, samples_per_bar: f64) -> f64 {
+        match self {
+            SnapMode::NoSnap => 1.0,
+            SnapMode::Bar => samples_per_bar.max(1.0),
+            SnapMode::Beat => samples_per_beat.max(1.0),
+            SnapMode::Eighth => (samples_per_beat / 2.0).max(1.0),
+            SnapMode::Sixteenth => (samples_per_beat / 4.0).max(1.0),
+            SnapMode::ThirtySecond => (samples_per_beat / 8.0).max(1.0),
+            SnapMode::SixtyFourth => (samples_per_beat / 16.0).max(1.0),
+        }
+    }
+
+    pub fn snap_sample(self, sample: f64, samples_per_beat: f64, samples_per_bar: f64) -> f64 {
+        if matches!(self, SnapMode::NoSnap) {
+            return sample.max(0.0);
+        }
+        let interval = self.interval_samples(samples_per_beat, samples_per_bar);
+        ((sample.max(0.0) / interval).round() * interval).max(0.0)
+    }
+
+    pub fn snap_sample_drag(
+        self,
+        sample: f64,
+        delta_samples: f64,
+        samples_per_beat: f64,
+        samples_per_bar: f64,
+    ) -> f64 {
+        if matches!(self, SnapMode::NoSnap) {
+            return sample.max(0.0);
+        }
+        let interval = self.interval_samples(samples_per_beat, samples_per_bar);
+        if delta_samples >= 0.0 {
+            ((sample.max(0.0) / interval).floor() * interval).max(0.0)
+        } else {
+            ((sample.max(0.0) / interval).ceil() * interval).max(0.0)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

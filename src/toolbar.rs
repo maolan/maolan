@@ -9,19 +9,8 @@ use iced::{
 use iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind, square,
 };
-use maolan_engine::message::Action;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TransportLatch {
-    Play,
-    Pause,
-    Stop,
-}
-
-#[derive(Debug)]
-pub struct Toolbar {
-    latch: TransportLatch,
-}
+#[derive(Debug, Default)]
+pub struct Toolbar;
 
 #[derive(Debug, Clone)]
 pub struct ToolbarViewState {
@@ -44,27 +33,9 @@ pub struct ToolbarViewState {
 
 impl Toolbar {
     pub fn new() -> Self {
-        Self {
-            latch: TransportLatch::Stop,
-        }
+        Self
     }
-    pub fn update(&mut self, message: &Message) {
-        match message {
-            Message::TransportPlay => self.latch = TransportLatch::Play,
-            Message::TransportPause => self.latch = TransportLatch::Pause,
-            Message::TransportStop => self.latch = TransportLatch::Stop,
-            Message::ToggleTransport => {
-                self.latch = if self.latch == TransportLatch::Play {
-                    TransportLatch::Stop
-                } else {
-                    TransportLatch::Play
-                };
-            }
-            Message::Response(Ok(Action::Play)) => self.latch = TransportLatch::Play,
-            Message::Response(Ok(Action::Stop)) => self.latch = TransportLatch::Stop,
-            _ => {}
-        }
-    }
+    pub fn update(&mut self, _message: &Message) {}
 
     fn button_style(
         enabled: bool,
@@ -242,11 +213,5 @@ impl Toolbar {
         ]
         .align_y(Alignment::Center)
         .into()
-    }
-}
-
-impl Default for Toolbar {
-    fn default() -> Self {
-        Self::new()
     }
 }

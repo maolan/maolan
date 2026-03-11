@@ -901,34 +901,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         }
         session_root.map(|root| root.join(path))
     };
-    let snap_sample = |sample: f32| -> f32 {
-        match snap_mode {
-            SnapMode::NoSnap => sample.max(0.0),
-            SnapMode::Bar => {
-                let interval = samples_per_bar.max(1.0);
-                (sample.max(0.0) / interval).round() * interval
-            }
-            SnapMode::Beat => {
-                let interval = samples_per_beat.max(1.0) as f32;
-                (sample.max(0.0) / interval).round() * interval
-            }
-            SnapMode::Eighth => {
-                let interval = (samples_per_beat / 2.0).max(1.0) as f32;
-                (sample.max(0.0) / interval).round() * interval
-            }
-            SnapMode::Sixteenth => {
-                let interval = (samples_per_beat / 4.0).max(1.0) as f32;
-                (sample.max(0.0) / interval).round() * interval
-            }
-            SnapMode::ThirtySecond => {
-                let interval = (samples_per_beat / 8.0).max(1.0) as f32;
-                (sample.max(0.0) / interval).round() * interval
-            }
-            SnapMode::SixtyFourth => {
-                let interval = (samples_per_beat / 16.0).max(1.0) as f32;
-                (sample.max(0.0) / interval).round() * interval
-            }
-        }
+    let snap_sample = |sample: f32, delta_samples: f32| -> f32 {
+        snap_mode.snap_sample_drag(
+            sample as f64,
+            delta_samples as f64,
+            samples_per_beat,
+            samples_per_bar as f64,
+        ) as f32
     };
     let mut clips: Vec<Element<'static, Message>> = vec![
         mouse_area(container("").width(Length::Fill).height(Length::Fill))
@@ -1174,7 +1153,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .filter(|d| !d.copy)
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
-                snap_sample(clip.start as f32 + delta_samples)
+                snap_sample(clip.start as f32 + delta_samples, delta_samples)
             })
             .unwrap_or(clip.start as f32);
         // All audio clips are displayed on lane 0 (single audio lane)
@@ -1491,7 +1470,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
-            let preview_start = snap_sample(clip.start as f32 + delta_samples);
+            let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples);
             let preview_content = container(Stack::with_children(vec![
                 audio_waveform_overlay(
                     clip_peaks,
@@ -1584,7 +1563,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .filter(|d| !d.copy)
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
-                snap_sample(clip.start as f32 + delta_samples)
+                snap_sample(clip.start as f32 + delta_samples, delta_samples)
             })
             .unwrap_or(clip.start as f32);
         let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
@@ -1911,7 +1890,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
-            let preview_start = snap_sample(clip.start as f32 + delta_samples);
+            let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples);
             let mut preview_layers = Vec::with_capacity(2);
             if let Some(notes) = midi_notes_for_clip.as_ref() {
                 preview_layers.push(midi_clip_notes_overlay(
@@ -2005,7 +1984,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         // All audio clips are displayed on lane 0 (single audio lane)
                         let lane = 0;
                         let lane_top = track.lane_top(Kind::Audio, lane) + 3.0;
-                        let preview_start = snap_sample(source_clip.start as f32 + delta_samples);
+                        let preview_start =
+                            snap_sample(source_clip.start as f32 + delta_samples, delta_samples);
                         let display_clip_label =
                             trim_label_to_width(&clean_clip_name(&source_clip.name), clip_width);
                         let preview_content = container(Stack::with_children(vec![
@@ -2094,7 +2074,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             .input_channel
                             .min(track.midi.ins.saturating_sub(1));
                         let lane_top = track.lane_top(Kind::MIDI, lane) + 3.0;
-                        let preview_start = snap_sample(source_clip.start as f32 + delta_samples);
+                        let preview_start =
+                            snap_sample(source_clip.start as f32 + delta_samples, delta_samples);
                         let display_clip_label =
                             trim_label_to_width(&clean_clip_name(&source_clip.name), clip_width);
                         let preview_content = container(clip_label_overlay(display_clip_label))

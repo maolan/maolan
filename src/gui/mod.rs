@@ -766,45 +766,25 @@ impl Maolan {
     }
 
     fn snap_sample_to_bar(&self, sample: f32) -> usize {
-        match self.snap_mode {
-            SnapMode::NoSnap => sample.max(0.0) as usize,
-            SnapMode::Bar => {
-                let interval = self.samples_per_bar().max(1.0);
-                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
-            }
-            SnapMode::Beat => {
-                let interval = self.samples_per_beat().max(1.0);
-                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
-            }
-            SnapMode::Eighth => {
-                let interval = (self.samples_per_beat() / 2.0).max(1.0);
-                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
-            }
-            SnapMode::Sixteenth => {
-                let interval = (self.samples_per_beat() / 4.0).max(1.0);
-                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
-            }
-            SnapMode::ThirtySecond => {
-                let interval = (self.samples_per_beat() / 8.0).max(1.0);
-                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
-            }
-            SnapMode::SixtyFourth => {
-                let interval = (self.samples_per_beat() / 16.0).max(1.0);
-                ((sample.max(0.0) as f64 / interval).round() * interval) as usize
-            }
-        }
+        self.snap_mode.snap_sample(
+            sample as f64,
+            self.samples_per_beat(),
+            self.samples_per_bar(),
+        ) as usize
+    }
+
+    fn snap_sample_to_bar_drag(&self, sample: f32, delta_samples: f32) -> usize {
+        self.snap_mode.snap_sample_drag(
+            sample as f64,
+            delta_samples as f64,
+            self.samples_per_beat(),
+            self.samples_per_bar(),
+        ) as usize
     }
 
     fn snap_interval_samples(&self) -> usize {
-        match self.snap_mode {
-            SnapMode::NoSnap => 1,
-            SnapMode::Bar => self.samples_per_bar().max(1.0) as usize,
-            SnapMode::Beat => self.samples_per_beat().max(1.0) as usize,
-            SnapMode::Eighth => (self.samples_per_beat() / 2.0).max(1.0) as usize,
-            SnapMode::Sixteenth => (self.samples_per_beat() / 4.0).max(1.0) as usize,
-            SnapMode::ThirtySecond => (self.samples_per_beat() / 8.0).max(1.0) as usize,
-            SnapMode::SixtyFourth => (self.samples_per_beat() / 16.0).max(1.0) as usize,
-        }
+        self.snap_mode
+            .interval_samples(self.samples_per_beat(), self.samples_per_bar()) as usize
     }
 
     fn create_empty_midi_clip_file(

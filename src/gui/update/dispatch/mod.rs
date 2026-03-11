@@ -4695,7 +4695,6 @@ impl Maolan {
                 let resizing = self.state.blocking_read().resizing.clone();
                 let can_start_midi_drag = self.midi_lane_at_position(position).is_some();
                 let mut state = self.state.blocking_write();
-                state.cursor = position;
                 state.editor_cursor = Some(position);
                 if state.mouse_left_down
                     && !matches!(resizing, Some(Resizing::Clip { .. }))
@@ -4986,8 +4985,10 @@ impl Maolan {
                                             continue;
                                         }
                                         let source = &from_track.audio.clips[idx];
-                                        let sample_offset =
-                                            self.snap_sample_to_bar(source.start as f32 + offset);
+                                        let sample_offset = self.snap_sample_to_bar_drag(
+                                            source.start as f32 + offset,
+                                            offset,
+                                        );
                                         tasks.push(self.send(Action::ClipMove {
                                             kind: clip.kind,
                                             from: ClipMoveFrom {
@@ -5013,8 +5014,10 @@ impl Maolan {
                                 let clip_index_in_from_track = clip_index;
                                 let mut clip_copy =
                                     from_track.audio.clips[clip_index_in_from_track].clone();
-                                clip_copy.start =
-                                    self.snap_sample_to_bar(clip_copy.start as f32 + offset);
+                                clip_copy.start = self.snap_sample_to_bar_drag(
+                                    clip_copy.start as f32 + offset,
+                                    offset,
+                                );
                                 let task = self.send(Action::ClipMove {
                                     kind: clip.kind,
                                     from: ClipMoveFrom {
@@ -5046,8 +5049,10 @@ impl Maolan {
                                             continue;
                                         }
                                         let source = &from_track.midi.clips[idx];
-                                        let sample_offset =
-                                            self.snap_sample_to_bar(source.start as f32 + offset);
+                                        let sample_offset = self.snap_sample_to_bar_drag(
+                                            source.start as f32 + offset,
+                                            offset,
+                                        );
                                         tasks.push(self.send(Action::ClipMove {
                                             kind: clip.kind,
                                             from: ClipMoveFrom {
@@ -5073,8 +5078,10 @@ impl Maolan {
                                 let clip_index_in_from_track = clip_index;
                                 let mut clip_copy =
                                     from_track.midi.clips[clip_index_in_from_track].clone();
-                                clip_copy.start =
-                                    self.snap_sample_to_bar(clip_copy.start as f32 + offset);
+                                clip_copy.start = self.snap_sample_to_bar_drag(
+                                    clip_copy.start as f32 + offset,
+                                    offset,
+                                );
                                 let task = self.send(Action::ClipMove {
                                     kind: clip.kind,
                                     from: ClipMoveFrom {
