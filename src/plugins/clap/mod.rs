@@ -277,13 +277,13 @@ unsafe extern "C" fn host_request_restart(_host: *const ClapHost) {}
 unsafe extern "C" fn host_request_process(_host: *const ClapHost) {}
 
 unsafe extern "C" fn host_request_callback(host: *const ClapHost) {
-    let state = host_state(host);
-    state.callback_requested.store(true, Ordering::SeqCst);
+    if let Some(state) = host_state(host) {
+        state.callback_requested.store(true, Ordering::SeqCst);
+    }
 }
 
 unsafe extern "C" fn host_is_main_thread(host: *const ClapHost) -> bool {
-    let state = host_state(host);
-    state.main_thread_id == thread::current().id()
+    host_state(host).is_some_and(|state| state.main_thread_id == thread::current().id())
 }
 
 unsafe extern "C" fn host_is_audio_thread(_host: *const ClapHost) -> bool {
@@ -301,7 +301,9 @@ unsafe extern "C" fn host_timer_register(
     let id = NEXT_TIMER_ID.fetch_add(1, Ordering::Relaxed);
     let period_ms = period_ms.max(1);
     let period = Duration::from_millis(period_ms as u64);
-    let state = host_state(host);
+    let Some(state) = host_state(host) else {
+        return false;
+    };
     {
         let mut timers = state.timers.lock().unwrap();
         timers.push(HostTimer {
@@ -315,7 +317,9 @@ unsafe extern "C" fn host_timer_register(
 }
 
 unsafe extern "C" fn host_timer_unregister(host: *const ClapHost, timer_id: u32) -> bool {
-    let state = host_state(host);
+    let Some(state) = host_state(host) else {
+        return false;
+    };
     let mut timers = state.timers.lock().unwrap();
     timers.retain(|timer| timer.id != timer_id);
     true
@@ -337,9 +341,12 @@ unsafe extern "C" fn host_gui_request_show(_host: *const ClapHost) -> bool {
 
 unsafe extern "C" fn host_gui_request_hide(host: *const ClapHost) -> bool {
     eprintln!("[clap-ui] Plugin requested hide");
-    let state = host_state(host);
-    state.should_close.store(true, Ordering::SeqCst);
-    true
+    if let Some(state) = host_state(host) {
+        state.should_close.store(true, Ordering::SeqCst);
+        true
+    } else {
+        false
+    }
 }
 
 unsafe extern "C" fn host_gui_closed(host: *const ClapHost, was_destroyed: bool) {
@@ -347,19 +354,22 @@ unsafe extern "C" fn host_gui_closed(host: *const ClapHost, was_destroyed: bool)
         "[clap-ui] Plugin reported GUI closed (was_destroyed: {})",
         was_destroyed
     );
-    let state = host_state(host);
-    state.should_close.store(true, Ordering::SeqCst);
+    if let Some(state) = host_state(host) {
+        state.should_close.store(true, Ordering::SeqCst);
+    }
 }
 
-fn host_state(host: *const ClapHost) -> &'static UiHostState {
+fn host_state(host: *const ClapHost) -> Option<&'static UiHostState> {
     if host.is_null() {
-        panic!("CLAP host pointer is null");
+        eprintln!("CLAP UI host callback received null host pointer");
+        return None;
     }
     let state_ptr = unsafe { (*host).host_data as *const UiHostState };
     if state_ptr.is_null() {
-        panic!("CLAP host_data is null");
+        eprintln!("CLAP UI host callback received null host_data pointer");
+        return None;
     }
-    unsafe { &*state_ptr }
+    Some(unsafe { &*state_ptr })
 }
 
 fn split_plugin_spec(spec: &str) -> (&str, Option<&str>) {

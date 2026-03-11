@@ -1817,6 +1817,21 @@ impl Track {
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
+    pub fn lv2_snapshot_state(&self, instance_id: usize) -> Result<Lv2PluginState, String> {
+        let Some(instance) = self
+            .lv2_processors
+            .iter()
+            .find(|instance| instance.id == instance_id)
+        else {
+            return Err(format!(
+                "Track '{}' does not have LV2 instance id: {}",
+                self.name, instance_id
+            ));
+        };
+        Ok(instance.processor.snapshot_state())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub fn get_lv2_midnam(&self) -> std::collections::HashMap<u8, String> {
         // Get midnam from the first LV2 plugin that has it
         for instance in &self.lv2_processors {

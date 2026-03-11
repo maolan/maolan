@@ -95,7 +95,7 @@ impl Maolan {
                             .as_ref()
                             .map(Self::lv2_state_to_json)
                             .unwrap_or(Value::Null);
-                        json!({"uri": p.uri, "state": state_json})
+                        json!({"format": p.format, "uri": p.uri, "state": state_json})
                     })
                     .collect();
                 let conns_json: Vec<Value> = connections
@@ -331,31 +331,82 @@ impl Maolan {
             }
         };
 
-        let mut tasks = vec![];
+        let mut restore_actions = vec![];
 
         // Load LV2 plugin graph
         #[cfg(all(unix, not(target_os = "macos")))]
         if let Some(graph) = json.get("graph").and_then(|g| g.as_object()) {
-            let mut plugin_count = 0usize;
+            let clap_paths = json
+                .get("clap")
+                .and_then(|c| c.as_array())
+                .map(|paths| {
+                    paths.iter()
+                        .filter_map(|path| path.as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let clap_states = json
+                .get("clap_state")
+                .cloned()
+                .and_then(|v| {
+                    serde_json::from_value::<
+                        std::collections::HashMap<String, maolan_engine::clap::ClapPluginState>,
+                    >(v)
+                    .ok()
+                })
+                .unwrap_or_default();
+            let mut runtime_nodes = Vec::new();
+            let mut next_lv2_instance_id = 0usize;
+            let mut next_clap_instance_id = 0usize;
 
             if let Some(plugins) = graph.get("plugins").and_then(|p| p.as_array()) {
-                for (instance_id, plugin) in plugins.iter().enumerate() {
+                for plugin in plugins {
                     if let Some(uri) = plugin.get("uri").and_then(|u| u.as_str()) {
-                        tasks.push(self.send(Action::TrackLoadLv2Plugin {
-                            track_name: track_name.clone(),
-                            plugin_uri: uri.to_string(),
-                        }));
-
-                        // Set plugin state if available
-                        if let Some(state) = plugin.get("state").and_then(Self::lv2_state_from_json)
-                        {
-                            tasks.push(self.send(Action::TrackSetLv2PluginState {
-                                track_name: track_name.clone(),
-                                instance_id,
-                                state,
-                            }));
+                        match Self::saved_unix_plugin_format(plugin, &clap_paths) {
+                            Some("LV2") => {
+                                let instance_id = next_lv2_instance_id;
+                                next_lv2_instance_id += 1;
+                                runtime_nodes.push(
+                                    maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
+                                        instance_id,
+                                    ),
+                                );
+                                restore_actions.push(Action::TrackLoadLv2Plugin {
+                                    track_name: track_name.clone(),
+                                    plugin_uri: uri.to_string(),
+                                });
+                                if let Some(state) =
+                                    plugin.get("state").and_then(Self::lv2_state_from_json)
+                                {
+                                    restore_actions.push(Action::TrackSetLv2PluginState {
+                                        track_name: track_name.clone(),
+                                        instance_id,
+                                        state,
+                                    });
+                                }
+                            }
+                            Some("CLAP") => {
+                                let instance_id = next_clap_instance_id;
+                                next_clap_instance_id += 1;
+                                runtime_nodes.push(
+                                    maolan_engine::message::PluginGraphNode::ClapPluginInstance(
+                                        instance_id,
+                                    ),
+                                );
+                                restore_actions.push(Action::TrackLoadClapPlugin {
+                                    track_name: track_name.clone(),
+                                    plugin_path: uri.to_string(),
+                                });
+                                if let Some(state) = clap_states.get(uri) {
+                                    restore_actions.push(Action::TrackClapRestoreState {
+                                        track_name: track_name.clone(),
+                                        instance_id,
+                                        state: state.clone(),
+                                    });
+                                }
+                            }
+                            _ => {}
                         }
-                        plugin_count += 1;
                     }
                 }
             }
@@ -363,10 +414,14 @@ impl Maolan {
             // Load plugin graph connections
             if let Some(connections) = graph.get("connections").and_then(|c| c.as_array()) {
                 for conn in connections {
-                    let Some(from_node) = Self::plugin_node_from_json(&conn["from_node"]) else {
+                    let Some(from_node) =
+                        Self::plugin_node_from_json_with_runtime_nodes(&conn["from_node"], &runtime_nodes)
+                    else {
                         continue;
                     };
-                    let Some(to_node) = Self::plugin_node_from_json(&conn["to_node"]) else {
+                    let Some(to_node) =
+                        Self::plugin_node_from_json_with_runtime_nodes(&conn["to_node"], &runtime_nodes)
+                    else {
                         continue;
                     };
                     let Some(kind) = Self::kind_from_json(&conn["kind"]) else {
@@ -376,19 +431,7 @@ impl Maolan {
                     let from_port = conn["from_port"].as_u64().unwrap_or(0) as usize;
                     let to_port = conn["to_port"].as_u64().unwrap_or(0) as usize;
 
-                    // Validate node indices
-                    let valid_node = |n: &maolan_engine::message::PluginGraphNode| match n {
-                        maolan_engine::message::PluginGraphNode::Lv2PluginInstance(idx) => {
-                            *idx < plugin_count
-                        }
-                        _ => true,
-                    };
-
-                    if !valid_node(&from_node) || !valid_node(&to_node) {
-                        continue;
-                    }
-
-                    let action = match kind {
+                    restore_actions.push(match kind {
                         Kind::Audio => Action::TrackConnectPluginAudio {
                             track_name: track_name.clone(),
                             from_node,
@@ -403,30 +446,28 @@ impl Maolan {
                             to_node,
                             to_port,
                         },
-                    };
-                    tasks.push(self.send(action));
+                    });
                 }
             }
         }
 
         // Load CLAP plugins
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
         if let Some(clap) = json.get("clap").and_then(|c| c.as_array()) {
             for plugin_path in clap {
                 if let Some(path) = plugin_path.as_str() {
-                    tasks.push(self.send(Action::TrackLoadClapPlugin {
+                    restore_actions.push(Action::TrackLoadClapPlugin {
                         track_name: track_name.clone(),
                         plugin_path: path.to_string(),
-                    }));
+                    });
                 }
             }
         }
 
-        // TODO: Load CLAP plugin states and connections
-
-        if tasks.is_empty() {
+        if restore_actions.is_empty() {
             Task::done(Message::None)
         } else {
-            Task::batch(tasks)
+            Self::restore_actions_task(restore_actions)
         }
     }
 
@@ -483,7 +524,7 @@ impl Maolan {
                                     .as_ref()
                                     .map(Self::lv2_state_to_json)
                                     .unwrap_or(Value::Null);
-                                json!({"uri": p.uri, "state": state_json})
+                                json!({"format": p.format, "uri": p.uri, "state": state_json})
                             })
                             .collect();
                         let conns_json: Vec<Value> = connections
@@ -675,7 +716,7 @@ impl Maolan {
                             .as_ref()
                             .map(Self::lv2_state_to_json)
                             .unwrap_or(Value::Null);
-                        json!({"uri": p.uri, "state": state_json})
+                        json!({"format": p.format, "uri": p.uri, "state": state_json})
                     })
                     .collect();
                 let conns_json: Vec<Value> = connections
@@ -1615,6 +1656,7 @@ impl Maolan {
                 }
             }
         }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
         if let Some(clap_tracks) = session.get("clap").and_then(Value::as_object) {
             for (track_name, plugins_v) in clap_tracks {
                 let Some(paths) = plugins_v.as_array() else {
@@ -1659,35 +1701,99 @@ impl Maolan {
                 restore_actions.push(Action::TrackClearDefaultPassthrough {
                     track_name: track_name.clone(),
                 });
+                let clap_paths = session
+                    .get("clap")
+                    .and_then(Value::as_object)
+                    .and_then(|tracks| tracks.get(track_name))
+                    .and_then(Value::as_array)
+                    .map(|paths| {
+                        paths.iter()
+                            .filter_map(|path| path.as_str().map(str::to_string))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let clap_states = session
+                    .get("clap_state")
+                    .and_then(Value::as_object)
+                    .and_then(|o| o.get(track_name))
+                    .cloned()
+                    .and_then(|v| {
+                        serde_json::from_value::<
+                            std::collections::HashMap<
+                                String,
+                                maolan_engine::clap::ClapPluginState,
+                            >,
+                        >(v)
+                        .ok()
+                    })
+                    .unwrap_or_default();
                 let Some(plugins_arr) = graph_v["plugins"].as_array() else {
                     continue;
                 };
-                let mut plugin_count = 0usize;
+                let mut runtime_nodes = Vec::new();
+                let mut next_lv2_instance_id = 0usize;
+                let mut next_clap_instance_id = 0usize;
                 for p in plugins_arr {
                     let Some(uri) = p["uri"].as_str() else {
                         continue;
                     };
-                    let plugin_index = plugin_count;
-                    restore_actions.push(Action::TrackLoadLv2Plugin {
-                        track_name: track_name.clone(),
-                        plugin_uri: uri.to_string(),
-                    });
-                    if let Some(state) = Self::lv2_state_from_json(&p["state"]) {
-                        restore_actions.push(Action::TrackSetLv2PluginState {
-                            track_name: track_name.clone(),
-                            instance_id: plugin_index,
-                            state,
-                        });
+                    match Self::saved_unix_plugin_format(p, &clap_paths) {
+                        Some("LV2") => {
+                            let instance_id = next_lv2_instance_id;
+                            next_lv2_instance_id += 1;
+                            runtime_nodes.push(
+                                maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
+                                    instance_id,
+                                ),
+                            );
+                            restore_actions.push(Action::TrackLoadLv2Plugin {
+                                track_name: track_name.clone(),
+                                plugin_uri: uri.to_string(),
+                            });
+                            if let Some(state) = Self::lv2_state_from_json(&p["state"]) {
+                                restore_actions.push(Action::TrackSetLv2PluginState {
+                                    track_name: track_name.clone(),
+                                    instance_id,
+                                    state,
+                                });
+                            }
+                        }
+                        Some("CLAP") => {
+                            let instance_id = next_clap_instance_id;
+                            next_clap_instance_id += 1;
+                            runtime_nodes.push(
+                                maolan_engine::message::PluginGraphNode::ClapPluginInstance(
+                                    instance_id,
+                                ),
+                            );
+                            restore_actions.push(Action::TrackLoadClapPlugin {
+                                track_name: track_name.clone(),
+                                plugin_path: uri.to_string(),
+                            });
+                            if let Some(state) = clap_states.get(uri) {
+                                restore_actions.push(Action::TrackClapRestoreState {
+                                    track_name: track_name.clone(),
+                                    instance_id,
+                                    state: state.clone(),
+                                });
+                            }
+                        }
+                        _ => {}
                     }
-                    plugin_count += 1;
                 }
 
                 if let Some(connections_arr) = graph_v["connections"].as_array() {
                     for c in connections_arr {
-                        let Some(from_node) = Self::plugin_node_from_json(&c["from_node"]) else {
+                        let Some(from_node) = Self::plugin_node_from_json_with_runtime_nodes(
+                            &c["from_node"],
+                            &runtime_nodes,
+                        ) else {
                             continue;
                         };
-                        let Some(to_node) = Self::plugin_node_from_json(&c["to_node"]) else {
+                        let Some(to_node) = Self::plugin_node_from_json_with_runtime_nodes(
+                            &c["to_node"],
+                            &runtime_nodes,
+                        ) else {
                             continue;
                         };
                         let Some(kind) = Self::kind_from_json(&c["kind"]) else {
@@ -1695,15 +1801,6 @@ impl Maolan {
                         };
                         let from_port = c["from_port"].as_u64().unwrap_or(0) as usize;
                         let to_port = c["to_port"].as_u64().unwrap_or(0) as usize;
-                        let valid_node = |n: &maolan_engine::message::PluginGraphNode| match n {
-                            maolan_engine::message::PluginGraphNode::Lv2PluginInstance(idx) => {
-                                *idx < plugin_count
-                            }
-                            _ => true,
-                        };
-                        if !valid_node(&from_node) || !valid_node(&to_node) {
-                            continue;
-                        }
                         match kind {
                             Kind::Audio => restore_actions.push(Action::TrackConnectPluginAudio {
                                 track_name: track_name.clone(),

@@ -2792,11 +2792,41 @@ impl Engine {
                 Action::SetTempo(_) => {
                     inverse_actions = Some(vec![Action::SetTempo(self.tempo_bpm)]);
                 }
+                Action::SetLoopEnabled(_) => {
+                    inverse_actions = Some(vec![Action::SetLoopEnabled(self.loop_enabled)]);
+                }
+                Action::SetLoopRange(_) => {
+                    inverse_actions = Some(vec![
+                        Action::SetLoopRange(self.loop_range_samples),
+                        Action::SetLoopEnabled(self.loop_enabled),
+                    ]);
+                }
+                Action::SetPunchEnabled(_) => {
+                    inverse_actions = Some(vec![Action::SetPunchEnabled(self.punch_enabled)]);
+                }
+                Action::SetPunchRange(_) => {
+                    inverse_actions = Some(vec![
+                        Action::SetPunchRange(self.punch_range_samples),
+                        Action::SetPunchEnabled(self.punch_enabled),
+                    ]);
+                }
+                Action::SetMetronomeEnabled(_) => {
+                    inverse_actions = Some(vec![Action::SetMetronomeEnabled(
+                        self.metronome_enabled,
+                    )]);
+                }
                 Action::SetTimeSignature { .. } => {
                     inverse_actions = Some(vec![Action::SetTimeSignature {
                         numerator: self.tsig_num,
                         denominator: self.tsig_denom,
                     }]);
+                }
+                Action::SetClipPlaybackEnabled(_) => {
+                    inverse_actions =
+                        Some(vec![Action::SetClipPlaybackEnabled(self.clip_playback_enabled)]);
+                }
+                Action::SetRecordEnabled(_) => {
+                    inverse_actions = Some(vec![Action::SetRecordEnabled(self.record_enabled)]);
                 }
                 Action::SetGlobalMidiLearnBinding { target, .. } => {
                     let binding = match target {

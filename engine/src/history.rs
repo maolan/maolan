@@ -72,7 +72,14 @@ pub fn should_record(action: &Action) -> bool {
     matches!(
         action,
         Action::SetTempo(_)
+            | Action::SetLoopEnabled(_)
+            | Action::SetLoopRange(_)
+            | Action::SetPunchEnabled(_)
+            | Action::SetPunchRange(_)
+            | Action::SetMetronomeEnabled(_)
             | Action::SetTimeSignature { .. }
+            | Action::SetClipPlaybackEnabled(_)
+            | Action::SetRecordEnabled(_)
             | Action::AddTrack { .. }
             | Action::RemoveTrack(_)
             | Action::RenameTrack { .. }
@@ -109,8 +116,11 @@ pub fn should_record(action: &Action) -> bool {
             | Action::TrackDisconnectPluginMidi { .. }
             | Action::TrackLoadClapPlugin { .. }
             | Action::TrackUnloadClapPlugin { .. }
+            | Action::TrackLoadLv2Plugin { .. }
+            | Action::TrackUnloadLv2PluginInstance { .. }
             | Action::TrackLoadVst3Plugin { .. }
             | Action::TrackUnloadVst3PluginInstance { .. }
+            | Action::TrackSetLv2ControlValue { .. }
             | Action::TrackSetClapParameter { .. }
             | Action::TrackSetVst3Parameter { .. }
             | Action::ModifyMidiNotes { .. }
@@ -572,6 +582,33 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             track_name: track_name.clone(),
             plugin_path: plugin_path.clone(),
         }),
+        Action::TrackLoadLv2Plugin {
+            track_name,
+            plugin_uri: _,
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track = track.lock();
+            Some(Action::TrackUnloadLv2PluginInstance {
+                track_name: track_name.clone(),
+                instance_id: track.next_lv2_instance_id,
+            })
+        }
+        Action::TrackUnloadLv2PluginInstance {
+            track_name,
+            instance_id,
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track = track.lock();
+            let plugin_uri = track
+                .loaded_lv2_instances()
+                .into_iter()
+                .find(|(id, _)| *id == *instance_id)
+                .map(|(_, uri)| uri)?;
+            Some(Action::TrackLoadLv2Plugin {
+                track_name: track_name.clone(),
+                plugin_uri,
+            })
+        }
         Action::TrackLoadVst3Plugin {
             track_name,
             plugin_path: _,
@@ -622,6 +659,20 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             let track = track.lock();
             let snapshot = track.vst3_snapshot_state(*instance_id).ok()?;
             Some(Action::TrackVst3RestoreState {
+                track_name: track_name.clone(),
+                instance_id: *instance_id,
+                state: snapshot,
+            })
+        }
+        Action::TrackSetLv2ControlValue {
+            track_name,
+            instance_id,
+            ..
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track = track.lock();
+            let snapshot = track.lv2_snapshot_state(*instance_id).ok()?;
+            Some(Action::TrackSetLv2PluginState {
                 track_name: track_name.clone(),
                 instance_id: *instance_id,
                 state: snapshot,

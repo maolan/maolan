@@ -2560,7 +2560,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(any(all(unix, not(target_os = "macos")), target_os = "windows"))]
+    #[cfg(target_os = "windows")]
     fn plugin_node_from_json(v: &Value) -> Option<maolan_engine::message::PluginGraphNode> {
         use maolan_engine::message::PluginGraphNode;
         let t = v["type"].as_str()?;
@@ -2576,6 +2576,49 @@ impl Maolan {
             "clap_plugin" => Some(PluginGraphNode::ClapPluginInstance(
                 v["plugin_index"].as_u64()? as usize,
             )),
+            _ => None,
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn saved_unix_plugin_format(
+        plugin: &Value,
+        clap_paths: &[String],
+    ) -> Option<&'static str> {
+        if let Some(format) = plugin.get("format").and_then(Value::as_str) {
+            if format.eq_ignore_ascii_case("LV2") {
+                return Some("LV2");
+            }
+            if format.eq_ignore_ascii_case("CLAP") {
+                return Some("CLAP");
+            }
+        }
+        let uri = plugin.get("uri").and_then(Value::as_str)?;
+        if clap_paths.iter().any(|path| path.eq_ignore_ascii_case(uri)) {
+            Some("CLAP")
+        } else {
+            Some("LV2")
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn plugin_node_from_json_with_runtime_nodes(
+        v: &Value,
+        runtime_nodes: &[maolan_engine::message::PluginGraphNode],
+    ) -> Option<maolan_engine::message::PluginGraphNode> {
+        use maolan_engine::message::PluginGraphNode;
+        let t = v["type"].as_str()?;
+        match t {
+            "track_input" => Some(PluginGraphNode::TrackInput),
+            "track_output" => Some(PluginGraphNode::TrackOutput),
+            "plugin" => runtime_nodes.get(v["plugin_index"].as_u64()? as usize).and_then(|node| {
+                matches!(node, PluginGraphNode::Lv2PluginInstance(_)).then(|| node.clone())
+            }),
+            "clap_plugin" => {
+                runtime_nodes.get(v["plugin_index"].as_u64()? as usize).and_then(|node| {
+                    matches!(node, PluginGraphNode::ClapPluginInstance(_)).then(|| node.clone())
+                })
+            }
             _ => None,
         }
     }
