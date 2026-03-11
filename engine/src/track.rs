@@ -366,7 +366,12 @@ impl Track {
         };
         let mut route_changed = false;
         for out in &self.audio.outs {
-            if !out.connections.lock().iter().any(|conn| Arc::ptr_eq(conn, &src)) {
+            if !out
+                .connections
+                .lock()
+                .iter()
+                .any(|conn| Arc::ptr_eq(conn, &src))
+            {
                 Self::connect_directed_audio(&src, out);
                 route_changed = true;
             }
@@ -777,7 +782,8 @@ impl Track {
                 .resize(self.audio.outs.len(), 0.0);
         }
         if self.meter_peak_hold_linear.len() != self.audio.outs.len() {
-            self.meter_peak_hold_linear.resize(self.audio.outs.len(), 0.0);
+            self.meter_peak_hold_linear
+                .resize(self.audio.outs.len(), 0.0);
         }
         for out_idx in 0..self.audio.outs.len() {
             let audio_out = self.audio.outs[out_idx].clone();

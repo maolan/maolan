@@ -78,10 +78,7 @@ impl Maolan {
                 state.time_signature_denom = base_den;
                 self.time_signature_num_input = incoming_num.to_string();
                 self.time_signature_denom_input = incoming_den.to_string();
-                self.last_sent_time_signature = Some((
-                    incoming_num as u16,
-                    incoming_den as u16,
-                ));
+                self.last_sent_time_signature = Some((incoming_num as u16, incoming_den as u16));
                 true
             }
             _ => false,

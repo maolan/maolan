@@ -751,13 +751,21 @@ impl Engine {
         }
         let (cycle_samples, sample_rate_hz, output_channels) = if let Some(hw) = &self.hw_driver {
             let hw = hw.lock();
-            (hw.cycle_samples(), hw.sample_rate() as f64, hw.output_channels())
+            (
+                hw.cycle_samples(),
+                hw.sample_rate() as f64,
+                hw.output_channels(),
+            )
         } else {
             #[cfg(unix)]
             {
                 if let Some(jack) = &self.jack_runtime {
                     let jack = jack.lock();
-                    (jack.buffer_size, jack.sample_rate as f64, jack.audio_outs.len())
+                    (
+                        jack.buffer_size,
+                        jack.sample_rate as f64,
+                        jack.audio_outs.len(),
+                    )
                 } else {
                     return;
                 }
@@ -782,13 +790,7 @@ impl Engine {
                 sample_rate_hz.max(1.0),
             )))),
         );
-        if let Some(track) = self
-            .state
-            .lock()
-            .tracks
-            .get(Self::METRONOME_TRACK)
-            .cloned()
-        {
+        if let Some(track) = self.state.lock().tracks.get(Self::METRONOME_TRACK).cloned() {
             track.lock().set_level(Self::METRONOME_DEFAULT_LEVEL_DB);
             track.lock().set_metronome_enabled(self.metronome_enabled);
         }
@@ -2526,7 +2528,8 @@ impl Engine {
             self.hw_out_peak_hold_linear[idx] = next;
             held_peaks.push(next);
         }
-        let should_notify = should_notify_interval && self.should_publish_hw_out_linear(&held_peaks);
+        let should_notify =
+            should_notify_interval && self.should_publish_hw_out_linear(&held_peaks);
         let meter_db: Vec<f32> = held_peaks
             .into_iter()
             .map(Self::meter_linear_to_db)
@@ -2868,13 +2871,7 @@ impl Engine {
                 if enabled {
                     self.ensure_metronome_track().await;
                 }
-                if let Some(track) = self
-                    .state
-                    .lock()
-                    .tracks
-                    .get(Self::METRONOME_TRACK)
-                    .cloned()
-                {
+                if let Some(track) = self.state.lock().tracks.get(Self::METRONOME_TRACK).cloned() {
                     track.lock().set_metronome_enabled(enabled);
                 }
             }

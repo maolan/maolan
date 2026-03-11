@@ -4435,10 +4435,7 @@ impl Maolan {
                 if let Some(level_db) = parsed {
                     self.mixer_level_edit_track = None;
                     self.mixer_level_edit_input.clear();
-                    return self.send(Action::TrackLevel(
-                        track_name,
-                        level_db.clamp(-90.0, 20.0),
-                    ));
+                    return self.send(Action::TrackLevel(track_name, level_db.clamp(-90.0, 20.0)));
                 }
                 self.state.blocking_write().message = "Invalid mixer level value".to_string();
             }
