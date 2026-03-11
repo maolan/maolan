@@ -2508,7 +2508,10 @@ impl Track {
 
     pub fn remove_audio_input(&mut self) -> Result<(), String> {
         if self.audio.ins.len() <= self.primary_audio_ins() {
-            return Err(format!("Track '{}' has no removable return inputs", self.name));
+            return Err(format!(
+                "Track '{}' has no removable return inputs",
+                self.name
+            ));
         }
         if let Some(input) = self.audio.ins.pop() {
             Self::disconnect_all(&input);
@@ -2529,7 +2532,10 @@ impl Track {
         track_inputs: &[Arc<AudioIO>],
     ) -> Result<(), String> {
         if self.audio.outs.len() <= self.primary_audio_outs() {
-            return Err(format!("Track '{}' has no removable send outputs", self.name));
+            return Err(format!(
+                "Track '{}' has no removable send outputs",
+                self.name
+            ));
         }
         let Some(output) = self.audio.outs.pop() else {
             return Err(format!("Track '{}' output removal failed", self.name));
@@ -2538,7 +2544,8 @@ impl Track {
             let _ = AudioIO::disconnect(&output, target);
         }
         self.record_tap_outs.truncate(self.audio.outs.len());
-        self.output_meter_linear_cache.truncate(self.audio.outs.len());
+        self.output_meter_linear_cache
+            .truncate(self.audio.outs.len());
         self.meter_peak_hold_linear.truncate(self.audio.outs.len());
         self.invalidate_audio_route_cache();
         Ok(())
@@ -3542,10 +3549,22 @@ mod tests {
         ];
 
         assert_eq!(Track::warped_source_sample_for_output(100, 0, &markers), 0);
-        assert_eq!(Track::warped_source_sample_for_output(100, 25, &markers), 10);
-        assert_eq!(Track::warped_source_sample_for_output(100, 50, &markers), 50);
-        assert_eq!(Track::warped_source_sample_for_output(100, 75, &markers), 90);
-        assert_eq!(Track::warped_source_sample_for_output(100, 100, &markers), 100);
+        assert_eq!(
+            Track::warped_source_sample_for_output(100, 25, &markers),
+            10
+        );
+        assert_eq!(
+            Track::warped_source_sample_for_output(100, 50, &markers),
+            50
+        );
+        assert_eq!(
+            Track::warped_source_sample_for_output(100, 75, &markers),
+            90
+        );
+        assert_eq!(
+            Track::warped_source_sample_for_output(100, 100, &markers),
+            100
+        );
     }
 
     #[test]
@@ -3559,7 +3578,8 @@ mod tests {
         track.loop_enabled = true;
         track.loop_range_samples = Some((32, 64));
         track.armed = true;
-        track.pending_hw_midi_out_events
+        track
+            .pending_hw_midi_out_events
             .push(crate::midi::io::MidiEvent::new(0, vec![0x90, 60, 100]));
 
         let (channels, rendered) = track.offline_bounce_interleaved(0, 4);

@@ -2811,9 +2811,8 @@ impl Engine {
                     ]);
                 }
                 Action::SetMetronomeEnabled(_) => {
-                    inverse_actions = Some(vec![Action::SetMetronomeEnabled(
-                        self.metronome_enabled,
-                    )]);
+                    inverse_actions =
+                        Some(vec![Action::SetMetronomeEnabled(self.metronome_enabled)]);
                 }
                 Action::SetTimeSignature { .. } => {
                     inverse_actions = Some(vec![Action::SetTimeSignature {
@@ -2822,8 +2821,9 @@ impl Engine {
                     }]);
                 }
                 Action::SetClipPlaybackEnabled(_) => {
-                    inverse_actions =
-                        Some(vec![Action::SetClipPlaybackEnabled(self.clip_playback_enabled)]);
+                    inverse_actions = Some(vec![Action::SetClipPlaybackEnabled(
+                        self.clip_playback_enabled,
+                    )]);
                 }
                 Action::SetRecordEnabled(_) => {
                     inverse_actions = Some(vec![Action::SetRecordEnabled(self.record_enabled)]);
@@ -3142,10 +3142,7 @@ impl Engine {
                         .collect::<Vec<_>>();
                     (hw_outputs, track_inputs)
                 };
-                if let Err(e) = track
-                    .lock()
-                    .remove_audio_output(&hw_outputs, &track_inputs)
-                {
+                if let Err(e) = track.lock().remove_audio_output(&hw_outputs, &track_inputs) {
                     self.notify_clients(Err(e)).await;
                     return;
                 }

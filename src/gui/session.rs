@@ -439,7 +439,8 @@ impl Maolan {
                 .get("clap")
                 .and_then(|c| c.as_array())
                 .map(|paths| {
-                    paths.iter()
+                    paths
+                        .iter()
                         .filter_map(|path| path.as_str().map(str::to_string))
                         .collect::<Vec<_>>()
                 })
@@ -513,14 +514,16 @@ impl Maolan {
             // Load plugin graph connections
             if let Some(connections) = graph.get("connections").and_then(|c| c.as_array()) {
                 for conn in connections {
-                    let Some(from_node) =
-                        Self::plugin_node_from_json_with_runtime_nodes(&conn["from_node"], &runtime_nodes)
-                    else {
+                    let Some(from_node) = Self::plugin_node_from_json_with_runtime_nodes(
+                        &conn["from_node"],
+                        &runtime_nodes,
+                    ) else {
                         continue;
                     };
-                    let Some(to_node) =
-                        Self::plugin_node_from_json_with_runtime_nodes(&conn["to_node"], &runtime_nodes)
-                    else {
+                    let Some(to_node) = Self::plugin_node_from_json_with_runtime_nodes(
+                        &conn["to_node"],
+                        &runtime_nodes,
+                    ) else {
                         continue;
                     };
                     let Some(kind) = Self::kind_from_json(&conn["kind"]) else {
@@ -1920,7 +1923,8 @@ impl Maolan {
                     .and_then(|tracks| tracks.get(track_name))
                     .and_then(Value::as_array)
                     .map(|paths| {
-                        paths.iter()
+                        paths
+                            .iter()
                             .filter_map(|path| path.as_str().map(str::to_string))
                             .collect::<Vec<_>>()
                     })
@@ -1932,10 +1936,7 @@ impl Maolan {
                     .cloned()
                     .and_then(|v| {
                         serde_json::from_value::<
-                            std::collections::HashMap<
-                                String,
-                                maolan_engine::clap::ClapPluginState,
-                            >,
+                            std::collections::HashMap<String, maolan_engine::clap::ClapPluginState>,
                         >(v)
                         .ok()
                     })

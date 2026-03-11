@@ -1094,11 +1094,11 @@ mod tests {
     use super::*;
     use crate::audio::clip::AudioClip;
     use crate::kind::Kind;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    use crate::message::Lv2PluginState;
     use crate::message::{MidiLearnBinding, TrackMidiLearnTarget};
     use crate::mutex::UnsafeMutex;
     use crate::track::Track;
-    #[cfg(all(unix, not(target_os = "macos")))]
-    use crate::message::Lv2PluginState;
     use crate::vst3::Vst3PluginState;
     use std::sync::Arc;
 
@@ -1140,10 +1140,16 @@ mod tests {
         history.record(c.clone());
 
         let undo = history.undo().unwrap();
-        assert!(matches!(undo.as_slice(), [Action::SetMetronomeEnabled(false)]));
+        assert!(matches!(
+            undo.as_slice(),
+            [Action::SetMetronomeEnabled(false)]
+        ));
 
         let redo = history.redo().unwrap();
-        assert!(matches!(redo.as_slice(), [Action::SetMetronomeEnabled(true)]));
+        assert!(matches!(
+            redo.as_slice(),
+            [Action::SetMetronomeEnabled(true)]
+        ));
 
         history.undo();
         history.record(UndoEntry {
@@ -1210,7 +1216,10 @@ mod tests {
     #[test]
     fn create_inverse_action_for_add_clip_targets_next_clip_index() {
         let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
-        track.audio.clips.push(AudioClip::new("existing".to_string(), 0, 16));
+        track
+            .audio
+            .clips
+            .push(AudioClip::new("existing".to_string(), 0, 16));
         let state = make_state_with_track(track);
 
         let inverse = create_inverse_action(
@@ -1379,7 +1388,8 @@ mod tests {
         track.audio.outs.push(Arc::new(AudioIO::new(64)));
         let state = make_state_with_track(track);
 
-        let inverses = create_inverse_actions(&Action::RemoveTrack("t".to_string()), &state).unwrap();
+        let inverses =
+            create_inverse_actions(&Action::RemoveTrack("t".to_string()), &state).unwrap();
 
         assert!(matches!(
             inverses.first(),
@@ -1391,18 +1401,26 @@ mod tests {
                 midi_outs: 1,
             }) if name == "t"
         ));
-        assert!(inverses
-            .iter()
-            .any(|action| matches!(action, Action::TrackAddAudioInput(name) if name == "t")));
-        assert!(inverses
-            .iter()
-            .any(|action| matches!(action, Action::TrackAddAudioOutput(name) if name == "t")));
-        assert!(inverses
-            .iter()
-            .any(|action| matches!(action, Action::TrackToggleInputMonitor(name) if name == "t")));
-        assert!(inverses
-            .iter()
-            .any(|action| matches!(action, Action::TrackToggleDiskMonitor(name) if name == "t")));
+        assert!(
+            inverses
+                .iter()
+                .any(|action| matches!(action, Action::TrackAddAudioInput(name) if name == "t"))
+        );
+        assert!(
+            inverses
+                .iter()
+                .any(|action| matches!(action, Action::TrackAddAudioOutput(name) if name == "t"))
+        );
+        assert!(
+            inverses.iter().any(
+                |action| matches!(action, Action::TrackToggleInputMonitor(name) if name == "t")
+            )
+        );
+        assert!(
+            inverses.iter().any(
+                |action| matches!(action, Action::TrackToggleDiskMonitor(name) if name == "t")
+            )
+        );
         assert!(inverses.iter().any(|action| {
             matches!(
                 action,

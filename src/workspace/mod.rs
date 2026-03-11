@@ -561,78 +561,84 @@ impl Workspace {
             piano_content
         };
 
-        container(column![
-            row![
-                container("")
-                    .width(Length::Fixed(TOOLS_STRIP_WIDTH + MAIN_SPLIT_SPACING,))
+        container(
+            column![
+                row![
+                    container("")
+                        .width(Length::Fixed(TOOLS_STRIP_WIDTH + MAIN_SPLIT_SPACING,))
+                        .height(Length::Fill),
+                    container("")
+                        .width(Length::Fixed(KEYBOARD_WIDTH))
+                        .height(Length::Fill),
+                    scrollable(container(self.tempo.view(TempoViewArgs {
+                        bpm: tempo,
+                        time_signature,
+                        pixels_per_sample: horizontal_pixels_per_sample,
+                        playhead_x,
+                        punch_range_samples: None,
+                        snap_mode,
+                        samples_per_beat,
+                        samples_per_bar: samples_per_bar as f64,
+                        content_width: timeline_content_width,
+                        tempo_points,
+                        time_signature_points,
+                        shift_pressed,
+                        selected_tempo_points,
+                        selected_time_signature_points,
+                        timeline_left_inset_px: 0.0,
+                    })))
+                    .id(Id::new(PIANO_TEMPO_SCROLL_ID))
+                    .direction(scrollable::Direction::Horizontal(
+                        scrollable::Scrollbar::hidden(),
+                    ))
+                    .on_scroll(|viewport| Message::PianoScrollXChanged(
+                        viewport.relative_offset().x
+                    ))
+                    .width(Length::Fill)
                     .height(Length::Fill),
-                container("")
-                    .width(Length::Fixed(KEYBOARD_WIDTH))
-                    .height(Length::Fill),
-                scrollable(container(self.tempo.view(TempoViewArgs {
-                    bpm: tempo,
-                    time_signature,
-                    pixels_per_sample: horizontal_pixels_per_sample,
-                    playhead_x,
-                    punch_range_samples: None,
-                    snap_mode,
-                    samples_per_beat,
-                    samples_per_bar: samples_per_bar as f64,
-                    content_width: timeline_content_width,
-                    tempo_points,
-                    time_signature_points,
-                    shift_pressed,
-                    selected_tempo_points,
-                    selected_time_signature_points,
-                    timeline_left_inset_px: 0.0,
-                })))
-                .id(Id::new(PIANO_TEMPO_SCROLL_ID))
-                .direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::hidden(),
-                ))
-                .on_scroll(|viewport| Message::PianoScrollXChanged(viewport.relative_offset().x))
+                    container("")
+                        .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
+                        .height(Length::Fill),
+                ]
                 .width(Length::Fill)
-                .height(Length::Fill),
-                container("")
-                    .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
+                .height(Length::Fixed(self.tempo.height())),
+                row![
+                    container("")
+                        .width(Length::Fixed(TOOLS_STRIP_WIDTH + MAIN_SPLIT_SPACING,))
+                        .height(Length::Fill),
+                    container("")
+                        .width(Length::Fixed(KEYBOARD_WIDTH))
+                        .height(Length::Fill),
+                    scrollable(container(self.ruler.view(RulerViewArgs {
+                        playhead_x,
+                        beat_pixels: horizontal_beat_pixels,
+                        pixels_per_sample: horizontal_pixels_per_sample,
+                        loop_range_samples: None,
+                        snap_mode,
+                        samples_per_beat,
+                        content_width: timeline_content_width,
+                        timeline_left_inset_px: 0.0,
+                    })))
+                    .id(Id::new(PIANO_RULER_SCROLL_ID))
+                    .direction(scrollable::Direction::Horizontal(
+                        scrollable::Scrollbar::hidden(),
+                    ))
+                    .on_scroll(|viewport| Message::PianoScrollXChanged(
+                        viewport.relative_offset().x
+                    ))
+                    .width(Length::Fill)
                     .height(Length::Fill),
+                    container("")
+                        .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
+                        .height(Length::Fill),
+                ]
+                .width(Length::Fill)
+                .height(Length::Fixed(self.ruler.height())),
+                piano_with_playhead,
             ]
             .width(Length::Fill)
-            .height(Length::Fixed(self.tempo.height())),
-            row![
-                container("")
-                    .width(Length::Fixed(TOOLS_STRIP_WIDTH + MAIN_SPLIT_SPACING,))
-                    .height(Length::Fill),
-                container("")
-                    .width(Length::Fixed(KEYBOARD_WIDTH))
-                    .height(Length::Fill),
-                scrollable(container(self.ruler.view(RulerViewArgs {
-                    playhead_x,
-                    beat_pixels: horizontal_beat_pixels,
-                    pixels_per_sample: horizontal_pixels_per_sample,
-                    loop_range_samples: None,
-                    snap_mode,
-                    samples_per_beat,
-                    content_width: timeline_content_width,
-                    timeline_left_inset_px: 0.0,
-                })))
-                .id(Id::new(PIANO_RULER_SCROLL_ID))
-                .direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::hidden(),
-                ))
-                .on_scroll(|viewport| Message::PianoScrollXChanged(viewport.relative_offset().x))
-                .width(Length::Fill)
-                .height(Length::Fill),
-                container("")
-                    .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
-                    .height(Length::Fill),
-            ]
-            .width(Length::Fill)
-            .height(Length::Fixed(self.ruler.height())),
-            piano_with_playhead,
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill))
+            .height(Length::Fill),
+        )
         .style(|_theme| crate::style::app_background())
         .width(Length::Fill)
         .height(Length::Fill)

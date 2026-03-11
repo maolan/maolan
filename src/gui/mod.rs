@@ -1958,7 +1958,8 @@ impl Maolan {
 
     fn normalize_export_hw_out_ports(&mut self) {
         let available: BTreeSet<usize> = self.available_export_hw_out_ports().into_iter().collect();
-        self.export_hw_out_ports.retain(|port| available.contains(port));
+        self.export_hw_out_ports
+            .retain(|port| available.contains(port));
         if self.export_hw_out_ports.is_empty() {
             self.export_hw_out_ports = self.default_export_hw_out_ports();
         }
@@ -2704,10 +2705,7 @@ impl Maolan {
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    fn saved_unix_plugin_format(
-        plugin: &Value,
-        clap_paths: &[String],
-    ) -> Option<&'static str> {
+    fn saved_unix_plugin_format(plugin: &Value, clap_paths: &[String]) -> Option<&'static str> {
         if let Some(format) = plugin.get("format").and_then(Value::as_str) {
             if format.eq_ignore_ascii_case("LV2") {
                 return Some("LV2");
@@ -2734,14 +2732,16 @@ impl Maolan {
         match t {
             "track_input" => Some(PluginGraphNode::TrackInput),
             "track_output" => Some(PluginGraphNode::TrackOutput),
-            "plugin" => runtime_nodes.get(v["plugin_index"].as_u64()? as usize).and_then(|node| {
-                matches!(node, PluginGraphNode::Lv2PluginInstance(_)).then(|| node.clone())
-            }),
-            "clap_plugin" => {
-                runtime_nodes.get(v["plugin_index"].as_u64()? as usize).and_then(|node| {
+            "plugin" => runtime_nodes
+                .get(v["plugin_index"].as_u64()? as usize)
+                .and_then(|node| {
+                    matches!(node, PluginGraphNode::Lv2PluginInstance(_)).then(|| node.clone())
+                }),
+            "clap_plugin" => runtime_nodes
+                .get(v["plugin_index"].as_u64()? as usize)
+                .and_then(|node| {
                     matches!(node, PluginGraphNode::ClapPluginInstance(_)).then(|| node.clone())
-                })
-            }
+                }),
             _ => None,
         }
     }
@@ -3150,7 +3150,7 @@ impl Maolan {
                 text_input("Filter CLAP plugins...", &self.clap_plugin_filter)
                     .on_input(Message::FilterClapPlugin)
                     .width(Length::Fill),
-                    scrollable(clap_list).height(Length::Fill),
+                scrollable(clap_list).height(Length::Fill),
                 row![
                     load,
                     pick_list(
@@ -3960,7 +3960,10 @@ mod tests {
             Maolan::kind_from_json(&Maolan::kind_to_json(Kind::MIDI)),
             Some(Kind::MIDI)
         );
-        assert_eq!(Maolan::kind_from_json(&Value::String("other".to_string())), None);
+        assert_eq!(
+            Maolan::kind_from_json(&Value::String("other".to_string())),
+            None
+        );
     }
 
     #[test]

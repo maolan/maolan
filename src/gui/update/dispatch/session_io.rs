@@ -100,9 +100,8 @@ impl Maolan {
                     );
                     if !pending.confirm_armed {
                         pending.confirm_armed = true;
-                        self.state.blocking_write().message = format!(
-                            "{preview}. Run Recover Autosave Snapshot again to apply."
-                        );
+                        self.state.blocking_write().message =
+                            format!("{preview}. Run Recover Autosave Snapshot again to apply.");
                         return Some(Task::none());
                     }
                 }

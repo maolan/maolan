@@ -233,7 +233,7 @@ pub(super) fn track_context_menu_overlay(
     for candidate in state
         .tracks
         .iter()
-        .filter(|candidate| candidate.name != track.name)
+        .filter(|candidate| candidate.name != track.name && candidate.name != METRONOME_TRACK_ID)
     {
         items.push(menu::menu_item(
             format!("VCA -> {}", candidate.name),
@@ -261,7 +261,13 @@ pub(super) fn track_context_menu_overlay(
         })
         .into();
 
-    Some((Point::new(menu_state.anchor.x.max(0.0), (top + menu_state.anchor.y).max(0.0)), panel))
+    Some((
+        Point::new(
+            menu_state.anchor.x.max(0.0),
+            (top + menu_state.anchor.y).max(0.0),
+        ),
+        panel,
+    ))
 }
 
 impl Tracks {
@@ -473,9 +479,6 @@ impl Tracks {
                 - automation_height)
                 .max(12.0);
             let mut title_badges = row![].spacing(4).align_y(Alignment::Center);
-            if track.armed {
-                title_badges = title_badges.push(Self::info_badge("REC".to_string(), true));
-            }
             if track.frozen {
                 title_badges = title_badges.push(Self::info_badge("FRZ".to_string(), false));
             }
@@ -635,11 +638,15 @@ impl Tracks {
             }
 
             let audio_io = format!("A {}/{}", track.audio_ins, track.audio_outs);
-            let return_io =
-                format!("RET {}", track.audio_ins.saturating_sub(track.primary_audio_ins));
+            let return_io = format!(
+                "RET {}",
+                track.audio_ins.saturating_sub(track.primary_audio_ins)
+            );
             let midi_io = format!("M {}/{}", track.midi_ins, track.midi_outs);
-            let send_io =
-                format!("SND {}", track.audio_outs.saturating_sub(track.primary_audio_outs));
+            let send_io = format!(
+                "SND {}",
+                track.audio_outs.saturating_sub(track.primary_audio_outs)
+            );
             let mode_label = track.automation_mode.clone();
             let balance_label = Self::format_balance(track.balance);
             let automation_hint = if has_visible_automation { "AUTO" } else { "" };
@@ -758,27 +765,39 @@ impl Tracks {
                         let segment = Self::char_slice(&full, capacity_before, segment_capacity);
                         Self::rotate_text_cw(&segment, segment_capacity)
                     };
-                    container(text(strip_name).size(9).align_x(Horizontal::Center))
-                        .width(Length::Fixed(vca_strip_width))
-                        .height(Length::Fill)
-                        .padding([6, 1])
-                        .style(move |_theme| container::Style {
-                            background: Some(Background::Color(Color::from_rgba(
-                                0.25, 0.34, 0.49, 0.92,
-                            ))),
-                            border: Border {
-                                color: Color::from_rgba(0.82, 0.9, 1.0, 0.18),
-                                width: 1.0,
-                                radius: if prev_same || next_same { 0.0 } else { 4.0 }.into(),
+                    container(
+                        container(text(strip_name).size(9).align_x(Horizontal::Center))
+                            .width(Length::Fill)
+                            .align_x(Alignment::Center),
+                    )
+                    .width(Length::Fixed(vca_strip_width))
+                    .height(Length::Fill)
+                    .padding([6, 1])
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(
+                            0.25, 0.34, 0.49, 0.92,
+                        ))),
+                        border: Border {
+                            color: Color::from_rgba(0.82, 0.9, 1.0, 0.18),
+                            width: 1.0,
+                            radius: iced::border::Radius {
+                                top_left: if prev_same { 0.0 } else { 4.0 },
+                                top_right: 0.0,
+                                bottom_right: 0.0,
+                                bottom_left: if next_same { 0.0 } else { 4.0 },
                             },
-                            text_color: Some(Color::from_rgb(0.89, 0.93, 0.99)),
-                            ..container::Style::default()
-                        })
+                        },
+                        text_color: Some(Color::from_rgb(0.89, 0.93, 0.99)),
+                        ..container::Style::default()
+                    })
                 } else {
                     container("")
                         .width(Length::Fixed(vca_strip_width))
                         .height(Length::Fill)
                 };
+                let vca_strip = container(row![Space::new().width(Length::Fixed(4.0)), vca_strip])
+                    .width(Length::Fixed(vca_strip_width + 4.0))
+                    .height(Length::Fill);
                 let track_body = container(track_ui)
                     .id(track.name.clone())
                     .width(Length::Fill)
@@ -802,7 +821,7 @@ impl Tracks {
                         },
                         ..container::Style::default()
                     });
-                let track_body = container(row![vca_strip, track_body].spacing(4.0))
+                let track_body = container(row![vca_strip, track_body])
                     .width(Length::Fill)
                     .height(Length::Fixed(height));
 

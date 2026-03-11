@@ -149,13 +149,15 @@ impl Maolan {
             }
             Action::TrackRemoveAudioInput(name) => {
                 let mut state = self.state.blocking_write();
-                let removed_port = state
-                    .tracks
-                    .iter()
-                    .find(|t| t.name == *name)
-                    .and_then(|track| {
-                        (track.audio.ins > track.primary_audio_ins()).then_some(track.audio.ins - 1)
-                    });
+                let removed_port =
+                    state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *name)
+                        .and_then(|track| {
+                            (track.audio.ins > track.primary_audio_ins())
+                                .then_some(track.audio.ins - 1)
+                        });
                 if let Some(removed_port) = removed_port {
                     state.connections.retain(|conn| {
                         !(conn.kind == maolan_engine::kind::Kind::Audio
@@ -171,14 +173,15 @@ impl Maolan {
             }
             Action::TrackRemoveAudioOutput(name) => {
                 let mut state = self.state.blocking_write();
-                let removed_port = state
-                    .tracks
-                    .iter()
-                    .find(|t| t.name == *name)
-                    .and_then(|track| {
-                        (track.audio.outs > track.primary_audio_outs())
-                            .then_some(track.audio.outs - 1)
-                    });
+                let removed_port =
+                    state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *name)
+                        .and_then(|track| {
+                            (track.audio.outs > track.primary_audio_outs())
+                                .then_some(track.audio.outs - 1)
+                        });
                 if let Some(removed_port) = removed_port {
                     state.connections.retain(|conn| {
                         !(conn.kind == maolan_engine::kind::Kind::Audio

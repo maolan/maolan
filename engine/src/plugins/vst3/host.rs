@@ -122,7 +122,12 @@ fn scan_vst3_bundle(bundle_path: &Path) -> Option<Vst3PluginInfo> {
                 let (audio_inputs, audio_outputs) = instance.main_audio_channel_counts();
                 let (midi_inputs, midi_outputs) = instance.event_bus_counts();
                 let _ = instance.terminate();
-                Some((audio_inputs, audio_outputs, midi_inputs > 0, midi_outputs > 0))
+                Some((
+                    audio_inputs,
+                    audio_outputs,
+                    midi_inputs > 0,
+                    midi_outputs > 0,
+                ))
             }
             Err(_) => None,
         };

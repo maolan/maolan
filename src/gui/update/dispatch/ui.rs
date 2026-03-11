@@ -36,7 +36,8 @@ impl Maolan {
                 true
             }
             Message::ExportFormatMp3Toggled(enabled) => {
-                self.export_format_mp3 = *enabled && self.export_mp3_supported_for_current_settings();
+                self.export_format_mp3 =
+                    *enabled && self.export_mp3_supported_for_current_settings();
                 self.adjust_export_bit_depth_if_needed();
                 true
             }

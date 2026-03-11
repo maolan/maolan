@@ -6,7 +6,10 @@ pub mod mute;
 pub mod solo;
 
 use crate::consts::APP_BACKGROUND_COLOR;
-use iced::{Background, Border, Color, Theme, widget::{button::Style, container}};
+use iced::{
+    Background, Border, Color, Theme,
+    widget::{button::Style, container},
+};
 
 pub fn app_background() -> container::Style {
     container::Style {

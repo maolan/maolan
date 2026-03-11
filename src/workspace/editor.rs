@@ -2636,13 +2636,15 @@ impl Editor {
                     .into(),
             );
         }
-        container(mouse_area(
-            Stack::from_vec(layers)
-                .width(Length::Fill)
-                .height(Length::Fill),
+        container(
+            mouse_area(
+                Stack::from_vec(layers)
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .on_move(Message::EditorMouseMoved)
+            .on_press(Message::DeselectClips),
         )
-        .on_move(Message::EditorMouseMoved)
-        .on_press(Message::DeselectClips))
         .style(|_theme| crate::style::app_background())
         .width(Length::Fill)
         .height(Length::Fill)

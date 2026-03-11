@@ -1498,7 +1498,8 @@ impl Maolan {
                         | Action::TrackAddAudioOutput(track_name)
                         | Action::TrackRemoveAudioInput(track_name)
                         | Action::TrackRemoveAudioOutput(track_name) => {
-                            if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name)
+                            if let Some(task) =
+                                self.maybe_refresh_plugin_graph_for_track(track_name)
                             {
                                 return task;
                             }
@@ -5323,8 +5324,8 @@ impl Maolan {
                     .unwrap_or(48_000);
                 self.export_sample_rate_hz = nearest_rate;
                 self.normalize_export_hw_out_ports();
-                self.export_format_mp3 = self.export_format_mp3
-                    && self.export_mp3_supported_for_current_settings();
+                self.export_format_mp3 =
+                    self.export_format_mp3 && self.export_mp3_supported_for_current_settings();
                 self.modal = Some(crate::message::Show::ExportSettings);
             }
             Message::ExportDiagnosticsBundleRequest => {

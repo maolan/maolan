@@ -1,8 +1,6 @@
 use crate::midi::io::MidiEvent;
 use std::cell::UnsafeCell;
-use vst3::Steinberg::Vst::ControllerNumbers_::{
-    kAfterTouch, kCtrlProgramChange, kPitchBend,
-};
+use vst3::Steinberg::Vst::ControllerNumbers_::{kAfterTouch, kCtrlProgramChange, kPitchBend};
 use vst3::Steinberg::Vst::DataEvent_::DataTypes_;
 use vst3::Steinberg::Vst::Event_::EventTypes_;
 use vst3::Steinberg::Vst::{
@@ -167,12 +165,7 @@ impl ParameterChanges {
             };
             let mut param_id: ParamID = 0;
             let result = unsafe {
-                mapping.getMidiControllerAssignment(
-                    bus_index,
-                    channel,
-                    controller,
-                    &mut param_id,
-                )
+                mapping.getMidiControllerAssignment(bus_index, channel, controller, &mut param_id)
             };
             if result != kResultOk {
                 continue;
@@ -230,7 +223,11 @@ impl IParameterChangesTrait for ParameterChanges {
             .unwrap_or(std::ptr::null_mut())
     }
 
-    unsafe fn addParameterData(&self, id: *const ParamID, index: *mut i32) -> *mut IParamValueQueue {
+    unsafe fn addParameterData(
+        &self,
+        id: *const ParamID,
+        index: *mut i32,
+    ) -> *mut IParamValueQueue {
         if id.is_null() {
             return std::ptr::null_mut();
         }
@@ -290,7 +287,8 @@ impl ParameterValueQueue {
     }
 
     fn push_point(&self, sample_offset: i32, value: f64) {
-        self.points_mut().push((sample_offset, value.clamp(0.0, 1.0)));
+        self.points_mut()
+            .push((sample_offset, value.clamp(0.0, 1.0)));
     }
 
     #[allow(clippy::mut_from_ref)]
@@ -313,7 +311,8 @@ impl IParamValueQueueTrait for ParameterValueQueue {
     }
 
     unsafe fn getPoint(&self, index: i32, sample_offset: *mut i32, value: *mut f64) -> i32 {
-        let Some((offset, point_value)) = self.points_ref().get(index.max(0) as usize).copied() else {
+        let Some((offset, point_value)) = self.points_ref().get(index.max(0) as usize).copied()
+        else {
             return kResultFalse;
         };
         if !sample_offset.is_null() {
@@ -480,7 +479,10 @@ fn vst3_event_to_midi(event: &Event) -> Option<MidiEvent> {
             let data = unsafe { event.__field0.data };
             (data.r#type == DataTypes_::kMidiSysEx && !data.bytes.is_null()).then(|| {
                 let bytes = unsafe {
-                    std::slice::from_raw_parts(data.bytes, data.size.min(usize::MAX as u32) as usize)
+                    std::slice::from_raw_parts(
+                        data.bytes,
+                        data.size.min(usize::MAX as u32) as usize,
+                    )
                 };
                 MidiEvent::new(frame, bytes.to_vec())
             })

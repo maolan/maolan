@@ -429,7 +429,10 @@ impl Vst3Processor {
         // Create ProcessData
         let mut process_context: ProcessContext = unsafe { std::mem::zeroed() };
         let input_event_list = if self.midi_input_ports > 0 {
-            Some(ComWrapper::new(EventBuffer::from_midi_events(input_events, 0)))
+            Some(ComWrapper::new(EventBuffer::from_midi_events(
+                input_events,
+                0,
+            )))
         } else {
             None
         };
@@ -439,8 +442,7 @@ impl Vst3Processor {
             .as_ref()
             .and_then(|controller| controller.cast::<IMidiMapping>());
         let input_parameter_changes = midi_mapping.as_ref().and_then(|mapping| {
-            ParameterChanges::from_midi_events(input_events, mapping, 0)
-                .map(ComWrapper::new)
+            ParameterChanges::from_midi_events(input_events, mapping, 0).map(ComWrapper::new)
         });
         let output_event_list = if self.midi_output_ports > 0 {
             Some(ComWrapper::new(EventBuffer::new()))

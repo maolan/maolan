@@ -169,10 +169,16 @@ impl Graph {
         (kind, engine_port)
     }
 
-    fn track_port_edge(track: &crate::state::Track, flat_port: usize, is_input: bool) -> TrackPortEdge {
+    fn track_port_edge(
+        track: &crate::state::Track,
+        flat_port: usize,
+        is_input: bool,
+    ) -> TrackPortEdge {
         let (kind, engine_port) = Self::track_port_to_engine_index(track, flat_port, is_input);
         match (is_input, kind) {
-            (true, Kind::Audio) if engine_port >= track.primary_audio_ins() => TrackPortEdge::Bottom,
+            (true, Kind::Audio) if engine_port >= track.primary_audio_ins() => {
+                TrackPortEdge::Bottom
+            }
             (false, Kind::Audio) if engine_port >= track.primary_audio_outs() => TrackPortEdge::Top,
             (true, _) => TrackPortEdge::Left,
             (false, _) => TrackPortEdge::Right,
@@ -262,10 +268,12 @@ impl Graph {
     fn track_port_color(track: &crate::state::Track, flat_port: usize, is_input: bool) -> Color {
         match Self::track_port_edge(track, flat_port, is_input) {
             TrackPortEdge::Top | TrackPortEdge::Bottom => aux_port_color(),
-            TrackPortEdge::Left | TrackPortEdge::Right => match Self::track_port_kind(track, flat_port, is_input) {
-                Kind::Audio => audio_port_color(),
-                Kind::MIDI => midi_port_color(),
-            },
+            TrackPortEdge::Left | TrackPortEdge::Right => {
+                match Self::track_port_kind(track, flat_port, is_input) {
+                    Kind::Audio => audio_port_color(),
+                    Kind::MIDI => midi_port_color(),
+                }
+            }
         }
     }
 
@@ -488,7 +496,8 @@ impl canvas::Program<Message> for Graph {
                         let track_name = track.name.clone();
                         let track_pos = track.position;
                         let track_size = Self::track_box_size(track);
-                        let t_ins = track.primary_audio_ins() + track.midi.ins + track.return_count();
+                        let t_ins =
+                            track.primary_audio_ins() + track.midi.ins + track.return_count();
                         for j in 0..t_ins {
                             let port_pos =
                                 Self::track_port_position(track, j, track_pos, track_size);
@@ -595,10 +604,7 @@ impl canvas::Program<Message> for Graph {
                                     false,
                                 );
                                 Self::track_output_port_position(
-                                    t,
-                                    port_idx,
-                                    t.position,
-                                    track_size,
+                                    t, port_idx, t.position, track_size,
                                 )
                             })
                         };
@@ -668,8 +674,9 @@ impl canvas::Program<Message> for Graph {
                         if is_input {
                             for track in data.tracks.iter() {
                                 let track_size = Self::track_box_size(track);
-                                let total_outs =
-                                    track.primary_audio_outs() + track.midi.outs + track.send_count();
+                                let total_outs = track.primary_audio_outs()
+                                    + track.midi.outs
+                                    + track.send_count();
                                 for j in 0..total_outs {
                                     let port_pos = Self::track_output_port_position(
                                         track,
@@ -721,8 +728,9 @@ impl canvas::Program<Message> for Graph {
                         } else {
                             for track in data.tracks.iter() {
                                 let track_size = Self::track_box_size(track);
-                                let total_ins =
-                                    track.primary_audio_ins() + track.midi.ins + track.return_count();
+                                let total_ins = track.primary_audio_ins()
+                                    + track.midi.ins
+                                    + track.return_count();
                                 for j in 0..total_ins {
                                     let port_pos = Self::track_port_position(
                                         track,
@@ -926,12 +934,8 @@ impl canvas::Program<Message> for Graph {
                             let t_ins =
                                 track.primary_audio_ins() + track.midi.ins + track.return_count();
                             for j in 0..t_ins {
-                                let port_pos = Self::track_port_position(
-                                    track,
-                                    j,
-                                    track.position,
-                                    track_size,
-                                );
+                                let port_pos =
+                                    Self::track_port_position(track, j, track.position, track_size);
                                 if cursor_position.distance(port_pos) < 10.0 {
                                     new_h = Some(Hovering::Port {
                                         track_idx: track.name.clone(),
@@ -1662,8 +1666,7 @@ impl canvas::Program<Message> for Graph {
                     );
                 }
 
-                let total_outs =
-                    track.primary_audio_outs() + track.midi.outs + track.send_count();
+                let total_outs = track.primary_audio_outs() + track.midi.outs + track.send_count();
                 for j in 0..total_outs {
                     let point = Self::track_output_port_position(track, j, pos, size);
                     let c = Self::track_port_color(track, j, false);
