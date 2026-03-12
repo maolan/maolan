@@ -293,6 +293,14 @@ pub enum Action {
         fade_in_samples: usize,
         fade_out_samples: usize,
     },
+    SetClipBounds {
+        track_name: String,
+        clip_index: usize,
+        kind: Kind,
+        start: usize,
+        length: usize,
+        offset: usize,
+    },
     SetClipMuted {
         track_name: String,
         clip_index: usize,

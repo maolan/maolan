@@ -1801,6 +1801,37 @@ impl Maolan {
                                 }
                             }
                         }
+                        Action::SetClipBounds {
+                            track_name,
+                            clip_index,
+                            kind,
+                            start,
+                            length,
+                            offset,
+                        } => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| &t.name == track_name)
+                            {
+                                match kind {
+                                    Kind::Audio => {
+                                        if let Some(clip) = track.audio.clips.get_mut(*clip_index) {
+                                            clip.start = *start;
+                                            clip.length = (*length).max(1);
+                                            clip.offset = *offset;
+                                        }
+                                    }
+                                    Kind::MIDI => {
+                                        if let Some(clip) = track.midi.clips.get_mut(*clip_index) {
+                                            clip.start = *start;
+                                            clip.length = (*length).max(1);
+                                            clip.offset = *offset;
+                                        }
+                                        refresh_midi_clip_previews = true;
+                                    }
+                                }
+                            }
+                        }
                         Action::SetAudioClipWarpMarkers {
                             track_name,
                             clip_index,
@@ -4679,7 +4710,40 @@ impl Maolan {
                         create_end,
                     )
                 };
-                if matches!(resizing, Some(Resizing::Clip { .. })) {
+                if let Some(Resizing::Clip {
+                    kind,
+                    track_name,
+                    index,
+                    ..
+                }) = resizing
+                {
+                    let state = self.state.blocking_read();
+                    if let Some(track) = state.tracks.iter().find(|t| t.name == track_name) {
+                        let (start, length, offset) = match kind {
+                            Kind::Audio => {
+                                if let Some(clip) = track.audio.clips.get(index) {
+                                    (clip.start, clip.length, clip.offset)
+                                } else {
+                                    return Task::none();
+                                }
+                            }
+                            Kind::MIDI => {
+                                if let Some(clip) = track.midi.clips.get(index) {
+                                    (clip.start, clip.length, clip.offset)
+                                } else {
+                                    return Task::none();
+                                }
+                            }
+                        };
+                        return self.send(Action::SetClipBounds {
+                            track_name,
+                            clip_index: index,
+                            kind,
+                            start,
+                            length,
+                            offset,
+                        });
+                    }
                     return Task::none();
                 }
                 if let Some(Resizing::Fade {

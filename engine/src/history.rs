@@ -103,6 +103,7 @@ pub fn should_record(action: &Action) -> bool {
             | Action::RenameClip { .. }
             | Action::ClipMove { .. }
             | Action::SetClipFade { .. }
+            | Action::SetClipBounds { .. }
             | Action::SetClipMuted { .. }
             | Action::SetAudioClipWarpMarkers { .. }
             | Action::ClearAllMidiLearnBindings
@@ -423,6 +424,39 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         fade_enabled: true,
                         fade_in_samples: 240,
                         fade_out_samples: 240,
+                    })
+                }
+            }
+        }
+        Action::SetClipBounds {
+            track_name,
+            clip_index,
+            kind,
+            ..
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track_lock = track.lock();
+            match kind {
+                Kind::Audio => {
+                    let clip = track_lock.audio.clips.get(*clip_index)?;
+                    Some(Action::SetClipBounds {
+                        track_name: track_name.clone(),
+                        clip_index: *clip_index,
+                        kind: *kind,
+                        start: clip.start,
+                        length: clip.end.max(1),
+                        offset: clip.offset,
+                    })
+                }
+                Kind::MIDI => {
+                    let clip = track_lock.midi.clips.get(*clip_index)?;
+                    Some(Action::SetClipBounds {
+                        track_name: track_name.clone(),
+                        clip_index: *clip_index,
+                        kind: *kind,
+                        start: clip.start,
+                        length: clip.end.max(1),
+                        offset: clip.offset,
                     })
                 }
             }
@@ -1177,6 +1211,14 @@ mod tests {
         assert!(should_record(&Action::SetMetronomeEnabled(true)));
         assert!(should_record(&Action::SetClipPlaybackEnabled(false)));
         assert!(should_record(&Action::SetRecordEnabled(true)));
+        assert!(should_record(&Action::SetClipBounds {
+            track_name: "t".to_string(),
+            clip_index: 0,
+            kind: Kind::Audio,
+            start: 64,
+            length: 32,
+            offset: 16,
+        }));
         assert!(should_record(&Action::TrackLoadVst3Plugin {
             track_name: "t".to_string(),
             plugin_path: "/tmp/test.vst3".to_string(),
@@ -1250,6 +1292,47 @@ mod tests {
                 assert_eq!(track_name, "t");
                 assert_eq!(kind, Kind::Audio);
                 assert_eq!(clip_indices, vec![1]);
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_action_for_set_clip_bounds_restores_previous_audio_bounds() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        let mut clip = AudioClip::new("clip".to_string(), 10, 30);
+        clip.offset = 7;
+        track.audio.clips.push(clip);
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::SetClipBounds {
+                track_name: "t".to_string(),
+                clip_index: 0,
+                kind: Kind::Audio,
+                start: 14,
+                length: 22,
+                offset: 11,
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        match inverse {
+            Action::SetClipBounds {
+                track_name,
+                clip_index,
+                kind,
+                start,
+                length,
+                offset,
+            } => {
+                assert_eq!(track_name, "t");
+                assert_eq!(clip_index, 0);
+                assert_eq!(kind, Kind::Audio);
+                assert_eq!(start, 10);
+                assert_eq!(length, 30);
+                assert_eq!(offset, 7);
             }
             other => panic!("unexpected inverse action: {other:?}"),
         }

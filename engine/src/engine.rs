@@ -2230,6 +2230,37 @@ impl Engine {
         }
     }
 
+    fn set_clip_bounds(
+        &self,
+        track_name: &str,
+        clip_index: usize,
+        kind: Kind,
+        start: usize,
+        length: usize,
+        offset: usize,
+    ) {
+        let Some(track) = self.state.lock().tracks.get(track_name) else {
+            return;
+        };
+        let track = track.lock();
+        match kind {
+            Kind::Audio => {
+                if let Some(clip) = track.audio.clips.get_mut(clip_index) {
+                    clip.start = start;
+                    clip.end = length.max(1);
+                    clip.offset = offset;
+                }
+            }
+            Kind::MIDI => {
+                if let Some(clip) = track.midi.clips.get_mut(clip_index) {
+                    clip.start = start;
+                    clip.end = length.max(1);
+                    clip.offset = offset;
+                }
+            }
+        }
+    }
+
     fn set_clip_muted(&self, track_name: &str, clip_index: usize, kind: Kind, muted: bool) {
         let Some(track) = self.state.lock().tracks.get(track_name) else {
             return;
@@ -4458,6 +4489,16 @@ impl Engine {
                     fade_in_samples,
                     fade_out_samples,
                 );
+            }
+            Action::SetClipBounds {
+                ref track_name,
+                clip_index,
+                kind,
+                start,
+                length,
+                offset,
+            } => {
+                self.set_clip_bounds(track_name, clip_index, kind, start, length, offset);
             }
             Action::SetClipMuted {
                 ref track_name,
