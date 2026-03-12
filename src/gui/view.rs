@@ -117,7 +117,7 @@ impl Maolan {
                 Some(Show::AutosaveRecovery) => self.autosave_recovery_view(),
                 #[cfg(all(unix, not(target_os = "macos")))]
                 Some(Show::TrackPluginList) => self.track_plugin_list_view(),
-                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                #[cfg(target_os = "macos")]
                 Some(Show::TrackPluginList) => self.track_plugin_list_view(),
                 _ => {
                     let view = match state.view {
@@ -155,7 +155,7 @@ impl Maolan {
                             mixer_level_edit_input: &self.mixer_level_edit_input,
                         }),
                         View::Connections => self.connections.view(),
-                        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+                        #[cfg(all(unix, not(target_os = "macos")))]
                         View::TrackPlugins => self.track_plugins.view(),
                         View::Piano => self.workspace.piano_view(WorkspaceViewArgs {
                             session_root: None,

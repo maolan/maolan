@@ -5,6 +5,4 @@ pub mod coreaudio_worker;
 pub mod hw_worker;
 #[cfg(target_os = "freebsd")]
 pub mod oss_worker;
-#[cfg(target_os = "windows")]
-pub mod wasapi_worker;
 pub mod worker;

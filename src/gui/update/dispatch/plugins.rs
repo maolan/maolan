@@ -131,7 +131,7 @@ impl Maolan {
                 None
             }
             Message::PluginFormatSelected(format) => {
-                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                #[cfg(target_os = "macos")]
                 let format = if format == PluginFormat::Lv2 {
                     PluginFormat::Vst3
                 } else {
@@ -156,29 +156,6 @@ impl Maolan {
                 self.pump_lv2_ui();
                 None
             }
-            #[cfg(target_os = "windows")]
-            Message::OpenVst3PluginUi {
-                ref track_name,
-                instance_id,
-                ref plugin_path,
-                ref plugin_name,
-                ref plugin_id,
-                audio_inputs,
-                audio_outputs,
-            } => {
-                let _ = (
-                    plugin_path,
-                    plugin_name,
-                    plugin_id,
-                    audio_inputs,
-                    audio_outputs,
-                );
-                Some(self.send(Action::TrackGetVst3EditorHandle {
-                    track_name: track_name.clone(),
-                    instance_id,
-                }))
-            }
-            #[cfg(not(target_os = "windows"))]
             Message::OpenVst3PluginUi {
                 ref track_name,
                 instance_id,

@@ -58,7 +58,7 @@ impl Maolan {
                 self.pending_record_after_save = false;
                 self.pending_save_path = None;
                 self.pending_save_tracks.clear();
-                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                #[cfg(target_os = "macos")]
                 self.pending_save_vst3_states.clear();
                 self.pending_audio_peaks.clear();
                 self.pending_peak_file_loads.clear();

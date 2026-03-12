@@ -171,7 +171,6 @@ Last updated: 2026-03-11
 
 ## Platform Notes
 - Unix builds support CLAP, VST3, and LV2.
-- Windows builds support CLAP and VST3.
 - FreeBSD roadmap notes still mark MIDI 2.0 as N/A.
 
 ## Known Boundaries

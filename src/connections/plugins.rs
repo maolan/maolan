@@ -1,4 +1,4 @@
-#![cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+#![cfg(all(unix, not(target_os = "macos")))]
 
 use crate::{
     connections::colors::{audio_port_color, aux_port_color, midi_port_color},
@@ -541,10 +541,6 @@ impl canvas::Program<Message> for Graph {
                                             track_name,
                                             instance_id,
                                         }))
-                                    }
-                                    #[cfg(target_os = "windows")]
-                                    PluginGraphNode::Lv2PluginInstance(_) => {
-                                        Some(Action::capture())
                                     }
                                     PluginGraphNode::ClapPluginInstance(_) => {
                                         Some(Action::publish(Message::ShowClapPluginUi(

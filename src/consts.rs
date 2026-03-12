@@ -62,24 +62,19 @@ pub mod ui_timing {
 
 pub mod platform_caps {
     pub const SUPPORTS_METER_POLL: bool = cfg!(any(
-        target_os = "windows",
         target_os = "freebsd",
         target_os = "linux"
     ));
     pub const HAS_SEPARATE_AUDIO_INPUT_DEVICE: bool = cfg!(any(
-        target_os = "windows",
         target_os = "linux",
         target_os = "freebsd"
     ));
     pub const REQUIRE_SAMPLE_RATES_FOR_HW_READY: bool =
         cfg!(any(target_os = "linux", target_os = "freebsd"));
     pub const REQUIRE_VST3_STATE_FOR_SAVE: bool =
-        cfg!(any(target_os = "windows", target_os = "macos"));
+        cfg!(target_os = "macos");
     pub const SUPPORTS_LV2: bool = cfg!(all(unix, not(target_os = "macos")));
-    pub const SUPPORTS_PLUGIN_GRAPH: bool = cfg!(any(
-        target_os = "windows",
-        all(unix, not(target_os = "macos"))
-    ));
+    pub const SUPPORTS_PLUGIN_GRAPH: bool = cfg!(all(unix, not(target_os = "macos")));
 }
 
 pub mod main {
@@ -139,11 +134,6 @@ pub mod plugins_x11 {
 
 pub mod plugins_clap {
     use std::ffi::{c_int, c_long};
-
-    #[cfg(target_os = "windows")]
-    pub const WM_QUIT: u32 = 0x0012;
-    #[cfg(target_os = "windows")]
-    pub const PM_REMOVE: u32 = 0x0001;
 
     #[cfg(all(unix, not(target_os = "macos")))]
     pub const DESTROY_NOTIFY: c_int = 17;

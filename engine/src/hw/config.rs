@@ -3,8 +3,6 @@ pub const HW_PROFILE_ENV: &str = "MAOLAN_HW_PROFILE";
 pub const OSS_ASSIST_AUTONOMOUS_ENV: &str = "MAOLAN_OSS_ASSIST_AUTONOMOUS";
 #[cfg(target_os = "linux")]
 pub const ALSA_ASSIST_AUTONOMOUS_ENV: &str = "MAOLAN_ALSA_ASSIST_AUTONOMOUS";
-#[cfg(target_os = "windows")]
-pub const WASAPI_ASSIST_AUTONOMOUS_ENV: &str = "MAOLAN_WASAPI_ASSIST_AUTONOMOUS";
 #[cfg(target_os = "macos")]
 pub const COREAUDIO_ASSIST_AUTONOMOUS_ENV: &str = "MAOLAN_COREAUDIO_ASSIST_AUTONOMOUS";
 

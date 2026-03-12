@@ -1,6 +1,4 @@
 use crate::consts::plugins_clap::{CLIENT_MESSAGE, DESTROY_NOTIFY, STRUCTURE_NOTIFY_MASK};
-#[cfg(target_os = "windows")]
-use crate::consts::plugins_clap::{PM_REMOVE, WM_QUIT};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::plugins::x11::{
     XBlackPixel, XCloseDisplay, XCreateSimpleWindow, XDefaultScreen, XDestroyWindow, XEvent,
@@ -14,44 +12,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-#[cfg(target_os = "windows")]
-use std::ffi::c_int;
-
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::ffi::{c_int, c_uint};
-
-#[cfg(target_os = "windows")]
-#[repr(C)]
-#[allow(clippy::upper_case_acronyms)]
-struct MSG {
-    hwnd: *mut c_void,
-    message: u32,
-    w_param: usize,
-    l_param: isize,
-    time: u32,
-    pt: Point,
-}
-
-#[cfg(target_os = "windows")]
-#[repr(C)]
-struct Point {
-    x: i32,
-    y: i32,
-}
-
-#[cfg(target_os = "windows")]
-#[link(name = "user32")]
-unsafe extern "system" {
-    fn PeekMessageW(
-        lpMsg: *mut MSG,
-        hWnd: *mut c_void,
-        wMsgFilterMin: u32,
-        wMsgFilterMax: u32,
-        wRemoveMsg: u32,
-    ) -> c_int;
-    fn TranslateMessage(lpMsg: *const MSG) -> c_int;
-    fn DispatchMessageW(lpMsg: *const MSG) -> isize;
-}
 
 // Platform-specific event handling for macOS
 #[cfg(target_os = "macos")]
@@ -186,7 +148,7 @@ struct ClapPluginGui {
 #[repr(C)]
 union ClapWindowHandle {
     x11: c_ulong,
-    win32: *mut c_void,
+    native: *mut c_void,
     cocoa: *mut c_void,
 }
 
@@ -674,21 +636,6 @@ fn create_x11_wrapper_for_floating_clap(
 }
 
 // Platform-specific event pumping to detect window close
-#[cfg(target_os = "windows")]
-fn pump_platform_events() -> bool {
-    unsafe {
-        let mut msg: MSG = std::mem::zeroed();
-        while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
-            if msg.message == WM_QUIT {
-                return true; // Window was closed
-            }
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
-    false // Continue running
-}
-
 #[cfg(all(unix, not(target_os = "macos")))]
 fn pump_platform_events_x11(
     display: *mut c_void,
@@ -869,7 +816,7 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
 
     if let Some(is_api_supported) = gui.is_api_supported {
         // Try embedded (non-floating) mode first
-        for candidate in ["x11", "cocoa", "win32"] {
+        for candidate in ["x11", "cocoa"] {
             let c = CString::new(candidate).map_err(|e| e.to_string())?;
             if unsafe { is_api_supported(plugin, c.as_ptr(), false) } {
                 eprintln!("[clap-ui] Plugin supports {} in embedded mode", candidate);
@@ -881,7 +828,7 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
 
         // Fall back to floating mode if embedded not supported
         if chosen.is_none() {
-            for candidate in ["x11", "cocoa", "win32"] {
+            for candidate in ["x11", "cocoa"] {
                 let c = CString::new(candidate).map_err(|e| e.to_string())?;
                 if unsafe { is_api_supported(plugin, c.as_ptr(), true) } {
                     eprintln!(
@@ -936,13 +883,6 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
     while !host_state.should_close.load(Ordering::SeqCst) {
         iteration_count += 1;
         // Pump platform-specific events to detect window close
-        #[cfg(target_os = "windows")]
-        if pump_platform_events() {
-            eprintln!("[clap-ui] Window close detected via Windows events");
-            host_state.should_close.store(true, Ordering::SeqCst);
-            break;
-        }
-
         #[cfg(all(unix, not(target_os = "macos")))]
         if !x11_display.is_null()
             && x11_window != 0

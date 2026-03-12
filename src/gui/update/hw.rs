@@ -13,11 +13,6 @@ impl Maolan {
         self.state.blocking_write().selected_hw = Some(hw.to_string());
     }
 
-    #[cfg(target_os = "windows")]
-    pub(super) fn apply_hw_input_selected(&self, hw: &String) {
-        self.state.blocking_write().selected_input_hw = Some(hw.to_string());
-    }
-
     #[cfg(target_os = "freebsd")]
     pub(super) fn apply_hw_input_selected(&self, hw: &AudioDeviceOption) {
         let mut state = self.state.blocking_write();

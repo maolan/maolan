@@ -842,11 +842,9 @@ pub enum Message {
     HWSelected(String),
     #[cfg(any(target_os = "freebsd", target_os = "linux"))]
     HWInputSelected(AudioDeviceOption),
-    #[cfg(target_os = "windows")]
-    HWInputSelected(String),
     HWBackendSelected(AudioBackendOption),
     HWExclusiveToggled(bool),
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     HWBitsChanged(usize),
     HWSampleRateChanged(i32),
     HWPeriodFramesChanged(usize),

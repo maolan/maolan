@@ -1,5 +1,3 @@
-#[cfg(target_os = "windows")]
-pub mod editor_win32;
 pub mod host;
 pub mod interfaces;
 pub mod midi;
@@ -24,12 +22,6 @@ use std::path::PathBuf;
 
 pub fn default_vst3_search_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
-
-    #[cfg(target_os = "windows")]
-    {
-        roots.push(PathBuf::from(r"C:\Program Files\Common Files\VST3"));
-        roots.push(PathBuf::from(r"C:\Program Files (x86)\Common Files\VST3"));
-    }
 
     #[cfg(target_os = "macos")]
     {

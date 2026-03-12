@@ -1,6 +1,5 @@
 mod clip;
 mod connection;
-mod platform;
 #[cfg(target_os = "freebsd")]
 mod platform_freebsd;
 #[cfg(target_os = "linux")]
@@ -24,11 +23,6 @@ use maolan_engine::{
     message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin, PluginGraphSnapshot},
     vst3::{Vst3PluginInfo, Vst3PluginState},
 };
-#[cfg(target_os = "windows")]
-pub(crate) use platform::{
-    discover_windows_audio_devices, discover_windows_input_devices,
-    discover_windows_output_bit_depths, discover_windows_output_sample_rates,
-};
 #[cfg(target_os = "freebsd")]
 pub(crate) use platform_freebsd::discover_freebsd_audio_devices;
 #[cfg(target_os = "linux")]
@@ -51,8 +45,6 @@ pub enum AudioBackendOption {
     Oss,
     #[cfg(target_os = "linux")]
     Alsa,
-    #[cfg(target_os = "windows")]
-    Wasapi,
     #[cfg(target_os = "macos")]
     CoreAudio,
 }
@@ -66,8 +58,6 @@ impl std::fmt::Display for AudioBackendOption {
             Self::Oss => "OSS",
             #[cfg(target_os = "linux")]
             Self::Alsa => "ALSA",
-            #[cfg(target_os = "windows")]
-            Self::Wasapi => "WASAPI",
             #[cfg(target_os = "macos")]
             Self::CoreAudio => "CoreAudio",
         };
@@ -163,8 +153,6 @@ pub type OutputAudioDevice = String;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub type InputAudioDevice = AudioDeviceOption;
-#[cfg(target_os = "windows")]
-pub type InputAudioDevice = String;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ClipId {
@@ -255,7 +243,7 @@ pub struct HW {
     pub channels: usize,
 }
 
-#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Debug, Clone)]
 pub struct PluginConnecting {
     pub from_node: PluginGraphNode,
@@ -265,7 +253,7 @@ pub struct PluginConnecting {
     pub is_input: bool,
 }
 
-#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+#[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Debug, Clone)]
 pub struct MovingPlugin {
     pub instance_id: usize,
@@ -394,17 +382,13 @@ pub struct StateData {
     pub selected_backend: AudioBackendOption,
     pub available_hw: Vec<OutputAudioDevice>,
     pub selected_hw: Option<OutputAudioDevice>,
-    #[cfg(target_os = "windows")]
-    pub available_input_hw: Vec<InputAudioDevice>,
     #[cfg(target_os = "linux")]
     pub available_input_hw: Vec<InputAudioDevice>,
-    #[cfg(target_os = "windows")]
-    pub selected_input_hw: Option<InputAudioDevice>,
     #[cfg(any(target_os = "freebsd", target_os = "linux"))]
     pub selected_input_hw: Option<InputAudioDevice>,
     pub hw_sample_rate_hz: i32,
     pub oss_exclusive: bool,
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     pub oss_bits: usize,
     pub oss_period_frames: usize,
     pub oss_nperiods: usize,
@@ -435,18 +419,18 @@ pub struct StateData {
     pub clap_states_by_track: HashMap<String, HashMap<String, ClapPluginState>>,
     pub vst3_states_by_track: HashMap<String, HashMap<usize, Vst3PluginState>>,
     pub plugin_graph_track: Option<String>,
-    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub plugin_graph_plugins: Vec<PluginGraphPlugin>,
-    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub plugin_graph_connections: Vec<PluginGraphConnection>,
-    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub plugin_graphs_by_track: HashMap<String, PluginGraphSnapshot>,
     pub plugin_graph_selected_connections: std::collections::HashSet<usize>,
     pub plugin_graph_selected_plugin: Option<usize>,
     pub plugin_graph_plugin_positions: HashMap<usize, Point>,
-    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub plugin_graph_connecting: Option<PluginConnecting>,
-    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub plugin_graph_moving_plugin: Option<MovingPlugin>,
     pub plugin_graph_last_plugin_click: Option<(usize, Instant)>,
     pub connections_last_track_click: Option<(String, Instant)>,
@@ -555,17 +539,13 @@ impl Default for StateData {
             selected_backend: initial_hw.selected_backend,
             available_hw: initial_hw.available_hw,
             selected_hw: initial_hw.selected_hw,
-            #[cfg(target_os = "windows")]
-            available_input_hw: initial_hw.available_input_hw,
             #[cfg(target_os = "linux")]
             available_input_hw: initial_hw.available_input_hw,
-            #[cfg(target_os = "windows")]
-            selected_input_hw: initial_hw.selected_input_hw,
             #[cfg(any(target_os = "freebsd", target_os = "linux"))]
             selected_input_hw: initial_hw.selected_input_hw,
             hw_sample_rate_hz: 48_000,
             oss_exclusive: true,
-            #[cfg(any(unix, target_os = "windows"))]
+            #[cfg(unix)]
             oss_bits: cfg.default_audio_bit_depth,
             oss_period_frames: 1024,
             oss_nperiods: 1,
@@ -596,18 +576,18 @@ impl Default for StateData {
             clap_states_by_track: HashMap::new(),
             vst3_states_by_track: HashMap::new(),
             plugin_graph_track: None,
-            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             plugin_graph_plugins: vec![],
-            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             plugin_graph_connections: vec![],
-            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             plugin_graphs_by_track: HashMap::new(),
             plugin_graph_selected_connections: HashSet::new(),
             plugin_graph_selected_plugin: None,
             plugin_graph_plugin_positions: HashMap::new(),
-            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             plugin_graph_connecting: None,
-            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             plugin_graph_moving_plugin: None,
             plugin_graph_last_plugin_click: None,
             connections_last_track_click: None,
@@ -669,9 +649,9 @@ struct InitialHwConfig {
     selected_backend: AudioBackendOption,
     available_hw: Vec<OutputAudioDevice>,
     selected_hw: Option<OutputAudioDevice>,
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "linux")]
     available_input_hw: Vec<InputAudioDevice>,
-    #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     selected_input_hw: Option<InputAudioDevice>,
 }
 
@@ -680,9 +660,9 @@ fn initial_hw_config() -> InitialHwConfig {
     let selected_backend = default_audio_backend();
     let available_hw = initial_output_hw_devices();
     let selected_hw = initial_selected_output_hw(&available_hw);
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "linux")]
     let available_input_hw = initial_input_hw_devices();
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "linux")]
     let selected_input_hw = initial_selected_input_hw();
     #[cfg(target_os = "freebsd")]
     let selected_input_hw = initial_selected_input_hw(&selected_hw);
@@ -691,9 +671,9 @@ fn initial_hw_config() -> InitialHwConfig {
         selected_backend,
         available_hw,
         selected_hw,
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(target_os = "linux")]
         available_input_hw,
-        #[cfg(any(target_os = "windows", target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         selected_input_hw,
     }
 }
@@ -703,16 +683,9 @@ fn initial_output_hw_devices() -> Vec<OutputAudioDevice> {
     let devices = discover_freebsd_audio_devices();
     #[cfg(target_os = "linux")]
     let devices = discover_alsa_output_devices();
-    #[cfg(target_os = "windows")]
-    let devices = discover_windows_audio_devices();
     #[cfg(target_os = "macos")]
     let devices = maolan_engine::discover_coreaudio_devices();
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "windows",
-        target_os = "macos"
-    )))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
     let devices = vec![];
     devices
 }
@@ -727,16 +700,14 @@ fn initial_selected_output_hw(_hw: &[OutputAudioDevice]) -> Option<OutputAudioDe
     None
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 fn initial_input_hw_devices() -> Vec<InputAudioDevice> {
     #[cfg(target_os = "linux")]
     let devices = discover_alsa_input_devices();
-    #[cfg(target_os = "windows")]
-    let devices = discover_windows_input_devices();
     devices
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 fn initial_selected_input_hw() -> Option<InputAudioDevice> {
     None
 }
@@ -756,8 +727,6 @@ fn supported_audio_backends() -> Vec<AudioBackendOption> {
         Some(AudioBackendOption::Oss),
         #[cfg(target_os = "linux")]
         Some(AudioBackendOption::Alsa),
-        #[cfg(target_os = "windows")]
-        Some(AudioBackendOption::Wasapi),
         #[cfg(target_os = "macos")]
         Some(AudioBackendOption::CoreAudio),
     ]
@@ -772,8 +741,6 @@ fn audio_backend_preference_rank(backend: &AudioBackendOption) -> usize {
         AudioBackendOption::Oss => 0,
         #[cfg(target_os = "linux")]
         AudioBackendOption::Alsa => 0,
-        #[cfg(target_os = "windows")]
-        AudioBackendOption::Wasapi => 0,
         #[cfg(target_os = "macos")]
         AudioBackendOption::CoreAudio => 0,
         #[cfg(unix)]

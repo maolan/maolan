@@ -9,7 +9,7 @@ mod types;
 use self::types::{
     AutomationTrackView, MidiMappingsFile, MidiMappingsGlobalFile, MidiMappingsTrackFile,
 };
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 use crate::message::PluginFormat;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use crate::state::AudioDeviceOption;
@@ -36,7 +36,7 @@ use crate::{
 };
 use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
-#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+#[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::message::{PluginGraphNode, PluginGraphPlugin};
 use maolan_engine::{
     history,
@@ -57,7 +57,7 @@ use tracing::error;
 
 impl Maolan {
     fn reset_track_plugin_view_state(state: &mut crate::state::StateData) {
-        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+        #[cfg(all(unix, not(target_os = "macos")))]
         {
             state.plugin_graph_connecting = None;
             state.plugin_graph_moving_plugin = None;
@@ -91,7 +91,7 @@ impl Maolan {
             && self.state.blocking_read().plugin_graph_track.as_deref() == Some(track_name)
     }
 
-    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn queue_pending_graph_automation_queries(
         &mut self,
         track_name: &str,
@@ -199,12 +199,12 @@ impl Maolan {
         self.pending_save_tracks.is_empty() && self.pending_vst3_save_ready()
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     fn pending_vst3_save_ready(&self) -> bool {
         !platform_caps::REQUIRE_VST3_STATE_FOR_SAVE || self.pending_save_vst3_states.is_empty()
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(not(target_os = "macos"))]
     fn pending_vst3_save_ready(&self) -> bool {
         !platform_caps::REQUIRE_VST3_STATE_FOR_SAVE
     }

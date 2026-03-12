@@ -34,7 +34,7 @@ impl Maolan {
                     Message::RefreshVst3Plugins,
                     Message::RefreshClapPlugins,
                 ];
-                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                #[cfg(target_os = "macos")]
                 let initial_messages =
                     vec![Message::RefreshVst3Plugins, Message::RefreshClapPlugins];
                 let initial = stream::iter(initial_messages);

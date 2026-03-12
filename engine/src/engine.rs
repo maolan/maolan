@@ -29,22 +29,16 @@ use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
 use crate::hw::coreaudio::{HwDriver, HwOptions, MidiHub};
 #[cfg(unix)]
 use crate::hw::jack::JackRuntime;
-#[cfg(target_os = "windows")]
-use crate::hw::options::HwOptions;
 #[cfg(target_os = "freebsd")]
 use crate::hw::oss as hw;
 #[cfg(target_os = "freebsd")]
 use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
-#[cfg(target_os = "windows")]
-use crate::hw::wasapi::{self, HwDriver, MidiHub};
 #[cfg(target_os = "linux")]
 use crate::workers::alsa_worker::HwWorker;
 #[cfg(target_os = "macos")]
 use crate::workers::coreaudio_worker::HwWorker;
 #[cfg(target_os = "freebsd")]
 use crate::workers::oss_worker::HwWorker;
-#[cfg(target_os = "windows")]
-use crate::workers::wasapi_worker::HwWorker;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
@@ -629,12 +623,6 @@ impl Engine {
         let devices = Self::discover_midi_hw_devices_from_dir("/dev", &["umidi", "midi"]);
         #[cfg(target_os = "linux")]
         let devices = Self::discover_midi_hw_devices_from_dir("/dev/snd", &["midiC"]);
-        #[cfg(target_os = "windows")]
-        let devices = {
-            let mut devices = wasapi::list_midi_input_devices();
-            devices.extend(wasapi::list_midi_output_devices());
-            Self::finalize_midi_hw_devices(devices)
-        };
         #[cfg(target_os = "macos")]
         let devices = {
             let mut devices = Vec::new();
@@ -650,12 +638,7 @@ impl Engine {
             }
             Self::finalize_midi_hw_devices(devices)
         };
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "freebsd",
-            target_os = "windows",
-            target_os = "macos"
-        )))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
         let devices = Vec::new();
         devices
     }
@@ -816,12 +799,12 @@ impl Engine {
         bits: i32,
         hw_opts: HwOptions,
     ) -> Result<HwDriver, String> {
-        #[cfg(any(target_os = "windows", target_os = "freebsd", target_os = "linux"))]
+        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
         {
             HwDriver::new_with_options(device, input_device, sample_rate_hz, bits, hw_opts)
                 .map_err(|e| e.to_string())
         }
-        #[cfg(not(any(target_os = "windows", target_os = "freebsd", target_os = "linux")))]
+        #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
         {
             let _ = input_device;
             HwDriver::new_with_options(device, sample_rate_hz, bits, hw_opts)
@@ -831,20 +814,13 @@ impl Engine {
 
     fn hw_profile_backend_label(device: &str) -> &'static str {
         let _ = device;
-        #[cfg(target_os = "windows")]
-        let label = "WASAPI";
         #[cfg(target_os = "linux")]
         let label = "ALSA";
         #[cfg(target_os = "freebsd")]
         let label = "OSS";
         #[cfg(target_os = "macos")]
         let label = "CoreAudio";
-        #[cfg(not(any(
-            target_os = "windows",
-            target_os = "linux",
-            target_os = "freebsd",
-            target_os = "macos"
-        )))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
         let label = "Unknown";
         label
     }
@@ -2099,32 +2075,6 @@ impl Engine {
     ) -> Result<Arc<UnsafeMutex<Box<Track>>>, String> {
         self.track_handle_by_name(track_name)
             .ok_or_else(|| format!("Track not found: {track_name}"))
-    }
-
-    #[cfg(target_os = "windows")]
-    fn open_vst3_editor_for_track(
-        &self,
-        track_name: &str,
-        instance_id: usize,
-    ) -> Result<(), String> {
-        let track = self.track_handle_or_err(track_name)?;
-        track.lock().open_vst3_editor(instance_id)
-    }
-
-    #[cfg(target_os = "windows")]
-    fn vst3_editor_handle_action_for_track(
-        &self,
-        track_name: &str,
-        instance_id: usize,
-    ) -> Result<Action, String> {
-        let track = self.track_handle_or_err(track_name)?;
-        let (controller_handle, title) = track.lock().vst3_editor_handle_and_title(instance_id)?;
-        Ok(Action::TrackVst3EditorHandle {
-            track_name: track_name.to_string(),
-            instance_id,
-            controller_handle,
-            title,
-        })
     }
 
     fn add_clip_to_track(
@@ -3728,7 +3678,7 @@ impl Engine {
                     return;
                 }
             }
-            #[cfg(any(unix, target_os = "windows"))]
+            #[cfg(unix)]
             Action::TrackGetPluginGraph { ref track_name } => {
                 let track = match self.track_handle_or_err(track_name) {
                     Ok(track) => track,
@@ -3752,9 +3702,9 @@ impl Engine {
                 .await;
                 return;
             }
-            #[cfg(any(unix, target_os = "windows"))]
+            #[cfg(unix)]
             Action::TrackPluginGraph { .. } => {}
-            #[cfg(any(unix, target_os = "windows"))]
+            #[cfg(unix)]
             Action::TrackConnectPluginAudio {
                 ref track_name,
                 ref from_node,
@@ -3785,7 +3735,7 @@ impl Engine {
                     return;
                 }
             }
-            #[cfg(any(unix, target_os = "windows"))]
+            #[cfg(unix)]
             Action::TrackConnectPluginMidi {
                 ref track_name,
                 ref from_node,
@@ -3816,7 +3766,7 @@ impl Engine {
                     return;
                 }
             }
-            #[cfg(any(unix, target_os = "windows"))]
+            #[cfg(unix)]
             Action::TrackDisconnectPluginAudio {
                 ref track_name,
                 ref from_node,
@@ -3847,7 +3797,7 @@ impl Engine {
                     return;
                 }
             }
-            #[cfg(any(unix, target_os = "windows"))]
+            #[cfg(unix)]
             Action::TrackDisconnectPluginMidi {
                 ref track_name,
                 ref from_node,
@@ -4208,27 +4158,6 @@ impl Engine {
                     return;
                 }
             }
-            #[cfg(target_os = "windows")]
-            Action::TrackOpenVst3Editor {
-                ref track_name,
-                instance_id,
-            } => {
-                if let Err(e) = self.open_vst3_editor_for_track(track_name, instance_id) {
-                    self.notify_clients(Err(e)).await;
-                    return;
-                }
-            }
-            #[cfg(target_os = "windows")]
-            Action::TrackGetVst3EditorHandle {
-                ref track_name,
-                instance_id,
-            } => match self.vst3_editor_handle_action_for_track(track_name, instance_id) {
-                Ok(action) => self.notify_clients(Ok(action)).await,
-                Err(e) => {
-                    self.notify_clients(Err(e)).await;
-                    return;
-                }
-            },
             Action::TrackGetVst3Graph { ref track_name } => {
                 match self.track_handle_or_err(track_name) {
                     Ok(track) => {
@@ -4250,8 +4179,6 @@ impl Engine {
             Action::TrackVst3Graph { .. } => {
                 // Response action, no handling needed
             }
-            #[cfg(target_os = "windows")]
-            Action::TrackVst3EditorHandle { .. } => {}
             Action::TrackSetVst3Parameter {
                 ref track_name,
                 instance_id,
@@ -5145,10 +5072,6 @@ impl Engine {
                     | Action::DeleteMidiNotes { .. }
                     | Action::InsertMidiNotes { .. }
                     | Action::SetMidiSysExEvents { .. } => {
-                        self.handle_request(a).await;
-                    }
-                    #[cfg(target_os = "windows")]
-                    Action::TrackOpenVst3Editor { .. } => {
                         self.handle_request(a).await;
                     }
                     #[cfg(all(unix, not(target_os = "macos")))]

@@ -1819,7 +1819,7 @@ fn scan_plugin_capabilities(
 
             // Check which GUI APIs are supported
             if let Some(is_api_supported) = gui.is_api_supported {
-                for api in ["x11", "cocoa", "win32"] {
+                for api in ["x11", "cocoa"] {
                     if let Ok(api_cstr) = CString::new(api) {
                         // Check embedded mode
                         // SAFETY: valid plugin and API string pointers.
@@ -1876,12 +1876,6 @@ fn scan_plugin_capabilities(
 
 fn default_clap_search_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
-
-    #[cfg(target_os = "windows")]
-    {
-        roots.push(PathBuf::from(r"C:\Program Files\Common Files\CLAP"));
-        roots.push(PathBuf::from(r"C:\Program Files (x86)\Common Files\CLAP"));
-    }
 
     #[cfg(target_os = "macos")]
     {

@@ -2186,7 +2186,7 @@ impl Maolan {
                                 }
                             }
                         }
-                        #[cfg(any(target_os = "windows", target_os = "macos"))]
+                        #[cfg(target_os = "macos")]
                         Action::TrackSnapshotAllClapStates { track_name: _ } => {}
                         Action::TrackClearDefaultPassthrough { track_name } => {
                             if let Some(task) =
@@ -2225,7 +2225,7 @@ impl Maolan {
                                     .or_default()
                                     .insert(*instance_id, state.clone());
                             }
-                            #[cfg(any(target_os = "windows", target_os = "macos"))]
+                            #[cfg(target_os = "macos")]
                             if self.pending_save_path.is_some() {
                                 self.pending_save_vst3_states
                                     .remove(&(track_name.clone(), *instance_id));
@@ -2276,33 +2276,6 @@ impl Maolan {
                                     self.state.blocking_write().message = e;
                                 }
                                 self.pending_vst3_ui_open = None;
-                            }
-                        }
-                        #[cfg(target_os = "windows")]
-                        Action::TrackVst3EditorHandle {
-                            track_name: _,
-                            instance_id: _,
-                            controller_handle,
-                            title,
-                        } => {
-                            if let Err(e) = self
-                                .vst3_ui_host
-                                .open_editor_from_handle(*controller_handle, title)
-                            {
-                                self.state.blocking_write().message = e;
-                            }
-                        }
-                        #[cfg(target_os = "windows")]
-                        Action::TrackLoadVst3Plugin { track_name, .. }
-                        | Action::TrackUnloadVst3PluginInstance { track_name, .. }
-                        | Action::TrackConnectPluginAudio { track_name, .. }
-                        | Action::TrackDisconnectPluginAudio { track_name, .. }
-                        | Action::TrackConnectPluginMidi { track_name, .. }
-                        | Action::TrackDisconnectPluginMidi { track_name, .. } => {
-                            if let Some(task) =
-                                self.maybe_refresh_plugin_graph_for_track(track_name)
-                            {
-                                return task;
                             }
                         }
                         #[cfg(all(unix, not(target_os = "macos")))]
@@ -2387,7 +2360,7 @@ impl Maolan {
                                 self.state.blocking_write().message = err;
                             }
                         }
-                        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+                        #[cfg(all(unix, not(target_os = "macos")))]
                         Action::TrackPluginGraph {
                             track_name,
                             plugins,
@@ -4146,7 +4119,7 @@ impl Maolan {
                         return self.update(Message::RemoveSelectedTracks);
                     }
                     crate::state::View::TrackPlugins => {
-                        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+                        #[cfg(all(unix, not(target_os = "macos")))]
                         {
                             let (track_name, selected_plugin, selected_indices, connections) = {
                                 let state = self.state.blocking_read();
@@ -4180,8 +4153,6 @@ impl Maolan {
                                                     instance_id,
                                                 })
                                             }
-                                            #[cfg(target_os = "windows")]
-                                            PluginGraphNode::Lv2PluginInstance(_) => Task::none(),
                                             PluginGraphNode::Vst3PluginInstance(_) => {
                                                 self.send(Action::TrackUnloadVst3PluginInstance {
                                                     track_name,

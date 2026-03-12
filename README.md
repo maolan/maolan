@@ -22,7 +22,6 @@ Maolan currently includes:
 ## Platform Notes
 
 - Unix builds support CLAP, VST3, and LV2.
-- Windows builds support CLAP and VST3.
 - Current keyboard handling is `Ctrl`-based across platforms.
 - Plugin compatibility is host-dependent and should be treated as evolving rather than guaranteed.
 

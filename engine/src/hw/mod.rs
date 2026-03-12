@@ -18,5 +18,3 @@ pub mod ports;
 #[cfg(target_os = "freebsd")]
 pub mod prefill;
 pub mod traits;
-#[cfg(target_os = "windows")]
-pub mod wasapi;

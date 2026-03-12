@@ -32,7 +32,7 @@ pub fn output_meter_linear(audio_outs: &[Arc<AudioIO>], gain: f32, balance: f32)
     out
 }
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 pub fn output_meter_db(audio_outs: &[Arc<AudioIO>], gain: f32, balance: f32) -> Vec<f32> {
     output_meter_linear(audio_outs, gain, balance)
         .into_iter()

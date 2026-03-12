@@ -198,58 +198,6 @@ impl Maolan {
             }
             Value::Object(graphs)
         };
-        #[cfg(target_os = "windows")]
-        let graphs = {
-            let mut graphs = serde_json::Map::new();
-            for (track_name, (plugins, connections)) in &state.plugin_graphs_by_track {
-                let vst3_plugins: Vec<&maolan_engine::message::PluginGraphPlugin> = plugins
-                    .iter()
-                    .filter(|p| p.format.eq_ignore_ascii_case("VST3"))
-                    .collect();
-                if vst3_plugins.is_empty() {
-                    continue;
-                }
-                let id_to_index: std::collections::HashMap<usize, usize> = vst3_plugins
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, p)| (p.instance_id, idx))
-                    .collect();
-                let plugins_json: Vec<Value> = vst3_plugins
-                    .iter()
-                    .map(|p| {
-                        let state_json = state
-                            .vst3_states_by_track
-                            .get(track_name)
-                            .and_then(|states| states.get(&p.instance_id))
-                            .and_then(|snapshot| serde_json::to_value(snapshot).ok())
-                            .unwrap_or(Value::Null);
-                        json!({ "uri": p.uri, "state": state_json })
-                    })
-                    .collect();
-                let conns_json: Vec<Value> = connections
-                    .iter()
-                    .filter_map(|c| {
-                        let from_node = Self::plugin_node_to_json(&c.from_node, &id_to_index)?;
-                        let to_node = Self::plugin_node_to_json(&c.to_node, &id_to_index)?;
-                        Some(json!({
-                            "from_node": from_node,
-                            "from_port": c.from_port,
-                            "to_node": to_node,
-                            "to_port": c.to_port,
-                            "kind": Self::kind_to_json(c.kind),
-                        }))
-                    })
-                    .collect();
-                graphs.insert(
-                    track_name.clone(),
-                    json!({
-                        "plugins": plugins_json,
-                        "connections": conns_json,
-                    }),
-                );
-            }
-            Value::Object(graphs)
-        };
         #[cfg(target_os = "macos")]
         let graphs = Value::Object(serde_json::Map::new());
 
@@ -383,7 +331,7 @@ impl Maolan {
             Task::batch(tasks)
         }
 
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             self.save_track_as_template(&track_name, path)
         }
@@ -652,7 +600,7 @@ impl Maolan {
                         Value::Null
                     }
                 }
-                #[cfg(any(target_os = "windows", target_os = "macos"))]
+                #[cfg(target_os = "macos")]
                 {
                     Value::Null
                 }
@@ -819,58 +767,6 @@ impl Maolan {
                             .map(Self::lv2_state_to_json)
                             .unwrap_or(Value::Null);
                         json!({"format": p.format, "uri": p.uri, "state": state_json})
-                    })
-                    .collect();
-                let conns_json: Vec<Value> = connections
-                    .iter()
-                    .filter_map(|c| {
-                        let from_node = Self::plugin_node_to_json(&c.from_node, &id_to_index)?;
-                        let to_node = Self::plugin_node_to_json(&c.to_node, &id_to_index)?;
-                        Some(json!({
-                            "from_node": from_node,
-                            "from_port": c.from_port,
-                            "to_node": to_node,
-                            "to_port": c.to_port,
-                            "kind": Self::kind_to_json(c.kind),
-                        }))
-                    })
-                    .collect();
-                graphs.insert(
-                    track_name.clone(),
-                    json!({
-                        "plugins": plugins_json,
-                        "connections": conns_json,
-                    }),
-                );
-            }
-            Value::Object(graphs)
-        };
-        #[cfg(target_os = "windows")]
-        let graphs = {
-            let mut graphs = serde_json::Map::new();
-            for (track_name, (plugins, connections)) in &state.plugin_graphs_by_track {
-                let vst3_plugins: Vec<&maolan_engine::message::PluginGraphPlugin> = plugins
-                    .iter()
-                    .filter(|p| p.format.eq_ignore_ascii_case("VST3"))
-                    .collect();
-                if vst3_plugins.is_empty() {
-                    continue;
-                }
-                let id_to_index: std::collections::HashMap<usize, usize> = vst3_plugins
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, p)| (p.instance_id, idx))
-                    .collect();
-                let plugins_json: Vec<Value> = vst3_plugins
-                    .iter()
-                    .map(|p| {
-                        let state_json = state
-                            .vst3_states_by_track
-                            .get(track_name)
-                            .and_then(|states| states.get(&p.instance_id))
-                            .and_then(|snapshot| serde_json::to_value(snapshot).ok())
-                            .unwrap_or(Value::Null);
-                        json!({ "uri": p.uri, "state": state_json })
                     })
                     .collect();
                 let conns_json: Vec<Value> = connections
@@ -2035,82 +1931,6 @@ impl Maolan {
                 }
             }
         }
-        #[cfg(target_os = "windows")]
-        if let Some(graphs) = session["graphs"].as_object() {
-            for (track_name, graph_v) in graphs {
-                restore_actions.push(Action::TrackClearDefaultPassthrough {
-                    track_name: track_name.clone(),
-                });
-                let Some(plugins_arr) = graph_v["plugins"].as_array() else {
-                    continue;
-                };
-                let mut plugin_count = 0usize;
-                for p in plugins_arr {
-                    let Some(uri) = p["uri"].as_str() else {
-                        continue;
-                    };
-                    let plugin_index = plugin_count;
-                    restore_actions.push(Action::TrackLoadVst3Plugin {
-                        track_name: track_name.clone(),
-                        plugin_path: uri.to_string(),
-                    });
-                    if let Ok(snapshot) = serde_json::from_value::<
-                        maolan_engine::vst3::Vst3PluginState,
-                    >(p["state"].clone())
-                    {
-                        restore_actions.push(Action::TrackVst3RestoreState {
-                            track_name: track_name.clone(),
-                            instance_id: plugin_index,
-                            state: snapshot,
-                        });
-                    }
-                    plugin_count += 1;
-                }
-
-                if let Some(connections_arr) = graph_v["connections"].as_array() {
-                    for c in connections_arr {
-                        let Some(from_node) = Self::plugin_node_from_json(&c["from_node"]) else {
-                            continue;
-                        };
-                        let Some(to_node) = Self::plugin_node_from_json(&c["to_node"]) else {
-                            continue;
-                        };
-                        let Some(kind) = Self::kind_from_json(&c["kind"]) else {
-                            continue;
-                        };
-                        let from_port = c["from_port"].as_u64().unwrap_or(0) as usize;
-                        let to_port = c["to_port"].as_u64().unwrap_or(0) as usize;
-                        let valid_node = |n: &maolan_engine::message::PluginGraphNode| match n {
-                            maolan_engine::message::PluginGraphNode::Vst3PluginInstance(idx) => {
-                                *idx < plugin_count
-                            }
-                            maolan_engine::message::PluginGraphNode::TrackInput
-                            | maolan_engine::message::PluginGraphNode::TrackOutput => true,
-                            _ => false,
-                        };
-                        if !valid_node(&from_node) || !valid_node(&to_node) {
-                            continue;
-                        }
-                        match kind {
-                            Kind::Audio => restore_actions.push(Action::TrackConnectPluginAudio {
-                                track_name: track_name.clone(),
-                                from_node,
-                                from_port,
-                                to_node,
-                                to_port,
-                            }),
-                            Kind::MIDI => restore_actions.push(Action::TrackConnectPluginMidi {
-                                track_name: track_name.clone(),
-                                from_node,
-                                from_port,
-                                to_node,
-                                to_port,
-                            }),
-                        }
-                    }
-                }
-            }
-        }
         if warnings.is_empty() {
             self.state.blocking_write().message = "Session loaded".to_string();
         } else {
@@ -2179,7 +1999,7 @@ impl Maolan {
                 .collect::<Vec<_>>();
             Task::batch(tasks)
         }
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             let track_names: Vec<String> = self
                 .state
@@ -2286,7 +2106,7 @@ impl Maolan {
                 .collect::<Vec<_>>();
             Task::batch(tasks)
         }
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        #[cfg(target_os = "macos")]
         {
             let track_names: Vec<String> = self
                 .state

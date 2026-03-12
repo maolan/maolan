@@ -7,15 +7,9 @@ use crate::midi::io::MidiEvent;
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-#[cfg(target_os = "windows")]
-use vst3::ComPtr;
 use vst3::ComWrapper;
-#[cfg(target_os = "windows")]
-use vst3::Steinberg::IPlugView;
 use vst3::Steinberg::Vst::ProcessModes_::kRealtime;
 use vst3::Steinberg::Vst::SymbolicSampleSizes_::kSample32;
-#[cfg(target_os = "windows")]
-use vst3::Steinberg::Vst::{IEditControllerTrait, ViewType};
 
 pub struct Vst3Processor {
     // Plugin identity
@@ -44,8 +38,6 @@ pub struct Vst3Processor {
     previous_values: Arc<Mutex<Vec<f32>>>,
     max_samples_per_block: usize,
     processing_started: bool,
-    #[cfg(target_os = "windows")]
-    editor_view: Option<ComPtr<IPlugView>>,
 }
 
 impl fmt::Debug for Vst3Processor {
@@ -182,12 +174,6 @@ impl Vst3Processor {
         )?;
         instance.set_active(true)?;
 
-        #[cfg(target_os = "windows")]
-        let processing_started = {
-            instance.start_processing()?;
-            true
-        };
-        #[cfg(not(target_os = "windows"))]
         let processing_started = false;
 
         // Temporary workaround: querying IEditController parameters crashes on
@@ -216,8 +202,6 @@ impl Vst3Processor {
             previous_values,
             max_samples_per_block: buffer_size,
             processing_started,
-            #[cfg(target_os = "windows")]
-            editor_view: None,
         })
     }
 
@@ -231,41 +215,6 @@ impl Vst3Processor {
 
     pub fn plugin_id(&self) -> &str {
         &self.plugin_id
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn open_editor_blocking(&mut self) -> Result<(), String> {
-        let view = self.ensure_editor_view()?;
-        super::editor_win32::open_editor_view_blocking(view, &self.name)
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn editor_controller_handle_and_title(&mut self) -> Result<(usize, String), String> {
-        let view = self.ensure_editor_view()?;
-        let handle = view.as_ptr() as usize;
-        // Transfer one COM ref-counted ownership unit to caller.
-        std::mem::forget(view);
-        Ok((handle, self.name.clone()))
-    }
-
-    #[cfg(target_os = "windows")]
-    fn ensure_editor_view(&mut self) -> Result<ComPtr<IPlugView>, String> {
-        if let Some(view) = self.editor_view.as_ref() {
-            return Ok(view.clone());
-        }
-        let controller = self
-            .instance
-            .edit_controller
-            .clone()
-            .ok_or("VST3 plugin has no edit controller")?;
-        let view_ptr = unsafe { controller.createView(ViewType::kEditor) };
-        if view_ptr.is_null() {
-            return Err("VST3 plugin does not expose an editor view".to_string());
-        }
-        let view = unsafe { ComPtr::from_raw(view_ptr) }
-            .ok_or("Failed to manage VST3 editor view pointer")?;
-        self.editor_view = Some(view.clone());
-        Ok(view)
     }
 
     pub fn audio_inputs(&self) -> &[Arc<AudioIO>] {

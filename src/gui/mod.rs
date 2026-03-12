@@ -37,7 +37,7 @@ use iced::{
     Length, Size, Task,
     widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
 };
-#[cfg(any(unix, target_os = "windows"))]
+#[cfg(unix)]
 use maolan_engine::kind::Kind;
 use maolan_engine::message::{Action, Message as EngineMessage};
 use midly::{
@@ -48,7 +48,7 @@ use mp3lame_encoder::{
     Bitrate as Mp3Bitrate, Builder as Mp3Builder, FlushNoGap, InterleavedPcm, Quality as Mp3Quality,
 };
 use serde_json::Value;
-#[cfg(any(unix, target_os = "windows"))]
+#[cfg(unix)]
 use serde_json::json;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -274,7 +274,7 @@ pub struct Maolan {
     track: Option<String>,
     workspace: workspace::Workspace,
     connections: connections::canvas_host::CanvasHost<connections::tracks::Graph>,
-    #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     track_plugins: connections::canvas_host::CanvasHost<connections::plugins::Graph>,
     hw: hw::HW,
     modal: Option<Show>,
@@ -296,7 +296,7 @@ pub struct Maolan {
     session_dir: Option<PathBuf>,
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     pending_save_vst3_states: HashSet<(String, usize)>,
     pending_save_is_template: bool,
     pending_audio_peaks: HashMap<AudioClipKey, ClipPeaks>,
@@ -488,7 +488,7 @@ impl Default for Maolan {
             connections: connections::canvas_host::CanvasHost::new(
                 connections::tracks::Graph::new(state.clone()),
             ),
-            #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+            #[cfg(all(unix, not(target_os = "macos")))]
             track_plugins: connections::canvas_host::CanvasHost::new(
                 connections::plugins::Graph::new(state.clone()),
             ),
@@ -512,7 +512,7 @@ impl Default for Maolan {
             session_dir: None,
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            #[cfg(target_os = "macos")]
             pending_save_vst3_states: HashSet::new(),
             pending_save_is_template: false,
             pending_audio_peaks: HashMap::new(),
@@ -2662,7 +2662,7 @@ impl Maolan {
         Ok((rel, length.max(1)))
     }
 
-    #[cfg(any(all(unix, not(target_os = "macos")), target_os = "windows"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn plugin_node_to_json(
         node: &maolan_engine::message::PluginGraphNode,
         id_to_index: &std::collections::HashMap<usize, usize>,
@@ -2683,26 +2683,6 @@ impl Maolan {
                 .get(id)
                 .copied()
                 .map(|idx| json!({"type":"clap_plugin","plugin_index":idx})),
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    fn plugin_node_from_json(v: &Value) -> Option<maolan_engine::message::PluginGraphNode> {
-        use maolan_engine::message::PluginGraphNode;
-        let t = v["type"].as_str()?;
-        match t {
-            "track_input" => Some(PluginGraphNode::TrackInput),
-            "track_output" => Some(PluginGraphNode::TrackOutput),
-            "plugin" => Some(PluginGraphNode::Lv2PluginInstance(
-                v["plugin_index"].as_u64()? as usize,
-            )),
-            "vst3_plugin" => Some(PluginGraphNode::Vst3PluginInstance(
-                v["plugin_index"].as_u64()? as usize,
-            )),
-            "clap_plugin" => Some(PluginGraphNode::ClapPluginInstance(
-                v["plugin_index"].as_u64()? as usize,
-            )),
-            _ => None,
         }
     }
 
@@ -2748,7 +2728,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     fn kind_to_json(kind: Kind) -> Value {
         match kind {
             Kind::Audio => json!("audio"),
@@ -2756,7 +2736,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     fn kind_from_json(v: &Value) -> Option<Kind> {
         match v.as_str()? {
             "audio" => Some(Kind::Audio),
@@ -3054,7 +3034,7 @@ impl Maolan {
         .into()
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     fn track_plugin_list_view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         let title = state
@@ -3637,34 +3617,11 @@ impl Maolan {
                     }),
             );
         }
-        #[cfg(target_os = "windows")]
-        {
-            options.extend(
-                state
-                    .available_input_hw
-                    .iter()
-                    .map(|hw| PreferencesDeviceOption {
-                        id: hw.clone(),
-                        label: hw.clone(),
-                    }),
-            );
-        }
         options
     }
 
     fn apply_preferred_devices_to_state(state: &mut StateData, prefs: &AppPreferences) {
-        #[cfg(target_os = "windows")]
-        {
-            let refreshed_output = crate::state::discover_windows_audio_devices();
-            if !refreshed_output.is_empty() {
-                state.available_hw = refreshed_output;
-            }
-            let refreshed_input = crate::state::discover_windows_input_devices();
-            if !refreshed_input.is_empty() {
-                state.available_input_hw = refreshed_input;
-            }
-        }
-        #[cfg(any(unix, target_os = "windows"))]
+        #[cfg(unix)]
         {
             let bits = if AUDIO_BIT_DEPTH_OPTIONS.contains(&prefs.default_audio_bit_depth) {
                 prefs.default_audio_bit_depth
@@ -3707,22 +3664,12 @@ impl Maolan {
             {
                 state.selected_input_hw = Some(selected);
             }
-            #[cfg(target_os = "windows")]
-            if state.available_input_hw.iter().any(|hw| hw == device_id) {
-                state.selected_input_hw = Some(device_id.to_string());
-            }
         }
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         if let Some(selected) = state.selected_hw.as_ref()
             && let Some(bits) = selected.preferred_bits()
         {
             state.oss_bits = bits;
-        }
-        #[cfg(target_os = "windows")]
-        if let Some(selected) = state.selected_hw.as_ref() {
-            if selected.starts_with("wasapi:") {
-                state.selected_backend = crate::state::AudioBackendOption::Wasapi;
-            }
         }
     }
 
@@ -3764,7 +3711,7 @@ impl Maolan {
                 ]
                 .spacing(10)
                 .align_y(iced::Alignment::Center),
-                #[cfg(any(unix, target_os = "windows"))]
+                #[cfg(unix)]
                 row![
                     text("Default bit depth:"),
                     pick_list(
@@ -3922,7 +3869,7 @@ impl Maolan {
         self.toolbar.update(message);
         self.workspace.update(message);
         self.connections.update(message);
-        #[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
+        #[cfg(all(unix, not(target_os = "macos")))]
         self.track_plugins.update(message);
         self.add_track.update(message);
         self.clip_rename.update(message);
@@ -3934,7 +3881,7 @@ impl Maolan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     use maolan_engine::message::PluginGraphNode;
 
     #[test]
@@ -3953,7 +3900,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     fn kind_json_roundtrip_rejects_unknown_values() {
         assert_eq!(
             Maolan::kind_from_json(&Maolan::kind_to_json(Kind::Audio)),
@@ -4037,7 +3984,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     fn plugin_node_to_json_serializes_track_and_plugin_nodes() {
         let mut id_to_index = std::collections::HashMap::new();
         id_to_index.insert(7usize, 2usize);

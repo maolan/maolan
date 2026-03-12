@@ -99,7 +99,7 @@ pub struct ClipMoveTo {
     pub input_channel: usize,
 }
 
-#[cfg(any(unix, target_os = "windows"))]
+#[cfg(unix)]
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PluginGraphNode {
     TrackInput,
@@ -109,7 +109,7 @@ pub enum PluginGraphNode {
     ClapPluginInstance(usize),
 }
 
-#[cfg(any(unix, target_os = "windows"))]
+#[cfg(unix)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PluginGraphPlugin {
     pub node: PluginGraphNode,
@@ -127,14 +127,14 @@ pub struct PluginGraphPlugin {
     pub state: Option<Lv2PluginState>,
 }
 
-#[cfg(any(unix, target_os = "windows"))]
+#[cfg(unix)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lv2StatePortValue {
     pub index: u32,
     pub value: f32,
 }
 
-#[cfg(any(unix, target_os = "windows"))]
+#[cfg(unix)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lv2StateProperty {
     pub key_uri: String,
@@ -143,7 +143,7 @@ pub struct Lv2StateProperty {
     pub value: Vec<u8>,
 }
 
-#[cfg(any(unix, target_os = "windows"))]
+#[cfg(unix)]
 #[derive(Clone, Debug, PartialEq)]
 pub struct Lv2PluginState {
     pub port_values: Vec<Lv2StatePortValue>,
@@ -160,7 +160,7 @@ pub struct Lv2ControlPortInfo {
     pub value: f32,
 }
 
-#[cfg(any(unix, target_os = "windows"))]
+#[cfg(unix)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginGraphConnection {
     pub from_node: PluginGraphNode,
@@ -170,7 +170,7 @@ pub struct PluginGraphConnection {
     pub kind: Kind,
 }
 
-#[cfg(any(unix, target_os = "windows"))]
+#[cfg(unix)]
 pub type PluginGraphSnapshot = (Vec<PluginGraphPlugin>, Vec<PluginGraphConnection>);
 
 // VST3 graph types
@@ -471,17 +471,17 @@ pub enum Action {
         index: u32,
         value: f32,
     },
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     TrackGetPluginGraph {
         track_name: String,
     },
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     TrackPluginGraph {
         track_name: String,
         plugins: Vec<PluginGraphPlugin>,
         connections: Vec<PluginGraphConnection>,
     },
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     TrackConnectPluginAudio {
         track_name: String,
         from_node: PluginGraphNode,
@@ -489,7 +489,7 @@ pub enum Action {
         to_node: PluginGraphNode,
         to_port: usize,
     },
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     TrackConnectPluginMidi {
         track_name: String,
         from_node: PluginGraphNode,
@@ -497,7 +497,7 @@ pub enum Action {
         to_node: PluginGraphNode,
         to_port: usize,
     },
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     TrackDisconnectPluginAudio {
         track_name: String,
         from_node: PluginGraphNode,
@@ -505,7 +505,7 @@ pub enum Action {
         to_node: PluginGraphNode,
         to_port: usize,
     },
-    #[cfg(any(unix, target_os = "windows"))]
+    #[cfg(unix)]
     TrackDisconnectPluginMidi {
         track_name: String,
         from_node: PluginGraphNode,
@@ -589,23 +589,6 @@ pub enum Action {
     TrackUnloadVst3PluginInstance {
         track_name: String,
         instance_id: usize,
-    },
-    #[cfg(target_os = "windows")]
-    TrackOpenVst3Editor {
-        track_name: String,
-        instance_id: usize,
-    },
-    #[cfg(target_os = "windows")]
-    TrackGetVst3EditorHandle {
-        track_name: String,
-        instance_id: usize,
-    },
-    #[cfg(target_os = "windows")]
-    TrackVst3EditorHandle {
-        track_name: String,
-        instance_id: usize,
-        controller_handle: usize,
-        title: String,
     },
     TrackGetVst3Graph {
         track_name: String,
