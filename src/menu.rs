@@ -117,7 +117,12 @@ impl Menu {
         format!("{base}  ({path})")
     }
 
-    pub fn view(&self, mixer_visible: bool) -> iced::Element<'_, Message> {
+    pub fn view(
+        &self,
+        tracks_visible: bool,
+        editor_visible: bool,
+        mixer_visible: bool,
+    ) -> iced::Element<'_, Message> {
         let menu_tpl = |items| IcedMenu::new(items).width(180.0).offset(15.0).spacing(5.0);
 
         // Build the "New" submenu dynamically from stored templates
@@ -194,6 +199,14 @@ impl Menu {
             }),
             (menu_dropdown("View", Message::None), {
                 menu_tpl(menu_items!(
+                    (menu_item(
+                        if tracks_visible { "Tracks [x]" } else { "Tracks [ ]" },
+                        Message::ToggleTracksVisibility
+                    )),
+                    (menu_item(
+                        if editor_visible { "Editor [x]" } else { "Editor [ ]" },
+                        Message::ToggleEditorVisibility
+                    )),
                     (menu_item(
                         if mixer_visible { "Mixer [x]" } else { "Mixer [ ]" },
                         Message::ToggleMixerVisibility

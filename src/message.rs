@@ -763,6 +763,8 @@ pub enum Message {
     Workspace,
     Connections,
     ToggleMixerVisibility,
+    ToggleTracksVisibility,
+    ToggleEditorVisibility,
     OpenTrackPlugins(String),
     OpenMidiPiano {
         track_idx: String,

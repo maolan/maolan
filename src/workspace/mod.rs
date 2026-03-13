@@ -69,6 +69,8 @@ pub struct WorkspaceViewArgs<'a> {
     pub zoom_visible_bars: f32,
     pub tracks_resize_hovered: bool,
     pub mixer_resize_hovered: bool,
+    pub tracks_visible: bool,
+    pub editor_visible: bool,
     pub mixer_visible: bool,
     pub active_clip_drag: Option<&'a DraggedClip>,
     pub active_clip_target_track: Option<&'a str>,
@@ -127,6 +129,8 @@ impl Workspace {
             zoom_visible_bars,
             tracks_resize_hovered,
             mixer_resize_hovered,
+            tracks_visible,
+            editor_visible,
             mixer_visible,
             active_clip_drag,
             active_clip_target_track,
@@ -295,78 +299,8 @@ impl Workspace {
             .width(tracks_width)
             .height(Length::Fill);
 
-        let shared_workspace = row![
-            column![
-                container("")
-                    .width(tracks_width)
-                    .height(Length::Fixed(self.tempo.height()))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.1,
-                            a: 1.0,
-                        })),
-                        ..container::Style::default()
-                    }),
-                container("")
-                    .width(tracks_width)
-                    .height(Length::Fixed(self.ruler.height()))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.1,
-                            g: 0.1,
-                            b: 0.1,
-                            a: 1.0,
-                        })),
-                        ..container::Style::default()
-                    }),
-                tracks_scrolled,
-            ]
-            .width(tracks_width),
-            mouse_area(column![
-                container("")
-                    .width(Length::Fixed(3.0))
-                    .height(Length::Fixed(self.tempo.height()))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.5,
-                            g: 0.5,
-                            b: 0.5,
-                            a: 0.5,
-                        })),
-                        ..container::Style::default()
-                    }),
-                container("")
-                    .width(Length::Fixed(3.0))
-                    .height(Length::Fixed(self.ruler.height()))
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.5,
-                            g: 0.5,
-                            b: 0.5,
-                            a: 0.5,
-                        })),
-                        ..container::Style::default()
-                    }),
-                container("")
-                    .width(Length::Fixed(3.0))
-                    .height(Length::Fill)
-                    .style(move |_theme| container::Style {
-                        background: Some(Background::Color(Color {
-                            r: 0.7,
-                            g: 0.7,
-                            b: 0.7,
-                            a: if tracks_resize_hovered { 0.95 } else { 0.6 },
-                        })),
-                        ..container::Style::default()
-                    }),
-            ],)
-            .on_enter(Message::TracksResizeHover(true))
-            .on_exit(Message::TracksResizeHover(false))
-            .on_press(Message::TracksResizeStart),
-            column![
-                scrollable(self.tempo.view(TempoViewArgs {
+        let right_panel = column![
+            scrollable(self.tempo.view(TempoViewArgs {
                     bpm: tempo,
                     time_signature,
                     pixels_per_sample,
@@ -407,9 +341,94 @@ impl Workspace {
                 .height(Length::Fixed(self.ruler.height())),
                 container(editor_with_zoom).height(Length::Fixed(tracks_total_height)),
             ]
-            .width(Length::Fill),
+            .width(Length::Fill);
+
+        let left_panel = column![
+            container("")
+                .width(tracks_width)
+                .height(Length::Fixed(self.tempo.height()))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.1,
+                        g: 0.1,
+                        b: 0.1,
+                        a: 1.0,
+                    })),
+                    ..container::Style::default()
+                }),
+            container("")
+                .width(tracks_width)
+                .height(Length::Fixed(self.ruler.height()))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.1,
+                        g: 0.1,
+                        b: 0.1,
+                        a: 1.0,
+                    })),
+                    ..container::Style::default()
+                }),
+            tracks_scrolled,
         ]
-        .height(Length::Fixed(workspace_content_height));
+        .width(tracks_width);
+
+        let tracks_splitter = mouse_area(column![
+            container("")
+                .width(Length::Fixed(3.0))
+                .height(Length::Fixed(self.tempo.height()))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.5,
+                        g: 0.5,
+                        b: 0.5,
+                        a: 0.5,
+                    })),
+                    ..container::Style::default()
+                }),
+            container("")
+                .width(Length::Fixed(3.0))
+                .height(Length::Fixed(self.ruler.height()))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.5,
+                        g: 0.5,
+                        b: 0.5,
+                        a: 0.5,
+                    })),
+                    ..container::Style::default()
+                }),
+            container("")
+                .width(Length::Fixed(3.0))
+                .height(Length::Fill)
+                .style(move |_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.7,
+                        g: 0.7,
+                        b: 0.7,
+                        a: if tracks_resize_hovered { 0.95 } else { 0.6 },
+                    })),
+                    ..container::Style::default()
+                }),
+        ],)
+        .on_enter(Message::TracksResizeHover(true))
+        .on_exit(Message::TracksResizeHover(false))
+        .on_press(Message::TracksResizeStart);
+
+        let shared_workspace: Element<'_, Message> = match (tracks_visible, editor_visible) {
+            (true, true) => row![left_panel, tracks_splitter, right_panel]
+                .height(Length::Fixed(workspace_content_height))
+                .into(),
+            (true, false) => row![left_panel]
+                .height(Length::Fixed(workspace_content_height))
+                .into(),
+            (false, true) => row![right_panel]
+                .height(Length::Fixed(workspace_content_height))
+                .into(),
+            (false, false) => container("")
+                .width(Length::Fill)
+                .height(Length::Fixed(workspace_content_height))
+                .into(),
+        };
 
         let shared_workspace: Element<'_, Message> =
             if let Some((anchor, menu)) = track_context_menu_overlay {
@@ -424,30 +443,39 @@ impl Workspace {
                 container(shared_workspace).into()
             };
 
-        let editor_footer = container(
-            row![
-                Space::new().width(Length::Fixed(tracks_width_px + 3.0)),
-                container(
-                    row![
-                        h_scroll,
-                        slider(
-                            1.0..=256.0,
-                            zoom_visible_bars,
-                            Message::ZoomVisibleBarsChanged,
-                        )
-                        .width(Length::Fixed(105.0)),
-                    ]
-                    .spacing(8),
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(16.0))
-                .padding([0, 8]),
-            ]
+        let editor_footer: Element<'_, Message> = if editor_visible {
+            container(
+                row![
+                    Space::new().width(Length::Fixed(if tracks_visible {
+                        tracks_width_px + 3.0
+                    } else {
+                        0.0
+                    })),
+                    container(
+                        row![
+                            h_scroll,
+                            slider(
+                                1.0..=256.0,
+                                zoom_visible_bars,
+                                Message::ZoomVisibleBarsChanged,
+                            )
+                            .width(Length::Fixed(105.0)),
+                        ]
+                        .spacing(8),
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fixed(16.0))
+                    .padding([0, 8]),
+                ]
+                .height(Length::Fill)
+                .align_y(iced::alignment::Vertical::Bottom),
+            )
+            .width(Length::Fill)
             .height(Length::Fill)
-            .align_y(iced::alignment::Vertical::Bottom),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill);
+            .into()
+        } else {
+            Space::new().into()
+        };
 
         let workspace_with_footer = Stack::from_vec(vec![
             shared_workspace,

@@ -2659,18 +2659,36 @@ impl Engine {
             10.0_f32.powf(self.hw_out_level_db / 20.0)
         };
         let should_notify_interval = self.should_publish_hw_out_meters();
-        let peaks_linear = if let Some(oss) = self.hw_driver.clone() {
-            {
-                let hw = oss.lock();
-                hw.set_output_gain_balance(gain, self.hw_out_balance);
+        if let Some(oss) = self.hw_driver.clone() {
+            let hw = oss.lock();
+            hw.set_output_gain_balance(gain, self.hw_out_balance);
+            if !should_notify_interval {
+                return;
             }
-            oss.lock().output_meter_linear(gain, self.hw_out_balance)
         } else {
             #[cfg(unix)]
             {
                 if let Some(jack) = self.jack_runtime.clone() {
                     jack.lock().set_output_gain_linear(gain);
                     jack.lock().set_output_balance(self.hw_out_balance);
+                    if !should_notify_interval {
+                        return;
+                    }
+                } else {
+                    return;
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                return;
+            }
+        }
+        let peaks_linear = if let Some(oss) = self.hw_driver.clone() {
+            oss.lock().output_meter_linear(gain, self.hw_out_balance)
+        } else {
+            #[cfg(unix)]
+            {
+                if let Some(jack) = self.jack_runtime.clone() {
                     let outs = jack.lock().audio_outs.clone();
                     let out_count = outs.len();
                     let b = if out_count == 2 {

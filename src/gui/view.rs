@@ -135,6 +135,8 @@ impl Maolan {
                             zoom_visible_bars: self.zoom_visible_bars,
                             tracks_resize_hovered: self.tracks_resize_hovered,
                             mixer_resize_hovered: self.mixer_resize_hovered,
+                            tracks_visible: self.tracks_visible,
+                            editor_visible: self.editor_visible,
                             mixer_visible: self.mixer_visible,
                             active_clip_drag: self.clip.as_ref(),
                             active_clip_target_track: self.clip_preview_target_track.as_deref(),
@@ -171,6 +173,8 @@ impl Maolan {
                             zoom_visible_bars: self.zoom_visible_bars,
                             tracks_resize_hovered: false,
                             mixer_resize_hovered: false,
+                            tracks_visible: false,
+                            editor_visible: false,
                             mixer_visible: false,
                             active_clip_drag: None,
                             active_clip_target_track: None,
@@ -210,7 +214,7 @@ impl Maolan {
                         self.playhead_bar_beat(&state, playhead_sample);
 
                     let mut content = column![
-                        self.menu.view(self.mixer_visible),
+                        self.menu.view(self.tracks_visible, self.editor_visible, self.mixer_visible),
                         self.toolbar.view(ToolbarViewState {
                             playing: self.playing,
                             paused: self.paused,

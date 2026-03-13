@@ -6127,6 +6127,15 @@ impl Maolan {
                     self.mixer_resize_hovered = false;
                 }
             }
+            Message::ToggleTracksVisibility => {
+                self.tracks_visible = !self.tracks_visible;
+                if !self.tracks_visible {
+                    self.tracks_resize_hovered = false;
+                }
+            }
+            Message::ToggleEditorVisibility => {
+                self.editor_visible = !self.editor_visible;
+            }
             Message::Connections => {
                 let mut state = self.state.blocking_write();
                 state.view = View::Connections;

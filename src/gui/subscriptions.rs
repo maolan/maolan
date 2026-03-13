@@ -208,7 +208,8 @@ impl Maolan {
         } else {
             Subscription::none()
         };
-        let meter_poll_sub = if SUPPORTS_METER_POLL {
+        let meter_poll_sub =
+            if SUPPORTS_METER_POLL && self.mixer_visible && (self.playing || self.paused) {
             iced::time::every(Duration::from_millis(40)).map(|_| Message::MeterPollTick)
         } else {
             Subscription::none()
