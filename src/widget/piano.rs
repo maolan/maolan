@@ -1495,6 +1495,13 @@ enum ControllerAdjustTarget {
     Velocity(usize),
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ControllerEraseTarget {
+    Controller(usize),
+    Velocity(usize),
+    ControllerRange,
+}
+
 #[derive(Default, Debug)]
 pub struct ControllerRollInteractionState {
     mode: ControllerDragMode,
@@ -1520,6 +1527,11 @@ enum ControllerDragMode {
         original_sample: usize,
         start_x: f32,
         current_x: f32,
+    },
+    Erasing {
+        start: Point,
+        current: Point,
+        target: ControllerEraseTarget,
     },
 }
 
@@ -1612,6 +1624,32 @@ impl ControllerRollInteraction {
             }
         }
         best.map(|(idx, _)| idx)
+    }
+
+    fn controller_indices_in_sample_range(
+        &self,
+        start_x: f32,
+        end_x: f32,
+        pps: f32,
+        hit: ControllerHitTest<'_>,
+    ) -> Vec<usize> {
+        let sample_start = ((start_x.min(end_x) / pps).floor().max(0.0)) as usize;
+        let sample_end = ((start_x.max(end_x) / pps).ceil().max(0.0)) as usize;
+        let mut out = Vec::new();
+        for (idx, row) in Piano::lane_controller_events(hit.lane, hit.controllers) {
+            if let Some(selected_row) = hit.selected_row
+                && row != selected_row
+            {
+                continue;
+            }
+            let ctrl = &hit.controllers[idx];
+            if ctrl.sample >= sample_start && ctrl.sample <= sample_end {
+                out.push(idx);
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 }
 
@@ -1714,6 +1752,38 @@ impl Program<Message> for ControllerRollInteraction {
                 }
                 None
             }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+                let position = cursor.position_in(bounds)?;
+                if matches!(lane, PianoControllerLane::SysEx) {
+                    return None;
+                }
+                let target = if matches!(lane, PianoControllerLane::Velocity) {
+                    self.velocity_note_at_position(position, row_h, pps, notes)
+                        .map(ControllerEraseTarget::Velocity)
+                } else {
+                    self.controller_at_position(
+                        position,
+                        ControllerHitTest {
+                            lane,
+                            pane_h: bounds.height,
+                            pps,
+                            selected_row,
+                            controllers,
+                        },
+                    )
+                    .map(ControllerEraseTarget::Controller)
+                    .or(Some(ControllerEraseTarget::ControllerRange))
+                };
+                if let Some(target) = target {
+                    state.mode = ControllerDragMode::Erasing {
+                        start: position,
+                        current: position,
+                        target,
+                    };
+                    return Some(CanvasAction::request_redraw().and_capture());
+                }
+                None
+            }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
                 if matches!(lane, PianoControllerLane::Velocity) {
                     return None;
@@ -1742,6 +1812,16 @@ impl Program<Message> for ControllerRollInteraction {
                 )
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if let Some(position) = cursor.position_in(bounds)
+                    && let ControllerDragMode::Erasing { start, target, .. } = state.mode
+                {
+                    state.mode = ControllerDragMode::Erasing {
+                        start,
+                        current: position,
+                        target,
+                    };
+                    return Some(CanvasAction::request_redraw().and_capture());
+                }
                 if let Some(position) = cursor.position_in(bounds)
                     && let ControllerDragMode::Adjusting {
                         target,
@@ -1839,6 +1919,71 @@ impl Program<Message> for ControllerRollInteraction {
                 }
                 None
             }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
+                if let ControllerDragMode::Erasing {
+                    start,
+                    mut current,
+                    target,
+                } = state.mode
+                {
+                    state.mode = ControllerDragMode::None;
+                    if let Some(position) = cursor.position_in(bounds) {
+                        current = position;
+                    }
+                    let drag_delta = (current.x - start.x).abs().max((current.y - start.y).abs());
+                    let msg = match target {
+                        ControllerEraseTarget::Velocity(note_index) => Message::PianoDeleteNotes {
+                            note_indices: vec![note_index],
+                        },
+                        ControllerEraseTarget::Controller(controller_index) if drag_delta < 3.0 => {
+                            Message::PianoDeleteControllers {
+                                controller_indices: vec![controller_index],
+                            }
+                        }
+                        ControllerEraseTarget::Controller(_) => {
+                            let controller_indices = self.controller_indices_in_sample_range(
+                                start.x,
+                                current.x,
+                                pps,
+                                ControllerHitTest {
+                                    lane,
+                                    pane_h: bounds.height,
+                                    pps,
+                                    selected_row: None,
+                                    controllers,
+                                },
+                            );
+                            if controller_indices.is_empty() {
+                                return Some(CanvasAction::capture());
+                            }
+                            Message::PianoDeleteControllers { controller_indices }
+                        }
+                        ControllerEraseTarget::ControllerRange if drag_delta < 3.0 => {
+                            return Some(CanvasAction::capture());
+                        }
+                        ControllerEraseTarget::ControllerRange => {
+                            let controller_indices = self.controller_indices_in_sample_range(
+                                start.x,
+                                current.x,
+                                pps,
+                                ControllerHitTest {
+                                    lane,
+                                    pane_h: bounds.height,
+                                    pps,
+                                    selected_row: None,
+                                    controllers,
+                                },
+                            );
+                            if controller_indices.is_empty() {
+                                return Some(CanvasAction::capture());
+                            }
+                            Message::PianoDeleteControllers { controller_indices }
+                        }
+                    };
+                    return Some(CanvasAction::publish(msg).and_capture());
+                }
+                None
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 if matches!(
                     lane,
@@ -1913,6 +2058,15 @@ impl Program<Message> for ControllerRollInteraction {
         let mut frame = Frame::new(renderer, bounds.size());
         match state.mode {
             ControllerDragMode::None => return vec![],
+            ControllerDragMode::Erasing { start, current, .. } => {
+                let line = Path::line(start, current);
+                frame.stroke(
+                    &line,
+                    canvas::Stroke::default()
+                        .with_width(2.0)
+                        .with_color(Color::from_rgba(1.0, 0.35, 0.28, 0.95)),
+                );
+            }
             ControllerDragMode::Drawing { start, current } => {
                 let line = Path::line(start, current);
                 frame.stroke(
@@ -2435,6 +2589,18 @@ impl Program<Message> for PianoRollInteraction {
                     return Some(
                         CanvasAction::publish(Message::PianoCreateNoteStart { position })
                             .and_capture(),
+                    );
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+                if let Some(position) = cursor.position_in(bounds)
+                    && let Some(note_idx) = self.note_at_position(position, row_h, pps, notes)
+                {
+                    return Some(
+                        CanvasAction::publish(Message::PianoDeleteNotes {
+                            note_indices: vec![note_idx],
+                        })
+                        .and_capture(),
                     );
                 }
             }

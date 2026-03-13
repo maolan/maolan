@@ -857,6 +857,12 @@ pub enum Message {
     PianoHumanizeVelocityAmountChanged(f32),
     PianoGrooveAmountChanged(f32),
     PianoDeleteSelectedNotes,
+    PianoDeleteNotes {
+        note_indices: Vec<usize>,
+    },
+    PianoDeleteControllers {
+        controller_indices: Vec<usize>,
+    },
     #[cfg(all(unix, not(target_os = "macos")))]
     RefreshLv2Plugins,
     #[cfg(all(unix, not(target_os = "macos")))]

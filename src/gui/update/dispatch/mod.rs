@@ -777,7 +777,6 @@ impl Maolan {
                     .unwrap_or(min_sample);
                 let drawn_controllers: HashSet<u8> =
                     controllers.iter().map(|c| c.controller).collect();
-                let drawn_channels: HashSet<u8> = controllers.iter().map(|c| c.channel).collect();
 
                 let mut delete_indices: Vec<usize> = Vec::new();
                 let mut deleted_payload: Vec<(usize, maolan_engine::message::MidiControllerData)> =
@@ -787,9 +786,6 @@ impl Maolan {
                         continue;
                     }
                     if !drawn_controllers.contains(&ctrl.controller) {
-                        continue;
-                    }
-                    if !drawn_channels.contains(&ctrl.channel) {
                         continue;
                     }
                     delete_indices.push(idx);
@@ -1207,6 +1203,88 @@ impl Maolan {
                         clip_index: clip_idx,
                         note_indices,
                         deleted_notes,
+                    });
+                }
+            }
+            Message::PianoDeleteNotes { ref note_indices } => {
+                let mut state = self.state.blocking_write();
+                let mut selected_indices = note_indices.clone();
+                selected_indices.sort_unstable();
+                selected_indices.dedup();
+
+                if !selected_indices.is_empty()
+                    && let Some(piano) = state.piano.as_mut()
+                {
+                    let track_name = piano.track_idx.clone();
+                    let clip_idx = piano.clip_index;
+                    let deleted_notes: Vec<(usize, maolan_engine::message::MidiNoteData)> =
+                        selected_indices
+                            .iter()
+                            .filter_map(|&idx| {
+                                piano.notes.get(idx).map(|note| {
+                                    (
+                                        idx,
+                                        maolan_engine::message::MidiNoteData {
+                                            start_sample: note.start_sample,
+                                            length_samples: note.length_samples,
+                                            pitch: note.pitch,
+                                            velocity: note.velocity,
+                                            channel: note.channel,
+                                        },
+                                    )
+                                })
+                            })
+                            .collect();
+
+                    let note_indices: Vec<usize> = selected_indices.iter().rev().copied().collect();
+                    state.piano_selected_notes.clear();
+                    drop(state);
+                    return self.send(Action::DeleteMidiNotes {
+                        track_name,
+                        clip_index: clip_idx,
+                        note_indices,
+                        deleted_notes,
+                    });
+                }
+            }
+            Message::PianoDeleteControllers { ref controller_indices } => {
+                let mut state = self.state.blocking_write();
+                let mut selected_indices = controller_indices.clone();
+                selected_indices.sort_unstable();
+                selected_indices.dedup();
+
+                if !selected_indices.is_empty()
+                    && let Some(piano) = state.piano.as_mut()
+                {
+                    let track_name = piano.track_idx.clone();
+                    let clip_idx = piano.clip_index;
+                    let deleted_controllers: Vec<(
+                        usize,
+                        maolan_engine::message::MidiControllerData,
+                    )> = selected_indices
+                        .iter()
+                        .filter_map(|&idx| {
+                            piano.controllers.get(idx).map(|ctrl| {
+                                (
+                                    idx,
+                                    maolan_engine::message::MidiControllerData {
+                                        sample: ctrl.sample,
+                                        controller: ctrl.controller,
+                                        value: ctrl.value,
+                                        channel: ctrl.channel,
+                                    },
+                                )
+                            })
+                        })
+                        .collect();
+                    let controller_indices: Vec<usize> =
+                        selected_indices.iter().rev().copied().collect();
+                    drop(state);
+                    return self.send(Action::DeleteMidiControllers {
+                        track_name,
+                        clip_index: clip_idx,
+                        controller_indices,
+                        deleted_controllers,
                     });
                 }
             }
