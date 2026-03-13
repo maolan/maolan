@@ -1,5 +1,4 @@
 use crate::message::{Message, Show};
-use engine::message::Action;
 use iced::{
     Border, Color, Element, Length, alignment,
     widget::{button, row, text},
@@ -9,7 +8,6 @@ use iced_aw::{
     menu_bar, menu_items,
 };
 use iced_fonts::lucide::chevron_right;
-use maolan_engine as engine;
 use maolan_engine::message::GlobalMidiLearnTarget;
 use std::path::{Path, PathBuf};
 
@@ -164,7 +162,7 @@ impl Menu {
                     (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
                     (menu_item("Import", Message::OpenFileImporter)),
                     (menu_item("Export", Message::OpenExporter)),
-                    (menu_item("Quit", Message::Request(Action::Quit))),
+                    (menu_item("Quit", Message::WindowCloseRequested)),
                 ))
             }),
             (menu_dropdown("Edit", Message::None), {

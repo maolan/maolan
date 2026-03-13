@@ -74,6 +74,7 @@ fn run_app() -> iced::Result {
         .subscription(Maolan::subscription)
         .window(window::Settings {
             icon,
+            exit_on_close_request: false,
             ..Default::default()
         })
         .run()

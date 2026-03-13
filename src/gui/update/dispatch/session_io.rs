@@ -13,6 +13,10 @@ impl Maolan {
                     self.session_dir = Some(path.clone());
                     return Some(self.refresh_graphs_then_save(path.to_string_lossy().to_string()));
                 }
+                if self.pending_exit_after_save {
+                    self.pending_exit_after_save = false;
+                    self.state.blocking_write().message = "Close cancelled".to_string();
+                }
                 None
             }
             Message::RecordFolderSelected(ref path_opt) => {

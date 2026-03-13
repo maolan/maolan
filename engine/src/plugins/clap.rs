@@ -208,10 +208,7 @@ impl ClapProcessor {
         }
         let (processed, processed_midi) = match self.process_native(frames, midi_in, transport) {
             Ok(v) => v,
-            Err(err) => {
-                eprintln!("CLAP processing error: {err}, producing silence");
-                (false, Vec::new())
-            }
+            Err(_) => (false, Vec::new()),
         };
         if !processed {
             for out in &self.audio_outputs {

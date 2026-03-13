@@ -15,6 +15,7 @@ pub enum Show {
     SessionMetadata,
     Preferences,
     AutosaveRecovery,
+    UnsavedChanges,
     Save,
     SaveAs,
     SaveTemplateAs,
@@ -678,6 +679,9 @@ pub enum Message {
 
     WindowResized(Size),
     WindowCloseRequested,
+    ConfirmCloseSave,
+    ConfirmCloseDiscard,
+    ConfirmCloseCancel,
     PlaybackTick,
     MeterPollTick,
     AutosaveSnapshotTick,

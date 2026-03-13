@@ -448,9 +448,7 @@ impl GuiLv2UiHost {
                 client,
             );
 
-            if let Err(e) = result {
-                eprintln!("LV2 UI error: {}", e);
-            }
+            let _ = result;
 
             // Notify that window was closed
             let _ = closed_tx.send(WindowKey {
@@ -884,10 +882,7 @@ fn spawn_control_sender(client: Client) -> mpsc::Sender<(String, usize, u32, f32
             .build()
         {
             Ok(rt) => rt,
-            Err(err) => {
-                eprintln!("Failed to create LV2 UI runtime: {err}");
-                return;
-            }
+            Err(_) => return,
         };
         for (track_name, instance_id, index, value) in rx {
             let _ = runtime.block_on(client.send(EngineMessage::Request(

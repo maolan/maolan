@@ -14,6 +14,8 @@ use iced::{Subscription, event, keyboard, mouse, window};
 use maolan_engine::message::{Action as EngineAction, Message as EngineMessage};
 use std::collections::HashMap;
 use std::time::Duration;
+#[cfg(unix)]
+use tokio::signal::unix::{SignalKind, signal};
 
 impl Maolan {
     pub fn subscription(&self) -> Subscription<Message> {
@@ -180,6 +182,27 @@ impl Maolan {
             _ => Message::None,
         });
 
+        let shutdown_sub = Subscription::run(|| {
+            stream::unfold((), |_| async move {
+                #[cfg(unix)]
+                {
+                    let mut sigint = signal(SignalKind::interrupt()).ok()?;
+                    let mut sigquit = signal(SignalKind::quit()).ok()?;
+                    let mut sigterm = signal(SignalKind::terminate()).ok()?;
+                    tokio::select! {
+                        _ = sigint.recv() => Some((Message::WindowCloseRequested, ())),
+                        _ = sigquit.recv() => Some((Message::WindowCloseRequested, ())),
+                        _ = sigterm.recv() => Some((Message::WindowCloseRequested, ())),
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    tokio::signal::ctrl_c().await.ok()?;
+                    Some((Message::WindowCloseRequested, ()))
+                }
+            })
+        });
+
         let playback_sub = if self.playing && !self.paused {
             iced::time::every(PLAYHEAD_UPDATE_INTERVAL).map(|_| Message::PlaybackTick)
         } else {
@@ -227,6 +250,7 @@ impl Maolan {
             engine_sub,
             keyboard_sub,
             event_sub,
+            shutdown_sub,
             playback_sub,
             meter_poll_sub,
             autosave_sub,

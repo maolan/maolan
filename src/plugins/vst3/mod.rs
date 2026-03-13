@@ -45,7 +45,7 @@ impl GuiVst3UiHost {
             std::thread::Builder::new()
                 .name("vst3-ui".to_string())
                 .spawn(move || {
-                    if let Err(err) = open_editor_blocking(
+                    let _ = open_editor_blocking(
                         &plugin_path,
                         &plugin_name,
                         &plugin_id,
@@ -54,9 +54,7 @@ impl GuiVst3UiHost {
                         audio_inputs,
                         audio_outputs,
                         state,
-                    ) {
-                        eprintln!("VST3 UI error: {err}");
-                    }
+                    );
                 })
                 .map_err(|e| format!("Failed to spawn VST3 UI thread: {e}"))?;
             Ok(())

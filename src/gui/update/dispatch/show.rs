@@ -106,6 +106,10 @@ impl Maolan {
                 self.modal = Some(Show::AutosaveRecovery);
                 Task::none()
             }
+            Show::UnsavedChanges => {
+                self.modal = Some(Show::UnsavedChanges);
+                Task::none()
+            }
         }
     }
 }

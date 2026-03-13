@@ -11,6 +11,7 @@ impl Maolan {
                 self.last_autosave_snapshot = None;
                 self.pending_autosave_recovery = None;
                 self.pending_open_session_dir = None;
+                self.modal = None;
                 if let Some(path) = self.session_dir.clone() {
                     self.remember_recent_session_path(&path);
                 }
@@ -18,6 +19,9 @@ impl Maolan {
                     && autosave_root.exists()
                 {
                     let _ = fs::remove_dir_all(&autosave_root);
+                }
+                if self.pending_exit_after_save {
+                    exit(0);
                 }
                 if self.pending_record_after_save {
                     self.pending_record_after_save = false;

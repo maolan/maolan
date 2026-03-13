@@ -365,13 +365,6 @@ impl Track {
         }
     }
 
-    fn buffer_peak(io: &Arc<AudioIO>) -> f32 {
-        io.buffer
-            .lock()
-            .iter()
-            .fold(0.0_f32, |acc, sample| acc.max(sample.abs()))
-    }
-
     fn ensure_metronome_source(&mut self, frames: usize) -> Option<Arc<AudioIO>> {
         if self.name != "metronome" || self.audio.outs.is_empty() {
             return None;
@@ -886,79 +879,6 @@ impl Track {
             self.meter_peak_hold_linear[out_idx] = next;
             self.output_meter_linear_cache[out_idx] = next;
             *audio_out.finished.lock() = true;
-        }
-
-        if std::env::var_os("MAOLAN_TRACE_PLUGIN_AUDIO").is_some()
-            && (!self.vst3_processors.is_empty() || !self.clap_plugins.is_empty() || {
-                #[cfg(all(unix, not(target_os = "macos")))]
-                {
-                    !self.lv2_processors.is_empty()
-                }
-                #[cfg(not(all(unix, not(target_os = "macos"))))]
-                {
-                    false
-                }
-            })
-        {
-            let track_in: Vec<f32> = self.audio.ins.iter().map(Self::buffer_peak).collect();
-            let track_out: Vec<f32> = self.audio.outs.iter().map(Self::buffer_peak).collect();
-            #[cfg(all(unix, not(target_os = "macos")))]
-            {
-                for instance in &self.lv2_processors {
-                    let pin: Vec<f32> = instance
-                        .processor
-                        .audio_inputs()
-                        .iter()
-                        .map(Self::buffer_peak)
-                        .collect();
-                    let pout: Vec<f32> = instance
-                        .processor
-                        .audio_outputs()
-                        .iter()
-                        .map(Self::buffer_peak)
-                        .collect();
-                    eprintln!(
-                        "TRACE track='{}' lv2#{} in={:?} out={:?} track_in={:?} track_out={:?}",
-                        self.name, instance.id, pin, pout, track_in, track_out
-                    );
-                }
-            }
-            for instance in &self.vst3_processors {
-                let pin: Vec<f32> = instance
-                    .processor
-                    .audio_inputs()
-                    .iter()
-                    .map(Self::buffer_peak)
-                    .collect();
-                let pout: Vec<f32> = instance
-                    .processor
-                    .audio_outputs()
-                    .iter()
-                    .map(Self::buffer_peak)
-                    .collect();
-                eprintln!(
-                    "TRACE track='{}' vst3#{} in={:?} out={:?} track_in={:?} track_out={:?}",
-                    self.name, instance.id, pin, pout, track_in, track_out
-                );
-            }
-            for instance in &self.clap_plugins {
-                let pin: Vec<f32> = instance
-                    .processor
-                    .audio_inputs()
-                    .iter()
-                    .map(Self::buffer_peak)
-                    .collect();
-                let pout: Vec<f32> = instance
-                    .processor
-                    .audio_outputs()
-                    .iter()
-                    .map(Self::buffer_peak)
-                    .collect();
-                eprintln!(
-                    "TRACE track='{}' clap#{} in={:?} out={:?} track_in={:?} track_out={:?}",
-                    self.name, instance.id, pin, pout, track_in, track_out
-                );
-            }
         }
 
         self.audio.finished = true;

@@ -2100,6 +2100,8 @@ impl Maolan {
                 };
                 if let Err(e) = self.save(path.clone()) {
                     error!("{}", e);
+                    self.pending_exit_after_save = false;
+                    self.state.blocking_write().message = format!("Failed to save session: {}", e);
                     return Task::none();
                 }
                 return self.send(Action::SetSessionPath(path));
@@ -2150,6 +2152,8 @@ impl Maolan {
                 };
                 if let Err(e) = self.save(path.clone()) {
                     error!("{}", e);
+                    self.pending_exit_after_save = false;
+                    self.state.blocking_write().message = format!("Failed to save session: {}", e);
                     return Task::none();
                 }
                 return self.send(Action::SetSessionPath(path));

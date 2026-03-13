@@ -33,9 +33,6 @@ impl Maolan {
         if let Some(task) = self.handle_plugin_message(message.clone()) {
             return task;
         }
-        if !matches!(message, Message::WindowCloseRequested) {
-            self.close_confirm_pending = false;
-        }
         if matches!(
             message,
             Message::ClipRenameShow { .. }
@@ -78,6 +75,20 @@ impl Maolan {
             | Message::Request(_)
             | Message::MeterPollTick => return self.handle_session_message(message),
             Message::Cancel => self.modal = None,
+            Message::ConfirmCloseSave => {
+                self.pending_exit_after_save = true;
+                self.modal = None;
+                return self.handle_show_message(&Show::Save);
+            }
+            Message::ConfirmCloseDiscard => {
+                exit(0);
+            }
+            Message::ConfirmCloseCancel => {
+                self.pending_exit_after_save = false;
+                self.modal = None;
+                self.state.blocking_write().message = "Close cancelled".to_string();
+                return Task::none();
+            }
             Message::TransportPlay
             | Message::TransportPause
             | Message::TransportStop
@@ -2358,6 +2369,9 @@ impl Maolan {
                                             }
                                         } else if let Err(e) = self.save(path.clone()) {
                                             error!("{}", e);
+                                            self.pending_exit_after_save = false;
+                                            self.state.blocking_write().message =
+                                                format!("Failed to save session: {}", e);
                                         } else {
                                             return self.send(Action::SetSessionPath(path));
                                         }
@@ -2536,6 +2550,9 @@ impl Maolan {
                                                     .save_track_as_template(track_name, path);
                                             } else if let Err(e) = self.save(path.clone()) {
                                                 error!("{}", e);
+                                                self.pending_exit_after_save = false;
+                                                self.state.blocking_write().message =
+                                                    format!("Failed to save session: {}", e);
                                             } else {
                                                 return self.send(Action::SetSessionPath(path));
                                             }

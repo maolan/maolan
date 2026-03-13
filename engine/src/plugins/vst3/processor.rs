@@ -119,16 +119,7 @@ impl Vst3Processor {
         } else {
             0
         };
-        if requested_inputs != audio_inputs.max(1) || requested_outputs != audio_outputs.max(1) {
-            eprintln!(
-                "[vst3] Capping '{}' I/O channels to plugin main bus: requested in/out={}/{} -> configured in/out={}/{}",
-                name,
-                audio_inputs.max(1),
-                audio_outputs.max(1),
-                requested_inputs,
-                requested_outputs
-            );
-        }
+        let _ = name;
 
         // Query buses (for now, use the provided counts)
         let input_buses = if plugin_input_buses > 0 {
@@ -266,8 +257,7 @@ impl Vst3Processor {
         };
 
         // Call real VST3 processing (no MIDI)
-        if let Err(e) = self.process_vst3(processor, frames, &[]) {
-            eprintln!("VST3 processing error: {e}, producing silence");
+        if self.process_vst3(processor, frames, &[]).is_err() {
             self.process_silence();
         }
     }
@@ -294,8 +284,7 @@ impl Vst3Processor {
                 // Convert output events back to MIDI
                 output_buffer.to_midi_events()
             }
-            Err(e) => {
-                eprintln!("VST3 processing error: {e}, producing silence");
+            Err(_) => {
                 self.process_silence();
                 Vec::new()
             }
@@ -343,12 +332,6 @@ impl Vst3Processor {
             .min()
             .unwrap_or(frames);
         let num_frames = frames.min(max_input_frames).min(max_output_frames);
-        if frames > self.max_samples_per_block {
-            eprintln!(
-                "[vst3] Requested {} frames exceeds setup max {}, clamping to {}",
-                frames, self.max_samples_per_block, num_frames
-            );
-        }
         if num_frames == 0 {
             return Ok(EventBuffer::new());
         }
@@ -511,10 +494,7 @@ impl Vst3Processor {
         if let Some(controller) = &instance.edit_controller {
             unsafe {
                 let result = controller.getState(ibstream_ptr(&ctrl_stream) as *mut _);
-                if result != vst3::Steinberg::kResultOk {
-                    // Controller state is optional, so just log warning
-                    eprintln!("Warning: Failed to get controller state");
-                }
+                let _ = result;
             }
         }
 
@@ -560,9 +540,7 @@ impl Vst3Processor {
                 vst3::ComWrapper::new(MemoryStream::from_bytes(&state.controller_state));
             unsafe {
                 let result = controller.setState(ibstream_ptr(&ctrl_stream) as *mut _);
-                if result != vst3::Steinberg::kResultOk {
-                    eprintln!("Warning: Failed to set controller state");
-                }
+                let _ = result;
             }
 
             // Re-sync parameter values after restoring state

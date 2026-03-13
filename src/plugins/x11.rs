@@ -199,10 +199,6 @@ unsafe extern "C" fn vst3_x11_error_handler(
     if ev.error_code == 3 {
         return 0;
     }
-    eprintln!(
-        "X11 error during VST3 UI hosting: error_code={} request_code={} minor_code={} resource=0x{:x}",
-        ev.error_code, ev.request_code, ev.minor_code, ev.resourceid
-    );
     0
 }
 

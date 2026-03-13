@@ -392,7 +392,7 @@ pub struct Maolan {
     midi_mappings_panel_open: bool,
     midi_mappings_report_lines: Vec<String>,
     has_unsaved_changes: bool,
-    close_confirm_pending: bool,
+    pending_exit_after_save: bool,
     session_restore_in_progress: bool,
     last_autosave_snapshot: Option<Instant>,
     pending_recovery_session_dir: Option<PathBuf>,
@@ -607,7 +607,7 @@ impl Default for Maolan {
             midi_mappings_panel_open: false,
             midi_mappings_report_lines: Vec::new(),
             has_unsaved_changes: false,
-            close_confirm_pending: false,
+            pending_exit_after_save: false,
             session_restore_in_progress: false,
             last_autosave_snapshot: None,
             pending_recovery_session_dir: None,
@@ -3849,6 +3849,38 @@ impl Maolan {
                 row![
                     button("Recover Latest").on_press(Message::RecoverAutosaveSnapshot),
                     button("Ignore").on_press(Message::RecoverAutosaveIgnore),
+                ]
+                .spacing(10),
+            ]
+            .align_x(iced::Alignment::Start)
+            .spacing(12),
+        )
+        .style(|_theme| crate::style::app_background())
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
+    fn unsaved_changes_view(&self) -> iced::Element<'_, Message> {
+        let session_label = self
+            .session_dir
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Untitled session".to_string());
+        container(
+            column![
+                text("Unsaved Changes").size(16),
+                text(format!(
+                    "Session has unsaved changes:\n{}\n\nSave before closing, discard changes, or cancel.",
+                    session_label
+                )),
+                row![
+                    button("Save").on_press(Message::ConfirmCloseSave),
+                    button("Discard").on_press(Message::ConfirmCloseDiscard),
+                    button("Cancel").on_press(Message::ConfirmCloseCancel),
                 ]
                 .spacing(10),
             ]

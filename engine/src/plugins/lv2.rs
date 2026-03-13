@@ -530,10 +530,7 @@ impl Lv2Processor {
                         .symbol()
                         .and_then(|node| node.as_str().map(str::to_string))
                         .unwrap_or_else(|| format!("port_{index}"));
-                    eprintln!(
-                        "TRACE LV2 default uri='{}' port={} symbol='{}' range=[{}, {}] value={} reason={}",
-                        uri, index, symbol, min, max, default_value, fallback_reason
-                    );
+                    let _ = (uri, index, symbol, min, max, default_value, fallback_reason);
                 }
 
                 if is_control && is_input {

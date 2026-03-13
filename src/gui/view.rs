@@ -115,6 +115,7 @@ impl Maolan {
                 Some(Show::SessionMetadata) => self.session_metadata_view(),
                 Some(Show::Preferences) => self.preferences_view(),
                 Some(Show::AutosaveRecovery) => self.autosave_recovery_view(),
+                Some(Show::UnsavedChanges) => self.unsaved_changes_view(),
                 #[cfg(all(unix, not(target_os = "macos")))]
                 Some(Show::TrackPluginList) => self.track_plugin_list_view(),
                 #[cfg(target_os = "macos")]
