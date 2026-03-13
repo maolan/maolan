@@ -22,6 +22,8 @@ pub struct Ruler;
 struct RulerState {
     dragging: bool,
     drag_with_right: bool,
+    drag_adjust_loop_edge: bool,
+    adjust_loop_start: bool,
     drag_start_x: f32,
     last_x: f32,
     cache: canvas::Cache,
@@ -33,6 +35,8 @@ impl Default for RulerState {
         Self {
             dragging: false,
             drag_with_right: false,
+            drag_adjust_loop_edge: false,
+            adjust_loop_start: false,
             drag_start_x: 0.0,
             last_x: 0.0,
             cache: canvas::Cache::default(),
@@ -64,6 +68,8 @@ pub struct RulerViewArgs {
 }
 
 impl Ruler {
+    const RANGE_EDGE_HIT_PX: f32 = 8.0;
+
     pub fn new() -> Self {
         Self
     }
@@ -170,11 +176,36 @@ impl canvas::Program<Message> for RulerCanvas {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 if let Some(pos) = cursor_position {
                     state.dragging = true;
+                    state.drag_adjust_loop_edge = false;
                     state.drag_with_right = true;
                     let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
                     state.drag_start_x = x;
                     state.last_x = x;
                     return Some(CanvasAction::capture());
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
+                if let Some(pos) = cursor_position
+                    && let Some((loop_start, loop_end)) = self.loop_range_samples
+                    && loop_end > loop_start
+                {
+                    let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
+                    let start_x = loop_start as f32 * self.pixels_per_sample;
+                    let end_x = loop_end as f32 * self.pixels_per_sample;
+                    let start_hit = (x - start_x).abs() <= Ruler::RANGE_EDGE_HIT_PX;
+                    let end_hit = (x - end_x).abs() <= Ruler::RANGE_EDGE_HIT_PX;
+                    if start_hit || end_hit {
+                        state.dragging = true;
+                        state.drag_with_right = false;
+                        state.drag_adjust_loop_edge = true;
+                        state.adjust_loop_start = start_hit;
+                        state.drag_start_x = x;
+                        state.last_x = x;
+                        return Some(CanvasAction::capture());
+                    }
+                    if x >= start_x.min(end_x) && x <= start_x.max(end_x) {
+                        return Some(CanvasAction::capture());
+                    }
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -241,6 +272,7 @@ impl canvas::Program<Message> for RulerCanvas {
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) => {
                 if state.dragging && state.drag_with_right {
                     state.dragging = false;
+                    state.drag_adjust_loop_edge = false;
                     if self.pixels_per_sample <= 1.0e-9 {
                         return None;
                     }
@@ -291,6 +323,28 @@ impl canvas::Program<Message> for RulerCanvas {
                     )))));
                 }
             }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
+                if state.dragging && state.drag_adjust_loop_edge {
+                    state.dragging = false;
+                    state.drag_adjust_loop_edge = false;
+                    if self.pixels_per_sample <= 1.0e-9 {
+                        return None;
+                    }
+                    let Some((loop_start, loop_end)) = self.loop_range_samples else {
+                        return Some(CanvasAction::capture());
+                    };
+                    let moved_sample = snap_sample(sample_at_x(state.last_x));
+                    let (new_start, new_end) = if state.adjust_loop_start {
+                        (moved_sample.min(loop_end.saturating_sub(1)), loop_end)
+                    } else {
+                        (loop_start, moved_sample.max(loop_start.saturating_add(1)))
+                    };
+                    return Some(
+                        CanvasAction::publish(Message::SetLoopRange(Some((new_start, new_end))))
+                            .and_capture(),
+                    );
+                }
+            }
             _ => {}
         }
 
@@ -317,6 +371,8 @@ impl canvas::Program<Message> for RulerCanvas {
         self.playhead_x.map(f32::to_bits).hash(&mut hasher);
         state.dragging.hash(&mut hasher);
         state.drag_with_right.hash(&mut hasher);
+        state.drag_adjust_loop_edge.hash(&mut hasher);
+        state.adjust_loop_start.hash(&mut hasher);
         state.drag_start_x.to_bits().hash(&mut hasher);
         state.last_x.to_bits().hash(&mut hasher);
         let hash = hasher.finish();
@@ -369,8 +425,32 @@ impl canvas::Program<Message> for RulerCanvas {
                 }
 
                 if state.dragging {
-                    let start_x = state.drag_start_x.min(state.last_x).max(0.0);
-                    let end_x = state.drag_start_x.max(state.last_x).max(0.0);
+                    let (start_x, end_x) = if state.drag_adjust_loop_edge {
+                        if let Some((loop_start, loop_end)) = self.loop_range_samples {
+                            let moved_x = state.last_x.max(0.0);
+                            if state.adjust_loop_start {
+                                (
+                                    moved_x.min(loop_end as f32 * self.pixels_per_sample),
+                                    loop_end as f32 * self.pixels_per_sample,
+                                )
+                            } else {
+                                (
+                                    loop_start as f32 * self.pixels_per_sample,
+                                    moved_x.max(loop_start as f32 * self.pixels_per_sample),
+                                )
+                            }
+                        } else {
+                            (
+                                state.drag_start_x.min(state.last_x).max(0.0),
+                                state.drag_start_x.max(state.last_x).max(0.0),
+                            )
+                        }
+                    } else {
+                        (
+                            state.drag_start_x.min(state.last_x).max(0.0),
+                            state.drag_start_x.max(state.last_x).max(0.0),
+                        )
+                    };
                     frame.fill(
                         &Path::rectangle(
                             Point::new(start_x, 0.0),

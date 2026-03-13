@@ -32,6 +32,11 @@ enum DragMode {
         drag_start_x: f32,
         last_x: f32,
     },
+    AdjustPunchEdge {
+        adjust_start: bool,
+        fixed_sample: usize,
+        current_sample: usize,
+    },
     Marker {
         lane: MarkerLane,
         original_samples: Vec<usize>,
@@ -104,6 +109,8 @@ pub struct TempoViewArgs {
 }
 
 impl Tempo {
+    const RANGE_EDGE_HIT_PX: f32 = 8.0;
+
     pub fn new() -> Self {
         Self
     }
@@ -390,6 +397,10 @@ impl canvas::Program<Message> for TempoCanvas {
                             *last_x = x;
                             return Some(CanvasAction::request_redraw().and_capture());
                         }
+                        DragMode::AdjustPunchEdge { current_sample, .. } => {
+                            *current_sample = snap_sample(sample_at_x(x));
+                            return Some(CanvasAction::request_redraw().and_capture());
+                        }
                         DragMode::Marker { current_sample, .. } => {
                             *current_sample = snap_sample(sample_at_x(x));
                             return Some(CanvasAction::request_redraw().and_capture());
@@ -485,6 +496,7 @@ impl canvas::Program<Message> for TempoCanvas {
                             }
                         });
                     }
+                    DragMode::AdjustPunchEdge { .. } => return Some(CanvasAction::capture()),
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
@@ -610,12 +622,41 @@ impl canvas::Program<Message> for TempoCanvas {
                         )))));
                     }
                     DragMode::Marker { .. } => return Some(CanvasAction::capture()),
+                    DragMode::AdjustPunchEdge { .. } => return Some(CanvasAction::capture()),
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) => {
                 if let Some(pos) = cursor_position
                     && pos.x > LEFT_HIT_WIDTH
                 {
+                    if let Some((punch_start, punch_end)) = self.punch_range_samples
+                        && punch_end > punch_start
+                    {
+                        let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
+                        let start_x = timeline_sample_to_x(
+                            punch_start,
+                            self.pixels_per_sample,
+                            self.timeline_left_inset_px,
+                        );
+                        let end_x = timeline_sample_to_x(
+                            punch_end,
+                            self.pixels_per_sample,
+                            self.timeline_left_inset_px,
+                        );
+                        let start_hit = (x - start_x).abs() <= Tempo::RANGE_EDGE_HIT_PX;
+                        let end_hit = (x - end_x).abs() <= Tempo::RANGE_EDGE_HIT_PX;
+                        if start_hit || end_hit {
+                            state.drag_mode = DragMode::AdjustPunchEdge {
+                                adjust_start: start_hit,
+                                fixed_sample: if start_hit { punch_end } else { punch_start },
+                                current_sample: if start_hit { punch_start } else { punch_end },
+                            };
+                            return Some(CanvasAction::capture());
+                        }
+                        if x >= start_x.min(end_x) && x <= start_x.max(end_x) {
+                            return Some(CanvasAction::capture());
+                        }
+                    }
                     let sample = snap_sample(sample_at_x(pos.x));
                     if pos.y <= TEMPO_HIT_HEIGHT {
                         return Some(
@@ -625,6 +666,30 @@ impl canvas::Program<Message> for TempoCanvas {
                     return Some(
                         CanvasAction::publish(Message::TimeSignaturePointAdd(sample)).and_capture(),
                     );
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
+                let drag_mode = std::mem::replace(&mut state.drag_mode, DragMode::None);
+                match drag_mode {
+                    DragMode::AdjustPunchEdge {
+                        adjust_start,
+                        fixed_sample,
+                        current_sample,
+                    } => {
+                        let (start, end) = if adjust_start {
+                            (current_sample.min(fixed_sample.saturating_sub(1)), fixed_sample)
+                        } else {
+                            (fixed_sample, current_sample.max(fixed_sample.saturating_add(1)))
+                        };
+                        return Some(
+                            CanvasAction::publish(Message::SetPunchRange(Some((start, end))))
+                                .and_capture(),
+                        );
+                    }
+                    DragMode::None => {}
+                    other => {
+                        state.drag_mode = other;
+                    }
                 }
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
@@ -722,6 +787,16 @@ impl canvas::Program<Message> for TempoCanvas {
                 Tempo::lane_key(*lane).hash(&mut hasher);
                 original_samples.hash(&mut hasher);
                 start_sample.hash(&mut hasher);
+                current_sample.hash(&mut hasher);
+            }
+            DragMode::AdjustPunchEdge {
+                adjust_start,
+                fixed_sample,
+                current_sample,
+            } => {
+                3_u8.hash(&mut hasher);
+                adjust_start.hash(&mut hasher);
+                fixed_sample.hash(&mut hasher);
                 current_sample.hash(&mut hasher);
             }
         }
@@ -864,6 +939,49 @@ impl canvas::Program<Message> for TempoCanvas {
                         );
                         frame.stroke(
                             &Path::line(Point::new(end_x, 0.0), Point::new(end_x, bounds.height)),
+                            Stroke::default()
+                                .with_width(1.5)
+                                .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
+                        );
+                    }
+                    DragMode::AdjustPunchEdge {
+                        adjust_start,
+                        fixed_sample,
+                        current_sample,
+                    } => {
+                        let fixed_x = sample_to_x(*fixed_sample);
+                        let current_x = sample_to_x(*current_sample);
+                        let start_x = if *adjust_start {
+                            current_x.min(fixed_x)
+                        } else {
+                            fixed_x.min(current_x)
+                        };
+                        let end_x = if *adjust_start {
+                            fixed_x.max(current_x)
+                        } else {
+                            current_x.max(fixed_x)
+                        };
+                        frame.fill(
+                            &Path::rectangle(
+                                Point::new(start_x.max(0.0), 0.0),
+                                iced::Size::new((end_x - start_x).max(1.0), bounds.height),
+                            ),
+                            Color::from_rgba(0.92, 0.36, 0.36, 0.22),
+                        );
+                        frame.stroke(
+                            &Path::line(
+                                Point::new(start_x.max(0.0), 0.0),
+                                Point::new(start_x.max(0.0), bounds.height),
+                            ),
+                            Stroke::default()
+                                .with_width(1.5)
+                                .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
+                        );
+                        frame.stroke(
+                            &Path::line(
+                                Point::new(end_x.max(0.0), 0.0),
+                                Point::new(end_x.max(0.0), bounds.height),
+                            ),
                             Stroke::default()
                                 .with_width(1.5)
                                 .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
