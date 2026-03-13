@@ -64,13 +64,7 @@ impl Maolan {
                 Some(self.sync_editor_scrollbars())
             }
             Message::WindowCloseRequested => {
-                if self.has_unsaved_changes {
-                    self.modal = Some(Show::UnsavedChanges);
-                    self.state.blocking_write().message =
-                        "Unsaved changes detected. Save, discard, or cancel.".to_string();
-                    return Some(Task::none());
-                }
-                exit(0);
+                Some(self.request_window_close())
             }
             _ => None,
         }

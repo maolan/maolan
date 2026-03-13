@@ -47,6 +47,10 @@ impl Maolan {
                     self.send(Action::Stop),
                 ])
             }
+            Message::TransportPanic => {
+                self.toolbar.update(&message);
+                self.send(Action::Panic)
+            }
             Message::JumpToStart => {
                 self.transport_samples = 0.0;
                 self.track_automation_runtime.clear();

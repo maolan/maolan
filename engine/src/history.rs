@@ -78,8 +78,6 @@ pub fn should_record(action: &Action) -> bool {
             | Action::SetPunchRange(_)
             | Action::SetMetronomeEnabled(_)
             | Action::SetTimeSignature { .. }
-            | Action::SetClipPlaybackEnabled(_)
-            | Action::SetRecordEnabled(_)
             | Action::AddTrack { .. }
             | Action::RemoveTrack(_)
             | Action::RenameTrack { .. }
@@ -1209,8 +1207,8 @@ mod tests {
         assert!(should_record(&Action::SetPunchEnabled(true)));
         assert!(should_record(&Action::SetPunchRange(Some((32, 96)))));
         assert!(should_record(&Action::SetMetronomeEnabled(true)));
-        assert!(should_record(&Action::SetClipPlaybackEnabled(false)));
-        assert!(should_record(&Action::SetRecordEnabled(true)));
+        assert!(!should_record(&Action::SetClipPlaybackEnabled(false)));
+        assert!(!should_record(&Action::SetRecordEnabled(true)));
         assert!(should_record(&Action::SetClipBounds {
             track_name: "t".to_string(),
             clip_index: 0,

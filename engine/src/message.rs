@@ -718,6 +718,7 @@ pub enum Action {
     },
     Undo,
     Redo,
+    Panic,
 }
 
 #[derive(Clone, Debug)]

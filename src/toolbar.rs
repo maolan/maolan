@@ -9,7 +9,7 @@ use iced::{
 };
 use iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind, square,
-    triangle,
+    triangle, volume_x,
 };
 #[derive(Debug, Default)]
 pub struct Toolbar;
@@ -150,6 +150,13 @@ impl Toolbar {
                         Color::from_rgba(0.45, 0.45, 0.45, 0.35)
                     ))
                     .on_press(Message::TransportStop),
+                button(volume_x())
+                    .style(Self::button_style(
+                        true,
+                        false,
+                        Color::from_rgba(0.85, 0.45, 0.1, 0.35)
+                    ))
+                    .on_press(Message::TransportPanic),
                 button(circle())
                     .style(Self::button_style(
                         true,

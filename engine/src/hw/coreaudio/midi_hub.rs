@@ -175,6 +175,13 @@ impl MidiHub {
             }
         }
     }
+
+    pub fn output_devices(&self) -> Vec<String> {
+        self.output_destinations
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect()
+    }
 }
 
 fn find_source_by_name(name: &str) -> Option<Source> {

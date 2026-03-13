@@ -26,7 +26,8 @@ impl Maolan {
                     );
                 }
                 if self.pending_exit_after_save {
-                    exit(0);
+                    self.pending_exit_after_save = false;
+                    return Some(self.request_quit());
                 }
                 if self.pending_record_after_save {
                     self.pending_record_after_save = false;

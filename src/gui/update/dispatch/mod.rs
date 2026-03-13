@@ -15,6 +15,21 @@ mod transport;
 mod ui;
 
 impl Maolan {
+    pub(super) fn request_quit(&self) -> Task<Message> {
+        self.send(Action::Quit)
+    }
+
+    pub(super) fn request_window_close(&mut self) -> Task<Message> {
+        if self.has_unsaved_changes {
+            self.modal = Some(Show::UnsavedChanges);
+            self.state.blocking_write().message =
+                "Unsaved changes detected. Save, discard, or cancel.".to_string();
+            Task::none()
+        } else {
+            self.request_quit()
+        }
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         if self.handle_simple_ui_message(&message) {
             self.update_children(&message);
@@ -81,7 +96,7 @@ impl Maolan {
                 return self.handle_show_message(&Show::Save);
             }
             Message::ConfirmCloseDiscard => {
-                exit(0);
+                return self.request_quit();
             }
             Message::ConfirmCloseCancel => {
                 self.pending_exit_after_save = false;
@@ -92,6 +107,7 @@ impl Maolan {
             Message::TransportPlay
             | Message::TransportPause
             | Message::TransportStop
+            | Message::TransportPanic
             | Message::JumpToStart
             | Message::JumpToEnd
             | Message::PlaybackTick

@@ -193,6 +193,8 @@ type MidiEditParseResult = (
 impl Engine {
     const METRONOME_TRACK: &'static str = "metronome";
     const METRONOME_DEFAULT_LEVEL_DB: f32 = -10.0;
+    const MIDI_CC_ALL_SOUND_OFF: u8 = 120;
+    const MIDI_CC_ALL_NOTES_OFF: u8 = 123;
     const MIDI_CC_SUSTAIN_PEDAL: u8 = 64;
 
     fn meter_linear_to_db(peak: f32) -> f32 {
@@ -272,6 +274,40 @@ impl Engine {
         let mut events = Vec::new();
         for track_name in track_names {
             events.extend(self.note_off_events_for_track(&track_name));
+        }
+        events
+    }
+
+    fn panic_events_for_all_hw_midi_outputs(&self) -> Vec<HwMidiEvent> {
+        let devices = {
+            let midi_hub = self.midi_hub.lock();
+            midi_hub.output_devices()
+        };
+        let mut events = Vec::with_capacity(devices.len() * 16 * 3);
+        for device in devices {
+            for channel in 0..16_u8 {
+                events.push(HwMidiEvent {
+                    device: device.clone(),
+                    event: MidiEvent::new(
+                        0,
+                        vec![0xB0 | channel, Self::MIDI_CC_SUSTAIN_PEDAL, 0],
+                    ),
+                });
+                events.push(HwMidiEvent {
+                    device: device.clone(),
+                    event: MidiEvent::new(
+                        0,
+                        vec![0xB0 | channel, Self::MIDI_CC_ALL_SOUND_OFF, 0],
+                    ),
+                });
+                events.push(HwMidiEvent {
+                    device: device.clone(),
+                    event: MidiEvent::new(
+                        0,
+                        vec![0xB0 | channel, Self::MIDI_CC_ALL_NOTES_OFF, 0],
+                    ),
+                });
+            }
         }
         events
     }
@@ -2698,32 +2734,60 @@ impl Engine {
 
     async fn send_tracks(&mut self) -> bool {
         let mut finished = true;
-        for track in self.state.lock().tracks.values() {
+        loop {
+            let next_track = {
+                let state = self.state.lock();
+                let mut next_track = None;
+                for track in state.tracks.values() {
+                    let t = track.lock();
+                    if t.audio.finished {
+                        continue;
+                    }
+                    finished = false;
+                    if next_track.is_none() && !t.audio.processing && t.audio.ready() {
+                        next_track = Some(track.clone());
+                    }
+                }
+                next_track
+            };
+
+            let Some(track) = next_track else {
+                return finished;
+            };
+            let Some(worker_index) = self.take_ready_worker_index() else {
+                return false;
+            };
+
             let t = track.lock();
-            finished &= t.audio.finished;
-            if !t.audio.finished && !t.audio.processing && t.audio.ready() {
-                if self.ready_workers.is_empty() {
-                    return false;
-                }
-                let worker_index = self.ready_workers.remove(0);
-                t.set_transport_sample(self.transport_sample);
-                t.set_loop_config(self.loop_enabled, self.loop_range_samples);
-                t.set_transport_timing(self.tempo_bpm, self.tsig_num, self.tsig_denom);
-                t.process_epoch = self.track_process_epoch;
-                // Avoid continuously mixing clip audio/MIDI while transport is stopped.
-                t.set_clip_playback_enabled(self.clip_playback_enabled && self.playing);
-                // Tap buffers are only needed while actively recording.
-                t.set_record_tap_enabled(self.playing && self.record_enabled);
-                t.audio.processing = true;
-                let worker = &self.workers[worker_index];
-                if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
-                    t.audio.processing = false;
-                    self.notify_clients(Err(format!("Failed to send track to worker: {}", e)))
-                        .await;
-                }
+            if t.audio.finished || t.audio.processing || !t.audio.ready() {
+                continue;
+            }
+            t.set_transport_sample(self.transport_sample);
+            t.set_loop_config(self.loop_enabled, self.loop_range_samples);
+            t.set_transport_timing(self.tempo_bpm, self.tsig_num, self.tsig_denom);
+            t.process_epoch = self.track_process_epoch;
+            // Avoid continuously mixing clip audio/MIDI while transport is stopped.
+            t.set_clip_playback_enabled(self.clip_playback_enabled && self.playing);
+            // Tap buffers are only needed while actively recording.
+            t.set_record_tap_enabled(self.playing && self.record_enabled);
+            t.audio.processing = true;
+            let worker = &self.workers[worker_index];
+            if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
+                t.audio.processing = false;
+                self.notify_clients(Err(format!("Failed to send track to worker: {}", e)))
+                    .await;
             }
         }
-        finished
+    }
+
+    fn take_ready_worker_index(&mut self) -> Option<usize> {
+        while !self.ready_workers.is_empty() {
+            let worker_index = self.ready_workers.remove(0);
+            if worker_index < self.workers.len() {
+                return Some(worker_index);
+            }
+        }
+        None
     }
 
     async fn publish_track_meters(&mut self) {
@@ -3034,6 +3098,29 @@ impl Engine {
                 self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
                     .await;
             }
+            Action::Panic => {
+                let panic_events = self.panic_events_for_all_hw_midi_outputs();
+                if let Some(worker) = &self.hw_worker {
+                    if !panic_events.is_empty() {
+                        if let Err(e) = worker.tx.send(Message::ClearHWMidiOutEvents).await {
+                            error!("Error clearing HW MIDI queue for panic {e}");
+                        }
+                        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+                        {
+                            self.midi_hub
+                                .lock()
+                                .write_events_blocking(&panic_events, Duration::from_millis(250));
+                        }
+                        #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+                        if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
+                        {
+                            error!("Error sending MIDI panic events {e}");
+                        }
+                    }
+                } else if !panic_events.is_empty() {
+                    self.pending_hw_midi_out_events_by_device.extend(panic_events);
+                }
+            }
             Action::SetClipPlaybackEnabled(enabled) => {
                 self.clip_playback_enabled = enabled;
                 for track in self.state.lock().tracks.values() {
@@ -3166,7 +3253,38 @@ impl Engine {
             }
             Action::Quit => {
                 self.flush_recordings().await;
+                self.ready_workers.clear();
+                while !self.workers.is_empty() {
+                    let worker = self.workers.remove(0);
+                    worker
+                        .tx
+                        .send(Message::Request(a.clone()))
+                        .await
+                        .expect("Failed sending quit message to worker");
+                    worker
+                        .handle
+                        .await
+                        .expect("Failed waiting for worker to quit");
+                }
+
                 if let Some(worker) = self.hw_worker.take() {
+                    let mut panic_events = self.note_off_events_for_all_active_tracks();
+                    panic_events.extend(self.panic_events_for_all_hw_midi_outputs());
+                    #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+                    if !panic_events.is_empty() {
+                        if let Err(e) = worker.tx.send(Message::ClearHWMidiOutEvents).await {
+                            error!("Error clearing HW MIDI queue during quit {e}");
+                        }
+                        self.midi_hub
+                            .lock()
+                            .write_events_blocking(&panic_events, Duration::from_millis(250));
+                    }
+                    #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+                    if !panic_events.is_empty()
+                        && let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
+                    {
+                        error!("Error sending quit MIDI panic events {e}");
+                    }
                     worker
                         .tx
                         .send(Message::Request(a.clone()))
@@ -3180,19 +3298,6 @@ impl Engine {
                 #[cfg(unix)]
                 {
                     self.jack_runtime = None;
-                }
-
-                while !self.workers.is_empty() {
-                    let worker = self.workers.remove(0);
-                    worker
-                        .tx
-                        .send(Message::Request(a.clone()))
-                        .await
-                        .expect("Failed sending quit message to worker");
-                    worker
-                        .handle
-                        .await
-                        .expect("Failed waiting for worker to quit");
                 }
             }
             Action::AddTrack {
@@ -3708,7 +3813,7 @@ impl Engine {
                     .await;
                     return;
                 }
-                if self.ready_workers.is_empty() {
+                let Some(worker_index) = self.take_ready_worker_index() else {
                     self.pending_requests
                         .push_front(Action::TrackOfflineBounce {
                             track_name,
@@ -3718,13 +3823,12 @@ impl Engine {
                             automation_lanes,
                         });
                     return;
-                }
+                };
                 let cancel = Arc::new(AtomicBool::new(false));
                 self.offline_bounce_job = Some(OfflineBounceJob {
                     track_name: track_name.clone(),
                     cancel: cancel.clone(),
                 });
-                let worker_index = self.ready_workers.remove(0);
                 let worker = &self.workers[worker_index];
                 let job = crate::message::OfflineBounceWork {
                     state: self.state.clone(),

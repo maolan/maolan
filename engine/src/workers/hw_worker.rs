@@ -252,6 +252,20 @@ impl<B: Backend> HwWorker<B> {
             match self.rx.recv().await {
                 Some(msg) => match msg {
                     Message::Request(crate::message::Action::Quit) => {
+                        if !self.pending_midi_out_events.is_empty() {
+                            if !self.pending_midi_out_sorted {
+                                self.pending_midi_out_events.sort_by(|a, b| {
+                                    a.event
+                                        .frame
+                                        .cmp(&b.event.frame)
+                                        .then_with(|| a.device.cmp(&b.device))
+                                });
+                                self.pending_midi_out_sorted = true;
+                            }
+                            let midi_hub = self.midi_hub.lock();
+                            midi_hub.write_events(&self.pending_midi_out_events);
+                            self.pending_midi_out_events.clear();
+                        }
                         Self::stop_assist_thread(&assist_state, assist_handle);
                         return;
                     }

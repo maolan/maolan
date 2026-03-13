@@ -7,6 +7,8 @@ use std::{
     fs::File,
     io::{ErrorKind, Read, Write},
     os::unix::fs::OpenOptionsExt,
+    thread,
+    time::{Duration, Instant},
 };
 use tracing::error;
 
@@ -68,6 +70,19 @@ impl MidiHub {
             output.write_events(events);
         }
     }
+
+    pub fn write_events_blocking(&mut self, events: &[HwMidiEvent], timeout: Duration) {
+        if events.is_empty() {
+            return;
+        }
+        for output in &mut self.outputs {
+            output.write_events_blocking(events, timeout);
+        }
+    }
+
+    pub fn output_devices(&self) -> Vec<String> {
+        self.outputs.iter().map(|output| output.path.clone()).collect()
+    }
 }
 
 #[derive(Debug)]
@@ -102,6 +117,31 @@ impl MidiOutputDevice {
                     error!("MIDI write error on {}: {}", self.path, err);
                 }
                 break;
+            }
+        }
+    }
+
+    fn write_events_blocking(&mut self, events: &[HwMidiEvent], timeout: Duration) {
+        for event in events {
+            if event.device != self.path {
+                continue;
+            }
+            let midi_event = &event.event;
+            if midi_event.data.is_empty() {
+                continue;
+            }
+            let deadline = Instant::now() + timeout;
+            loop {
+                match self.file.write_all(&midi_event.data) {
+                    Ok(()) => break,
+                    Err(err) if err.kind() == ErrorKind::WouldBlock && Instant::now() < deadline => {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(err) => {
+                        error!("Blocking MIDI write error on {}: {}", self.path, err);
+                        break;
+                    }
+                }
             }
         }
     }

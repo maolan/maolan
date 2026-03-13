@@ -73,6 +73,7 @@ Last updated: 2026-03-13
 - Tempo/time-signature points add/move/delete/duplicate/reset
 - Numeric tempo/time-signature input with validation
 - Play/pause/stop/record transport control
+- Toolbar panic button for hardware MIDI outputs (`CC64=0`, `CC120=0`, `CC123=0`)
 - Loop range set/clear
 - Punch range set/clear
 - Metronome enable/disable

@@ -713,6 +713,7 @@ pub enum Message {
     TransportPlay,
     TransportPause,
     TransportStop,
+    TransportPanic,
     JumpToStart,
     JumpToEnd,
     TransportRecordToggle,
