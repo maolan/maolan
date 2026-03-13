@@ -1,6 +1,6 @@
 use super::{CLIENT, Maolan};
 use crate::{
-    consts::gui::METER_DIRTY_EPSILON_DB,
+    consts::gui::{METER_DIRTY_EPSILON_DB, METER_QUANTIZE_STEP_DB},
     message::{Message, Show},
     platform_caps::SUPPORTS_METER_POLL,
     ui_timing::{
@@ -19,13 +19,21 @@ use tokio::signal::unix::{SignalKind, signal};
 
 impl Maolan {
     pub fn subscription(&self) -> Subscription<Message> {
+        fn quantize_meter_db(level_db: f32) -> f32 {
+            let step = METER_QUANTIZE_STEP_DB;
+            ((level_db / step).round() * step).clamp(-90.0, 20.0)
+        }
+
         fn meter_changed(prev: &[f32], next: &[f32]) -> bool {
             if prev.len() != next.len() {
                 return true;
             }
             prev.iter()
                 .zip(next.iter())
-                .any(|(a, b)| (a - b).abs() >= METER_DIRTY_EPSILON_DB)
+                .any(|(a, b)| {
+                    (quantize_meter_db(*a) - quantize_meter_db(*b)).abs()
+                        >= METER_DIRTY_EPSILON_DB
+                })
         }
 
         fn listener() -> impl Stream<Item = Message> {

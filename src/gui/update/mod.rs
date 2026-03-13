@@ -15,7 +15,7 @@ use crate::message::PluginFormat;
 use crate::state::AudioDeviceOption;
 use crate::{
     connections,
-    consts::gui::AUTOSAVE_SNAPSHOT_INTERVAL,
+    consts::gui::{AUTOSAVE_SNAPSHOT_INTERVAL, METER_QUANTIZE_STEP_DB},
     consts::gui_update_mod::{ATTACK_ALPHA, RELEASE_ALPHA},
     message::{
         ExportNormalizeMode, ExportRenderMode, Message, Show, TrackAutomationMode,
@@ -56,6 +56,11 @@ use std::{
 use tracing::error;
 
 impl Maolan {
+    fn quantize_meter_db(level_db: f32) -> f32 {
+        let step = METER_QUANTIZE_STEP_DB;
+        ((level_db / step).round() * step).clamp(-90.0, 20.0)
+    }
+
     fn reset_track_plugin_view_state(state: &mut crate::state::StateData) {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
@@ -1620,7 +1625,11 @@ impl Maolan {
 
     fn smooth_meter_db_levels(current: &mut Vec<f32>, target: &[f32]) {
         if current.len() != target.len() {
-            *current = target.to_vec();
+            *current = target
+                .iter()
+                .copied()
+                .map(Self::quantize_meter_db)
+                .collect();
             return;
         }
 
@@ -1630,7 +1639,7 @@ impl Maolan {
             } else {
                 RELEASE_ALPHA
             };
-            *cur = (*cur + (tgt - *cur) * alpha).clamp(-90.0, 20.0);
+            *cur = Self::quantize_meter_db((*cur + (tgt - *cur) * alpha).clamp(-90.0, 20.0));
         }
     }
 

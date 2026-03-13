@@ -10,6 +10,7 @@ pub mod gui {
     pub const MIN_CLIP_WIDTH_PX: f32 = 12.0;
     pub const PREF_DEVICE_AUTO_ID: &str = "__auto__";
     pub const METER_DIRTY_EPSILON_DB: f32 = 0.5;
+    pub const METER_QUANTIZE_STEP_DB: f32 = 1.0;
     pub const AUTOSAVE_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(60);
 }
 
