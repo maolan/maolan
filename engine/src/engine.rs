@@ -128,6 +128,8 @@ pub struct Engine {
     pending_hw_midi_events_by_device: HashMap<String, Vec<MidiEvent>>,
     pending_hw_midi_out_events: Vec<MidiEvent>,
     pending_hw_midi_out_events_by_device: Vec<HwMidiEvent>,
+    active_hw_notes_by_track: HashMap<String, std::collections::HashSet<(String, u8, u8)>>,
+    active_hw_notes_cycle_start: HashMap<String, std::collections::HashSet<(String, u8, u8)>>,
     midi_hw_in_routes: Vec<MidiHwInRoute>,
     midi_hw_out_routes: Vec<MidiHwOutRoute>,
     midi_hw_thru_routes: Vec<MidiHwThruRoute>,
@@ -191,9 +193,6 @@ impl Engine {
     const METRONOME_TRACK: &'static str = "metronome";
     const METRONOME_DEFAULT_LEVEL_DB: f32 = -10.0;
     const MIDI_CC_SUSTAIN_PEDAL: u8 = 64;
-    const MIDI_CC_ALL_SOUND_OFF: u8 = 120;
-    const MIDI_CC_RESET_ALL_CONTROLLERS: u8 = 121;
-    const MIDI_CC_ALL_NOTES_OFF: u8 = 123;
 
     fn meter_linear_to_db(peak: f32) -> f32 {
         if peak <= 1.0e-6 {
@@ -203,48 +202,103 @@ impl Engine {
         }
     }
 
-    fn collect_routed_hw_midi_output_devices(&self) -> Vec<String> {
-        let mut devices = std::collections::HashSet::<String>::new();
-        for route in &self.midi_hw_out_routes {
-            devices.insert(route.device.clone());
+    fn note_off_events_for_track(&mut self, track_name: &str) -> Vec<HwMidiEvent> {
+        let Some(active) = self.active_hw_notes_by_track.remove(track_name) else {
+            return vec![];
+        };
+        let mut channels = std::collections::HashSet::<(String, u8)>::new();
+        let mut events = Vec::with_capacity(active.len() * 2);
+        for (device, channel, pitch) in active {
+            channels.insert((device.clone(), channel));
+            events.push(HwMidiEvent {
+                device,
+                event: MidiEvent::new(0, vec![0x80 | channel.min(15), pitch.min(127), 64]),
+            });
         }
-        for route in &self.midi_hw_thru_routes {
-            devices.insert(route.to_device.clone());
+        for (device, channel) in channels {
+            events.push(HwMidiEvent {
+                device,
+                event: MidiEvent::new(
+                    0,
+                    vec![0xB0 | channel.min(15), Self::MIDI_CC_SUSTAIN_PEDAL, 0],
+                ),
+            });
         }
-        let mut out: Vec<_> = devices.into_iter().collect();
-        out.sort();
-        out
+        events
     }
 
-    fn all_notes_off_events_for_devices(&self) -> Vec<HwMidiEvent> {
-        let devices = self.collect_routed_hw_midi_output_devices();
-        let mut events = Vec::with_capacity(devices.len() * 16 * 4);
-        for device in devices {
-            for channel in 0_u8..16 {
-                let status = 0xB0 | channel;
-                for controller in [
-                    Self::MIDI_CC_SUSTAIN_PEDAL,
-                    Self::MIDI_CC_ALL_SOUND_OFF,
-                    Self::MIDI_CC_RESET_ALL_CONTROLLERS,
-                    Self::MIDI_CC_ALL_NOTES_OFF,
-                ] {
-                    events.push(HwMidiEvent {
-                        device: device.clone(),
-                        event: MidiEvent::new(
-                            0,
-                            vec![
-                                status,
-                                controller,
-                                if controller == Self::MIDI_CC_SUSTAIN_PEDAL {
-                                    0
-                                } else {
-                                    0
-                                },
-                            ],
-                        ),
-                    });
+    fn update_active_hw_notes_for_track(&mut self, track_name: &str, device: &str, data: &[u8]) {
+        let Some(status) = data.first().copied() else {
+            return;
+        };
+        let channel = status & 0x0F;
+        match status & 0xF0 {
+            0x80 => {
+                if let Some(&pitch) = data.get(1)
+                    && let Some(active) = self.active_hw_notes_by_track.get_mut(track_name)
+                {
+                    active.remove(&(device.to_string(), channel, pitch));
+                    if active.is_empty() {
+                        self.active_hw_notes_by_track.remove(track_name);
+                    }
                 }
             }
+            0x90 => {
+                let Some(&pitch) = data.get(1) else {
+                    return;
+                };
+                let velocity = data.get(2).copied().unwrap_or(0);
+                if velocity == 0 {
+                    if let Some(active) = self.active_hw_notes_by_track.get_mut(track_name) {
+                        active.remove(&(device.to_string(), channel, pitch));
+                        if active.is_empty() {
+                            self.active_hw_notes_by_track.remove(track_name);
+                        }
+                    }
+                } else {
+                    self.active_hw_notes_by_track
+                        .entry(track_name.to_string())
+                        .or_default()
+                        .insert((device.to_string(), channel, pitch));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn note_off_events_for_all_active_tracks(&mut self) -> Vec<HwMidiEvent> {
+        let track_names: Vec<String> = self.active_hw_notes_by_track.keys().cloned().collect();
+        let mut events = Vec::new();
+        for track_name in track_names {
+            events.extend(self.note_off_events_for_track(&track_name));
+        }
+        events
+    }
+
+    fn note_off_events_for_active_snapshot(
+        &self,
+        snapshot: &HashMap<String, std::collections::HashSet<(String, u8, u8)>>,
+        frame: u32,
+    ) -> Vec<HwMidiEvent> {
+        let mut channels = std::collections::HashSet::<(String, u8)>::new();
+        let mut events = Vec::new();
+        for active in snapshot.values() {
+            for (device, channel, pitch) in active {
+                channels.insert((device.clone(), *channel));
+                events.push(HwMidiEvent {
+                    device: device.clone(),
+                    event: MidiEvent::new(frame, vec![0x80 | (*channel).min(15), (*pitch).min(127), 64]),
+                });
+            }
+        }
+        for (device, channel) in channels {
+            events.push(HwMidiEvent {
+                device,
+                event: MidiEvent::new(
+                    frame,
+                    vec![0xB0 | channel.min(15), Self::MIDI_CC_SUSTAIN_PEDAL, 0],
+                ),
+            });
         }
         events
     }
@@ -720,6 +774,8 @@ impl Engine {
             pending_hw_midi_events_by_device: HashMap::new(),
             pending_hw_midi_out_events: vec![],
             pending_hw_midi_out_events_by_device: vec![],
+            active_hw_notes_by_track: HashMap::new(),
+            active_hw_notes_cycle_start: HashMap::new(),
             midi_hw_in_routes: vec![],
             midi_hw_out_routes: vec![],
             midi_hw_thru_routes: vec![],
@@ -1662,17 +1718,31 @@ impl Engine {
             .collect()
     }
 
-    fn apply_mute_solo_policy(&self) {
-        let tracks = &self.state.lock().tracks;
-        let any_soloed = tracks.values().any(|t| t.lock().soloed);
-        for track in tracks.values() {
-            let t = track.lock();
-            let enabled = if any_soloed {
-                t.soloed && !t.muted
-            } else {
-                !t.muted
-            };
-            t.set_output_enabled(enabled);
+    fn apply_mute_solo_policy(&mut self) {
+        let mut newly_disabled_tracks = Vec::new();
+        {
+            let tracks = &self.state.lock().tracks;
+            let any_soloed = tracks.values().any(|t| t.lock().soloed);
+            for track in tracks.values() {
+                let t = track.lock();
+                let was_enabled = t.output_enabled;
+                let enabled = if any_soloed {
+                    t.soloed && !t.muted
+                } else {
+                    !t.muted
+                };
+                t.set_output_enabled(enabled);
+                if was_enabled && !enabled {
+                    newly_disabled_tracks.push(t.name.clone());
+                }
+            }
+        }
+        let mut note_off_events = Vec::new();
+        for track_name in newly_disabled_tracks {
+            note_off_events.extend(self.note_off_events_for_track(&track_name));
+        }
+        if !note_off_events.is_empty() {
+            self.pending_hw_midi_out_events_by_device.extend(note_off_events);
         }
     }
 
@@ -2398,7 +2468,7 @@ impl Engine {
         }
 
         let panic_events = if send_panic {
-            self.all_notes_off_events_for_devices()
+            self.note_off_events_for_all_active_tracks()
         } else {
             vec![]
         };
@@ -2947,7 +3017,7 @@ impl Engine {
                 if let Some(driver) = self.hw_driver.as_mut() {
                     driver.lock().set_playing(false);
                 }
-                let panic_events = self.all_notes_off_events_for_devices();
+                let panic_events = self.note_off_events_for_all_active_tracks();
                 if let Some(worker) = &self.hw_worker {
                     if !panic_events.is_empty() {
                         if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await {
@@ -5260,7 +5330,32 @@ impl Engine {
                                     track.lock().take_hw_midi_out_events();
                                 }
                             } else if self.hw_worker.is_some() {
-                                let out_events = self.collect_hw_midi_output_events_by_device();
+                                self.active_hw_notes_cycle_start =
+                                    self.active_hw_notes_by_track.clone();
+                                let mut out_events = self.collect_hw_midi_output_events_by_device();
+                                if self.loop_enabled
+                                    && let Some((_, loop_end)) = self.loop_range_samples
+                                {
+                                    let cycle_end = self
+                                        .transport_sample
+                                        .saturating_add(self.current_cycle_samples());
+                                    if self.transport_sample < loop_end && cycle_end > loop_end {
+                                        let wrap_frame = loop_end
+                                            .saturating_sub(self.transport_sample)
+                                            .min(self.current_cycle_samples())
+                                            as u32;
+                                        out_events.extend(self.note_off_events_for_active_snapshot(
+                                            &self.active_hw_notes_cycle_start,
+                                            wrap_frame,
+                                        ));
+                                        out_events.sort_by(|a, b| {
+                                            a.event
+                                                .frame
+                                                .cmp(&b.event.frame)
+                                                .then_with(|| a.device.cmp(&b.device))
+                                        });
+                                    }
+                                }
                                 self.pending_hw_midi_out_events_by_device.extend(out_events);
                             } else {
                                 self.pending_hw_midi_out_events =
@@ -5512,6 +5607,11 @@ impl Engine {
                 continue;
             };
             for hw_event in track_events.iter().filter(|evt| evt.port == route.from_port) {
+                self.update_active_hw_notes_for_track(
+                    &route.from_track,
+                    &route.device,
+                    &hw_event.event.data,
+                );
                 events.push(HwMidiEvent {
                     device: route.device.clone(),
                     event: hw_event.event.clone(),

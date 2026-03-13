@@ -4475,8 +4475,24 @@ impl Maolan {
                         initial_length,
                     }) => {
                         let pixels_per_sample = self.pixels_per_sample().max(1.0e-6);
-                        let min_length_samples =
-                            (MIN_CLIP_WIDTH_PX / pixels_per_sample).ceil().max(1.0);
+                        let samples_per_beat = self.samples_per_beat();
+                        let samples_per_bar = self.samples_per_bar();
+                        let snap_interval_samples = self
+                            .snap_mode
+                            .interval_samples(samples_per_beat, samples_per_bar)
+                            .max(1.0) as f32;
+                        let snap_sample_drag = |sample: f32, delta_samples: f32| {
+                            self.snap_mode.snap_sample_drag(
+                                sample as f64,
+                                delta_samples as f64,
+                                samples_per_beat,
+                                samples_per_bar,
+                            ) as f32
+                        };
+                        let min_length_samples = (MIN_CLIP_WIDTH_PX / pixels_per_sample)
+                            .ceil()
+                            .max(snap_interval_samples)
+                            .max(1.0);
                         let mut state = self.state.blocking_write();
                         if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
                         {
@@ -4487,15 +4503,23 @@ impl Maolan {
                                     let max_length_samples =
                                         clip.max_length_samples.max(initial_length as usize) as f32;
                                     if is_right_side {
-                                        let updated_length = (initial_value + delta_samples)
-                                            .clamp(min_length_samples, max_length_samples);
-                                        clip.length = updated_length as usize;
+                                        let raw_end =
+                                            clip.start as f32 + initial_value + delta_samples;
+                                        let snapped_end = snap_sample_drag(raw_end, delta_samples);
+                                        let min_end = clip.start as f32 + min_length_samples;
+                                        let max_end = clip.start as f32 + max_length_samples;
+                                        let updated_end = snapped_end.clamp(min_end, max_end);
+                                        clip.length =
+                                            updated_end.max(clip.start as f32) as usize - clip.start;
                                     } else {
                                         let right_edge = initial_value + initial_length;
                                         let max_start = (right_edge - min_length_samples).max(0.0);
                                         let min_start = (right_edge - max_length_samples).max(0.0);
-                                        let new_start = (initial_value + delta_samples)
-                                            .clamp(min_start, max_start);
+                                        let snapped_start = snap_sample_drag(
+                                            initial_value + delta_samples,
+                                            delta_samples,
+                                        );
+                                        let new_start = snapped_start.clamp(min_start, max_start);
                                         let updated_length = (right_edge - new_start)
                                             .clamp(min_length_samples, max_length_samples);
                                         let start_delta = new_start as isize - clip.start as isize;
@@ -4516,15 +4540,23 @@ impl Maolan {
                                     let max_length_samples =
                                         clip.max_length_samples.max(initial_length as usize) as f32;
                                     if is_right_side {
-                                        let updated_length = (initial_value + delta_samples)
-                                            .clamp(min_length_samples, max_length_samples);
-                                        clip.length = updated_length as usize;
+                                        let raw_end =
+                                            clip.start as f32 + initial_value + delta_samples;
+                                        let snapped_end = snap_sample_drag(raw_end, delta_samples);
+                                        let min_end = clip.start as f32 + min_length_samples;
+                                        let max_end = clip.start as f32 + max_length_samples;
+                                        let updated_end = snapped_end.clamp(min_end, max_end);
+                                        clip.length =
+                                            updated_end.max(clip.start as f32) as usize - clip.start;
                                     } else {
                                         let right_edge = initial_value + initial_length;
                                         let max_start = (right_edge - min_length_samples).max(0.0);
                                         let min_start = (right_edge - max_length_samples).max(0.0);
-                                        let new_start = (initial_value + delta_samples)
-                                            .clamp(min_start, max_start);
+                                        let snapped_start = snap_sample_drag(
+                                            initial_value + delta_samples,
+                                            delta_samples,
+                                        );
+                                        let new_start = snapped_start.clamp(min_start, max_start);
                                         let updated_length = (right_edge - new_start)
                                             .clamp(min_length_samples, max_length_samples);
                                         let start_delta = new_start as isize - clip.start as isize;
