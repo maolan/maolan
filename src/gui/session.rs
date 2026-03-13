@@ -742,8 +742,16 @@ impl Maolan {
                         .unwrap_or("clip.mid");
                     let rel = format!("midi/{basename}");
                     let dst_path = session_root.join(&rel);
-                    if src_path.exists() && src_path.is_file() && src_path != dst_path {
-                        let _ = fs::copy(&src_path, &dst_path);
+                    if src_path.exists()
+                        && src_path.is_file()
+                        && src_path != dst_path
+                        && let Err(err) = fs::copy(&src_path, &dst_path)
+                    {
+                        error!(
+                            "Failed to copy MIDI clip '{}' to '{}': {err}",
+                            src_path.display(),
+                            dst_path.display()
+                        );
                     }
                     clip["name"] = Value::String(rel);
                 }

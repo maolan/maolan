@@ -34,7 +34,9 @@ impl GuiClapUiHost {
         thread::Builder::new()
             .name("clap-ui".to_string())
             .spawn(move || {
-                let _ = open_editor_blocking(&plugin_spec);
+                if let Err(err) = open_editor_blocking(&plugin_spec) {
+                    tracing::error!("Failed to open CLAP editor: {err}");
+                }
             })
             .map_err(|e| format!("Failed to spawn CLAP UI thread: {e}"))?;
         Ok(())
@@ -308,8 +310,7 @@ unsafe extern "C" fn host_gui_request_hide(host: *const ClapHost) -> bool {
     }
 }
 
-unsafe extern "C" fn host_gui_closed(host: *const ClapHost, was_destroyed: bool) {
-    let _ = was_destroyed;
+unsafe extern "C" fn host_gui_closed(host: *const ClapHost, _was_destroyed: bool) {
     if let Some(state) = host_state(host) {
         state.should_close.store(true, Ordering::SeqCst);
     }

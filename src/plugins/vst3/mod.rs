@@ -8,6 +8,23 @@ impl GuiVst3UiHost {
         Self
     }
 
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_editor(
+        &mut self,
+        _plugin_path: &str,
+        _plugin_name: &str,
+        _plugin_id: &str,
+        _sample_rate_hz: f64,
+        _block_size: usize,
+        _audio_inputs: usize,
+        _audio_outputs: usize,
+        _state: Option<maolan_engine::vst3::Vst3PluginState>,
+    ) -> Result<(), String> {
+        Err("VST3 UI hosting is only supported on Unix/X11 in this build".to_string())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[allow(clippy::too_many_arguments)]
     pub fn open_editor(
         &mut self,
@@ -20,44 +37,28 @@ impl GuiVst3UiHost {
         audio_outputs: usize,
         state: Option<maolan_engine::vst3::Vst3PluginState>,
     ) -> Result<(), String> {
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
-        {
-            let _ = (
-                plugin_path,
-                plugin_name,
-                plugin_id,
-                sample_rate_hz,
-                block_size,
-                audio_inputs,
-                audio_outputs,
-                state,
-            );
-            return Err("VST3 UI hosting is only supported on Unix/X11 in this build".to_string());
-        }
-
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            let plugin_path = plugin_path.to_string();
-            let plugin_name = plugin_name.to_string();
-            let plugin_id = plugin_id.to_string();
-            let sample_rate_hz = sample_rate_hz.max(1.0);
-            let block_size = block_size.max(1);
-            std::thread::Builder::new()
-                .name("vst3-ui".to_string())
-                .spawn(move || {
-                    let _ = open_editor_blocking(
-                        &plugin_path,
-                        &plugin_name,
-                        &plugin_id,
-                        sample_rate_hz,
-                        block_size,
-                        audio_inputs,
-                        audio_outputs,
-                        state,
-                    );
-                })
-                .map_err(|e| format!("Failed to spawn VST3 UI thread: {e}"))?;
-            Ok(())
-        }
+        let plugin_path = plugin_path.to_string();
+        let plugin_name = plugin_name.to_string();
+        let plugin_id = plugin_id.to_string();
+        let sample_rate_hz = sample_rate_hz.max(1.0);
+        let block_size = block_size.max(1);
+        std::thread::Builder::new()
+            .name("vst3-ui".to_string())
+            .spawn(move || {
+                if let Err(err) = open_editor_blocking(
+                    &plugin_path,
+                    &plugin_name,
+                    &plugin_id,
+                    sample_rate_hz,
+                    block_size,
+                    audio_inputs,
+                    audio_outputs,
+                    state,
+                ) {
+                    tracing::error!("Failed to open VST3 editor: {err}");
+                }
+            })
+            .map_err(|e| format!("Failed to spawn VST3 UI thread: {e}"))?;
+        Ok(())
     }
 }

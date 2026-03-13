@@ -40,9 +40,7 @@ enum WindowEntry {
 impl WindowEntry {
     fn cleanup(self) {
         match self {
-            Self::Generic(generic) => {
-                let _ = generic;
-            }
+            Self::Generic(_generic) => {}
         }
     }
 }
@@ -299,12 +297,18 @@ extern "C" fn suil_write_port(
     }
     let controller = unsafe { &*(controller as *const NativeUiController) };
     let value = unsafe { *(buffer as *const f32) };
-    let _ = controller.tx.send((
-        controller.track_name.clone(),
-        controller.instance_id,
-        port_index,
-        value,
-    ));
+    if controller
+        .tx
+        .send((
+            controller.track_name.clone(),
+            controller.instance_id,
+            port_index,
+            value,
+        ))
+        .is_err()
+    {
+        tracing::debug!("LV2 UI control channel closed while writing port");
+    }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -350,12 +354,18 @@ unsafe extern "C" fn on_slider_changed(range: *mut c_void, data: *mut c_void) {
     }
     let data = unsafe { &*(data as *const SliderCallbackData) };
     let value = unsafe { gtk_range_get_value(range) as f32 };
-    let _ = data.tx.send((
-        data.track_name.clone(),
-        data.instance_id,
-        data.port_index,
-        value,
-    ));
+    if data
+        .tx
+        .send((
+            data.track_name.clone(),
+            data.instance_id,
+            data.port_index,
+            value,
+        ))
+        .is_err()
+    {
+        tracing::debug!("LV2 slider callback channel closed");
+    }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -448,13 +458,20 @@ impl GuiLv2UiHost {
                 client,
             );
 
-            let _ = result;
+            if let Err(err) = result {
+                tracing::error!("LV2 UI window failed: {err}");
+            }
 
             // Notify that window was closed
-            let _ = closed_tx.send(WindowKey {
-                track_name,
-                instance_id,
-            });
+            if closed_tx
+                .send(WindowKey {
+                    track_name,
+                    instance_id,
+                })
+                .is_err()
+            {
+                tracing::debug!("LV2 UI closed notification receiver dropped");
+            }
         });
 
         Ok(())
@@ -758,7 +775,7 @@ fn run_native_ui_with_gtk_main(
         drop(Box::from_raw(window_open_ptr));
     }
 
-    let _ = &urid_feature; // Keep feature alive
+    let _urid_feature = urid_feature;
 
     Ok(())
 }

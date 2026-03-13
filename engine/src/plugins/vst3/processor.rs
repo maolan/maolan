@@ -71,8 +71,6 @@ impl Vst3Processor {
         audio_outputs: usize,
     ) -> Result<Self, String> {
         let path_buf = Path::new(plugin_path);
-
-        // Extract name from path
         let name = path_buf
             .file_stem()
             .or_else(|| path_buf.file_name())
@@ -119,8 +117,6 @@ impl Vst3Processor {
         } else {
             0
         };
-        let _ = name;
-
         // Query buses (for now, use the provided counts)
         let input_buses = if plugin_input_buses > 0 {
             vec![BusInfo {
@@ -493,8 +489,7 @@ impl Vst3Processor {
         let ctrl_stream = vst3::ComWrapper::new(MemoryStream::new());
         if let Some(controller) = &instance.edit_controller {
             unsafe {
-                let result = controller.getState(ibstream_ptr(&ctrl_stream) as *mut _);
-                let _ = result;
+                controller.getState(ibstream_ptr(&ctrl_stream) as *mut _);
             }
         }
 
@@ -539,8 +534,7 @@ impl Vst3Processor {
             let ctrl_stream =
                 vst3::ComWrapper::new(MemoryStream::from_bytes(&state.controller_state));
             unsafe {
-                let result = controller.setState(ibstream_ptr(&ctrl_stream) as *mut _);
-                let _ = result;
+                controller.setState(ibstream_ptr(&ctrl_stream) as *mut _);
             }
 
             // Re-sync parameter values after restoring state

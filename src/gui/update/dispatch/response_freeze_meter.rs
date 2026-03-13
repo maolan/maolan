@@ -1,4 +1,5 @@
 use super::*;
+use tracing::error;
 
 impl Maolan {
     pub(super) fn handle_response_freeze_meter_action(
@@ -16,7 +17,12 @@ impl Maolan {
                 if let Some(pending) = self.pending_track_freeze_bounce.remove(track_name) {
                     if self.freeze_cancel_requested {
                         self.freeze_cancel_requested = false;
-                        let _ = std::fs::remove_file(output_path);
+                        if let Err(err) = std::fs::remove_file(output_path) {
+                            error!(
+                                "Failed to remove canceled freeze output '{}': {err}",
+                                output_path
+                            );
+                        }
                         self.state.blocking_write().message =
                             format!("Freeze canceled for '{}'", track_name);
                         return Some(Task::none());

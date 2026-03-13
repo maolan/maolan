@@ -1,4 +1,5 @@
 use super::*;
+use tracing::error;
 
 impl Maolan {
     pub(super) fn handle_transport_message(&mut self, message: Message) -> Task<Message> {
@@ -188,7 +189,12 @@ impl Maolan {
                                 crate::consts::gui_update_dispatch_transport::AUTOSAVE_KEEP_COUNT,
                             );
                             for stale in snapshots.into_iter().take(remove_count) {
-                                let _ = fs::remove_dir_all(stale);
+                                if let Err(err) = fs::remove_dir_all(&stale) {
+                                    error!(
+                                        "Failed to remove stale autosave snapshot '{}': {err}",
+                                        stale.display()
+                                    );
+                                }
                             }
                         }
                     }

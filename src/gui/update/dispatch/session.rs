@@ -158,9 +158,12 @@ impl Maolan {
                 self.send(a.clone())
             }
             Message::MeterPollTick => {
-                let _ = CLIENT
+                if let Err(err) = CLIENT
                     .sender
-                    .try_send(EngineMessage::Request(Action::RequestMeterSnapshot));
+                    .try_send(EngineMessage::Request(Action::RequestMeterSnapshot))
+                {
+                    tracing::debug!("Meter snapshot request skipped: {err}");
+                }
                 Task::none()
             }
             _ => Task::none(),

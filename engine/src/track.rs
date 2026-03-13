@@ -2815,73 +2815,73 @@ impl Track {
     }
 
     #[cfg(unix)]
-    fn lv2_audio_output_io(&self, instance_id: usize, port: usize) -> Result<Arc<AudioIO>, String> {
+    fn lv2_audio_output_io(
+        &self,
+        instance_id: usize,
+        _port: usize,
+    ) -> Result<Arc<AudioIO>, String> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
             self.lv2_processors
                 .iter()
                 .find(|instance| instance.id == instance_id)
-                .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
-                .ok_or_else(|| format!("Plugin instance {instance_id} output port {port} missing"))
+                .and_then(|instance| instance.processor.audio_outputs().get(_port).cloned())
+                .ok_or_else(|| format!("Plugin instance {instance_id} output port {_port} missing"))
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         {
-            let _ = port;
             Err(Self::lv2_unsupported_error(instance_id))
         }
     }
 
     #[cfg(unix)]
-    fn lv2_audio_input_io(&self, instance_id: usize, port: usize) -> Result<Arc<AudioIO>, String> {
+    fn lv2_audio_input_io(&self, instance_id: usize, _port: usize) -> Result<Arc<AudioIO>, String> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
             self.lv2_processors
                 .iter()
                 .find(|instance| instance.id == instance_id)
-                .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
-                .ok_or_else(|| format!("Plugin instance {instance_id} input port {port} missing"))
+                .and_then(|instance| instance.processor.audio_inputs().get(_port).cloned())
+                .ok_or_else(|| format!("Plugin instance {instance_id} input port {_port} missing"))
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         {
-            let _ = port;
             Err(Self::lv2_unsupported_error(instance_id))
         }
     }
 
     #[cfg(unix)]
-    fn lv2_validate_midi_output(&self, instance_id: usize, port: usize) -> Result<(), String> {
+    fn lv2_validate_midi_output(&self, instance_id: usize, _port: usize) -> Result<(), String> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
             self.lv2_processors
                 .iter()
                 .find(|instance| instance.id == instance_id)
-                .and_then(|instance| (port < instance.processor.midi_output_count()).then_some(()))
+                .and_then(|instance| (_port < instance.processor.midi_output_count()).then_some(()))
                 .ok_or_else(|| {
-                    format!("Plugin instance {instance_id} MIDI output port {port} missing")
+                    format!("Plugin instance {instance_id} MIDI output port {_port} missing")
                 })
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         {
-            let _ = port;
             Err(Self::lv2_unsupported_error(instance_id))
         }
     }
 
     #[cfg(unix)]
-    fn lv2_validate_midi_input(&self, instance_id: usize, port: usize) -> Result<(), String> {
+    fn lv2_validate_midi_input(&self, instance_id: usize, _port: usize) -> Result<(), String> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
             self.lv2_processors
                 .iter()
                 .find(|instance| instance.id == instance_id)
-                .and_then(|instance| (port < instance.processor.midi_input_count()).then_some(()))
+                .and_then(|instance| (_port < instance.processor.midi_input_count()).then_some(()))
                 .ok_or_else(|| {
-                    format!("Plugin instance {instance_id} MIDI input port {port} missing")
+                    format!("Plugin instance {instance_id} MIDI input port {_port} missing")
                 })
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         {
-            let _ = port;
             Err(Self::lv2_unsupported_error(instance_id))
         }
     }

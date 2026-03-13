@@ -64,6 +64,7 @@ use symphonia::core::{
     formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
 };
 use tokio::sync::RwLock;
+use tracing::error;
 use vorbis_rs::{VorbisBitrateManagementStrategy, VorbisEncoderBuilder};
 use wavers::Wav;
 
@@ -658,7 +659,9 @@ impl Maolan {
         );
         let recent = Self::normalize_recent_session_paths(recent);
         cfg.recent_session_paths = recent.clone();
-        let _ = cfg.save();
+        if let Err(err) = cfg.save() {
+            error!("Failed to save recent session paths: {err}");
+        }
         self.menu.update_recent_sessions(recent);
     }
 
@@ -1724,7 +1727,9 @@ impl Maolan {
             year: id3_year.as_bytes(),
             comment: id3_comment.as_bytes(),
         };
-        let _ = builder.set_id3_tag(id3);
+        builder
+            .set_id3_tag(id3)
+            .map_err(|e| io::Error::other(format!("Failed to set MP3 ID3 tag: {e:?}")))?;
         let mut encoder = builder
             .build()
             .map_err(|e| io::Error::other(format!("MP3 encoder build failed: {e}")))?;
@@ -1769,19 +1774,29 @@ impl Maolan {
             target_quality: codec.ogg_quality.clamp(-0.1, 1.0),
         });
         if !metadata.author.is_empty() {
-            let _ = builder.comment_tag("ARTIST", metadata.author.as_str());
+            builder
+                .comment_tag("ARTIST", metadata.author.as_str())
+                .map_err(|e| io::Error::other(format!("Failed to set OGG ARTIST tag: {e}")))?;
         }
         if !metadata.album.is_empty() {
-            let _ = builder.comment_tag("ALBUM", metadata.album.as_str());
+            builder
+                .comment_tag("ALBUM", metadata.album.as_str())
+                .map_err(|e| io::Error::other(format!("Failed to set OGG ALBUM tag: {e}")))?;
         }
         if let Some(year) = metadata.year {
-            let _ = builder.comment_tag("DATE", year.to_string());
+            builder
+                .comment_tag("DATE", year.to_string())
+                .map_err(|e| io::Error::other(format!("Failed to set OGG DATE tag: {e}")))?;
         }
         if let Some(track_number) = metadata.track_number {
-            let _ = builder.comment_tag("TRACKNUMBER", track_number.to_string());
+            builder
+                .comment_tag("TRACKNUMBER", track_number.to_string())
+                .map_err(|e| io::Error::other(format!("Failed to set OGG TRACKNUMBER tag: {e}")))?;
         }
         if !metadata.genre.is_empty() {
-            let _ = builder.comment_tag("GENRE", metadata.genre.as_str());
+            builder
+                .comment_tag("GENRE", metadata.genre.as_str())
+                .map_err(|e| io::Error::other(format!("Failed to set OGG GENRE tag: {e}")))?;
         }
         let mut encoder = builder
             .build()

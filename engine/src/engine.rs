@@ -168,6 +168,7 @@ pub struct Engine {
     hw_out_meter_publish_phase: bool,
     last_track_meter_publish: Option<Instant>,
     track_meter_linear_by_track: HashMap<String, Vec<f32>>,
+    #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
     track_meter_last_published_linear: HashMap<String, Vec<f32>>,
     latest_hw_out_meter_db: Arc<Vec<f32>>,
     latest_track_meter_snapshot: Arc<Vec<(String, Vec<f32>)>>,
@@ -817,6 +818,7 @@ impl Engine {
             hw_out_meter_publish_phase: false,
             last_track_meter_publish: None,
             track_meter_linear_by_track: HashMap::new(),
+            #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
             track_meter_last_published_linear: HashMap::new(),
             latest_hw_out_meter_db: Arc::new(Vec::new()),
             latest_track_meter_snapshot: Arc::new(Vec::new()),
@@ -919,26 +921,24 @@ impl Engine {
 
     fn open_hw_driver(
         device: &str,
-        input_device: Option<&str>,
+        _input_device: Option<&str>,
         sample_rate_hz: i32,
         bits: i32,
         hw_opts: HwOptions,
     ) -> Result<HwDriver, String> {
         #[cfg(any(target_os = "freebsd", target_os = "linux"))]
         {
-            HwDriver::new_with_options(device, input_device, sample_rate_hz, bits, hw_opts)
+            HwDriver::new_with_options(device, _input_device, sample_rate_hz, bits, hw_opts)
                 .map_err(|e| e.to_string())
         }
         #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
         {
-            let _ = input_device;
             HwDriver::new_with_options(device, sample_rate_hz, bits, hw_opts)
                 .map_err(|e| e.to_string())
         }
     }
 
-    fn hw_profile_backend_label(device: &str) -> &'static str {
-        let _ = device;
+    fn hw_profile_backend_label(_device: &str) -> &'static str {
         #[cfg(target_os = "linux")]
         let label = "ALSA";
         #[cfg(target_os = "freebsd")]
@@ -2549,21 +2549,19 @@ impl Engine {
         }
         #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
         {
-            let _ = peaks_linear;
+            let _peaks_linear = peaks_linear;
             true
         }
     }
 
-    async fn maybe_notify_hw_out_meter(&mut self, meter_db: Vec<f32>) {
+    async fn maybe_notify_hw_out_meter(&mut self, _meter_db: Vec<f32>) {
         #[cfg(any(target_os = "freebsd", target_os = "linux"))]
-        {
-            let _ = meter_db;
-        }
+        {}
         #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
         {
             self.notify_clients(Ok(Action::TrackMeters {
                 track_name: "hw:out".to_string(),
-                output_db: meter_db,
+                output_db: _meter_db,
             }))
             .await;
         }
@@ -2571,18 +2569,16 @@ impl Engine {
 
     fn collect_changed_track_meters(
         &mut self,
-        tracks: &[(String, Arc<UnsafeMutex<Box<Track>>>)],
+        _tracks: &[(String, Arc<UnsafeMutex<Box<Track>>>)],
     ) -> Vec<(String, Vec<f32>)> {
         #[cfg(any(target_os = "freebsd", target_os = "linux"))]
         {
-            let _ = tracks;
-            let _ = &self.track_meter_last_published_linear;
             Vec::new()
         }
         #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
         {
-            let mut active_track_names = std::collections::HashSet::with_capacity(tracks.len());
-            let meters: Vec<(String, Vec<f32>)> = tracks
+            let mut active_track_names = std::collections::HashSet::with_capacity(_tracks.len());
+            let meters: Vec<(String, Vec<f32>)> = _tracks
                 .iter()
                 .filter_map(|(name, track)| {
                     active_track_names.insert(name.clone());
@@ -5172,7 +5168,7 @@ impl Engine {
                     )
                 };
                 #[cfg(not(all(unix, not(target_os = "macos"))))]
-                let _ = lv2_instance_count;
+                let _lv2_instance_count = lv2_instance_count;
                 let pending_hw_midi_events = self.pending_hw_midi_events.len()
                     + self
                         .pending_hw_midi_events_by_device

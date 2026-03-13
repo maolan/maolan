@@ -5387,13 +5387,16 @@ impl Maolan {
                                         }
                                         last_progress_bucket = Some(bucket);
                                         last_operation = operation.clone();
-                                        let _ = tx_clone.send(Message::ImportProgress {
-                                            file_index,
-                                            total_files,
-                                            file_progress: clamped,
-                                            filename: filename_for_progress.clone(),
-                                            operation,
-                                        });
+                                        if tx_clone
+                                            .send(Message::ImportProgress {
+                                                file_index,
+                                                total_files,
+                                                file_progress: clamped,
+                                                filename: filename_for_progress.clone(),
+                                                operation,
+                                            })
+                                            .is_err()
+                                        {}
                                     };
 
                                 if Self::is_import_audio_path(path) {
@@ -5449,13 +5452,18 @@ impl Maolan {
                                         }
                                     }
                                 } else if Self::is_import_midi_path(path) {
-                                    let _ = tx.send(Message::ImportProgress {
-                                        file_index,
-                                        total_files,
-                                        file_progress: 0.5,
-                                        filename: filename.clone(),
-                                        operation: Some("Copying".to_string()),
-                                    });
+                                    if tx
+                                        .send(Message::ImportProgress {
+                                            file_index,
+                                            total_files,
+                                            file_progress: 0.5,
+                                            filename: filename.clone(),
+                                            operation: Some("Copying".to_string()),
+                                        })
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
 
                                     match Self::import_midi_to_session(
                                         path,
@@ -5506,13 +5514,18 @@ impl Maolan {
                                         }
                                     }
 
-                                    let _ = tx.send(Message::ImportProgress {
-                                        file_index,
-                                        total_files,
-                                        file_progress: 1.0,
-                                        filename: filename.clone(),
-                                        operation: None,
-                                    });
+                                    if tx
+                                        .send(Message::ImportProgress {
+                                            file_index,
+                                            total_files,
+                                            file_progress: 1.0,
+                                            filename: filename.clone(),
+                                            operation: None,
+                                        })
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
                                 } else {
                                     failures.push(format!(
                                         "{} (unsupported extension)",
@@ -5525,13 +5538,18 @@ impl Maolan {
                                 error!("Import failed: {err}");
                             }
 
-                            let _ = tx.send(Message::ImportProgress {
-                                file_index: total_files,
-                                total_files,
-                                file_progress: 1.0,
-                                filename: "Done".to_string(),
-                                operation: None,
-                            });
+                            if tx
+                                .send(Message::ImportProgress {
+                                    file_index: total_files,
+                                    total_files,
+                                    file_progress: 1.0,
+                                    filename: "Done".to_string(),
+                                    operation: None,
+                                })
+                                .is_err()
+                            {
+                                return;
+                            }
                             drop(tx);
                         });
 
@@ -5800,10 +5818,13 @@ impl Maolan {
                                 }
                                 last_progress_bucket = Some(bucket);
                                 last_operation = operation.clone();
-                                let _ = tx_clone.send(Message::ExportProgress {
-                                    progress: clamped,
-                                    operation,
-                                });
+                                if tx_clone
+                                    .send(Message::ExportProgress {
+                                        progress: clamped,
+                                        operation,
+                                    })
+                                    .is_err()
+                                {}
                             };
 
                             let options = super::super::ExportSessionOptions {
@@ -5836,15 +5857,23 @@ impl Maolan {
                             let result = Self::export_session(&options, progress_fn).await;
 
                             if let Err(e) = result {
-                                let _ = tx.send(Message::ExportProgress {
-                                    progress: 0.0,
-                                    operation: Some(format!("Error: {}", e)),
-                                });
-                            } else {
-                                let _ = tx.send(Message::ExportProgress {
+                                if tx
+                                    .send(Message::ExportProgress {
+                                        progress: 0.0,
+                                        operation: Some(format!("Error: {}", e)),
+                                    })
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            } else if tx
+                                .send(Message::ExportProgress {
                                     progress: 1.0,
                                     operation: Some("Complete".to_string()),
-                                });
+                                })
+                                .is_err()
+                            {
+                                return;
                             }
                             drop(tx);
                         });
@@ -6168,10 +6197,14 @@ impl Maolan {
                         }
                         #[cfg(all(unix, not(target_os = "macos")))]
                         {
-                            let _ = self.send(Action::TrackGetLv2Midnam {
-                                track_name: track_idx.clone(),
-                            });
+                            return Task::batch(vec![
+                                self.send(Action::TrackGetLv2Midnam {
+                                    track_name: track_idx.clone(),
+                                }),
+                                self.sync_piano_scrollbars(),
+                            ]);
                         }
+                        #[cfg(not(all(unix, not(target_os = "macos"))))]
                         return self.sync_piano_scrollbars();
                     }
                     Err(e) => {
