@@ -7,29 +7,23 @@ use crate::{
     message::Message,
     state::State,
     style,
-    widget::{horizontal_slider::HorizontalSlider, slider::Slider},
+    ui_timing::DOUBLE_CLICK,
+    widget::horizontal_slider::HorizontalSlider,
 };
 use iced::{
-    Alignment, Background, Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse,
+    Alignment, Color, Element, Length, Point, Rectangle, Renderer, Theme, event::Event, mouse,
     widget::{
-        Space, Stack, canvas,
-        canvas::{Geometry, Path},
-        column, container, lazy, mouse_area, pin, row, scrollable, text, text_input,
+        Space, canvas,
+        canvas::{Action as CanvasAction, Frame, Geometry, Path, Stroke, Text},
+        column, container, lazy, mouse_area, row, scrollable, text, text_input,
     },
 };
 use maolan_engine::message::Action;
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 #[derive(Debug, Default)]
 pub struct Mixer {
     state: State,
-}
-
-#[derive(Clone)]
-struct VuMeterCanvas {
-    channels: usize,
-    levels_qdb: Arc<[u8]>,
-    meter_height: f32,
 }
 
 struct StripReadout<'a> {
@@ -39,8 +33,109 @@ struct StripReadout<'a> {
     level_label: &'static str,
 }
 
-impl canvas::Program<Message> for VuMeterCanvas {
-    type State = ();
+#[derive(Default)]
+struct FaderBayState {
+    dragging: bool,
+    last_click_at: Option<Instant>,
+}
+
+#[derive(Clone)]
+struct FaderBayCanvas {
+    track_name: String,
+    channels: usize,
+    levels_qdb: Arc<[u8]>,
+    value: f32,
+    show_ticks: bool,
+    fader_height: f32,
+}
+
+impl FaderBayCanvas {
+    const OUTER_PAD_X: f32 = 8.0;
+    const OUTER_PAD_Y: f32 = 7.0;
+    const INNER_GAP: f32 = 8.0;
+    const SCALE_GAP: f32 = 3.0;
+
+    fn slider_block_width(&self) -> f32 {
+        if self.show_ticks {
+            FADER_WIDTH + Self::SCALE_GAP + SCALE_WIDTH
+        } else {
+            FADER_WIDTH
+        }
+    }
+
+    fn meter_block_width(&self) -> f32 {
+        Mixer::meter_total_width(self.channels)
+    }
+
+    fn slider_bounds(&self, bounds: Rectangle) -> Rectangle {
+        Rectangle {
+            x: bounds.x + Self::OUTER_PAD_X,
+            y: bounds.y + Self::OUTER_PAD_Y,
+            width: FADER_WIDTH,
+            height: self.fader_height,
+        }
+    }
+
+    fn value_from_cursor(&self, cursor_position: Point, bounds: Rectangle) -> f32 {
+        let slider = self.slider_bounds(bounds);
+        let y = cursor_position.y - slider.y;
+        let normalized = 1.0 - (y / slider.height.max(1.0)).clamp(0.0, 1.0);
+        let value = FADER_MIN_DB + normalized * (FADER_MAX_DB - FADER_MIN_DB);
+        value.clamp(FADER_MIN_DB, FADER_MAX_DB)
+    }
+}
+
+impl canvas::Program<Message> for FaderBayCanvas {
+    type State = FaderBayState;
+
+    fn update(
+        &self,
+        state: &mut Self::State,
+        event: &Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> Option<CanvasAction<Message>> {
+        let slider_bounds = self.slider_bounds(bounds);
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                if cursor.is_over(slider_bounds) {
+                    let now = Instant::now();
+                    let is_double_click = state
+                        .last_click_at
+                        .is_some_and(|last| now.duration_since(last) <= DOUBLE_CLICK);
+                    state.last_click_at = Some(now);
+                    state.dragging = true;
+                    if is_double_click {
+                        return Some(CanvasAction::publish(Message::Request(Action::TrackLevel(
+                            self.track_name.clone(),
+                            0.0,
+                        ))));
+                    }
+                    if let Some(cursor_position) = cursor.position() {
+                        return Some(CanvasAction::publish(Message::Request(Action::TrackLevel(
+                            self.track_name.clone(),
+                            self.value_from_cursor(cursor_position, bounds),
+                        ))));
+                    }
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                state.dragging = false;
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                if state.dragging
+                    && let Some(cursor_position) = cursor.position()
+                {
+                    return Some(CanvasAction::publish(Message::Request(Action::TrackLevel(
+                        self.track_name.clone(),
+                        self.value_from_cursor(cursor_position, bounds),
+                    ))));
+                }
+            }
+            _ => {}
+        }
+        None
+    }
 
     fn draw(
         &self,
@@ -53,23 +148,107 @@ impl canvas::Program<Message> for VuMeterCanvas {
         if bounds.width <= 0.0 || bounds.height <= 0.0 {
             return vec![];
         }
-        let channels = self.channels.max(1);
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
+
+        let slider_bounds = self.slider_bounds(bounds);
+        let meter_x = bounds.x + Self::OUTER_PAD_X + self.slider_block_width() + Self::INNER_GAP;
+        let meter_y = bounds.y + Self::OUTER_PAD_Y;
+        let meter_inner_h = self.fader_height.max(1.0);
+        let meter_total_w = self.meter_block_width();
+
+        let mut frame = Frame::new(renderer, bounds.size());
+
+        let local = |x: f32, y: f32| Point::new(x - bounds.x, y - bounds.y);
+
+        let back_color = Color::from_rgb(0x42 as f32 / 255.0, 0x46 as f32 / 255.0, 0x4D as f32 / 255.0);
+        let border_color = Color::from_rgb(0x30 as f32 / 255.0, 0x33 as f32 / 255.0, 0x3C as f32 / 255.0);
+        let filled_color = Color::from_rgb(0x29 as f32 / 255.0, 0x66 as f32 / 255.0, 0xA3 as f32 / 255.0);
+        let handle_color = Color::from_rgb(0x75 as f32 / 255.0, 0xC2 as f32 / 255.0, 0xFF as f32 / 255.0);
+        let border_width = 1.0;
+        let handle_height = 2.0;
+        let normalized = (self.value - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB);
+        let handle_y = slider_bounds.y
+            + ((slider_bounds.height - handle_height - border_width * 2.0) * (1.0 - normalized)).round();
+
+        frame.fill(
+            &Path::rectangle(
+                local(slider_bounds.x, slider_bounds.y),
+                iced::Size::new(slider_bounds.width, slider_bounds.height),
+            ),
+            back_color,
+        );
+        frame.stroke(
+            &Path::rectangle(
+                local(slider_bounds.x, slider_bounds.y),
+                iced::Size::new(slider_bounds.width, slider_bounds.height),
+            ),
+            Stroke::default().with_width(border_width).with_color(border_color),
+        );
+
+        let filled_y = handle_y + handle_height + 1.0;
+        let filled_h = (slider_bounds.y + slider_bounds.height - filled_y).max(0.0);
+        if filled_h > 0.0 {
+            frame.fill(
+                &Path::rectangle(
+                    local(slider_bounds.x, filled_y),
+                    iced::Size::new(slider_bounds.width, filled_h),
+                ),
+                filled_color,
+            );
+        }
+        frame.fill(
+            &Path::rectangle(
+                local(slider_bounds.x, handle_y),
+                iced::Size::new(slider_bounds.width, handle_height + border_width * 2.0),
+            ),
+            handle_color,
+        );
+
+        if self.show_ticks {
+            let tick_x = slider_bounds.x + FADER_WIDTH + Self::SCALE_GAP;
+            for (label_y, label) in Mixer::tick_layout(self.fader_height) {
+                frame.fill(
+                    &Path::rectangle(
+                        local(tick_x, bounds.y + Self::OUTER_PAD_Y + label_y + 4.0),
+                        iced::Size::new(4.0, 1.0),
+                    ),
+                    Color::from_rgba(0.62, 0.67, 0.77, 0.78),
+                );
+                frame.fill_text(Text {
+                    content: label.to_string(),
+                    position: local(tick_x + 6.0, bounds.y + Self::OUTER_PAD_Y + label_y),
+                    color: Color::from_rgba(0.9, 0.92, 0.96, 0.9),
+                    size: 8.0.into(),
+                    ..Default::default()
+                });
+            }
+        }
+
+        frame.fill(
+            &Path::rectangle(
+                local(meter_x, meter_y),
+                iced::Size::new(meter_total_w, self.fader_height),
+            ),
+            Color::from_rgba(0.09, 0.10, 0.12, 1.0),
+        );
+
         let bar_w = METER_BAR_WIDTH;
         let bar_gap = METER_BAR_GAP;
-        let inner_h = self.meter_height.max(1.0);
-        for channel_idx in 0..channels {
+        for channel_idx in 0..self.channels.max(1) {
             let q = self.levels_qdb.get(channel_idx).copied().unwrap_or(0);
             let db = Mixer::qdb_to_level(q);
             let fill = Mixer::level_to_meter_fill(db);
-            let filled_h = (inner_h * fill).max(1.0);
-            let y = (inner_h - filled_h).max(0.0);
-            let x = channel_idx as f32 * (bar_w + bar_gap);
+            let filled_h = (meter_inner_h * fill).max(1.0);
+            let y = (meter_inner_h - filled_h).max(0.0);
+            let x = meter_x + METER_PAD_X + channel_idx as f32 * (bar_w + bar_gap);
             frame.fill(
-                &Path::rectangle(Point::new(x, y), iced::Size::new(bar_w, filled_h)),
+                &Path::rectangle(
+                    local(x, meter_y + METER_PAD_Y + y),
+                    iced::Size::new(bar_w, (filled_h - METER_PAD_Y).max(1.0)),
+                ),
                 Mixer::meter_fill_color(db),
             );
         }
+
         vec![frame.into_geometry()]
     }
 }
@@ -105,18 +284,6 @@ impl Mixer {
         out
     }
 
-    fn tick_mark() -> iced::widget::container::Style {
-        iced::widget::container::Style {
-            background: Some(Background::Color(Color {
-                r: 0.62,
-                g: 0.67,
-                b: 0.77,
-                a: 0.78,
-            })),
-            ..iced::widget::container::Style::default()
-        }
-    }
-
     fn trim_strip_name(name: &str, width: f32) -> String {
         let usable_width = (width - (STRIP_NAME_SIDE_PADDING * 2.0)).max(0.0);
         let max_chars = (usable_width / STRIP_NAME_CHAR_PX).floor() as usize;
@@ -135,6 +302,17 @@ impl Mixer {
             .into()
     }
 
+    fn strip_name_cached(name: String, width: f32) -> Element<'static, Message> {
+        let dep = (
+            name,
+            (width.max(0.0) * 10.0).round().clamp(0.0, u16::MAX as f32) as u16,
+        );
+        lazy(dep, |(name, width_tenths)| -> Element<'static, Message> {
+            Self::strip_name(name.clone(), *width_tenths as f32 / 10.0)
+        })
+        .into()
+    }
+
     fn master_meter_width(channels: usize) -> f32 {
         Self::meter_total_width(channels)
     }
@@ -146,65 +324,6 @@ impl Mixer {
 
     fn meter_total_width(channels: usize) -> f32 {
         Self::meter_inner_width(channels) + (METER_PAD_X * 2.0)
-    }
-
-    fn tick_scale_cached(fader_height: f32) -> Element<'static, Message> {
-        let dep = (fader_height * 10.0).round().clamp(0.0, u16::MAX as f32) as u16;
-        lazy(dep, move |dep_h| -> Element<'static, Message> {
-            let fader_height = (*dep_h as f32) / 10.0;
-            let tick_layout = Self::tick_layout(fader_height);
-            let mut marks: Vec<Element<'static, Message>> = Vec::with_capacity(tick_layout.len());
-            for (label_y, label) in tick_layout.iter().copied() {
-                marks.push(
-                    pin(row![
-                        container("")
-                            .width(Length::Fixed(4.0))
-                            .height(Length::Fixed(1.0))
-                            .style(|_theme| Self::tick_mark()),
-                        text(label).size(8),
-                    ]
-                    .spacing(2)
-                    .align_y(Alignment::Center))
-                    .position(Point::new(0.0, label_y))
-                    .into(),
-                );
-            }
-
-            Stack::from_vec(marks)
-                .width(Length::Fixed(SCALE_WIDTH))
-                .height(Length::Fixed(fader_height))
-                .into()
-        })
-        .into()
-    }
-
-    fn slider_with_ticks<F>(
-        value: f32,
-        fader_height: f32,
-        on_change: F,
-    ) -> Element<'static, Message>
-    where
-        F: Fn(f32) -> Message + 'static,
-    {
-        row![
-            Slider::new(FADER_MIN_DB..=FADER_MAX_DB, value, on_change)
-                .width(Length::Fixed(FADER_WIDTH))
-                .height(Length::Fixed(fader_height)),
-            Self::tick_scale_cached(fader_height),
-        ]
-        .spacing(3)
-        .align_y(Alignment::End)
-        .into()
-    }
-
-    fn slider_plain<F>(value: f32, fader_height: f32, on_change: F) -> Element<'static, Message>
-    where
-        F: Fn(f32) -> Message + 'static,
-    {
-        Slider::new(FADER_MIN_DB..=FADER_MAX_DB, value, on_change)
-            .width(Length::Fixed(FADER_WIDTH))
-            .height(Length::Fixed(fader_height))
-            .into()
     }
 
     fn balance_slider<F>(value: f32, on_change: F) -> Element<'static, Message>
@@ -263,6 +382,30 @@ impl Mixer {
         }
     }
 
+    fn value_pill_cached<'a>(
+        track_name: String,
+        content: &'static str,
+        editing: bool,
+        edit_input: &'a str,
+    ) -> Element<'a, Message> {
+        if editing {
+            return Self::value_pill(track_name, content, true, edit_input);
+        }
+        let dep = (track_name, content);
+        lazy(dep, |(track_name, content)| -> Element<'static, Message> {
+            mouse_area(
+                container(text(*content).size(11))
+                    .width(Length::Fixed(READOUT_WIDTH))
+                    .padding([4, 6])
+                    .align_x(Alignment::Center)
+                    .style(|_theme| style::mixer::readout()),
+            )
+            .on_press(Message::MixerLevelEditStart(track_name.clone()))
+            .into()
+        })
+        .into()
+    }
+
     fn pan_section<F>(value: f32, on_change: F) -> Element<'static, Message>
     where
         F: Fn(f32) -> Message + 'static,
@@ -278,16 +421,8 @@ impl Mixer {
         .into()
     }
 
-    fn quantized_db_tenths(level: f32) -> i16 {
-        (level.clamp(FADER_MIN_DB, FADER_MAX_DB) * 10.0).round() as i16
-    }
-
     fn quantized_balance_hundredths(balance: f32) -> i16 {
         (balance.clamp(-1.0, 1.0) * 100.0).round() as i16
-    }
-
-    fn quantized_height_tenths(height: f32) -> u16 {
-        (height.max(0.0) * 10.0).round().clamp(0.0, u16::MAX as f32) as u16
     }
 
     fn level_to_qdb(level_db: f32) -> u8 {
@@ -327,39 +462,6 @@ impl Mixer {
         .into()
     }
 
-    fn slider_cached(
-        track_name: String,
-        value: f32,
-        fader_height: f32,
-        show_ticks: bool,
-    ) -> Element<'static, Message> {
-        let dep = (
-            track_name,
-            Self::quantized_db_tenths(value),
-            Self::quantized_height_tenths(fader_height),
-            show_ticks,
-        );
-        lazy(
-            dep,
-            move |(track_name, value_tenths, height_tenths, show_ticks)| -> Element<'static, Message> {
-                let value = (*value_tenths as f32) / 10.0;
-                let fader_height = (*height_tenths as f32) / 10.0;
-                if *show_ticks {
-                    Self::slider_with_ticks(value, fader_height, {
-                        let track_name = track_name.clone();
-                        move |new_val| Message::Request(Action::TrackLevel(track_name.clone(), new_val))
-                    })
-                } else {
-                    Self::slider_plain(value, fader_height, {
-                        let track_name = track_name.clone();
-                        move |new_val| Message::Request(Action::TrackLevel(track_name.clone(), new_val))
-                    })
-                }
-            },
-        )
-        .into()
-    }
-
     fn pan_placeholder() -> Element<'static, Message> {
         Space::new()
             .width(Length::Fill)
@@ -377,39 +479,6 @@ impl Mixer {
         }
     }
 
-    fn vu_meter(channels: usize, levels_db: &[f32], meter_h: f32) -> Element<'static, Message> {
-        let channels = channels.max(1);
-        let inner_h = (meter_h - (METER_PAD_Y * 2.0)).max(1.0);
-        let q_levels = Self::quantized_meter_levels(levels_db, channels);
-        let dep = (
-            channels as u16,
-            Self::quantized_height_tenths(inner_h),
-            q_levels,
-        );
-        let meter_canvas: Element<'static, Message> = lazy(
-            dep,
-            |(channels, inner_h_tenths, q_levels)| -> Element<'static, Message> {
-                let channels = *channels as usize;
-                let inner_h = *inner_h_tenths as f32 / 10.0;
-                canvas(VuMeterCanvas {
-                    channels,
-                    levels_qdb: q_levels.clone(),
-                    meter_height: inner_h,
-                })
-                .width(Length::Fixed(Self::meter_inner_width(channels)))
-                .height(Length::Fixed(inner_h))
-                .into()
-            },
-        )
-        .into();
-        container(meter_canvas)
-            .width(Length::Fixed(Self::meter_total_width(channels)))
-            .height(Length::Fixed(meter_h))
-            .padding([METER_PAD_Y as u16, METER_PAD_X as u16])
-            .style(|_theme| style::mixer::meter())
-            .into()
-    }
-
     fn fader_bay(
         track_name: String,
         channels: usize,
@@ -418,16 +487,39 @@ impl Mixer {
         fader_height: f32,
         show_ticks: bool,
     ) -> Element<'static, Message> {
-        let slider = Self::slider_cached(track_name, value, fader_height, show_ticks);
+        let inner_width = if show_ticks {
+            FADER_WIDTH + 3.0 + SCALE_WIDTH
+        } else {
+            FADER_WIDTH
+        } + 8.0
+            + Self::meter_total_width(channels.max(1));
+        let total_width = inner_width + (FaderBayCanvas::OUTER_PAD_X * 2.0);
         container(
-            row![slider, Self::vu_meter(channels, levels_db, fader_height),]
-                .spacing(8)
-                .align_y(Alignment::End),
+            canvas(FaderBayCanvas {
+                track_name,
+                channels: channels.max(1),
+                levels_qdb: Self::quantized_meter_levels(levels_db, channels.max(1)),
+                value,
+                show_ticks,
+                fader_height,
+            })
+            .width(Length::Fixed(total_width))
+            .height(Length::Fixed(fader_height + 14.0)),
         )
         .width(Length::Fill)
-        .padding([8, 7])
         .style(|_theme| style::mixer::bay())
         .into()
+    }
+
+    fn fader_bay_cached(
+        track_name: String,
+        channels: usize,
+        levels_db: &[f32],
+        value: f32,
+        fader_height: f32,
+        show_ticks: bool,
+    ) -> Element<'static, Message> {
+        Self::fader_bay(track_name, channels, levels_db, value, fader_height, show_ticks)
     }
 
     fn strip_shell<'a>(
@@ -440,13 +532,13 @@ impl Mixer {
     ) -> Element<'a, Message> {
         let mut content = column![].spacing(8).width(Length::Fill);
         content = content.push(pan_section.unwrap_or_else(Self::pan_placeholder));
-        content = content.push(bay).push(Self::value_pill(
+        content = content.push(bay).push(Self::value_pill_cached(
             readout.track_name,
             readout.level_label,
             readout.editing,
             readout.edit_input,
         ));
-        content = content.push(Self::strip_name(name, width));
+        content = content.push(Self::strip_name_cached(name, width));
 
         container(content)
             .width(Length::Fixed(width))
@@ -483,7 +575,7 @@ impl Mixer {
             } else {
                 None
             };
-            let bay = Self::fader_bay(
+            let bay = Self::fader_bay_cached(
                 track.name.clone(),
                 track.audio.outs,
                 &track.meter_out_db,
@@ -532,7 +624,7 @@ impl Mixer {
             } else {
                 None
             },
-            Self::fader_bay(
+            Self::fader_bay_cached(
                 "hw:out".to_string(),
                 hw_out_channels.max(1),
                 &state.hw_out_meter_db,

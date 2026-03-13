@@ -61,18 +61,6 @@ pub fn bay() -> container::Style {
     }
 }
 
-pub fn meter() -> container::Style {
-    container::Style {
-        background: Some(Background::Color(rgb(12, 16, 25))),
-        border: Border {
-            color: rgb(52, 60, 74),
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        ..container::Style::default()
-    }
-}
-
 pub fn readout() -> container::Style {
     container::Style {
         background: Some(Background::Color(rgb(31, 38, 52))),

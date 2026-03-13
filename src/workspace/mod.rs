@@ -16,10 +16,10 @@ use crate::{
     state::{ClipPeaks, MidiClipPreviewMap, State},
     widget::piano,
 };
-use editor::EditorViewArgs;
+use editor::{EditorViewArgs, OwnedEditorViewArgs};
 use iced::{
     Background, Color, Element, Length, Point,
-    widget::{Id, Space, Stack, column, container, mouse_area, pin, row, scrollable, slider},
+    widget::{Id, Space, Stack, column, container, lazy, mouse_area, pin, row, scrollable, slider},
 };
 use ruler::RulerViewArgs;
 use std::{collections::HashMap, path::PathBuf};
@@ -220,20 +220,38 @@ impl Workspace {
             timeline_sample_to_x_f64(sample, pixels_per_sample, TIMELINE_LEFT_INSET_PX)
         });
 
+        let editor_render_hash = self.editor.render_hash(&EditorViewArgs {
+            session_root,
+            pixels_per_sample,
+            samples_per_bar,
+            snap_mode,
+            samples_per_beat,
+            active_clip_drag,
+            active_target_track: active_clip_target_track,
+            recording_preview_bounds,
+            recording_preview_peaks,
+            midi_clip_previews,
+        });
+        let editor = self.editor.clone();
+        let editor_args_owned = OwnedEditorViewArgs {
+            session_root: session_root.cloned(),
+            pixels_per_sample,
+            samples_per_bar,
+            snap_mode,
+            samples_per_beat,
+            active_clip_drag: active_clip_drag.cloned(),
+            active_target_track: active_clip_target_track.map(str::to_string),
+            recording_preview_bounds,
+            recording_preview_peaks: recording_preview_peaks.cloned(),
+            midi_clip_previews: midi_clip_previews.cloned(),
+        };
+        let editor_body: Element<'_, Message> = lazy(editor_render_hash, move |_| {
+            editor.clone().into_view_owned(editor_args_owned.clone())
+        })
+        .into();
         let editor_with_playhead = if let Some(x) = playhead_x_timeline {
             Stack::from_vec(vec![
-                self.editor.view(EditorViewArgs {
-                    session_root,
-                    pixels_per_sample,
-                    samples_per_bar,
-                    snap_mode,
-                    samples_per_beat,
-                    active_clip_drag,
-                    active_target_track: active_clip_target_track,
-                    recording_preview_bounds,
-                    recording_preview_peaks,
-                    midi_clip_previews,
-                }),
+                editor_body,
                 pin(Self::playhead_line())
                     .position(Point::new(x.max(0.0), 0.0))
                     .into(),
@@ -242,18 +260,7 @@ impl Workspace {
             .height(Length::Fill)
             .into()
         } else {
-            self.editor.view(EditorViewArgs {
-                session_root,
-                pixels_per_sample,
-                samples_per_bar,
-                snap_mode,
-                samples_per_beat,
-                active_clip_drag,
-                active_target_track: active_clip_target_track,
-                recording_preview_bounds,
-                recording_preview_peaks,
-                midi_clip_previews,
-            })
+            editor_body
         };
 
         let editor_timeline_scrolled = scrollable(
@@ -299,12 +306,11 @@ impl Workspace {
             .width(tracks_width)
             .height(Length::Fill);
 
-        let right_panel = column![
-            scrollable(self.tempo.view(TempoViewArgs {
+        let tempo_scrolled: Element<'_, Message> = scrollable(self.tempo.view(TempoViewArgs {
                     bpm: tempo,
                     time_signature,
                     pixels_per_sample,
-                    playhead_x: playhead_x_timeline,
+                    playhead_x: None,
                     punch_range_samples,
                     snap_mode,
                     samples_per_beat,
@@ -322,9 +328,22 @@ impl Workspace {
                     scrollable::Scrollbar::hidden(),
                 ))
                 .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
-                .height(Length::Fixed(self.tempo.height())),
-                scrollable(self.ruler.view(RulerViewArgs {
-                    playhead_x: playhead_x_timeline,
+                .height(Length::Fixed(self.tempo.height()))
+                .into();
+        let tempo_with_playhead: Element<'_, Message> = if let Some(x) = playhead_x_timeline {
+            Stack::from_vec(vec![
+                tempo_scrolled,
+                pin(Self::playhead_line())
+                    .position(Point::new(x.max(0.0), 0.0))
+                    .into(),
+            ])
+            .height(Length::Fixed(self.tempo.height()))
+            .into()
+        } else {
+            tempo_scrolled
+        };
+        let ruler_scrolled: Element<'_, Message> = scrollable(self.ruler.view(RulerViewArgs {
+                    playhead_x: None,
                     beat_pixels,
                     pixels_per_sample,
                     loop_range_samples,
@@ -338,7 +357,24 @@ impl Workspace {
                     scrollable::Scrollbar::hidden(),
                 ))
                 .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
-                .height(Length::Fixed(self.ruler.height())),
+                .height(Length::Fixed(self.ruler.height()))
+                .into();
+        let ruler_with_playhead: Element<'_, Message> = if let Some(x) = playhead_x_timeline {
+            Stack::from_vec(vec![
+                ruler_scrolled,
+                pin(Self::playhead_line())
+                    .position(Point::new(x.max(0.0), 0.0))
+                    .into(),
+            ])
+            .height(Length::Fixed(self.ruler.height()))
+            .into()
+        } else {
+            ruler_scrolled
+        };
+
+        let right_panel = column![
+            tempo_with_playhead,
+            ruler_with_playhead,
                 container(editor_with_zoom).height(Length::Fixed(tracks_total_height)),
             ]
             .width(Length::Fill);

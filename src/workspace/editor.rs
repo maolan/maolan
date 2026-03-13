@@ -2410,7 +2410,7 @@ fn clip_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'stati
     Some((menu.anchor, panel))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Editor {
     state: State,
 }
@@ -2428,13 +2428,201 @@ pub struct EditorViewArgs<'a> {
     pub midi_clip_previews: Option<&'a MidiClipPreviewMap>,
 }
 
+#[derive(Clone)]
+pub struct OwnedEditorViewArgs {
+    pub session_root: Option<PathBuf>,
+    pub pixels_per_sample: f32,
+    pub samples_per_bar: f32,
+    pub snap_mode: SnapMode,
+    pub samples_per_beat: f64,
+    pub active_clip_drag: Option<DraggedClip>,
+    pub active_target_track: Option<String>,
+    pub recording_preview_bounds: Option<(usize, usize)>,
+    pub recording_preview_peaks: Option<HashMap<String, ClipPeaks>>,
+    pub midi_clip_previews: Option<MidiClipPreviewMap>,
+}
+
 impl Editor {
     pub fn new(state: State) -> Self {
         Self { state }
     }
 
-    pub fn view(&self, args: EditorViewArgs<'_>) -> Element<'_, Message> {
-        let EditorViewArgs {
+    pub fn render_hash(&self, args: &EditorViewArgs<'_>) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        let state = self.state.blocking_read();
+
+        args.session_root.hash(&mut hasher);
+        args.pixels_per_sample.to_bits().hash(&mut hasher);
+        args.samples_per_bar.to_bits().hash(&mut hasher);
+        args.samples_per_beat.to_bits().hash(&mut hasher);
+        std::mem::discriminant(&args.snap_mode).hash(&mut hasher);
+        args.recording_preview_bounds.hash(&mut hasher);
+        args.active_target_track.hash(&mut hasher);
+        if let Some(drag) = args.active_clip_drag {
+            std::mem::discriminant(&drag.kind).hash(&mut hasher);
+            drag.index.hash(&mut hasher);
+            drag.track_index.hash(&mut hasher);
+            drag.start.x.to_bits().hash(&mut hasher);
+            drag.start.y.to_bits().hash(&mut hasher);
+            drag.end.x.to_bits().hash(&mut hasher);
+            drag.end.y.to_bits().hash(&mut hasher);
+            drag.copy.hash(&mut hasher);
+        }
+
+        let mut selected_clips: Vec<_> = state.selected_clips.iter().collect();
+        selected_clips.sort_by(|a, b| {
+            a.track_idx
+                .cmp(&b.track_idx)
+                .then_with(|| {
+                    let ak = match a.kind {
+                        Kind::Audio => 0_u8,
+                        Kind::MIDI => 1_u8,
+                    };
+                    let bk = match b.kind {
+                        Kind::Audio => 0_u8,
+                        Kind::MIDI => 1_u8,
+                    };
+                    ak.cmp(&bk)
+                })
+                .then_with(|| a.clip_idx.cmp(&b.clip_idx))
+        });
+        for clip in selected_clips {
+            clip.track_idx.hash(&mut hasher);
+            clip.clip_idx.hash(&mut hasher);
+            std::mem::discriminant(&clip.kind).hash(&mut hasher);
+        }
+
+        state.hovered_clip_resize_handle.hash(&mut hasher);
+        state.clip_marquee_start.map(|p| (p.x.to_bits(), p.y.to_bits())).hash(&mut hasher);
+        state.clip_marquee_end.map(|p| (p.x.to_bits(), p.y.to_bits())).hash(&mut hasher);
+        state
+            .midi_clip_create_start
+            .map(|p| (p.x.to_bits(), p.y.to_bits()))
+            .hash(&mut hasher);
+        state
+            .midi_clip_create_end
+            .map(|p| (p.x.to_bits(), p.y.to_bits()))
+            .hash(&mut hasher);
+
+        if let Some(menu) = state.clip_context_menu.as_ref() {
+            menu.clip.track_idx.hash(&mut hasher);
+            menu.clip.clip_idx.hash(&mut hasher);
+            std::mem::discriminant(&menu.clip.kind).hash(&mut hasher);
+            menu.anchor.x.to_bits().hash(&mut hasher);
+            menu.anchor.y.to_bits().hash(&mut hasher);
+        }
+
+        for track in state
+            .tracks
+            .iter()
+            .filter(|track| track.name != METRONOME_TRACK_ID)
+        {
+            track.name.hash(&mut hasher);
+            track.height.to_bits().hash(&mut hasher);
+            track.armed.hash(&mut hasher);
+            track.audio.ins.hash(&mut hasher);
+            track.midi.ins.hash(&mut hasher);
+            track.midi_lane_channels.hash(&mut hasher);
+            std::mem::discriminant(&track.automation_mode).hash(&mut hasher);
+
+            for lane in &track.automation_lanes {
+                lane.visible.hash(&mut hasher);
+                std::mem::discriminant(&lane.target).hash(&mut hasher);
+                lane.points.len().hash(&mut hasher);
+                if let Some(first) = lane.points.first() {
+                    first.sample.hash(&mut hasher);
+                    first.value.to_bits().hash(&mut hasher);
+                }
+                if let Some(last) = lane.points.last() {
+                    last.sample.hash(&mut hasher);
+                    last.value.to_bits().hash(&mut hasher);
+                }
+            }
+
+            for clip in &track.audio.clips {
+                clip.name.hash(&mut hasher);
+                clip.start.hash(&mut hasher);
+                clip.length.hash(&mut hasher);
+                clip.offset.hash(&mut hasher);
+                clip.input_channel.hash(&mut hasher);
+                clip.muted.hash(&mut hasher);
+                clip.fade_enabled.hash(&mut hasher);
+                clip.fade_in_samples.hash(&mut hasher);
+                clip.fade_out_samples.hash(&mut hasher);
+                clip.take_lane_override.hash(&mut hasher);
+                clip.take_lane_pinned.hash(&mut hasher);
+                clip.take_lane_locked.hash(&mut hasher);
+                clip.warp_markers.len().hash(&mut hasher);
+                clip.peaks.len().hash(&mut hasher);
+            }
+
+            for clip in &track.midi.clips {
+                clip.name.hash(&mut hasher);
+                clip.start.hash(&mut hasher);
+                clip.length.hash(&mut hasher);
+                clip.offset.hash(&mut hasher);
+                clip.input_channel.hash(&mut hasher);
+                clip.muted.hash(&mut hasher);
+                clip.fade_enabled.hash(&mut hasher);
+                clip.fade_in_samples.hash(&mut hasher);
+                clip.fade_out_samples.hash(&mut hasher);
+                clip.take_lane_override.hash(&mut hasher);
+                clip.take_lane_pinned.hash(&mut hasher);
+                clip.take_lane_locked.hash(&mut hasher);
+            }
+        }
+
+        if let Some(peaks_by_track) = args.recording_preview_peaks {
+            let mut keys: Vec<_> = peaks_by_track.keys().collect();
+            keys.sort_unstable();
+            for key in keys {
+                key.hash(&mut hasher);
+                if let Some(peaks) = peaks_by_track.get(key) {
+                    peaks.len().hash(&mut hasher);
+                    for channel in peaks.iter() {
+                        channel.len().hash(&mut hasher);
+                        if let Some(first) = channel.first() {
+                            first[0].to_bits().hash(&mut hasher);
+                            first[1].to_bits().hash(&mut hasher);
+                        }
+                        if let Some(last) = channel.last() {
+                            last[0].to_bits().hash(&mut hasher);
+                            last[1].to_bits().hash(&mut hasher);
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(previews) = args.midi_clip_previews {
+            let mut keys: Vec<_> = previews.keys().collect();
+            keys.sort_unstable();
+            for (track_name, clip_index) in keys {
+                track_name.hash(&mut hasher);
+                clip_index.hash(&mut hasher);
+                if let Some(notes) = previews.get(&(track_name.clone(), *clip_index)) {
+                    notes.len().hash(&mut hasher);
+                    if let Some(first) = notes.first() {
+                        first.start_sample.hash(&mut hasher);
+                        first.length_samples.hash(&mut hasher);
+                        first.pitch.hash(&mut hasher);
+                        first.velocity.hash(&mut hasher);
+                    }
+                    if let Some(last) = notes.last() {
+                        last.start_sample.hash(&mut hasher);
+                        last.length_samples.hash(&mut hasher);
+                        last.pitch.hash(&mut hasher);
+                        last.velocity.hash(&mut hasher);
+                    }
+                }
+            }
+        }
+
+        hasher.finish()
+    }
+
+    pub fn into_view_owned(self, args: OwnedEditorViewArgs) -> Element<'static, Message> {
+        let OwnedEditorViewArgs {
             session_root,
             pixels_per_sample,
             samples_per_bar,
@@ -2446,8 +2634,15 @@ impl Editor {
             recording_preview_peaks,
             midi_clip_previews,
         } = args;
+        let state_handle = self.state;
+        let session_root_ref = session_root.as_ref();
+        let active_clip_drag_ref = active_clip_drag.as_ref();
+        let active_target_track_ref = active_target_track.as_deref();
+        let recording_preview_peaks_ref = recording_preview_peaks.as_ref();
+        let midi_clip_previews_ref = midi_clip_previews.as_ref();
+
         let mut result = column![];
-        let state = self.state.blocking_read();
+        let state = state_handle.blocking_read();
         for track in state
             .tracks
             .iter()
@@ -2456,19 +2651,19 @@ impl Editor {
             result = result.push(view_track_elements(TrackElementViewArgs {
                 state: &state,
                 track,
-                session_root,
+                session_root: session_root_ref,
                 pixels_per_sample,
                 samples_per_bar,
                 snap_mode,
                 samples_per_beat,
-                active_clip_drag,
-                active_target_track,
+                active_clip_drag: active_clip_drag_ref,
+                active_target_track: active_target_track_ref,
                 recording_preview_bounds,
-                recording_preview_peaks,
-                midi_clip_previews,
+                recording_preview_peaks: recording_preview_peaks_ref,
+                midi_clip_previews: midi_clip_previews_ref,
             }));
         }
-        let mut layers: Vec<Element<'_, Message>> =
+        let mut layers: Vec<Element<'static, Message>> =
             vec![result.width(Length::Fill).height(Length::Fill).into()];
         if let (Some(start), Some(end)) = (state.clip_marquee_start, state.clip_marquee_end) {
             let mut x = start.x.min(end.x);
