@@ -1973,8 +1973,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let Some(source_clip) = source_track.audio.clips.get(clip_index) else {
                             continue;
                         };
-                        let clip_width =
-                            (source_clip.length as f32 * pixels_per_sample).max(12.0);
+                        let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let clip_height = lane_clip_height;
                         // All audio clips are displayed on lane 0 (single audio lane)
                         let lane = 0;
@@ -2062,8 +2061,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let Some(source_clip) = source_track.midi.clips.get(clip_index) else {
                             continue;
                         };
-                        let clip_width =
-                            (source_clip.length as f32 * pixels_per_sample).max(12.0);
+                        let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let lane = source_clip
                             .input_channel
                             .min(track.midi.ins.saturating_sub(1));

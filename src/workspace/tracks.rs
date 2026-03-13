@@ -1,6 +1,6 @@
 use crate::{
-    consts::state_track::TRACK_SUBTRACK_GAP,
     consts::state_ids::METRONOME_TRACK_ID,
+    consts::state_track::TRACK_SUBTRACK_GAP,
     menu,
     message::{Message, MidiLaneChannelSelection, TrackAutomationTarget},
     state::{State, StateData, TrackLaneLayout},

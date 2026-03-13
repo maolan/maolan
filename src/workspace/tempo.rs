@@ -677,9 +677,15 @@ impl canvas::Program<Message> for TempoCanvas {
                         current_sample,
                     } => {
                         let (start, end) = if adjust_start {
-                            (current_sample.min(fixed_sample.saturating_sub(1)), fixed_sample)
+                            (
+                                current_sample.min(fixed_sample.saturating_sub(1)),
+                                fixed_sample,
+                            )
                         } else {
-                            (fixed_sample, current_sample.max(fixed_sample.saturating_add(1)))
+                            (
+                                fixed_sample,
+                                current_sample.max(fixed_sample.saturating_add(1)),
+                            )
                         };
                         return Some(
                             CanvasAction::publish(Message::SetPunchRange(Some((start, end))))

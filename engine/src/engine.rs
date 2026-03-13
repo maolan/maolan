@@ -287,7 +287,10 @@ impl Engine {
                 channels.insert((device.clone(), *channel));
                 events.push(HwMidiEvent {
                     device: device.clone(),
-                    event: MidiEvent::new(frame, vec![0x80 | (*channel).min(15), (*pitch).min(127), 64]),
+                    event: MidiEvent::new(
+                        frame,
+                        vec![0x80 | (*channel).min(15), (*pitch).min(127), 64],
+                    ),
                 });
             }
         }
@@ -1742,7 +1745,8 @@ impl Engine {
             note_off_events.extend(self.note_off_events_for_track(&track_name));
         }
         if !note_off_events.is_empty() {
-            self.pending_hw_midi_out_events_by_device.extend(note_off_events);
+            self.pending_hw_midi_out_events_by_device
+                .extend(note_off_events);
         }
     }
 
@@ -2483,7 +2487,8 @@ impl Engine {
                 error!("Error sending transport restart MIDI panic events {e}");
             }
         } else if !panic_events.is_empty() {
-            self.pending_hw_midi_out_events_by_device.extend(panic_events);
+            self.pending_hw_midi_out_events_by_device
+                .extend(panic_events);
         }
     }
 
@@ -3020,12 +3025,14 @@ impl Engine {
                 let panic_events = self.note_off_events_for_all_active_tracks();
                 if let Some(worker) = &self.hw_worker {
                     if !panic_events.is_empty() {
-                        if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await {
+                        if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
+                        {
                             error!("Error sending stop MIDI panic events {e}");
                         }
                     }
                 } else {
-                    self.pending_hw_midi_out_events_by_device.extend(panic_events);
+                    self.pending_hw_midi_out_events_by_device
+                        .extend(panic_events);
                 }
                 self.flush_recordings().await;
                 self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
@@ -4982,7 +4989,8 @@ impl Engine {
                     let from_hw_in_device = Self::midi_hw_in_device(from_track);
                     let to_hw_out_device = Self::midi_hw_out_device(to_track);
 
-                    if let (Some(from_device), Some(to_device)) = (from_hw_in_device, to_hw_out_device)
+                    if let (Some(from_device), Some(to_device)) =
+                        (from_hw_in_device, to_hw_out_device)
                     {
                         let before = self.midi_hw_thru_routes.len();
                         self.midi_hw_thru_routes.retain(|r| {
@@ -5322,45 +5330,44 @@ impl Engine {
                     }
                     self.track_meter_linear_by_track
                         .insert(track_name, output_linear);
-                        let all_finished = self.send_tracks().await;
-                        if all_finished {
-                            if self.transport_restart_pending {
-                                let state = self.state.lock();
-                                for track in state.tracks.values() {
-                                    track.lock().take_hw_midi_out_events();
-                                }
-                            } else if self.hw_worker.is_some() {
-                                self.active_hw_notes_cycle_start =
-                                    self.active_hw_notes_by_track.clone();
-                                let mut out_events = self.collect_hw_midi_output_events_by_device();
-                                if self.loop_enabled
-                                    && let Some((_, loop_end)) = self.loop_range_samples
-                                {
-                                    let cycle_end = self
-                                        .transport_sample
-                                        .saturating_add(self.current_cycle_samples());
-                                    if self.transport_sample < loop_end && cycle_end > loop_end {
-                                        let wrap_frame = loop_end
-                                            .saturating_sub(self.transport_sample)
-                                            .min(self.current_cycle_samples())
-                                            as u32;
-                                        out_events.extend(self.note_off_events_for_active_snapshot(
-                                            &self.active_hw_notes_cycle_start,
-                                            wrap_frame,
-                                        ));
-                                        out_events.sort_by(|a, b| {
-                                            a.event
-                                                .frame
-                                                .cmp(&b.event.frame)
-                                                .then_with(|| a.device.cmp(&b.device))
-                                        });
-                                    }
-                                }
-                                self.pending_hw_midi_out_events_by_device.extend(out_events);
-                            } else {
-                                self.pending_hw_midi_out_events =
-                                    self.collect_hw_midi_output_events();
+                    let all_finished = self.send_tracks().await;
+                    if all_finished {
+                        if self.transport_restart_pending {
+                            let state = self.state.lock();
+                            for track in state.tracks.values() {
+                                track.lock().take_hw_midi_out_events();
                             }
+                        } else if self.hw_worker.is_some() {
+                            self.active_hw_notes_cycle_start =
+                                self.active_hw_notes_by_track.clone();
+                            let mut out_events = self.collect_hw_midi_output_events_by_device();
+                            if self.loop_enabled
+                                && let Some((_, loop_end)) = self.loop_range_samples
+                            {
+                                let cycle_end = self
+                                    .transport_sample
+                                    .saturating_add(self.current_cycle_samples());
+                                if self.transport_sample < loop_end && cycle_end > loop_end {
+                                    let wrap_frame = loop_end
+                                        .saturating_sub(self.transport_sample)
+                                        .min(self.current_cycle_samples())
+                                        as u32;
+                                    out_events.extend(self.note_off_events_for_active_snapshot(
+                                        &self.active_hw_notes_cycle_start,
+                                        wrap_frame,
+                                    ));
+                                    out_events.sort_by(|a, b| {
+                                        a.event
+                                            .frame
+                                            .cmp(&b.event.frame)
+                                            .then_with(|| a.device.cmp(&b.device))
+                                    });
+                                }
+                            }
+                            self.pending_hw_midi_out_events_by_device.extend(out_events);
+                        } else {
+                            self.pending_hw_midi_out_events = self.collect_hw_midi_output_events();
+                        }
                         self.request_hw_cycle().await;
                     }
                 }
@@ -5509,18 +5516,18 @@ impl Engine {
                         } else if self.transport_restart_pending {
                             self.transport_restart_pending = false;
                         } else {
-                        let next = self
-                            .transport_sample
-                            .saturating_add(self.current_cycle_samples());
-                        let normalized = self.normalize_transport_sample(next);
-                        let wrapped = normalized != next;
-                        self.transport_sample = normalized;
-                        if wrapped {
-                            self.notify_clients(Ok(Action::TransportPosition(
-                                self.transport_sample,
-                            )))
-                            .await;
-                        }
+                            let next = self
+                                .transport_sample
+                                .saturating_add(self.current_cycle_samples());
+                            let normalized = self.normalize_transport_sample(next);
+                            let wrapped = normalized != next;
+                            self.transport_sample = normalized;
+                            if wrapped {
+                                self.notify_clients(Ok(Action::TransportPosition(
+                                    self.transport_sample,
+                                )))
+                                .await;
+                            }
                         }
                     }
                     if self.send_tracks().await && self.hw_worker.is_some() {
@@ -5597,8 +5604,10 @@ impl Engine {
                 let Some(track) = state.tracks.get(&route.from_track) else {
                     continue;
                 };
-                events_by_track
-                    .insert(route.from_track.clone(), track.lock().take_hw_midi_out_events());
+                events_by_track.insert(
+                    route.from_track.clone(),
+                    track.lock().take_hw_midi_out_events(),
+                );
             }
         }
 
@@ -5606,7 +5615,10 @@ impl Engine {
             let Some(track_events) = events_by_track.get(&route.from_track) else {
                 continue;
             };
-            for hw_event in track_events.iter().filter(|evt| evt.port == route.from_port) {
+            for hw_event in track_events
+                .iter()
+                .filter(|evt| evt.port == route.from_port)
+            {
                 self.update_active_hw_notes_for_track(
                     &route.from_track,
                     &route.device,

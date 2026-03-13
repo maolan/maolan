@@ -1258,7 +1258,9 @@ impl Maolan {
                     });
                 }
             }
-            Message::PianoDeleteControllers { ref controller_indices } => {
+            Message::PianoDeleteControllers {
+                ref controller_indices,
+            } => {
                 let mut state = self.state.blocking_write();
                 let mut selected_indices = controller_indices.clone();
                 selected_indices.sort_unstable();
@@ -4604,8 +4606,8 @@ impl Maolan {
                                         let min_end = clip.start as f32 + min_length_samples;
                                         let max_end = clip.start as f32 + max_length_samples;
                                         let updated_end = snapped_end.clamp(min_end, max_end);
-                                        clip.length =
-                                            updated_end.max(clip.start as f32) as usize - clip.start;
+                                        clip.length = updated_end.max(clip.start as f32) as usize
+                                            - clip.start;
                                     } else {
                                         let right_edge = initial_value + initial_length;
                                         let max_start = (right_edge - min_length_samples).max(0.0);
@@ -4641,8 +4643,8 @@ impl Maolan {
                                         let min_end = clip.start as f32 + min_length_samples;
                                         let max_end = clip.start as f32 + max_length_samples;
                                         let updated_end = snapped_end.clamp(min_end, max_end);
-                                        clip.length =
-                                            updated_end.max(clip.start as f32) as usize - clip.start;
+                                        clip.length = updated_end.max(clip.start as f32) as usize
+                                            - clip.start;
                                     } else {
                                         let right_edge = initial_value + initial_length;
                                         let max_start = (right_edge - min_length_samples).max(0.0);

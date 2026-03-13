@@ -16,8 +16,7 @@ use crate::{
 };
 use iced::{
     Background, Border, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme,
-    gradient,
-    mouse,
+    gradient, mouse,
     widget::{
         Id, Stack, button,
         canvas::{self, Action as CanvasAction, Frame, Geometry, Path, Program},
@@ -336,9 +335,7 @@ impl Piano {
         }
     }
 
-    fn populated_controller_ccs(
-        controllers: &[crate::state::PianoControllerPoint],
-    ) -> HashSet<u8> {
+    fn populated_controller_ccs(controllers: &[crate::state::PianoControllerPoint]) -> HashSet<u8> {
         controllers.iter().map(|ctrl| ctrl.controller).collect()
     }
 

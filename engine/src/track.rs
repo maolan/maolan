@@ -2667,7 +2667,10 @@ impl Track {
                 return Err(format!("Track MIDI output port {to_port} not found"));
             };
             let out = midi_out.lock();
-            let exists = out.connections.iter().any(|conn| Arc::ptr_eq(conn, &midi_in));
+            let exists = out
+                .connections
+                .iter()
+                .any(|conn| Arc::ptr_eq(conn, &midi_in));
             if !exists {
                 out.connect(midi_in);
             }
@@ -3113,9 +3116,7 @@ impl Track {
         for (lane, input) in self.midi.ins.iter().enumerate() {
             let input_lock = input.lock();
             let mut port_events = std::mem::take(&mut input_lock.buffer);
-            if should_filter
-                && let Some(Some(channel)) = self.midi_lane_channels.get(lane)
-            {
+            if should_filter && let Some(Some(channel)) = self.midi_lane_channels.get(lane) {
                 port_events.retain(|event| Self::event_matches_midi_channel(event, *channel));
             }
             self.record_tap_midi_in.extend(port_events.iter().cloned());
@@ -3282,15 +3283,11 @@ impl Track {
         self.pending_hw_midi_out_events.clear();
         for (port, out) in self.midi.outs.iter().enumerate() {
             self.pending_hw_midi_out_events.extend(
-                out
-                .lock()
-                .buffer
-                .iter()
-                .cloned()
-                .map(|event| HwMidiOutEvent {
-                    port,
-                    event,
-                }),
+                out.lock()
+                    .buffer
+                    .iter()
+                    .cloned()
+                    .map(|event| HwMidiOutEvent { port, event }),
             );
         }
     }
@@ -3573,10 +3570,11 @@ mod tests {
         let mut track = Track::new("t".to_string(), 0, 0, 1, 1, 8, 48_000.0);
         track.disk_monitor = true;
         track.clip_playback_enabled = true;
-        track
-            .midi
-            .clips
-            .push(crate::midi::clip::MIDIClip::new("clip.mid".to_string(), 0, 8));
+        track.midi.clips.push(crate::midi::clip::MIDIClip::new(
+            "clip.mid".to_string(),
+            0,
+            8,
+        ));
         track.midi_clip_cache.insert(
             "clip.mid".to_string(),
             Arc::new(vec![(0, vec![0x90, 60, 100])]),
@@ -3610,7 +3608,10 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].len(), 2);
-        assert_eq!(events[0][0], crate::midi::io::MidiEvent::new(1, vec![0x91, 61, 101]));
+        assert_eq!(
+            events[0][0],
+            crate::midi::io::MidiEvent::new(1, vec![0x91, 61, 101])
+        );
         assert_eq!(events[0][1], crate::midi::io::MidiEvent::new(2, vec![0xF8]));
         assert_eq!(track.record_tap_midi_in, events[0]);
     }

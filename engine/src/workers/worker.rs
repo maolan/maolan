@@ -298,7 +298,11 @@ impl Worker {
                         let process_epoch = track.process_epoch;
                         track.process();
                         track.audio.processing = false;
-                        (track.name.clone(), track.output_meter_linear(), process_epoch)
+                        (
+                            track.name.clone(),
+                            track.output_meter_linear(),
+                            process_epoch,
+                        )
                     };
                     match self
                         .tx
