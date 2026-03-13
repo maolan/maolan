@@ -293,11 +293,12 @@ impl Worker {
                     return;
                 }
                 Message::ProcessTrack(t) => {
-                    let (track_name, output_linear) = {
+                    let (track_name, output_linear, process_epoch) = {
                         let track = t.lock();
+                        let process_epoch = track.process_epoch;
                         track.process();
                         track.audio.processing = false;
-                        (track.name.clone(), track.output_meter_linear())
+                        (track.name.clone(), track.output_meter_linear(), process_epoch)
                     };
                     match self
                         .tx
@@ -305,6 +306,7 @@ impl Worker {
                             worker_id: self.id,
                             track_name,
                             output_linear,
+                            process_epoch,
                         })
                         .await
                     {

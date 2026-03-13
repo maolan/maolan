@@ -1509,6 +1509,17 @@ impl Maolan {
                         "'disk_monitor' is not boolean",
                     ));
                 }
+                if let Some(value) = track.get("midi_lane_channels")
+                    && let Ok(channels) = serde_json::from_value::<Vec<Option<u8>>>(value.clone())
+                {
+                    for (lane, channel) in channels.into_iter().enumerate() {
+                        restore_actions.push(Action::TrackSetMidiLaneChannel {
+                            track_name: name.clone(),
+                            lane,
+                            channel,
+                        });
+                    }
+                }
                 if track["frozen"].as_bool().unwrap_or(false) {
                     frozen_tracks.push(name.clone());
                 }

@@ -362,6 +362,11 @@ pub enum Action {
         track_name: String,
         master_track: Option<String>,
     },
+    TrackSetMidiLaneChannel {
+        track_name: String,
+        lane: usize,
+        channel: Option<u8>,
+    },
     TrackSetFrozen {
         track_name: String,
         frozen: bool,
@@ -722,6 +727,7 @@ pub enum Message {
         worker_id: usize,
         track_name: String,
         output_linear: Vec<f32>,
+        process_epoch: usize,
     },
     TracksFinished,
 
@@ -733,6 +739,7 @@ pub enum Message {
     Response(Result<Action, String>),
     HWMidiEvents(Vec<HwMidiEvent>),
     HWMidiOutEvents(Vec<HwMidiEvent>),
+    ClearHWMidiOutEvents,
     HWFinished,
     OfflineBounceFinished {
         result: Result<Action, String>,

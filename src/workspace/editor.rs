@@ -1161,8 +1161,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let take_idx = audio_take_idx.get(index).copied().unwrap_or(0);
         let take_slot_height = (lane_clip_height / take_count as f32).max(8.0);
         let lane_top = lane_top_base + take_idx as f32 * take_slot_height + 1.0;
-        let clip_width =
-            ((clip.length as f32 * pixels_per_sample) - CLIP_RESIZE_HANDLE_WIDTH * 2.0).max(12.0);
+        let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
         let clip_height = (take_slot_height - 2.0).max(8.0);
         let display_clip_label = trim_label_to_width(&clip_label, clip_width);
         let audio_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
@@ -1570,8 +1569,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let take_idx = midi_take_idx.get(index).copied().unwrap_or(0);
         let take_slot_height = (lane_clip_height / take_count as f32).max(8.0);
         let lane_top = lane_top_base + take_idx as f32 * take_slot_height + 1.0;
-        let clip_width =
-            ((clip.length as f32 * pixels_per_sample) - CLIP_RESIZE_HANDLE_WIDTH * 2.0).max(12.0);
+        let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
         let clip_height = (take_slot_height - 2.0).max(8.0);
         let display_clip_label = trim_label_to_width(&clip_label, clip_width);
         let midi_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
@@ -1975,9 +1973,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let Some(source_clip) = source_track.audio.clips.get(clip_index) else {
                             continue;
                         };
-                        let clip_width = ((source_clip.length as f32 * pixels_per_sample)
-                            - CLIP_RESIZE_HANDLE_WIDTH * 2.0)
-                            .max(12.0);
+                        let clip_width =
+                            (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let clip_height = lane_clip_height;
                         // All audio clips are displayed on lane 0 (single audio lane)
                         let lane = 0;
@@ -2065,9 +2062,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let Some(source_clip) = source_track.midi.clips.get(clip_index) else {
                             continue;
                         };
-                        let clip_width = ((source_clip.length as f32 * pixels_per_sample)
-                            - CLIP_RESIZE_HANDLE_WIDTH * 2.0)
-                            .max(12.0);
+                        let clip_width =
+                            (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let lane = source_clip
                             .input_channel
                             .min(track.midi.ins.saturating_sub(1));

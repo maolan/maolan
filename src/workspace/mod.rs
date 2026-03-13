@@ -6,6 +6,7 @@ mod tracks;
 
 use crate::{
     consts::{
+        state_ids::METRONOME_TRACK_ID,
         widget_piano::{
             KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, RIGHT_SCROLL_GUTTER_WIDTH, TOOLS_STRIP_WIDTH,
         },
@@ -181,6 +182,7 @@ impl Workspace {
                 state
                     .tracks
                     .iter()
+                    .filter(|track| track.name != METRONOME_TRACK_ID)
                     .map(|track| track.height)
                     .sum::<f32>()
                     .max(1.0),
@@ -291,7 +293,7 @@ impl Workspace {
             ))
             .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
             .width(tracks_width)
-            .height(Length::Fixed(tracks_total_height));
+            .height(Length::Fill);
 
         let shared_workspace = row![
             column![
@@ -349,7 +351,7 @@ impl Workspace {
                     }),
                 container("")
                     .width(Length::Fixed(3.0))
-                    .height(Length::Fixed(tracks_total_height))
+                    .height(Length::Fill)
                     .style(move |_theme| container::Style {
                         background: Some(Background::Color(Color {
                             r: 0.7,

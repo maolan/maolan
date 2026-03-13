@@ -201,6 +201,57 @@ impl fmt::Display for PianoControllerLane {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MidiLaneChannelSelection {
+    Omni,
+    Channel(u8),
+}
+
+impl MidiLaneChannelSelection {
+    pub const ALL: [Self; 17] = [
+        Self::Omni,
+        Self::Channel(0),
+        Self::Channel(1),
+        Self::Channel(2),
+        Self::Channel(3),
+        Self::Channel(4),
+        Self::Channel(5),
+        Self::Channel(6),
+        Self::Channel(7),
+        Self::Channel(8),
+        Self::Channel(9),
+        Self::Channel(10),
+        Self::Channel(11),
+        Self::Channel(12),
+        Self::Channel(13),
+        Self::Channel(14),
+        Self::Channel(15),
+    ];
+
+    pub fn from_engine(channel: Option<u8>) -> Self {
+        match channel {
+            Some(channel) => Self::Channel(channel.min(15)),
+            None => Self::Omni,
+        }
+    }
+
+    pub fn to_engine(self) -> Option<u8> {
+        match self {
+            Self::Omni => None,
+            Self::Channel(channel) => Some(channel.min(15)),
+        }
+    }
+}
+
+impl fmt::Display for MidiLaneChannelSelection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Omni => write!(f, "Omni"),
+            Self::Channel(channel) => write!(f, "Ch {}", channel + 1),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PianoVelocityKind {
     NoteVelocity,
     ReleaseVelocity,
@@ -783,6 +834,11 @@ pub enum Message {
     },
     PianoControllerLaneSelected(PianoControllerLane),
     PianoControllerKindSelected(u8),
+    TrackMidiLaneChannelSelected {
+        track_name: String,
+        lane: usize,
+        channel: MidiLaneChannelSelection,
+    },
     PianoVelocityKindSelected(PianoVelocityKind),
     PianoRpnKindSelected(PianoRpnKind),
     PianoNrpnKindSelected(PianoNrpnKind),

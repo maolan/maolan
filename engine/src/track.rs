@@ -53,6 +53,12 @@ struct AudioClipBuffer {
     samples: Vec<f32>,
 }
 
+#[derive(Debug, Clone)]
+pub struct HwMidiOutEvent {
+    pub port: usize,
+    pub event: MidiEvent,
+}
+
 #[derive(Debug)]
 pub struct Track {
     pub name: String,
@@ -72,6 +78,7 @@ pub struct Track {
     pub midi_learn_disk_monitor: Option<crate::message::MidiLearnBinding>,
     pub vca_master: Option<String>,
     pub frozen: bool,
+    pub midi_lane_channels: Vec<Option<u8>>,
     primary_audio_ins: usize,
     primary_audio_outs: usize,
     pub audio: AudioTrack,
@@ -82,14 +89,16 @@ pub struct Track {
     pub clap_plugins: Vec<ClapInstance>,
     #[cfg(unix)]
     pub plugin_midi_connections: Vec<PluginGraphConnection>,
-    pub pending_hw_midi_out_events: Vec<MidiEvent>,
+    pub pending_hw_midi_out_events: Vec<HwMidiOutEvent>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub next_lv2_instance_id: usize,
     pub next_vst3_instance_id: usize,
     pub next_clap_instance_id: usize,
     pub next_plugin_instance_id: usize,
     pub sample_rate: f64,
+    process_block_size: usize,
     pub output_enabled: bool,
+    pub process_epoch: usize,
     pub transport_sample: usize,
     pub loop_enabled: bool,
     pub loop_range_samples: Option<(usize, usize)>,
@@ -146,6 +155,7 @@ impl Track {
             midi_learn_disk_monitor: None,
             vca_master: None,
             frozen: false,
+            midi_lane_channels: vec![None; midi_ins],
             primary_audio_ins: audio_ins,
             primary_audio_outs: audio_outs,
             audio: AudioTrack::new(audio_ins, audio_outs, buffer_size),
@@ -163,7 +173,9 @@ impl Track {
             next_clap_instance_id: 0,
             next_plugin_instance_id: 0,
             sample_rate,
+            process_block_size: buffer_size.max(1),
             output_enabled: true,
+            process_epoch: 0,
             transport_sample: 0,
             loop_enabled: false,
             loop_range_samples: None,
@@ -456,7 +468,7 @@ impl Track {
                     .first()
                     .map(|audio_out| audio_out.buffer.lock().len())
             })
-            .unwrap_or(0);
+            .unwrap_or(self.process_block_size);
         if let Some(source) = self.ensure_metronome_source(frames) {
             self.synthesize_metronome_into(&source, frames);
         }
@@ -777,8 +789,8 @@ impl Track {
                 self.route_clap_midi_to_track_outputs(&last_clap_output);
             }
         }
-        self.dispatch_track_output_midi_to_connected_inputs();
         self.collect_hw_midi_output_events();
+        self.dispatch_track_output_midi_to_connected_inputs();
         self.clear_local_midi_inputs();
         let linear_gain = 10.0_f32.powf(self.level / 20.0);
         let (left_balance, right_balance) = if self.audio.outs.len() == 2 {
@@ -1001,6 +1013,12 @@ impl Track {
     }
     pub fn set_record_tap_enabled(&mut self, enabled: bool) {
         self.record_tap_enabled = enabled;
+    }
+
+    pub fn set_midi_lane_channel(&mut self, lane: usize, channel: Option<u8>) {
+        if let Some(slot) = self.midi_lane_channels.get_mut(lane) {
+            *slot = channel.map(|channel| channel.min(15));
+        }
     }
     pub fn mute(&mut self) {
         self.muted = !self.muted;
@@ -2457,7 +2475,7 @@ impl Track {
             .first()
             .map(|io| io.buffer.lock().len())
             .or_else(|| self.audio.outs.first().map(|io| io.buffer.lock().len()))
-            .unwrap_or(0)
+            .unwrap_or(self.process_block_size)
     }
 
     pub fn add_audio_input(&mut self) -> Result<(), String> {
@@ -2719,6 +2737,23 @@ impl Track {
         if from_node == to_node && from_port == to_port {
             return Err("Cannot connect a MIDI port to itself".to_string());
         }
+        if matches!(from_node, PluginGraphNode::TrackInput)
+            && matches!(to_node, PluginGraphNode::TrackOutput)
+        {
+            let Some(midi_in) = self.midi.ins.get(from_port).cloned() else {
+                return Err(format!("Track MIDI input port {from_port} not found"));
+            };
+            let Some(midi_out) = self.midi.outs.get(to_port).cloned() else {
+                return Err(format!("Track MIDI output port {to_port} not found"));
+            };
+            let out = midi_out.lock();
+            let exists = out.connections.iter().any(|conn| Arc::ptr_eq(conn, &midi_in));
+            if !exists {
+                out.connect(midi_in);
+            }
+            self.invalidate_midi_route_cache();
+            return Ok(());
+        }
         if routing::would_create_cycle(&from_node, &to_node, |node| {
             self.plugin_connected_neighbors(Kind::MIDI, node)
         }) {
@@ -2746,6 +2781,19 @@ impl Track {
         to_node: PluginGraphNode,
         to_port: usize,
     ) -> Result<(), String> {
+        if matches!(from_node, PluginGraphNode::TrackInput)
+            && matches!(to_node, PluginGraphNode::TrackOutput)
+        {
+            let Some(midi_in) = self.midi.ins.get(from_port).cloned() else {
+                return Err(format!("Track MIDI input port {from_port} not found"));
+            };
+            let Some(midi_out) = self.midi.outs.get(to_port).cloned() else {
+                return Err(format!("Track MIDI output port {to_port} not found"));
+            };
+            midi_out.lock().disconnect(&midi_in)?;
+            self.invalidate_midi_route_cache();
+            return Ok(());
+        }
         let before = self.plugin_midi_connections.len();
         self.plugin_midi_connections.retain(|c| {
             !(c.kind == Kind::MIDI
@@ -3141,14 +3189,30 @@ impl Track {
     fn collect_track_input_midi_events(&mut self) -> Vec<Vec<MidiEvent>> {
         let mut events: Vec<Vec<MidiEvent>> = Vec::with_capacity(self.midi.ins.len());
         self.record_tap_midi_in.clear();
-        for input in &self.midi.ins {
+        let should_filter = self.input_monitor || self.record_tap_enabled;
+        for (lane, input) in self.midi.ins.iter().enumerate() {
             let input_lock = input.lock();
-            let port_events = std::mem::take(&mut input_lock.buffer);
+            let mut port_events = std::mem::take(&mut input_lock.buffer);
+            if should_filter
+                && let Some(Some(channel)) = self.midi_lane_channels.get(lane)
+            {
+                port_events.retain(|event| Self::event_matches_midi_channel(event, *channel));
+            }
             self.record_tap_midi_in.extend(port_events.iter().cloned());
             events.push(port_events);
         }
         self.record_tap_midi_in.sort_by_key(|e| e.frame);
         events
+    }
+
+    fn event_matches_midi_channel(event: &MidiEvent, channel: u8) -> bool {
+        let Some(status) = event.data.first().copied() else {
+            return true;
+        };
+        if !(0x80..=0xEF).contains(&status) {
+            return true;
+        }
+        (status & 0x0F) == channel.min(15)
     }
 
     fn route_track_inputs_to_track_outputs(&mut self, input_events: &[Vec<MidiEvent>]) {
@@ -3296,20 +3360,29 @@ impl Track {
 
     fn collect_hw_midi_output_events(&mut self) {
         self.pending_hw_midi_out_events.clear();
-        for out in &self.midi.outs {
-            self.pending_hw_midi_out_events
-                .extend(out.lock().buffer.iter().cloned());
+        for (port, out) in self.midi.outs.iter().enumerate() {
+            self.pending_hw_midi_out_events.extend(
+                out
+                .lock()
+                .buffer
+                .iter()
+                .cloned()
+                .map(|event| HwMidiOutEvent {
+                    port,
+                    event,
+                }),
+            );
         }
     }
 
-    pub fn take_hw_midi_out_events(&mut self) -> Vec<MidiEvent> {
+    pub fn take_hw_midi_out_events(&mut self) -> Vec<HwMidiOutEvent> {
         std::mem::take(&mut self.pending_hw_midi_out_events)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioClipBuffer, Track};
+    use super::{AudioClipBuffer, HwMidiOutEvent, Track};
     use crate::audio::clip::AudioClip;
     use crate::audio::io::AudioIO;
     #[cfg(unix)]
@@ -3555,9 +3628,10 @@ mod tests {
         track.loop_enabled = true;
         track.loop_range_samples = Some((32, 64));
         track.armed = true;
-        track
-            .pending_hw_midi_out_events
-            .push(crate::midi::io::MidiEvent::new(0, vec![0x90, 60, 100]));
+        track.pending_hw_midi_out_events.push(HwMidiOutEvent {
+            port: 0,
+            event: crate::midi::io::MidiEvent::new(0, vec![0x90, 60, 100]),
+        });
 
         let (channels, rendered) = track.offline_bounce_interleaved(0, 4);
         assert_eq!(channels, 1);
@@ -3572,5 +3646,71 @@ mod tests {
         assert_eq!(track.loop_range_samples, Some((32, 64)));
         assert!(track.armed);
         assert_eq!(track.pending_hw_midi_out_events.len(), 1);
+    }
+
+    #[test]
+    fn midi_only_track_clip_playback_generates_hw_midi_events() {
+        let mut track = Track::new("t".to_string(), 0, 0, 1, 1, 8, 48_000.0);
+        track.disk_monitor = true;
+        track.clip_playback_enabled = true;
+        track
+            .midi
+            .clips
+            .push(crate::midi::clip::MIDIClip::new("clip.mid".to_string(), 0, 8));
+        track.midi_clip_cache.insert(
+            "clip.mid".to_string(),
+            Arc::new(vec![(0, vec![0x90, 60, 100])]),
+        );
+
+        track.process();
+
+        assert_eq!(track.pending_hw_midi_out_events.len(), 1);
+        assert_eq!(track.pending_hw_midi_out_events[0].port, 0);
+        assert_eq!(
+            track.pending_hw_midi_out_events[0].event,
+            crate::midi::io::MidiEvent::new(0, vec![0x90, 60, 100])
+        );
+    }
+
+    #[test]
+    fn midi_lane_channel_filters_monitored_input() {
+        let mut track = Track::new("t".to_string(), 0, 0, 1, 1, 8, 48_000.0);
+        track.input_monitor = true;
+        track.set_midi_lane_channel(0, Some(1));
+        track.push_hw_midi_events_to_port(
+            0,
+            &[
+                crate::midi::io::MidiEvent::new(0, vec![0x90, 60, 100]),
+                crate::midi::io::MidiEvent::new(1, vec![0x91, 61, 101]),
+                crate::midi::io::MidiEvent::new(2, vec![0xF8]),
+            ],
+        );
+
+        let events = track.collect_track_input_midi_events();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].len(), 2);
+        assert_eq!(events[0][0], crate::midi::io::MidiEvent::new(1, vec![0x91, 61, 101]));
+        assert_eq!(events[0][1], crate::midi::io::MidiEvent::new(2, vec![0xF8]));
+        assert_eq!(track.record_tap_midi_in, events[0]);
+    }
+
+    #[test]
+    fn midi_lane_channel_omni_does_not_filter_input() {
+        let mut track = Track::new("t".to_string(), 0, 0, 1, 1, 8, 48_000.0);
+        track.input_monitor = true;
+        track.set_midi_lane_channel(0, None);
+        track.push_hw_midi_events_to_port(
+            0,
+            &[
+                crate::midi::io::MidiEvent::new(0, vec![0x90, 60, 100]),
+                crate::midi::io::MidiEvent::new(1, vec![0x91, 61, 101]),
+            ],
+        );
+
+        let events = track.collect_track_input_midi_events();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].len(), 2);
     }
 }

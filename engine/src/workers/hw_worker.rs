@@ -306,6 +306,10 @@ impl<B: Backend> HwWorker<B> {
                         self.pending_midi_out_events.append(&mut events);
                         self.pending_midi_out_sorted = false;
                     }
+                    Message::ClearHWMidiOutEvents => {
+                        self.pending_midi_out_events.clear();
+                        self.pending_midi_out_sorted = true;
+                    }
                     _ => {}
                 },
                 None => {

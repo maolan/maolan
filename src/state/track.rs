@@ -108,6 +108,8 @@ pub struct Track {
     pub audio: AudioData,
     pub midi: MIDIData,
     #[serde(default)]
+    pub midi_lane_channels: Vec<Option<u8>>,
+    #[serde(default)]
     pub frozen_audio_backup: Vec<AudioClip>,
     #[serde(default)]
     pub frozen_midi_backup: Vec<MIDIClip>,
@@ -156,6 +158,7 @@ impl Track {
             frozen: false,
             audio: AudioData::new(audio_ins, audio_outs),
             midi: MIDIData::new(midi_ins, midi_outs),
+            midi_lane_channels: vec![None; midi_ins],
             primary_audio_ins: audio_ins,
             primary_audio_outs: audio_outs,
             frozen_audio_backup: vec![],

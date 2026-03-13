@@ -15,7 +15,8 @@ use crate::{
     state::State,
 };
 use iced::{
-    Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, gradient,
+    Background, Border, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme,
+    gradient,
     mouse,
     widget::{
         Id, Stack, button,
@@ -333,6 +334,84 @@ impl Piano {
                 out
             }
         }
+    }
+
+    fn populated_controller_ccs(
+        controllers: &[crate::state::PianoControllerPoint],
+    ) -> HashSet<u8> {
+        controllers.iter().map(|ctrl| ctrl.controller).collect()
+    }
+
+    fn populated_controller_rows(
+        lane: PianoControllerLane,
+        controllers: &[crate::state::PianoControllerPoint],
+    ) -> HashSet<usize> {
+        Self::lane_controller_events(lane, controllers)
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect()
+    }
+
+    fn populated_menu_item(
+        label: impl Into<String>,
+        message: Message,
+        populated: bool,
+    ) -> Element<'static, Message> {
+        let label = label.into();
+        button(
+            text(label)
+                .width(Length::Fill)
+                .style(move |_theme| iced::widget::text::Style {
+                    color: Some(if populated {
+                        Color::from_rgb(0.60, 0.88, 0.45)
+                    } else {
+                        Color::from_rgb(0.86, 0.86, 0.9)
+                    }),
+                }),
+        )
+        .padding([4, 8])
+        .width(Length::Fill)
+        .style(move |_theme, status| {
+            use iced::widget::button::{Status, Style};
+
+            let background = match status {
+                Status::Hovered => {
+                    if populated {
+                        Color::from_rgba(0.16, 0.34, 0.16, 1.0)
+                    } else {
+                        Color::from_rgba(0.22, 0.23, 0.26, 1.0)
+                    }
+                }
+                Status::Pressed => {
+                    if populated {
+                        Color::from_rgba(0.20, 0.42, 0.18, 1.0)
+                    } else {
+                        Color::from_rgba(0.30, 0.31, 0.35, 1.0)
+                    }
+                }
+                Status::Disabled => Color::from_rgba(0.18, 0.18, 0.20, 0.7),
+                Status::Active => {
+                    if populated {
+                        Color::from_rgba(0.12, 0.26, 0.12, 0.95)
+                    } else {
+                        Color::TRANSPARENT
+                    }
+                }
+            };
+
+            Style {
+                background: Some(Background::Color(background)),
+                text_color: if populated {
+                    Color::from_rgb(0.60, 0.88, 0.45)
+                } else {
+                    Color::from_rgb(0.86, 0.86, 0.9)
+                },
+                border: Border::default().rounded(6.0),
+                ..Style::default()
+            }
+        })
+        .on_press(message)
+        .into()
     }
 
     pub fn view(&self, pixels_per_sample: f32, samples_per_bar: f32) -> Element<'_, Message> {
@@ -714,6 +793,11 @@ impl Piano {
         let piano_note_keys = keyboard
             .width(Length::Fixed(KEYBOARD_WIDTH))
             .height(Length::Fill);
+        let populated_ccs = Self::populated_controller_ccs(&roll.controllers);
+        let populated_rpn_rows =
+            Self::populated_controller_rows(PianoControllerLane::Rpn, &roll.controllers);
+        let populated_nrpn_rows =
+            Self::populated_controller_rows(PianoControllerLane::Nrpn, &roll.controllers);
         let controller_picker = pick_list(
             vec![
                 PianoControllerLane::Controller,
@@ -732,9 +816,10 @@ impl Piano {
                 let cc_menu = IcedMenu::new(
                     (0u8..=127)
                         .map(|cc| {
-                            Item::new(menu_item(
+                            Item::new(Self::populated_menu_item(
                                 ControllerKindOption(cc).to_string(),
                                 Message::PianoControllerKindSelected(cc),
+                                populated_ccs.contains(&cc),
                             ))
                         })
                         .collect::<Vec<_>>(),
@@ -787,10 +872,12 @@ impl Piano {
                     PIANO_RPN_KIND_ALL
                         .iter()
                         .copied()
-                        .map(|kind| {
-                            Item::new(menu_item(
+                        .enumerate()
+                        .map(|(row, kind)| {
+                            Item::new(Self::populated_menu_item(
                                 kind.to_string(),
                                 Message::PianoRpnKindSelected(kind),
+                                populated_rpn_rows.contains(&row),
                             ))
                         })
                         .collect::<Vec<_>>(),
@@ -815,10 +902,12 @@ impl Piano {
                     PIANO_NRPN_KIND_ALL
                         .iter()
                         .copied()
-                        .map(|kind| {
-                            Item::new(menu_item(
+                        .enumerate()
+                        .map(|(row, kind)| {
+                            Item::new(Self::populated_menu_item(
                                 kind.to_string(),
                                 Message::PianoNrpnKindSelected(kind),
+                                populated_nrpn_rows.contains(&row),
                             ))
                         })
                         .collect::<Vec<_>>(),

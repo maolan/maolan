@@ -129,6 +129,27 @@ impl Maolan {
                 }
                 true
             }
+            Action::TrackSetMidiLaneChannel {
+                track_name,
+                lane,
+                channel,
+            } => {
+                if let Some(track) = self
+                    .state
+                    .blocking_write()
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.name == *track_name)
+                {
+                    if track.midi_lane_channels.len() < track.midi.ins {
+                        track.midi_lane_channels.resize(track.midi.ins, None);
+                    }
+                    if let Some(slot) = track.midi_lane_channels.get_mut(*lane) {
+                        *slot = *channel;
+                    }
+                }
+                true
+            }
             Action::TrackAddAudioInput(name) => {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {

@@ -474,12 +474,8 @@ impl Maolan {
 
         let mut tasks = Vec::new();
         for ((track_name, clip_idx), clip_name) in live {
-            if self
-                .midi_clip_previews
-                .contains_key(&(track_name.clone(), clip_idx))
-            {
-                continue;
-            }
+            self.midi_clip_previews
+                .remove(&(track_name.clone(), clip_idx));
             let pending_key = (track_name.clone(), clip_idx, clip_name.clone());
             if !self.pending_midi_clip_previews.insert(pending_key) {
                 continue;

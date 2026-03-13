@@ -96,6 +96,12 @@ struct MidiHwOutRoute {
     device: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct MidiHwThruRoute {
+    from_device: String,
+    to_device: String,
+}
+
 struct OfflineBounceJob {
     track_name: String,
     cancel: Arc<AtomicBool>,
@@ -124,9 +130,14 @@ pub struct Engine {
     pending_hw_midi_out_events_by_device: Vec<HwMidiEvent>,
     midi_hw_in_routes: Vec<MidiHwInRoute>,
     midi_hw_out_routes: Vec<MidiHwOutRoute>,
+    midi_hw_thru_routes: Vec<MidiHwThruRoute>,
     ready_workers: Vec<usize>,
     pending_requests: VecDeque<Action>,
     awaiting_hwfinished: bool,
+    handling_hwfinished: bool,
+    track_process_epoch: usize,
+    transport_panic_flush_pending: bool,
+    transport_restart_pending: bool,
     transport_sample: usize,
     loop_enabled: bool,
     loop_range_samples: Option<(usize, usize)>,
@@ -179,6 +190,10 @@ type MidiEditParseResult = (
 impl Engine {
     const METRONOME_TRACK: &'static str = "metronome";
     const METRONOME_DEFAULT_LEVEL_DB: f32 = -10.0;
+    const MIDI_CC_SUSTAIN_PEDAL: u8 = 64;
+    const MIDI_CC_ALL_SOUND_OFF: u8 = 120;
+    const MIDI_CC_RESET_ALL_CONTROLLERS: u8 = 121;
+    const MIDI_CC_ALL_NOTES_OFF: u8 = 123;
 
     fn meter_linear_to_db(peak: f32) -> f32 {
         if peak <= 1.0e-6 {
@@ -186,6 +201,52 @@ impl Engine {
         } else {
             (20.0 * peak.log10()).clamp(-90.0, 20.0)
         }
+    }
+
+    fn collect_routed_hw_midi_output_devices(&self) -> Vec<String> {
+        let mut devices = std::collections::HashSet::<String>::new();
+        for route in &self.midi_hw_out_routes {
+            devices.insert(route.device.clone());
+        }
+        for route in &self.midi_hw_thru_routes {
+            devices.insert(route.to_device.clone());
+        }
+        let mut out: Vec<_> = devices.into_iter().collect();
+        out.sort();
+        out
+    }
+
+    fn all_notes_off_events_for_devices(&self) -> Vec<HwMidiEvent> {
+        let devices = self.collect_routed_hw_midi_output_devices();
+        let mut events = Vec::with_capacity(devices.len() * 16 * 4);
+        for device in devices {
+            for channel in 0_u8..16 {
+                let status = 0xB0 | channel;
+                for controller in [
+                    Self::MIDI_CC_SUSTAIN_PEDAL,
+                    Self::MIDI_CC_ALL_SOUND_OFF,
+                    Self::MIDI_CC_RESET_ALL_CONTROLLERS,
+                    Self::MIDI_CC_ALL_NOTES_OFF,
+                ] {
+                    events.push(HwMidiEvent {
+                        device: device.clone(),
+                        event: MidiEvent::new(
+                            0,
+                            vec![
+                                status,
+                                controller,
+                                if controller == Self::MIDI_CC_SUSTAIN_PEDAL {
+                                    0
+                                } else {
+                                    0
+                                },
+                            ],
+                        ),
+                    });
+                }
+            }
+        }
+        events
     }
 
     fn parse_midi_clip_for_edit(
@@ -661,9 +722,14 @@ impl Engine {
             pending_hw_midi_out_events_by_device: vec![],
             midi_hw_in_routes: vec![],
             midi_hw_out_routes: vec![],
+            midi_hw_thru_routes: vec![],
             ready_workers: vec![],
             pending_requests: VecDeque::new(),
             awaiting_hwfinished: false,
+            handling_hwfinished: false,
+            track_process_epoch: 0,
+            transport_panic_flush_pending: false,
+            transport_restart_pending: false,
             transport_sample: 0,
             loop_enabled: false,
             loop_range_samples: None,
@@ -2321,6 +2387,46 @@ impl Engine {
         }
     }
 
+    async fn clear_hw_midi_output_state(&mut self, send_panic: bool) {
+        self.pending_hw_midi_out_events.clear();
+        self.pending_hw_midi_out_events_by_device.clear();
+        {
+            let state = self.state.lock();
+            for track in state.tracks.values() {
+                track.lock().take_hw_midi_out_events();
+            }
+        }
+
+        let panic_events = if send_panic {
+            self.all_notes_off_events_for_devices()
+        } else {
+            vec![]
+        };
+
+        if let Some(worker) = &self.hw_worker {
+            if let Err(e) = worker.tx.send(Message::ClearHWMidiOutEvents).await {
+                error!("Error clearing pending HWMidiOutEvents {e}");
+            }
+            if !panic_events.is_empty()
+                && let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
+            {
+                error!("Error sending transport restart MIDI panic events {e}");
+            }
+        } else if !panic_events.is_empty() {
+            self.pending_hw_midi_out_events_by_device.extend(panic_events);
+        }
+    }
+
+    fn invalidate_track_cycle_state(&mut self) {
+        self.track_process_epoch = self.track_process_epoch.saturating_add(1);
+        let state = self.state.lock();
+        for track in state.tracks.values() {
+            let t = track.lock();
+            t.audio.finished = false;
+            t.audio.processing = false;
+        }
+    }
+
     fn should_publish_hw_out_meters(&mut self) -> bool {
         let now = Instant::now();
         match self.last_hw_out_meter_publish {
@@ -2532,6 +2638,7 @@ impl Engine {
                 t.set_transport_sample(self.transport_sample);
                 t.set_loop_config(self.loop_enabled, self.loop_range_samples);
                 t.set_transport_timing(self.tempo_bpm, self.tsig_num, self.tsig_denom);
+                t.process_epoch = self.track_process_epoch;
                 // Avoid continuously mixing clip audio/MIDI while transport is stopped.
                 t.set_clip_playback_enabled(self.clip_playback_enabled && self.playing);
                 // Tap buffers are only needed while actively recording.
@@ -2817,16 +2924,38 @@ impl Engine {
         match action_to_process {
             Action::Play => {
                 self.playing = true;
+                self.transport_restart_pending = true;
+                self.invalidate_track_cycle_state();
                 if let Some(driver) = self.hw_driver.as_mut() {
                     driver.lock().set_playing(true);
                 }
                 self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
                     .await;
+                if !self.awaiting_hwfinished
+                    && !self.handling_hwfinished
+                    && self.send_tracks().await
+                    && self.hw_worker.is_some()
+                {
+                    self.transport_restart_pending = false;
+                    self.request_hw_cycle().await;
+                }
             }
             Action::Stop => {
                 self.playing = false;
+                self.transport_panic_flush_pending = false;
+                self.transport_restart_pending = false;
                 if let Some(driver) = self.hw_driver.as_mut() {
                     driver.lock().set_playing(false);
+                }
+                let panic_events = self.all_notes_off_events_for_devices();
+                if let Some(worker) = &self.hw_worker {
+                    if !panic_events.is_empty() {
+                        if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await {
+                            error!("Error sending stop MIDI panic events {e}");
+                        }
+                    }
+                } else {
+                    self.pending_hw_midi_out_events_by_device.extend(panic_events);
                 }
                 self.flush_recordings().await;
                 self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
@@ -2840,6 +2969,20 @@ impl Engine {
             }
             Action::TransportPosition(sample) => {
                 self.transport_sample = self.normalize_transport_sample(sample);
+                if self.playing {
+                    self.transport_restart_pending = true;
+                    self.invalidate_track_cycle_state();
+                    self.transport_panic_flush_pending = self.hw_worker.is_some();
+                    self.clear_hw_midi_output_state(true).await;
+                    if !self.awaiting_hwfinished && !self.handling_hwfinished {
+                        if self.hw_worker.is_some() {
+                            self.request_hw_cycle().await;
+                        } else if self.send_tracks().await {
+                            self.transport_restart_pending = false;
+                            self.request_hw_cycle().await;
+                        }
+                    }
+                }
             }
             Action::SetLoopEnabled(enabled) => {
                 self.loop_enabled = enabled && self.loop_range_samples.is_some();
@@ -3438,6 +3581,20 @@ impl Engine {
                     }
                 }
                 track.lock().set_vca_master(master_track.clone());
+            }
+            Action::TrackSetMidiLaneChannel {
+                ref track_name,
+                lane,
+                channel,
+            } => {
+                let track = match self.track_handle_or_err(track_name) {
+                    Ok(track) => track,
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                        return;
+                    }
+                };
+                track.lock().set_midi_lane_channel(lane, channel);
             }
             Action::TrackSetFrozen {
                 ref track_name,
@@ -4610,7 +4767,17 @@ impl Engine {
                         let from_track_handle = state.tracks.get(from_track);
                         let to_track_handle = state.tracks.get(to_track);
 
-                        if let Some(device) = from_hw_in_device {
+                        if let (Some(from_device), Some(to_device)) =
+                            (from_hw_in_device, to_hw_out_device)
+                        {
+                            let route = MidiHwThruRoute {
+                                from_device: from_device.to_string(),
+                                to_device: to_device.to_string(),
+                            };
+                            if !self.midi_hw_thru_routes.iter().any(|r| r == &route) {
+                                self.midi_hw_thru_routes.push(route);
+                            }
+                        } else if let Some(device) = from_hw_in_device {
                             if let Some(t_t) = to_track_handle {
                                 if t_t.lock().midi.ins.get(to_port).is_none() {
                                     self.notify_clients(Err(format!(
@@ -4744,6 +4911,24 @@ impl Engine {
                 } else if kind == Kind::MIDI {
                     let from_hw_in_device = Self::midi_hw_in_device(from_track);
                     let to_hw_out_device = Self::midi_hw_out_device(to_track);
+
+                    if let (Some(from_device), Some(to_device)) = (from_hw_in_device, to_hw_out_device)
+                    {
+                        let before = self.midi_hw_thru_routes.len();
+                        self.midi_hw_thru_routes.retain(|r| {
+                            !(r.from_device == from_device && r.to_device == to_device)
+                        });
+                        if self.midi_hw_thru_routes.len() < before {
+                            self.notify_clients(Ok(a.clone())).await;
+                        } else {
+                            self.notify_clients(Err(format!(
+                                "Disconnect failed: MIDI route not found ({} -> {})",
+                                from_track, to_track
+                            )))
+                            .await;
+                        }
+                        return;
+                    }
 
                     if let Some(device) = from_hw_in_device {
                         let before = self.midi_hw_in_routes.len();
@@ -5054,18 +5239,33 @@ impl Engine {
                     worker_id,
                     track_name,
                     output_linear,
+                    process_epoch,
                 } => {
                     self.ready_workers.push(worker_id);
+                    if process_epoch != self.track_process_epoch {
+                        if let Some(track) = self.state.lock().tracks.get(&track_name).cloned() {
+                            let t = track.lock();
+                            t.audio.finished = false;
+                            t.audio.processing = false;
+                        }
+                        continue;
+                    }
                     self.track_meter_linear_by_track
                         .insert(track_name, output_linear);
-                    let all_finished = self.send_tracks().await;
-                    if all_finished {
-                        if self.hw_worker.is_some() {
-                            self.pending_hw_midi_out_events_by_device =
-                                self.collect_hw_midi_output_events_by_device();
-                        } else {
-                            self.pending_hw_midi_out_events = self.collect_hw_midi_output_events();
-                        }
+                        let all_finished = self.send_tracks().await;
+                        if all_finished {
+                            if self.transport_restart_pending {
+                                let state = self.state.lock();
+                                for track in state.tracks.values() {
+                                    track.lock().take_hw_midi_out_events();
+                                }
+                            } else if self.hw_worker.is_some() {
+                                let out_events = self.collect_hw_midi_output_events_by_device();
+                                self.pending_hw_midi_out_events_by_device.extend(out_events);
+                            } else {
+                                self.pending_hw_midi_out_events =
+                                    self.collect_hw_midi_output_events();
+                            }
                         self.request_hw_cycle().await;
                     }
                 }
@@ -5150,6 +5350,7 @@ impl Engine {
                     if !self.awaiting_hwfinished {
                         continue;
                     }
+                    self.handling_hwfinished = true;
                     self.awaiting_hwfinished = false;
                     #[cfg(unix)]
                     {
@@ -5208,6 +5409,11 @@ impl Engine {
                     self.pending_hw_midi_events.clear();
                     self.pending_hw_midi_events_by_device.clear();
                     if self.playing {
+                        if self.transport_panic_flush_pending {
+                            self.transport_panic_flush_pending = false;
+                        } else if self.transport_restart_pending {
+                            self.transport_restart_pending = false;
+                        } else {
                         let next = self
                             .transport_sample
                             .saturating_add(self.current_cycle_samples());
@@ -5220,6 +5426,7 @@ impl Engine {
                             )))
                             .await;
                         }
+                        }
                     }
                     if self.send_tracks().await && self.hw_worker.is_some() {
                         self.request_hw_cycle().await;
@@ -5230,9 +5437,22 @@ impl Engine {
                             self.awaiting_hwfinished = true;
                         }
                     }
+                    self.handling_hwfinished = false;
                 }
                 Message::HWMidiEvents(events) => {
                     for hw_event in events {
+                        let thru_targets: Vec<String> = self
+                            .midi_hw_thru_routes
+                            .iter()
+                            .filter(|route| route.from_device == hw_event.device)
+                            .map(|route| route.to_device.clone())
+                            .collect();
+                        for device in thru_targets {
+                            self.pending_hw_midi_out_events_by_device.push(HwMidiEvent {
+                                device,
+                                event: hw_event.event.clone(),
+                            });
+                        }
                         if hw_event.event.data.len() >= 3 {
                             let status = hw_event.event.data[0];
                             if status & 0xF0 == 0xB0 {
@@ -5257,29 +5477,44 @@ impl Engine {
     fn collect_hw_midi_output_events(&self) -> Vec<MidiEvent> {
         let mut events = vec![];
         for track in self.state.lock().tracks.values() {
-            events.extend(track.lock().take_hw_midi_out_events());
+            events.extend(
+                track
+                    .lock()
+                    .take_hw_midi_out_events()
+                    .into_iter()
+                    .map(|evt| evt.event),
+            );
         }
         events.sort_by(|a, b| a.frame.cmp(&b.frame));
         events
     }
 
-    fn collect_hw_midi_output_events_by_device(&self) -> Vec<HwMidiEvent> {
+    fn collect_hw_midi_output_events_by_device(&mut self) -> Vec<HwMidiEvent> {
         let mut events = Vec::<HwMidiEvent>::new();
         let routes = self.midi_hw_out_routes.clone();
-        let state = self.state.lock();
+        let mut events_by_track = HashMap::<String, Vec<crate::track::HwMidiOutEvent>>::new();
+        {
+            let state = self.state.lock();
+            for route in &routes {
+                if events_by_track.contains_key(&route.from_track) {
+                    continue;
+                }
+                let Some(track) = state.tracks.get(&route.from_track) else {
+                    continue;
+                };
+                events_by_track
+                    .insert(route.from_track.clone(), track.lock().take_hw_midi_out_events());
+            }
+        }
+
         for route in routes {
-            let Some(track) = state.tracks.get(&route.from_track) else {
+            let Some(track_events) = events_by_track.get(&route.from_track) else {
                 continue;
             };
-            let track_lock = track.lock();
-            let Some(out_port) = track_lock.midi.outs.get(route.from_port) else {
-                continue;
-            };
-            let port_events = out_port.lock().buffer.clone();
-            for event in port_events {
+            for hw_event in track_events.iter().filter(|evt| evt.port == route.from_port) {
                 events.push(HwMidiEvent {
                     device: route.device.clone(),
-                    event,
+                    event: hw_event.event.clone(),
                 });
             }
         }

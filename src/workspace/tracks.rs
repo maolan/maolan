@@ -1,14 +1,15 @@
 use crate::{
+    consts::state_track::TRACK_SUBTRACK_GAP,
     consts::state_ids::METRONOME_TRACK_ID,
     menu,
-    message::{Message, TrackAutomationTarget},
+    message::{Message, MidiLaneChannelSelection, TrackAutomationTarget},
     state::{State, StateData, TrackLaneLayout},
     style,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Point, Theme,
     alignment::Horizontal,
-    widget::{Column, Space, button, column, container, mouse_area, row, text},
+    widget::{Column, Space, button, column, container, mouse_area, pick_list, row, text},
 };
 use iced_drop::droppable;
 use iced_fonts::lucide::{audio_waveform, disc};
@@ -357,6 +358,7 @@ impl Tracks {
             primary_audio_outs: usize,
             midi_ins: usize,
             midi_outs: usize,
+            midi_lane_channels: Vec<Option<u8>>,
             balance: f32,
             automation_mode: String,
             visible_automation_lanes: Vec<VisibleAutomationLane>,
@@ -395,6 +397,7 @@ impl Tracks {
                     primary_audio_outs: track.primary_audio_outs(),
                     midi_ins: track.midi.ins,
                     midi_outs: track.midi.outs,
+                    midi_lane_channels: track.midi_lane_channels.clone(),
                     balance: track.balance,
                     automation_mode: track.automation_mode.to_string(),
                     visible_automation_lanes: track
@@ -423,6 +426,7 @@ impl Tracks {
             _ => 200.0,
         };
         let track_heights: Vec<f32> = tracks.iter().map(|t| t.height).collect();
+        let total_height = track_heights.iter().sum::<f32>().max(1.0);
         let mut vca_has_followers = std::collections::HashSet::new();
         for track in &tracks {
             if let Some(master) = track.vca_master.as_ref() {
@@ -470,8 +474,10 @@ impl Tracks {
             let resize_handle_height = 6.0;
             let outer_spacing = 6.0;
             let inner_vertical_padding = 8.0;
-            let automation_height = if has_visible_automation {
-                track.visible_automation_lanes.len() as f32 * (lane_h + 4.0)
+            let lane_row_count = track.midi_ins + track.visible_automation_lanes.len();
+            let lane_rows_height = if lane_row_count > 0 {
+                lane_row_count as f32 * lane_h
+                    + lane_row_count.saturating_sub(1) as f32 * TRACK_SUBTRACK_GAP
             } else {
                 0.0
             };
@@ -480,8 +486,8 @@ impl Tracks {
                 - layout.header_height
                 - resize_handle_height
                 - outer_spacing
-                - automation_height)
-                .max(12.0);
+                - lane_rows_height)
+                .max(0.0);
             let mut title_badges = row![].spacing(4).align_y(Alignment::Center);
             if track.frozen {
                 title_badges = title_badges.push(Self::info_badge("FRZ".to_string(), false));
@@ -605,6 +611,47 @@ impl Tracks {
             .align_y(Alignment::Center);
 
             let mut lane_rows: Column<'_, Message> = column![];
+            for lane_index in 0..track.midi_ins {
+                let track_name = track.name.clone();
+                let selected_channel = MidiLaneChannelSelection::from_engine(
+                    track.midi_lane_channels.get(lane_index).copied().flatten(),
+                );
+                lane_rows = lane_rows.push(
+                    container(
+                        row![
+                            Self::info_badge(format!("MIDI {}", lane_index + 1), true),
+                            Space::new().width(Length::Fill),
+                            pick_list(
+                                MidiLaneChannelSelection::ALL,
+                                Some(selected_channel),
+                                move |channel| Message::TrackMidiLaneChannelSelected {
+                                    track_name: track_name.clone(),
+                                    lane: lane_index,
+                                    channel,
+                                },
+                            )
+                            .placeholder("Channel"),
+                        ]
+                        .align_y(Alignment::Center)
+                        .spacing(6),
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fixed(lane_h))
+                    .padding([4, 6])
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(
+                            0.08, 0.18, 0.14, 0.9,
+                        ))),
+                        border: Border {
+                            color: Color::from_rgba(0.34, 0.63, 0.48, 0.26),
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        text_color: Some(Color::from_rgb(0.83, 0.93, 0.88)),
+                        ..container::Style::default()
+                    }),
+                );
+            }
             for lane in &track.visible_automation_lanes {
                 lane_rows = lane_rows.push(
                     container(
@@ -700,7 +747,7 @@ impl Tracks {
                         text_color: Some(Color::from_rgb(0.90, 0.93, 0.98)),
                         ..container::Style::default()
                     }),
-                lane_rows.spacing(4),
+                lane_rows.spacing(TRACK_SUBTRACK_GAP),
                 mouse_area(
                     container("")
                         .width(Length::Fill)
@@ -723,7 +770,7 @@ impl Tracks {
                 .on_exit(Message::TrackResizeHover(track.name.clone(), false))
                 .on_press(Message::TrackResizeStart(track.name.clone())),
             ]
-            .spacing(2.0);
+            .spacing(TRACK_SUBTRACK_GAP);
 
             {
                 let vca_strip_width = 12.0;
@@ -842,6 +889,7 @@ impl Tracks {
         container(result.width(width))
             .style(|_theme| crate::style::app_background())
             .width(width)
+            .height(Length::Fixed(total_height))
             .into()
     }
 }

@@ -2563,6 +2563,17 @@ impl Maolan {
                     master_track: master_track.clone(),
                 });
             }
+            Message::TrackMidiLaneChannelSelected {
+                ref track_name,
+                lane,
+                channel,
+            } => {
+                return self.send(Action::TrackSetMidiLaneChannel {
+                    track_name: track_name.clone(),
+                    lane,
+                    channel: channel.to_engine(),
+                });
+            }
             Message::TrackAddReturn(ref track_name) => {
                 self.state.blocking_write().track_context_menu = None;
                 return self.send(Action::TrackAddAudioInput(track_name.clone()));
