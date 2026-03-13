@@ -458,6 +458,7 @@ impl Tracks {
             let layout = track.layout;
             let lane_h = layout.lane_height.max(12.0);
             let has_visible_automation = !track.visible_automation_lanes.is_empty();
+            let inline_midi_lane_selector = track.audio_ins == 0 && track.midi_ins > 0;
             let max_name_chars = (((track_width_px - 98.0) / 7.0).floor() as i32).clamp(10, 64);
             let learn_count = [
                 midi_learn_vol,
@@ -474,7 +475,8 @@ impl Tracks {
             let resize_handle_height = 6.0;
             let outer_spacing = 6.0;
             let inner_vertical_padding = 8.0;
-            let lane_row_count = track.midi_ins + track.visible_automation_lanes.len();
+            let lane_row_count = track.midi_ins.saturating_sub(usize::from(inline_midi_lane_selector))
+                + track.visible_automation_lanes.len();
             let lane_rows_height = if lane_row_count > 0 {
                 lane_row_count as f32 * lane_h
                     + lane_row_count.saturating_sub(1) as f32 * TRACK_SUBTRACK_GAP
@@ -610,8 +612,34 @@ impl Tracks {
             .spacing(4)
             .align_y(Alignment::Center);
 
+            let inline_midi_channel: Element<'_, Message> = if inline_midi_lane_selector {
+                let track_name = track.name.clone();
+                let selected_channel = MidiLaneChannelSelection::from_engine(
+                    track.midi_lane_channels.first().copied().flatten(),
+                );
+                container(
+                    pick_list(
+                        MidiLaneChannelSelection::ALL,
+                        Some(selected_channel),
+                        move |channel| Message::TrackMidiLaneChannelSelected {
+                            track_name: track_name.clone(),
+                            lane: 0,
+                            channel,
+                        },
+                    )
+                    .placeholder("Channel"),
+                )
+                .padding([0, 2])
+                .into()
+            } else {
+                Space::new().into()
+            };
+
             let mut lane_rows: Column<'_, Message> = column![];
             for lane_index in 0..track.midi_ins {
+                if inline_midi_lane_selector && lane_index == 0 {
+                    continue;
+                }
                 let track_name = track.name.clone();
                 let selected_channel = MidiLaneChannelSelection::from_engine(
                     track.midi_lane_channels.get(lane_index).copied().flatten(),
@@ -700,6 +728,7 @@ impl Tracks {
                 controls,
                 column![
                     row![
+                        inline_midi_channel,
                         Self::info_badge(audio_io, false),
                         Self::info_badge(return_io, false),
                         Self::info_badge(midi_io, false),

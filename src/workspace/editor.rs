@@ -164,67 +164,6 @@ fn clip_two_edge_gradient(
     )
 }
 
-fn assign_take_lanes<T, FBase, FStart, FLen, FPreferred>(
-    clips: &[T],
-    base_lane: FBase,
-    start_sample: FStart,
-    length_samples: FLen,
-    preferred_take_lane: FPreferred,
-) -> (Vec<usize>, Vec<usize>)
-where
-    FBase: Fn(&T) -> usize,
-    FStart: Fn(&T) -> usize,
-    FLen: Fn(&T) -> usize,
-    FPreferred: Fn(&T) -> Option<usize>,
-{
-    let mut take_index_by_clip = vec![0_usize; clips.len()];
-    let mut max_takes_by_lane: HashMap<usize, usize> = HashMap::new();
-    let mut active_by_lane: HashMap<usize, Vec<(usize, usize)>> = HashMap::new();
-
-    let mut order: Vec<usize> = (0..clips.len()).collect();
-    order.sort_by_key(|idx| {
-        let clip = &clips[*idx];
-        (base_lane(clip), start_sample(clip), std::cmp::Reverse(*idx))
-    });
-
-    for idx in order {
-        let clip = &clips[idx];
-        let lane = base_lane(clip);
-        let start = start_sample(clip);
-        let end = start.saturating_add(length_samples(clip));
-        let active = active_by_lane.entry(lane).or_default();
-
-        // Keep only active overlaps in this lane (touching edges is not overlap).
-        active.retain(|(existing_end, _)| *existing_end > start);
-
-        let mut take_idx = preferred_take_lane(clip).unwrap_or(0);
-        if preferred_take_lane(clip).is_none() {
-            while active
-                .iter()
-                .any(|(_, existing_take)| *existing_take == take_idx)
-            {
-                take_idx = take_idx.saturating_add(1);
-            }
-        }
-        active.push((end, take_idx));
-        take_index_by_clip[idx] = take_idx;
-        max_takes_by_lane
-            .entry(lane)
-            .and_modify(|max_take| *max_take = (*max_take).max(take_idx.saturating_add(1)))
-            .or_insert(take_idx.saturating_add(1));
-    }
-
-    let take_count_by_clip = clips
-        .iter()
-        .map(|clip| {
-            let lane = base_lane(clip);
-            max_takes_by_lane.get(&lane).copied().unwrap_or(1).max(1)
-        })
-        .collect::<Vec<_>>();
-
-    (take_index_by_clip, take_count_by_clip)
-}
-
 fn automation_point_color(target: crate::message::TrackAutomationTarget) -> Color {
     match target {
         crate::message::TrackAutomationTarget::Volume => Color::from_rgba(0.98, 0.78, 0.22, 0.95),
@@ -934,21 +873,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     }
     let selected_audio_count = selected_audio_indices.len();
     let selected_midi_count = selected_midi_indices.len();
-    let (audio_take_idx, audio_take_count) = assign_take_lanes(
-        &track.audio.clips,
-        |_| 0,
-        |clip| clip.start,
-        |clip| clip.length,
-        |clip| clip.take_lane_override,
-    );
-    let (midi_take_idx, midi_take_count) = assign_take_lanes(
-        &track.midi.clips,
-        |clip| clip.input_channel.min(track.midi.ins.saturating_sub(1)),
-        |clip| clip.start,
-        |clip| clip.length,
-        |clip| clip.take_lane_override,
-    );
-
     clips.push(
         pin(track_bar_grid_overlay(
             height,
@@ -1157,12 +1081,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         // All audio clips are displayed on lane 0 (single audio lane)
         let lane = 0;
         let lane_top_base = track.lane_top(Kind::Audio, lane) + 3.0;
-        let take_count = audio_take_count.get(index).copied().unwrap_or(1).max(1);
-        let take_idx = audio_take_idx.get(index).copied().unwrap_or(0);
-        let take_slot_height = (lane_clip_height / take_count as f32).max(8.0);
-        let lane_top = lane_top_base + take_idx as f32 * take_slot_height + 1.0;
+        let lane_top = lane_top_base + 1.0;
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
-        let clip_height = (take_slot_height - 2.0).max(8.0);
+        let clip_height = (lane_clip_height - 2.0).max(8.0);
         let display_clip_label = trim_label_to_width(&clip_label, clip_width);
         let audio_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
             |(track_idx, clip_idx, kind, is_right_side)| {
@@ -1565,12 +1486,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .unwrap_or(clip.start as f32);
         let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
         let lane_top_base = track.lane_top(Kind::MIDI, lane) + 3.0;
-        let take_count = midi_take_count.get(index).copied().unwrap_or(1).max(1);
-        let take_idx = midi_take_idx.get(index).copied().unwrap_or(0);
-        let take_slot_height = (lane_clip_height / take_count as f32).max(8.0);
-        let lane_top = lane_top_base + take_idx as f32 * take_slot_height + 1.0;
+        let lane_top = lane_top_base + 1.0;
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
-        let clip_height = (take_slot_height - 2.0).max(8.0);
+        let clip_height = (lane_clip_height - 2.0).max(8.0);
         let display_clip_label = trim_label_to_width(&clip_label, clip_width);
         let midi_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
             |(track_idx, clip_idx, kind, is_right_side)| {
