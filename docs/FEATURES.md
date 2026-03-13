@@ -1,6 +1,6 @@
 # Maolan Features
 
-Last updated: 2026-03-11
+Last updated: 2026-03-13
 
 ## Core DAW Workflow
 - Multi-track audio + MIDI session editing
@@ -150,8 +150,9 @@ Last updated: 2026-03-11
 - Diagnostics bundle export
 - MIDI mappings report
 - MIDI mappings import/export/clear-all
-- History coverage audit script (`scripts/audit-history-coverage.sh`)
-- Release packaging script (`scripts/package-release.sh`)
+- Preferences saved to `~/.config/maolan/config.toml`
+- Recent sessions menu
+- Autosave recovery preview summary
 
 ## MIDI Learn and Control Surface Features
 - Track MIDI learn targets:
@@ -171,6 +172,7 @@ Last updated: 2026-03-11
 
 ## Platform Notes
 - Unix builds support CLAP, VST3, and LV2.
+- Linux and FreeBSD builds currently force the X11 window backend at startup.
 - FreeBSD roadmap notes still mark MIDI 2.0 as N/A.
 
 ## Known Boundaries

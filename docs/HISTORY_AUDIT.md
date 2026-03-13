@@ -2,11 +2,10 @@
 
 Date: 2026-03-05
 
-Command:
+Note:
 
-```bash
-./scripts/audit-history-coverage.sh
-```
+This repository currently includes the audit notes below, but not the helper script that originally generated them.
+To refresh the audit, compare `engine::message::Action` against `history::should_record` manually or add a new local audit script.
 
 ## Scope
 

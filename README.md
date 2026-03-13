@@ -49,12 +49,14 @@ cargo run --release -- --debug
 ## Documentation
 
 - [Features](docs/FEATURES.md)
+- [Operations, Storage, and Recovery](docs/OPERATIONS.md)
 - [Shortcuts and Mouse Gestures](docs/SHORTCUTS.md)
 - [Plugin Routing and Sidechains](docs/PLUGIN_ROUTING.md)
 - [History Audit Notes](docs/HISTORY_AUDIT.md)
 
 ## Project Notes
 
+- Preferences are stored in `~/.config/maolan/config.toml`.
 - Session templates are stored under `~/.config/maolan/session_templates/`.
 - Track templates are stored under `~/.config/maolan/track_templates/`.
 - Autosave snapshots are stored under `<session>/.maolan_autosave/snapshots/`.
