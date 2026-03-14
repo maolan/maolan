@@ -63,9 +63,7 @@ impl Maolan {
                 self.size = *size;
                 Some(self.sync_editor_scrollbars())
             }
-            Message::WindowCloseRequested => {
-                Some(self.request_window_close())
-            }
+            Message::WindowCloseRequested => Some(self.request_window_close()),
             _ => None,
         }
     }

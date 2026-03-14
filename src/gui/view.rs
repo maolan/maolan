@@ -214,7 +214,11 @@ impl Maolan {
                         self.playhead_bar_beat(&state, playhead_sample);
 
                     let mut content = column![
-                        self.menu.view(self.tracks_visible, self.editor_visible, self.mixer_visible),
+                        self.menu.view(
+                            self.tracks_visible,
+                            self.editor_visible,
+                            self.mixer_visible
+                        ),
                         self.toolbar.view(ToolbarViewState {
                             playing: self.playing,
                             paused: self.paused,

@@ -2493,8 +2493,14 @@ impl Editor {
         }
 
         state.hovered_clip_resize_handle.hash(&mut hasher);
-        state.clip_marquee_start.map(|p| (p.x.to_bits(), p.y.to_bits())).hash(&mut hasher);
-        state.clip_marquee_end.map(|p| (p.x.to_bits(), p.y.to_bits())).hash(&mut hasher);
+        state
+            .clip_marquee_start
+            .map(|p| (p.x.to_bits(), p.y.to_bits()))
+            .hash(&mut hasher);
+        state
+            .clip_marquee_end
+            .map(|p| (p.x.to_bits(), p.y.to_bits()))
+            .hash(&mut hasher);
         state
             .midi_clip_create_start
             .map(|p| (p.x.to_bits(), p.y.to_bits()))

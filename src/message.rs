@@ -661,7 +661,10 @@ pub enum Message {
     HandleClipZones(Vec<(Id, Rectangle)>),
     HandleClipPreviewZones(Vec<(Id, Rectangle)>),
 
-    TrackDrag(usize),
+    TrackDrag {
+        index: usize,
+        position: Point,
+    },
     TrackDropped(Point, Rectangle),
     HandleTrackZones(Vec<(Id, Rectangle)>),
 

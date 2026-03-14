@@ -10,7 +10,9 @@ use crate::{
     ui_timing::DOUBLE_CLICK,
 };
 use iced::{
-    Alignment, Color, Element, Length, Point, Rectangle, Renderer, Theme, event::Event, mouse,
+    Alignment, Color, Element, Length, Point, Rectangle, Renderer, Theme,
+    event::Event,
+    mouse,
     widget::{
         Space, canvas,
         canvas::{Action as CanvasAction, Frame, Geometry, Path, Stroke, Text},
@@ -96,11 +98,7 @@ impl SmallMeterLevels {
     }
 
     fn get(&self, idx: usize) -> u8 {
-        if idx < self.len {
-            self.data[idx]
-        } else {
-            0
-        }
+        if idx < self.len { self.data[idx] } else { 0 }
     }
 }
 
@@ -241,10 +239,26 @@ impl canvas::Program<Message> for FaderBayCanvas {
             state.last_hash.set(static_hash);
         }
 
-        let back_color = Color::from_rgb(0x42 as f32 / 255.0, 0x46 as f32 / 255.0, 0x4D as f32 / 255.0);
-        let border_color = Color::from_rgb(0x30 as f32 / 255.0, 0x33 as f32 / 255.0, 0x3C as f32 / 255.0);
-        let filled_color = Color::from_rgb(0x29 as f32 / 255.0, 0x66 as f32 / 255.0, 0xA3 as f32 / 255.0);
-        let handle_color = Color::from_rgb(0x75 as f32 / 255.0, 0xC2 as f32 / 255.0, 0xFF as f32 / 255.0);
+        let back_color = Color::from_rgb(
+            0x42 as f32 / 255.0,
+            0x46 as f32 / 255.0,
+            0x4D as f32 / 255.0,
+        );
+        let border_color = Color::from_rgb(
+            0x30 as f32 / 255.0,
+            0x33 as f32 / 255.0,
+            0x3C as f32 / 255.0,
+        );
+        let filled_color = Color::from_rgb(
+            0x29 as f32 / 255.0,
+            0x66 as f32 / 255.0,
+            0xA3 as f32 / 255.0,
+        );
+        let handle_color = Color::from_rgb(
+            0x75 as f32 / 255.0,
+            0xC2 as f32 / 255.0,
+            0xFF as f32 / 255.0,
+        );
         let border_width = 1.0;
         let handle_height = 2.0;
         let static_geometry = state.cache.draw(renderer, bounds.size(), |frame| {
@@ -260,7 +274,9 @@ impl canvas::Program<Message> for FaderBayCanvas {
                     Point::new(slider_bounds.x, slider_bounds.y),
                     iced::Size::new(slider_bounds.width, slider_bounds.height),
                 ),
-                Stroke::default().with_width(border_width).with_color(border_color),
+                Stroke::default()
+                    .with_width(border_width)
+                    .with_color(border_color),
             );
 
             if self.show_ticks {
@@ -294,7 +310,8 @@ impl canvas::Program<Message> for FaderBayCanvas {
 
         let normalized = (self.value - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB);
         let handle_y = slider_bounds.y
-            + ((slider_bounds.height - handle_height - border_width * 2.0) * (1.0 - normalized)).round();
+            + ((slider_bounds.height - handle_height - border_width * 2.0) * (1.0 - normalized))
+                .round();
         let mut dynamic_frame = Frame::new(renderer, bounds.size());
         let filled_y = handle_y + handle_height + 1.0;
         let filled_h = (slider_bounds.y + slider_bounds.height - filled_y).max(0.0);
@@ -356,19 +373,17 @@ impl canvas::Program<Message> for PanCanvas {
                     state.last_click_at = Some(now);
                     state.dragging = true;
                     if is_double_click {
-                        return Some(CanvasAction::publish(Message::Request(Action::TrackBalance(
-                            self.track_name.clone(),
-                            0.0,
-                        ))));
+                        return Some(CanvasAction::publish(Message::Request(
+                            Action::TrackBalance(self.track_name.clone(), 0.0),
+                        )));
                     }
                     if let Some(cursor_position) = cursor.position() {
-                        let normalized =
-                            ((cursor_position.x - bounds.x) / bounds.width.max(1.0)).clamp(0.0, 1.0);
+                        let normalized = ((cursor_position.x - bounds.x) / bounds.width.max(1.0))
+                            .clamp(0.0, 1.0);
                         let value = (normalized * 2.0 - 1.0).clamp(-1.0, 1.0);
-                        return Some(CanvasAction::publish(Message::Request(Action::TrackBalance(
-                            self.track_name.clone(),
-                            value,
-                        ))));
+                        return Some(CanvasAction::publish(Message::Request(
+                            Action::TrackBalance(self.track_name.clone(), value),
+                        )));
                     }
                 }
             }
@@ -382,10 +397,9 @@ impl canvas::Program<Message> for PanCanvas {
                     let normalized =
                         ((cursor_position.x - bounds.x) / bounds.width.max(1.0)).clamp(0.0, 1.0);
                     let value = (normalized * 2.0 - 1.0).clamp(-1.0, 1.0);
-                    return Some(CanvasAction::publish(Message::Request(Action::TrackBalance(
-                        self.track_name.clone(),
-                        value,
-                    ))));
+                    return Some(CanvasAction::publish(Message::Request(
+                        Action::TrackBalance(self.track_name.clone(), value),
+                    )));
                 }
             }
             _ => {}
@@ -412,10 +426,26 @@ impl canvas::Program<Message> for PanCanvas {
             state.cache.clear();
             state.last_hash.set(static_hash);
         }
-        let back_color = Color::from_rgb(0x42 as f32 / 255.0, 0x46 as f32 / 255.0, 0x4D as f32 / 255.0);
-        let border_color = Color::from_rgb(0x30 as f32 / 255.0, 0x33 as f32 / 255.0, 0x3C as f32 / 255.0);
-        let filled_color = Color::from_rgb(0x29 as f32 / 255.0, 0x66 as f32 / 255.0, 0xA3 as f32 / 255.0);
-        let handle_color = Color::from_rgb(0x75 as f32 / 255.0, 0xC2 as f32 / 255.0, 0xFF as f32 / 255.0);
+        let back_color = Color::from_rgb(
+            0x42 as f32 / 255.0,
+            0x46 as f32 / 255.0,
+            0x4D as f32 / 255.0,
+        );
+        let border_color = Color::from_rgb(
+            0x30 as f32 / 255.0,
+            0x33 as f32 / 255.0,
+            0x3C as f32 / 255.0,
+        );
+        let filled_color = Color::from_rgb(
+            0x29 as f32 / 255.0,
+            0x66 as f32 / 255.0,
+            0xA3 as f32 / 255.0,
+        );
+        let handle_color = Color::from_rgb(
+            0x75 as f32 / 255.0,
+            0xC2 as f32 / 255.0,
+            0xFF as f32 / 255.0,
+        );
         let border_width = 1.0;
         let handle_width = 2.0;
 
@@ -426,7 +456,9 @@ impl canvas::Program<Message> for PanCanvas {
             );
             frame.stroke(
                 &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
-                Stroke::default().with_width(border_width).with_color(border_color),
+                Stroke::default()
+                    .with_width(border_width)
+                    .with_color(border_color),
             );
         });
 
@@ -697,7 +729,14 @@ impl Mixer {
         fader_height: f32,
         show_ticks: bool,
     ) -> Element<'static, Message> {
-        Self::fader_bay(track_name, channels, levels_db, value, fader_height, show_ticks)
+        Self::fader_bay(
+            track_name,
+            channels,
+            levels_db,
+            value,
+            fader_height,
+            show_ticks,
+        )
     }
 
     fn strip_width_for_channels(channels: usize) -> f32 {

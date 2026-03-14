@@ -307,29 +307,29 @@ impl Workspace {
             .height(Length::Fill);
 
         let tempo_scrolled: Element<'_, Message> = scrollable(self.tempo.view(TempoViewArgs {
-                    bpm: tempo,
-                    time_signature,
-                    pixels_per_sample,
-                    playhead_x: None,
-                    punch_range_samples,
-                    snap_mode,
-                    samples_per_beat,
-                    samples_per_bar: samples_per_bar as f64,
-                    content_width: editor_content_width,
-                    tempo_points,
-                    time_signature_points,
-                    shift_pressed,
-                    selected_tempo_points,
-                    selected_time_signature_points,
-                    timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
-                }))
-                .id(Id::new(WORKSPACE_TEMPO_SCROLL_ID))
-                .direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::hidden(),
-                ))
-                .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
-                .height(Length::Fixed(self.tempo.height()))
-                .into();
+            bpm: tempo,
+            time_signature,
+            pixels_per_sample,
+            playhead_x: None,
+            punch_range_samples,
+            snap_mode,
+            samples_per_beat,
+            samples_per_bar: samples_per_bar as f64,
+            content_width: editor_content_width,
+            tempo_points,
+            time_signature_points,
+            shift_pressed,
+            selected_tempo_points,
+            selected_time_signature_points,
+            timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
+        }))
+        .id(Id::new(WORKSPACE_TEMPO_SCROLL_ID))
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::hidden(),
+        ))
+        .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
+        .height(Length::Fixed(self.tempo.height()))
+        .into();
         let tempo_with_playhead: Element<'_, Message> = if let Some(x) = playhead_x_timeline {
             Stack::from_vec(vec![
                 tempo_scrolled,
@@ -343,22 +343,22 @@ impl Workspace {
             tempo_scrolled
         };
         let ruler_scrolled: Element<'_, Message> = scrollable(self.ruler.view(RulerViewArgs {
-                    playhead_x: None,
-                    beat_pixels,
-                    pixels_per_sample,
-                    loop_range_samples,
-                    snap_mode,
-                    samples_per_beat,
-                    content_width: editor_content_width,
-                    timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
-                }))
-                .id(Id::new(WORKSPACE_RULER_SCROLL_ID))
-                .direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::hidden(),
-                ))
-                .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
-                .height(Length::Fixed(self.ruler.height()))
-                .into();
+            playhead_x: None,
+            beat_pixels,
+            pixels_per_sample,
+            loop_range_samples,
+            snap_mode,
+            samples_per_beat,
+            content_width: editor_content_width,
+            timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
+        }))
+        .id(Id::new(WORKSPACE_RULER_SCROLL_ID))
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::hidden(),
+        ))
+        .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
+        .height(Length::Fixed(self.ruler.height()))
+        .into();
         let ruler_with_playhead: Element<'_, Message> = if let Some(x) = playhead_x_timeline {
             Stack::from_vec(vec![
                 ruler_scrolled,
@@ -375,9 +375,9 @@ impl Workspace {
         let right_panel = column![
             tempo_with_playhead,
             ruler_with_playhead,
-                container(editor_with_zoom).height(Length::Fixed(tracks_total_height)),
-            ]
-            .width(Length::Fill);
+            container(editor_with_zoom).height(Length::Fixed(tracks_total_height)),
+        ]
+        .width(Length::Fill);
 
         let left_panel = column![
             container("")
@@ -445,7 +445,7 @@ impl Workspace {
                     })),
                     ..container::Style::default()
                 }),
-        ],)
+        ])
         .on_enter(Message::TracksResizeHover(true))
         .on_exit(Message::TracksResizeHover(false))
         .on_press(Message::TracksResizeStart);

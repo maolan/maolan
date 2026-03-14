@@ -16,8 +16,8 @@ use crate::state::AudioDeviceOption;
 use crate::{
     connections,
     consts::gui::{AUTOSAVE_SNAPSHOT_INTERVAL, METER_QUANTIZE_STEP_DB},
-    consts::state_ids::METRONOME_TRACK_ID,
     consts::gui_update_mod::{ATTACK_ALPHA, RELEASE_ALPHA},
+    consts::state_ids::METRONOME_TRACK_ID,
     message::{
         ExportNormalizeMode, ExportRenderMode, Message, Show, TrackAutomationMode,
         TrackAutomationTarget,

@@ -4561,13 +4561,36 @@ impl Maolan {
                 }
             }
             Message::MouseMoved(mouse::Event::CursorMoved { position }) => {
-                let resizing = self.state.blocking_read().resizing.clone();
+                const TRACK_DRAG_SCROLL_TOP_INSET: f32 = 56.0;
+                const TRACK_DRAG_SCROLL_UP_HOTZONE_HEIGHT: f32 = 24.0;
+                const TRACK_DRAG_SCROLL_FOOTER_HEIGHT: f32 = 16.0;
+                const DRAG_SCROLL_STEP_Y: f32 = 28.0;
+
+                let (resizing, mixer_drag_scroll_top) = {
+                    let state = self.state.blocking_read();
+                    let bottom_trigger_top = if self.mixer_visible {
+                        match state.mixer_height {
+                            Length::Fixed(height) => {
+                                (self.size.height - height.max(0.0)).clamp(0.0, self.size.height)
+                            }
+                            _ => self.size.height,
+                        }
+                    } else {
+                        (self.size.height - TRACK_DRAG_SCROLL_FOOTER_HEIGHT)
+                            .clamp(0.0, self.size.height)
+                    };
+                    (state.resizing.clone(), bottom_trigger_top)
+                };
                 let previous_cursor = {
                     let mut state = self.state.blocking_write();
                     let prev = state.cursor;
                     state.cursor = position;
                     prev
                 };
+                let should_scroll_up = position.y >= TRACK_DRAG_SCROLL_TOP_INSET
+                    && position.y
+                        <= TRACK_DRAG_SCROLL_TOP_INSET + TRACK_DRAG_SCROLL_UP_HOTZONE_HEIGHT;
+                let should_scroll_down = position.y >= mixer_drag_scroll_top;
                 match resizing {
                     Some(Resizing::Track(ref track_name, initial_height, initial_mouse_y)) => {
                         let mut state = self.state.blocking_write();
@@ -4751,12 +4774,44 @@ impl Maolan {
                 if mouse_left_down && !matches!(resizing, Some(Resizing::Clip { .. })) {
                     if let Some(active) = self.clip.as_mut() {
                         active.end = position;
-                        return iced_drop::zones_on_point(
+                        let mut tasks = vec![iced_drop::zones_on_point(
                             Message::HandleClipPreviewZones,
                             position,
                             None,
                             None,
-                        );
+                        )];
+                        if should_scroll_up {
+                            tasks.push(operation::scroll_by(
+                                Id::new(EDITOR_SCROLL_ID),
+                                operation::AbsoluteOffset {
+                                    x: 0.0,
+                                    y: -DRAG_SCROLL_STEP_Y,
+                                },
+                            ));
+                            tasks.push(operation::scroll_by(
+                                Id::new(TRACKS_SCROLL_ID),
+                                operation::AbsoluteOffset {
+                                    x: 0.0,
+                                    y: -DRAG_SCROLL_STEP_Y,
+                                },
+                            ));
+                        } else if should_scroll_down {
+                            tasks.push(operation::scroll_by(
+                                Id::new(EDITOR_SCROLL_ID),
+                                operation::AbsoluteOffset {
+                                    x: 0.0,
+                                    y: DRAG_SCROLL_STEP_Y,
+                                },
+                            ));
+                            tasks.push(operation::scroll_by(
+                                Id::new(TRACKS_SCROLL_ID),
+                                operation::AbsoluteOffset {
+                                    x: 0.0,
+                                    y: DRAG_SCROLL_STEP_Y,
+                                },
+                            ));
+                        }
+                        return Task::batch(tasks);
                     }
                     let mut state = self.state.blocking_write();
                     if state.clip_marquee_start.is_some()
@@ -4791,6 +4846,23 @@ impl Maolan {
                         state.midi_clip_create_end =
                             Some(Point::new((end.x + dx).max(0.0), (end.y + dy).max(0.0)));
                     }
+                }
+                if self.track.is_some() && (should_scroll_up || should_scroll_down) {
+                    let delta_y = if should_scroll_up {
+                        -DRAG_SCROLL_STEP_Y
+                    } else {
+                        DRAG_SCROLL_STEP_Y
+                    };
+                    return Task::batch(vec![
+                        operation::scroll_by(
+                            Id::new(EDITOR_SCROLL_ID),
+                            operation::AbsoluteOffset { x: 0.0, y: delta_y },
+                        ),
+                        operation::scroll_by(
+                            Id::new(TRACKS_SCROLL_ID),
+                            operation::AbsoluteOffset { x: 0.0, y: delta_y },
+                        ),
+                    ]);
                 }
             }
             Message::EditorMouseMoved(position) => {
@@ -5287,10 +5359,27 @@ impl Maolan {
                     self.clip_preview_target_track = None;
                 }
             }
-            Message::TrackDrag(index) => {
+            Message::TrackDrag { index, position } => {
+                const TRACK_DRAG_SCROLL_UP_HOTZONE_HEIGHT: f32 = 24.0;
+
                 let state = self.state.blocking_read();
                 if index < state.tracks.len() {
-                    self.track = Some(state.tracks[index].name.clone());
+                    let track_name = state.tracks[index].name.clone();
+                    drop(state);
+                    self.track = Some(track_name);
+
+                    if position.y <= TRACK_DRAG_SCROLL_UP_HOTZONE_HEIGHT {
+                        return Task::batch(vec![
+                            operation::scroll_by(
+                                Id::new(EDITOR_SCROLL_ID),
+                                operation::AbsoluteOffset { x: 0.0, y: -28.0 },
+                            ),
+                            operation::scroll_by(
+                                Id::new(TRACKS_SCROLL_ID),
+                                operation::AbsoluteOffset { x: 0.0, y: -28.0 },
+                            ),
+                        ]);
+                    }
                 }
             }
             Message::TrackDropped(point, _rect) => {

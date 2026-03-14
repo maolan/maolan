@@ -28,12 +28,9 @@ impl Maolan {
             if prev.len() != next.len() {
                 return true;
             }
-            prev.iter()
-                .zip(next.iter())
-                .any(|(a, b)| {
-                    (quantize_meter_db(*a) - quantize_meter_db(*b)).abs()
-                        >= METER_DIRTY_EPSILON_DB
-                })
+            prev.iter().zip(next.iter()).any(|(a, b)| {
+                (quantize_meter_db(*a) - quantize_meter_db(*b)).abs() >= METER_DIRTY_EPSILON_DB
+            })
         }
 
         fn listener() -> impl Stream<Item = Message> {
@@ -218,10 +215,10 @@ impl Maolan {
         };
         let meter_poll_sub =
             if SUPPORTS_METER_POLL && self.mixer_visible && (self.playing || self.paused) {
-            iced::time::every(Duration::from_millis(40)).map(|_| Message::MeterPollTick)
-        } else {
-            Subscription::none()
-        };
+                iced::time::every(Duration::from_millis(40)).map(|_| Message::MeterPollTick)
+            } else {
+                Subscription::none()
+            };
         let recording_preview_sub = if self.playing
             && !self.paused
             && self.record_armed
