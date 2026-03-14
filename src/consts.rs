@@ -157,6 +157,7 @@ pub mod plugins_lv2 {
     pub const LV2_INSTANCE_ACCESS: &str = "http://lv2plug.in/ns/ext/instance-access";
 }
 
+#[cfg(target_os = "freebsd")]
 pub mod state_platform_freebsd {
     pub const AFMT_S16_LE: u64 = 0x00000010;
     pub const AFMT_S16_BE: u64 = 0x00000020;
@@ -272,6 +273,7 @@ pub mod state_platform_linux {
     ];
 }
 
+#[cfg(target_os = "freebsd")]
 pub mod state_platform_freebsd_lists {
     pub const DIRECT_KEYS: [&str; 7] = [
         "formats",
