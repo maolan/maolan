@@ -4968,7 +4968,11 @@ impl Maolan {
                         let mut y_offset = 0.0f32;
                         let mut selected = std::collections::HashSet::new();
                         let state = self.state.blocking_read();
-                        for track in &state.tracks {
+                        for track in state
+                            .tracks
+                            .iter()
+                            .filter(|track| track.name != METRONOME_TRACK_ID)
+                        {
                             let layout = track.lane_layout();
                             let lane_clip_h = (layout.lane_height - 6.0).max(12.0);
                             for (clip_idx, clip) in track.audio.clips.iter().enumerate() {

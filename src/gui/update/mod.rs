@@ -16,6 +16,7 @@ use crate::state::AudioDeviceOption;
 use crate::{
     connections,
     consts::gui::{AUTOSAVE_SNAPSHOT_INTERVAL, METER_QUANTIZE_STEP_DB},
+    consts::state_ids::METRONOME_TRACK_ID,
     consts::gui_update_mod::{ATTACK_ALPHA, RELEASE_ALPHA},
     message::{
         ExportNormalizeMode, ExportRenderMode, Message, Show, TrackAutomationMode,
@@ -1646,7 +1647,11 @@ impl Maolan {
     fn midi_lane_at_position(&self, position: Point) -> Option<(String, usize)> {
         let state = self.state.blocking_read();
         let mut y_offset = 0.0f32;
-        for track in &state.tracks {
+        for track in state
+            .tracks
+            .iter()
+            .filter(|track| track.name != METRONOME_TRACK_ID)
+        {
             let track_top = y_offset;
             let track_bottom = y_offset + track.height;
             if position.y < track_top || position.y > track_bottom {
@@ -1676,7 +1681,11 @@ impl Maolan {
         let pps = self.pixels_per_sample().max(1.0e-6);
         let state = self.state.blocking_read();
         let mut y_offset = 0.0f32;
-        for track in &state.tracks {
+        for track in state
+            .tracks
+            .iter()
+            .filter(|track| track.name != METRONOME_TRACK_ID)
+        {
             let track_top = y_offset;
             let track_bottom = y_offset + track.height;
             if position.y < track_top || position.y > track_bottom {

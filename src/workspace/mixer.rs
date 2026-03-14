@@ -518,10 +518,6 @@ impl Mixer {
         .into()
     }
 
-    fn master_meter_width(channels: usize) -> f32 {
-        Self::meter_total_width(channels)
-    }
-
     fn meter_inner_width(channels: usize) -> f32 {
         let channels = channels.max(1);
         channels as f32 * METER_BAR_WIDTH + (channels.saturating_sub(1) as f32 * METER_BAR_GAP)
@@ -704,6 +700,11 @@ impl Mixer {
         Self::fader_bay(track_name, channels, levels_db, value, fader_height, show_ticks)
     }
 
+    fn strip_width_for_channels(channels: usize) -> f32 {
+        (FADER_WIDTH + SCALE_WIDTH + 3.0 + 8.0 + Self::meter_total_width(channels.max(1)) + 16.0)
+            .max(STRIP_WIDTH)
+    }
+
     fn strip_shell<'a>(
         name: String,
         selected: bool,
@@ -751,6 +752,7 @@ impl Mixer {
                 continue;
             }
             let strip_name = track.name.clone();
+            let strip_width = Self::strip_width_for_channels(track.audio.outs);
             let pan = if track.audio.outs == 2 {
                 Some(Self::pan_section_cached(track.name.clone(), track.balance))
             } else {
@@ -767,7 +769,7 @@ impl Mixer {
             let strip: Element<'a, Message> = mouse_area(Self::strip_shell(
                 strip_name,
                 state.selected.contains(track.name.as_str()),
-                STRIP_WIDTH,
+                strip_width,
                 pan,
                 bay,
                 StripReadout {
@@ -787,13 +789,7 @@ impl Mixer {
             }
         }
 
-        let master_strip_width = (FADER_WIDTH
-            + SCALE_WIDTH
-            + 3.0
-            + 8.0
-            + Self::master_meter_width(hw_out_channels.max(1))
-            + 16.0)
-            .max(STRIP_WIDTH);
+        let master_strip_width = Self::strip_width_for_channels(hw_out_channels.max(1));
         let master_strip: Element<'a, Message> = mouse_area(Self::strip_shell(
             "Master".to_string(),
             master_selected,
