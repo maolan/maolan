@@ -103,6 +103,9 @@ impl Maolan {
             if state.track_group_dialog.is_some() {
                 return self.track_group.view();
             }
+            if state.track_marker_dialog.is_some() {
+                return self.track_marker.view();
+            }
             if state.track_template_save_dialog.is_some() {
                 return self.track_template_save.view();
             }

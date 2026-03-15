@@ -14,6 +14,7 @@ mod style;
 mod template_save;
 mod toolbar;
 mod track_group;
+mod track_marker;
 mod track_rename;
 mod track_template_save;
 mod ui_timing;

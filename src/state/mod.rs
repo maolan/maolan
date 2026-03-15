@@ -33,7 +33,7 @@ use std::{
     time::Instant,
 };
 use tokio::sync::RwLock;
-pub use track::{Track, TrackAutomationLane, TrackAutomationPoint, TrackLaneLayout};
+pub use track::{EditorMarker, Track, TrackAutomationLane, TrackAutomationPoint, TrackLaneLayout};
 
 pub use crate::consts::state_ids::{HW_IN_ID, HW_OUT_ID, MIDI_HW_IN_ID, MIDI_HW_OUT_ID};
 
@@ -192,6 +192,12 @@ pub enum Resizing {
         initial_samples: usize,
         initial_mouse_x: f32,
     },
+    TrackMarker {
+        track_name: String,
+        marker_index: usize,
+        initial_sample: usize,
+        initial_mouse_x: f32,
+    },
     Mixer(f32, f32),
     Track(String, f32, f32),
     Tracks(f32, f32),
@@ -289,6 +295,14 @@ pub struct TemplateSaveDialog {
 #[derive(Debug, Clone)]
 pub struct TrackTemplateSaveDialog {
     pub track_name: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TrackMarkerDialog {
+    pub track_name: String,
+    pub sample: usize,
+    pub marker_index: Option<usize>,
     pub name: String,
 }
 
@@ -438,6 +452,7 @@ pub struct StateData {
     pub track_rename_dialog: Option<TrackRenameDialog>,
     pub track_group_dialog: Option<TrackGroupDialog>,
     pub track_template_save_dialog: Option<TrackTemplateSaveDialog>,
+    pub track_marker_dialog: Option<TrackMarkerDialog>,
     pub template_save_dialog: Option<TemplateSaveDialog>,
     pub pending_track_template_load: Option<(String, String)>, // (track_name, template_name)
     pub piano: Option<PianoData>,
@@ -595,6 +610,7 @@ impl Default for StateData {
             track_rename_dialog: None,
             track_group_dialog: None,
             track_template_save_dialog: None,
+            track_marker_dialog: None,
             template_save_dialog: None,
             pending_track_template_load: None,
             piano: None,

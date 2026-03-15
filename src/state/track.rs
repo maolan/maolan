@@ -1,7 +1,7 @@
 use super::{AudioClip, MIDIClip};
 use crate::message::{TrackAutomationMode, TrackAutomationTarget};
 use iced::Point;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 pub use crate::consts::state_track::{
     TRACK_FOLDER_HEADER_HEIGHT, TRACK_SUBTRACK_GAP, TRACK_SUBTRACK_MIN_HEIGHT,
@@ -62,6 +62,39 @@ pub struct TrackAutomationLane {
     pub points: Vec<TrackAutomationPoint>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, Hash)]
+pub struct EditorMarker {
+    pub sample: usize,
+    #[serde(default)]
+    pub name: String,
+}
+
+impl<'de> Deserialize<'de> for EditorMarker {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum LegacyOrCurrent {
+            Legacy(usize),
+            Current {
+                sample: usize,
+                #[serde(default)]
+                name: String,
+            },
+        }
+
+        match LegacyOrCurrent::deserialize(deserializer)? {
+            LegacyOrCurrent::Legacy(sample) => Ok(Self {
+                sample,
+                name: String::new(),
+            }),
+            LegacyOrCurrent::Current { sample, name } => Ok(Self { sample, name }),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "Point")]
 struct PointDef {
@@ -117,6 +150,8 @@ pub struct Track {
     pub frozen_render_clip: Option<String>,
     #[serde(default)]
     pub automation_lanes: Vec<TrackAutomationLane>,
+    #[serde(default)]
+    pub editor_markers: Vec<EditorMarker>,
     #[serde(default = "default_automation_mode")]
     pub automation_mode: TrackAutomationMode,
     #[serde(with = "PointDef")]
@@ -165,6 +200,7 @@ impl Track {
             frozen_midi_backup: vec![],
             frozen_render_clip: None,
             automation_lanes: vec![],
+            editor_markers: vec![],
             automation_mode: TrackAutomationMode::Read,
             height: 60.0,
             position: Point::new(100.0, 100.0),

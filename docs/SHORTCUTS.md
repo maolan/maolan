@@ -1,6 +1,6 @@
 # Maolan Shortcuts and Gestures
 
-Last updated: 2026-03-11
+Last updated: 2026-03-15
 
 ## Keyboard Shortcuts
 ### Global / Session
@@ -55,6 +55,12 @@ Last updated: 2026-03-11
   - Mute/unmute
   - Fade enable/disable
   - Audio warp actions (audio clips)
+
+### Track Header Markers
+- `Right click empty marker/header area`: Open the create-marker dialog at the snapped timeline position
+- `Left drag marker`: Move marker horizontally; snapping is applied on drop
+- `Right click marker`: Rename marker
+- `Middle click marker`: Delete marker
 
 ### Selection Gestures
 - `Left drag on empty editor`: Marquee clip selection rectangle

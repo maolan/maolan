@@ -569,6 +569,22 @@ pub enum Message {
         target: TrackAutomationTarget,
         sample: usize,
     },
+    TrackMarkerCreate(String),
+    TrackMarkerRenameShow {
+        track_name: String,
+        marker_index: usize,
+    },
+    TrackMarkerDragStart {
+        track_name: String,
+        marker_index: usize,
+    },
+    TrackMarkerNameInput(String),
+    TrackMarkerNameConfirm,
+    TrackMarkerNameCancel,
+    TrackMarkerDelete {
+        track_name: String,
+        marker_index: usize,
+    },
     SelectClip {
         track_idx: String,
         clip_idx: usize,

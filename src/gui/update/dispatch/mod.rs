@@ -3182,6 +3182,118 @@ impl Maolan {
                     }
                 }
             }
+            Message::TrackMarkerCreate(ref track_name) => {
+                let marker_x = {
+                    let state = self.state.blocking_read();
+                    state.editor_cursor.unwrap_or(state.cursor).x
+                };
+                let marker_sample = self
+                    .snap_mode
+                    .snap_sample(
+                        timeline_x_to_sample_f32(marker_x, self.pixels_per_sample(), 0.0) as f64,
+                        self.samples_per_beat(),
+                        self.samples_per_bar(),
+                    )
+                    .max(0.0) as usize;
+                self.state.blocking_write().track_marker_dialog =
+                    Some(crate::state::TrackMarkerDialog {
+                        track_name: track_name.clone(),
+                        sample: marker_sample,
+                        marker_index: None,
+                        name: String::new(),
+                    });
+            }
+            Message::TrackMarkerRenameShow {
+                ref track_name,
+                marker_index,
+            } => {
+                let dialog = {
+                    let state = self.state.blocking_read();
+                    state
+                        .tracks
+                        .iter()
+                        .find(|t| t.name == *track_name)
+                        .and_then(|track| track.editor_markers.get(marker_index))
+                        .map(|marker| crate::state::TrackMarkerDialog {
+                            track_name: track_name.clone(),
+                            sample: marker.sample,
+                            marker_index: Some(marker_index),
+                            name: marker.name.clone(),
+                        })
+                };
+                if let Some(dialog) = dialog {
+                    self.state.blocking_write().track_marker_dialog = Some(dialog);
+                }
+            }
+            Message::TrackMarkerNameInput(_) => {}
+            Message::TrackMarkerNameConfirm => {
+                let dialog = self.state.blocking_read().track_marker_dialog.clone();
+                let Some(dialog) = dialog else {
+                    return Task::none();
+                };
+                let marker_name = dialog.name.trim().to_string();
+                if marker_name.is_empty() {
+                    return Task::none();
+                }
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.name == dialog.track_name)
+                {
+                    if let Some(marker_index) = dialog.marker_index {
+                        if let Some(marker) = track.editor_markers.get_mut(marker_index) {
+                            marker.name = marker_name;
+                        }
+                    } else {
+                        track.editor_markers.push(crate::state::EditorMarker {
+                            sample: dialog.sample,
+                            name: marker_name,
+                        });
+                    }
+                    track
+                        .editor_markers
+                        .sort_unstable_by_key(|marker| marker.sample);
+                    track
+                        .editor_markers
+                        .dedup_by(|a, b| a.sample == b.sample && a.name == b.name);
+                }
+                state.track_marker_dialog = None;
+            }
+            Message::TrackMarkerNameCancel => {
+                self.state.blocking_write().track_marker_dialog = None;
+            }
+            Message::TrackMarkerDragStart {
+                ref track_name,
+                marker_index,
+            } => {
+                let mut state = self.state.blocking_write();
+                let initial_sample = state
+                    .tracks
+                    .iter()
+                    .find(|t| t.name == *track_name)
+                    .and_then(|track| track.editor_markers.get(marker_index))
+                    .map(|marker| marker.sample);
+                if let Some(initial_sample) = initial_sample {
+                    state.resizing = Some(Resizing::TrackMarker {
+                        track_name: track_name.clone(),
+                        marker_index,
+                        initial_sample,
+                        initial_mouse_x: state.editor_cursor.unwrap_or(state.cursor).x,
+                    });
+                }
+            }
+            Message::TrackMarkerDelete {
+                ref track_name,
+                marker_index,
+            } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
+                    && marker_index < track.editor_markers.len()
+                {
+                    track.editor_markers.remove(marker_index);
+                }
+            }
             Message::SelectClip {
                 ref track_idx,
                 clip_idx,
@@ -4601,6 +4713,13 @@ impl Maolan {
                             track.height = (initial_height + delta).clamp(min_h, 600.0);
                         }
                     }
+                    Some(Resizing::TrackMarker {
+                        ref track_name,
+                        marker_index,
+                        ..
+                    }) => {
+                        let _ = (track_name, marker_index);
+                    }
                     Some(Resizing::Clip {
                         kind,
                         ref track_name,
@@ -4868,8 +4987,34 @@ impl Maolan {
             Message::EditorMouseMoved(position) => {
                 let resizing = self.state.blocking_read().resizing.clone();
                 let can_start_midi_drag = self.midi_lane_at_position(position).is_some();
+                let marker_drag_update = if let Some(Resizing::TrackMarker {
+                    ref track_name,
+                    marker_index,
+                    initial_sample,
+                    initial_mouse_x,
+                }) = resizing
+                {
+                    let pixels_per_sample = self.pixels_per_sample().max(1.0e-6);
+                    let delta_samples = (position.x - initial_mouse_x) / pixels_per_sample;
+                    Some((
+                        track_name.clone(),
+                        marker_index,
+                        (initial_sample as f64 + delta_samples as f64)
+                            .max(0.0)
+                            .round() as usize,
+                    ))
+                } else {
+                    None
+                };
                 let mut state = self.state.blocking_write();
                 state.editor_cursor = Some(position);
+                if let Some((track_name, marker_index, marker_sample)) = marker_drag_update {
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name)
+                        && marker_index < track.editor_markers.len()
+                    {
+                        track.editor_markers[marker_index].sample = marker_sample;
+                    }
+                }
                 if state.mouse_left_down
                     && !matches!(resizing, Some(Resizing::Clip { .. }))
                     && self.clip.is_none()
@@ -4938,6 +5083,53 @@ impl Maolan {
                         create_end,
                     )
                 };
+                let marker_snap_update = if let Some(Resizing::TrackMarker {
+                    ref track_name,
+                    marker_index,
+                    ..
+                }) = resizing.clone()
+                {
+                    let current_sample = {
+                        let state = self.state.blocking_read();
+                        state
+                            .tracks
+                            .iter()
+                            .find(|t| t.name == *track_name)
+                            .and_then(|track| track.editor_markers.get(marker_index))
+                            .map(|marker| marker.sample)
+                    };
+                    current_sample.map(|current_sample| {
+                        let samples_per_beat = self.samples_per_beat();
+                        let samples_per_bar = self.samples_per_bar();
+                        (
+                            track_name.clone(),
+                            marker_index,
+                            self.snap_mode
+                                .snap_sample(
+                                    current_sample as f64,
+                                    samples_per_beat,
+                                    samples_per_bar,
+                                )
+                                .max(0.0) as usize,
+                        )
+                    })
+                } else {
+                    None
+                };
+                if let Some((track_name, marker_index, snapped_sample)) = marker_snap_update {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name) {
+                        if marker_index < track.editor_markers.len() {
+                            track.editor_markers[marker_index].sample = snapped_sample;
+                        }
+                        track
+                            .editor_markers
+                            .sort_unstable_by_key(|marker| marker.sample);
+                        track
+                            .editor_markers
+                            .dedup_by(|a, b| a.sample == b.sample && a.name == b.name);
+                    }
+                }
                 if let Some(Resizing::Clip {
                     kind,
                     track_name,

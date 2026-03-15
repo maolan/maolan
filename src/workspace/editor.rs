@@ -884,6 +884,95 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         .position(Point::new(0.0, 0.0))
         .into(),
     );
+    clips.push(
+        pin(mouse_area(
+            container("")
+                .width(Length::Fill)
+                .height(Length::Fixed(layout.header_height))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.08,
+                        g: 0.08,
+                        b: 0.08,
+                        a: 0.12,
+                    })),
+                    ..container::Style::default()
+                }),
+        )
+        .on_right_press(Message::TrackMarkerCreate(track_name_cloned.clone())))
+        .position(Point::new(0.0, 0.0))
+        .into(),
+    );
+    for (marker_index, marker) in track.editor_markers.iter().enumerate() {
+        let marker_track_name = track_name_cloned.clone();
+        let marker_x = marker.sample as f32 * pixels_per_sample;
+        let marker_name = marker.name.trim().to_string();
+        let marker_has_name = !marker_name.is_empty();
+        let marker_color = Color::from_rgba(0.96, 0.72, 0.18, 0.95);
+        let marker_hitbox = mouse_area(
+            container(Stack::with_children(vec![
+                pin(container(text(marker_name).size(10))
+                    .padding([1, 4])
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(
+                            0.28, 0.20, 0.06, 0.92,
+                        ))),
+                        text_color: Some(Color::from_rgba(0.98, 0.92, 0.72, 0.96)),
+                        border: Border {
+                            color: Color::from_rgba(0.78, 0.62, 0.18, 0.85),
+                            width: 1.0,
+                            radius: 3.0.into(),
+                        },
+                        ..container::Style::default()
+                    }))
+                .position(Point::new(10.0, 0.0))
+                .into(),
+                pin(container("")
+                    .width(Length::Fixed(2.0))
+                    .height(Length::Fixed((layout.header_height - 8.0).max(8.0)))
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(marker_color)),
+                        ..container::Style::default()
+                    }))
+                .position(Point::new(3.0, 6.0))
+                .into(),
+                pin(container("")
+                    .width(Length::Fixed(8.0))
+                    .height(Length::Fixed(8.0))
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(marker_color)),
+                        border: Border {
+                            color: Color::from_rgba(0.2, 0.16, 0.04, 0.95),
+                            width: 1.0,
+                            radius: 2.0.into(),
+                        },
+                        ..container::Style::default()
+                    }))
+                .position(Point::new(0.0, 0.0))
+                .into(),
+            ]))
+            .width(Length::Fixed(if marker_has_name { 112.0 } else { 8.0 }))
+            .height(Length::Fixed(layout.header_height.max(12.0))),
+        )
+        .interaction(mouse::Interaction::ResizingHorizontally)
+        .on_press(Message::TrackMarkerDragStart {
+            track_name: marker_track_name.clone(),
+            marker_index,
+        })
+        .on_right_press(Message::TrackMarkerRenameShow {
+            track_name: marker_track_name.clone(),
+            marker_index,
+        })
+        .on_middle_press(Message::TrackMarkerDelete {
+            track_name: marker_track_name,
+            marker_index,
+        });
+        clips.push(
+            pin(marker_hitbox)
+                .position(Point::new((marker_x - 4.0).max(0.0), 0.0))
+                .into(),
+        );
+    }
 
     for lane in 0..track.audio.ins {
         let y = track.lane_top(Kind::Audio, lane);
@@ -2641,6 +2730,7 @@ impl Editor {
             track.armed.hash(&mut hasher);
             track.audio.ins.hash(&mut hasher);
             track.midi.ins.hash(&mut hasher);
+            track.editor_markers.hash(&mut hasher);
             track.midi_lane_channels.hash(&mut hasher);
             std::mem::discriminant(&track.automation_mode).hash(&mut hasher);
 

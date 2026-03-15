@@ -32,7 +32,7 @@ use crate::{
     workspace::{
         EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID, EDITOR_TIMELINE_SCROLL_ID, PIANO_RULER_SCROLL_ID,
         PIANO_TEMPO_SCROLL_ID, TRACKS_SCROLL_ID, WORKSPACE_RULER_SCROLL_ID,
-        WORKSPACE_TEMPO_SCROLL_ID,
+        WORKSPACE_TEMPO_SCROLL_ID, timeline_x_to_sample_f32,
     },
 };
 use iced::widget::{Id, operation};
