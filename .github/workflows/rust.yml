@@ -10,13 +10,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  build-ubuntu:
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
+    - name: Install system packages
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cargo jackd2 libasound2-dev lilv-utils libsuil-dev libgtk2.0-dev
     - name: Build
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+
+  build-freebsd:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build and test on FreeBSD
+      uses: cross-platform-actions/action@v0.30.0
+      with:
+        operating_system: freebsd
+        version: '14.3'
+        run: |
+          sudo pkg update
+          sudo pkg install -y rustup-init pkgconf libX11 gtk2 lilv jackit
+
+          rustup-init -y --default-toolchain stable
+          . "$HOME/.cargo/env"
+
+          cargo build --verbose
+          cargo test --verbose
