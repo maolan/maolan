@@ -4,6 +4,10 @@
 
 Maolan is a Rust DAW focused on recording, editing, routing, automation, export, and plugin hosting.
 
+[maolan.github.io](https://maolan.github.io)
+
+![workspace](images/workspace.gif)
+
 ## Current Scope
 
 Maolan currently includes:
