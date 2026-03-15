@@ -2,6 +2,14 @@
 name = "maolan-engine"
 version = "0.0.1"
 edition = "2024"
+description = "Audio engine for the Maolan DAW with audio/MIDI tracks, routing, export, and CLAP/VST3/LV2 hosting"
+license = "BSD-2-Clause"
+readme = "README.md"
+repository = "https://github.com/maolan/maolan"
+homepage = "https://github.com/maolan/maolan"
+documentation = "https://docs.rs/maolan-engine"
+keywords = ["audio", "midi", "vst3", "clap", "lv2"]
+categories = ["multimedia::audio"]
 
 [dependencies]
 num_cpus = "1.17.0"

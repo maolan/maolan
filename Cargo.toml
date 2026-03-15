@@ -2,6 +2,13 @@
 name = "maolan"
 version = "0.0.1"
 edition = "2024"
+description = "Rust DAW application for recording, editing, routing, automation, export, and plugin hosting"
+license = "BSD-2-Clause"
+readme = "README.md"
+repository = "https://github.com/maolan/maolan"
+homepage = "https://github.com/maolan/maolan"
+keywords = ["audio", "midi", "vst3", "clap", "lv2"]
+categories = ["multimedia::audio"]
 
 [dependencies]
 ebur128 = "0.1"
@@ -12,7 +19,7 @@ iced_aw = "0.13.0"
 iced_drop = { version = "0.2.10", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
 libloading = "0.8"
-maolan-engine = { path = "./engine" }
+maolan-engine = { version = "0.0.1", path = "./engine" }
 midly = "0.5.3"
 mp3lame-encoder = "0.2"
 rfd = "0.17.2"
