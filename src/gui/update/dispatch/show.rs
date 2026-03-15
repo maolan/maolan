@@ -66,7 +66,7 @@ impl Maolan {
                 self.modal = Some(Show::AddTrack);
                 let track_templates = crate::gui::scan_track_templates();
                 self.add_track.set_available_templates(track_templates);
-                Task::none()
+                iced::widget::operation::focus(crate::add_track::AddTrackView::name_input_id())
             }
             Show::TrackPluginList => {
                 self.modal = Some(Show::TrackPluginList);

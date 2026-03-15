@@ -7,7 +7,7 @@ use crate::{
     workspace::WorkspaceViewArgs,
 };
 use iced::{
-    Length,
+    Border, Color, Length,
     widget::{button, column, container, progress_bar, row, scrollable, text, text_input},
 };
 
@@ -103,9 +103,6 @@ impl Maolan {
             if state.track_group_dialog.is_some() {
                 return self.track_group.view();
             }
-            if state.track_marker_dialog.is_some() {
-                return self.track_marker.view();
-            }
             if state.track_template_save_dialog.is_some() {
                 return self.track_template_save.view();
             }
@@ -113,7 +110,6 @@ impl Maolan {
                 return self.template_save.view();
             }
             match self.modal {
-                Some(Show::AddTrack) => self.add_track.view(),
                 Some(Show::ExportSettings) => self.export_settings_view(),
                 Some(Show::SessionMetadata) => self.session_metadata_view(),
                 Some(Show::Preferences) => self.preferences_view(),
@@ -323,7 +319,16 @@ impl Maolan {
                                 ]
                                 .spacing(8),
                             )
+                            .style(|_theme| container::Style {
+                                border: Border {
+                                    color: Color::from_rgba(0.34, 0.42, 0.56, 0.72),
+                                    width: 1.0,
+                                    ..Border::default()
+                                },
+                                ..crate::style::app_background()
+                            })
                             .width(Length::Fixed(220.0))
+                            .height(Length::Fill)
                             .padding(8);
                             row![container(view).width(Length::Fill), editor_panel]
                                 .width(Length::Fill)
@@ -357,6 +362,14 @@ impl Maolan {
                             ]
                             .spacing(8),
                         )
+                        .style(|_theme| container::Style {
+                            border: Border {
+                                color: Color::from_rgba(0.34, 0.42, 0.56, 0.72),
+                                width: 1.0,
+                                ..Border::default()
+                            },
+                            ..crate::style::app_background()
+                        })
                         .width(Length::Fixed(340.0))
                         .height(Length::Fill)
                         .padding(8);
@@ -364,6 +377,24 @@ impl Maolan {
                             .width(Length::Fill)
                             .height(Length::Fill)
                             .into();
+                    }
+                    if matches!(self.modal, Some(Show::AddTrack)) {
+                        view = row![
+                            container(view).width(Length::Fill),
+                            self.add_track.view()
+                        ]
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into();
+                    }
+                    if state.track_marker_dialog.is_some() {
+                        view = row![
+                            container(view).width(Length::Fill),
+                            self.track_marker.view()
+                        ]
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into();
                     }
                     content = content.push(view);
                     if self.import_in_progress {

@@ -89,6 +89,13 @@ impl Maolan {
             | Message::NewSession
             | Message::Request(_)
             | Message::MeterPollTick => return self.handle_session_message(message),
+            Message::EscapePressed => {
+                if matches!(self.modal, Some(Show::AddTrack)) {
+                    self.modal = None;
+                } else if self.state.blocking_read().track_marker_dialog.is_some() {
+                    self.state.blocking_write().track_marker_dialog = None;
+                }
+            }
             Message::Cancel => self.modal = None,
             Message::ConfirmCloseSave => {
                 self.pending_exit_after_save = true;
@@ -3202,6 +3209,9 @@ impl Maolan {
                         marker_index: None,
                         name: String::new(),
                     });
+                return iced::widget::operation::focus(
+                    crate::track_marker::TrackMarkerView::name_input_id(),
+                );
             }
             Message::TrackMarkerRenameShow {
                 ref track_name,
@@ -3223,6 +3233,9 @@ impl Maolan {
                 };
                 if let Some(dialog) = dialog {
                     self.state.blocking_write().track_marker_dialog = Some(dialog);
+                    return iced::widget::operation::focus(
+                        crate::track_marker::TrackMarkerView::name_input_id(),
+                    );
                 }
             }
             Message::TrackMarkerNameInput(_) => {}
@@ -5008,12 +5021,11 @@ impl Maolan {
                 };
                 let mut state = self.state.blocking_write();
                 state.editor_cursor = Some(position);
-                if let Some((track_name, marker_index, marker_sample)) = marker_drag_update {
-                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name)
-                        && marker_index < track.editor_markers.len()
-                    {
-                        track.editor_markers[marker_index].sample = marker_sample;
-                    }
+                if let Some((track_name, marker_index, marker_sample)) = marker_drag_update
+                    && let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name)
+                    && marker_index < track.editor_markers.len()
+                {
+                    track.editor_markers[marker_index].sample = marker_sample;
                 }
                 if state.mouse_left_down
                     && !matches!(resizing, Some(Resizing::Clip { .. }))

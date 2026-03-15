@@ -164,6 +164,7 @@ impl Maolan {
                     keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
                     keyboard::Key::Named(keyboard::key::Named::Delete)
                     | keyboard::Key::Named(keyboard::key::Named::Backspace) => Message::Remove,
+                    keyboard::Key::Named(keyboard::key::Named::Escape) => Message::EscapePressed,
                     _ => Message::None,
                 }
             }

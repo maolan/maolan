@@ -698,6 +698,7 @@ pub enum Message {
 
     WindowResized(Size),
     WindowCloseRequested,
+    EscapePressed,
     ConfirmCloseSave,
     ConfirmCloseDiscard,
     ConfirmCloseCancel,

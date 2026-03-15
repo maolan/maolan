@@ -1,7 +1,7 @@
 use crate::{message::Message, state::State};
 use iced::{
-    Alignment, Element, Length,
-    widget::{button, column, container, row, text, text_input},
+    Alignment, Border, Color, Element, Length,
+    widget::{Id, button, column, container, row, text, text_input},
 };
 
 #[derive(Debug)]
@@ -12,6 +12,10 @@ pub struct TrackMarkerView {
 impl TrackMarkerView {
     pub fn new(state: State) -> Self {
         Self { state }
+    }
+
+    pub fn name_input_id() -> Id {
+        Id::new("track-marker-name-input")
     }
 
     pub fn update(&mut self, message: &Message) {
@@ -39,21 +43,13 @@ impl TrackMarkerView {
 
         container(
             column![
-                text(format!(
-                    "{} marker on track: {}",
-                    if is_rename { "Rename" } else { "Create" },
-                    dialog.track_name
-                ))
-                .size(16),
-                row![
-                    text("Marker name:"),
-                    text_input("Enter marker name", &dialog.name)
-                        .on_input(Message::TrackMarkerNameInput)
-                        .on_submit(Message::TrackMarkerNameConfirm)
-                        .width(Length::Fixed(300.0)),
-                ]
-                .spacing(10)
-                .align_y(Alignment::Center),
+                text(if is_rename { "Edit Marker" } else { "Add Marker" }),
+                text(format!("Track: {}", dialog.track_name)).size(11),
+                text_input("Enter marker name", &dialog.name)
+                    .id(Self::name_input_id())
+                    .on_input(Message::TrackMarkerNameInput)
+                    .on_submit(Message::TrackMarkerNameConfirm)
+                    .width(Length::Fill),
                 row![
                     confirm_button,
                     button("Cancel")
@@ -62,15 +58,20 @@ impl TrackMarkerView {
                 ]
                 .spacing(10),
             ]
-            .align_x(Alignment::End)
-            .spacing(15),
+            .align_x(Alignment::Start)
+            .spacing(10),
         )
-        .style(|_theme| crate::style::app_background())
-        .padding(20)
-        .width(Length::Fill)
+        .style(|_theme| container::Style {
+            border: Border {
+                color: Color::from_rgba(0.34, 0.42, 0.56, 0.72),
+                width: 1.0,
+                ..Border::default()
+            },
+            ..crate::style::app_background()
+        })
+        .padding(12)
+        .width(Length::Fixed(320.0))
         .height(Length::Fill)
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center)
         .into()
     }
 }

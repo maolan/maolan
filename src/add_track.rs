@@ -1,8 +1,8 @@
 use crate::message::{AddTrack, Message};
 use crate::widget::numeric_input::number_input;
 use iced::{
-    Alignment, Element, Length,
-    widget::{button, column, container, pick_list, row, text, text_input},
+    Alignment, Border, Color, Element, Length,
+    widget::{Id, button, column, container, pick_list, row, text, text_input},
 };
 use maolan_engine::message::Action;
 
@@ -18,6 +18,40 @@ pub struct AddTrackView {
 }
 
 impl AddTrackView {
+    pub fn name_input_id() -> Id {
+        Id::new("add-track-name-input")
+    }
+
+    fn create_message(&self) -> Option<Message> {
+        if self.name.trim().is_empty() {
+            return None;
+        }
+
+        let template_name = self
+            .selected_template
+            .clone()
+            .unwrap_or_else(|| "empty".to_string());
+
+        Some(if template_name == "empty" {
+            Message::Request(Action::AddTrack {
+                name: self.name.clone(),
+                audio_ins: self.audio_ins,
+                midi_ins: self.midi_ins,
+                audio_outs: self.audio_outs,
+                midi_outs: self.midi_outs,
+            })
+        } else {
+            Message::AddTrackFromTemplate {
+                name: self.name.clone(),
+                template: template_name,
+                audio_ins: self.audio_ins,
+                midi_ins: self.midi_ins,
+                audio_outs: self.audio_outs,
+                midi_outs: self.midi_outs,
+            }
+        })
+    }
+
     pub fn set_available_templates(&mut self, templates: Vec<String>) {
         self.available_templates = templates;
     }
@@ -92,33 +126,11 @@ impl AddTrackView {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let template_name = self
-            .selected_template
-            .clone()
-            .unwrap_or_else(|| "empty".to_string());
-
-        let create = if self.name.trim().is_empty() {
-            button("Create")
-        } else {
-            let message = if template_name == "empty" {
-                Message::Request(Action::AddTrack {
-                    name: self.name.clone(),
-                    audio_ins: self.audio_ins,
-                    midi_ins: self.midi_ins,
-                    audio_outs: self.audio_outs,
-                    midi_outs: self.midi_outs,
-                })
-            } else {
-                Message::AddTrackFromTemplate {
-                    name: self.name.clone(),
-                    template: template_name.clone(),
-                    audio_ins: self.audio_ins,
-                    midi_ins: self.midi_ins,
-                    audio_outs: self.audio_outs,
-                    midi_outs: self.midi_outs,
-                }
-            };
+        let create_message = self.create_message();
+        let create = if let Some(message) = create_message.clone() {
             button("Create").on_press(message)
+        } else {
+            button("Create")
         };
 
         // Build template options with "empty" as first option
@@ -142,7 +154,9 @@ impl AddTrackView {
             row![
                 text("Name:"),
                 text_input("Track name", &self.name)
+                    .id(Self::name_input_id())
                     .on_input(|name: String| Message::AddTrack(AddTrack::Name(name)))
+                    .on_submit_maybe(create_message)
                     .width(Length::Fixed(200.0)),
             ]
             .spacing(10),
@@ -207,13 +221,20 @@ impl AddTrackView {
             .spacing(10),
         );
 
-        container(col.align_x(Alignment::End).spacing(10))
-            .style(|_theme| crate::style::app_background())
-            .padding(20)
-            .width(Length::Fill)
+        container(
+            column![text("Add Track"), col.align_x(Alignment::End).spacing(10)].spacing(10),
+        )
+            .style(|_theme| container::Style {
+                border: Border {
+                    color: Color::from_rgba(0.34, 0.42, 0.56, 0.72),
+                    width: 1.0,
+                    ..Border::default()
+                },
+                ..crate::style::app_background()
+            })
+            .padding(12)
+            .width(Length::Fixed(320.0))
             .height(Length::Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
             .into()
     }
 }
