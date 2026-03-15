@@ -268,6 +268,7 @@ struct TrackAutomationRuntime {
 pub struct Maolan {
     clip: Option<DraggedClip>,
     clip_preview_target_track: Option<String>,
+    clip_preview_target_valid: bool,
     menu: menu::Menu,
     size: Size,
     state: State,
@@ -482,6 +483,7 @@ impl Default for Maolan {
         Self {
             clip: None,
             clip_preview_target_track: None,
+            clip_preview_target_valid: false,
             menu,
             size: Size::new(0.0, 0.0),
             state: state.clone(),

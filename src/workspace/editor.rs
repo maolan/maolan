@@ -38,6 +38,7 @@ struct TrackElementViewArgs<'a> {
     samples_per_beat: f64,
     active_clip_drag: Option<&'a DraggedClip>,
     active_target_track: Option<&'a str>,
+    active_target_valid: bool,
     recording_preview_bounds: Option<(usize, usize)>,
     recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
     midi_clip_previews: Option<&'a MidiClipPreviewMap>,
@@ -827,6 +828,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         samples_per_beat,
         active_clip_drag,
         active_target_track,
+        active_target_valid,
         recording_preview_bounds,
         recording_preview_peaks,
         midi_clip_previews,
@@ -1065,14 +1067,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let drag_for_clip = group_drag.or(active_drag);
         let dragged_to_other_track = drag_for_clip.is_some_and(|d| {
             !d.copy
+                && active_target_valid
                 && active_target_track.is_some_and(|target| target != track_name_cloned.as_str())
         });
-        let show_preview_in_this_track = drag_for_clip.is_some_and(|d| {
+        let show_preview_in_this_track = drag_for_clip.is_some_and(|_| {
             active_target_track.is_some_and(|target| target == track_name_cloned.as_str())
-                && (d.copy || d.track_index != track_name_cloned)
         });
         let dragged_start = drag_for_clip
-            .filter(|d| !d.copy)
+            .filter(|d| !d.copy && !show_preview_in_this_track)
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
                 snap_sample(clip.start as f32 + delta_samples, delta_samples)
@@ -1389,6 +1391,36 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples);
+            let preview_fill = if active_target_valid {
+                Background::Color(Color {
+                    r: 0.72,
+                    g: 0.86,
+                    b: 1.0,
+                    a: 0.7,
+                })
+            } else {
+                Background::Color(Color {
+                    r: 0.92,
+                    g: 0.32,
+                    b: 0.32,
+                    a: 0.55,
+                })
+            };
+            let preview_border = if active_target_valid {
+                Color {
+                    r: 0.98,
+                    g: 0.98,
+                    b: 0.98,
+                    a: 0.9,
+                }
+            } else {
+                Color {
+                    r: 1.0,
+                    g: 0.45,
+                    b: 0.45,
+                    a: 0.95,
+                }
+            };
             let preview_content = container(Stack::with_children(vec![
                 audio_waveform_overlay(
                     clip_peaks,
@@ -1404,15 +1436,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(0)
-            .style(|_theme| {
+            .style(move |_theme| {
                 use container::Style;
                 Style {
-                    background: Some(Background::Color(Color {
-                        r: 0.72,
-                        g: 0.86,
-                        b: 1.0,
-                        a: 0.7,
-                    })),
+                    background: Some(preview_fill),
                     ..Style::default()
                 }
             });
@@ -1427,15 +1454,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             ])
             .width(Length::Fixed(clip_width))
             .height(Length::Fixed(clip_height))
-            .style(|_theme| container::Style {
+            .style(move |_theme| container::Style {
                 background: None,
                 border: Border {
-                    color: Color {
-                        r: 0.98,
-                        g: 0.98,
-                        b: 0.98,
-                        a: 0.9,
-                    },
+                    color: preview_border,
                     width: 2.0,
                     radius: 3.0.into(),
                 },
@@ -1471,14 +1493,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let drag_for_clip = group_drag.or(active_drag);
         let dragged_to_other_track = drag_for_clip.is_some_and(|d| {
             !d.copy
+                && active_target_valid
                 && active_target_track.is_some_and(|target| target != track_name_cloned.as_str())
         });
-        let show_preview_in_this_track = drag_for_clip.is_some_and(|d| {
+        let show_preview_in_this_track = drag_for_clip.is_some_and(|_| {
             active_target_track.is_some_and(|target| target == track_name_cloned.as_str())
-                && (d.copy || d.track_index != track_name_cloned)
         });
         let dragged_start = drag_for_clip
-            .filter(|d| !d.copy)
+            .filter(|d| !d.copy && !show_preview_in_this_track)
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
                 snap_sample(clip.start as f32 + delta_samples, delta_samples)
@@ -1805,6 +1827,36 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples);
+            let preview_fill = if active_target_valid {
+                clip_two_edge_gradient(MIDI_CLIP_SELECTED_BASE, 0.66, 0.66, false)
+            } else {
+                clip_two_edge_gradient(
+                    Color {
+                        r: 0.72,
+                        g: 0.18,
+                        b: 0.18,
+                        a: 1.0,
+                    },
+                    0.72,
+                    0.72,
+                    false,
+                )
+            };
+            let preview_border = if active_target_valid {
+                Color {
+                    r: 0.88,
+                    g: 1.0,
+                    b: 0.78,
+                    a: 0.92,
+                }
+            } else {
+                Color {
+                    r: 1.0,
+                    g: 0.45,
+                    b: 0.45,
+                    a: 0.95,
+                }
+            };
             let mut preview_layers = Vec::with_capacity(2);
             if let Some(notes) = midi_notes_for_clip.as_ref() {
                 preview_layers.push(midi_clip_notes_overlay(
@@ -1818,15 +1870,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .padding(0)
-                .style(|_theme| {
+                .style(move |_theme| {
                     use container::Style;
                     Style {
-                        background: Some(clip_two_edge_gradient(
-                            MIDI_CLIP_SELECTED_BASE,
-                            0.66,
-                            0.66,
-                            false,
-                        )),
+                        background: Some(preview_fill),
                         ..Style::default()
                     }
                 });
@@ -1841,15 +1888,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             ])
             .width(Length::Fixed(clip_width))
             .height(Length::Fixed(clip_height))
-            .style(|_theme| container::Style {
+            .style(move |_theme| container::Style {
                 background: None,
                 border: Border {
-                    color: Color {
-                        r: 0.88,
-                        g: 1.0,
-                        b: 0.78,
-                        a: 0.92,
-                    },
+                    color: preview_border,
                     width: 2.0,
                     radius: 8.0.into(),
                 },
@@ -1891,11 +1933,45 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let Some(source_clip) = source_track.audio.clips.get(clip_index) else {
                             continue;
                         };
+                        let preview_fill = if active_target_valid {
+                            clip_two_edge_gradient(AUDIO_CLIP_SELECTED_BASE, 0.7, 0.7, true)
+                        } else {
+                            clip_two_edge_gradient(
+                                Color {
+                                    r: 0.72,
+                                    g: 0.18,
+                                    b: 0.18,
+                                    a: 1.0,
+                                },
+                                0.72,
+                                0.72,
+                                true,
+                            )
+                        };
+                        let preview_border = if active_target_valid {
+                            Color {
+                                r: 0.98,
+                                g: 0.98,
+                                b: 0.98,
+                                a: 0.9,
+                            }
+                        } else {
+                            Color {
+                                r: 1.0,
+                                g: 0.45,
+                                b: 0.45,
+                                a: 0.95,
+                            }
+                        };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
                         let clip_height = lane_clip_height;
-                        // All audio clips are displayed on lane 0 (single audio lane)
-                        let lane = 0;
-                        let lane_top = track.lane_top(Kind::Audio, lane) + 3.0;
+                        let lane_top = if active_target_valid || track.audio.ins > 0 {
+                            track.lane_top(Kind::Audio, 0) + 3.0
+                        } else if track.midi.ins > 0 {
+                            track.lane_top(Kind::MIDI, 0) + 3.0
+                        } else {
+                            track.lane_layout().header_height + 3.0
+                        };
                         let preview_start =
                             snap_sample(source_clip.start as f32 + delta_samples, delta_samples);
                         let display_clip_label =
@@ -1915,15 +1991,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         .width(Length::Fill)
                         .height(Length::Fill)
                         .padding(0)
-                        .style(|_theme| {
+                        .style(move |_theme| {
                             use container::Style;
                             Style {
-                                background: Some(clip_two_edge_gradient(
-                                    AUDIO_CLIP_SELECTED_BASE,
-                                    0.7,
-                                    0.7,
-                                    true,
-                                )),
+                                background: Some(if active_target_valid {
+                                    preview_fill
+                                } else {
+                                    Background::Color(Color::TRANSPARENT)
+                                }),
                                 ..Style::default()
                             }
                         });
@@ -1938,15 +2013,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         ])
                         .width(Length::Fixed(clip_width))
                         .height(Length::Fixed(clip_height))
-                        .style(|_theme| container::Style {
-                            background: None,
+                        .style(move |_theme| container::Style {
+                            background: Some(if active_target_valid {
+                                Background::Color(Color::TRANSPARENT)
+                            } else {
+                                preview_fill
+                            }),
                             border: Border {
-                                color: Color {
-                                    r: 0.98,
-                                    g: 0.98,
-                                    b: 0.98,
-                                    a: 0.9,
-                                },
+                                color: preview_border,
                                 width: 2.0,
                                 radius: 3.0.into(),
                             },
@@ -1979,11 +2053,49 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let Some(source_clip) = source_track.midi.clips.get(clip_index) else {
                             continue;
                         };
+                        let preview_fill = if active_target_valid {
+                            clip_two_edge_gradient(MIDI_CLIP_SELECTED_BASE, 0.7, 0.7, false)
+                        } else {
+                            clip_two_edge_gradient(
+                                Color {
+                                    r: 0.72,
+                                    g: 0.18,
+                                    b: 0.18,
+                                    a: 1.0,
+                                },
+                                0.72,
+                                0.72,
+                                false,
+                            )
+                        };
+                        let preview_border = if active_target_valid {
+                            Color {
+                                r: 0.98,
+                                g: 0.98,
+                                b: 0.98,
+                                a: 0.9,
+                            }
+                        } else {
+                            Color {
+                                r: 1.0,
+                                g: 0.45,
+                                b: 0.45,
+                                a: 0.95,
+                            }
+                        };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
-                        let lane = source_clip
-                            .input_channel
-                            .min(track.midi.ins.saturating_sub(1));
-                        let lane_top = track.lane_top(Kind::MIDI, lane) + 3.0;
+                        let lane_top = if active_target_valid && track.midi.ins > 0 {
+                            let lane = source_clip
+                                .input_channel
+                                .min(track.midi.ins.saturating_sub(1));
+                            track.lane_top(Kind::MIDI, lane) + 3.0
+                        } else if track.audio.ins > 0 {
+                            track.lane_top(Kind::Audio, 0) + 3.0
+                        } else if track.midi.ins > 0 {
+                            track.lane_top(Kind::MIDI, 0) + 3.0
+                        } else {
+                            track.lane_layout().header_height + 3.0
+                        };
                         let preview_start =
                             snap_sample(source_clip.start as f32 + delta_samples, delta_samples);
                         let display_clip_label =
@@ -1992,15 +2104,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             .width(Length::Fill)
                             .height(Length::Fill)
                             .padding(0)
-                            .style(|_theme| {
+                            .style(move |_theme| {
                                 use container::Style;
                                 Style {
-                                    background: Some(clip_two_edge_gradient(
-                                        MIDI_CLIP_SELECTED_BASE,
-                                        0.7,
-                                        0.7,
-                                        false,
-                                    )),
+                                    background: Some(if active_target_valid {
+                                        preview_fill
+                                    } else {
+                                        Background::Color(Color::TRANSPARENT)
+                                    }),
                                     ..Style::default()
                                 }
                             });
@@ -2015,15 +2126,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         ])
                         .width(Length::Fixed(clip_width))
                         .height(Length::Fixed(lane_clip_height))
-                        .style(|_theme| container::Style {
-                            background: None,
+                        .style(move |_theme| container::Style {
+                            background: Some(if active_target_valid {
+                                Background::Color(Color::TRANSPARENT)
+                            } else {
+                                preview_fill
+                            }),
                             border: Border {
-                                color: Color {
-                                    r: 0.98,
-                                    g: 0.98,
-                                    b: 0.98,
-                                    a: 0.9,
-                                },
+                                color: preview_border,
                                 width: 2.0,
                                 radius: 3.0.into(),
                             },
@@ -2423,6 +2533,7 @@ pub struct EditorViewArgs<'a> {
     pub samples_per_beat: f64,
     pub active_clip_drag: Option<&'a DraggedClip>,
     pub active_target_track: Option<&'a str>,
+    pub active_target_valid: bool,
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
     pub midi_clip_previews: Option<&'a MidiClipPreviewMap>,
@@ -2437,6 +2548,7 @@ pub struct OwnedEditorViewArgs {
     pub samples_per_beat: f64,
     pub active_clip_drag: Option<DraggedClip>,
     pub active_target_track: Option<String>,
+    pub active_target_valid: bool,
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<HashMap<String, ClipPeaks>>,
     pub midi_clip_previews: Option<MidiClipPreviewMap>,
@@ -2458,6 +2570,7 @@ impl Editor {
         std::mem::discriminant(&args.snap_mode).hash(&mut hasher);
         args.recording_preview_bounds.hash(&mut hasher);
         args.active_target_track.hash(&mut hasher);
+        args.active_target_valid.hash(&mut hasher);
         if let Some(drag) = args.active_clip_drag {
             std::mem::discriminant(&drag.kind).hash(&mut hasher);
             drag.index.hash(&mut hasher);
@@ -2636,6 +2749,7 @@ impl Editor {
             samples_per_beat,
             active_clip_drag,
             active_target_track,
+            active_target_valid,
             recording_preview_bounds,
             recording_preview_peaks,
             midi_clip_previews,
@@ -2664,6 +2778,7 @@ impl Editor {
                 samples_per_beat,
                 active_clip_drag: active_clip_drag_ref,
                 active_target_track: active_target_track_ref,
+                active_target_valid,
                 recording_preview_bounds,
                 recording_preview_peaks: recording_preview_peaks_ref,
                 midi_clip_previews: midi_clip_previews_ref,

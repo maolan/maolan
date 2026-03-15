@@ -5092,6 +5092,7 @@ impl Maolan {
                         || (clip.end.y - clip.start.y).abs() > 2.0;
                     if !moved {
                         self.clip = None;
+                        self.clip_preview_target_valid = false;
                         return Task::none();
                     }
                     return iced_drop::zones_on_point(
@@ -5102,6 +5103,7 @@ impl Maolan {
                     );
                 }
                 self.clip_preview_target_track = None;
+                self.clip_preview_target_valid = false;
             }
             Message::ClipDrag(ref clip) => {
                 if !self.state.blocking_read().mouse_left_down {
@@ -5144,6 +5146,7 @@ impl Maolan {
                     });
                     let Some((to_track_id, to_track_rect)) = to_track_zone else {
                         self.clip = None;
+                        self.clip_preview_target_valid = false;
                         return Task::none();
                     };
 
@@ -5165,6 +5168,7 @@ impl Maolan {
                         if !kind_matches {
                             self.clip = None;
                             self.clip_preview_target_track = None;
+                            self.clip_preview_target_valid = false;
                             return Task::none();
                         }
                         let local_y = (clip.end.y - to_track_rect.y).max(0.0);
@@ -5216,10 +5220,12 @@ impl Maolan {
                                     }
                                     self.clip = None;
                                     self.clip_preview_target_track = None;
+                                    self.clip_preview_target_valid = false;
                                     return Task::batch(tasks);
                                 }
                                 if clip_index >= from_track.audio.clips.len() {
                                     self.clip = None;
+                                    self.clip_preview_target_valid = false;
                                     return Task::none();
                                 }
                                 let clip_index_in_from_track = clip_index;
@@ -5244,6 +5250,7 @@ impl Maolan {
                                 });
                                 self.clip = None;
                                 self.clip_preview_target_track = None;
+                                self.clip_preview_target_valid = false;
                                 return task;
                             }
                             Kind::MIDI => {
@@ -5280,10 +5287,12 @@ impl Maolan {
                                     }
                                     self.clip = None;
                                     self.clip_preview_target_track = None;
+                                    self.clip_preview_target_valid = false;
                                     return Task::batch(tasks);
                                 }
                                 if clip_index >= from_track.midi.clips.len() {
                                     self.clip = None;
+                                    self.clip_preview_target_valid = false;
                                     return Task::none();
                                 }
                                 let clip_index_in_from_track = clip_index;
@@ -5308,6 +5317,7 @@ impl Maolan {
                                 });
                                 self.clip = None;
                                 self.clip_preview_target_track = None;
+                                self.clip_preview_target_valid = false;
                                 return task;
                             }
                         }
@@ -5315,20 +5325,28 @@ impl Maolan {
                 }
                 self.clip = None;
                 self.clip_preview_target_track = None;
+                self.clip_preview_target_valid = false;
                 return Task::none();
             }
             Message::HandleClipPreviewZones(ref zones) => {
                 if let Some(clip) = &self.clip {
                     let state = self.state.blocking_read();
                     let from_track = state.tracks.iter().find(|t| t.name == clip.track_index);
-                    let to_track_id = zones.iter().map(|(id, _)| id).find(|id| {
+                    let mut track_zone_ids = zones.iter().filter_map(|(id, _)| {
                         state
                             .tracks
                             .iter()
-                            .any(|t| Id::from(t.name.clone()) == **id)
+                            .find(|t| Id::from(t.name.clone()) == *id)
+                            .map(|track| (id, track.name.as_str()))
                     });
+                    let to_track_id = track_zone_ids
+                        .clone()
+                        .find(|(_, track_name)| *track_name != clip.track_index.as_str())
+                        .map(|(id, _)| id)
+                        .or_else(|| track_zone_ids.next().map(|(id, _)| id));
                     let Some(to_track_id) = to_track_id else {
                         self.clip_preview_target_track = None;
+                        self.clip_preview_target_valid = false;
                         return Task::none();
                     };
                     let to_track = state
@@ -5349,14 +5367,18 @@ impl Maolan {
                         };
                         if kind_matches {
                             self.clip_preview_target_track = Some(to_track.name.clone());
+                            self.clip_preview_target_valid = true;
                         } else {
-                            self.clip_preview_target_track = None;
+                            self.clip_preview_target_track = Some(to_track.name.clone());
+                            self.clip_preview_target_valid = false;
                         }
                     } else {
                         self.clip_preview_target_track = None;
+                        self.clip_preview_target_valid = false;
                     }
                 } else {
                     self.clip_preview_target_track = None;
+                    self.clip_preview_target_valid = false;
                 }
             }
             Message::TrackDrag { index, position } => {
