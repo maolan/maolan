@@ -81,7 +81,7 @@ Last updated: 2026-03-15
 - `Left drag selected marker(s)`: Move marker(s) in time
 - `Left click empty timing lane`: Clear timing selection / begin punch drag
 - `Left drag empty timing lane`: Set punch range
-- `Right click`: Decrement tempo/TS controls (left control zone) or open marker context menu
+- `Right click` marker: Open marker context menu
 - `Middle click` on tempo lane: Add tempo point
 - `Middle click` on time-signature lane: Add time-signature point
 - `Mouse wheel` over left control zone: Adjust tempo or time-signature values

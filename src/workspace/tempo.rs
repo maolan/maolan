@@ -307,21 +307,7 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                     state.context_menu = None;
                     if pos.x <= LEFT_HIT_WIDTH {
-                        if pos.y <= TEMPO_HIT_HEIGHT {
-                            return Some(
-                                CanvasAction::publish(Message::TempoAdjust(1.0)).and_capture(),
-                            );
-                        }
-                        if pos.x <= TIME_SIG_HIT_X_SPLIT {
-                            return Some(
-                                CanvasAction::publish(Message::TimeSignatureNumeratorAdjust(1))
-                                    .and_capture(),
-                            );
-                        }
-                        return Some(
-                            CanvasAction::publish(Message::TimeSignatureDenominatorAdjust(1))
-                                .and_capture(),
-                        );
+                        return Some(CanvasAction::capture());
                     }
                     if pos.y <= TEMPO_HIT_HEIGHT
                         && let Some(sample) = nearest_tempo_point_at_x(pos.x)
@@ -502,21 +488,7 @@ impl canvas::Program<Message> for TempoCanvas {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 if let Some(pos) = cursor_position {
                     if pos.x <= LEFT_HIT_WIDTH {
-                        if pos.y <= TEMPO_HIT_HEIGHT {
-                            return Some(
-                                CanvasAction::publish(Message::TempoAdjust(-1.0)).and_capture(),
-                            );
-                        }
-                        if pos.x <= TIME_SIG_HIT_X_SPLIT {
-                            return Some(
-                                CanvasAction::publish(Message::TimeSignatureNumeratorAdjust(-1))
-                                    .and_capture(),
-                            );
-                        }
-                        return Some(
-                            CanvasAction::publish(Message::TimeSignatureDenominatorAdjust(-1))
-                                .and_capture(),
-                        );
+                        return Some(CanvasAction::capture());
                     }
                     if pos.y <= TEMPO_HIT_HEIGHT
                         && let Some(sample) = nearest_tempo_point_at_x(pos.x)
@@ -1024,7 +996,7 @@ impl canvas::Program<Message> for TempoCanvas {
                 }
 
                 frame.fill_text(Text {
-                    content: format!("{:.0} BPM", self.bpm),
+                    content: format!("{:.0}", self.bpm),
                     position: Point::new(10.0, 2.0),
                     color: Color::WHITE,
                     size: 14.0.into(),
@@ -1036,20 +1008,6 @@ impl canvas::Program<Message> for TempoCanvas {
                     position: Point::new(10.0, 15.0),
                     color: Color::WHITE,
                     size: 10.0.into(),
-                    ..Default::default()
-                });
-                frame.fill_text(Text {
-                    content: "L+/R-".to_string(),
-                    position: Point::new(56.0, 2.0),
-                    color: Color::from_rgba(0.82, 0.82, 0.82, 0.8),
-                    size: 9.0.into(),
-                    ..Default::default()
-                });
-                frame.fill_text(Text {
-                    content: "Scroll +/-".to_string(),
-                    position: Point::new(47.0, 15.0),
-                    color: Color::from_rgba(0.82, 0.82, 0.82, 0.8),
-                    size: 9.0.into(),
                     ..Default::default()
                 });
 
