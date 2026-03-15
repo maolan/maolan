@@ -1,0 +1,12 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    uses: ./.github/workflows/rust.yml
+    with:
+      release_build: true
+      release_tag: ${{ github.event.release.tag_name }}

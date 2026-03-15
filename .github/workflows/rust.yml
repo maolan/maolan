@@ -5,41 +5,134 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+  workflow_call:
+    inputs:
+      release_build:
+        required: false
+        type: boolean
+        default: false
+      release_tag:
+        required: false
+        type: string
+        default: ""
 
 env:
   CARGO_TERM_COLOR: always
+  FREEBSD_VERSION: '14.3'
+
+permissions:
+  contents: write
 
 jobs:
   build-ubuntu:
     runs-on: ubuntu-latest
+    env:
+      ASSET_BASENAME: maolan-${{ inputs.release_tag }}-linux-x86_64
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Install system packages
       run: |
         sudo apt-get update
-        sudo apt-get install -y cargo jackd2 libasound2-dev lilv-utils libsuil-dev libgtk2.0-dev
+        sudo apt-get install -y cargo pkg-config jackd2 libjack-jackd2-dev libasound2-dev liblilv-dev libsuil-dev libgtk2.0-dev
     - name: Build
-      run: cargo build --verbose
+      if: ${{ !inputs.release_build }}
+      run: cargo build
     - name: Run tests
-      run: cargo test --verbose
+      if: ${{ !inputs.release_build }}
+      run: cargo test
+    - name: Build release binary
+      if: ${{ inputs.release_build }}
+      run: cargo build --release --verbose
+    - name: Package Linux binary
+      if: ${{ inputs.release_build }}
+      run: |
+        mkdir -p dist
+        cp target/release/maolan "dist/${ASSET_BASENAME}"
+        tar -C dist -czf "dist/${ASSET_BASENAME}.tar.gz" "${ASSET_BASENAME}"
+    - name: Upload Linux artifact
+      if: ${{ inputs.release_build }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: ${{ env.ASSET_BASENAME }}
+        path: dist/${{ env.ASSET_BASENAME }}.tar.gz
 
   build-freebsd:
     runs-on: ubuntu-latest
+    env:
+      ASSET_BASENAME: maolan-${{ inputs.release_tag }}-freebsd-x86_64
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
     - name: Build and test on FreeBSD
+      if: ${{ !inputs.release_build }}
       uses: cross-platform-actions/action@v0.30.0
       with:
         operating_system: freebsd
-        version: '14.3'
+        version: ${{ env.FREEBSD_VERSION }}
         run: |
-          sudo pkg update
-          sudo pkg install -y rustup-init pkgconf libX11 gtk2 lilv jackit
+          sudo mkdir -p /usr/local/etc/pkg/repos
+          echo 'FreeBSD: { url: "pkg+http://pkg.FreeBSD.org/${ABI}/latest", mirror_type: "srv", enabled: yes }' | sudo tee /usr/local/etc/pkg/repos/FreeBSD.conf
+          sudo pkg update -f
+          sudo pkg install -y ca_root_nss rustup-init pkgconf libX11 gtk2 lilv suil jackit
+          export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
 
           rustup-init -y --default-toolchain stable
           . "$HOME/.cargo/env"
 
-          cargo build --verbose
-          cargo test --verbose
+          cargo build
+          cargo test
+    - name: Build, package, and upload FreeBSD artifact
+      if: ${{ inputs.release_build }}
+      uses: cross-platform-actions/action@v0.30.0
+      with:
+        operating_system: freebsd
+        version: ${{ env.FREEBSD_VERSION }}
+        run: |
+          sudo mkdir -p /usr/local/etc/pkg/repos
+          echo 'FreeBSD: { url: "pkg+http://pkg.FreeBSD.org/${ABI}/latest", mirror_type: "srv", enabled: yes }' | sudo tee /usr/local/etc/pkg/repos/FreeBSD.conf
+          sudo pkg update -f
+          sudo pkg install -y ca_root_nss rustup-init pkgconf libX11 gtk2 lilv suil jackit
+          export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
+
+          rustup-init -y --default-toolchain stable
+          . "$HOME/.cargo/env"
+
+          cargo build --release --verbose
+
+          mkdir -p dist
+          cp target/release/maolan "dist/${{ env.ASSET_BASENAME }}"
+          tar -C dist -czf "dist/${{ env.ASSET_BASENAME }}.tar.gz" "${{ env.ASSET_BASENAME }}"
+    - name: Upload FreeBSD artifact
+      if: ${{ inputs.release_build }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: ${{ env.ASSET_BASENAME }}
+        path: dist/${{ env.ASSET_BASENAME }}.tar.gz
+
+  publish-release-assets:
+    if: ${{ inputs.release_build }}
+    runs-on: ubuntu-latest
+    needs:
+    - build-ubuntu
+    - build-freebsd
+
+    steps:
+    - name: Download release artifacts
+      uses: actions/download-artifact@v5
+      with:
+        merge-multiple: true
+        path: dist
+    - name: Publish assets to release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        TAG_NAME: ${{ inputs.release_tag }}
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        mapfile -t artifacts < <(find dist -maxdepth 1 -type f -name '*.tar.gz' | sort)
+        if [ "${#artifacts[@]}" -eq 0 ]; then
+          echo "No release artifacts found in dist/"
+          find dist -maxdepth 3 -print
+          exit 1
+        fi
+        gh release upload "$TAG_NAME" "${artifacts[@]}" --clobber --repo "$REPOSITORY"
