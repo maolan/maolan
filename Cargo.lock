@@ -2442,7 +2442,7 @@ dependencies = [
 
 [[package]]
 name = "maolan"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "alsa",
  "ebur128",
@@ -2476,7 +2476,7 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "alsa",
  "byteorder",
