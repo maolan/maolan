@@ -476,11 +476,13 @@ impl fmt::Display for ExportBitDepth {
 #[derive(Debug, Clone)]
 pub enum AddTrack {
     Name(String),
+    Count(usize),
     AudioIns(usize),
     AudioOuts(usize),
     MIDIIns(usize),
     MIDIOuts(usize),
     TemplateSelected(String),
+    Submit,
 }
 
 #[derive(Debug, Clone)]

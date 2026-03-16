@@ -9,6 +9,7 @@ use maolan_engine::message::Action;
 #[derive(Debug)]
 pub struct AddTrackView {
     name: String,
+    count: usize,
     audio_ins: usize,
     audio_outs: usize,
     midi_ins: usize,
@@ -26,30 +27,48 @@ impl AddTrackView {
         if self.name.trim().is_empty() {
             return None;
         }
+        Some(Message::AddTrack(AddTrack::Submit))
+    }
+
+    pub fn create_messages(&self) -> Vec<Message> {
+        let base_name = self.name.trim();
+        if base_name.is_empty() {
+            return Vec::new();
+        }
 
         let template_name = self
             .selected_template
             .clone()
             .unwrap_or_else(|| "empty".to_string());
+        let count = self.count.max(1);
 
-        Some(if template_name == "empty" {
-            Message::Request(Action::AddTrack {
-                name: self.name.clone(),
-                audio_ins: self.audio_ins,
-                midi_ins: self.midi_ins,
-                audio_outs: self.audio_outs,
-                midi_outs: self.midi_outs,
+        (0..count)
+            .map(|index| {
+                let name = if count == 1 {
+                    base_name.to_string()
+                } else {
+                    format!("{base_name} {}", index + 1)
+                };
+                if template_name == "empty" {
+                    Message::Request(Action::AddTrack {
+                        name,
+                        audio_ins: self.audio_ins,
+                        midi_ins: self.midi_ins,
+                        audio_outs: self.audio_outs,
+                        midi_outs: self.midi_outs,
+                    })
+                } else {
+                    Message::AddTrackFromTemplate {
+                        name,
+                        template: template_name.clone(),
+                        audio_ins: self.audio_ins,
+                        midi_ins: self.midi_ins,
+                        audio_outs: self.audio_outs,
+                        midi_outs: self.midi_outs,
+                    }
+                }
             })
-        } else {
-            Message::AddTrackFromTemplate {
-                name: self.name.clone(),
-                template: template_name,
-                audio_ins: self.audio_ins,
-                midi_ins: self.midi_ins,
-                audio_outs: self.audio_outs,
-                midi_outs: self.midi_outs,
-            }
-        })
+            .collect()
     }
 
     pub fn set_available_templates(&mut self, templates: Vec<String>) {
@@ -88,6 +107,9 @@ impl AddTrackView {
                 AddTrack::Name(name) => {
                     self.name = name.clone();
                 }
+                AddTrack::Count(count) => {
+                    self.count = (*count).max(1);
+                }
                 AddTrack::AudioIns(ins) => {
                     self.audio_ins = *ins;
                 }
@@ -121,6 +143,7 @@ impl AddTrackView {
                         }
                     }
                 }
+                AddTrack::Submit => {}
             }
         }
     }
@@ -158,6 +181,13 @@ impl AddTrackView {
                     .on_input(|name: String| Message::AddTrack(AddTrack::Name(name)))
                     .on_submit_maybe(create_message)
                     .width(Length::Fixed(200.0)),
+            ]
+            .spacing(10),
+            row![
+                text("Tracks:"),
+                number_input(&self.count, 1..=128, |count: usize| {
+                    Message::AddTrack(AddTrack::Count(count))
+                })
             ]
             .spacing(10),
         ];
@@ -242,6 +272,7 @@ impl AddTrackView {
 impl Default for AddTrackView {
     fn default() -> Self {
         Self {
+            count: 1,
             audio_ins: 1,
             audio_outs: 1,
             midi_ins: 0,
