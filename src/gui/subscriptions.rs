@@ -77,6 +77,25 @@ impl Maolan {
                                                 hw_out_db,
                                                 track_meters,
                                             } => {
+                                                let hw_changed =
+                                                    meter_changed(&last_hw_out, hw_out_db);
+                                                let track_count_changed =
+                                                    last_meters.len() != track_meters.len();
+                                                let tracks_changed = track_count_changed
+                                                    || track_meters.iter().any(
+                                                        |(track_name, output_db)| match last_meters
+                                                            .get(track_name)
+                                                        {
+                                                            Some(prev) => {
+                                                                meter_changed(prev, output_db)
+                                                            }
+                                                            None => true,
+                                                        },
+                                                    );
+                                                if !hw_changed && !tracks_changed {
+                                                    continue;
+                                                }
+
                                                 last_hw_out.clear();
                                                 last_hw_out.extend_from_slice(hw_out_db);
                                                 last_meters.clear();

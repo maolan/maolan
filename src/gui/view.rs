@@ -132,6 +132,8 @@ impl Maolan {
                             snap_mode: self.snap_mode,
                             samples_per_beat: self.samples_per_beat(),
                             zoom_visible_bars: self.zoom_visible_bars,
+                            mixer_scroll_x: self.mixer_scroll_x,
+                            window_width: self.size.width,
                             tracks_resize_hovered: self.tracks_resize_hovered,
                             mixer_resize_hovered: self.mixer_resize_hovered,
                             tracks_visible: self.tracks_visible,
@@ -171,6 +173,8 @@ impl Maolan {
                             snap_mode: self.snap_mode,
                             samples_per_beat: self.samples_per_beat(),
                             zoom_visible_bars: self.zoom_visible_bars,
+                            mixer_scroll_x: 0.0,
+                            window_width: self.size.width,
                             tracks_resize_hovered: false,
                             mixer_resize_hovered: false,
                             tracks_visible: false,
@@ -379,13 +383,10 @@ impl Maolan {
                             .into();
                     }
                     if matches!(self.modal, Some(Show::AddTrack)) {
-                        view = row![
-                            container(view).width(Length::Fill),
-                            self.add_track.view()
-                        ]
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .into();
+                        view = row![container(view).width(Length::Fill), self.add_track.view()]
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .into();
                     }
                     if state.track_marker_dialog.is_some() {
                         view = row![

@@ -925,7 +925,6 @@ impl Maolan {
         let mut pending_vca_assignments: Vec<(String, String)> = Vec::new();
         let mut warnings: Vec<String> = Vec::new();
         let session_root = PathBuf::from(path.clone());
-        self.pending_audio_peaks.clear();
         self.pending_peak_file_loads.clear();
         self.pending_peak_rebuilds.clear();
         self.midi_clip_previews.clear();

@@ -303,7 +303,6 @@ pub struct Maolan {
     #[cfg(target_os = "macos")]
     pending_save_vst3_states: HashSet<(String, usize)>,
     pending_save_is_template: bool,
-    pending_audio_peaks: HashMap<AudioClipKey, ClipPeaks>,
     pending_peak_file_loads: HashMap<AudioClipKey, PathBuf>,
     pending_peak_rebuilds: HashSet<AudioClipKey>,
     pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
@@ -341,6 +340,7 @@ pub struct Maolan {
     zoom_visible_bars: f32,
     editor_scroll_x: f32,
     editor_scroll_y: f32,
+    mixer_scroll_x: f32,
     tracks_resize_hovered: bool,
     mixer_resize_hovered: bool,
     tracks_visible: bool,
@@ -523,7 +523,6 @@ impl Default for Maolan {
             #[cfg(target_os = "macos")]
             pending_save_vst3_states: HashSet::new(),
             pending_save_is_template: false,
-            pending_audio_peaks: HashMap::new(),
             pending_peak_file_loads: HashMap::new(),
             pending_peak_rebuilds: HashSet::new(),
             pending_track_freeze_restore: HashMap::new(),
@@ -560,6 +559,7 @@ impl Default for Maolan {
             zoom_visible_bars: 127.0,
             editor_scroll_x: 0.0,
             editor_scroll_y: 0.0,
+            mixer_scroll_x: 0.0,
             tracks_resize_hovered: false,
             mixer_resize_hovered: false,
             tracks_visible: true,

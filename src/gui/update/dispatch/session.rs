@@ -72,7 +72,6 @@ impl Maolan {
                 self.pending_save_tracks.clear();
                 #[cfg(target_os = "macos")]
                 self.pending_save_vst3_states.clear();
-                self.pending_audio_peaks.clear();
                 self.pending_peak_file_loads.clear();
                 self.pending_peak_rebuilds.clear();
                 self.midi_clip_previews.clear();

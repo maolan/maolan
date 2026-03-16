@@ -5,7 +5,7 @@ use crate::{
         workspace_mixer::*,
     },
     message::Message,
-    state::State,
+    state::{State, Track},
     style,
     ui_timing::DOUBLE_CLICK,
 };
@@ -27,6 +27,10 @@ use std::{
     time::Instant,
 };
 
+const STRIP_SPACING: f32 = 2.0;
+const STRIP_ROW_PADDING_X: f32 = 8.0;
+const MIXER_OVERSCAN_PX: f32 = 160.0;
+
 #[derive(Debug, Default)]
 pub struct Mixer {
     state: State,
@@ -37,6 +41,11 @@ struct StripReadout<'a> {
     editing: bool,
     edit_input: &'a str,
     level_label: &'static str,
+}
+
+struct TrackStripSpec<'a> {
+    track: &'a Track,
+    width: f32,
 }
 
 struct FaderBayState {
@@ -744,6 +753,81 @@ impl Mixer {
             .max(STRIP_WIDTH)
     }
 
+    fn output_strips_width(
+        metronome_width: Option<f32>,
+        master_channels: usize,
+        metronome_enabled: bool,
+    ) -> f32 {
+        let mut widths = vec![Self::strip_width_for_channels(master_channels.max(1))];
+        if metronome_enabled && let Some(width) = metronome_width {
+            widths.insert(0, width);
+        }
+        let spacing_count = widths.len().saturating_sub(1) as f32;
+        widths.iter().copied().sum::<f32>() + (STRIP_SPACING * spacing_count)
+    }
+
+    fn visible_track_window(
+        track_specs: &[TrackStripSpec<'_>],
+        viewport_width: f32,
+        scroll_x: f32,
+    ) -> (usize, usize, f32, f32) {
+        if track_specs.is_empty() {
+            return (0, 0, 0.0, 0.0);
+        }
+
+        let content_width = track_specs.iter().map(|spec| spec.width).sum::<f32>()
+            + (STRIP_SPACING * track_specs.len().saturating_sub(1) as f32)
+            + (STRIP_ROW_PADDING_X * 2.0);
+        if viewport_width <= 0.0 || content_width <= viewport_width {
+            return (0, track_specs.len(), 0.0, 0.0);
+        }
+
+        let max_scroll = (content_width - viewport_width).max(0.0);
+        let left_edge = (scroll_x.clamp(0.0, 1.0) * max_scroll - MIXER_OVERSCAN_PX).max(0.0);
+        let right_edge =
+            (left_edge + viewport_width + (MIXER_OVERSCAN_PX * 2.0)).min(content_width);
+
+        let mut current_x = STRIP_ROW_PADDING_X;
+        let mut first_visible = track_specs.len();
+        let mut last_visible = 0usize;
+        for (idx, spec) in track_specs.iter().enumerate() {
+            let strip_start = current_x;
+            let strip_end = strip_start + spec.width;
+            if strip_end >= left_edge && strip_start <= right_edge {
+                first_visible = first_visible.min(idx);
+                last_visible = idx + 1;
+            }
+            current_x = strip_end + STRIP_SPACING;
+        }
+
+        if first_visible == track_specs.len() {
+            return (0, track_specs.len(), 0.0, 0.0);
+        }
+
+        let left_spacer = if first_visible == 0 {
+            0.0
+        } else {
+            STRIP_ROW_PADDING_X
+                + track_specs[..first_visible]
+                    .iter()
+                    .map(|spec| spec.width)
+                    .sum::<f32>()
+                + (STRIP_SPACING * first_visible as f32)
+        };
+        let right_spacer = if last_visible >= track_specs.len() {
+            0.0
+        } else {
+            STRIP_ROW_PADDING_X
+                + track_specs[last_visible..]
+                    .iter()
+                    .map(|spec| spec.width)
+                    .sum::<f32>()
+                + (STRIP_SPACING * (track_specs.len() - last_visible) as f32)
+        };
+
+        (first_visible, last_visible, left_spacer, right_spacer)
+    }
+
     fn strip_shell<'a>(
         name: String,
         selected: bool,
@@ -774,6 +858,8 @@ impl Mixer {
         &'a self,
         editing_track: Option<&'a str>,
         editing_input: &'a str,
+        viewport_width: f32,
+        scroll_x: f32,
     ) -> Element<'a, Message> {
         let mut strips = row![].spacing(2).align_y(Alignment::Start);
         let state = self.state.blocking_read();
@@ -785,13 +871,74 @@ impl Mixer {
         let fader_height = Self::fader_height_from_panel(height);
         let metronome_enabled = state.metronome_enabled;
         let mut metronome_strip: Option<Element<'a, Message>> = None;
+        let track_specs: Vec<_> = state
+            .tracks
+            .iter()
+            .map(|track| TrackStripSpec {
+                track,
+                width: Self::strip_width_for_channels(track.audio.outs),
+            })
+            .collect();
+        let metronome_width = track_specs
+            .iter()
+            .find(|spec| spec.track.name == METRONOME_TRACK_ID)
+            .map(|spec| spec.width);
+        let output_strips_width =
+            Self::output_strips_width(metronome_width, hw_out_channels, metronome_enabled);
+        let track_viewport_width = (viewport_width - output_strips_width).max(0.0);
+        let normal_track_specs: Vec<_> = track_specs
+            .into_iter()
+            .filter(|spec| spec.track.name != METRONOME_TRACK_ID)
+            .collect();
+        let (first_visible, last_visible, left_spacer, right_spacer) =
+            Self::visible_track_window(&normal_track_specs, track_viewport_width, scroll_x);
 
-        for track in &state.tracks {
-            if track.name == METRONOME_TRACK_ID && !metronome_enabled {
+        if metronome_enabled
+            && let Some(track) = state
+                .tracks
+                .iter()
+                .find(|track| track.name == METRONOME_TRACK_ID)
+        {
+            let strip_width = Self::strip_width_for_channels(track.audio.outs);
+            let pan = if track.audio.outs == 2 {
+                Some(Self::pan_section_cached(track.name.clone(), track.balance))
+            } else {
+                None
+            };
+            let bay = Self::fader_bay_cached(
+                track.name.clone(),
+                track.audio.outs,
+                &track.meter_out_db,
+                track.level,
+                fader_height,
+                true,
+            );
+            metronome_strip = Some(
+                mouse_area(Self::strip_shell(
+                    track.name.clone(),
+                    state.selected.contains(track.name.as_str()),
+                    strip_width,
+                    pan,
+                    bay,
+                    StripReadout {
+                        track_name: track.name.clone(),
+                        editing: editing_track == Some(track.name.as_str()),
+                        edit_input: editing_input,
+                        level_label: Self::format_level_db(track.level),
+                    },
+                ))
+                .on_press(Message::SelectTrackFromMixer(track.name.clone()))
+                .into(),
+            );
+        }
+
+        for (index, spec) in normal_track_specs.iter().enumerate() {
+            let track = spec.track;
+            if index < first_visible || index >= last_visible {
                 continue;
             }
             let strip_name = track.name.clone();
-            let strip_width = Self::strip_width_for_channels(track.audio.outs);
+            let strip_width = spec.width;
             let pan = if track.audio.outs == 2 {
                 Some(Self::pan_section_cached(track.name.clone(), track.balance))
             } else {
@@ -821,11 +968,15 @@ impl Mixer {
             .on_press(Message::SelectTrackFromMixer(track.name.clone()))
             .into();
 
-            if track.name == METRONOME_TRACK_ID {
-                metronome_strip = Some(strip);
-            } else {
-                strips = strips.push(strip);
-            }
+            strips = strips.push(strip);
+        }
+        if left_spacer > 0.0 {
+            strips = row![Space::new().width(Length::Fixed(left_spacer)), strips]
+                .spacing(STRIP_SPACING)
+                .align_y(Alignment::Start);
+        }
+        if right_spacer > 0.0 {
+            strips = strips.push(Space::new().width(Length::Fixed(right_spacer)));
         }
 
         let master_strip_width = Self::strip_width_for_channels(hw_out_channels.max(1));
@@ -873,6 +1024,7 @@ impl Mixer {
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new(),
         ))
+        .on_scroll(|viewport| Message::MixerScrollXChanged(viewport.relative_offset().x))
         .width(Length::Fill)
         .height(height);
 

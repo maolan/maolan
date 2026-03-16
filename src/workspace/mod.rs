@@ -67,6 +67,8 @@ pub struct WorkspaceViewArgs<'a> {
     pub snap_mode: SnapMode,
     pub samples_per_beat: f64,
     pub zoom_visible_bars: f32,
+    pub mixer_scroll_x: f32,
+    pub window_width: f32,
     pub tracks_resize_hovered: bool,
     pub mixer_resize_hovered: bool,
     pub tracks_visible: bool,
@@ -128,6 +130,8 @@ impl Workspace {
             snap_mode,
             samples_per_beat,
             zoom_visible_bars,
+            mixer_scroll_x,
+            window_width,
             tracks_resize_hovered,
             mixer_resize_hovered,
             tracks_visible,
@@ -546,8 +550,12 @@ impl Workspace {
                 .on_enter(Message::MixerResizeHover(true))
                 .on_exit(Message::MixerResizeHover(false))
                 .on_press(Message::MixerResizeStart),
-                self.mixer
-                    .view(mixer_level_edit_track, mixer_level_edit_input),
+                self.mixer.view(
+                    mixer_level_edit_track,
+                    mixer_level_edit_input,
+                    window_width,
+                    mixer_scroll_x,
+                ),
             ]
             .width(Length::Fill)
             .into()
