@@ -1641,9 +1641,6 @@ impl Maolan {
                             clip["fade_in_samples"].as_u64().unwrap_or(240) as usize;
                         let fade_out_samples =
                             clip["fade_out_samples"].as_u64().unwrap_or(240) as usize;
-                        let warp_markers: Vec<maolan_engine::message::AudioWarpMarker> =
-                            serde_json::from_value(clip["warp_markers"].clone())
-                                .unwrap_or_default();
 
                         if clip_name.trim().is_empty() {
                             warnings.push(format!(
@@ -1696,7 +1693,6 @@ impl Maolan {
                             fade_enabled,
                             fade_in_samples,
                             fade_out_samples,
-                            warp_markers,
                         });
                     }
                 }
@@ -1756,7 +1752,6 @@ impl Maolan {
                             fade_enabled,
                             fade_in_samples,
                             fade_out_samples,
-                            warp_markers: vec![],
                         });
                     }
                 }

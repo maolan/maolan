@@ -180,9 +180,12 @@ pub enum Resizing {
         track_name: String,
         index: usize,
         is_right_side: bool,
+        stretch_mode: bool,
         initial_value: f32,
         initial_mouse_x: f32,
         initial_length: f32,
+        initial_start: usize,
+        initial_offset: usize,
     },
     Fade {
         kind: Kind,

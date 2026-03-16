@@ -1,15 +1,15 @@
 use crate::{
-        consts::{
-            message_lists::{
-                PIANO_CHORD_KIND_ALL, PIANO_NRPN_KIND_ALL, PIANO_RPN_KIND_ALL, PIANO_SCALE_ROOT_ALL,
-                PIANO_VELOCITY_KIND_ALL,
-            },
-            workspace::PLAYHEAD_WIDTH_PX,
-            widget_piano::{
-                H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, MIDI_CHANNELS,
-                NOTES_PER_OCTAVE, OCTAVES, PITCH_MAX, RIGHT_SCROLL_GUTTER_WIDTH, TOOLS_STRIP_WIDTH,
-                WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
-            },
+    consts::{
+        message_lists::{
+            PIANO_CHORD_KIND_ALL, PIANO_NRPN_KIND_ALL, PIANO_RPN_KIND_ALL, PIANO_SCALE_ROOT_ALL,
+            PIANO_VELOCITY_KIND_ALL,
+        },
+        widget_piano::{
+            H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, MIDI_CHANNELS,
+            NOTES_PER_OCTAVE, OCTAVES, PITCH_MAX, RIGHT_SCROLL_GUTTER_WIDTH, TOOLS_STRIP_WIDTH,
+            WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
+        },
+        workspace::PLAYHEAD_WIDTH_PX,
     },
     menu::{menu_dropdown, menu_item},
     message::{Message, PianoControllerLane, PianoNrpnKind, PianoRpnKind},

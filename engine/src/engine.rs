@@ -2056,7 +2056,6 @@ impl Engine {
             fade_enabled: clip.fade_enabled,
             fade_in_samples: clip.fade_in_samples,
             fade_out_samples: clip.fade_out_samples,
-            warp_markers: vec![],
         }))
         .await;
     }
@@ -2175,7 +2174,6 @@ impl Engine {
             fade_enabled: true,
             fade_in_samples: 240,
             fade_out_samples: 240,
-            warp_markers: vec![],
         }))
         .await;
     }
@@ -2266,7 +2264,6 @@ impl Engine {
         fade_enabled: bool,
         fade_in_samples: usize,
         fade_out_samples: usize,
-        warp_markers: &[crate::message::AudioWarpMarker],
     ) {
         if let Some(track) = self.state.lock().tracks.get(track_name) {
             let track = track.lock();
@@ -2280,7 +2277,6 @@ impl Engine {
                     clip.fade_enabled = fade_enabled;
                     clip.fade_in_samples = fade_in_samples;
                     clip.fade_out_samples = fade_out_samples;
-                    clip.warp_markers = warp_markers.to_vec();
                     track.audio.clips.push(clip);
                 }
                 Kind::MIDI => {
@@ -2454,24 +2450,6 @@ impl Engine {
                 }
             }
         }
-    }
-
-    fn set_audio_clip_warp_markers(
-        &self,
-        track_name: &str,
-        clip_index: usize,
-        warp_markers: &[crate::message::AudioWarpMarker],
-    ) -> Result<(), String> {
-        let track = self.track_handle_or_err(track_name)?;
-        let track = track.lock();
-        let Some(clip) = track.audio.clips.get_mut(clip_index) else {
-            return Err(format!(
-                "Audio clip index {} not found on track '{}'",
-                clip_index, track_name
-            ));
-        };
-        clip.warp_markers = warp_markers.to_vec();
-        Ok(())
     }
 
     async fn request_hw_cycle(&mut self) {
@@ -4793,7 +4771,6 @@ impl Engine {
                 fade_enabled,
                 fade_in_samples,
                 fade_out_samples,
-                ref warp_markers,
             } => {
                 self.add_clip_to_track(
                     name,
@@ -4807,7 +4784,6 @@ impl Engine {
                     fade_enabled,
                     fade_in_samples,
                     fade_out_samples,
-                    warp_markers,
                 );
             }
             Action::RemoveClip {
@@ -4859,18 +4835,6 @@ impl Engine {
                 muted,
             } => {
                 self.set_clip_muted(track_name, clip_index, kind, muted);
-            }
-            Action::SetAudioClipWarpMarkers {
-                ref track_name,
-                clip_index,
-                ref warp_markers,
-            } => {
-                if let Err(e) =
-                    self.set_audio_clip_warp_markers(track_name, clip_index, warp_markers)
-                {
-                    self.notify_clients(Err(e)).await;
-                    return;
-                }
             }
             Action::Connect {
                 ref from_track,

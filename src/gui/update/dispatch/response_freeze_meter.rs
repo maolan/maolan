@@ -147,7 +147,6 @@ impl Maolan {
                         fade_enabled: true,
                         fade_in_samples: 240,
                         fade_out_samples: 240,
-                        warp_markers: vec![],
                     }));
                     tasks.push(self.send(Action::TrackSetFrozen {
                         track_name: track_name.clone(),

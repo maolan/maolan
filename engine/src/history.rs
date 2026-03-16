@@ -103,7 +103,6 @@ pub fn should_record(action: &Action) -> bool {
             | Action::SetClipFade { .. }
             | Action::SetClipBounds { .. }
             | Action::SetClipMuted { .. }
-            | Action::SetAudioClipWarpMarkers { .. }
             | Action::ClearAllMidiLearnBindings
             | Action::Connect { .. }
             | Action::Disconnect { .. }
@@ -274,7 +273,6 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         fade_enabled: clip.fade_enabled,
                         fade_in_samples: clip.fade_in_samples,
                         fade_out_samples: clip.fade_out_samples,
-                        warp_markers: clip.warp_markers.clone(),
                     })
                 }
                 Kind::MIDI => {
@@ -292,7 +290,6 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         fade_enabled: true,    // Default value for MIDI clips
                         fade_in_samples: 240,  // Default value
                         fade_out_samples: 240, // Default value
-                        warp_markers: vec![],
                     })
                 }
             }
@@ -478,21 +475,6 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                 muted,
             })
         }
-        Action::SetAudioClipWarpMarkers {
-            track_name,
-            clip_index,
-            ..
-        } => {
-            let track = state.tracks.get(track_name)?;
-            let track_lock = track.lock();
-            let clip = track_lock.audio.clips.get(*clip_index)?;
-            Some(Action::SetAudioClipWarpMarkers {
-                track_name: track_name.clone(),
-                clip_index: *clip_index,
-                warp_markers: clip.warp_markers.clone(),
-            })
-        }
-
         Action::Connect {
             from_track,
             from_port,
@@ -974,7 +956,6 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: clip.fade_in_samples,
                     fade_out_samples: clip.fade_out_samples,
-                    warp_markers: clip.warp_markers.clone(),
                 });
             }
             for clip in &track.midi.clips {
@@ -991,7 +972,6 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     fade_enabled: true,
                     fade_in_samples: 240,
                     fade_out_samples: 240,
-                    warp_markers: vec![],
                 });
             }
         }
@@ -1275,7 +1255,6 @@ mod tests {
                 fade_enabled: false,
                 fade_in_samples: 0,
                 fade_out_samples: 0,
-                warp_markers: vec![],
             },
             &state,
         )

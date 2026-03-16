@@ -1,6 +1,6 @@
 use super::{
     AUDIO_PEAK_UPDATES, AutomationWriteKey, CLIENT, MIN_CLIP_WIDTH_PX, Maolan,
-    TouchAutomationOverride, platform,
+    RUBBERBAND_AVAILABLE, TouchAutomationOverride, platform,
 };
 mod autosave;
 mod dispatch;
@@ -19,8 +19,8 @@ use crate::{
     consts::gui_update_mod::{ATTACK_ALPHA, RELEASE_ALPHA},
     consts::state_ids::METRONOME_TRACK_ID,
     message::{
-        ExportNormalizeMode, ExportRenderMode, Message, Show, TrackAutomationMode,
-        TrackAutomationTarget,
+        ClipStretchRequest, ExportNormalizeMode, ExportRenderMode, Message, Show,
+        TrackAutomationMode, TrackAutomationTarget,
     },
     platform_caps,
     state::{
@@ -43,8 +43,8 @@ use maolan_engine::{
     history,
     kind::Kind,
     message::{
-        Action, AudioWarpMarker, ClipMoveFrom, ClipMoveTo, Message as EngineMessage,
-        OfflineAutomationLane, OfflineAutomationPoint, OfflineAutomationTarget,
+        Action, ClipMoveFrom, ClipMoveTo, Message as EngineMessage, OfflineAutomationLane,
+        OfflineAutomationPoint, OfflineAutomationTarget,
     },
 };
 use rfd::AsyncFileDialog;
@@ -923,67 +923,6 @@ impl Maolan {
         Ok(actions)
     }
 
-    fn warp_markers_for_speed(clip_length: usize, speed: f32) -> Vec<AudioWarpMarker> {
-        let speed = speed.max(0.01);
-        let source_end = ((clip_length as f64) * speed as f64).round().max(1.0) as usize;
-        vec![
-            AudioWarpMarker {
-                timeline_sample: 0,
-                source_sample: 0,
-            },
-            AudioWarpMarker {
-                timeline_sample: clip_length,
-                source_sample: source_end,
-            },
-        ]
-    }
-
-    fn add_warp_marker_between(
-        markers: &[AudioWarpMarker],
-        clip_length: usize,
-    ) -> Vec<AudioWarpMarker> {
-        let mut out = markers.to_vec();
-        let timeline_mid = clip_length / 2;
-        if out.iter().any(|m| m.timeline_sample == timeline_mid) {
-            return out;
-        }
-        let source_mid = if out.is_empty() {
-            timeline_mid
-        } else {
-            let mut points = out
-                .iter()
-                .map(|m| (m.timeline_sample.min(clip_length), m.source_sample))
-                .collect::<Vec<_>>();
-            points.push((0, 0));
-            points.push((clip_length, clip_length));
-            points.sort_unstable_by_key(|(t, _)| *t);
-            points.dedup_by_key(|(t, _)| *t);
-            let mut mapped = timeline_mid;
-            for window in points.windows(2) {
-                let (x0, y0) = window[0];
-                let (x1, y1) = window[1];
-                if timeline_mid < x0 || timeline_mid > x1 {
-                    continue;
-                }
-                if x1 == x0 {
-                    mapped = y0;
-                } else {
-                    let t = (timeline_mid - x0) as f64 / (x1 - x0) as f64;
-                    mapped = (y0 as f64 + (y1 as f64 - y0 as f64) * t).round() as usize;
-                }
-                break;
-            }
-            mapped
-        };
-        out.push(AudioWarpMarker {
-            timeline_sample: timeline_mid,
-            source_sample: source_mid,
-        });
-        out.sort_unstable_by_key(|m| m.timeline_sample);
-        out.dedup_by_key(|m| m.timeline_sample);
-        out
-    }
-
     fn maybe_record_automation_from_request(&mut self, action: &Action) {
         match action {
             Action::TrackLevel(track_name, level) if track_name != "hw:out" => {
@@ -1833,11 +1772,6 @@ impl Maolan {
                         "Cannot split a take-lane locked clip".to_string();
                     return Task::none();
                 }
-                if !clip.warp_markers.is_empty() {
-                    self.state.blocking_write().message =
-                        "Split for warped audio clips is not supported yet".to_string();
-                    return Task::none();
-                }
                 if split_sample <= clip.start || split_sample >= clip_end {
                     return Task::none();
                 }
@@ -1869,7 +1803,6 @@ impl Maolan {
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: left_fade_in,
                     fade_out_samples: left_fade_out,
-                    warp_markers: vec![],
                 }));
                 tasks.push(self.send(Action::AddClip {
                     name: clip.name,
@@ -1883,7 +1816,6 @@ impl Maolan {
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: right_fade_in,
                     fade_out_samples: right_fade_out,
-                    warp_markers: vec![],
                 }));
                 tasks.push(self.send(Action::EndHistoryGroup));
                 Task::batch(tasks)
@@ -1937,7 +1869,6 @@ impl Maolan {
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: left_fade_in,
                     fade_out_samples: left_fade_out,
-                    warp_markers: vec![],
                 }));
                 tasks.push(self.send(Action::AddClip {
                     name: clip.name,
@@ -1951,7 +1882,6 @@ impl Maolan {
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: right_fade_in,
                     fade_out_samples: right_fade_out,
-                    warp_markers: vec![],
                 }));
                 tasks.push(self.send(Action::EndHistoryGroup));
                 Task::batch(tasks)
@@ -2000,8 +1930,111 @@ impl Maolan {
             fade_enabled: true,
             fade_in_samples: 240,
             fade_out_samples: 240,
-            warp_markers: vec![],
         })
+    }
+
+    fn begin_clip_stretch(
+        &mut self,
+        track_idx: String,
+        clip_idx: usize,
+        stretch_ratio: f32,
+    ) -> Task<Message> {
+        let Some(session_root) = self.session_dir.clone() else {
+            self.state.blocking_write().message =
+                "Stretching audio clips requires an opened/saved session".to_string();
+            return Task::none();
+        };
+        let Some(request) = ({
+            let state = self.state.blocking_read();
+            state
+                .tracks
+                .iter()
+                .find(|t| t.name == track_idx)
+                .and_then(|t| t.audio.clips.get(clip_idx))
+                .cloned()
+                .map(|clip| ClipStretchRequest {
+                    track_idx: track_idx.clone(),
+                    clip_idx,
+                    clip_name: clip.name,
+                    start: clip.start,
+                    original_start: clip.start,
+                    length: clip.length,
+                    offset: clip.offset,
+                    input_channel: clip.input_channel,
+                    muted: clip.muted,
+                    fade_enabled: clip.fade_enabled,
+                    fade_in_samples: clip.fade_in_samples,
+                    fade_out_samples: clip.fade_out_samples,
+                    stretch_ratio,
+                })
+        }) else {
+            self.state.blocking_write().message = "Audio clip not found".to_string();
+            return Task::none();
+        };
+        let source_path = if std::path::Path::new(&request.clip_name).is_absolute() {
+            std::path::PathBuf::from(&request.clip_name)
+        } else {
+            session_root.join(&request.clip_name)
+        };
+        if !source_path.exists() {
+            self.state.blocking_write().message =
+                format!("Audio clip source is missing: {}", source_path.display());
+            return Task::none();
+        }
+        self.state.blocking_write().message = format!(
+            "Stretching audio clip '{}' to {:.2}x...",
+            request.clip_name, request.stretch_ratio
+        );
+        self.start_clip_stretch_request_with_source(request, session_root, source_path)
+    }
+
+    fn start_clip_stretch_request(&mut self, request: ClipStretchRequest) -> Task<Message> {
+        let Some(session_root) = self.session_dir.clone() else {
+            self.state.blocking_write().message =
+                "Stretching audio clips requires an opened/saved session".to_string();
+            return Task::none();
+        };
+        let source_path = if std::path::Path::new(&request.clip_name).is_absolute() {
+            std::path::PathBuf::from(&request.clip_name)
+        } else {
+            session_root.join(&request.clip_name)
+        };
+        self.start_clip_stretch_request_with_source(request, session_root, source_path)
+    }
+
+    fn start_clip_stretch_request_with_source(
+        &mut self,
+        request: ClipStretchRequest,
+        session_root: std::path::PathBuf,
+        source_path: std::path::PathBuf,
+    ) -> Task<Message> {
+        if !*RUBBERBAND_AVAILABLE {
+            self.state.blocking_write().message =
+                "Clip stretching is unavailable because 'rubberband' is not installed or not on PATH"
+                    .to_string();
+            return Task::none();
+        }
+        if !source_path.exists() {
+            self.state.blocking_write().message =
+                format!("Audio clip source is missing: {}", source_path.display());
+            return Task::none();
+        }
+        Task::perform(
+            async move {
+                let result = Self::stretch_audio_clip_with_rubberband(
+                    &source_path,
+                    &session_root,
+                    &request.clip_name,
+                    request.offset,
+                    request.length,
+                    request.stretch_ratio,
+                )
+                .await
+                .map_err(|e| e.to_string());
+                (request, result)
+            },
+            |(request, result)| Message::ClipStretchFinished { request, result },
+        )
     }
 
     fn schedule_audio_peak_rebuild(
