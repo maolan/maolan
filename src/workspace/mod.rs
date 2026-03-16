@@ -12,6 +12,7 @@ use crate::{
         },
         workspace::{MIN_TIMELINE_BARS, PLAYHEAD_WIDTH_PX, TIMELINE_LEFT_INSET_PX},
     },
+    gui::visible_bars_to_zoom_slider,
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State},
     widget::piano,
@@ -499,10 +500,11 @@ impl Workspace {
                         row![
                             h_scroll,
                             slider(
-                                1.0..=256.0,
-                                zoom_visible_bars,
-                                Message::ZoomVisibleBarsChanged,
+                                0.0..=1.0,
+                                visible_bars_to_zoom_slider(zoom_visible_bars),
+                                Message::ZoomSliderChanged,
                             )
+                            .step(0.001)
                             .width(Length::Fixed(105.0)),
                         ]
                         .spacing(8),

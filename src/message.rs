@@ -711,7 +711,7 @@ pub enum Message {
     RecordingPreviewTick,
     RecordingPreviewPeaksTick,
     ToggleTransport,
-    ZoomVisibleBarsChanged(f32),
+    ZoomSliderChanged(f32),
     PianoZoomXChanged(f32),
     PianoZoomYChanged(f32),
     PianoScrollChanged {
