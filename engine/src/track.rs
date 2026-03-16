@@ -1332,44 +1332,6 @@ impl Track {
         (t.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2).cos()
     }
 
-    fn warped_source_sample_for_output(
-        clip_len: usize,
-        output_sample_in_clip: usize,
-        warp_markers: &[crate::message::AudioWarpMarker],
-    ) -> usize {
-        if clip_len == 0 || warp_markers.is_empty() {
-            return output_sample_in_clip;
-        }
-
-        let mut points: Vec<(usize, usize)> = Vec::with_capacity(warp_markers.len() + 2);
-        points.push((0, 0));
-        for marker in warp_markers {
-            points.push((marker.timeline_sample.min(clip_len), marker.source_sample));
-        }
-        points.push((clip_len, clip_len));
-        points.sort_unstable_by_key(|(timeline, _)| *timeline);
-        points.dedup_by_key(|(timeline, _)| *timeline);
-        if points.len() < 2 {
-            return output_sample_in_clip;
-        }
-
-        let x = output_sample_in_clip.min(clip_len);
-        for window in points.windows(2) {
-            let (x0, y0) = window[0];
-            let (x1, y1) = window[1];
-            if x < x0 || x > x1 {
-                continue;
-            }
-            if x1 == x0 {
-                return y0;
-            }
-            let t = (x - x0) as f64 / (x1 - x0) as f64;
-            let mapped = y0 as f64 + (y1 as f64 - y0 as f64) * t;
-            return mapped.max(0.0).round() as usize;
-        }
-        output_sample_in_clip
-    }
-
     fn mix_clip_audio_into_inputs(&mut self) {
         let frames = self
             .audio
@@ -1419,13 +1381,7 @@ impl Track {
                     let to = (*segment_end).min(clip_end);
                     for absolute_sample in from..to {
                         let track_idx = out_offset + (absolute_sample - *segment_start);
-                        let output_sample_in_clip = absolute_sample - clip_start;
-                        let warped_source_sample = Self::warped_source_sample_for_output(
-                            clip_len,
-                            output_sample_in_clip,
-                            &clip.warp_markers,
-                        );
-                        let clip_idx = warped_source_sample + clip.offset;
+                        let clip_idx = (absolute_sample - clip_start) + clip.offset;
                         if clip_idx >= total_frames || track_idx >= in_samples.len() {
                             break;
                         }
@@ -3498,40 +3454,6 @@ mod tests {
 
         let segments = track.cycle_segments(6);
         assert_eq!(segments, vec![(14, 16, 0), (10, 14, 2)]);
-    }
-
-    #[test]
-    fn warped_source_sample_interpolates_between_markers() {
-        use crate::message::AudioWarpMarker;
-
-        let markers = vec![
-            AudioWarpMarker {
-                timeline_sample: 25,
-                source_sample: 10,
-            },
-            AudioWarpMarker {
-                timeline_sample: 75,
-                source_sample: 90,
-            },
-        ];
-
-        assert_eq!(Track::warped_source_sample_for_output(100, 0, &markers), 0);
-        assert_eq!(
-            Track::warped_source_sample_for_output(100, 25, &markers),
-            10
-        );
-        assert_eq!(
-            Track::warped_source_sample_for_output(100, 50, &markers),
-            50
-        );
-        assert_eq!(
-            Track::warped_source_sample_for_output(100, 75, &markers),
-            90
-        );
-        assert_eq!(
-            Track::warped_source_sample_for_output(100, 100, &markers),
-            100
-        );
     }
 
     #[test]

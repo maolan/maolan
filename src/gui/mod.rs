@@ -58,6 +58,7 @@ use std::{
     io::{self, BufReader},
     num::{NonZeroU8, NonZeroU32},
     path::{Path, PathBuf},
+    process::Command,
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
@@ -83,6 +84,13 @@ type TrackFreezeRestore = (Vec<AudioClip>, Vec<MIDIClip>, Option<String>);
 
 pub(crate) const MIN_ZOOM_VISIBLE_BARS: f32 = 1.0;
 pub(crate) const MAX_ZOOM_VISIBLE_BARS: f32 = 256.0;
+pub(crate) static RUBBERBAND_AVAILABLE: LazyLock<bool> = LazyLock::new(|| {
+    Command::new("rubberband")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+});
 
 pub(crate) fn zoom_slider_to_visible_bars(position: f32) -> f32 {
     let clamped = position.clamp(0.0, 1.0);
@@ -1607,6 +1615,82 @@ impl Maolan {
         progress_callback(1.0, None);
         let frames = final_samples.len() / channels.max(1);
         Ok((rel, channels.max(1), frames.max(1)))
+    }
+
+    async fn stretch_audio_clip_with_rubberband(
+        src_path: &Path,
+        session_root: &Path,
+        clip_name: &str,
+        offset: usize,
+        length: usize,
+        stretch_ratio: f32,
+    ) -> io::Result<(String, usize)> {
+        let (samples, channels, sample_rate) =
+            Self::decode_audio_to_f32_interleaved_with_progress(src_path, |_| {}).await?;
+        let channels = channels.max(1);
+        let total_frames = samples.len() / channels;
+        let start_frame = offset.min(total_frames);
+        let segment_frames = length.max(1).min(total_frames.saturating_sub(start_frame));
+        if segment_frames == 0 {
+            return Err(io::Error::other(format!(
+                "Audio clip '{}' has no available source samples to stretch",
+                clip_name
+            )));
+        }
+
+        let start_idx = start_frame * channels;
+        let end_idx = start_idx + segment_frames * channels;
+        let segment_samples = &samples[start_idx..end_idx];
+        let stem = Path::new(clip_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("audio");
+        let temp_rel =
+            Self::unique_import_rel_path(session_root, "audio", &format!("{stem}_src"), "wav")?;
+        let temp_path = session_root.join(&temp_rel);
+        let output_rel =
+            Self::unique_import_rel_path(session_root, "audio", &format!("{stem}_stretch"), "wav")?;
+        let output_path = session_root.join(&output_rel);
+
+        wavers::write::<f32, _>(
+            &temp_path,
+            segment_samples,
+            sample_rate as i32,
+            channels as u16,
+        )
+        .map_err(|e| {
+            io::Error::other(format!(
+                "Failed to write stretch source '{}': {e}",
+                temp_path.display()
+            ))
+        })?;
+
+        let command_result = tokio::process::Command::new("rubberband")
+            .arg("--quiet")
+            .arg("--fine")
+            .arg("--time")
+            .arg(format!("{:.6}", stretch_ratio.max(0.01)))
+            .arg(&temp_path)
+            .arg(&output_path)
+            .output()
+            .await;
+
+        let _ = fs::remove_file(&temp_path);
+
+        let output = command_result
+            .map_err(|e| io::Error::other(format!("Failed to launch Rubber Band: {e}")))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let _ = fs::remove_file(&output_path);
+            return Err(io::Error::other(if stderr.is_empty() {
+                "Rubber Band failed to stretch the clip".to_string()
+            } else {
+                format!("Rubber Band failed: {stderr}")
+            }));
+        }
+
+        let output_frames = Self::audio_clip_source_length(&output_path)?;
+        Ok((output_rel, output_frames.max(1)))
     }
 
     fn write_wav_with_bit_depth(

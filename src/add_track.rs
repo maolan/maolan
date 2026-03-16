@@ -251,9 +251,7 @@ impl AddTrackView {
             .spacing(10),
         );
 
-        container(
-            column![text("Add Track"), col.align_x(Alignment::End).spacing(10)].spacing(10),
-        )
+        container(column![text("Add Track"), col.align_x(Alignment::End).spacing(10)].spacing(10))
             .style(|_theme| container::Style {
                 border: Border {
                     color: Color::from_rgba(0.34, 0.42, 0.56, 0.72),

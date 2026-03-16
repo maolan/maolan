@@ -43,7 +43,11 @@ impl TrackMarkerView {
 
         container(
             column![
-                text(if is_rename { "Edit Marker" } else { "Add Marker" }),
+                text(if is_rename {
+                    "Edit Marker"
+                } else {
+                    "Add Marker"
+                }),
                 text(format!("Track: {}", dialog.track_name)).size(11),
                 text_input("Enter marker name", &dialog.name)
                     .id(Self::name_input_id())

@@ -8,6 +8,7 @@ use crate::{
         },
         workspace_editor::{CHECKPOINTS, MAX_RENDER_COLUMNS, RENDER_MARGIN_COLUMNS},
     },
+    gui::RUBBERBAND_AVAILABLE,
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, PianoNote, State, StateData, Track},
 };
@@ -1130,15 +1131,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     for (index, clip) in track.audio.clips.iter().enumerate() {
         let clip_name = clip.name.clone();
         let clip_label = format!(
-            "{}{}{}{}",
+            "{}{}{}",
             clean_clip_name(&clip_name),
             if clip.take_lane_pinned { " [P]" } else { "" },
-            if clip.take_lane_locked { " [L]" } else { "" },
-            if clip.warp_markers.is_empty() {
-                ""
-            } else {
-                " [WRP]"
-            }
+            if clip.take_lane_locked { " [L]" } else { "" }
         );
         let clip_peaks = clip.peaks.clone();
         let clip_muted = clip.muted;
@@ -2435,34 +2431,28 @@ fn clip_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'stati
                         muted: !muted,
                     },
                 ),
-                crate::menu::menu_item(
-                    "Warp Reset",
-                    Message::ClipWarpReset {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                    },
-                ),
-                crate::menu::menu_item(
-                    "Warp 0.5x",
-                    Message::ClipWarpHalfSpeed {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                    },
-                ),
-                crate::menu::menu_item(
-                    "Warp 2.0x",
-                    Message::ClipWarpDoubleSpeed {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                    },
-                ),
-                crate::menu::menu_item(
-                    "Warp Add Marker",
-                    Message::ClipWarpAddMarker {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                    },
-                ),
+                if *RUBBERBAND_AVAILABLE {
+                    crate::menu::menu_item(
+                        "Stretch 0.5x",
+                        Message::ClipStretchHalfSpeed {
+                            track_idx: track_idx.clone(),
+                            clip_idx,
+                        },
+                    )
+                } else {
+                    crate::menu::menu_item("Stretch 0.5x (requires rubberband)", Message::None)
+                },
+                if *RUBBERBAND_AVAILABLE {
+                    crate::menu::menu_item(
+                        "Stretch 2.0x",
+                        Message::ClipStretchDoubleSpeed {
+                            track_idx: track_idx.clone(),
+                            clip_idx,
+                        },
+                    )
+                } else {
+                    crate::menu::menu_item("Stretch 2.0x (requires rubberband)", Message::None)
+                },
                 crate::menu::menu_item(
                     if fade_enabled {
                         "Disable Fade"
@@ -2761,7 +2751,6 @@ impl Editor {
                 clip.take_lane_override.hash(&mut hasher);
                 clip.take_lane_pinned.hash(&mut hasher);
                 clip.take_lane_locked.hash(&mut hasher);
-                clip.warp_markers.len().hash(&mut hasher);
                 clip.peaks.len().hash(&mut hasher);
             }
 

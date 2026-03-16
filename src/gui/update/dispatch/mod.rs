@@ -53,10 +53,8 @@ impl Maolan {
             Message::ClipRenameShow { .. }
                 | Message::ClipToggleFade { .. }
                 | Message::ClipSetMuted { .. }
-                | Message::ClipWarpReset { .. }
-                | Message::ClipWarpHalfSpeed { .. }
-                | Message::ClipWarpDoubleSpeed { .. }
-                | Message::ClipWarpAddMarker { .. }
+                | Message::ClipStretchHalfSpeed { .. }
+                | Message::ClipStretchDoubleSpeed { .. }
                 | Message::ClipSetActiveTake { .. }
                 | Message::ClipCycleActiveTake { .. }
                 | Message::ClipUnmuteTakesInRange { .. }
@@ -1813,7 +1811,6 @@ impl Maolan {
                             fade_enabled,
                             fade_in_samples,
                             fade_out_samples,
-                            warp_markers,
                         } => {
                             let mut max_length_samples = offset.saturating_add(*length);
                             let mut wav_path_for_rebuild: Option<std::path::PathBuf> = None;
@@ -1863,7 +1860,6 @@ impl Maolan {
                                             fade_enabled: *fade_enabled,
                                             fade_in_samples: *fade_in_samples,
                                             fade_out_samples: *fade_out_samples,
-                                            warp_markers: warp_markers.clone(),
                                             take_lane_override: None,
                                             take_lane_pinned: false,
                                             take_lane_locked: false,
@@ -1964,19 +1960,6 @@ impl Maolan {
                                         refresh_midi_clip_previews = true;
                                     }
                                 }
-                            }
-                        }
-                        Action::SetAudioClipWarpMarkers {
-                            track_name,
-                            clip_index,
-                            warp_markers,
-                        } => {
-                            let mut state = self.state.blocking_write();
-                            if let Some(track) =
-                                state.tracks.iter_mut().find(|t| &t.name == track_name)
-                                && let Some(clip) = track.audio.clips.get_mut(*clip_index)
-                            {
-                                clip.warp_markers = warp_markers.clone();
                             }
                         }
                         Action::RemoveClip {
@@ -2833,7 +2816,6 @@ impl Maolan {
                             fade_enabled: clip.fade_enabled,
                             fade_in_samples: clip.fade_in_samples,
                             fade_out_samples: clip.fade_out_samples,
-                            warp_markers: clip.warp_markers,
                         }));
                     }
                     for clip in restore_midi {
@@ -2849,7 +2831,6 @@ impl Maolan {
                             fade_enabled: clip.fade_enabled,
                             fade_in_samples: clip.fade_in_samples,
                             fade_out_samples: clip.fade_out_samples,
-                            warp_markers: vec![],
                         }));
                     }
                     tasks.push(self.send(Action::TrackSetFrozen {
@@ -3598,79 +3579,86 @@ impl Maolan {
                     muted,
                 });
             }
-            Message::ClipWarpReset {
+            Message::ClipStretchHalfSpeed {
                 ref track_idx,
                 clip_idx,
             } => {
-                return self.send(Action::SetAudioClipWarpMarkers {
-                    track_name: track_idx.clone(),
-                    clip_index: clip_idx,
-                    warp_markers: vec![],
-                });
+                return self.begin_clip_stretch(track_idx.clone(), clip_idx, 0.5);
             }
-            Message::ClipWarpHalfSpeed {
+            Message::ClipStretchDoubleSpeed {
                 ref track_idx,
                 clip_idx,
             } => {
-                let clip_len = {
-                    let state = self.state.blocking_read();
-                    state
-                        .tracks
-                        .iter()
-                        .find(|t| t.name == *track_idx)
-                        .and_then(|t| t.audio.clips.get(clip_idx))
-                        .map(|c| c.length)
-                };
-                if let Some(clip_len) = clip_len {
-                    return self.send(Action::SetAudioClipWarpMarkers {
-                        track_name: track_idx.clone(),
-                        clip_index: clip_idx,
-                        warp_markers: Self::warp_markers_for_speed(clip_len, 0.5),
-                    });
+                return self.begin_clip_stretch(track_idx.clone(), clip_idx, 2.0);
+            }
+            Message::ClipStretchFinished { request, result } => match result {
+                Ok((new_name, new_length)) => {
+                    let clip_state = {
+                        let state = self.state.blocking_read();
+                        state
+                            .tracks
+                            .iter()
+                            .find(|t| t.name == request.track_idx)
+                            .and_then(|t| t.audio.clips.get(request.clip_idx))
+                            .map(|clip| (clip.name.clone(), clip.start))
+                    };
+                    let Some((current_name, current_start)) = clip_state else {
+                        self.state.blocking_write().message =
+                            "Stretched clip finished, but the original clip no longer exists"
+                                .to_string();
+                        return Task::none();
+                    };
+                    if current_name != request.clip_name || current_start != request.start {
+                        self.state.blocking_write().message =
+                            "Discarded stale stretched clip result".to_string();
+                        return Task::none();
+                    }
+                    let fade_in = request.fade_in_samples.min(new_length / 2);
+                    let fade_out = request.fade_out_samples.min(new_length / 2);
+                    self.state.blocking_write().message = format!(
+                        "Stretched audio clip '{}' to {:.2}x",
+                        request.clip_name, request.stretch_ratio
+                    );
+                    return Task::batch(vec![
+                        self.send(Action::BeginHistoryGroup),
+                        self.send(Action::RemoveClip {
+                            track_name: request.track_idx.clone(),
+                            kind: Kind::Audio,
+                            clip_indices: vec![request.clip_idx],
+                        }),
+                        self.send(Action::AddClip {
+                            name: new_name,
+                            track_name: request.track_idx,
+                            start: request.start,
+                            length: new_length,
+                            offset: 0,
+                            input_channel: request.input_channel,
+                            muted: request.muted,
+                            kind: Kind::Audio,
+                            fade_enabled: request.fade_enabled,
+                            fade_in_samples: fade_in,
+                            fade_out_samples: fade_out,
+                        }),
+                        self.send(Action::EndHistoryGroup),
+                    ]);
                 }
-            }
-            Message::ClipWarpDoubleSpeed {
-                ref track_idx,
-                clip_idx,
-            } => {
-                let clip_len = {
-                    let state = self.state.blocking_read();
-                    state
+                Err(e) => {
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state
                         .tracks
-                        .iter()
-                        .find(|t| t.name == *track_idx)
-                        .and_then(|t| t.audio.clips.get(clip_idx))
-                        .map(|c| c.length)
-                };
-                if let Some(clip_len) = clip_len {
-                    return self.send(Action::SetAudioClipWarpMarkers {
-                        track_name: track_idx.clone(),
-                        clip_index: clip_idx,
-                        warp_markers: Self::warp_markers_for_speed(clip_len, 2.0),
-                    });
+                        .iter_mut()
+                        .find(|t| t.name == request.track_idx)
+                        && let Some(clip) = track.audio.clips.get_mut(request.clip_idx)
+                        && clip.name == request.clip_name
+                    {
+                        clip.start = request.original_start;
+                        clip.length = request.length;
+                        clip.offset = request.offset;
+                    }
+                    state.message = format!("Failed to stretch clip '{}': {e}", request.clip_name);
+                    return Task::none();
                 }
-            }
-            Message::ClipWarpAddMarker {
-                ref track_idx,
-                clip_idx,
-            } => {
-                let marker_state = {
-                    let state = self.state.blocking_read();
-                    state
-                        .tracks
-                        .iter()
-                        .find(|t| t.name == *track_idx)
-                        .and_then(|t| t.audio.clips.get(clip_idx))
-                        .map(|c| (c.length, c.warp_markers.clone()))
-                };
-                if let Some((clip_len, markers)) = marker_state {
-                    return self.send(Action::SetAudioClipWarpMarkers {
-                        track_name: track_idx.clone(),
-                        clip_index: clip_idx,
-                        warp_markers: Self::add_warp_marker_between(&markers, clip_len),
-                    });
-                }
-            }
+            },
             Message::ClipSetActiveTake {
                 ref track_idx,
                 clip_idx,
@@ -4612,6 +4600,10 @@ impl Maolan {
             Message::ClipResizeStart(ref kind, ref track_name, clip_index, is_right_side) => {
                 self.clip = None;
                 let mut state = self.state.blocking_write();
+                let stretch_unavailable = state.shift && !*super::RUBBERBAND_AVAILABLE;
+                if stretch_unavailable {
+                    state.message = "Clip stretching is unavailable because 'rubberband' is not installed or not on PATH".to_string();
+                }
                 if let Some(track) = state.tracks.iter().find(|t| t.name == *track_name) {
                     match kind {
                         Kind::Audio => {
@@ -4621,6 +4613,7 @@ impl Maolan {
                             if clip.take_lane_locked {
                                 return Task::none();
                             }
+                            let stretch_mode = state.shift && *super::RUBBERBAND_AVAILABLE;
                             let initial_value = if is_right_side {
                                 clip.length
                             } else {
@@ -4631,9 +4624,12 @@ impl Maolan {
                                 track_name: track_name.clone(),
                                 index: clip_index,
                                 is_right_side,
+                                stretch_mode,
                                 initial_value: initial_value as f32,
                                 initial_mouse_x: state.cursor.x,
                                 initial_length: clip.length as f32,
+                                initial_start: clip.start,
+                                initial_offset: clip.offset,
                             });
                         }
                         Kind::MIDI => {
@@ -4653,9 +4649,12 @@ impl Maolan {
                                 track_name: track_name.clone(),
                                 index: clip_index,
                                 is_right_side,
+                                stretch_mode: false,
                                 initial_value: initial_value as f32,
                                 initial_mouse_x: state.cursor.x,
                                 initial_length: clip.length as f32,
+                                initial_start: clip.start,
+                                initial_offset: clip.offset,
                             });
                         }
                     }
@@ -4758,9 +4757,12 @@ impl Maolan {
                         ref track_name,
                         index,
                         is_right_side,
+                        stretch_mode,
                         initial_value,
                         initial_mouse_x,
                         initial_length,
+                        initial_start,
+                        initial_offset,
                     }) => {
                         let pixels_per_sample = self.pixels_per_sample().max(1.0e-6);
                         let samples_per_beat = self.samples_per_beat();
@@ -4788,38 +4790,76 @@ impl Maolan {
                             match kind {
                                 Kind::Audio => {
                                     let clip = &mut track.audio.clips[index];
-                                    let max_length_samples =
-                                        clip.max_length_samples.max(initial_length as usize) as f32;
-                                    if is_right_side {
-                                        let raw_end =
-                                            clip.start as f32 + initial_value + delta_samples;
-                                        let snapped_end = snap_sample_drag(raw_end, delta_samples);
-                                        let min_end = clip.start as f32 + min_length_samples;
-                                        let max_end = clip.start as f32 + max_length_samples;
-                                        let updated_end = snapped_end.clamp(min_end, max_end);
-                                        clip.length = updated_end.max(clip.start as f32) as usize
-                                            - clip.start;
-                                    } else {
-                                        let right_edge = initial_value + initial_length;
-                                        let max_start = (right_edge - min_length_samples).max(0.0);
-                                        let min_start = (right_edge - max_length_samples).max(0.0);
-                                        let snapped_start = snap_sample_drag(
-                                            initial_value + delta_samples,
-                                            delta_samples,
-                                        );
-                                        let new_start = snapped_start.clamp(min_start, max_start);
-                                        let updated_length = (right_edge - new_start)
-                                            .clamp(min_length_samples, max_length_samples);
-                                        let start_delta = new_start as isize - clip.start as isize;
-                                        clip.start = new_start as usize;
-                                        clip.length = updated_length as usize;
-                                        if start_delta >= 0 {
-                                            clip.offset = (clip.offset + start_delta as usize).min(
-                                                clip.max_length_samples.saturating_sub(clip.length),
-                                            );
+                                    if stretch_mode {
+                                        if is_right_side {
+                                            let raw_end =
+                                                clip.start as f32 + initial_value + delta_samples;
+                                            let snapped_end =
+                                                snap_sample_drag(raw_end, delta_samples);
+                                            let min_end = clip.start as f32 + min_length_samples;
+                                            let updated_end = snapped_end.max(min_end);
+                                            clip.length = updated_end.max(clip.start as f32)
+                                                as usize
+                                                - clip.start;
                                         } else {
-                                            clip.offset =
-                                                clip.offset.saturating_sub((-start_delta) as usize);
+                                            let right_edge = initial_start as f32 + initial_length;
+                                            let max_start =
+                                                (right_edge - min_length_samples).max(0.0);
+                                            let snapped_start = snap_sample_drag(
+                                                initial_value + delta_samples,
+                                                delta_samples,
+                                            );
+                                            let new_start = snapped_start.clamp(0.0, max_start);
+                                            let updated_length =
+                                                (right_edge - new_start).max(min_length_samples);
+                                            clip.start = new_start as usize;
+                                            clip.length = updated_length as usize;
+                                            clip.offset = initial_offset;
+                                        }
+                                    } else {
+                                        let max_length_samples =
+                                            clip.max_length_samples.max(initial_length as usize)
+                                                as f32;
+                                        if is_right_side {
+                                            let raw_end =
+                                                clip.start as f32 + initial_value + delta_samples;
+                                            let snapped_end =
+                                                snap_sample_drag(raw_end, delta_samples);
+                                            let min_end = clip.start as f32 + min_length_samples;
+                                            let max_end = clip.start as f32 + max_length_samples;
+                                            let updated_end = snapped_end.clamp(min_end, max_end);
+                                            clip.length = updated_end.max(clip.start as f32)
+                                                as usize
+                                                - clip.start;
+                                        } else {
+                                            let right_edge = initial_value + initial_length;
+                                            let max_start =
+                                                (right_edge - min_length_samples).max(0.0);
+                                            let min_start =
+                                                (right_edge - max_length_samples).max(0.0);
+                                            let snapped_start = snap_sample_drag(
+                                                initial_value + delta_samples,
+                                                delta_samples,
+                                            );
+                                            let new_start =
+                                                snapped_start.clamp(min_start, max_start);
+                                            let updated_length = (right_edge - new_start)
+                                                .clamp(min_length_samples, max_length_samples);
+                                            let start_delta =
+                                                new_start as isize - clip.start as isize;
+                                            clip.start = new_start as usize;
+                                            clip.length = updated_length as usize;
+                                            if start_delta >= 0 {
+                                                clip.offset = (clip.offset + start_delta as usize)
+                                                    .min(
+                                                        clip.max_length_samples
+                                                            .saturating_sub(clip.length),
+                                                    );
+                                            } else {
+                                                clip.offset = clip
+                                                    .offset
+                                                    .saturating_sub((-start_delta) as usize);
+                                            }
                                         }
                                     }
                                 }
@@ -5166,6 +5206,10 @@ impl Maolan {
                     kind,
                     track_name,
                     index,
+                    stretch_mode,
+                    initial_start,
+                    initial_length,
+                    initial_offset,
                     ..
                 }) = resizing
                 {
@@ -5187,6 +5231,37 @@ impl Maolan {
                                 }
                             }
                         };
+                        drop(state);
+                        if stretch_mode && kind == Kind::Audio {
+                            let stretch_ratio = length as f32 / initial_length.max(1.0);
+                            let stretch_request = {
+                                let state = self.state.blocking_read();
+                                state
+                                    .tracks
+                                    .iter()
+                                    .find(|t| t.name == track_name)
+                                    .and_then(|track| track.audio.clips.get(index))
+                                    .map(|clip| crate::message::ClipStretchRequest {
+                                        track_idx: track_name.clone(),
+                                        clip_idx: index,
+                                        clip_name: clip.name.clone(),
+                                        start,
+                                        original_start: initial_start,
+                                        length: initial_length.max(1.0) as usize,
+                                        offset: initial_offset,
+                                        input_channel: clip.input_channel,
+                                        muted: clip.muted,
+                                        fade_enabled: clip.fade_enabled,
+                                        fade_in_samples: clip.fade_in_samples,
+                                        fade_out_samples: clip.fade_out_samples,
+                                        stretch_ratio,
+                                    })
+                            };
+                            if let Some(request) = stretch_request {
+                                return self.start_clip_stretch_request(request);
+                            }
+                            return Task::none();
+                        }
                         return self.send(Action::SetClipBounds {
                             track_name,
                             clip_index: index,
@@ -5794,7 +5869,6 @@ impl Maolan {
                                                     fade_enabled: true,
                                                     fade_in_samples: 240,
                                                     fade_out_samples: 240,
-                                                    warp_markers: vec![],
                                                 }))
                                                 .await
                                             {
@@ -5856,7 +5930,6 @@ impl Maolan {
                                                     fade_enabled: true,
                                                     fade_in_samples: 240,
                                                     fade_out_samples: 240,
-                                                    warp_markers: vec![],
                                                 }))
                                                 .await
                                             {

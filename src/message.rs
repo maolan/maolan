@@ -509,6 +509,23 @@ impl DraggedClip {
 }
 
 #[derive(Debug, Clone)]
+pub struct ClipStretchRequest {
+    pub track_idx: String,
+    pub clip_idx: usize,
+    pub clip_name: String,
+    pub start: usize,
+    pub original_start: usize,
+    pub length: usize,
+    pub offset: usize,
+    pub input_channel: usize,
+    pub muted: bool,
+    pub fade_enabled: bool,
+    pub fade_in_samples: usize,
+    pub fade_out_samples: usize,
+    pub stretch_ratio: f32,
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     None,
 
@@ -969,21 +986,17 @@ pub enum Message {
         kind: Kind,
         muted: bool,
     },
-    ClipWarpReset {
+    ClipStretchHalfSpeed {
         track_idx: String,
         clip_idx: usize,
     },
-    ClipWarpHalfSpeed {
+    ClipStretchDoubleSpeed {
         track_idx: String,
         clip_idx: usize,
     },
-    ClipWarpDoubleSpeed {
-        track_idx: String,
-        clip_idx: usize,
-    },
-    ClipWarpAddMarker {
-        track_idx: String,
-        clip_idx: usize,
+    ClipStretchFinished {
+        request: ClipStretchRequest,
+        result: Result<(String, usize), String>,
     },
     ClipSetActiveTake {
         track_idx: String,

@@ -201,12 +201,6 @@ pub struct Vst3GraphConnection {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct AudioWarpMarker {
-    pub timeline_sample: usize,
-    pub source_sample: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MidiLearnBinding {
     pub device: Option<String>,
     pub channel: u8,
@@ -278,7 +272,6 @@ pub enum Action {
         fade_enabled: bool,
         fade_in_samples: usize,
         fade_out_samples: usize,
-        warp_markers: Vec<AudioWarpMarker>,
     },
     RemoveClip {
         track_name: String,
@@ -306,11 +299,6 @@ pub enum Action {
         clip_index: usize,
         kind: Kind,
         muted: bool,
-    },
-    SetAudioClipWarpMarkers {
-        track_name: String,
-        clip_index: usize,
-        warp_markers: Vec<AudioWarpMarker>,
     },
     RenameClip {
         track_name: String,
