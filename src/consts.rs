@@ -23,7 +23,6 @@ pub mod workspace {
 
     pub const RULER_HEIGHT: f32 = 28.0;
     pub const BEATS_PER_BAR: usize = 4;
-    pub const BARS_TO_DRAW: usize = 256;
     pub const MIN_TICK_SPACING_PX: f32 = 8.0;
     pub const MIN_LABEL_SPACING_PX: f32 = 64.0;
 

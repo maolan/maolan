@@ -857,9 +857,12 @@ impl Maolan {
             .max()
             .unwrap_or(0) as f64;
         let visible_samples = self.editor_visible_samples();
+        let right_padding_samples = visible_samples * 0.5;
         let min_timeline_samples =
             (self.samples_per_bar() * crate::consts::workspace::MIN_TIMELINE_BARS as f64).max(1.0);
         max_end_samples
+            .max(self.transport_samples.max(0.0) + right_padding_samples)
+            .max(max_end_samples + right_padding_samples)
             .max(visible_samples)
             .max(min_timeline_samples)
     }

@@ -1,14 +1,15 @@
 use crate::{
-    consts::{
-        message_lists::{
-            PIANO_CHORD_KIND_ALL, PIANO_NRPN_KIND_ALL, PIANO_RPN_KIND_ALL, PIANO_SCALE_ROOT_ALL,
-            PIANO_VELOCITY_KIND_ALL,
-        },
-        widget_piano::{
-            H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, MIDI_CHANNELS,
-            NOTES_PER_OCTAVE, OCTAVES, PITCH_MAX, RIGHT_SCROLL_GUTTER_WIDTH, TOOLS_STRIP_WIDTH,
-            WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
-        },
+        consts::{
+            message_lists::{
+                PIANO_CHORD_KIND_ALL, PIANO_NRPN_KIND_ALL, PIANO_RPN_KIND_ALL, PIANO_SCALE_ROOT_ALL,
+                PIANO_VELOCITY_KIND_ALL,
+            },
+            workspace::PLAYHEAD_WIDTH_PX,
+            widget_piano::{
+                H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, MIDI_CHANNELS,
+                NOTES_PER_OCTAVE, OCTAVES, PITCH_MAX, RIGHT_SCROLL_GUTTER_WIDTH, TOOLS_STRIP_WIDTH,
+                WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
+            },
     },
     menu::{menu_dropdown, menu_item},
     message::{Message, PianoControllerLane, PianoNrpnKind, PianoRpnKind},
@@ -411,7 +412,12 @@ impl Piano {
         .into()
     }
 
-    pub fn view(&self, pixels_per_sample: f32, samples_per_bar: f32) -> Element<'_, Message> {
+    pub fn view(
+        &self,
+        pixels_per_sample: f32,
+        samples_per_bar: f32,
+        playhead_x: Option<f32>,
+    ) -> Element<'_, Message> {
         let state = self.state.blocking_read();
         let zoom_x = state.piano_zoom_x;
         let zoom_y = state.piano_zoom_y;
@@ -743,6 +749,42 @@ impl Piano {
                     );
                 }
             }
+        }
+
+        if let Some(x) = playhead_x {
+            let x = x.max(0.0);
+            note_layers.push(
+                pin(container("")
+                    .width(Length::Fixed(PLAYHEAD_WIDTH_PX))
+                    .height(Length::Fixed(notes_h))
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.95,
+                            g: 0.18,
+                            b: 0.14,
+                            a: 0.95,
+                        })),
+                        ..container::Style::default()
+                    }))
+                .position(Point::new(x, 0.0))
+                .into(),
+            );
+            ctrl_layers.push(
+                pin(container("")
+                    .width(Length::Fixed(PLAYHEAD_WIDTH_PX))
+                    .height(Length::Fixed(ctrl_h))
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 0.95,
+                            g: 0.18,
+                            b: 0.14,
+                            a: 0.95,
+                        })),
+                        ..container::Style::default()
+                    }))
+                .position(Point::new(x, 0.0))
+                .into(),
+            );
         }
 
         ctrl_layers.push(
