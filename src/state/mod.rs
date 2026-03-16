@@ -454,7 +454,7 @@ pub struct StateData {
     pub track_template_save_dialog: Option<TrackTemplateSaveDialog>,
     pub track_marker_dialog: Option<TrackMarkerDialog>,
     pub template_save_dialog: Option<TemplateSaveDialog>,
-    pub pending_track_template_load: Option<(String, String)>, // (track_name, template_name)
+    pub pending_track_template_loads: Vec<(String, String)>, // [(track_name, template_name)]
     pub piano: Option<PianoData>,
     pub piano_zoom_x: f32,
     pub piano_zoom_y: f32,
@@ -612,7 +612,7 @@ impl Default for StateData {
             track_template_save_dialog: None,
             track_marker_dialog: None,
             template_save_dialog: None,
-            pending_track_template_load: None,
+            pending_track_template_loads: Vec::new(),
             piano: None,
             piano_zoom_x: 20.0,
             piano_zoom_y: 1.0,

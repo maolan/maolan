@@ -3,6 +3,18 @@ use super::*;
 impl Maolan {
     pub(super) fn handle_session_message(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::AddTrack(crate::message::AddTrack::Submit) => {
+                let tasks: Vec<_> = self
+                    .add_track
+                    .create_messages()
+                    .into_iter()
+                    .map(|message| self.handle_session_message(message))
+                    .collect();
+                if !tasks.is_empty() {
+                    self.modal = None;
+                }
+                Task::batch(tasks)
+            }
             Message::AddTrackFromTemplate {
                 ref name,
                 ref template,
@@ -19,10 +31,10 @@ impl Maolan {
                     midi_outs,
                 });
 
-                self.state.blocking_write().pending_track_template_load =
-                    Some((name.clone(), template.clone()));
-
-                self.modal = None;
+                self.state
+                    .blocking_write()
+                    .pending_track_template_loads
+                    .push((name.clone(), template.clone()));
                 task
             }
             Message::NewFromTemplate(ref template_name) => {

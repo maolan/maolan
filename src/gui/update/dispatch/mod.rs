@@ -84,7 +84,8 @@ impl Maolan {
         }
         match message {
             Message::Show(ref show) => return self.handle_show_message(show),
-            Message::AddTrackFromTemplate { .. }
+            Message::AddTrack(crate::message::AddTrack::Submit)
+            | Message::AddTrackFromTemplate { .. }
             | Message::NewFromTemplate(_)
             | Message::NewSession
             | Message::Request(_)
@@ -1668,13 +1669,25 @@ impl Maolan {
                             }
 
                             // Check if we need to load a template for this track
-                            let pending_template = state.pending_track_template_load.clone();
+                            let pending_template = state
+                                .pending_track_template_loads
+                                .iter()
+                                .position(|(track_name, _)| track_name == name)
+                                .map(|index| state.pending_track_template_loads[index].clone());
                             drop(state);
 
                             if let Some((template_track_name, template_name)) = pending_template
                                 && template_track_name == *name
                             {
-                                self.state.blocking_write().pending_track_template_load = None;
+                                let mut state = self.state.blocking_write();
+                                if let Some(index) = state
+                                    .pending_track_template_loads
+                                    .iter()
+                                    .position(|(track_name, _)| track_name == name)
+                                {
+                                    state.pending_track_template_loads.remove(index);
+                                }
+                                drop(state);
                                 return self.load_track_template(name.clone(), template_name);
                             }
 
