@@ -1,6 +1,6 @@
 use super::timeline_x_to_sample_f32;
 use crate::consts::workspace::{
-    BARS_TO_DRAW, BEATS_PER_BAR, MIN_LABEL_SPACING_PX, MIN_TICK_SPACING_PX, RULER_HEIGHT,
+    BEATS_PER_BAR, MIN_LABEL_SPACING_PX, MIN_TICK_SPACING_PX, RULER_HEIGHT,
 };
 use crate::message::{Message, SnapMode};
 use iced::{
@@ -476,7 +476,12 @@ impl canvas::Program<Message> for RulerCanvas {
                     Ruler::step_for_spacing(self.beat_pixels, MIN_TICK_SPACING_PX);
                 let bar_pixels = self.beat_pixels * BEATS_PER_BAR as f32;
                 let label_step_bars = Ruler::step_for_spacing(bar_pixels, MIN_LABEL_SPACING_PX);
-                let total_beats = BARS_TO_DRAW * BEATS_PER_BAR;
+                let drawable_width = (bounds.width - self.timeline_left_inset_px).max(0.0);
+                let total_beats = (drawable_width / self.beat_pixels.max(0.0001))
+                    .ceil()
+                    .max(0.0) as usize;
+                let total_bars =
+                    (total_beats as f32 / BEATS_PER_BAR as f32).ceil().max(0.0) as usize;
 
                 for beat_idx in (0..=total_beats).step_by(tick_step_beats) {
                     let x = self.timeline_left_inset_px + beat_idx as f32 * self.beat_pixels;
@@ -497,7 +502,7 @@ impl canvas::Program<Message> for RulerCanvas {
                     );
                 }
 
-                for bar in (0..BARS_TO_DRAW).step_by(label_step_bars) {
+                for bar in (0..=total_bars).step_by(label_step_bars) {
                     let x = self.timeline_left_inset_px
                         + bar as f32 * BEATS_PER_BAR as f32 * self.beat_pixels;
                     frame.fill_text(Text {

@@ -213,7 +213,15 @@ impl Workspace {
         };
         let min_visible_samples = (samples_per_bar * zoom_visible_bars).max(1.0) as usize;
         let min_timeline_samples = (samples_per_bar * MIN_TIMELINE_BARS).max(1.0) as usize;
+        let right_padding_samples = ((samples_per_bar * zoom_visible_bars) * 0.5).max(1.0) as usize;
+        let playhead_extent_samples = playhead_samples
+            .map(|sample| sample.max(0.0) as usize)
+            .unwrap_or(0)
+            .saturating_add(right_padding_samples);
+        let content_extent_samples = max_end_samples.saturating_add(right_padding_samples);
         let timeline_samples = max_end_samples
+            .max(playhead_extent_samples)
+            .max(content_extent_samples)
             .max(min_visible_samples)
             .max(min_timeline_samples);
         let editor_content_width = (timeline_samples as f32 * pixels_per_sample).max(1.0);
@@ -319,7 +327,7 @@ impl Workspace {
             bpm: tempo,
             time_signature,
             pixels_per_sample,
-            playhead_x: None,
+            playhead_x: playhead_x_timeline.map(|x| x.max(0.0)),
             punch_range_samples,
             snap_mode,
             samples_per_beat,
@@ -339,20 +347,8 @@ impl Workspace {
         .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
         .height(Length::Fixed(self.tempo.height()))
         .into();
-        let tempo_with_playhead: Element<'_, Message> = if let Some(x) = playhead_x_timeline {
-            Stack::from_vec(vec![
-                tempo_scrolled,
-                pin(Self::playhead_line())
-                    .position(Point::new(x.max(0.0), 0.0))
-                    .into(),
-            ])
-            .height(Length::Fixed(self.tempo.height()))
-            .into()
-        } else {
-            tempo_scrolled
-        };
         let ruler_scrolled: Element<'_, Message> = scrollable(self.ruler.view(RulerViewArgs {
-            playhead_x: None,
+            playhead_x: playhead_x_timeline.map(|x| x.max(0.0)),
             beat_pixels,
             pixels_per_sample,
             loop_range_samples,
@@ -368,22 +364,10 @@ impl Workspace {
         .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
         .height(Length::Fixed(self.ruler.height()))
         .into();
-        let ruler_with_playhead: Element<'_, Message> = if let Some(x) = playhead_x_timeline {
-            Stack::from_vec(vec![
-                ruler_scrolled,
-                pin(Self::playhead_line())
-                    .position(Point::new(x.max(0.0), 0.0))
-                    .into(),
-            ])
-            .height(Length::Fixed(self.ruler.height()))
-            .into()
-        } else {
-            ruler_scrolled
-        };
 
         let right_panel = column![
-            tempo_with_playhead,
-            ruler_with_playhead,
+            tempo_scrolled,
+            ruler_scrolled,
             container(editor_with_zoom).height(Length::Fixed(tracks_total_height)),
         ]
         .width(Length::Fill);
@@ -624,22 +608,9 @@ impl Workspace {
         let playhead_x =
             playhead_samples.map(|sample| (sample as f32 * horizontal_pixels_per_sample).max(0.0));
 
-        let piano_content = self.piano.view(pixels_per_sample, samples_per_bar);
-        let piano_timeline_x_offset = TOOLS_STRIP_WIDTH + MAIN_SPLIT_SPACING + KEYBOARD_WIDTH;
-
-        let piano_with_playhead = if let Some(x) = playhead_x {
-            Stack::from_vec(vec![
-                piano_content,
-                pin(Self::playhead_line())
-                    .position(Point::new((piano_timeline_x_offset + x).max(0.0), 0.0))
-                    .into(),
-            ])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-        } else {
-            piano_content
-        };
+        let piano_content = self
+            .piano
+            .view(pixels_per_sample, samples_per_bar, playhead_x);
 
         container(
             column![
@@ -714,7 +685,7 @@ impl Workspace {
                 ]
                 .width(Length::Fill)
                 .height(Length::Fixed(self.ruler.height())),
-                piano_with_playhead,
+                piano_content,
             ]
             .width(Length::Fill)
             .height(Length::Fill),
