@@ -17,6 +17,7 @@ use crate::{
         EXPORT_BIT_DEPTH_ALL, EXPORT_MP3_MODE_ALL, EXPORT_NORMALIZE_MODE_ALL,
         EXPORT_RENDER_MODE_ALL, SNAP_MODE_ALL,
     },
+    consts::state_ids::METRONOME_TRACK_ID,
     hw, menu,
     message::{
         DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
@@ -79,6 +80,23 @@ type PianoParseResult = (
     usize,
 );
 type TrackFreezeRestore = (Vec<AudioClip>, Vec<MIDIClip>, Option<String>);
+
+pub(crate) const MIN_ZOOM_VISIBLE_BARS: f32 = 1.0;
+pub(crate) const MAX_ZOOM_VISIBLE_BARS: f32 = 256.0;
+
+pub(crate) fn zoom_slider_to_visible_bars(position: f32) -> f32 {
+    let clamped = position.clamp(0.0, 1.0);
+    let min = MIN_ZOOM_VISIBLE_BARS.log2();
+    let max = MAX_ZOOM_VISIBLE_BARS.log2();
+    2.0_f32.powf(min + (max - min) * clamped)
+}
+
+pub(crate) fn visible_bars_to_zoom_slider(visible_bars: f32) -> f32 {
+    let clamped = visible_bars.clamp(MIN_ZOOM_VISIBLE_BARS, MAX_ZOOM_VISIBLE_BARS);
+    let min = MIN_ZOOM_VISIBLE_BARS.log2();
+    let max = MAX_ZOOM_VISIBLE_BARS.log2();
+    ((clamped.log2() - min) / (max - min)).clamp(0.0, 1.0)
+}
 
 #[derive(Debug, Clone)]
 struct PendingTrackFreezeBounce {
@@ -338,6 +356,7 @@ pub struct Maolan {
     punch_range_samples: Option<(usize, usize)>,
     snap_mode: SnapMode,
     zoom_visible_bars: f32,
+    editor_scroll_origin_samples: f64,
     editor_scroll_x: f32,
     editor_scroll_y: f32,
     mixer_scroll_x: f32,
@@ -557,6 +576,7 @@ impl Default for Maolan {
             punch_range_samples: None,
             snap_mode: prefs.default_snap_mode,
             zoom_visible_bars: 127.0,
+            editor_scroll_origin_samples: 0.0,
             editor_scroll_x: 0.0,
             editor_scroll_y: 0.0,
             mixer_scroll_x: 0.0,
@@ -809,6 +829,52 @@ impl Maolan {
             return 1.0;
         }
         (self.editor_width_px() as f64 / total_samples) as f32
+    }
+
+    fn editor_visible_samples(&self) -> f64 {
+        (self.samples_per_bar() * self.zoom_visible_bars as f64).max(1.0)
+    }
+
+    fn editor_timeline_samples(&self) -> f64 {
+        let state = self.state.blocking_read();
+        let max_end_samples = state
+            .tracks
+            .iter()
+            .filter(|track| track.name != METRONOME_TRACK_ID)
+            .flat_map(|track| {
+                let audio = track
+                    .audio
+                    .clips
+                    .iter()
+                    .map(|clip| clip.start.saturating_add(clip.length));
+                let midi = track
+                    .midi
+                    .clips
+                    .iter()
+                    .map(|clip| clip.start.saturating_add(clip.length));
+                audio.chain(midi)
+            })
+            .max()
+            .unwrap_or(0) as f64;
+        let visible_samples = self.editor_visible_samples();
+        let min_timeline_samples =
+            (self.samples_per_bar() * crate::consts::workspace::MIN_TIMELINE_BARS as f64).max(1.0);
+        max_end_samples
+            .max(visible_samples)
+            .max(min_timeline_samples)
+    }
+
+    fn editor_max_scroll_samples(&self) -> f64 {
+        (self.editor_timeline_samples() - self.editor_visible_samples()).max(0.0)
+    }
+
+    fn editor_scroll_relative_x(&self) -> f32 {
+        let max_scroll = self.editor_max_scroll_samples();
+        if max_scroll <= 0.0 {
+            0.0
+        } else {
+            (self.editor_scroll_origin_samples / max_scroll).clamp(0.0, 1.0) as f32
+        }
     }
 
     fn beat_pixels(&self) -> f32 {
@@ -4067,5 +4133,20 @@ mod tests {
             Maolan::plugin_node_to_json(&PluginGraphNode::ClapPluginInstance(7), &id_to_index),
             Some(json!({"type":"clap_plugin","plugin_index":2}))
         );
+    }
+
+    #[test]
+    fn zoom_slider_roundtrip_preserves_visible_bars() {
+        for visible_bars in [1.0_f32, 2.0, 4.0, 16.0, 64.0, 256.0] {
+            let slider = visible_bars_to_zoom_slider(visible_bars);
+            let roundtrip = zoom_slider_to_visible_bars(slider);
+            assert!((roundtrip - visible_bars).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn zoom_slider_midpoint_is_geometric_midpoint() {
+        let midpoint = zoom_slider_to_visible_bars(0.5);
+        assert!((midpoint - 16.0).abs() < 0.001);
     }
 }

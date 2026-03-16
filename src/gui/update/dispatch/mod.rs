@@ -209,14 +209,19 @@ impl Maolan {
                     }
                 }
             }
-            Message::ZoomVisibleBarsChanged(value) => {
-                self.zoom_visible_bars = value.clamp(1.0, 256.0);
+            Message::ZoomSliderChanged(value) => {
+                self.zoom_visible_bars = crate::gui::zoom_slider_to_visible_bars(value);
+                let max_scroll = self.editor_max_scroll_samples();
+                self.editor_scroll_origin_samples =
+                    self.editor_scroll_origin_samples.clamp(0.0, max_scroll);
+                self.editor_scroll_x = self.editor_scroll_relative_x();
                 return self.sync_editor_scrollbars();
             }
             Message::EditorScrollXChanged(value) => {
                 let x = value.clamp(0.0, 1.0);
                 if (self.editor_scroll_x - x).abs() > 0.0005 {
                     self.editor_scroll_x = x;
+                    self.editor_scroll_origin_samples = self.editor_max_scroll_samples() * x as f64;
                     return self.sync_editor_scrollbars();
                 }
             }

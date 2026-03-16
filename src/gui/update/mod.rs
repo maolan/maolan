@@ -1506,7 +1506,7 @@ impl Maolan {
     }
 
     fn sync_editor_scrollbars(&self) -> Task<Message> {
-        let x = self.editor_scroll_x.clamp(0.0, 1.0);
+        let x = self.editor_scroll_relative_x();
         let y = self.editor_scroll_y.clamp(0.0, 1.0);
         Task::batch(vec![
             operation::snap_to(
