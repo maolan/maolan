@@ -526,6 +526,34 @@ pub struct ClipStretchRequest {
 }
 
 #[derive(Debug, Clone)]
+pub struct ClipPitchCorrectionRequest {
+    pub track_idx: String,
+    pub clip_idx: usize,
+    pub clip_name: String,
+    pub start: usize,
+    pub source_name: String,
+    pub source_offset: usize,
+    pub source_length: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClipPitchCorrectionApplyRequest {
+    pub track_idx: String,
+    pub clip_idx: usize,
+    pub clip_name: String,
+    pub start: usize,
+    pub input_channel: usize,
+    pub muted: bool,
+    pub fade_enabled: bool,
+    pub fade_in_samples: usize,
+    pub fade_out_samples: usize,
+    pub source_name: String,
+    pub source_offset: usize,
+    pub source_length: usize,
+    pub points: Vec<crate::state::PitchCorrectionPoint>,
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     None,
 
@@ -749,6 +777,11 @@ pub enum Message {
         filename: String,
         operation: Option<String>,
     },
+    ClipOpenPitchCorrectionProgress {
+        clip_name: String,
+        progress: f32,
+        operation: Option<String>,
+    },
     TrackTemplatesLoaded(Vec<String>),
     #[cfg(target_os = "linux")]
     PreferencesDevicesLoaded {
@@ -832,6 +865,21 @@ pub enum Message {
         position: Point,
     },
     PianoNotesEndDrag,
+    PitchCorrectionPointClick {
+        point_index: usize,
+        position: Point,
+    },
+    PitchCorrectionPointsDrag {
+        position: Point,
+    },
+    PitchCorrectionPointsEndDrag,
+    PitchCorrectionSelectRectStart {
+        position: Point,
+    },
+    PitchCorrectionSelectRectDrag {
+        position: Point,
+    },
+    PitchCorrectionSelectRectEnd,
     PianoNoteResizeStart {
         note_index: usize,
         position: Point,
@@ -986,50 +1034,28 @@ pub enum Message {
         kind: Kind,
         muted: bool,
     },
-    ClipStretchHalfSpeed {
-        track_idx: String,
-        clip_idx: usize,
-    },
-    ClipStretchDoubleSpeed {
-        track_idx: String,
-        clip_idx: usize,
-    },
     ClipStretchFinished {
         request: ClipStretchRequest,
         result: Result<(String, usize), String>,
     },
-    ClipSetActiveTake {
+    ClipOpenPitchCorrection {
         track_idx: String,
         clip_idx: usize,
-        kind: Kind,
     },
-    ClipCycleActiveTake {
-        track_idx: String,
-        clip_idx: usize,
-        kind: Kind,
+    ClipOpenPitchCorrectionFinished {
+        request: ClipPitchCorrectionRequest,
+        result: Result<crate::state::PitchCorrectionData, String>,
     },
-    ClipUnmuteTakesInRange {
-        track_idx: String,
-        clip_idx: usize,
-        kind: Kind,
+    PitchCorrectionApply,
+    PitchCorrectionApplyProgress {
+        clip_name: String,
+        progress: f32,
+        operation: Option<String>,
     },
-    ClipTakeLanePinToggle {
-        track_idx: String,
-        clip_idx: usize,
-        kind: Kind,
+    PitchCorrectionApplyFinished {
+        request: ClipPitchCorrectionApplyRequest,
+        result: Result<(String, usize, crate::state::ClipPeaks), String>,
     },
-    ClipTakeLaneLockToggle {
-        track_idx: String,
-        clip_idx: usize,
-        kind: Kind,
-    },
-    ClipTakeLaneMove {
-        track_idx: String,
-        clip_idx: usize,
-        kind: Kind,
-        delta: i8,
-    },
-
     TrackRenameShow(String),
     TrackRenameInput(String),
     TrackRenameConfirm,

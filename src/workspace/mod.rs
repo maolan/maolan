@@ -15,7 +15,7 @@ use crate::{
     gui::visible_bars_to_zoom_slider,
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State},
-    widget::piano,
+    widget::{piano, pitch_correction},
 };
 use editor::{EditorViewArgs, OwnedEditorViewArgs};
 use iced::{
@@ -52,6 +52,7 @@ pub struct Workspace {
     editor: editor::Editor,
     mixer: mixer::Mixer,
     piano: piano::Piano,
+    pitch_correction: pitch_correction::PitchCorrection,
     ruler: ruler::Ruler,
     tempo: tempo::Tempo,
     tracks: tracks::Tracks,
@@ -60,6 +61,7 @@ pub struct Workspace {
 pub struct WorkspaceViewArgs<'a> {
     pub session_root: Option<&'a PathBuf>,
     pub playhead_samples: Option<f64>,
+    pub transport_active: bool,
     pub pixels_per_sample: f32,
     pub beat_pixels: f32,
     pub samples_per_bar: f32,
@@ -95,6 +97,7 @@ impl Workspace {
             editor: editor::Editor::new(state.clone()),
             mixer: mixer::Mixer::new(state.clone()),
             piano: piano::Piano::new(state.clone()),
+            pitch_correction: pitch_correction::PitchCorrection::new(state.clone()),
             ruler: ruler::Ruler::new(),
             tempo: tempo::Tempo::new(),
             tracks: tracks::Tracks::new(state.clone()),
@@ -123,6 +126,7 @@ impl Workspace {
         let WorkspaceViewArgs {
             session_root,
             playhead_samples,
+            transport_active,
             pixels_per_sample,
             beat_pixels,
             samples_per_bar,
@@ -230,6 +234,10 @@ impl Workspace {
         let track_context_menu_overlay = {
             let state = self.state.blocking_read();
             tracks::track_context_menu_overlay(&state)
+        };
+        let clip_context_menu_overlay = {
+            let state = self.state.blocking_read();
+            editor::clip_context_menu_overlay(&state, transport_active)
         };
         let playhead_x_timeline = playhead_samples.map(|sample| {
             timeline_sample_to_x_f64(sample, pixels_per_sample, TIMELINE_LEFT_INSET_PX)
@@ -459,18 +467,22 @@ impl Workspace {
                 .into(),
         };
 
-        let shared_workspace: Element<'_, Message> =
+        let shared_workspace: Element<'_, Message> = {
+            let mut stack = Stack::new().push(shared_workspace);
             if let Some((anchor, menu)) = track_context_menu_overlay {
-                Stack::new()
-                    .push(shared_workspace)
-                    .push(pin(menu).position(Point::new(
-                        anchor.x.max(0.0),
-                        self.tempo.height() + self.ruler.height() + anchor.y.max(0.0),
-                    )))
-                    .into()
-            } else {
-                container(shared_workspace).into()
-            };
+                stack = stack.push(pin(menu).position(Point::new(
+                    anchor.x.max(0.0),
+                    self.tempo.height() + self.ruler.height() + anchor.y.max(0.0),
+                )));
+            }
+            if let Some((anchor, menu)) = clip_context_menu_overlay {
+                stack = stack.push(pin(menu).position(Point::new(
+                    tracks_width_px + 3.0 + anchor.x.max(0.0),
+                    self.tempo.height() + self.ruler.height() + anchor.y.max(0.0),
+                )));
+            }
+            stack.into()
+        };
 
         let editor_footer: Element<'_, Message> = if editor_visible {
             container(
@@ -686,6 +698,147 @@ impl Workspace {
                 .width(Length::Fill)
                 .height(Length::Fixed(self.ruler.height())),
                 piano_content,
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+        .style(|_theme| crate::style::app_background())
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    pub fn pitch_correction_view<'a>(
+        &'a self,
+        args: WorkspaceViewArgs<'a>,
+    ) -> Element<'a, Message> {
+        let WorkspaceViewArgs {
+            playhead_samples,
+            pixels_per_sample,
+            beat_pixels,
+            samples_per_bar,
+            snap_mode,
+            samples_per_beat,
+            shift_pressed,
+            selected_tempo_points,
+            selected_time_signature_points,
+            ..
+        } = args;
+        let (
+            clip_length_samples,
+            zoom_x,
+            tempo,
+            time_signature,
+            tempo_points,
+            time_signature_points,
+        ) = {
+            let state = self.state.blocking_read();
+            (
+                state
+                    .pitch_correction
+                    .as_ref()
+                    .map(|roll| roll.clip_length_samples)
+                    .unwrap_or(samples_per_bar.max(1.0) as usize),
+                state.piano_zoom_x,
+                state.tempo,
+                (state.time_signature_num, state.time_signature_denom),
+                state
+                    .tempo_points
+                    .iter()
+                    .map(|p| (p.sample, p.bpm))
+                    .collect::<Vec<_>>(),
+                state
+                    .time_signature_points
+                    .iter()
+                    .map(|p| (p.sample, p.numerator, p.denominator))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let horizontal_zoom = zoom_x.max(1.0);
+        let horizontal_pixels_per_sample = (pixels_per_sample * horizontal_zoom).max(0.0001);
+        let horizontal_beat_pixels = (beat_pixels * horizontal_zoom).max(0.0001);
+        let timeline_content_width =
+            (clip_length_samples.max(1) as f32 * horizontal_pixels_per_sample).max(1.0);
+        let playhead_x =
+            playhead_samples.map(|sample| (sample as f32 * horizontal_pixels_per_sample).max(0.0));
+        let pitch_correction_content =
+            self.pitch_correction
+                .view(pixels_per_sample, samples_per_bar, playhead_x);
+
+        container(
+            column![
+                row![
+                    container("")
+                        .width(Length::Fixed(TOOLS_STRIP_WIDTH + MAIN_SPLIT_SPACING,))
+                        .height(Length::Fill),
+                    container("")
+                        .width(Length::Fixed(KEYBOARD_WIDTH))
+                        .height(Length::Fill),
+                    scrollable(container(self.tempo.view(TempoViewArgs {
+                        bpm: tempo,
+                        time_signature,
+                        pixels_per_sample: horizontal_pixels_per_sample,
+                        playhead_x,
+                        punch_range_samples: None,
+                        snap_mode,
+                        samples_per_beat,
+                        samples_per_bar: samples_per_bar as f64,
+                        content_width: timeline_content_width,
+                        tempo_points,
+                        time_signature_points,
+                        shift_pressed,
+                        selected_tempo_points,
+                        selected_time_signature_points,
+                        timeline_left_inset_px: 0.0,
+                    })))
+                    .id(Id::new(PIANO_TEMPO_SCROLL_ID))
+                    .direction(scrollable::Direction::Horizontal(
+                        scrollable::Scrollbar::hidden(),
+                    ))
+                    .on_scroll(|viewport| Message::PianoScrollXChanged(
+                        viewport.relative_offset().x
+                    ))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+                    container("")
+                        .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
+                        .height(Length::Fill),
+                ]
+                .width(Length::Fill)
+                .height(Length::Fixed(self.tempo.height())),
+                row![
+                    container("")
+                        .width(Length::Fixed(TOOLS_STRIP_WIDTH + MAIN_SPLIT_SPACING,))
+                        .height(Length::Fill),
+                    container("")
+                        .width(Length::Fixed(KEYBOARD_WIDTH))
+                        .height(Length::Fill),
+                    scrollable(container(self.ruler.view(RulerViewArgs {
+                        playhead_x,
+                        beat_pixels: horizontal_beat_pixels,
+                        pixels_per_sample: horizontal_pixels_per_sample,
+                        loop_range_samples: None,
+                        snap_mode,
+                        samples_per_beat,
+                        content_width: timeline_content_width,
+                        timeline_left_inset_px: 0.0,
+                    })))
+                    .id(Id::new(PIANO_RULER_SCROLL_ID))
+                    .direction(scrollable::Direction::Horizontal(
+                        scrollable::Scrollbar::hidden(),
+                    ))
+                    .on_scroll(|viewport| Message::PianoScrollXChanged(
+                        viewport.relative_offset().x
+                    ))
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+                    container("")
+                        .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
+                        .height(Length::Fill),
+                ]
+                .width(Length::Fill)
+                .height(Length::Fixed(self.ruler.height())),
+                pitch_correction_content,
             ]
             .width(Length::Fill)
             .height(Length::Fill),

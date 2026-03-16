@@ -120,10 +120,32 @@ impl Maolan {
                 #[cfg(target_os = "macos")]
                 Some(Show::TrackPluginList) => self.track_plugin_list_view(),
                 _ => {
-                    let view = match state.view {
+                    let view_kind = state.view.clone();
+                    let shift_pressed = state.shift;
+                    let has_session_end = state
+                        .tracks
+                        .iter()
+                        .filter(|track| track.name != METRONOME_TRACK_ID)
+                        .any(|track| !track.audio.clips.is_empty() || !track.midi.clips.is_empty());
+                    let playhead_sample = self.transport_samples.max(0.0) as usize;
+                    let playhead_seconds = playhead_sample as f64 / self.playback_rate_hz.max(1.0);
+                    let minutes = (playhead_seconds / 60.0).floor() as u64;
+                    let seconds = (playhead_seconds % 60.0).floor() as u64;
+                    let millis = (playhead_seconds.fract() * 1000.0) as u64;
+                    let playhead_time_label = format!("{minutes:02}:{seconds:02}.{millis:03}");
+                    let (playhead_bar, playhead_beat) =
+                        self.playhead_bar_beat(&state, playhead_sample);
+                    let show_track_marker_dialog = state.track_marker_dialog.is_some();
+                    let diagnostics_report = state.diagnostics_report.clone();
+                    let status_message = state.message.clone();
+                    let transport_play_pause_enabled = !matches!(view_kind, View::PitchCorrection);
+                    drop(state);
+
+                    let view = match view_kind {
                         View::Workspace => self.workspace.view(WorkspaceViewArgs {
                             session_root: self.session_dir.as_ref(),
                             playhead_samples: Some(self.transport_samples),
+                            transport_active: self.playing,
                             pixels_per_sample: self.pixels_per_sample(),
                             beat_pixels: self.beat_pixels(),
                             samples_per_bar: self.samples_per_bar() as f32,
@@ -145,7 +167,7 @@ impl Maolan {
                             recording_preview_bounds: self.recording_preview_bounds(),
                             recording_preview_peaks: Some(&self.recording_preview_peaks),
                             midi_clip_previews: Some(&self.midi_clip_previews),
-                            shift_pressed: state.shift,
+                            shift_pressed,
                             selected_tempo_points: self
                                 .selected_tempo_points
                                 .iter()
@@ -165,6 +187,7 @@ impl Maolan {
                         View::Piano => self.workspace.piano_view(WorkspaceViewArgs {
                             session_root: None,
                             playhead_samples: Some(self.transport_samples),
+                            transport_active: self.playing,
                             pixels_per_sample: self.pixels_per_sample(),
                             beat_pixels: self.beat_pixels(),
                             samples_per_bar: self.samples_per_bar() as f32,
@@ -186,7 +209,7 @@ impl Maolan {
                             recording_preview_bounds: None,
                             recording_preview_peaks: None,
                             midi_clip_previews: None,
-                            shift_pressed: state.shift,
+                            shift_pressed,
                             selected_tempo_points: self
                                 .selected_tempo_points
                                 .iter()
@@ -200,23 +223,50 @@ impl Maolan {
                             mixer_level_edit_track: None,
                             mixer_level_edit_input: "",
                         }),
+                        View::PitchCorrection => {
+                            self.workspace.pitch_correction_view(WorkspaceViewArgs {
+                                session_root: None,
+                                playhead_samples: Some(self.transport_samples),
+                                transport_active: self.playing,
+                                pixels_per_sample: self.pixels_per_sample(),
+                                beat_pixels: self.beat_pixels(),
+                                samples_per_bar: self.samples_per_bar() as f32,
+                                loop_range_samples: None,
+                                punch_range_samples: None,
+                                snap_mode: self.snap_mode,
+                                samples_per_beat: self.samples_per_beat(),
+                                zoom_visible_bars: self.zoom_visible_bars,
+                                mixer_scroll_x: 0.0,
+                                window_width: self.size.width,
+                                tracks_resize_hovered: false,
+                                mixer_resize_hovered: false,
+                                tracks_visible: false,
+                                editor_visible: false,
+                                mixer_visible: false,
+                                active_clip_drag: None,
+                                active_clip_target_track: None,
+                                active_clip_target_valid: false,
+                                recording_preview_bounds: None,
+                                recording_preview_peaks: None,
+                                midi_clip_previews: None,
+                                shift_pressed,
+                                selected_tempo_points: self
+                                    .selected_tempo_points
+                                    .iter()
+                                    .copied()
+                                    .collect(),
+                                selected_time_signature_points: self
+                                    .selected_time_signature_points
+                                    .iter()
+                                    .copied()
+                                    .collect(),
+                                mixer_level_edit_track: None,
+                                mixer_level_edit_input: "",
+                            })
+                        }
                         #[cfg(target_os = "macos")]
                         View::TrackPlugins => self.connections.view(),
                     };
-
-                    let has_session_end = state
-                        .tracks
-                        .iter()
-                        .filter(|track| track.name != METRONOME_TRACK_ID)
-                        .any(|track| !track.audio.clips.is_empty() || !track.midi.clips.is_empty());
-                    let playhead_sample = self.transport_samples.max(0.0) as usize;
-                    let playhead_seconds = playhead_sample as f64 / self.playback_rate_hz.max(1.0);
-                    let minutes = (playhead_seconds / 60.0).floor() as u64;
-                    let seconds = (playhead_seconds % 60.0).floor() as u64;
-                    let millis = (playhead_seconds.fract() * 1000.0) as u64;
-                    let playhead_time_label = format!("{minutes:02}:{seconds:02}.{millis:03}");
-                    let (playhead_bar, playhead_beat) =
-                        self.playhead_bar_beat(&state, playhead_sample);
 
                     let mut content = column![
                         self.menu.view(
@@ -227,6 +277,7 @@ impl Maolan {
                         self.toolbar.view(ToolbarViewState {
                             playing: self.playing,
                             paused: self.paused,
+                            transport_play_pause_enabled,
                             recording: self.record_armed,
                             metronome_enabled: self.metronome_enabled,
                             has_session_end,
@@ -243,7 +294,7 @@ impl Maolan {
                             playhead_beat,
                         })
                     ];
-                    if matches!(state.view, View::TrackPlugins) {
+                    if matches!(view_kind, View::TrackPlugins) {
                         content = content.push(
                             container(
                                 row![
@@ -257,90 +308,90 @@ impl Maolan {
                     }
                     let has_timing_selection = !self.selected_tempo_points.is_empty()
                         || !self.selected_time_signature_points.is_empty();
-                    let mut view: iced::Element<'_, Message> =
-                        if matches!(state.view, View::Workspace | View::Piano)
-                            && has_timing_selection
-                        {
-                            let lane_label = match self.timing_selection_lane {
-                                Some(super::TimingSelectionLane::Tempo) => "Tempo Points",
-                                Some(super::TimingSelectionLane::TimeSignature) => {
-                                    "Time Signature Points"
-                                }
-                                None => "Timing Points",
-                            };
-                            let selected_count = if !self.selected_tempo_points.is_empty() {
-                                self.selected_tempo_points.len()
-                            } else {
-                                self.selected_time_signature_points.len()
-                            };
-                            let editor_panel = container(
-                                column![
-                                    text(lane_label),
-                                    text(format!("{selected_count} selected")).size(11),
-                                    text_input("BPM", &self.tempo_input)
-                                        .on_input(Message::TempoInputChanged)
-                                        .on_submit(Message::TempoInputCommit),
-                                    row![
-                                        text_input("Num", &self.time_signature_num_input)
-                                            .on_input(Message::TimeSignatureNumeratorInputChanged)
-                                            .on_submit(Message::TimeSignatureInputCommit)
-                                            .width(Length::Fill),
-                                        text_input("Den", &self.time_signature_denom_input)
-                                            .on_input(Message::TimeSignatureDenominatorInputChanged)
-                                            .on_submit(Message::TimeSignatureInputCommit)
-                                            .width(Length::Fill),
-                                    ]
-                                    .spacing(6),
-                                    row![
-                                        button("Duplicate").on_press(
-                                            if !self.selected_tempo_points.is_empty() {
-                                                Message::TempoSelectionDuplicate
-                                            } else {
-                                                Message::TimeSignatureSelectionDuplicate
-                                            }
-                                        ),
-                                        button("Reset").on_press(
-                                            if !self.selected_tempo_points.is_empty() {
-                                                Message::TempoSelectionResetToPrevious
-                                            } else {
-                                                Message::TimeSignatureSelectionResetToPrevious
-                                            }
-                                        ),
-                                    ]
-                                    .spacing(6),
-                                    row![
-                                        button("Delete").on_press(
-                                            if !self.selected_tempo_points.is_empty() {
-                                                Message::TempoSelectionDelete
-                                            } else {
-                                                Message::TimeSignatureSelectionDelete
-                                            }
-                                        ),
-                                        button("Clear")
-                                            .on_press(Message::ClearTimingPointSelection),
-                                    ]
-                                    .spacing(6),
-                                ]
-                                .spacing(8),
-                            )
-                            .style(|_theme| container::Style {
-                                border: Border {
-                                    color: Color::from_rgba(0.34, 0.42, 0.56, 0.72),
-                                    width: 1.0,
-                                    ..Border::default()
-                                },
-                                ..crate::style::app_background()
-                            })
-                            .width(Length::Fixed(220.0))
-                            .height(Length::Fill)
-                            .padding(8);
-                            row![container(view).width(Length::Fill), editor_panel]
-                                .width(Length::Fill)
-                                .height(Length::Fill)
-                                .into()
-                        } else {
-                            view
+                    let mut view: iced::Element<'_, Message> = if matches!(
+                        view_kind,
+                        View::Workspace | View::Piano | View::PitchCorrection
+                    ) && has_timing_selection
+                    {
+                        let lane_label = match self.timing_selection_lane {
+                            Some(super::TimingSelectionLane::Tempo) => "Tempo Points",
+                            Some(super::TimingSelectionLane::TimeSignature) => {
+                                "Time Signature Points"
+                            }
+                            None => "Timing Points",
                         };
+                        let selected_count = if !self.selected_tempo_points.is_empty() {
+                            self.selected_tempo_points.len()
+                        } else {
+                            self.selected_time_signature_points.len()
+                        };
+                        let editor_panel = container(
+                            column![
+                                text(lane_label),
+                                text(format!("{selected_count} selected")).size(11),
+                                text_input("BPM", &self.tempo_input)
+                                    .on_input(Message::TempoInputChanged)
+                                    .on_submit(Message::TempoInputCommit),
+                                row![
+                                    text_input("Num", &self.time_signature_num_input)
+                                        .on_input(Message::TimeSignatureNumeratorInputChanged)
+                                        .on_submit(Message::TimeSignatureInputCommit)
+                                        .width(Length::Fill),
+                                    text_input("Den", &self.time_signature_denom_input)
+                                        .on_input(Message::TimeSignatureDenominatorInputChanged)
+                                        .on_submit(Message::TimeSignatureInputCommit)
+                                        .width(Length::Fill),
+                                ]
+                                .spacing(6),
+                                row![
+                                    button("Duplicate").on_press(
+                                        if !self.selected_tempo_points.is_empty() {
+                                            Message::TempoSelectionDuplicate
+                                        } else {
+                                            Message::TimeSignatureSelectionDuplicate
+                                        }
+                                    ),
+                                    button("Reset").on_press(
+                                        if !self.selected_tempo_points.is_empty() {
+                                            Message::TempoSelectionResetToPrevious
+                                        } else {
+                                            Message::TimeSignatureSelectionResetToPrevious
+                                        }
+                                    ),
+                                ]
+                                .spacing(6),
+                                row![
+                                    button("Delete").on_press(
+                                        if !self.selected_tempo_points.is_empty() {
+                                            Message::TempoSelectionDelete
+                                        } else {
+                                            Message::TimeSignatureSelectionDelete
+                                        }
+                                    ),
+                                    button("Clear").on_press(Message::ClearTimingPointSelection),
+                                ]
+                                .spacing(6),
+                            ]
+                            .spacing(8),
+                        )
+                        .style(|_theme| container::Style {
+                            border: Border {
+                                color: Color::from_rgba(0.34, 0.42, 0.56, 0.72),
+                                width: 1.0,
+                                ..Border::default()
+                            },
+                            ..crate::style::app_background()
+                        })
+                        .width(Length::Fixed(220.0))
+                        .height(Length::Fill)
+                        .padding(8);
+                        row![container(view).width(Length::Fill), editor_panel]
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .into()
+                    } else {
+                        view
+                    };
                     if self.midi_mappings_panel_open {
                         let mappings_list = if self.midi_mappings_report_lines.is_empty() {
                             column![text("No MIDI mappings loaded").size(11)]
@@ -388,7 +439,7 @@ impl Maolan {
                             .height(Length::Fill)
                             .into();
                     }
-                    if state.track_marker_dialog.is_some() {
+                    if show_track_marker_dialog {
                         view = row![
                             container(view).width(Length::Fill),
                             self.track_marker.view()
@@ -448,10 +499,10 @@ impl Maolan {
                             .padding(8),
                         );
                     }
-                    if let Some(diag) = state.diagnostics_report.as_ref() {
+                    if let Some(diag) = diagnostics_report.as_ref() {
                         content = content.push(text(format!("Diagnostics: {}", diag)));
                     }
-                    let status_bar = container(text(format!("Last message: {}", state.message)))
+                    let status_bar = container(text(format!("Last message: {}", status_message)))
                         .width(Length::Fill)
                         .padding(8);
                     column![
@@ -464,11 +515,13 @@ impl Maolan {
                 }
             }
         } else {
+            let message = state.message.clone();
+            drop(state);
             column![
                 container(self.hw.audio_view())
                     .width(Length::Fill)
                     .height(Length::Fill),
-                container(text(format!("Last message: {}", state.message)))
+                container(text(format!("Last message: {}", message)))
                     .width(Length::Fill)
                     .padding(8),
             ]

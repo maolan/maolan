@@ -2056,6 +2056,9 @@ impl Engine {
             fade_enabled: clip.fade_enabled,
             fade_in_samples: clip.fade_in_samples,
             fade_out_samples: clip.fade_out_samples,
+            source_name: None,
+            source_offset: None,
+            source_length: None,
         }))
         .await;
     }
@@ -2174,6 +2177,9 @@ impl Engine {
             fade_enabled: true,
             fade_in_samples: 240,
             fade_out_samples: 240,
+            source_name: None,
+            source_offset: None,
+            source_length: None,
         }))
         .await;
     }
@@ -2264,6 +2270,9 @@ impl Engine {
         fade_enabled: bool,
         fade_in_samples: usize,
         fade_out_samples: usize,
+        source_name: Option<String>,
+        source_offset: Option<usize>,
+        source_length: Option<usize>,
     ) {
         if let Some(track) = self.state.lock().tracks.get(track_name) {
             let track = track.lock();
@@ -2277,6 +2286,9 @@ impl Engine {
                     clip.fade_enabled = fade_enabled;
                     clip.fade_in_samples = fade_in_samples;
                     clip.fade_out_samples = fade_out_samples;
+                    clip.pitch_correction_source_name = source_name;
+                    clip.pitch_correction_source_offset = source_offset;
+                    clip.pitch_correction_source_length = source_length;
                     track.audio.clips.push(clip);
                 }
                 Kind::MIDI => {
@@ -2363,6 +2375,9 @@ impl Engine {
                     for clip in &mut other_track.audio.clips {
                         if clip.name == old_name {
                             clip.name = new_file_name.clone();
+                        }
+                        if clip.pitch_correction_source_name.as_deref() == Some(old_name.as_str()) {
+                            clip.pitch_correction_source_name = Some(new_file_name.clone());
                         }
                     }
                 }
@@ -4771,6 +4786,9 @@ impl Engine {
                 fade_enabled,
                 fade_in_samples,
                 fade_out_samples,
+                ref source_name,
+                source_offset,
+                source_length,
             } => {
                 self.add_clip_to_track(
                     name,
@@ -4784,6 +4802,9 @@ impl Engine {
                     fade_enabled,
                     fade_in_samples,
                     fade_out_samples,
+                    source_name.clone(),
+                    source_offset,
+                    source_length,
                 );
             }
             Action::RemoveClip {

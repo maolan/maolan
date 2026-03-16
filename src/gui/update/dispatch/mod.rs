@@ -53,14 +53,7 @@ impl Maolan {
             Message::ClipRenameShow { .. }
                 | Message::ClipToggleFade { .. }
                 | Message::ClipSetMuted { .. }
-                | Message::ClipStretchHalfSpeed { .. }
-                | Message::ClipStretchDoubleSpeed { .. }
-                | Message::ClipSetActiveTake { .. }
-                | Message::ClipCycleActiveTake { .. }
-                | Message::ClipUnmuteTakesInRange { .. }
-                | Message::ClipTakeLanePinToggle { .. }
-                | Message::ClipTakeLaneLockToggle { .. }
-                | Message::ClipTakeLaneMove { .. }
+                | Message::ClipOpenPitchCorrection { .. }
         ) {
             self.state.blocking_write().clip_context_menu = None;
         }
@@ -512,6 +505,147 @@ impl Maolan {
                         });
                     }
                 }
+            }
+            Message::PitchCorrectionPointClick {
+                point_index,
+                position,
+            } => {
+                let mut state = self.state.blocking_write();
+                let shift = state.shift;
+
+                if shift {
+                    if state
+                        .pitch_correction_selected_points
+                        .contains(&point_index)
+                    {
+                        state.pitch_correction_selected_points.remove(&point_index);
+                    } else {
+                        state.pitch_correction_selected_points.insert(point_index);
+                    }
+                } else if !state
+                    .pitch_correction_selected_points
+                    .contains(&point_index)
+                {
+                    state.pitch_correction_selected_points.clear();
+                    state.pitch_correction_selected_points.insert(point_index);
+                }
+
+                if !state.pitch_correction_selected_points.is_empty()
+                    && let Some(pitch_correction) = state.pitch_correction.as_ref()
+                {
+                    let point_indices: Vec<usize> = state
+                        .pitch_correction_selected_points
+                        .iter()
+                        .copied()
+                        .collect();
+                    let original_points = point_indices
+                        .iter()
+                        .filter_map(|&idx| pitch_correction.points.get(idx).cloned())
+                        .collect();
+                    state.pitch_correction_dragging_points =
+                        Some(crate::state::DraggingPitchCorrectionPoints {
+                            point_indices,
+                            start_point: position,
+                            current_point: position,
+                            original_points,
+                        });
+                }
+            }
+            Message::PitchCorrectionPointsDrag { position } => {
+                let mut state = self.state.blocking_write();
+                if let Some(ref mut dragging) = state.pitch_correction_dragging_points {
+                    dragging.current_point = position;
+                }
+            }
+            Message::PitchCorrectionPointsEndDrag => {
+                let mut state = self.state.blocking_write();
+                if let Some(dragging) = state.pitch_correction_dragging_points.take() {
+                    let zoom_y = state.piano_zoom_y;
+                    let row_h = ((14.0 * 7.0 / 12.0) * zoom_y).max(1.0);
+                    let delta_y = dragging.current_point.y - dragging.start_point.y;
+                    let delta_pitch = -(delta_y / row_h);
+                    if delta_pitch.abs() <= f32::EPSILON {
+                        return Task::none();
+                    }
+                    if let Some(pitch_correction) = state.pitch_correction.as_mut() {
+                        for (point_idx, original_point) in dragging
+                            .point_indices
+                            .iter()
+                            .copied()
+                            .zip(dragging.original_points.iter())
+                        {
+                            if let Some(point) = pitch_correction.points.get_mut(point_idx) {
+                                point.target_midi_pitch = (original_point.target_midi_pitch
+                                    + delta_pitch)
+                                    .clamp(0.0, 119.999);
+                            }
+                        }
+                        state.message = format!(
+                            "Adjusted {} pitch segment{}",
+                            dragging.point_indices.len(),
+                            if dragging.point_indices.len() == 1 {
+                                ""
+                            } else {
+                                "s"
+                            }
+                        );
+                    }
+                }
+            }
+            Message::PitchCorrectionSelectRectStart { position } => {
+                let mut state = self.state.blocking_write();
+                state.pitch_correction_dragging_points = None;
+                state.pitch_correction_selecting_rect = Some((position, position));
+            }
+            Message::PitchCorrectionSelectRectDrag { position } => {
+                let base_pps = self.pixels_per_sample();
+                let mut state = self.state.blocking_write();
+                if let Some((start, _)) = state.pitch_correction_selecting_rect {
+                    state.pitch_correction_selecting_rect = Some((start, position));
+                    let shift = state.shift;
+                    let Some(pitch_correction) = state.pitch_correction.as_ref() else {
+                        return Task::none();
+                    };
+                    let left = start.x.min(position.x);
+                    let right = start.x.max(position.x);
+                    let top = start.y.min(position.y);
+                    let bottom = start.y.max(position.y);
+                    let zoom_y = state.piano_zoom_y;
+                    let row_h = ((14.0 * 7.0 / 12.0) * zoom_y).max(1.0);
+                    let pps = base_pps * state.piano_zoom_x.max(1.0);
+                    let selected = pitch_correction
+                        .points
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(idx, point)| {
+                            let x = point.start_sample as f32 * pps;
+                            let width = (point.length_samples as f32 * pps).max(6.0);
+                            let y = (119.0 - point.target_midi_pitch.clamp(0.0, 119.0)) * row_h;
+                            let height =
+                                (row_h * (0.45 + 0.35 * point.clarity.clamp(0.0, 1.0))).max(6.0);
+                            let rect_left = x;
+                            let rect_right = x + width;
+                            let rect_top = y - height * 0.5;
+                            let rect_bottom = rect_top + height;
+                            (rect_left < right
+                                && rect_right > left
+                                && rect_top < bottom
+                                && rect_bottom > top)
+                                .then_some(idx)
+                        })
+                        .collect::<std::collections::HashSet<_>>();
+                    if shift {
+                        state
+                            .pitch_correction_selected_points
+                            .extend(selected.iter().copied());
+                    } else {
+                        state.pitch_correction_selected_points = selected;
+                    }
+                }
+            }
+            Message::PitchCorrectionSelectRectEnd => {
+                let mut state = self.state.blocking_write();
+                state.pitch_correction_selecting_rect = None;
             }
             Message::PianoNoteResizeStart {
                 note_index,
@@ -1811,15 +1945,18 @@ impl Maolan {
                             fade_enabled,
                             fade_in_samples,
                             fade_out_samples,
+                            source_name,
+                            source_offset,
+                            source_length,
                         } => {
+                            let key =
+                                Self::audio_clip_key(track_name, name, *start, *length, *offset);
                             let mut max_length_samples = offset.saturating_add(*length);
                             let mut wav_path_for_rebuild: Option<std::path::PathBuf> = None;
                             let mut peaks_path_for_load: Option<std::path::PathBuf> = None;
+                            let precomputed_peaks = self.pending_precomputed_peaks.remove(&key);
                             let loaded_bins = 0usize;
                             if *kind == Kind::Audio {
-                                let key = Self::audio_clip_key(
-                                    track_name, name, *start, *length, *offset,
-                                );
                                 peaks_path_for_load = self.pending_peak_file_loads.remove(&key);
                                 if name.to_ascii_lowercase().ends_with(".wav") {
                                     let wav_path = if std::path::Path::new(name).is_absolute() {
@@ -1856,10 +1993,13 @@ impl Maolan {
                                             muted: *muted,
                                             max_length_samples,
                                             peaks_file: None,
-                                            peaks: crate::state::ClipPeaks::default(),
+                                            peaks: precomputed_peaks.clone().unwrap_or_default(),
                                             fade_enabled: *fade_enabled,
                                             fade_in_samples: *fade_in_samples,
                                             fade_out_samples: *fade_out_samples,
+                                            pitch_correction_source_name: source_name.clone(),
+                                            pitch_correction_source_offset: *source_offset,
+                                            pitch_correction_source_length: *source_length,
                                             take_lane_override: None,
                                             take_lane_pinned: false,
                                             take_lane_locked: false,
@@ -1885,7 +2025,10 @@ impl Maolan {
                                 }
                             }
                             drop(state);
-                            if *kind == Kind::Audio && loaded_bins < 32_768 {
+                            if *kind == Kind::Audio
+                                && precomputed_peaks.is_none()
+                                && loaded_bins < 32_768
+                            {
                                 if let Some(peaks_path) = peaks_path_for_load
                                     && let Some(task) = self.schedule_audio_peak_file_load(
                                         track_name, name, *start, *length, *offset, peaks_path,
@@ -2816,6 +2959,9 @@ impl Maolan {
                             fade_enabled: clip.fade_enabled,
                             fade_in_samples: clip.fade_in_samples,
                             fade_out_samples: clip.fade_out_samples,
+                            source_name: clip.pitch_correction_source_name,
+                            source_offset: clip.pitch_correction_source_offset,
+                            source_length: clip.pitch_correction_source_length,
                         }));
                     }
                     for clip in restore_midi {
@@ -2831,6 +2977,9 @@ impl Maolan {
                             fade_enabled: clip.fade_enabled,
                             fade_in_samples: clip.fade_in_samples,
                             fade_out_samples: clip.fade_out_samples,
+                            source_name: None,
+                            source_offset: None,
+                            source_length: None,
                         }));
                     }
                     tasks.push(self.send(Action::TrackSetFrozen {
@@ -3472,6 +3621,11 @@ impl Maolan {
                                 if clip.name == old_name {
                                     clip.name = new_file_name.clone();
                                 }
+                                if clip.pitch_correction_source_name.as_deref()
+                                    == Some(old_name.as_str())
+                                {
+                                    clip.pitch_correction_source_name = Some(new_file_name.clone());
+                                }
                             }
                         }
                         Kind::MIDI => {
@@ -3579,18 +3733,117 @@ impl Maolan {
                     muted,
                 });
             }
-            Message::ClipStretchHalfSpeed {
+            Message::ClipOpenPitchCorrection {
                 ref track_idx,
                 clip_idx,
             } => {
-                return self.begin_clip_stretch(track_idx.clone(), clip_idx, 0.5);
+                return self.open_clip_pitch_correction(track_idx.clone(), clip_idx);
             }
-            Message::ClipStretchDoubleSpeed {
-                ref track_idx,
-                clip_idx,
+            Message::ClipOpenPitchCorrectionProgress {
+                ref clip_name,
+                progress,
+                ref operation,
             } => {
-                return self.begin_clip_stretch(track_idx.clone(), clip_idx, 2.0);
+                let percent = (progress.clamp(0.0, 1.0) * 100.0) as usize;
+                self.state.blocking_write().message = if let Some(op) = operation {
+                    format!("Pitch correction '{clip_name}' ({percent}%): {op}")
+                } else {
+                    format!("Pitch correction '{clip_name}' ({percent}%)")
+                };
+                return Task::none();
             }
+            Message::PitchCorrectionApply => {
+                return self.apply_pitch_correction();
+            }
+            Message::PitchCorrectionApplyProgress {
+                ref clip_name,
+                progress,
+                ref operation,
+            } => {
+                let percent = (progress.clamp(0.0, 1.0) * 100.0) as usize;
+                self.state.blocking_write().message = if let Some(op) = operation {
+                    format!("Applying pitch correction '{clip_name}' ({percent}%): {op}")
+                } else {
+                    format!("Applying pitch correction '{clip_name}' ({percent}%)")
+                };
+                return Task::none();
+            }
+            Message::PitchCorrectionApplyFinished { request, result } => match result {
+                Ok((new_name, new_length, peaks)) => {
+                    let clip_state = {
+                        let state = self.state.blocking_read();
+                        state
+                            .tracks
+                            .iter()
+                            .find(|t| t.name == request.track_idx)
+                            .and_then(|t| t.audio.clips.get(request.clip_idx))
+                            .map(|clip| (clip.name.clone(), clip.start))
+                    };
+                    let Some((current_name, current_start)) = clip_state else {
+                        self.state.blocking_write().message =
+                            "Pitch correction finished, but the original clip no longer exists"
+                                .to_string();
+                        return Task::none();
+                    };
+                    if current_name != request.clip_name || current_start != request.start {
+                        self.state.blocking_write().message =
+                            "Discarded stale pitch correction render result".to_string();
+                        return Task::none();
+                    }
+                    let fade_in = request.fade_in_samples.min(new_length / 2);
+                    let fade_out = request.fade_out_samples.min(new_length / 2);
+                    {
+                        let mut state = self.state.blocking_write();
+                        state.pitch_correction = None;
+                        state.pitch_correction_selected_points.clear();
+                        state.pitch_correction_dragging_points = None;
+                        state.pitch_correction_selecting_rect = None;
+                        state.view = View::Workspace;
+                        state.message =
+                            format!("Applied pitch correction to '{}'", request.clip_name);
+                    }
+                    let peak_key = Self::audio_clip_key(
+                        &request.track_idx,
+                        &new_name,
+                        request.start,
+                        new_length,
+                        0,
+                    );
+                    self.pending_precomputed_peaks.insert(peak_key, peaks);
+                    return Task::batch(vec![
+                        self.send(Action::BeginHistoryGroup),
+                        self.send(Action::RemoveClip {
+                            track_name: request.track_idx.clone(),
+                            kind: Kind::Audio,
+                            clip_indices: vec![request.clip_idx],
+                        }),
+                        self.send(Action::AddClip {
+                            name: new_name,
+                            track_name: request.track_idx,
+                            start: request.start,
+                            length: new_length,
+                            offset: 0,
+                            input_channel: request.input_channel,
+                            muted: request.muted,
+                            kind: Kind::Audio,
+                            fade_enabled: request.fade_enabled,
+                            fade_in_samples: fade_in,
+                            fade_out_samples: fade_out,
+                            source_name: Some(request.source_name),
+                            source_offset: Some(request.source_offset),
+                            source_length: Some(request.source_length),
+                        }),
+                        self.send(Action::EndHistoryGroup),
+                    ]);
+                }
+                Err(e) => {
+                    self.state.blocking_write().message = format!(
+                        "Failed to apply pitch correction to '{}': {e}",
+                        request.clip_name
+                    );
+                    return Task::none();
+                }
+            },
             Message::ClipStretchFinished { request, result } => match result {
                 Ok((new_name, new_length)) => {
                     let clip_state = {
@@ -3638,6 +3891,9 @@ impl Maolan {
                             fade_enabled: request.fade_enabled,
                             fade_in_samples: fade_in,
                             fade_out_samples: fade_out,
+                            source_name: None,
+                            source_offset: None,
+                            source_length: None,
                         }),
                         self.send(Action::EndHistoryGroup),
                     ]);
@@ -3659,365 +3915,53 @@ impl Maolan {
                     return Task::none();
                 }
             },
-            Message::ClipSetActiveTake {
-                ref track_idx,
-                clip_idx,
-                kind,
-            } => {
-                let updates = {
+            Message::ClipOpenPitchCorrectionFinished { request, result } => {
+                let clip_state = {
                     let state = self.state.blocking_read();
-                    let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) else {
-                        return Task::none();
-                    };
-                    match kind {
-                        Kind::Audio => {
-                            let Some(selected) = track.audio.clips.get(clip_idx) else {
-                                return Task::none();
-                            };
-                            let selected_end = selected.start.saturating_add(selected.length);
-                            track
-                                .audio
-                                .clips
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(idx, clip)| {
-                                    let end = clip.start.saturating_add(clip.length);
-                                    (!clip.take_lane_locked
-                                        && selected.start < end
-                                        && clip.start < selected_end)
-                                        .then_some((idx, idx != clip_idx))
-                                })
-                                .collect::<Vec<_>>()
-                        }
-                        Kind::MIDI => {
-                            let Some(selected) = track.midi.clips.get(clip_idx) else {
-                                return Task::none();
-                            };
-                            let selected_end = selected.start.saturating_add(selected.length);
-                            track
-                                .midi
-                                .clips
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(idx, clip)| {
-                                    let end = clip.start.saturating_add(clip.length);
-                                    (!clip.take_lane_locked
-                                        && selected.start < end
-                                        && clip.start < selected_end)
-                                        .then_some((idx, idx != clip_idx))
-                                })
-                                .collect::<Vec<_>>()
-                        }
-                    }
-                };
-                if updates.is_empty() {
-                    return Task::none();
-                }
-                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
-                for (idx, should_mute) in updates {
-                    tasks.push(self.send(Action::SetClipMuted {
-                        track_name: track_idx.clone(),
-                        clip_index: idx,
-                        kind,
-                        muted: should_mute,
-                    }));
-                }
-                tasks.push(self.send(Action::EndHistoryGroup));
-                return Task::batch(tasks);
-            }
-            Message::ClipCycleActiveTake {
-                ref track_idx,
-                clip_idx,
-                kind,
-            } => {
-                let updates = {
-                    let state = self.state.blocking_read();
-                    let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) else {
-                        return Task::none();
-                    };
-                    let mut group: Vec<(usize, usize, bool)> = match kind {
-                        Kind::Audio => {
-                            let Some(selected) = track.audio.clips.get(clip_idx) else {
-                                return Task::none();
-                            };
-                            let selected_end = selected.start.saturating_add(selected.length);
-                            track
-                                .audio
-                                .clips
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(idx, clip)| {
-                                    let end = clip.start.saturating_add(clip.length);
-                                    (!clip.take_lane_locked
-                                        && selected.start < end
-                                        && clip.start < selected_end)
-                                        .then_some((idx, clip.start, clip.muted))
-                                })
-                                .collect()
-                        }
-                        Kind::MIDI => {
-                            let Some(selected) = track.midi.clips.get(clip_idx) else {
-                                return Task::none();
-                            };
-                            let selected_end = selected.start.saturating_add(selected.length);
-                            track
-                                .midi
-                                .clips
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(idx, clip)| {
-                                    let end = clip.start.saturating_add(clip.length);
-                                    (!clip.take_lane_locked
-                                        && selected.start < end
-                                        && clip.start < selected_end)
-                                        .then_some((idx, clip.start, clip.muted))
-                                })
-                                .collect()
-                        }
-                    };
-                    if group.is_empty() {
-                        return Task::none();
-                    }
-                    group.sort_by_key(|(idx, start, _)| (*start, *idx));
-                    let current_pos = group
+                    state
+                        .tracks
                         .iter()
-                        .position(|(idx, _, _)| *idx == clip_idx)
-                        .or_else(|| group.iter().position(|(_, _, muted)| !*muted))
-                        .unwrap_or(0);
-                    let next_pos = (current_pos + 1) % group.len();
-                    let next_idx = group[next_pos].0;
-                    group
-                        .iter()
-                        .map(|(idx, _, _)| (*idx, *idx != next_idx))
-                        .collect::<Vec<_>>()
+                        .find(|t| t.name == request.track_idx)
+                        .and_then(|t| t.audio.clips.get(request.clip_idx))
+                        .map(|clip| (clip.name.clone(), clip.start))
                 };
-                if updates.is_empty() {
-                    return Task::none();
-                }
-                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
-                for (idx, should_mute) in updates {
-                    tasks.push(self.send(Action::SetClipMuted {
-                        track_name: track_idx.clone(),
-                        clip_index: idx,
-                        kind,
-                        muted: should_mute,
-                    }));
-                }
-                tasks.push(self.send(Action::EndHistoryGroup));
-                return Task::batch(tasks);
-            }
-            Message::ClipUnmuteTakesInRange {
-                ref track_idx,
-                clip_idx,
-                kind,
-            } => {
-                let updates = {
-                    let state = self.state.blocking_read();
-                    let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) else {
-                        return Task::none();
-                    };
-                    match kind {
-                        Kind::Audio => {
-                            let Some(selected) = track.audio.clips.get(clip_idx) else {
-                                return Task::none();
-                            };
-                            let selected_end = selected.start.saturating_add(selected.length);
-                            track
-                                .audio
-                                .clips
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(idx, clip)| {
-                                    let end = clip.start.saturating_add(clip.length);
-                                    (!clip.take_lane_locked
-                                        && selected.start < end
-                                        && clip.start < selected_end)
-                                        .then_some((idx, false))
-                                })
-                                .collect::<Vec<_>>()
-                        }
-                        Kind::MIDI => {
-                            let Some(selected) = track.midi.clips.get(clip_idx) else {
-                                return Task::none();
-                            };
-                            let selected_end = selected.start.saturating_add(selected.length);
-                            track
-                                .midi
-                                .clips
-                                .iter()
-                                .enumerate()
-                                .filter_map(|(idx, clip)| {
-                                    let end = clip.start.saturating_add(clip.length);
-                                    (!clip.take_lane_locked
-                                        && selected.start < end
-                                        && clip.start < selected_end)
-                                        .then_some((idx, false))
-                                })
-                                .collect::<Vec<_>>()
-                        }
-                    }
-                };
-                if updates.is_empty() {
-                    return Task::none();
-                }
-                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
-                for (idx, should_mute) in updates {
-                    tasks.push(self.send(Action::SetClipMuted {
-                        track_name: track_idx.clone(),
-                        clip_index: idx,
-                        kind,
-                        muted: should_mute,
-                    }));
-                }
-                tasks.push(self.send(Action::EndHistoryGroup));
-                return Task::batch(tasks);
-            }
-            Message::ClipTakeLanePinToggle {
-                ref track_idx,
-                clip_idx,
-                kind,
-            } => {
-                let mut state = self.state.blocking_write();
-                let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_idx) else {
+                let Some((current_name, current_start)) = clip_state else {
+                    self.state.blocking_write().message =
+                        "Pitch correction data finished loading, but the original clip no longer exists"
+                            .to_string();
                     return Task::none();
                 };
-                match kind {
-                    Kind::Audio => {
-                        if clip_idx >= track.audio.clips.len() {
-                            return Task::none();
-                        }
-                        let current_take = {
-                            let (take_idx, _) = Self::assign_take_lanes(
-                                &track.audio.clips,
-                                |_| 0,
-                                |clip| clip.start,
-                                |clip| clip.length,
-                                |clip| clip.take_lane_override,
-                            );
-                            take_idx.get(clip_idx).copied().unwrap_or(0)
-                        };
-                        let clip = &mut track.audio.clips[clip_idx];
-                        if clip.take_lane_pinned {
-                            clip.take_lane_pinned = false;
-                            if !clip.take_lane_locked {
-                                clip.take_lane_override = None;
-                            }
-                        } else {
-                            clip.take_lane_pinned = true;
-                            clip.take_lane_override = Some(current_take);
-                        }
-                    }
-                    Kind::MIDI => {
-                        if clip_idx >= track.midi.clips.len() {
-                            return Task::none();
-                        }
-                        let lane_count = track.midi.ins.max(1);
-                        let (take_idx, _) = Self::assign_take_lanes(
-                            &track.midi.clips,
-                            |clip| clip.input_channel.min(lane_count.saturating_sub(1)),
-                            |clip| clip.start,
-                            |clip| clip.length,
-                            |clip| clip.take_lane_override,
-                        );
-                        let current_take = take_idx.get(clip_idx).copied().unwrap_or(0);
-                        let clip = &mut track.midi.clips[clip_idx];
-                        if clip.take_lane_pinned {
-                            clip.take_lane_pinned = false;
-                            if !clip.take_lane_locked {
-                                clip.take_lane_override = None;
-                            }
-                        } else {
-                            clip.take_lane_pinned = true;
-                            clip.take_lane_override = Some(current_take);
-                        }
-                    }
-                }
-            }
-            Message::ClipTakeLaneLockToggle {
-                ref track_idx,
-                clip_idx,
-                kind,
-            } => {
-                let mut state = self.state.blocking_write();
-                let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_idx) else {
+                if current_name != request.clip_name || current_start != request.start {
+                    self.state.blocking_write().message =
+                        "Discarded stale pitch correction result".to_string();
                     return Task::none();
-                };
-                match kind {
-                    Kind::Audio => {
-                        let Some(clip) = track.audio.clips.get_mut(clip_idx) else {
-                            return Task::none();
-                        };
-                        clip.take_lane_locked = !clip.take_lane_locked;
+                }
+                match result {
+                    Ok(mut pitch_correction) => {
+                        let mut state = self.state.blocking_write();
+                        pitch_correction.track_idx = request.track_idx.clone();
+                        pitch_correction.clip_index = request.clip_idx;
+                        state.pitch_correction = Some(pitch_correction);
+                        state.pitch_correction_selected_points.clear();
+                        state.pitch_correction_dragging_points = None;
+                        state.pitch_correction_selecting_rect = None;
+                        state.piano = None;
+                        state.piano_selected_notes.clear();
+                        state.piano_selected_sysex = None;
+                        state.piano_sysex_hex_input.clear();
+                        state.piano_sysex_panel_open = false;
+                        state.piano_scroll_x = 0.0;
+                        state.piano_scroll_y = 0.0;
+                        state.view = View::PitchCorrection;
+                        state.message =
+                            format!("Opened pitch correction for '{}'", request.clip_name);
                     }
-                    Kind::MIDI => {
-                        let Some(clip) = track.midi.clips.get_mut(clip_idx) else {
-                            return Task::none();
-                        };
-                        clip.take_lane_locked = !clip.take_lane_locked;
+                    Err(e) => {
+                        self.state.blocking_write().message =
+                            format!("Pitch correction failed for '{}': {e}", request.clip_name);
                     }
                 }
-            }
-            Message::ClipTakeLaneMove {
-                ref track_idx,
-                clip_idx,
-                kind,
-                delta,
-            } => {
-                let mut state = self.state.blocking_write();
-                let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_idx) else {
-                    return Task::none();
-                };
-                match kind {
-                    Kind::Audio => {
-                        if clip_idx >= track.audio.clips.len() {
-                            return Task::none();
-                        }
-                        let (take_idx, _) = Self::assign_take_lanes(
-                            &track.audio.clips,
-                            |_| 0,
-                            |clip| clip.start,
-                            |clip| clip.length,
-                            |clip| clip.take_lane_override,
-                        );
-                        let current_take = take_idx.get(clip_idx).copied().unwrap_or(0);
-                        let clip = &mut track.audio.clips[clip_idx];
-                        if clip.take_lane_locked {
-                            return Task::none();
-                        }
-                        let next_take = if delta.is_negative() {
-                            current_take.saturating_sub(delta.unsigned_abs() as usize)
-                        } else {
-                            current_take.saturating_add(delta as usize)
-                        };
-                        clip.take_lane_override = Some(next_take);
-                        clip.take_lane_pinned = true;
-                    }
-                    Kind::MIDI => {
-                        if clip_idx >= track.midi.clips.len() {
-                            return Task::none();
-                        }
-                        let lane_count = track.midi.ins.max(1);
-                        let (take_idx, _) = Self::assign_take_lanes(
-                            &track.midi.clips,
-                            |clip| clip.input_channel.min(lane_count.saturating_sub(1)),
-                            |clip| clip.start,
-                            |clip| clip.length,
-                            |clip| clip.take_lane_override,
-                        );
-                        let current_take = take_idx.get(clip_idx).copied().unwrap_or(0);
-                        let clip = &mut track.midi.clips[clip_idx];
-                        if clip.take_lane_locked {
-                            return Task::none();
-                        }
-                        let next_take = if delta.is_negative() {
-                            current_take.saturating_sub(delta.unsigned_abs() as usize)
-                        } else {
-                            current_take.saturating_add(delta as usize)
-                        };
-                        clip.take_lane_override = Some(next_take);
-                        clip.take_lane_pinned = true;
-                    }
-                }
+                return Task::none();
             }
             Message::TrackRenameShow(ref track_name) => {
                 let mut state = self.state.blocking_write();
@@ -4487,6 +4431,9 @@ impl Maolan {
                     }
                     crate::state::View::Piano => {
                         return self.update(Message::RemoveSelected);
+                    }
+                    crate::state::View::PitchCorrection => {
+                        return Task::none();
                     }
                 }
             }
@@ -5869,6 +5816,9 @@ impl Maolan {
                                                     fade_enabled: true,
                                                     fade_in_samples: 240,
                                                     fade_out_samples: 240,
+                                                    source_name: None,
+                                                    source_offset: None,
+                                                    source_length: None,
                                                 }))
                                                 .await
                                             {
@@ -5930,6 +5880,9 @@ impl Maolan {
                                                     fade_enabled: true,
                                                     fade_in_samples: 240,
                                                     fade_out_samples: 240,
+                                                    source_name: None,
+                                                    source_offset: None,
+                                                    source_length: None,
                                                 }))
                                                 .await
                                             {
@@ -6546,6 +6499,10 @@ impl Maolan {
             Message::Workspace => {
                 let mut state = self.state.blocking_write();
                 state.view = View::Workspace;
+                state.pitch_correction = None;
+                state.pitch_correction_selected_points.clear();
+                state.pitch_correction_dragging_points = None;
+                state.pitch_correction_selecting_rect = None;
                 drop(state);
                 return self.queue_midi_clip_preview_loads();
             }
@@ -6644,6 +6601,10 @@ impl Maolan {
                             state.piano_selected_sysex = None;
                             state.piano_sysex_hex_input.clear();
                             state.piano_sysex_panel_open = false;
+                            state.pitch_correction = None;
+                            state.pitch_correction_selected_points.clear();
+                            state.pitch_correction_dragging_points = None;
+                            state.pitch_correction_selecting_rect = None;
                             state.piano_scroll_x = 0.0;
                             state.piano_scroll_y = 0.0;
                             state.view = View::Piano;

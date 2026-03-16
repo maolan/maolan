@@ -272,6 +272,9 @@ pub enum Action {
         fade_enabled: bool,
         fade_in_samples: usize,
         fade_out_samples: usize,
+        source_name: Option<String>,
+        source_offset: Option<usize>,
+        source_length: Option<usize>,
     },
     RemoveClip {
         track_name: String,

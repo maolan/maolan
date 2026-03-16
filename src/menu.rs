@@ -72,6 +72,46 @@ pub(crate) fn menu_item(
     menu_button(label, Some(Length::Fill), Some(Length::Shrink), message)
 }
 
+pub(crate) fn menu_item_maybe(
+    label: impl Into<String>,
+    message: Option<Message>,
+) -> Element<'static, Message, iced::Theme, iced::Renderer> {
+    let label = label.into();
+    let button = button(
+        text(label)
+            .height(Length::Shrink)
+            .align_y(alignment::Vertical::Center),
+    )
+    .padding([4, 8])
+    .style(|theme: &iced::Theme, status| {
+        use button::{Status, Style};
+
+        let palette = theme.extended_palette();
+        let base = Style {
+            text_color: palette.background.base.text,
+            border: Border::default().rounded(6.0),
+            ..Style::default()
+        };
+        match status {
+            Status::Active => base.with_background(Color::TRANSPARENT),
+            Status::Hovered => base.with_background(Color::from_rgb(
+                palette.primary.weak.color.r * 1.2,
+                palette.primary.weak.color.g * 1.2,
+                palette.primary.weak.color.b * 1.2,
+            )),
+            Status::Disabled => base.with_background(Color::from_rgb(0.5, 0.5, 0.5)),
+            Status::Pressed => base.with_background(palette.primary.weak.color),
+        }
+    })
+    .width(Length::Fill)
+    .height(Length::Shrink);
+    if let Some(message) = message {
+        button.on_press(message).into()
+    } else {
+        button.into()
+    }
+}
+
 pub(crate) fn submenu(
     label: impl Into<String>,
     msg: Message,

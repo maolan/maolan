@@ -147,6 +147,9 @@ impl Maolan {
                         fade_enabled: true,
                         fade_in_samples: 240,
                         fade_out_samples: 240,
+                        source_name: None,
+                        source_offset: None,
+                        source_length: None,
                     }));
                     tasks.push(self.send(Action::TrackSetFrozen {
                         track_name: track_name.clone(),

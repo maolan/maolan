@@ -1693,6 +1693,15 @@ impl Maolan {
                             fade_enabled,
                             fade_in_samples,
                             fade_out_samples,
+                            source_name: clip["pitch_correction_source_name"]
+                                .as_str()
+                                .map(str::to_string),
+                            source_offset: clip["pitch_correction_source_offset"]
+                                .as_u64()
+                                .map(|v| v as usize),
+                            source_length: clip["pitch_correction_source_length"]
+                                .as_u64()
+                                .map(|v| v as usize),
                         });
                     }
                 }
@@ -1752,6 +1761,9 @@ impl Maolan {
                             fade_enabled,
                             fade_in_samples,
                             fade_out_samples,
+                            source_name: None,
+                            source_offset: None,
+                            source_length: None,
                         });
                     }
                 }

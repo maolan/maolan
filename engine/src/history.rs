@@ -273,6 +273,9 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         fade_enabled: clip.fade_enabled,
                         fade_in_samples: clip.fade_in_samples,
                         fade_out_samples: clip.fade_out_samples,
+                        source_name: clip.pitch_correction_source_name.clone(),
+                        source_offset: clip.pitch_correction_source_offset,
+                        source_length: clip.pitch_correction_source_length,
                     })
                 }
                 Kind::MIDI => {
@@ -290,6 +293,9 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         fade_enabled: true,    // Default value for MIDI clips
                         fade_in_samples: 240,  // Default value
                         fade_out_samples: 240, // Default value
+                        source_name: None,
+                        source_offset: None,
+                        source_length: None,
                     })
                 }
             }
@@ -956,6 +962,9 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: clip.fade_in_samples,
                     fade_out_samples: clip.fade_out_samples,
+                    source_name: clip.pitch_correction_source_name.clone(),
+                    source_offset: clip.pitch_correction_source_offset,
+                    source_length: clip.pitch_correction_source_length,
                 });
             }
             for clip in &track.midi.clips {
@@ -972,6 +981,9 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     fade_enabled: true,
                     fade_in_samples: 240,
                     fade_out_samples: 240,
+                    source_name: None,
+                    source_offset: None,
+                    source_length: None,
                 });
             }
         }
@@ -1255,6 +1267,9 @@ mod tests {
                 fade_enabled: false,
                 fade_in_samples: 0,
                 fade_out_samples: 0,
+                source_name: None,
+                source_offset: None,
+                source_length: None,
             },
             &state,
         )

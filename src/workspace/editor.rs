@@ -8,7 +8,6 @@ use crate::{
         },
         workspace_editor::{CHECKPOINTS, MAX_RENDER_COLUMNS, RENDER_MARGIN_COLUMNS},
     },
-    gui::RUBBERBAND_AVAILABLE,
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, PianoNote, State, StateData, Track},
 };
@@ -2333,7 +2332,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     .into()
 }
 
-fn clip_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'static, Message>)> {
+pub(super) fn clip_context_menu_overlay(
+    state: &StateData,
+    transport_active: bool,
+) -> Option<(Point, Element<'static, Message>)> {
     let menu = state.clip_context_menu.as_ref()?;
     let clip = &menu.clip;
     let track = state.tracks.iter().find(|t| t.name == clip.track_idx)?;
@@ -2343,8 +2345,6 @@ fn clip_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'stati
             let clip_ref = track.audio.clips.get(clip.clip_idx)?;
             let fade_enabled = clip_ref.fade_enabled;
             let muted = clip_ref.muted;
-            let pinned = clip_ref.take_lane_pinned;
-            let locked = clip_ref.take_lane_locked;
             let track_idx = clip.track_idx.clone();
             let clip_idx = clip.clip_idx;
             column![
@@ -2357,73 +2357,7 @@ fn clip_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'stati
                     },
                 ),
                 crate::menu::menu_item(
-                    "Set Active Take",
-                    Message::ClipSetActiveTake {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::Audio,
-                    },
-                ),
-                crate::menu::menu_item(
-                    "Next Active Take",
-                    Message::ClipCycleActiveTake {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::Audio,
-                    },
-                ),
-                crate::menu::menu_item(
-                    "Unmute All Takes",
-                    Message::ClipUnmuteTakesInRange {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::Audio,
-                    },
-                ),
-                crate::menu::menu_item(
-                    if pinned {
-                        "Unpin Take Lane"
-                    } else {
-                        "Pin Take Lane"
-                    },
-                    Message::ClipTakeLanePinToggle {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::Audio,
-                    },
-                ),
-                crate::menu::menu_item(
-                    if locked {
-                        "Unlock Take Lane"
-                    } else {
-                        "Lock Take Lane"
-                    },
-                    Message::ClipTakeLaneLockToggle {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::Audio,
-                    },
-                ),
-                crate::menu::menu_item(
-                    "Take Lane Up",
-                    Message::ClipTakeLaneMove {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::Audio,
-                        delta: -1,
-                    },
-                ),
-                crate::menu::menu_item(
-                    "Take Lane Down",
-                    Message::ClipTakeLaneMove {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::Audio,
-                        delta: 1,
-                    },
-                ),
-                crate::menu::menu_item(
-                    if muted { "Unmute Take" } else { "Mute Take" },
+                    if muted { "Unmute" } else { "Mute" },
                     Message::ClipSetMuted {
                         track_idx: track_idx.clone(),
                         clip_idx,
@@ -2431,28 +2365,13 @@ fn clip_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'stati
                         muted: !muted,
                     },
                 ),
-                if *RUBBERBAND_AVAILABLE {
-                    crate::menu::menu_item(
-                        "Stretch 0.5x",
-                        Message::ClipStretchHalfSpeed {
-                            track_idx: track_idx.clone(),
-                            clip_idx,
-                        },
-                    )
-                } else {
-                    crate::menu::menu_item("Stretch 0.5x (requires rubberband)", Message::None)
-                },
-                if *RUBBERBAND_AVAILABLE {
-                    crate::menu::menu_item(
-                        "Stretch 2.0x",
-                        Message::ClipStretchDoubleSpeed {
-                            track_idx: track_idx.clone(),
-                            clip_idx,
-                        },
-                    )
-                } else {
-                    crate::menu::menu_item("Stretch 2.0x (requires rubberband)", Message::None)
-                },
+                crate::menu::menu_item_maybe(
+                    "Pitch Correction",
+                    (!transport_active).then_some(Message::ClipOpenPitchCorrection {
+                        track_idx: track_idx.clone(),
+                        clip_idx,
+                    }),
+                ),
                 crate::menu::menu_item(
                     if fade_enabled {
                         "Disable Fade"
@@ -2473,8 +2392,6 @@ fn clip_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'stati
             let clip_ref = track.midi.clips.get(clip.clip_idx)?;
             let fade_enabled = clip_ref.fade_enabled;
             let muted = clip_ref.muted;
-            let pinned = clip_ref.take_lane_pinned;
-            let locked = clip_ref.take_lane_locked;
             let track_idx = clip.track_idx.clone();
             let clip_idx = clip.clip_idx;
             column![
@@ -2487,73 +2404,7 @@ fn clip_context_menu_overlay(state: &StateData) -> Option<(Point, Element<'stati
                     },
                 ),
                 crate::menu::menu_item(
-                    "Set Active Take",
-                    Message::ClipSetActiveTake {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::MIDI,
-                    },
-                ),
-                crate::menu::menu_item(
-                    "Next Active Take",
-                    Message::ClipCycleActiveTake {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::MIDI,
-                    },
-                ),
-                crate::menu::menu_item(
-                    "Unmute All Takes",
-                    Message::ClipUnmuteTakesInRange {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::MIDI,
-                    },
-                ),
-                crate::menu::menu_item(
-                    if pinned {
-                        "Unpin Take Lane"
-                    } else {
-                        "Pin Take Lane"
-                    },
-                    Message::ClipTakeLanePinToggle {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::MIDI,
-                    },
-                ),
-                crate::menu::menu_item(
-                    if locked {
-                        "Unlock Take Lane"
-                    } else {
-                        "Lock Take Lane"
-                    },
-                    Message::ClipTakeLaneLockToggle {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::MIDI,
-                    },
-                ),
-                crate::menu::menu_item(
-                    "Take Lane Up",
-                    Message::ClipTakeLaneMove {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::MIDI,
-                        delta: -1,
-                    },
-                ),
-                crate::menu::menu_item(
-                    "Take Lane Down",
-                    Message::ClipTakeLaneMove {
-                        track_idx: track_idx.clone(),
-                        clip_idx,
-                        kind: Kind::MIDI,
-                        delta: 1,
-                    },
-                ),
-                crate::menu::menu_item(
-                    if muted { "Unmute Take" } else { "Mute Take" },
+                    if muted { "Unmute" } else { "Mute" },
                     Message::ClipSetMuted {
                         track_idx: track_idx.clone(),
                         clip_idx,
@@ -2934,13 +2785,6 @@ impl Editor {
                     }))
                 .position(Point::new(x, y))
                 .into(),
-            );
-        }
-        if let Some((anchor, menu)) = clip_context_menu_overlay(&state) {
-            layers.push(
-                pin(menu)
-                    .position(Point::new(anchor.x.max(0.0), anchor.y.max(0.0)))
-                    .into(),
             );
         }
         container(
