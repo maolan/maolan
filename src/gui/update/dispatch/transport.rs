@@ -5,6 +5,14 @@ impl Maolan {
     pub(super) fn handle_transport_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TransportPlay => {
+                if matches!(
+                    self.state.blocking_read().view,
+                    crate::state::View::PitchCorrection
+                ) {
+                    self.state.blocking_write().message =
+                        "Play and pause are unavailable in Pitch Correction view".to_string();
+                    return Task::none();
+                }
                 self.toolbar.update(&message);
                 let was_playing = self.playing;
                 self.playing = true;
@@ -20,6 +28,14 @@ impl Maolan {
                 Task::batch(tasks)
             }
             Message::TransportPause => {
+                if matches!(
+                    self.state.blocking_read().view,
+                    crate::state::View::PitchCorrection
+                ) {
+                    self.state.blocking_write().message =
+                        "Play and pause are unavailable in Pitch Correction view".to_string();
+                    return Task::none();
+                }
                 self.toolbar.update(&message);
                 let was_playing = self.playing;
                 self.playing = true;

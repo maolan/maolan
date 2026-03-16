@@ -245,6 +245,7 @@ pub enum View {
     Connections,
     TrackPlugins,
     Piano,
+    PitchCorrection,
 }
 
 #[derive(Debug, Clone)]
@@ -356,6 +357,32 @@ pub struct PianoData {
     pub midnam_note_names: HashMap<u8, String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PitchCorrectionPoint {
+    pub start_sample: usize,
+    pub length_samples: usize,
+    pub detected_midi_pitch: f32,
+    pub target_midi_pitch: f32,
+    pub clarity: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct PitchCorrectionData {
+    pub track_idx: String,
+    pub clip_index: usize,
+    pub clip_name: String,
+    pub clip_length_samples: usize,
+    pub points: Vec<PitchCorrectionPoint>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DraggingPitchCorrectionPoints {
+    pub point_indices: Vec<usize>,
+    pub start_point: Point,
+    pub current_point: Point,
+    pub original_points: Vec<PitchCorrectionPoint>,
+}
+
 pub type MidiClipPreviewMap = HashMap<(String, usize), Arc<Vec<PianoNote>>>;
 
 #[derive(Debug)]
@@ -459,6 +486,10 @@ pub struct StateData {
     pub template_save_dialog: Option<TemplateSaveDialog>,
     pub pending_track_template_loads: Vec<(String, String)>, // [(track_name, template_name)]
     pub piano: Option<PianoData>,
+    pub pitch_correction: Option<PitchCorrectionData>,
+    pub pitch_correction_selected_points: HashSet<usize>,
+    pub pitch_correction_dragging_points: Option<DraggingPitchCorrectionPoints>,
+    pub pitch_correction_selecting_rect: Option<(Point, Point)>,
     pub piano_zoom_x: f32,
     pub piano_zoom_y: f32,
     pub piano_scroll_x: f32,
@@ -617,6 +648,10 @@ impl Default for StateData {
             template_save_dialog: None,
             pending_track_template_loads: Vec::new(),
             piano: None,
+            pitch_correction: None,
+            pitch_correction_selected_points: HashSet::new(),
+            pitch_correction_dragging_points: None,
+            pitch_correction_selecting_rect: None,
             piano_zoom_x: 20.0,
             piano_zoom_y: 1.0,
             piano_scroll_x: 0.0,

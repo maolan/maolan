@@ -27,7 +27,7 @@ use crate::{
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{
         AudioClip, ClipPeaks, MIDIClip, MidiClipPreviewMap, PianoControllerPoint, PianoNote,
-        PianoSysExPoint, State, StateData,
+        PianoSysExPoint, PitchCorrectionData, PitchCorrectionPoint, State, StateData,
     },
     template_save, toolbar, track_group, track_marker, track_rename, track_template_save,
     workspace,
@@ -49,6 +49,7 @@ use midly::{
 use mp3lame_encoder::{
     Bitrate as Mp3Bitrate, Builder as Mp3Builder, FlushNoGap, InterleavedPcm, Quality as Mp3Quality,
 };
+use pitch_detection::detector::{PitchDetector, mcleod::McLeodDetector};
 use serde_json::Value;
 #[cfg(unix)]
 use serde_json::json;
@@ -331,6 +332,7 @@ pub struct Maolan {
     pending_save_is_template: bool,
     pending_peak_file_loads: HashMap<AudioClipKey, PathBuf>,
     pending_peak_rebuilds: HashSet<AudioClipKey>,
+    pending_precomputed_peaks: HashMap<AudioClipKey, crate::state::ClipPeaks>,
     pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
     pending_track_freeze_bounce: HashMap<String, PendingTrackFreezeBounce>,
     track_automation_runtime: HashMap<String, TrackAutomationRuntime>,
@@ -552,6 +554,7 @@ impl Default for Maolan {
             pending_save_is_template: false,
             pending_peak_file_loads: HashMap::new(),
             pending_peak_rebuilds: HashSet::new(),
+            pending_precomputed_peaks: HashMap::new(),
             pending_track_freeze_restore: HashMap::new(),
             pending_track_freeze_bounce: HashMap::new(),
             track_automation_runtime: HashMap::new(),
@@ -1691,6 +1694,301 @@ impl Maolan {
 
         let output_frames = Self::audio_clip_source_length(&output_path)?;
         Ok((output_rel, output_frames.max(1)))
+    }
+
+    async fn analyze_audio_clip_pitch_correction<F>(
+        src_path: &Path,
+        clip_name: &str,
+        offset: usize,
+        length: usize,
+        mut progress_callback: F,
+    ) -> io::Result<PitchCorrectionData>
+    where
+        F: FnMut(f32, Option<String>),
+    {
+        let (samples, channels, sample_rate) =
+            Self::decode_audio_to_f32_interleaved_with_progress(src_path, |decode_progress| {
+                progress_callback(decode_progress * 0.55, Some("Decoding".to_string()));
+            })
+            .await?;
+        let channels = channels.max(1);
+        let total_frames = samples.len() / channels;
+        let start_frame = offset.min(total_frames);
+        let segment_frames = length.max(1).min(total_frames.saturating_sub(start_frame));
+        if segment_frames < 256 {
+            return Err(io::Error::other(format!(
+                "Audio clip '{}' is too short for pitch analysis",
+                clip_name
+            )));
+        }
+
+        let mut mono = Vec::with_capacity(segment_frames);
+        for frame_idx in 0..segment_frames {
+            let base = (start_frame + frame_idx) * channels;
+            let sample = (0..channels)
+                .map(|channel| samples[base + channel])
+                .sum::<f32>()
+                / channels as f32;
+            mono.push(sample);
+        }
+        progress_callback(0.60, Some("Preparing analysis".to_string()));
+
+        let analysis_size = 2048usize.min(mono.len().next_power_of_two() / 2).max(256);
+        let analysis_size = analysis_size.min(mono.len());
+        let analysis_size = analysis_size
+            .next_power_of_two()
+            .min(mono.len().next_power_of_two());
+        let analysis_size = analysis_size.min(mono.len());
+        let analysis_size = analysis_size.clamp(256, 4096);
+        if mono.len() < analysis_size {
+            return Err(io::Error::other(format!(
+                "Audio clip '{}' is too short for pitch analysis",
+                clip_name
+            )));
+        }
+        let hop_size = (analysis_size / 4).max(64);
+        let padding = analysis_size / 2;
+        let mut detector = McLeodDetector::new(analysis_size, padding);
+        let mut detected = Vec::<PitchCorrectionPoint>::new();
+        let mut cursor = 0usize;
+        let total_windows = ((mono.len().saturating_sub(analysis_size)) / hop_size).max(1) + 1;
+        let mut window_index = 0usize;
+        while cursor + analysis_size <= mono.len() {
+            let window: Vec<f64> = mono[cursor..cursor + analysis_size]
+                .iter()
+                .map(|sample| *sample as f64)
+                .collect();
+            if let Some(pitch) = detector.get_pitch(&window, sample_rate as usize, 5.0f64, 0.7f64)
+                && pitch.frequency.is_finite()
+                && pitch.frequency > 0.0
+            {
+                let midi_pitch = 69.0 + 12.0 * (pitch.frequency as f32 / 440.0).log2();
+                if midi_pitch.is_finite() {
+                    detected.push(PitchCorrectionPoint {
+                        start_sample: cursor,
+                        length_samples: hop_size.min(mono.len().saturating_sub(cursor)).max(1),
+                        detected_midi_pitch: midi_pitch.clamp(0.0, 119.999),
+                        target_midi_pitch: midi_pitch.clamp(0.0, 119.999),
+                        clarity: pitch.clarity as f32,
+                    });
+                }
+            }
+            window_index = window_index.saturating_add(1);
+            let analysis_progress = window_index as f32 / total_windows as f32;
+            progress_callback(
+                0.60 + analysis_progress.clamp(0.0, 1.0) * 0.40,
+                Some("Detecting pitch".to_string()),
+            );
+            cursor = cursor.saturating_add(hop_size);
+        }
+        if detected.is_empty() {
+            return Err(io::Error::other(format!(
+                "No stable pitch detected in '{}'",
+                clip_name
+            )));
+        }
+        let detected = Self::merge_adjacent_pitch_fragments(detected, 0.2, hop_size);
+        Ok(PitchCorrectionData {
+            track_idx: String::new(),
+            clip_index: 0,
+            clip_name: clip_name.to_string(),
+            clip_length_samples: length.max(1),
+            points: detected,
+        })
+    }
+
+    fn merge_adjacent_pitch_fragments(
+        mut points: Vec<PitchCorrectionPoint>,
+        max_pitch_delta: f32,
+        max_gap_samples: usize,
+    ) -> Vec<PitchCorrectionPoint> {
+        if points.len() <= 1 {
+            return points;
+        }
+        points.sort_by_key(|point| point.start_sample);
+        let mut merged = Vec::with_capacity(points.len());
+        let mut points_iter = points.into_iter();
+        let Some(mut current) = points_iter.next() else {
+            return merged;
+        };
+        let mut reference_detected = current.detected_midi_pitch;
+        let mut reference_target = current.target_midi_pitch;
+
+        for point in points_iter {
+            let current_end = current.start_sample.saturating_add(current.length_samples);
+            let gap = point.start_sample.saturating_sub(current_end);
+            let detected_delta = (reference_detected - point.detected_midi_pitch).abs();
+            let target_delta = (reference_target - point.target_midi_pitch).abs();
+
+            if gap <= max_gap_samples
+                && detected_delta <= max_pitch_delta
+                && target_delta <= max_pitch_delta
+            {
+                let left_weight = (current.length_samples as f32) * current.clarity.max(0.05);
+                let right_weight = (point.length_samples as f32) * point.clarity.max(0.05);
+                let total_weight = (left_weight + right_weight).max(f32::EPSILON);
+                let merged_end = point.start_sample.saturating_add(point.length_samples);
+                current.length_samples = merged_end.saturating_sub(current.start_sample);
+                current.detected_midi_pitch = ((current.detected_midi_pitch * left_weight)
+                    + (point.detected_midi_pitch * right_weight))
+                    / total_weight;
+                current.target_midi_pitch = ((current.target_midi_pitch * left_weight)
+                    + (point.target_midi_pitch * right_weight))
+                    / total_weight;
+                current.clarity = ((current.clarity * left_weight)
+                    + (point.clarity * right_weight))
+                    / total_weight;
+            } else {
+                merged.push(current);
+                reference_detected = point.detected_midi_pitch;
+                reference_target = point.target_midi_pitch;
+                current = point;
+            }
+        }
+
+        merged.push(current);
+        merged
+    }
+
+    async fn render_audio_clip_pitch_correction_with_rubberband<F>(
+        src_path: &Path,
+        session_root: &Path,
+        clip_name: &str,
+        offset: usize,
+        length: usize,
+        points: &[PitchCorrectionPoint],
+        mut progress_callback: F,
+    ) -> io::Result<(String, usize, crate::state::ClipPeaks)>
+    where
+        F: FnMut(f32, Option<String>),
+    {
+        let (samples, channels, sample_rate) =
+            Self::decode_audio_to_f32_interleaved_with_progress(src_path, |decode_progress| {
+                progress_callback(decode_progress * 0.45, Some("Decoding".to_string()));
+            })
+            .await?;
+        let channels = channels.max(1);
+        let total_frames = samples.len() / channels;
+        let start_frame = offset.min(total_frames);
+        let segment_frames = length.max(1).min(total_frames.saturating_sub(start_frame));
+        if segment_frames == 0 {
+            return Err(io::Error::other(format!(
+                "Audio clip '{}' has no available source samples for pitch correction",
+                clip_name
+            )));
+        }
+
+        let start_idx = start_frame * channels;
+        let end_idx = start_idx + segment_frames * channels;
+        let segment_samples = &samples[start_idx..end_idx];
+        progress_callback(0.50, Some("Preparing source".to_string()));
+        tokio::task::yield_now().await;
+
+        let stem = Path::new(clip_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("audio");
+        let temp_rel =
+            Self::unique_import_rel_path(session_root, "audio", &format!("{stem}_src"), "wav")?;
+        let temp_path = session_root.join(&temp_rel);
+        let pitchmap_rel = Self::unique_import_rel_path(
+            session_root,
+            "audio",
+            &format!("{stem}_pitchmap"),
+            "txt",
+        )?;
+        let pitchmap_path = session_root.join(&pitchmap_rel);
+        let output_rel = Self::unique_import_rel_path(
+            session_root,
+            "audio",
+            &format!("{stem}_pitch_corrected"),
+            "wav",
+        )?;
+        let output_path = session_root.join(&output_rel);
+
+        wavers::write::<f32, _>(
+            &temp_path,
+            segment_samples,
+            sample_rate as i32,
+            channels as u16,
+        )
+        .map_err(|e| {
+            io::Error::other(format!(
+                "Failed to write pitch-correction source '{}': {e}",
+                temp_path.display()
+            ))
+        })?;
+
+        let mut pitchmap = String::new();
+        if points.is_empty() {
+            pitchmap.push_str("0 0\n");
+        } else {
+            let mut sorted_points = points.to_vec();
+            sorted_points.sort_by_key(|point| point.start_sample);
+            if sorted_points
+                .first()
+                .is_some_and(|point| point.start_sample > 0)
+            {
+                let first = &sorted_points[0];
+                pitchmap.push_str(&format!(
+                    "0 {:.6}\n",
+                    first.target_midi_pitch - first.detected_midi_pitch
+                ));
+            }
+            for point in sorted_points {
+                pitchmap.push_str(&format!(
+                    "{} {:.6}\n",
+                    point.start_sample.min(segment_frames.saturating_sub(1)),
+                    point.target_midi_pitch - point.detected_midi_pitch
+                ));
+            }
+        }
+        fs::write(&pitchmap_path, pitchmap).map_err(|e| {
+            io::Error::other(format!(
+                "Failed to write pitch map '{}': {e}",
+                pitchmap_path.display()
+            ))
+        })?;
+        progress_callback(0.60, Some("Writing pitch map".to_string()));
+        tokio::task::yield_now().await;
+
+        let command_result = tokio::process::Command::new("rubberband")
+            .arg("--quiet")
+            .arg("--fine")
+            .arg("--formant")
+            .arg("--pitch")
+            .arg("0")
+            .arg("--pitchmap")
+            .arg(&pitchmap_path)
+            .arg(&temp_path)
+            .arg(&output_path)
+            .output()
+            .await;
+
+        let _ = fs::remove_file(&temp_path);
+        let _ = fs::remove_file(&pitchmap_path);
+
+        progress_callback(0.90, Some("Rendering".to_string()));
+        tokio::task::yield_now().await;
+
+        let output = command_result
+            .map_err(|e| io::Error::other(format!("Failed to launch Rubber Band: {e}")))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let _ = fs::remove_file(&output_path);
+            return Err(io::Error::other(if stderr.is_empty() {
+                "Rubber Band failed to render pitch correction".to_string()
+            } else {
+                format!("Rubber Band failed: {stderr}")
+            }));
+        }
+
+        let output_frames = Self::audio_clip_source_length(&output_path)?;
+        progress_callback(0.95, Some("Calculating peaks".to_string()));
+        tokio::task::yield_now().await;
+        let peaks = Self::compute_audio_clip_peaks(&output_path)?;
+        progress_callback(1.0, Some("Complete".to_string()));
+        Ok((output_rel, output_frames.max(1), peaks))
     }
 
     fn write_wav_with_bit_depth(

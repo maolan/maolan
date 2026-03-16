@@ -18,6 +18,7 @@ pub struct Toolbar;
 pub struct ToolbarViewState {
     pub playing: bool,
     pub paused: bool,
+    pub transport_play_pause_enabled: bool,
     pub recording: bool,
     pub metronome_enabled: bool,
     pub has_session_end: bool,
@@ -77,6 +78,36 @@ impl Toolbar {
         let metronome_active = view_state.metronome_enabled;
         let loop_active = view_state.has_loop_range && view_state.loop_enabled;
         let punch_active = view_state.has_punch_range && view_state.punch_enabled;
+        let play_button = if view_state.transport_play_pause_enabled {
+            button(play())
+                .style(Self::button_style(
+                    true,
+                    play_active,
+                    Color::from_rgba(0.2, 0.7, 0.35, 0.35),
+                ))
+                .on_press(Message::TransportPlay)
+        } else {
+            button(play()).style(Self::button_style(
+                false,
+                play_active,
+                Color::from_rgba(0.2, 0.7, 0.35, 0.35),
+            ))
+        };
+        let pause_button = if view_state.transport_play_pause_enabled {
+            button(pause())
+                .style(Self::button_style(
+                    true,
+                    pause_active,
+                    Color::from_rgba(0.85, 0.7, 0.1, 0.35),
+                ))
+                .on_press(Message::TransportPause)
+        } else {
+            button(pause()).style(Self::button_style(
+                false,
+                pause_active,
+                Color::from_rgba(0.85, 0.7, 0.1, 0.35),
+            ))
+        };
         let loop_button = if view_state.has_loop_range {
             button(repeat())
                 .style(Self::button_style(
@@ -129,20 +160,8 @@ impl Toolbar {
                 button(rewind())
                     .style(Self::button_style(true, false, Color::TRANSPARENT))
                     .on_press(Message::JumpToStart),
-                button(play())
-                    .style(Self::button_style(
-                        true,
-                        play_active,
-                        Color::from_rgba(0.2, 0.7, 0.35, 0.35)
-                    ))
-                    .on_press(Message::TransportPlay),
-                button(pause())
-                    .style(Self::button_style(
-                        true,
-                        pause_active,
-                        Color::from_rgba(0.85, 0.7, 0.1, 0.35)
-                    ))
-                    .on_press(Message::TransportPause),
+                play_button,
+                pause_button,
                 button(square())
                     .style(Self::button_style(
                         true,

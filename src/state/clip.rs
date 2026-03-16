@@ -27,6 +27,12 @@ pub struct AudioClip {
     #[serde(default = "default_fade_samples")]
     pub fade_out_samples: usize,
     #[serde(default)]
+    pub pitch_correction_source_name: Option<String>,
+    #[serde(default)]
+    pub pitch_correction_source_offset: Option<usize>,
+    #[serde(default)]
+    pub pitch_correction_source_length: Option<usize>,
+    #[serde(default)]
     pub take_lane_override: Option<usize>,
     #[serde(default = "default_take_lane_flag")]
     pub take_lane_pinned: bool,

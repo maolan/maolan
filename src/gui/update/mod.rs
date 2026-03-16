@@ -19,8 +19,9 @@ use crate::{
     consts::gui_update_mod::{ATTACK_ALPHA, RELEASE_ALPHA},
     consts::state_ids::METRONOME_TRACK_ID,
     message::{
-        ClipStretchRequest, ExportNormalizeMode, ExportRenderMode, Message, Show,
-        TrackAutomationMode, TrackAutomationTarget,
+        ClipPitchCorrectionApplyRequest, ClipPitchCorrectionRequest, ClipStretchRequest,
+        ExportNormalizeMode, ExportRenderMode, Message, Show, TrackAutomationMode,
+        TrackAutomationTarget,
     },
     platform_caps,
     state::{
@@ -1791,32 +1792,48 @@ impl Maolan {
                     kind: Kind::Audio,
                     clip_indices: vec![clip_idx],
                 }));
-                tasks.push(self.send(Action::AddClip {
-                    name: clip.name.clone(),
-                    track_name: track_name.clone(),
-                    start: clip.start,
-                    length: left_len,
-                    offset: clip.offset,
-                    input_channel: clip.input_channel,
-                    muted: clip.muted,
-                    kind: Kind::Audio,
-                    fade_enabled: clip.fade_enabled,
-                    fade_in_samples: left_fade_in,
-                    fade_out_samples: left_fade_out,
-                }));
-                tasks.push(self.send(Action::AddClip {
-                    name: clip.name,
-                    track_name,
-                    start: split_sample,
-                    length: right_len,
-                    offset: clip.offset.saturating_add(left_len),
-                    input_channel: clip.input_channel,
-                    muted: clip.muted,
-                    kind: Kind::Audio,
-                    fade_enabled: clip.fade_enabled,
-                    fade_in_samples: right_fade_in,
-                    fade_out_samples: right_fade_out,
-                }));
+                tasks.push(
+                    self.send(Action::AddClip {
+                        name: clip.name.clone(),
+                        track_name: track_name.clone(),
+                        start: clip.start,
+                        length: left_len,
+                        offset: clip.offset,
+                        input_channel: clip.input_channel,
+                        muted: clip.muted,
+                        kind: Kind::Audio,
+                        fade_enabled: clip.fade_enabled,
+                        fade_in_samples: left_fade_in,
+                        fade_out_samples: left_fade_out,
+                        source_name: clip.pitch_correction_source_name.clone(),
+                        source_offset: clip.pitch_correction_source_offset,
+                        source_length: clip
+                            .pitch_correction_source_length
+                            .map(|value| value.min(left_len)),
+                    }),
+                );
+                tasks.push(
+                    self.send(Action::AddClip {
+                        name: clip.name,
+                        track_name,
+                        start: split_sample,
+                        length: right_len,
+                        offset: clip.offset.saturating_add(left_len),
+                        input_channel: clip.input_channel,
+                        muted: clip.muted,
+                        kind: Kind::Audio,
+                        fade_enabled: clip.fade_enabled,
+                        fade_in_samples: right_fade_in,
+                        fade_out_samples: right_fade_out,
+                        source_name: clip.pitch_correction_source_name,
+                        source_offset: clip
+                            .pitch_correction_source_offset
+                            .map(|value| value.saturating_add(left_len)),
+                        source_length: clip
+                            .pitch_correction_source_length
+                            .map(|value| value.saturating_sub(left_len)),
+                    }),
+                );
                 tasks.push(self.send(Action::EndHistoryGroup));
                 Task::batch(tasks)
             }
@@ -1869,6 +1886,9 @@ impl Maolan {
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: left_fade_in,
                     fade_out_samples: left_fade_out,
+                    source_name: None,
+                    source_offset: None,
+                    source_length: None,
                 }));
                 tasks.push(self.send(Action::AddClip {
                     name: clip.name,
@@ -1882,6 +1902,9 @@ impl Maolan {
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: right_fade_in,
                     fade_out_samples: right_fade_out,
+                    source_name: None,
+                    source_offset: None,
+                    source_length: None,
                 }));
                 tasks.push(self.send(Action::EndHistoryGroup));
                 Task::batch(tasks)
@@ -1930,18 +1953,21 @@ impl Maolan {
             fade_enabled: true,
             fade_in_samples: 240,
             fade_out_samples: 240,
+            source_name: None,
+            source_offset: None,
+            source_length: None,
         })
     }
 
-    fn begin_clip_stretch(
-        &mut self,
-        track_idx: String,
-        clip_idx: usize,
-        stretch_ratio: f32,
-    ) -> Task<Message> {
+    fn open_clip_pitch_correction(&mut self, track_idx: String, clip_idx: usize) -> Task<Message> {
+        if self.playing {
+            self.state.blocking_write().message =
+                "Pitch correction is unavailable while playing or paused".to_string();
+            return Task::none();
+        }
         let Some(session_root) = self.session_dir.clone() else {
             self.state.blocking_write().message =
-                "Stretching audio clips requires an opened/saved session".to_string();
+                "Pitch correction requires an opened/saved session".to_string();
             return Task::none();
         };
         let Some(request) = ({
@@ -1952,40 +1978,84 @@ impl Maolan {
                 .find(|t| t.name == track_idx)
                 .and_then(|t| t.audio.clips.get(clip_idx))
                 .cloned()
-                .map(|clip| ClipStretchRequest {
+                .map(|clip| ClipPitchCorrectionRequest {
                     track_idx: track_idx.clone(),
                     clip_idx,
-                    clip_name: clip.name,
+                    clip_name: clip.name.clone(),
                     start: clip.start,
-                    original_start: clip.start,
-                    length: clip.length,
-                    offset: clip.offset,
-                    input_channel: clip.input_channel,
-                    muted: clip.muted,
-                    fade_enabled: clip.fade_enabled,
-                    fade_in_samples: clip.fade_in_samples,
-                    fade_out_samples: clip.fade_out_samples,
-                    stretch_ratio,
+                    source_name: clip
+                        .pitch_correction_source_name
+                        .clone()
+                        .unwrap_or_else(|| clip.name.clone()),
+                    source_offset: clip.pitch_correction_source_offset.unwrap_or(clip.offset),
+                    source_length: clip.pitch_correction_source_length.unwrap_or(clip.length),
                 })
         }) else {
             self.state.blocking_write().message = "Audio clip not found".to_string();
             return Task::none();
         };
-        let source_path = if std::path::Path::new(&request.clip_name).is_absolute() {
-            std::path::PathBuf::from(&request.clip_name)
+        let source_path = if std::path::Path::new(&request.source_name).is_absolute() {
+            std::path::PathBuf::from(&request.source_name)
         } else {
-            session_root.join(&request.clip_name)
+            session_root.join(&request.source_name)
         };
         if !source_path.exists() {
             self.state.blocking_write().message =
                 format!("Audio clip source is missing: {}", source_path.display());
             return Task::none();
         }
-        self.state.blocking_write().message = format!(
-            "Stretching audio clip '{}' to {:.2}x...",
-            request.clip_name, request.stretch_ratio
-        );
-        self.start_clip_stretch_request_with_source(request, session_root, source_path)
+        self.state.blocking_write().message =
+            format!("Opening pitch correction for '{}'...", request.clip_name);
+        Task::run(
+            {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                tokio::spawn(async move {
+                    let tx_clone = tx.clone();
+                    let clip_name_for_progress = request.clip_name.clone();
+                    let mut last_progress_bucket: Option<u16> = None;
+                    let mut last_operation: Option<String> = None;
+                    let progress_fn = move |progress: f32, operation: Option<String>| {
+                        let clamped = progress.clamp(0.0, 1.0);
+                        let bucket = (clamped * 100.0).round() as u16;
+                        if last_progress_bucket == Some(bucket) && last_operation == operation {
+                            return;
+                        }
+                        last_progress_bucket = Some(bucket);
+                        last_operation = operation.clone();
+                        if tx_clone
+                            .send(Message::ClipOpenPitchCorrectionProgress {
+                                clip_name: clip_name_for_progress.clone(),
+                                progress: clamped,
+                                operation,
+                            })
+                            .is_err()
+                        {}
+                    };
+
+                    let result = Self::analyze_audio_clip_pitch_correction(
+                        &source_path,
+                        &request.clip_name,
+                        request.source_offset,
+                        request.source_length,
+                        progress_fn,
+                    )
+                    .await
+                    .map_err(|e| e.to_string());
+                    if tx
+                        .send(Message::ClipOpenPitchCorrectionFinished { request, result })
+                        .is_err()
+                    {
+                        return;
+                    }
+                    drop(tx);
+                });
+
+                iced::futures::stream::unfold(rx, |mut rx| async move {
+                    rx.recv().await.map(|msg| (msg, rx))
+                })
+            },
+            |msg| msg,
+        )
     }
 
     fn start_clip_stretch_request(&mut self, request: ClipStretchRequest) -> Task<Message> {
@@ -2034,6 +2104,116 @@ impl Maolan {
                 (request, result)
             },
             |(request, result)| Message::ClipStretchFinished { request, result },
+        )
+    }
+
+    fn apply_pitch_correction(&mut self) -> Task<Message> {
+        if self.playing {
+            self.state.blocking_write().message =
+                "Pitch correction is unavailable while playing or paused".to_string();
+            return Task::none();
+        }
+        let Some(session_root) = self.session_dir.clone() else {
+            self.state.blocking_write().message =
+                "Pitch correction requires an opened/saved session".to_string();
+            return Task::none();
+        };
+        if !*RUBBERBAND_AVAILABLE {
+            self.state.blocking_write().message =
+                "Pitch correction is unavailable because 'rubberband' is not installed or not on PATH"
+                    .to_string();
+            return Task::none();
+        }
+        let Some(request) = ({
+            let state = self.state.blocking_read();
+            let Some(pitch_correction) = state.pitch_correction.as_ref() else {
+                return Task::none();
+            };
+            state
+                .tracks
+                .iter()
+                .find(|t| t.name == pitch_correction.track_idx)
+                .and_then(|t| t.audio.clips.get(pitch_correction.clip_index))
+                .cloned()
+                .map(|clip| {
+                    let clip_name = clip.name.clone();
+                    ClipPitchCorrectionApplyRequest {
+                        track_idx: pitch_correction.track_idx.clone(),
+                        clip_idx: pitch_correction.clip_index,
+                        clip_name,
+                        start: clip.start,
+                        input_channel: clip.input_channel,
+                        muted: clip.muted,
+                        fade_enabled: clip.fade_enabled,
+                        fade_in_samples: clip.fade_in_samples,
+                        fade_out_samples: clip.fade_out_samples,
+                        source_name: clip
+                            .pitch_correction_source_name
+                            .clone()
+                            .unwrap_or_else(|| clip.name.clone()),
+                        source_offset: clip.pitch_correction_source_offset.unwrap_or(clip.offset),
+                        source_length: clip.pitch_correction_source_length.unwrap_or(clip.length),
+                        points: pitch_correction.points.clone(),
+                    }
+                })
+        }) else {
+            self.state.blocking_write().message = "Audio clip not found".to_string();
+            return Task::none();
+        };
+        let source_path = if std::path::Path::new(&request.source_name).is_absolute() {
+            std::path::PathBuf::from(&request.source_name)
+        } else {
+            session_root.join(&request.source_name)
+        };
+        if !source_path.exists() {
+            self.state.blocking_write().message =
+                format!("Audio clip source is missing: {}", source_path.display());
+            return Task::none();
+        }
+        self.state.blocking_write().message =
+            format!("Applying pitch correction to '{}'...", request.clip_name);
+        Task::run(
+            {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                tokio::spawn(async move {
+                    let tx_clone = tx.clone();
+                    let clip_name_for_progress = request.clip_name.clone();
+                    let mut last_progress_bucket: Option<u16> = None;
+                    let mut last_operation: Option<String> = None;
+                    let progress_fn = move |progress: f32, operation: Option<String>| {
+                        let clamped = progress.clamp(0.0, 1.0);
+                        let bucket = (clamped * 100.0).round() as u16;
+                        if last_progress_bucket == Some(bucket) && last_operation == operation {
+                            return;
+                        }
+                        last_progress_bucket = Some(bucket);
+                        last_operation = operation.clone();
+                        let _ = tx_clone.send(Message::PitchCorrectionApplyProgress {
+                            clip_name: clip_name_for_progress.clone(),
+                            progress: clamped,
+                            operation,
+                        });
+                    };
+                    let result = Self::render_audio_clip_pitch_correction_with_rubberband(
+                        &source_path,
+                        &session_root,
+                        &request.clip_name,
+                        request.source_offset,
+                        request.source_length,
+                        &request.points,
+                        progress_fn,
+                    )
+                    .await
+                    .map_err(|e| e.to_string());
+                    let _ = tx.send(Message::PitchCorrectionApplyFinished { request, result });
+                    drop(tx);
+                });
+
+                iced::futures::stream::unfold(rx, |mut rx| async move {
+                    rx.recv().await.map(|msg| (msg, rx))
+                })
+            },
+            |msg| msg,
         )
     }
 

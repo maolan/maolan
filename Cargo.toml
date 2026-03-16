@@ -22,6 +22,7 @@ libloading = "0.8.9"
 maolan-engine = { version = "0.0.2", path = "./engine" }
 midly = "0.5.3"
 mp3lame-encoder = "0.2"
+pitch-detection = "0.3.0"
 rfd = "0.17.2"
 rubato = "0.16.2"
 serde = { version = "1.0.228", features = ["derive"] }

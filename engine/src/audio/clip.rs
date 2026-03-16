@@ -9,6 +9,9 @@ pub struct AudioClip {
     pub fade_enabled: bool,
     pub fade_in_samples: usize,
     pub fade_out_samples: usize,
+    pub pitch_correction_source_name: Option<String>,
+    pub pitch_correction_source_offset: Option<usize>,
+    pub pitch_correction_source_length: Option<usize>,
 }
 
 impl AudioClip {
@@ -23,6 +26,9 @@ impl AudioClip {
             fade_enabled: true,
             fade_in_samples: 240, // 5ms at 48kHz
             fade_out_samples: 240,
+            pitch_correction_source_name: None,
+            pitch_correction_source_offset: None,
+            pitch_correction_source_length: None,
         }
     }
 }

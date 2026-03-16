@@ -10,6 +10,14 @@ impl Maolan {
                 if !self.state.blocking_read().hw_loaded {
                     return Some(Task::none());
                 }
+                if matches!(
+                    self.state.blocking_read().view,
+                    crate::state::View::PitchCorrection
+                ) {
+                    self.state.blocking_write().message =
+                        "Play and pause are unavailable in Pitch Correction view".to_string();
+                    return Some(Task::none());
+                }
                 if self.playing && !self.paused {
                     self.toolbar.update(message);
                     self.playing = false;
