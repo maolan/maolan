@@ -227,6 +227,12 @@ impl Maolan {
                     return self.sync_editor_scrollbars();
                 }
             }
+            Message::MixerScrollXChanged(value) => {
+                let x = value.clamp(0.0, 1.0);
+                if (self.mixer_scroll_x - x).abs() > 0.0005 {
+                    self.mixer_scroll_x = x;
+                }
+            }
             Message::PianoZoomXChanged(value) => {
                 self.state.blocking_write().piano_zoom_x = value;
                 return self.sync_piano_scrollbars();
@@ -1804,19 +1810,15 @@ impl Maolan {
                             fade_out_samples,
                             warp_markers,
                         } => {
-                            let mut audio_peaks = crate::state::ClipPeaks::default();
                             let mut max_length_samples = offset.saturating_add(*length);
                             let mut wav_path_for_rebuild: Option<std::path::PathBuf> = None;
                             let mut peaks_path_for_load: Option<std::path::PathBuf> = None;
-                            let mut loaded_bins = 0usize;
+                            let loaded_bins = 0usize;
                             if *kind == Kind::Audio {
                                 let key = Self::audio_clip_key(
                                     track_name, name, *start, *length, *offset,
                                 );
-                                audio_peaks =
-                                    self.pending_audio_peaks.remove(&key).unwrap_or_default();
                                 peaks_path_for_load = self.pending_peak_file_loads.remove(&key);
-                                loaded_bins = audio_peaks.iter().map(Vec::len).max().unwrap_or(0);
                                 if name.to_ascii_lowercase().ends_with(".wav") {
                                     let wav_path = if std::path::Path::new(name).is_absolute() {
                                         Some(std::path::PathBuf::from(name))
@@ -1852,7 +1854,7 @@ impl Maolan {
                                             muted: *muted,
                                             max_length_samples,
                                             peaks_file: None,
-                                            peaks: audio_peaks,
+                                            peaks: crate::state::ClipPeaks::default(),
                                             fade_enabled: *fade_enabled,
                                             fade_in_samples: *fade_in_samples,
                                             fade_out_samples: *fade_out_samples,
@@ -6382,6 +6384,22 @@ impl Maolan {
                         "Importing {}/{} ({percent}%){}: {}",
                         file_index, total_files, op_text, filename
                     );
+                }
+            }
+            Message::TrackTemplatesLoaded(ref templates) => {
+                self.add_track.set_available_templates(templates.clone());
+            }
+            #[cfg(target_os = "linux")]
+            Message::PreferencesDevicesLoaded {
+                ref output_devices,
+                ref input_devices,
+            } => {
+                let mut state = self.state.blocking_write();
+                if !output_devices.is_empty() {
+                    state.available_hw = output_devices.clone();
+                }
+                if !input_devices.is_empty() {
+                    state.available_input_hw = input_devices.clone();
                 }
             }
             Message::DrainAudioPeakUpdates => {

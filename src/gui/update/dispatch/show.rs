@@ -64,9 +64,14 @@ impl Maolan {
             ),
             Show::AddTrack => {
                 self.modal = Some(Show::AddTrack);
-                let track_templates = crate::gui::scan_track_templates();
-                self.add_track.set_available_templates(track_templates);
-                iced::widget::operation::focus(crate::add_track::AddTrackView::name_input_id())
+                self.add_track.set_available_templates(Vec::new());
+                Task::batch(vec![
+                    Task::perform(
+                        async { crate::gui::scan_track_templates() },
+                        Message::TrackTemplatesLoaded,
+                    ),
+                    iced::widget::operation::focus(crate::add_track::AddTrackView::name_input_id()),
+                ])
             }
             Show::TrackPluginList => {
                 self.modal = Some(Show::TrackPluginList);
@@ -88,16 +93,23 @@ impl Maolan {
                 #[cfg(target_os = "linux")]
                 {
                     let prefs = super::super::super::load_preferences();
-                    let mut state = self.state.blocking_write();
-                    let refreshed_output = crate::state::discover_alsa_output_devices();
-                    if !refreshed_output.is_empty() {
-                        state.available_hw = refreshed_output;
+                    {
+                        let mut state = self.state.blocking_write();
+                        Self::apply_preferred_devices_to_state(&mut state, &prefs);
                     }
-                    let refreshed_input = crate::state::discover_alsa_input_devices();
-                    if !refreshed_input.is_empty() {
-                        state.available_input_hw = refreshed_input;
-                    }
-                    Self::apply_preferred_devices_to_state(&mut state, &prefs);
+                    self.modal = Some(Show::Preferences);
+                    return Task::perform(
+                        async {
+                            (
+                                crate::state::discover_alsa_output_devices(),
+                                crate::state::discover_alsa_input_devices(),
+                            )
+                        },
+                        |(output_devices, input_devices)| Message::PreferencesDevicesLoaded {
+                            output_devices,
+                            input_devices,
+                        },
+                    );
                 }
                 self.modal = Some(Show::Preferences);
                 Task::none()

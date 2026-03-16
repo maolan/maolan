@@ -690,6 +690,7 @@ pub enum Message {
     EditorMouseMoved(Point),
     EditorScrollXChanged(f32),
     EditorScrollYChanged(f32),
+    MixerScrollXChanged(f32),
     MousePressed(mouse::Button),
     MouseReleased,
 
@@ -730,6 +731,12 @@ pub enum Message {
         file_progress: f32,
         filename: String,
         operation: Option<String>,
+    },
+    TrackTemplatesLoaded(Vec<String>),
+    #[cfg(target_os = "linux")]
+    PreferencesDevicesLoaded {
+        output_devices: Vec<AudioDeviceOption>,
+        input_devices: Vec<AudioDeviceOption>,
     },
     DrainAudioPeakUpdates,
     TransportPlay,
