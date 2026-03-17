@@ -769,6 +769,7 @@ pub enum Message {
     MixerResizeHover(bool),
 
     OpenFileImporter,
+    DeleteUnusedSessionMediaFiles,
     ImportFilesSelected(Option<Vec<std::path::PathBuf>>),
     ImportProgress {
         file_index: usize,

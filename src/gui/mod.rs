@@ -232,6 +232,12 @@ struct AudioClipKey {
     offset: usize,
 }
 
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct SessionMediaCleanupReport {
+    deleted_files: Vec<String>,
+    failed_files: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct AudioPeakChunkUpdate {
     pub track_name: String,
@@ -1308,6 +1314,167 @@ impl Maolan {
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.trim_matches('.').to_ascii_lowercase())
+    }
+
+    fn normalize_session_media_rel(path: &str) -> Option<String> {
+        let candidate = Path::new(path);
+        if candidate.is_absolute() {
+            return None;
+        }
+
+        let mut parts = Vec::new();
+        for component in candidate.components() {
+            match component {
+                std::path::Component::Normal(part) => {
+                    parts.push(part.to_string_lossy().to_string());
+                }
+                std::path::Component::CurDir => {}
+                _ => return None,
+            }
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("/"))
+        }
+    }
+
+    fn is_cleanup_target_rel(path: &str) -> bool {
+        if path.starts_with("audio/") || path.starts_with("midi/") {
+            let Some(ext) = Self::file_extension_lower(Path::new(path)) else {
+                return false;
+            };
+            return matches!(ext.as_str(), "wav" | "mid" | "midi");
+        }
+
+        path.starts_with("peaks/")
+            && Path::new(path).extension().and_then(|ext| ext.to_str()) == Some("json")
+    }
+
+    fn insert_referenced_session_media_path(referenced: &mut HashSet<String>, path: &str) {
+        let Some(rel) = Self::normalize_session_media_rel(path) else {
+            return;
+        };
+        if Self::is_cleanup_target_rel(&rel) {
+            referenced.insert(rel);
+        }
+    }
+
+    fn referenced_session_media_paths(state: &crate::state::StateData) -> HashSet<String> {
+        let mut referenced = HashSet::new();
+
+        for track in &state.tracks {
+            for clip in &track.audio.clips {
+                Self::insert_referenced_session_media_path(&mut referenced, &clip.name);
+                if let Some(source_name) = clip.pitch_correction_source_name.as_deref() {
+                    Self::insert_referenced_session_media_path(&mut referenced, source_name);
+                }
+                if let Some(peaks_file) = clip.peaks_file.as_deref() {
+                    Self::insert_referenced_session_media_path(&mut referenced, peaks_file);
+                }
+            }
+            for clip in &track.midi.clips {
+                Self::insert_referenced_session_media_path(&mut referenced, &clip.name);
+            }
+            for clip in &track.frozen_audio_backup {
+                Self::insert_referenced_session_media_path(&mut referenced, &clip.name);
+                if let Some(source_name) = clip.pitch_correction_source_name.as_deref() {
+                    Self::insert_referenced_session_media_path(&mut referenced, source_name);
+                }
+                if let Some(peaks_file) = clip.peaks_file.as_deref() {
+                    Self::insert_referenced_session_media_path(&mut referenced, peaks_file);
+                }
+            }
+            for clip in &track.frozen_midi_backup {
+                Self::insert_referenced_session_media_path(&mut referenced, &clip.name);
+            }
+            if let Some(render_clip) = track.frozen_render_clip.as_deref() {
+                Self::insert_referenced_session_media_path(&mut referenced, render_clip);
+            }
+        }
+
+        referenced
+    }
+
+    fn collect_cleanup_candidate_files(
+        dir: &Path,
+        session_root: &Path,
+        referenced: &HashSet<String>,
+        out: &mut Vec<(PathBuf, String)>,
+    ) -> io::Result<()> {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(err),
+        };
+
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                Self::collect_cleanup_candidate_files(&path, session_root, referenced, out)?;
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+
+            let Ok(rel_path) = path.strip_prefix(session_root) else {
+                continue;
+            };
+            let rel = rel_path.to_string_lossy().replace('\\', "/");
+            if Self::is_cleanup_target_rel(&rel) && !referenced.contains(&rel) {
+                out.push((path, rel));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn delete_unused_session_media_files(
+        &self,
+        session_root: &Path,
+    ) -> Result<SessionMediaCleanupReport, String> {
+        let referenced = {
+            let state = self.state.blocking_read();
+            Self::referenced_session_media_paths(&state)
+        };
+
+        let mut candidates = Vec::new();
+        Self::collect_cleanup_candidate_files(
+            &session_root.join("audio"),
+            session_root,
+            &referenced,
+            &mut candidates,
+        )
+        .map_err(|e| format!("Failed to scan audio/: {e}"))?;
+        Self::collect_cleanup_candidate_files(
+            &session_root.join("midi"),
+            session_root,
+            &referenced,
+            &mut candidates,
+        )
+        .map_err(|e| format!("Failed to scan midi/: {e}"))?;
+        Self::collect_cleanup_candidate_files(
+            &session_root.join("peaks"),
+            session_root,
+            &referenced,
+            &mut candidates,
+        )
+        .map_err(|e| format!("Failed to scan peaks/: {e}"))?;
+        candidates.sort_by(|a, b| a.1.cmp(&b.1));
+
+        let mut report = SessionMediaCleanupReport::default();
+        for (path, rel) in candidates {
+            match fs::remove_file(&path) {
+                Ok(()) => report.deleted_files.push(rel),
+                Err(e) => report.failed_files.push(format!("{rel} ({e})")),
+            }
+        }
+
+        Ok(report)
     }
 
     fn is_import_audio_path(path: &Path) -> bool {
@@ -4533,5 +4700,50 @@ mod tests {
     fn zoom_slider_midpoint_is_geometric_midpoint() {
         let midpoint = zoom_slider_to_visible_bars(0.5);
         assert!((midpoint - 16.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn referenced_session_media_paths_include_indirect_and_frozen_assets() {
+        let mut state = crate::state::StateData::default();
+        let mut track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 1, 1);
+        track.audio.clips.push(crate::state::AudioClip {
+            name: "audio/lead.wav".to_string(),
+            pitch_correction_source_name: Some("audio/lead_src.wav".to_string()),
+            peaks_file: Some("peaks/lead.json".to_string()),
+            ..Default::default()
+        });
+        track.audio.clips.push(crate::state::AudioClip {
+            name: "/tmp/external.wav".to_string(),
+            ..Default::default()
+        });
+        track.midi.clips.push(crate::state::MIDIClip {
+            name: "midi/pattern.mid".to_string(),
+            ..Default::default()
+        });
+        track.frozen_audio_backup.push(crate::state::AudioClip {
+            name: "audio/frozen.wav".to_string(),
+            pitch_correction_source_name: Some("audio/frozen_src.wav".to_string()),
+            peaks_file: Some("peaks/frozen.json".to_string()),
+            ..Default::default()
+        });
+        track.frozen_midi_backup.push(crate::state::MIDIClip {
+            name: "midi/ghost.midi".to_string(),
+            ..Default::default()
+        });
+        track.frozen_render_clip = Some("audio/render.wav".to_string());
+        state.tracks.push(track);
+
+        let referenced = Maolan::referenced_session_media_paths(&state);
+
+        assert!(referenced.contains("audio/lead.wav"));
+        assert!(referenced.contains("audio/lead_src.wav"));
+        assert!(referenced.contains("peaks/lead.json"));
+        assert!(referenced.contains("midi/pattern.mid"));
+        assert!(referenced.contains("audio/frozen.wav"));
+        assert!(referenced.contains("audio/frozen_src.wav"));
+        assert!(referenced.contains("peaks/frozen.json"));
+        assert!(referenced.contains("midi/ghost.midi"));
+        assert!(referenced.contains("audio/render.wav"));
+        assert!(!referenced.contains("/tmp/external.wav"));
     }
 }
