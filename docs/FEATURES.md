@@ -1,11 +1,12 @@
 # Maolan Features
 
-Last updated: 2026-03-13
+Last updated: 2026-03-17
 
 ## Core DAW Workflow
 - Multi-track audio + MIDI session editing
 - Track selection, reordering, resizing, and rename
-- Track templates and session templates
+- Session template save/load
+- Track template save/load
 - Session save/open/save-as
 - Recent session tracking
 - Session metadata editing:
@@ -26,6 +27,14 @@ Last updated: 2026-03-13
 - Clip middle-click split at cursor/snap point
 - MIDI clip double-click opens piano roll
 - Audio warp markers with reset / half-speed / double-speed helpers
+
+## Timeline Markers and Arrangement Aids
+- Per-track editor markers
+- Marker create / rename / move / delete workflow
+- Snap-aware marker placement and marker dragging
+- Ruler playhead seek
+- Loop range set/clear
+- Punch range set/clear
 
 ## Take Lanes and Comping
 - Overlap-based take lane stacking
@@ -67,6 +76,9 @@ Last updated: 2026-03-13
 - Chord generation
 - Legato
 - Velocity shaping
+- Configurable scale root / major-minor mode
+- Configurable chord type
+- Configurable groove, humanize, and velocity-shape amounts
 
 ## Timing and Transport
 - Tempo and time-signature timeline editing
@@ -74,8 +86,6 @@ Last updated: 2026-03-13
 - Numeric tempo/time-signature input with validation
 - Play/pause/stop/record transport control
 - Toolbar panic button for hardware MIDI outputs (`CC64=0`, `CC120=0`, `CC123=0`)
-- Loop range set/clear
-- Punch range set/clear
 - Metronome enable/disable
 - Clip playback enable/disable at transport level
 
@@ -153,7 +163,6 @@ Last updated: 2026-03-13
 - MIDI mappings import/export/clear-all
 - Preferences saved to `~/.config/maolan/config.toml`
 - Recent sessions menu
-- Autosave recovery preview summary
 
 ## MIDI Learn and Control Surface Features
 - Track MIDI learn targets:
@@ -172,7 +181,8 @@ Last updated: 2026-03-13
 - Collision/conflict protection
 
 ## Platform Notes
-- Unix builds support CLAP, VST3, and LV2.
+- Linux and FreeBSD builds support CLAP, VST3, and LV2.
+- macOS builds refresh CLAP and VST3 plugin support paths; LV2 is Unix-only in the current codebase.
 - Linux and FreeBSD builds currently force the X11 window backend at startup.
 - FreeBSD roadmap notes still mark MIDI 2.0 as N/A.
 

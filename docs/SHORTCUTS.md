@@ -1,6 +1,6 @@
 # Maolan Shortcuts and Gestures
 
-Last updated: 2026-03-16
+Last updated: 2026-03-17
 
 ## Keyboard Shortcuts
 ### Global / Session
@@ -30,7 +30,7 @@ Last updated: 2026-03-16
 ### Workspace / Track List
 - `Left click track`: Select track
 - `Ctrl+Left click track`: Add track to the current selection
-- `Double click track`: Open track plugin view
+- `Double click track`: Open the track plugin/routing graph
 - `Right click track`: Open track context menu
   - Track actions such as automation lanes, rename, sends/returns, MIDI learn, freeze/flatten, template save, and grouping/VCA actions depending on track state
 - `Drag track` (grab track body): Reorder track
@@ -100,7 +100,6 @@ Last updated: 2026-03-16
 - `SysEx lane`: Left drag moves SysEx event, double click opens SysEx editor
 
 ### Plugin Graph
-- `Double click track`: Open the track plugin/routing graph
 - `Drag plugin node`: Move plugin node in graph
 - `Drag from port to port`: Create audio or MIDI connection
 - `Select connection + delete`: Remove selected graph connection
@@ -109,5 +108,6 @@ Last updated: 2026-03-16
 ## Notes
 - Current keyboard handling is `Ctrl`-based in code paths (including on macOS builds).
 - Some actions are context-dependent (current view/tool/selection state).
+- The `Q` / `H` / `G` piano shortcuts act on the current piano-roll note selection.
 - Audio clip stretching is only available when the `rubberband` executable can be found on `PATH`.
 - The main editor zoom is geometric rather than linear, so equal slider movement produces equal zoom-ratio changes.
