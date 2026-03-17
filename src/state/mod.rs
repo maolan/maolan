@@ -378,6 +378,8 @@ pub struct PitchCorrectionData {
 }
 
 pub const DEFAULT_PITCH_CORRECTION_FRAME_LIKENESS: f32 = 0.2;
+pub const DEFAULT_PITCH_CORRECTION_INERTIA_MS: u16 = 0;
+pub const DEFAULT_PITCH_CORRECTION_FORMANT_COMPENSATION: bool = true;
 
 #[derive(Debug, Clone)]
 pub struct DraggingPitchCorrectionPoints {
@@ -495,6 +497,8 @@ pub struct StateData {
     pub pitch_correction_dragging_points: Option<DraggingPitchCorrectionPoints>,
     pub pitch_correction_selecting_rect: Option<(Point, Point)>,
     pub pitch_correction_frame_likeness: f32,
+    pub pitch_correction_inertia_ms: u16,
+    pub pitch_correction_formant_compensation: bool,
     pub piano_zoom_x: f32,
     pub piano_zoom_y: f32,
     pub piano_scroll_x: f32,
@@ -658,6 +662,8 @@ impl Default for StateData {
             pitch_correction_dragging_points: None,
             pitch_correction_selecting_rect: None,
             pitch_correction_frame_likeness: DEFAULT_PITCH_CORRECTION_FRAME_LIKENESS,
+            pitch_correction_inertia_ms: DEFAULT_PITCH_CORRECTION_INERTIA_MS,
+            pitch_correction_formant_compensation: DEFAULT_PITCH_CORRECTION_FORMANT_COMPENSATION,
             piano_zoom_x: 20.0,
             piano_zoom_y: 1.0,
             piano_scroll_x: 0.0,

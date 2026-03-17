@@ -138,7 +138,6 @@ impl Maolan {
                     let show_track_marker_dialog = state.track_marker_dialog.is_some();
                     let diagnostics_report = state.diagnostics_report.clone();
                     let status_message = state.message.clone();
-                    let transport_play_pause_enabled = !matches!(view_kind, View::PitchCorrection);
                     drop(state);
 
                     let view = match view_kind {
@@ -285,7 +284,6 @@ impl Maolan {
                     content = content.push(self.toolbar.view(ToolbarViewState {
                         playing: self.playing,
                         paused: self.paused,
-                        transport_play_pause_enabled,
                         recording: self.record_armed,
                         metronome_enabled: self.metronome_enabled,
                         has_session_end,

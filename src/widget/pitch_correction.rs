@@ -12,9 +12,10 @@ use iced::{
     widget::{
         Id, Stack, button, canvas,
         canvas::{Action as CanvasAction, Frame, Geometry, Path, Program},
-        column, container, pin, row, scrollable, slider, text, vertical_slider,
+        checkbox, column, container, pin, row, scrollable, slider, text, vertical_slider,
     },
 };
+use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct PitchCorrection {
@@ -65,6 +66,8 @@ impl PitchCorrection {
             dragging_points,
             selecting_rect,
             frame_likeness,
+            inertia_ms,
+            formant_compensation,
         ) = {
             let state = self.state.blocking_read();
             (
@@ -77,6 +80,8 @@ impl PitchCorrection {
                 state
                     .pitch_correction_frame_likeness
                     .clamp(Self::FRAME_LIKENESS_MIN, Self::FRAME_LIKENESS_MAX),
+                state.pitch_correction_inertia_ms.min(1000),
+                state.pitch_correction_formant_compensation,
             )
         };
         let Some(roll) = roll else {
@@ -209,9 +214,6 @@ impl PitchCorrection {
 
         let info_strip = container(
             column![
-                text("Pitch Correction").size(12),
-                text(roll.clip_name.clone()).size(11),
-                text(format!("Detected segments: {}", roll.points.len())).size(10),
                 text(format!("Frame likeness: {:.2}", frame_likeness)).size(10),
                 slider(
                     Self::FRAME_LIKENESS_MIN..=Self::FRAME_LIKENESS_MAX,
@@ -219,8 +221,11 @@ impl PitchCorrection {
                     Message::PitchCorrectionFrameLikenessChanged,
                 )
                 .step(0.05),
-                button(text("Re-detect").size(11)).on_press(Message::PitchCorrectionRedetect),
-                text("Drag vertically to set target pitch.").size(10),
+                text(format!("Inertia: {} ms", inertia_ms)).size(10),
+                slider(0..=1000, inertia_ms, Message::PitchCorrectionInertiaChanged).step(1_u16),
+                checkbox(formant_compensation)
+                    .label("Formant compensation")
+                    .on_toggle(Message::PitchCorrectionFormantCompensationChanged),
                 button(text("Apply").size(11)).on_press(Message::PitchCorrectionApply),
             ]
             .spacing(8)
@@ -318,7 +323,8 @@ impl PitchRollCanvas {
     fn point_bounds(&self, point: &PitchCorrectionPoint, bounds: Rectangle) -> Rectangle {
         let x = point.start_sample as f32 * self.pixels_per_sample;
         let width = (point.length_samples as f32 * self.pixels_per_sample).max(6.0);
-        let y = (f32::from(PITCH_MAX) - point.target_midi_pitch.clamp(0.0, f32::from(PITCH_MAX)))
+        let y = (f32::from(PITCH_MAX) - point.target_midi_pitch.clamp(0.0, f32::from(PITCH_MAX))
+            + 0.5)
             * self.row_h;
         let height = (self.row_h * (0.45 + 0.35 * point.clarity.clamp(0.0, 1.0))).max(6.0);
         Rectangle {
@@ -350,6 +356,8 @@ impl PitchRollCanvas {
 struct PitchRollCanvasState {
     drag_start: Option<Point>,
     dragging_mode: PitchDraggingMode,
+    last_click: Option<(usize, Instant)>,
+    selection_dragged: bool,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -374,7 +382,27 @@ impl Program<Message> for PitchRollCanvas {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if let Some(position) = cursor.position_in(bounds) {
                     state.drag_start = Some(position);
+                    state.selection_dragged = false;
                     if let Some(point_index) = self.hit_test(position, bounds) {
+                        let now = Instant::now();
+                        let double_click = state
+                            .last_click
+                            .map(|(last_idx, last_time)| {
+                                last_idx == point_index
+                                    && now.duration_since(last_time) <= Duration::from_millis(350)
+                            })
+                            .unwrap_or(false);
+                        state.last_click = Some((point_index, now));
+                        if double_click {
+                            state.drag_start = None;
+                            state.dragging_mode = PitchDraggingMode::None;
+                            return Some(
+                                CanvasAction::publish(Message::PitchCorrectionSnapToNearest {
+                                    point_index,
+                                })
+                                .and_capture(),
+                            );
+                        }
                         state.dragging_mode = PitchDraggingMode::DraggingPoints;
                         return Some(
                             CanvasAction::publish(Message::PitchCorrectionPointClick {
@@ -384,6 +412,7 @@ impl Program<Message> for PitchRollCanvas {
                             .and_capture(),
                         );
                     }
+                    state.last_click = None;
                     state.dragging_mode = PitchDraggingMode::SelectingRect;
                     return Some(
                         CanvasAction::publish(Message::PitchCorrectionSelectRectStart { position })
@@ -405,6 +434,12 @@ impl Program<Message> for PitchRollCanvas {
                             );
                         }
                         PitchDraggingMode::SelectingRect => {
+                            if let Some(start) = state.drag_start
+                                && ((position.x - start.x).abs() > 2.0
+                                    || (position.y - start.y).abs() > 2.0)
+                            {
+                                state.selection_dragged = true;
+                            }
                             return Some(
                                 CanvasAction::publish(Message::PitchCorrectionSelectRectDrag {
                                     position,
@@ -426,10 +461,15 @@ impl Program<Message> for PitchRollCanvas {
                             CanvasAction::publish(Message::PitchCorrectionPointsEndDrag)
                                 .and_capture(),
                         ),
-                        PitchDraggingMode::SelectingRect => Some(
-                            CanvasAction::publish(Message::PitchCorrectionSelectRectEnd)
-                                .and_capture(),
-                        ),
+                        PitchDraggingMode::SelectingRect => {
+                            let message = if state.selection_dragged {
+                                Message::PitchCorrectionSelectRectEnd
+                            } else {
+                                Message::PitchCorrectionClearSelection
+                            };
+                            state.selection_dragged = false;
+                            Some(CanvasAction::publish(message).and_capture())
+                        }
                         PitchDraggingMode::None => None,
                     };
                 }

@@ -58,6 +58,85 @@ use std::{
 use tracing::error;
 
 impl Maolan {
+    const PITCH_CORRECTION_HISTORY_LIMIT: usize = 100;
+
+    fn push_pitch_correction_history(
+        &mut self,
+        points: Vec<crate::state::PitchCorrectionPoint>,
+        selected_points: HashSet<usize>,
+    ) {
+        self.pitch_correction_undo
+            .push(super::PitchCorrectionHistoryEntry {
+                points,
+                selected_points,
+            });
+        if self.pitch_correction_undo.len() > Self::PITCH_CORRECTION_HISTORY_LIMIT {
+            self.pitch_correction_undo.remove(0);
+        }
+        self.pitch_correction_redo.clear();
+    }
+
+    fn clear_pitch_correction_history(&mut self) {
+        self.pitch_correction_undo.clear();
+        self.pitch_correction_redo.clear();
+    }
+
+    fn undo_pitch_correction_edit(&mut self) -> Task<Message> {
+        let Some(previous) = self.pitch_correction_undo.pop() else {
+            return Task::none();
+        };
+        let mut state = self.state.blocking_write();
+        let current_points = match state.pitch_correction.as_ref() {
+            Some(pitch_correction) => pitch_correction.points.clone(),
+            None => {
+                self.pitch_correction_undo.push(previous);
+                return Task::none();
+            }
+        };
+        let current_selected = state.pitch_correction_selected_points.clone();
+        self.pitch_correction_redo
+            .push(super::PitchCorrectionHistoryEntry {
+                points: current_points,
+                selected_points: current_selected,
+            });
+        if let Some(pitch_correction) = state.pitch_correction.as_mut() {
+            pitch_correction.points = previous.points;
+        }
+        state.pitch_correction_selected_points = previous.selected_points;
+        state.pitch_correction_dragging_points = None;
+        state.pitch_correction_selecting_rect = None;
+        state.message = "Undid pitch correction edit".to_string();
+        Task::none()
+    }
+
+    fn redo_pitch_correction_edit(&mut self) -> Task<Message> {
+        let Some(next) = self.pitch_correction_redo.pop() else {
+            return Task::none();
+        };
+        let mut state = self.state.blocking_write();
+        let current_points = match state.pitch_correction.as_ref() {
+            Some(pitch_correction) => pitch_correction.points.clone(),
+            None => {
+                self.pitch_correction_redo.push(next);
+                return Task::none();
+            }
+        };
+        let current_selected = state.pitch_correction_selected_points.clone();
+        self.pitch_correction_undo
+            .push(super::PitchCorrectionHistoryEntry {
+                points: current_points,
+                selected_points: current_selected,
+            });
+        if let Some(pitch_correction) = state.pitch_correction.as_mut() {
+            pitch_correction.points = next.points;
+        }
+        state.pitch_correction_selected_points = next.selected_points;
+        state.pitch_correction_dragging_points = None;
+        state.pitch_correction_selecting_rect = None;
+        state.message = "Redid pitch correction edit".to_string();
+        Task::none()
+    }
+
     fn quantize_meter_db(level_db: f32) -> f32 {
         let step = METER_QUANTIZE_STEP_DB;
         ((level_db / step).round() * step).clamp(-90.0, 20.0)
@@ -2156,6 +2235,8 @@ impl Maolan {
                         source_offset: clip.pitch_correction_source_offset.unwrap_or(clip.offset),
                         source_length: clip.pitch_correction_source_length.unwrap_or(clip.length),
                         points: pitch_correction.points.clone(),
+                        inertia_ms: state.pitch_correction_inertia_ms.min(1000),
+                        formant_compensation: state.pitch_correction_formant_compensation,
                     }
                 })
         }) else {
@@ -2203,6 +2284,8 @@ impl Maolan {
                         request.source_offset,
                         request.source_length,
                         &request.points,
+                        request.inertia_ms,
+                        request.formant_compensation,
                         progress_fn,
                     )
                     .await
@@ -2217,6 +2300,60 @@ impl Maolan {
             },
             |msg| msg,
         )
+    }
+
+    fn snap_pitch_correction_points_to_nearest(&mut self, point_index: usize) -> Task<Message> {
+        let mut state = self.state.blocking_write();
+        let selection = if state
+            .pitch_correction_selected_points
+            .contains(&point_index)
+        {
+            let mut indices: Vec<usize> = state
+                .pitch_correction_selected_points
+                .iter()
+                .copied()
+                .collect();
+            indices.sort_unstable();
+            indices
+        } else {
+            state.pitch_correction_selected_points.clear();
+            state.pitch_correction_selected_points.insert(point_index);
+            vec![point_index]
+        };
+        state.pitch_correction_dragging_points = None;
+        state.pitch_correction_selecting_rect = None;
+        let before_selection = state.pitch_correction_selected_points.clone();
+
+        let Some(pitch_correction) = state.pitch_correction.as_mut() else {
+            return Task::none();
+        };
+        let before_points = pitch_correction.points.clone();
+        let mut snapped = 0usize;
+        for idx in selection.iter().copied() {
+            if let Some(point) = pitch_correction.points.get_mut(idx) {
+                let snapped_pitch = point.target_midi_pitch.round().clamp(0.0, 119.0);
+                if (point.target_midi_pitch - snapped_pitch).abs() > f32::EPSILON {
+                    point.target_midi_pitch = snapped_pitch;
+                    snapped = snapped.saturating_add(1);
+                }
+            }
+        }
+        state.message = if snapped == 0 {
+            if selection.len() == 1 {
+                "Pitch segment is already on the nearest note".to_string()
+            } else {
+                "Selected pitch segments are already on the nearest notes".to_string()
+            }
+        } else if selection.len() == 1 {
+            "Snapped pitch segment to nearest note".to_string()
+        } else {
+            format!("Snapped {} pitch segments to nearest notes", snapped)
+        };
+        drop(state);
+        if snapped > 0 {
+            self.push_pitch_correction_history(before_points, before_selection);
+        }
+        Task::none()
     }
 
     fn schedule_audio_peak_rebuild(
