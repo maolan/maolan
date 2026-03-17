@@ -4,7 +4,7 @@ use crate::{
         workspace::{
             AUDIO_CLIP_BASE, AUDIO_CLIP_BORDER, AUDIO_CLIP_SELECTED_BASE,
             AUDIO_CLIP_SELECTED_BORDER, CLIP_RESIZE_HANDLE_WIDTH, MIDI_CLIP_BASE, MIDI_CLIP_BORDER,
-            MIDI_CLIP_SELECTED_BASE, MIDI_CLIP_SELECTED_BORDER,
+            MIDI_CLIP_SELECTED_BASE, MIDI_CLIP_SELECTED_BORDER, MIN_TICK_SPACING_PX,
         },
         workspace_editor::{CHECKPOINTS, MAX_RENDER_COLUMNS, RENDER_MARGIN_COLUMNS},
     },
@@ -757,6 +757,17 @@ struct TrackBarGridCanvasState {
 }
 
 impl TrackBarGridCanvas {
+    fn step_for_spacing(base_px: f32, min_spacing_px: f32) -> usize {
+        if base_px <= 0.0 {
+            return 1;
+        }
+        let mut step = 1usize;
+        while base_px * (step as f32) < min_spacing_px {
+            step *= 2;
+        }
+        step
+    }
+
     fn shape_hash(&self, bounds: Rectangle) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         bounds.width.to_bits().hash(&mut hasher);
@@ -790,7 +801,8 @@ impl canvas::Program<Message> for TrackBarGridCanvas {
         let geom = state
             .cache
             .draw(renderer, bounds.size(), |frame: &mut Frame| {
-                let step = self.bar_pixels.max(1.0);
+                let step = self.bar_pixels.max(1.0)
+                    * Self::step_for_spacing(self.bar_pixels, MIN_TICK_SPACING_PX) as f32;
                 let color = Color::from_rgba(0.86, 0.96, 0.74, 0.14);
                 let mut x = 0.0_f32;
                 while x <= bounds.width + 1.0 {
