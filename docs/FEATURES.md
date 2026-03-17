@@ -26,6 +26,10 @@ Last updated: 2026-03-17
 - Clip rename
 - Clip middle-click split at cursor/snap point
 - MIDI clip double-click opens piano roll
+- Audio clip pitch-correction editor
+- Pitch-correction frame-likeness slider in the left pane
+- In-memory cached pitch scan for likeness regrouping without rescanning audio
+- Manual pitch-segment retargeting with drag-to-adjust
 - Audio warp markers with reset / half-speed / double-speed helpers
 
 ## Timeline Markers and Arrangement Aids
