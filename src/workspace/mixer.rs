@@ -66,6 +66,12 @@ impl Default for FaderBayState {
     }
 }
 
+#[derive(Default)]
+struct MeterState {
+    cache: canvas::Cache,
+    last_hash: Cell<u64>,
+}
+
 struct PanState {
     dragging: bool,
     last_click_at: Option<Instant>,
@@ -112,32 +118,18 @@ impl SmallMeterLevels {
 }
 
 #[derive(Clone)]
-struct FaderBayCanvas {
+struct FaderSliderCanvas {
     track_name: String,
-    channels: usize,
-    levels_qdb: SmallMeterLevels,
     value: f32,
     show_ticks: bool,
     fader_height: f32,
 }
 
-impl FaderBayCanvas {
+impl FaderSliderCanvas {
     const OUTER_PAD_X: f32 = 8.0;
     const OUTER_PAD_Y: f32 = 7.0;
     const INNER_GAP: f32 = 8.0;
     const SCALE_GAP: f32 = 3.0;
-
-    fn slider_block_width(&self) -> f32 {
-        if self.show_ticks {
-            FADER_WIDTH + Self::SCALE_GAP + SCALE_WIDTH
-        } else {
-            FADER_WIDTH
-        }
-    }
-
-    fn meter_block_width(&self) -> f32 {
-        Mixer::meter_total_width(self.channels)
-    }
 
     fn slider_bounds(&self, bounds: Rectangle) -> Rectangle {
         Rectangle {
@@ -160,14 +152,13 @@ impl FaderBayCanvas {
         let mut hasher = DefaultHasher::new();
         bounds.width.to_bits().hash(&mut hasher);
         bounds.height.to_bits().hash(&mut hasher);
-        self.channels.hash(&mut hasher);
         self.show_ticks.hash(&mut hasher);
         self.fader_height.to_bits().hash(&mut hasher);
         hasher.finish()
     }
 }
 
-impl canvas::Program<Message> for FaderBayCanvas {
+impl canvas::Program<Message> for FaderSliderCanvas {
     type State = FaderBayState;
 
     fn update(
@@ -237,10 +228,6 @@ impl canvas::Program<Message> for FaderBayCanvas {
             width: FADER_WIDTH,
             height: self.fader_height,
         };
-        let meter_x = Self::OUTER_PAD_X + self.slider_block_width() + Self::INNER_GAP;
-        let meter_y = Self::OUTER_PAD_Y;
-        let meter_inner_h = self.fader_height.max(1.0);
-        let meter_total_w = self.meter_block_width();
         let static_hash = self.static_hash(bounds);
 
         if state.last_hash.get() != static_hash {
@@ -307,14 +294,6 @@ impl canvas::Program<Message> for FaderBayCanvas {
                     });
                 }
             }
-
-            frame.fill(
-                &Path::rectangle(
-                    Point::new(meter_x, meter_y),
-                    iced::Size::new(meter_total_w, self.fader_height),
-                ),
-                Color::from_rgba(0.09, 0.10, 0.12, 1.0),
-            );
         });
 
         let normalized = (self.value - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB);
@@ -341,17 +320,69 @@ impl canvas::Program<Message> for FaderBayCanvas {
             handle_color,
         );
 
+        vec![static_geometry, dynamic_frame.into_geometry()]
+    }
+}
+
+#[derive(Clone)]
+struct MeterCanvas {
+    channels: usize,
+    levels_qdb: SmallMeterLevels,
+    fader_height: f32,
+}
+
+impl MeterCanvas {
+    fn static_hash(&self, bounds: Rectangle) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        bounds.width.to_bits().hash(&mut hasher);
+        bounds.height.to_bits().hash(&mut hasher);
+        self.channels.hash(&mut hasher);
+        self.fader_height.to_bits().hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl canvas::Program<Message> for MeterCanvas {
+    type State = MeterState;
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return vec![];
+        }
+
+        let static_hash = self.static_hash(bounds);
+        if state.last_hash.get() != static_hash {
+            state.cache.clear();
+            state.last_hash.set(static_hash);
+        }
+
+        let static_geometry = state.cache.draw(renderer, bounds.size(), |frame| {
+            frame.fill(
+                &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
+                Color::from_rgba(0.09, 0.10, 0.12, 1.0),
+            );
+        });
+
+        let meter_inner_h = self.fader_height.max(1.0);
         let bar_w = METER_BAR_WIDTH;
         let bar_gap = METER_BAR_GAP;
+        let mut dynamic_frame = Frame::new(renderer, bounds.size());
         for channel_idx in 0..self.channels.max(1) {
             let db = Mixer::qdb_to_level(self.levels_qdb.get(channel_idx));
             let fill = Mixer::level_to_meter_fill(db);
             let filled_h = (meter_inner_h * fill).max(1.0);
             let y = (meter_inner_h - filled_h).max(0.0);
-            let x = meter_x + METER_PAD_X + channel_idx as f32 * (bar_w + bar_gap);
+            let x = METER_PAD_X + channel_idx as f32 * (bar_w + bar_gap);
             dynamic_frame.fill(
                 &Path::rectangle(
-                    Point::new(x, meter_y + METER_PAD_Y + y),
+                    Point::new(x, METER_PAD_Y + y),
                     iced::Size::new(bar_w, (filled_h - METER_PAD_Y).max(1.0)),
                 ),
                 Mixer::meter_fill_color(db),
@@ -706,24 +737,46 @@ impl Mixer {
         fader_height: f32,
         show_ticks: bool,
     ) -> Element<'static, Message> {
-        let inner_width = if show_ticks {
-            FADER_WIDTH + 3.0 + SCALE_WIDTH
+        let channels = channels.max(1);
+        let slider_width = if show_ticks {
+            FADER_WIDTH + FaderSliderCanvas::SCALE_GAP + SCALE_WIDTH
         } else {
             FADER_WIDTH
-        } + 8.0
-            + Self::meter_total_width(channels.max(1));
-        let total_width = inner_width + (FaderBayCanvas::OUTER_PAD_X * 2.0);
+        } + (FaderSliderCanvas::OUTER_PAD_X * 2.0);
+        let meter_width = Self::meter_total_width(channels);
         container(
-            canvas(FaderBayCanvas {
-                track_name,
-                channels: channels.max(1),
-                levels_qdb: SmallMeterLevels::from_db(levels_db, channels.max(1)),
-                value,
-                show_ticks,
-                fader_height,
-            })
-            .width(Length::Fixed(total_width))
-            .height(Length::Fixed(fader_height + 14.0)),
+            row![
+                lazy(
+                    (
+                        track_name.clone(),
+                        channels,
+                        Self::level_to_qdb(value),
+                        (fader_height.max(0.0) * 10.0).round() as u16,
+                        show_ticks,
+                    ),
+                    move |(track_name, _channels, value_qdb, fader_height_tenths, show_ticks)| -> Element<'static, Message> {
+                        let value = Self::qdb_to_level(*value_qdb);
+                        let fader_height = *fader_height_tenths as f32 / 10.0;
+                        canvas(FaderSliderCanvas {
+                            track_name: track_name.clone(),
+                            value,
+                            show_ticks: *show_ticks,
+                            fader_height,
+                        })
+                        .width(Length::Fixed(slider_width))
+                        .height(Length::Fixed(fader_height + (FaderSliderCanvas::OUTER_PAD_Y * 2.0)))
+                        .into()
+                    },
+                ),
+                canvas(MeterCanvas {
+                    channels,
+                    levels_qdb: SmallMeterLevels::from_db(levels_db, channels),
+                    fader_height,
+                })
+                .width(Length::Fixed(meter_width))
+                .height(Length::Fixed(fader_height + (FaderSliderCanvas::OUTER_PAD_Y * 2.0))),
+            ]
+            .spacing(FaderSliderCanvas::INNER_GAP),
         )
         .width(Length::Fill)
         .style(|_theme| style::mixer::bay())
@@ -758,7 +811,8 @@ impl Mixer {
         master_channels: usize,
         metronome_enabled: bool,
     ) -> f32 {
-        let mut widths = vec![Self::strip_width_for_channels(master_channels.max(1))];
+        let strip_width = Self::strip_width_for_channels(master_channels.max(1));
+        let mut widths = vec![strip_width];
         if metronome_enabled && let Some(width) = metronome_width {
             widths.insert(0, width);
         }

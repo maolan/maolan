@@ -1,3 +1,4 @@
+use super::VisibleTrackWindow;
 use crate::{
     consts::{
         state_ids::METRONOME_TRACK_ID,
@@ -829,6 +830,111 @@ fn track_bar_grid_overlay(
         .into()
 }
 
+#[derive(Clone)]
+struct TrackLaneBackgroundCanvas {
+    header_height: f32,
+    lane_height: f32,
+    audio_lanes: usize,
+    midi_lanes: usize,
+}
+
+#[derive(Default)]
+struct TrackLaneBackgroundCanvasState {
+    cache: canvas::Cache,
+    last_hash: Cell<u64>,
+}
+
+impl TrackLaneBackgroundCanvas {
+    fn shape_hash(&self, bounds: Rectangle) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        bounds.width.to_bits().hash(&mut hasher);
+        bounds.height.to_bits().hash(&mut hasher);
+        self.header_height.to_bits().hash(&mut hasher);
+        self.lane_height.to_bits().hash(&mut hasher);
+        self.audio_lanes.hash(&mut hasher);
+        self.midi_lanes.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl canvas::Program<Message> for TrackLaneBackgroundCanvas {
+    type State = TrackLaneBackgroundCanvasState;
+
+    fn draw(
+        &self,
+        state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        if bounds.width <= 0.0 || bounds.height <= 0.0 {
+            return vec![];
+        }
+
+        let hash = self.shape_hash(bounds);
+        if state.last_hash.get() != hash {
+            state.cache.clear();
+            state.last_hash.set(hash);
+        }
+
+        let geom = state
+            .cache
+            .draw(renderer, bounds.size(), |frame: &mut Frame| {
+                frame.fill(
+                    &Path::rectangle(
+                        Point::new(0.0, 0.0),
+                        iced::Size::new(bounds.width, self.header_height),
+                    ),
+                    Color::from_rgba(0.08, 0.08, 0.08, 0.12),
+                );
+
+                for lane in 0..self.audio_lanes {
+                    let y = self.header_height + lane as f32 * self.lane_height;
+                    frame.fill(
+                        &Path::rectangle(
+                            Point::new(0.0, y),
+                            iced::Size::new(bounds.width, self.lane_height),
+                        ),
+                        Color::from_rgba(0.15, 0.20, 0.28, 0.22),
+                    );
+                }
+
+                for lane in 0..self.midi_lanes {
+                    let y =
+                        self.header_height + (self.audio_lanes + lane) as f32 * self.lane_height;
+                    frame.fill(
+                        &Path::rectangle(
+                            Point::new(0.0, y),
+                            iced::Size::new(bounds.width, self.lane_height),
+                        ),
+                        Color::from_rgba(0.12, 0.26, 0.14, 0.25),
+                    );
+                }
+            });
+
+        vec![geom]
+    }
+}
+
+fn track_lane_background_overlay(
+    height: f32,
+    header_height: f32,
+    lane_height: f32,
+    audio_lanes: usize,
+    midi_lanes: usize,
+) -> Element<'static, Message> {
+    canvas(TrackLaneBackgroundCanvas {
+        header_height,
+        lane_height,
+        audio_lanes,
+        midi_lanes,
+    })
+    .width(Length::Fill)
+    .height(Length::Fixed(height))
+    .into()
+}
+
 fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Message> {
     let TrackElementViewArgs {
         state,
@@ -888,6 +994,17 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     let selected_audio_count = selected_audio_indices.len();
     let selected_midi_count = selected_midi_indices.len();
     clips.push(
+        pin(track_lane_background_overlay(
+            height,
+            layout.header_height,
+            lane_height,
+            track.audio.ins,
+            track.midi.ins,
+        ))
+        .position(Point::new(0.0, 0.0))
+        .into(),
+    );
+    clips.push(
         pin(track_bar_grid_overlay(
             height,
             samples_per_bar,
@@ -900,16 +1017,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         pin(mouse_area(
             container("")
                 .width(Length::Fill)
-                .height(Length::Fixed(layout.header_height))
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(Color {
-                        r: 0.08,
-                        g: 0.08,
-                        b: 0.08,
-                        a: 0.12,
-                    })),
-                    ..container::Style::default()
-                }),
+                .height(Length::Fixed(layout.header_height)),
         )
         .on_right_press(Message::TrackMarkerCreate(track_name_cloned.clone())))
         .position(Point::new(0.0, 0.0))
@@ -986,44 +1094,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         );
     }
 
-    for lane in 0..track.audio.ins {
-        let y = track.lane_top(Kind::Audio, lane);
-        clips.push(
-            pin(container("")
-                .width(Length::Fill)
-                .height(Length::Fixed(lane_height))
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(Color {
-                        r: 0.15,
-                        g: 0.2,
-                        b: 0.28,
-                        a: 0.22,
-                    })),
-                    ..container::Style::default()
-                }))
-            .position(Point::new(0.0, y))
-            .into(),
-        );
-    }
-    for lane in 0..track.midi.ins {
-        let y = track.lane_top(Kind::MIDI, lane);
-        clips.push(
-            pin(container("")
-                .width(Length::Fill)
-                .height(Length::Fixed(lane_height))
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(Color {
-                        r: 0.12,
-                        g: 0.26,
-                        b: 0.14,
-                        a: 0.25,
-                    })),
-                    ..container::Style::default()
-                }))
-            .position(Point::new(0.0, y))
-            .into(),
-        );
-    }
     let visible_automation_lanes: Vec<_> = track
         .automation_lanes
         .iter()
@@ -2479,6 +2549,7 @@ pub struct EditorViewArgs<'a> {
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
     pub midi_clip_previews: Option<&'a MidiClipPreviewMap>,
+    pub visible_track_window: VisibleTrackWindow,
 }
 
 #[derive(Clone)]
@@ -2494,6 +2565,7 @@ pub struct OwnedEditorViewArgs {
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<HashMap<String, ClipPeaks>>,
     pub midi_clip_previews: Option<MidiClipPreviewMap>,
+    pub visible_track_window: VisibleTrackWindow,
 }
 
 impl Editor {
@@ -2513,6 +2585,16 @@ impl Editor {
         args.recording_preview_bounds.hash(&mut hasher);
         args.active_target_track.hash(&mut hasher);
         args.active_target_valid.hash(&mut hasher);
+        args.visible_track_window.start_index.hash(&mut hasher);
+        args.visible_track_window.end_index.hash(&mut hasher);
+        args.visible_track_window
+            .top_padding
+            .to_bits()
+            .hash(&mut hasher);
+        args.visible_track_window
+            .bottom_padding
+            .to_bits()
+            .hash(&mut hasher);
         if let Some(drag) = args.active_clip_drag {
             std::mem::discriminant(&drag.kind).hash(&mut hasher);
             drag.index.hash(&mut hasher);
@@ -2577,6 +2659,12 @@ impl Editor {
             .tracks
             .iter()
             .filter(|track| track.name != METRONOME_TRACK_ID)
+            .skip(args.visible_track_window.start_index)
+            .take(
+                args.visible_track_window
+                    .end_index
+                    .saturating_sub(args.visible_track_window.start_index),
+            )
         {
             track.name.hash(&mut hasher);
             track.height.to_bits().hash(&mut hasher);
@@ -2695,6 +2783,7 @@ impl Editor {
             recording_preview_bounds,
             recording_preview_peaks,
             midi_clip_previews,
+            visible_track_window,
         } = args;
         let state_handle = self.state;
         let session_root_ref = session_root.as_ref();
@@ -2704,11 +2793,21 @@ impl Editor {
         let midi_clip_previews_ref = midi_clip_previews.as_ref();
 
         let mut result = column![];
+        if visible_track_window.top_padding > 0.0 {
+            result =
+                result.push(Space::new().height(Length::Fixed(visible_track_window.top_padding)));
+        }
         let state = state_handle.blocking_read();
         for track in state
             .tracks
             .iter()
             .filter(|track| track.name != METRONOME_TRACK_ID)
+            .skip(visible_track_window.start_index)
+            .take(
+                visible_track_window
+                    .end_index
+                    .saturating_sub(visible_track_window.start_index),
+            )
         {
             result = result.push(view_track_elements(TrackElementViewArgs {
                 state: &state,
@@ -2725,6 +2824,10 @@ impl Editor {
                 recording_preview_peaks: recording_preview_peaks_ref,
                 midi_clip_previews: midi_clip_previews_ref,
             }));
+        }
+        if visible_track_window.bottom_padding > 0.0 {
+            result = result
+                .push(Space::new().height(Length::Fixed(visible_track_window.bottom_padding)));
         }
         let mut layers: Vec<Element<'static, Message>> =
             vec![result.width(Length::Fill).height(Length::Fill).into()];

@@ -156,6 +156,9 @@ impl Maolan {
                             zoom_visible_bars: self.zoom_visible_bars,
                             mixer_scroll_x: self.mixer_scroll_x,
                             window_width: self.size.width,
+                            window_height: self.size.height,
+                            editor_scroll_y: self.editor_scroll_y,
+                            track_drag_active: self.track.is_some(),
                             tracks_resize_hovered: self.tracks_resize_hovered,
                             mixer_resize_hovered: self.mixer_resize_hovered,
                             tracks_visible: self.tracks_visible,
@@ -198,6 +201,9 @@ impl Maolan {
                             zoom_visible_bars: self.zoom_visible_bars,
                             mixer_scroll_x: 0.0,
                             window_width: self.size.width,
+                            window_height: self.size.height,
+                            editor_scroll_y: self.editor_scroll_y,
+                            track_drag_active: false,
                             tracks_resize_hovered: false,
                             mixer_resize_hovered: false,
                             tracks_visible: false,
@@ -238,6 +244,9 @@ impl Maolan {
                                 zoom_visible_bars: self.zoom_visible_bars,
                                 mixer_scroll_x: 0.0,
                                 window_width: self.size.width,
+                                window_height: self.size.height,
+                                editor_scroll_y: self.editor_scroll_y,
+                                track_drag_active: false,
                                 tracks_resize_hovered: false,
                                 mixer_resize_hovered: false,
                                 tracks_visible: false,
@@ -268,32 +277,30 @@ impl Maolan {
                         View::TrackPlugins => self.connections.view(),
                     };
 
-                    let mut content = column![
-                        self.menu.view(
-                            self.tracks_visible,
-                            self.editor_visible,
-                            self.mixer_visible
-                        ),
-                        self.toolbar.view(ToolbarViewState {
-                            playing: self.playing,
-                            paused: self.paused,
-                            transport_play_pause_enabled,
-                            recording: self.record_armed,
-                            metronome_enabled: self.metronome_enabled,
-                            has_session_end,
-                            has_loop_range: self.loop_range_samples.is_some(),
-                            loop_enabled: self.loop_enabled,
-                            has_punch_range: self.punch_range_samples.is_some(),
-                            punch_enabled: self.punch_enabled,
-                            snap_mode: self.snap_mode,
-                            tempo_input: self.tempo_input.clone(),
-                            tsig_num_input: self.time_signature_num_input.clone(),
-                            tsig_denom_input: self.time_signature_denom_input.clone(),
-                            playhead_time_label,
-                            playhead_bar,
-                            playhead_beat,
-                        })
-                    ];
+                    let mut content = column![self.menu.view(
+                        self.tracks_visible,
+                        self.editor_visible,
+                        self.mixer_visible
+                    ),];
+                    content = content.push(self.toolbar.view(ToolbarViewState {
+                        playing: self.playing,
+                        paused: self.paused,
+                        transport_play_pause_enabled,
+                        recording: self.record_armed,
+                        metronome_enabled: self.metronome_enabled,
+                        has_session_end,
+                        has_loop_range: self.loop_range_samples.is_some(),
+                        loop_enabled: self.loop_enabled,
+                        has_punch_range: self.punch_range_samples.is_some(),
+                        punch_enabled: self.punch_enabled,
+                        snap_mode: self.snap_mode,
+                        tempo_input: self.tempo_input.clone(),
+                        tsig_num_input: self.time_signature_num_input.clone(),
+                        tsig_denom_input: self.time_signature_denom_input.clone(),
+                        playhead_time_label,
+                        playhead_bar,
+                        playhead_beat,
+                    }));
                     if matches!(view_kind, View::TrackPlugins) {
                         content = content.push(
                             container(
