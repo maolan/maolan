@@ -5703,6 +5703,44 @@ impl Maolan {
                     Message::ImportFilesSelected,
                 );
             }
+            Message::DeleteUnusedSessionMediaFiles => {
+                let Some(session_root) = self.session_dir.clone() else {
+                    self.state.blocking_write().message =
+                        "Cleanup requires an opened/saved session folder".to_string();
+                    return Task::none();
+                };
+
+                match self.delete_unused_session_media_files(&session_root) {
+                    Ok(report)
+                        if report.deleted_files.is_empty() && report.failed_files.is_empty() =>
+                    {
+                        self.state.blocking_write().message =
+                            "No unused media or peak files found".to_string();
+                    }
+                    Ok(report) if report.failed_files.is_empty() => {
+                        self.state.blocking_write().message = format!(
+                            "Deleted {} unused media/peak file(s)",
+                            report.deleted_files.len()
+                        );
+                    }
+                    Ok(report) if report.deleted_files.is_empty() => {
+                        self.state.blocking_write().message = format!(
+                            "Failed to delete {} unused media/peak file(s)",
+                            report.failed_files.len()
+                        );
+                    }
+                    Ok(report) => {
+                        self.state.blocking_write().message = format!(
+                            "Deleted {} unused media/peak file(s); {} failed",
+                            report.deleted_files.len(),
+                            report.failed_files.len()
+                        );
+                    }
+                    Err(e) => {
+                        self.state.blocking_write().message = e;
+                    }
+                }
+            }
             Message::ImportFilesSelected(Some(ref paths)) => {
                 if paths.is_empty() {
                     self.state.blocking_write().message = "No files selected".to_string();
