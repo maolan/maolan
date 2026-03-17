@@ -372,8 +372,12 @@ pub struct PitchCorrectionData {
     pub clip_index: usize,
     pub clip_name: String,
     pub clip_length_samples: usize,
+    pub frame_likeness: f32,
+    pub raw_points: Vec<PitchCorrectionPoint>,
     pub points: Vec<PitchCorrectionPoint>,
 }
+
+pub const DEFAULT_PITCH_CORRECTION_FRAME_LIKENESS: f32 = 0.2;
 
 #[derive(Debug, Clone)]
 pub struct DraggingPitchCorrectionPoints {
@@ -490,6 +494,7 @@ pub struct StateData {
     pub pitch_correction_selected_points: HashSet<usize>,
     pub pitch_correction_dragging_points: Option<DraggingPitchCorrectionPoints>,
     pub pitch_correction_selecting_rect: Option<(Point, Point)>,
+    pub pitch_correction_frame_likeness: f32,
     pub piano_zoom_x: f32,
     pub piano_zoom_y: f32,
     pub piano_scroll_x: f32,
@@ -652,6 +657,7 @@ impl Default for StateData {
             pitch_correction_selected_points: HashSet::new(),
             pitch_correction_dragging_points: None,
             pitch_correction_selecting_rect: None,
+            pitch_correction_frame_likeness: DEFAULT_PITCH_CORRECTION_FRAME_LIKENESS,
             piano_zoom_x: 20.0,
             piano_zoom_y: 1.0,
             piano_scroll_x: 0.0,

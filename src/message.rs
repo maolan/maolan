@@ -534,6 +534,7 @@ pub struct ClipPitchCorrectionRequest {
     pub source_name: String,
     pub source_offset: usize,
     pub source_length: usize,
+    pub frame_likeness: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -884,6 +885,8 @@ pub enum Message {
         position: Point,
     },
     PitchCorrectionSelectRectEnd,
+    PitchCorrectionFrameLikenessChanged(f32),
+    PitchCorrectionRedetect,
     PianoNoteResizeStart {
         note_index: usize,
         position: Point,

@@ -1868,6 +1868,7 @@ impl Maolan {
         clip_name: &str,
         offset: usize,
         length: usize,
+        frame_likeness: f32,
         mut progress_callback: F,
     ) -> io::Result<PitchCorrectionData>
     where
@@ -1954,14 +1955,39 @@ impl Maolan {
                 clip_name
             )));
         }
-        let detected = Self::merge_adjacent_pitch_fragments(detected, 0.2, hop_size);
+        let frame_likeness = frame_likeness.clamp(0.05, 2.0);
+        let raw_points = detected;
+        let points =
+            Self::merge_adjacent_pitch_fragments(raw_points.clone(), frame_likeness, hop_size);
         Ok(PitchCorrectionData {
             track_idx: String::new(),
             clip_index: 0,
             clip_name: clip_name.to_string(),
             clip_length_samples: length.max(1),
-            points: detected,
+            frame_likeness,
+            raw_points,
+            points,
         })
+    }
+
+    fn regroup_pitch_correction_frames(
+        pitch_correction: &mut PitchCorrectionData,
+        frame_likeness: f32,
+    ) {
+        let clamped = frame_likeness.clamp(0.05, 2.0);
+        let max_gap_samples = pitch_correction
+            .raw_points
+            .iter()
+            .map(|point| point.length_samples)
+            .min()
+            .unwrap_or(1)
+            .max(1);
+        pitch_correction.frame_likeness = clamped;
+        pitch_correction.points = Self::merge_adjacent_pitch_fragments(
+            pitch_correction.raw_points.clone(),
+            clamped,
+            max_gap_samples,
+        );
     }
 
     fn merge_adjacent_pitch_fragments(

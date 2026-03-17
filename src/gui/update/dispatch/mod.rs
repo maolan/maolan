@@ -647,6 +647,36 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.pitch_correction_selecting_rect = None;
             }
+            Message::PitchCorrectionFrameLikenessChanged(value) => {
+                let clamped = value.clamp(0.05, 2.0);
+                let mut state = self.state.blocking_write();
+                state.pitch_correction_frame_likeness = clamped;
+                if let Some(pitch_correction) = state.pitch_correction.as_mut() {
+                    Self::regroup_pitch_correction_frames(pitch_correction, clamped);
+                    state.pitch_correction_selected_points.clear();
+                    state.pitch_correction_dragging_points = None;
+                    state.pitch_correction_selecting_rect = None;
+                }
+            }
+            Message::PitchCorrectionRedetect => {
+                let request = {
+                    let state = self.state.blocking_read();
+                    state.pitch_correction.as_ref().map(|pitch_correction| {
+                        (
+                            pitch_correction.track_idx.clone(),
+                            pitch_correction.clip_index,
+                            state.pitch_correction_frame_likeness,
+                        )
+                    })
+                };
+                let Some((track_idx, clip_idx, frame_likeness)) = request else {
+                    return Task::none();
+                };
+                self.state.blocking_write().message = format!(
+                    "Re-detecting pitch correction with frame likeness {frame_likeness:.2}"
+                );
+                return self.open_clip_pitch_correction(track_idx, clip_idx);
+            }
             Message::PianoNoteResizeStart {
                 note_index,
                 position,
@@ -3941,7 +3971,9 @@ impl Maolan {
                         let mut state = self.state.blocking_write();
                         pitch_correction.track_idx = request.track_idx.clone();
                         pitch_correction.clip_index = request.clip_idx;
+                        pitch_correction.frame_likeness = request.frame_likeness;
                         state.pitch_correction = Some(pitch_correction);
+                        state.pitch_correction_frame_likeness = request.frame_likeness;
                         state.pitch_correction_selected_points.clear();
                         state.pitch_correction_dragging_points = None;
                         state.pitch_correction_selecting_rect = None;
