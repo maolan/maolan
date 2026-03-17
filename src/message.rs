@@ -723,12 +723,15 @@ pub enum Message {
     ClipDrag(DraggedClip),
     HandleClipZones(Vec<(Id, Rectangle)>),
     HandleClipPreviewZones(Vec<(Id, Rectangle)>),
-
     TrackDrag {
         index: usize,
         position: Point,
     },
     TrackDropped(Point, Rectangle),
+    TrackContextMenuHover {
+        track_name: String,
+        position: Point,
+    },
     HandleTrackZones(Vec<(Id, Rectangle)>),
 
     MouseMoved(mouse::Event),
@@ -1072,10 +1075,6 @@ pub enum Message {
     TrackTemplateSaveInput(String),
     TrackTemplateSaveConfirm,
     TrackTemplateSaveCancel,
-    TrackContextMenuHover {
-        track_name: String,
-        position: Point,
-    },
     TrackContextMenuToggle(String),
 
     TemplateSaveInput(String),

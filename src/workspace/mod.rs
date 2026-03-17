@@ -47,6 +47,66 @@ pub(crate) fn timeline_x_to_sample_f32(x: f32, pixels_per_sample: f32, inset_px:
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct VisibleTrackWindow {
+    pub start_index: usize,
+    pub end_index: usize,
+    pub top_padding: f32,
+    pub bottom_padding: f32,
+}
+
+fn compute_visible_track_window(
+    track_heights: &[f32],
+    scroll_y: f32,
+    viewport_height: f32,
+) -> VisibleTrackWindow {
+    if track_heights.is_empty() {
+        return VisibleTrackWindow {
+            start_index: 0,
+            end_index: 0,
+            top_padding: 0.0,
+            bottom_padding: 0.0,
+        };
+    }
+
+    const OVERSCAN_PX: f32 = 240.0;
+
+    let total_height = track_heights.iter().sum::<f32>().max(1.0);
+    let viewport_height = viewport_height.max(track_heights[0]).min(total_height);
+    let max_scroll = (total_height - viewport_height).max(0.0);
+    let scroll_top = scroll_y.clamp(0.0, 1.0) * max_scroll;
+    let visible_top = (scroll_top - OVERSCAN_PX).max(0.0);
+    let visible_bottom = (scroll_top + viewport_height + OVERSCAN_PX).min(total_height);
+
+    let mut top_padding = 0.0;
+    let mut start_index = 0;
+    while start_index < track_heights.len()
+        && top_padding + track_heights[start_index] <= visible_top
+    {
+        top_padding += track_heights[start_index];
+        start_index += 1;
+    }
+
+    let mut bottom_edge = top_padding;
+    let mut end_index = start_index;
+    while end_index < track_heights.len() && bottom_edge < visible_bottom {
+        bottom_edge += track_heights[end_index];
+        end_index += 1;
+    }
+
+    if start_index == end_index {
+        end_index = (start_index + 1).min(track_heights.len());
+        bottom_edge = top_padding + track_heights[start_index.min(track_heights.len() - 1)];
+    }
+
+    VisibleTrackWindow {
+        start_index,
+        end_index,
+        top_padding,
+        bottom_padding: (total_height - bottom_edge).max(0.0),
+    }
+}
+
 pub struct Workspace {
     state: State,
     editor: editor::Editor,
@@ -72,6 +132,9 @@ pub struct WorkspaceViewArgs<'a> {
     pub zoom_visible_bars: f32,
     pub mixer_scroll_x: f32,
     pub window_width: f32,
+    pub window_height: f32,
+    pub editor_scroll_y: f32,
+    pub track_drag_active: bool,
     pub tracks_resize_hovered: bool,
     pub mixer_resize_hovered: bool,
     pub tracks_visible: bool,
@@ -137,6 +200,9 @@ impl Workspace {
             zoom_visible_bars,
             mixer_scroll_x,
             window_width,
+            window_height,
+            editor_scroll_y,
+            track_drag_active,
             tracks_resize_hovered,
             mixer_resize_hovered,
             tracks_visible,
@@ -159,10 +225,12 @@ impl Workspace {
             tracks_width_px,
             max_end_samples,
             tracks_total_height,
+            track_heights,
             tempo,
             time_signature,
             tempo_points,
             time_signature_points,
+            mixer_height_px,
         ) = {
             let state = self.state.blocking_read();
             let max_end_samples = state
@@ -187,6 +255,12 @@ impl Workspace {
                 })
                 .max()
                 .unwrap_or(0);
+            let track_heights = state
+                .tracks
+                .iter()
+                .filter(|track| track.name != METRONOME_TRACK_ID)
+                .map(|track| track.height)
+                .collect::<Vec<_>>();
             (
                 state.tracks_width,
                 match state.tracks_width {
@@ -194,13 +268,8 @@ impl Workspace {
                     _ => 200.0,
                 },
                 max_end_samples,
-                state
-                    .tracks
-                    .iter()
-                    .filter(|track| track.name != METRONOME_TRACK_ID)
-                    .map(|track| track.height)
-                    .sum::<f32>()
-                    .max(1.0),
+                track_heights.iter().sum::<f32>().max(1.0),
+                track_heights,
                 state.tempo,
                 (state.time_signature_num, state.time_signature_denom),
                 state
@@ -213,7 +282,35 @@ impl Workspace {
                     .iter()
                     .map(|p| (p.sample, p.numerator, p.denominator))
                     .collect::<Vec<_>>(),
+                match state.mixer_height {
+                    Length::Fixed(height) => height,
+                    _ => 300.0,
+                },
             )
+        };
+        const TOP_CHROME_ESTIMATE_PX: f32 = 72.0;
+        const MIXER_SPLITTER_HEIGHT_PX: f32 = 3.0;
+        let track_viewport_height = (window_height
+            - TOP_CHROME_ESTIMATE_PX
+            - if mixer_visible {
+                mixer_height_px + MIXER_SPLITTER_HEIGHT_PX
+            } else {
+                0.0
+            }
+            - self.tempo.height()
+            - self.ruler.height())
+        .max(160.0);
+        let visible_track_window =
+            compute_visible_track_window(&track_heights, editor_scroll_y, track_viewport_height);
+        let tracks_visible_window = if track_drag_active {
+            VisibleTrackWindow {
+                start_index: 0,
+                end_index: track_heights.len(),
+                top_padding: 0.0,
+                bottom_padding: 0.0,
+            }
+        } else {
+            visible_track_window
         };
         let min_visible_samples = (samples_per_bar * zoom_visible_bars).max(1.0) as usize;
         let min_timeline_samples = (samples_per_bar * MIN_TIMELINE_BARS).max(1.0) as usize;
@@ -255,6 +352,7 @@ impl Workspace {
             recording_preview_bounds,
             recording_preview_peaks,
             midi_clip_previews,
+            visible_track_window,
         });
         let editor = self.editor.clone();
         let editor_args_owned = OwnedEditorViewArgs {
@@ -269,6 +367,7 @@ impl Workspace {
             recording_preview_bounds,
             recording_preview_peaks: recording_preview_peaks.cloned(),
             midi_clip_previews: midi_clip_previews.cloned(),
+            visible_track_window,
         };
         let editor_body: Element<'_, Message> = lazy(editor_render_hash, move |_| {
             editor.clone().into_view_owned(editor_args_owned.clone())
@@ -322,7 +421,7 @@ impl Workspace {
         .height(Length::Fixed(16.0));
 
         let editor_with_zoom = right_lanes_scrolled;
-        let tracks_scrolled = scrollable(self.tracks.view())
+        let tracks_scrolled = scrollable(self.tracks.view(tracks_visible_window))
             .id(Id::new(TRACKS_SCROLL_ID))
             .direction(scrollable::Direction::Vertical(
                 scrollable::Scrollbar::hidden(),
