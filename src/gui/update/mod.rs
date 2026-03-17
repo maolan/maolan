@@ -1989,6 +1989,7 @@ impl Maolan {
                         .unwrap_or_else(|| clip.name.clone()),
                     source_offset: clip.pitch_correction_source_offset.unwrap_or(clip.offset),
                     source_length: clip.pitch_correction_source_length.unwrap_or(clip.length),
+                    frame_likeness: state.pitch_correction_frame_likeness,
                 })
         }) else {
             self.state.blocking_write().message = "Audio clip not found".to_string();
@@ -2037,6 +2038,7 @@ impl Maolan {
                         &request.clip_name,
                         request.source_offset,
                         request.source_length,
+                        request.frame_likeness,
                         progress_fn,
                     )
                     .await

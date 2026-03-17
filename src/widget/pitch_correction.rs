@@ -22,6 +22,9 @@ pub struct PitchCorrection {
 }
 
 impl PitchCorrection {
+    const FRAME_LIKENESS_MIN: f32 = 0.05;
+    const FRAME_LIKENESS_MAX: f32 = 2.0;
+
     pub fn new(state: State) -> Self {
         Self { state }
     }
@@ -54,7 +57,15 @@ impl PitchCorrection {
         _samples_per_bar: f32,
         playhead_x: Option<f32>,
     ) -> Element<'a, Message> {
-        let (zoom_x, zoom_y, roll, selected_points, dragging_points, selecting_rect) = {
+        let (
+            zoom_x,
+            zoom_y,
+            roll,
+            selected_points,
+            dragging_points,
+            selecting_rect,
+            frame_likeness,
+        ) = {
             let state = self.state.blocking_read();
             (
                 state.piano_zoom_x.max(1.0),
@@ -63,6 +74,9 @@ impl PitchCorrection {
                 state.pitch_correction_selected_points.clone(),
                 state.pitch_correction_dragging_points.clone(),
                 state.pitch_correction_selecting_rect,
+                state
+                    .pitch_correction_frame_likeness
+                    .clamp(Self::FRAME_LIKENESS_MIN, Self::FRAME_LIKENESS_MAX),
             )
         };
         let Some(roll) = roll else {
@@ -198,6 +212,14 @@ impl PitchCorrection {
                 text("Pitch Correction").size(12),
                 text(roll.clip_name.clone()).size(11),
                 text(format!("Detected segments: {}", roll.points.len())).size(10),
+                text(format!("Frame likeness: {:.2}", frame_likeness)).size(10),
+                slider(
+                    Self::FRAME_LIKENESS_MIN..=Self::FRAME_LIKENESS_MAX,
+                    frame_likeness,
+                    Message::PitchCorrectionFrameLikenessChanged,
+                )
+                .step(0.05),
+                button(text("Re-detect").size(11)).on_press(Message::PitchCorrectionRedetect),
                 text("Drag vertically to set target pitch.").size(10),
                 button(text("Apply").size(11)).on_press(Message::PitchCorrectionApply),
             ]
