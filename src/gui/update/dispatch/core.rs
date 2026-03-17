@@ -4,18 +4,26 @@ impl Maolan {
     pub(super) fn handle_core_message(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
             Message::None => Some(Task::none()),
-            Message::Undo => Some(self.send(Action::Undo)),
-            Message::Redo => Some(self.send(Action::Redo)),
-            Message::ToggleTransport => {
-                if !self.state.blocking_read().hw_loaded {
-                    return Some(Task::none());
-                }
+            Message::Undo => {
                 if matches!(
                     self.state.blocking_read().view,
                     crate::state::View::PitchCorrection
                 ) {
-                    self.state.blocking_write().message =
-                        "Play and pause are unavailable in Pitch Correction view".to_string();
+                    return Some(self.undo_pitch_correction_edit());
+                }
+                Some(self.send(Action::Undo))
+            }
+            Message::Redo => {
+                if matches!(
+                    self.state.blocking_read().view,
+                    crate::state::View::PitchCorrection
+                ) {
+                    return Some(self.redo_pitch_correction_edit());
+                }
+                Some(self.send(Action::Redo))
+            }
+            Message::ToggleTransport => {
+                if !self.state.blocking_read().hw_loaded {
                     return Some(Task::none());
                 }
                 if self.playing && !self.paused {

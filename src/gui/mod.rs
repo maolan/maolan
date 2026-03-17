@@ -123,6 +123,12 @@ struct PendingAutosaveRecovery {
     confirm_armed: bool,
 }
 
+#[derive(Debug, Clone)]
+struct PitchCorrectionHistoryEntry {
+    points: Vec<PitchCorrectionPoint>,
+    selected_points: HashSet<usize>,
+}
+
 struct ExportSessionOptions {
     export_path: PathBuf,
     sample_rate: i32,
@@ -339,6 +345,8 @@ pub struct Maolan {
     pending_peak_file_loads: HashMap<AudioClipKey, PathBuf>,
     pending_peak_rebuilds: HashSet<AudioClipKey>,
     pending_precomputed_peaks: HashMap<AudioClipKey, crate::state::ClipPeaks>,
+    pitch_correction_undo: Vec<PitchCorrectionHistoryEntry>,
+    pitch_correction_redo: Vec<PitchCorrectionHistoryEntry>,
     pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
     pending_track_freeze_bounce: HashMap<String, PendingTrackFreezeBounce>,
     track_automation_runtime: HashMap<String, TrackAutomationRuntime>,
@@ -561,6 +569,8 @@ impl Default for Maolan {
             pending_peak_file_loads: HashMap::new(),
             pending_peak_rebuilds: HashSet::new(),
             pending_precomputed_peaks: HashMap::new(),
+            pitch_correction_undo: Vec::new(),
+            pitch_correction_redo: Vec::new(),
             pending_track_freeze_restore: HashMap::new(),
             pending_track_freeze_bounce: HashMap::new(),
             track_automation_runtime: HashMap::new(),
@@ -2043,6 +2053,7 @@ impl Maolan {
         merged
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn render_audio_clip_pitch_correction_with_rubberband<F>(
         src_path: &Path,
         session_root: &Path,
@@ -2050,6 +2061,8 @@ impl Maolan {
         offset: usize,
         length: usize,
         points: &[PitchCorrectionPoint],
+        inertia_ms: u16,
+        formant_compensation: bool,
         mut progress_callback: F,
     ) -> io::Result<(String, usize, crate::state::ClipPeaks)>
     where
@@ -2118,22 +2131,29 @@ impl Maolan {
         } else {
             let mut sorted_points = points.to_vec();
             sorted_points.sort_by_key(|point| point.start_sample);
-            if sorted_points
-                .first()
-                .is_some_and(|point| point.start_sample > 0)
-            {
-                let first = &sorted_points[0];
-                pitchmap.push_str(&format!(
-                    "0 {:.6}\n",
-                    first.target_midi_pitch - first.detected_midi_pitch
-                ));
+            let inertia_frames = ((sample_rate as u64 * inertia_ms as u64) / 1000) as usize;
+            let mut previous_shift =
+                sorted_points[0].target_midi_pitch - sorted_points[0].detected_midi_pitch;
+            if sorted_points[0].start_sample > 0 {
+                pitchmap.push_str(&format!("0 {:.6}\n", previous_shift));
             }
             for point in sorted_points {
-                pitchmap.push_str(&format!(
-                    "{} {:.6}\n",
-                    point.start_sample.min(segment_frames.saturating_sub(1)),
-                    point.target_midi_pitch - point.detected_midi_pitch
-                ));
+                let start_sample = point.start_sample.min(segment_frames.saturating_sub(1));
+                let target_shift = point.target_midi_pitch - point.detected_midi_pitch;
+                if inertia_frames == 0 || (target_shift - previous_shift).abs() <= f32::EPSILON {
+                    pitchmap.push_str(&format!("{start_sample} {:.6}\n", target_shift));
+                } else {
+                    pitchmap.push_str(&format!("{start_sample} {:.6}\n", previous_shift));
+                    let glide_end = start_sample
+                        .saturating_add(inertia_frames)
+                        .min(segment_frames.saturating_sub(1));
+                    if glide_end > start_sample {
+                        pitchmap.push_str(&format!("{glide_end} {:.6}\n", target_shift));
+                    } else {
+                        pitchmap.push_str(&format!("{start_sample} {:.6}\n", target_shift));
+                    }
+                }
+                previous_shift = target_shift;
             }
         }
         fs::write(&pitchmap_path, pitchmap).map_err(|e| {
@@ -2146,15 +2166,22 @@ impl Maolan {
         tokio::task::yield_now().await;
 
         let command_result = tokio::process::Command::new("rubberband")
-            .arg("--quiet")
-            .arg("--fine")
-            .arg("--formant")
-            .arg("--pitch")
-            .arg("0")
-            .arg("--pitchmap")
-            .arg(&pitchmap_path)
-            .arg(&temp_path)
-            .arg(&output_path)
+            .args({
+                let mut args = vec![
+                    "--quiet".to_string(),
+                    "--fine".to_string(),
+                    "--pitch".to_string(),
+                    "0".to_string(),
+                    "--pitchmap".to_string(),
+                    pitchmap_path.to_string_lossy().to_string(),
+                    temp_path.to_string_lossy().to_string(),
+                    output_path.to_string_lossy().to_string(),
+                ];
+                if formant_compensation {
+                    args.insert(2, "--formant".to_string());
+                }
+                args
+            })
             .output()
             .await;
 

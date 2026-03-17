@@ -152,6 +152,9 @@ impl Maolan {
                     if s == "t" {
                         return Message::Show(Show::AddTrack);
                     }
+                    if s == "a" {
+                        return Message::SelectAll;
+                    }
                     if s == "z" {
                         if modifiers.shift() {
                             return Message::Redo;

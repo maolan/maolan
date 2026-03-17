@@ -551,6 +551,9 @@ impl Maolan {
                         });
                 }
             }
+            Message::PitchCorrectionSnapToNearest { point_index } => {
+                return self.snap_pitch_correction_points_to_nearest(point_index);
+            }
             Message::PitchCorrectionPointsDrag { position } => {
                 let mut state = self.state.blocking_write();
                 if let Some(ref mut dragging) = state.pitch_correction_dragging_points {
@@ -567,7 +570,9 @@ impl Maolan {
                     if delta_pitch.abs() <= f32::EPSILON {
                         return Task::none();
                     }
+                    let before_selection = state.pitch_correction_selected_points.clone();
                     if let Some(pitch_correction) = state.pitch_correction.as_mut() {
+                        let before_points = pitch_correction.points.clone();
                         for (point_idx, original_point) in dragging
                             .point_indices
                             .iter()
@@ -589,6 +594,8 @@ impl Maolan {
                                 "s"
                             }
                         );
+                        drop(state);
+                        self.push_pitch_correction_history(before_points, before_selection);
                     }
                 }
             }
@@ -620,7 +627,8 @@ impl Maolan {
                         .filter_map(|(idx, point)| {
                             let x = point.start_sample as f32 * pps;
                             let width = (point.length_samples as f32 * pps).max(6.0);
-                            let y = (119.0 - point.target_midi_pitch.clamp(0.0, 119.0)) * row_h;
+                            let y =
+                                (119.0 - point.target_midi_pitch.clamp(0.0, 119.0) + 0.5) * row_h;
                             let height =
                                 (row_h * (0.45 + 0.35 * point.clarity.clamp(0.0, 1.0))).max(6.0);
                             let rect_left = x;
@@ -647,6 +655,30 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 state.pitch_correction_selecting_rect = None;
             }
+            Message::PitchCorrectionClearSelection => {
+                let mut state = self.state.blocking_write();
+                state.pitch_correction_selected_points.clear();
+                state.pitch_correction_dragging_points = None;
+                state.pitch_correction_selecting_rect = None;
+            }
+            Message::SelectAll => {
+                let view = self.state.blocking_read().view.clone();
+                if matches!(view, crate::state::View::PitchCorrection) {
+                    let mut state = self.state.blocking_write();
+                    let all_points = state
+                        .pitch_correction
+                        .as_ref()
+                        .map(|pitch_correction| {
+                            (0..pitch_correction.points.len())
+                                .collect::<std::collections::HashSet<_>>()
+                        })
+                        .unwrap_or_default();
+                    state.pitch_correction_selected_points = all_points;
+                    state.pitch_correction_dragging_points = None;
+                    state.pitch_correction_selecting_rect = None;
+                    return Task::none();
+                }
+            }
             Message::PitchCorrectionFrameLikenessChanged(value) => {
                 let clamped = value.clamp(0.05, 2.0);
                 let mut state = self.state.blocking_write();
@@ -658,24 +690,13 @@ impl Maolan {
                     state.pitch_correction_selecting_rect = None;
                 }
             }
-            Message::PitchCorrectionRedetect => {
-                let request = {
-                    let state = self.state.blocking_read();
-                    state.pitch_correction.as_ref().map(|pitch_correction| {
-                        (
-                            pitch_correction.track_idx.clone(),
-                            pitch_correction.clip_index,
-                            state.pitch_correction_frame_likeness,
-                        )
-                    })
-                };
-                let Some((track_idx, clip_idx, frame_likeness)) = request else {
-                    return Task::none();
-                };
-                self.state.blocking_write().message = format!(
-                    "Re-detecting pitch correction with frame likeness {frame_likeness:.2}"
-                );
-                return self.open_clip_pitch_correction(track_idx, clip_idx);
+            Message::PitchCorrectionInertiaChanged(value) => {
+                self.state.blocking_write().pitch_correction_inertia_ms = value.min(1000);
+            }
+            Message::PitchCorrectionFormantCompensationChanged(enabled) => {
+                self.state
+                    .blocking_write()
+                    .pitch_correction_formant_compensation = enabled;
             }
             Message::PianoNoteResizeStart {
                 note_index,
@@ -3822,16 +3843,28 @@ impl Maolan {
                     }
                     let fade_in = request.fade_in_samples.min(new_length / 2);
                     let fade_out = request.fade_out_samples.min(new_length / 2);
+                    let replacement_clip_index = {
+                        let state = self.state.blocking_read();
+                        state
+                            .tracks
+                            .iter()
+                            .find(|t| t.name == request.track_idx)
+                            .map(|track| track.audio.clips.len().saturating_sub(1))
+                            .unwrap_or(request.clip_idx)
+                    };
                     {
                         let mut state = self.state.blocking_write();
-                        state.pitch_correction = None;
-                        state.pitch_correction_selected_points.clear();
+                        if let Some(pitch_correction) = state.pitch_correction.as_mut() {
+                            pitch_correction.clip_index = replacement_clip_index;
+                            pitch_correction.clip_name = new_name.clone();
+                            pitch_correction.clip_length_samples = new_length;
+                        }
                         state.pitch_correction_dragging_points = None;
                         state.pitch_correction_selecting_rect = None;
-                        state.view = View::Workspace;
                         state.message =
                             format!("Applied pitch correction to '{}'", request.clip_name);
                     }
+                    self.clear_pitch_correction_history();
                     let peak_key = Self::audio_clip_key(
                         &request.track_idx,
                         &new_name,
@@ -3987,6 +4020,8 @@ impl Maolan {
                         state.view = View::PitchCorrection;
                         state.message =
                             format!("Opened pitch correction for '{}'", request.clip_name);
+                        drop(state);
+                        self.clear_pitch_correction_history();
                     }
                     Err(e) => {
                         self.state.blocking_write().message =

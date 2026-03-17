@@ -552,6 +552,8 @@ pub struct ClipPitchCorrectionApplyRequest {
     pub source_offset: usize,
     pub source_length: usize,
     pub points: Vec<crate::state::PitchCorrectionPoint>,
+    pub inertia_ms: u16,
+    pub formant_compensation: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -747,6 +749,7 @@ pub enum Message {
     CtrlPressed,
     ShiftReleased,
     CtrlReleased,
+    SelectAll,
 
     WindowResized(Size),
     WindowCloseRequested,
@@ -874,6 +877,9 @@ pub enum Message {
         point_index: usize,
         position: Point,
     },
+    PitchCorrectionSnapToNearest {
+        point_index: usize,
+    },
     PitchCorrectionPointsDrag {
         position: Point,
     },
@@ -885,8 +891,10 @@ pub enum Message {
         position: Point,
     },
     PitchCorrectionSelectRectEnd,
+    PitchCorrectionClearSelection,
     PitchCorrectionFrameLikenessChanged(f32),
-    PitchCorrectionRedetect,
+    PitchCorrectionInertiaChanged(u16),
+    PitchCorrectionFormantCompensationChanged(bool),
     PianoNoteResizeStart {
         note_index: usize,
         position: Point,
