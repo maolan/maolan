@@ -81,7 +81,10 @@ impl MidiHub {
     }
 
     pub fn output_devices(&self) -> Vec<String> {
-        self.outputs.iter().map(|output| output.path.clone()).collect()
+        self.outputs
+            .iter()
+            .map(|output| output.path.clone())
+            .collect()
     }
 }
 
@@ -134,7 +137,9 @@ impl MidiOutputDevice {
             loop {
                 match self.file.write_all(&midi_event.data) {
                     Ok(()) => break,
-                    Err(err) if err.kind() == ErrorKind::WouldBlock && Instant::now() < deadline => {
+                    Err(err)
+                        if err.kind() == ErrorKind::WouldBlock && Instant::now() < deadline =>
+                    {
                         thread::sleep(Duration::from_millis(1));
                     }
                     Err(err) => {

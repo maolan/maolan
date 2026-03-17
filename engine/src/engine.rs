@@ -288,24 +288,15 @@ impl Engine {
             for channel in 0..16_u8 {
                 events.push(HwMidiEvent {
                     device: device.clone(),
-                    event: MidiEvent::new(
-                        0,
-                        vec![0xB0 | channel, Self::MIDI_CC_SUSTAIN_PEDAL, 0],
-                    ),
+                    event: MidiEvent::new(0, vec![0xB0 | channel, Self::MIDI_CC_SUSTAIN_PEDAL, 0]),
                 });
                 events.push(HwMidiEvent {
                     device: device.clone(),
-                    event: MidiEvent::new(
-                        0,
-                        vec![0xB0 | channel, Self::MIDI_CC_ALL_SOUND_OFF, 0],
-                    ),
+                    event: MidiEvent::new(0, vec![0xB0 | channel, Self::MIDI_CC_ALL_SOUND_OFF, 0]),
                 });
                 events.push(HwMidiEvent {
                     device: device.clone(),
-                    event: MidiEvent::new(
-                        0,
-                        vec![0xB0 | channel, Self::MIDI_CC_ALL_NOTES_OFF, 0],
-                    ),
+                    event: MidiEvent::new(0, vec![0xB0 | channel, Self::MIDI_CC_ALL_NOTES_OFF, 0]),
                 });
             }
         }
@@ -3129,7 +3120,8 @@ impl Engine {
                         }
                     }
                 } else if !panic_events.is_empty() {
-                    self.pending_hw_midi_out_events_by_device.extend(panic_events);
+                    self.pending_hw_midi_out_events_by_device
+                        .extend(panic_events);
                 }
             }
             Action::SetClipPlaybackEnabled(enabled) => {
