@@ -779,6 +779,7 @@ impl Mixer {
             .spacing(FaderSliderCanvas::INNER_GAP),
         )
         .width(Length::Fill)
+        .padding(BAY_INSET)
         .style(|_theme| style::mixer::bay())
         .into()
     }
@@ -802,7 +803,13 @@ impl Mixer {
     }
 
     fn strip_width_for_channels(channels: usize) -> f32 {
-        (FADER_WIDTH + SCALE_WIDTH + 3.0 + 8.0 + Self::meter_total_width(channels.max(1)) + 16.0)
+        (FADER_WIDTH
+            + SCALE_WIDTH
+            + 3.0
+            + 8.0
+            + Self::meter_total_width(channels.max(1))
+            + 16.0
+            + (BAY_INSET * 2.0))
             .max(STRIP_WIDTH)
     }
 

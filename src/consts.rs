@@ -207,6 +207,7 @@ pub mod workspace_mixer {
     pub const METER_BAR_GAP: f32 = 2.0;
     pub const METER_PAD_X: f32 = 3.0;
     pub const METER_PAD_Y: f32 = 3.0;
+    pub const BAY_INSET: f32 = 1.0;
 
     pub static LEVEL_LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
         let mut labels = Vec::with_capacity(1101);

@@ -2329,6 +2329,10 @@ impl Maolan {
 
         self.state.blocking_write().message =
             format!("Opening pitch correction for '{}'...", request.clip_name);
+        self.clip_pitch_correction_in_progress = true;
+        self.clip_pitch_correction_progress = 0.0;
+        self.clip_pitch_correction_clip_name = request.clip_name.clone();
+        self.clip_pitch_correction_operation = Some("Starting".to_string());
         let session_root_for_cache = session_root.clone();
         Task::run(
             {

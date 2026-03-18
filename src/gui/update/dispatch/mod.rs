@@ -4129,6 +4129,10 @@ impl Maolan {
                 progress,
                 ref operation,
             } => {
+                self.clip_pitch_correction_in_progress = true;
+                self.clip_pitch_correction_progress = progress.clamp(0.0, 1.0);
+                self.clip_pitch_correction_clip_name = clip_name.clone();
+                self.clip_pitch_correction_operation = operation.clone();
                 let percent = (progress.clamp(0.0, 1.0) * 100.0) as usize;
                 self.state.blocking_write().message = if let Some(op) = operation {
                     format!("Pitch correction '{clip_name}' ({percent}%): {op}")
@@ -4217,6 +4221,10 @@ impl Maolan {
                 }
             },
             Message::ClipOpenPitchCorrectionFinished { request, result } => {
+                self.clip_pitch_correction_in_progress = false;
+                self.clip_pitch_correction_progress = 0.0;
+                self.clip_pitch_correction_clip_name.clear();
+                self.clip_pitch_correction_operation = None;
                 let clip_state = {
                     let state = self.state.blocking_read();
                     state
@@ -6019,24 +6027,21 @@ impl Maolan {
                     Ok(report)
                         if report.deleted_files.is_empty() && report.failed_files.is_empty() =>
                     {
-                        self.state.blocking_write().message =
-                            "No unused media or peak files found".to_string();
+                        self.state.blocking_write().message = "No unused files found".to_string();
                     }
                     Ok(report) if report.failed_files.is_empty() => {
-                        self.state.blocking_write().message = format!(
-                            "Deleted {} unused media/peak file(s)",
-                            report.deleted_files.len()
-                        );
+                        self.state.blocking_write().message =
+                            format!("Deleted {} unused file(s)", report.deleted_files.len());
                     }
                     Ok(report) if report.deleted_files.is_empty() => {
                         self.state.blocking_write().message = format!(
-                            "Failed to delete {} unused media/peak file(s)",
+                            "Failed to delete {} unused file(s)",
                             report.failed_files.len()
                         );
                     }
                     Ok(report) => {
                         self.state.blocking_write().message = format!(
-                            "Deleted {} unused media/peak file(s); {} failed",
+                            "Deleted {} unused file(s); {} failed",
                             report.deleted_files.len(),
                             report.failed_files.len()
                         );
@@ -6128,10 +6133,23 @@ impl Maolan {
                                     )
                                     .await
                                     {
-                                        Ok((clip_rel, channels, length)) => {
+                                        Ok((clip_rel, channels, length, peaks)) => {
                                             let base = Self::import_track_base_name(path);
                                             let track_name =
                                                 Self::unique_track_name(&base, &mut used_names);
+                                            if tx
+                                                .send(Message::ImportPreparedAudioPeaks {
+                                                    track_name: track_name.clone(),
+                                                    clip_name: clip_rel.clone(),
+                                                    start: 0,
+                                                    length,
+                                                    offset: 0,
+                                                    peaks,
+                                                })
+                                                .is_err()
+                                            {
+                                                return;
+                                            }
 
                                             if let Err(e) = CLIENT
                                                 .send(EngineMessage::Request(Action::AddTrack {
@@ -6769,6 +6787,17 @@ impl Maolan {
                         file_index, total_files, op_text, filename
                     );
                 }
+            }
+            Message::ImportPreparedAudioPeaks {
+                ref track_name,
+                ref clip_name,
+                start,
+                length,
+                offset,
+                ref peaks,
+            } => {
+                let key = Self::audio_clip_key(track_name, clip_name, start, length, offset);
+                self.pending_precomputed_peaks.insert(key, peaks.clone());
             }
             Message::TrackTemplatesLoaded(ref templates) => {
                 self.add_track.set_available_templates(templates.clone());

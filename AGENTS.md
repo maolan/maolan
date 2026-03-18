@@ -60,7 +60,8 @@ and link the relevant issue if one exists. Include screenshots or GIFs
 for visible UI changes, and mention any required system libraries or
 manual verification steps when audio or plugin behavior is involved.
 
-Use `cargo clippy` for Rust verification when Clippy is available. Do
-not use `cargo check` as a substitute unless Clippy is unavailable or
-the user explicitly asks for `cargo check`. If Clippy cannot be run,
-state why. Make sure code is formatted using `cargo fmt`.
+Always run `cargo clippy` for Rust verification when Clippy is
+available. Do not skip it, and do not use `cargo check` as a substitute
+unless Clippy is unavailable or the user explicitly asks for
+`cargo check`. If Clippy cannot be run, state why. Make sure code is
+formatted using `cargo fmt`.

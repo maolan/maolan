@@ -8,14 +8,16 @@ const MIXER_OVERSCAN_PX: f32 = 160.0;
 
 fn mixer_strip_width_for_channels(channels: usize) -> f32 {
     use crate::consts::workspace_mixer::{
-        FADER_WIDTH, METER_BAR_GAP, METER_BAR_WIDTH, METER_PAD_X, SCALE_WIDTH, STRIP_WIDTH,
+        BAY_INSET, FADER_WIDTH, METER_BAR_GAP, METER_BAR_WIDTH, METER_PAD_X, SCALE_WIDTH,
+        STRIP_WIDTH,
     };
 
     let channels = channels.max(1);
     let meter_inner_width =
         channels as f32 * METER_BAR_WIDTH + (channels.saturating_sub(1) as f32 * METER_BAR_GAP);
     let meter_total_width = meter_inner_width + (METER_PAD_X * 2.0);
-    (FADER_WIDTH + SCALE_WIDTH + 3.0 + 8.0 + meter_total_width + 16.0).max(STRIP_WIDTH)
+    (FADER_WIDTH + SCALE_WIDTH + 3.0 + 8.0 + meter_total_width + 16.0 + (BAY_INSET * 2.0))
+        .max(STRIP_WIDTH)
 }
 
 fn visible_mixer_track_names(

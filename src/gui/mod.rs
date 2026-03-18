@@ -56,6 +56,7 @@ use serde_json::json;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
+    hash::{DefaultHasher, Hash, Hasher},
     io::{self, BufReader},
     num::{NonZeroU8, NonZeroU32},
     path::{Path, PathBuf},
@@ -402,6 +403,10 @@ pub struct Maolan {
     import_file_progress: f32,
     import_current_filename: String,
     import_current_operation: Option<String>,
+    clip_pitch_correction_in_progress: bool,
+    clip_pitch_correction_progress: f32,
+    clip_pitch_correction_clip_name: String,
+    clip_pitch_correction_operation: Option<String>,
     export_in_progress: bool,
     export_progress: f32,
     export_operation: Option<String>,
@@ -625,6 +630,10 @@ impl Default for Maolan {
             import_file_progress: 0.0,
             import_current_filename: String::new(),
             import_current_operation: None,
+            clip_pitch_correction_in_progress: false,
+            clip_pitch_correction_progress: 0.0,
+            clip_pitch_correction_clip_name: String::new(),
+            clip_pitch_correction_operation: None,
             export_in_progress: false,
             export_progress: 0.0,
             export_operation: None,
@@ -1352,13 +1361,24 @@ impl Maolan {
 
     fn is_cleanup_target_rel(path: &str) -> bool {
         if path.starts_with("audio/") || path.starts_with("midi/") {
-            let Some(ext) = Self::file_extension_lower(Path::new(path)) else {
+            let rel_path = Path::new(path);
+            let Some(ext) = Self::file_extension_lower(rel_path) else {
                 return false;
             };
-            return matches!(ext.as_str(), "wav" | "mid" | "midi");
+            if matches!(ext.as_str(), "wav" | "mid" | "midi") {
+                return true;
+            }
+            if path.starts_with("audio/") && ext == "txt" {
+                let stem = rel_path
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("");
+                return stem.contains("_pitchmap");
+            }
+            return false;
         }
 
-        path.starts_with("peaks/")
+        (path.starts_with("peaks/") || path.starts_with("pitch/"))
             && Path::new(path).extension().and_then(|ext| ext.to_str()) == Some("json")
     }
 
@@ -1369,6 +1389,36 @@ impl Maolan {
         if Self::is_cleanup_target_rel(&rel) {
             referenced.insert(rel);
         }
+    }
+
+    fn pitch_correction_cache_rel(
+        source_name: &str,
+        source_offset: usize,
+        source_length: usize,
+    ) -> String {
+        let mut hasher = DefaultHasher::new();
+        source_name.hash(&mut hasher);
+        source_offset.hash(&mut hasher);
+        source_length.hash(&mut hasher);
+        format!("pitch/{:016x}.json", hasher.finish())
+    }
+
+    fn insert_pitch_correction_cache_reference(
+        referenced: &mut HashSet<String>,
+        clip: &crate::state::AudioClip,
+    ) {
+        let Some(source_name) = clip.pitch_correction_source_name.as_deref() else {
+            return;
+        };
+        let Some(source_rel) = Self::normalize_session_media_rel(source_name) else {
+            return;
+        };
+        let cache_rel = Self::pitch_correction_cache_rel(
+            &source_rel,
+            clip.pitch_correction_source_offset.unwrap_or(clip.offset),
+            clip.pitch_correction_source_length.unwrap_or(clip.length),
+        );
+        referenced.insert(cache_rel);
     }
 
     fn referenced_session_media_paths(state: &crate::state::StateData) -> HashSet<String> {
@@ -1383,6 +1433,7 @@ impl Maolan {
                 if let Some(peaks_file) = clip.peaks_file.as_deref() {
                     Self::insert_referenced_session_media_path(&mut referenced, peaks_file);
                 }
+                Self::insert_pitch_correction_cache_reference(&mut referenced, clip);
             }
             for clip in &track.midi.clips {
                 Self::insert_referenced_session_media_path(&mut referenced, &clip.name);
@@ -1395,6 +1446,7 @@ impl Maolan {
                 if let Some(peaks_file) = clip.peaks_file.as_deref() {
                     Self::insert_referenced_session_media_path(&mut referenced, peaks_file);
                 }
+                Self::insert_pitch_correction_cache_reference(&mut referenced, clip);
             }
             for clip in &track.frozen_midi_backup {
                 Self::insert_referenced_session_media_path(&mut referenced, &clip.name);
@@ -1474,6 +1526,13 @@ impl Maolan {
             &mut candidates,
         )
         .map_err(|e| format!("Failed to scan peaks/: {e}"))?;
+        Self::collect_cleanup_candidate_files(
+            &session_root.join("pitch"),
+            session_root,
+            &referenced,
+            &mut candidates,
+        )
+        .map_err(|e| format!("Failed to scan pitch/: {e}"))?;
         candidates.sort_by(|a, b| a.1.cmp(&b.1));
 
         let mut report = SessionMediaCleanupReport::default();
@@ -1745,7 +1804,7 @@ impl Maolan {
         session_root: &Path,
         target_sample_rate: u32,
         mut progress_callback: F,
-    ) -> std::io::Result<(String, usize, usize)>
+    ) -> std::io::Result<(String, usize, usize, ClipPeaks)>
     where
         F: FnMut(f32, Option<String>),
     {
@@ -1792,9 +1851,13 @@ impl Maolan {
         )
         .map_err(|e| io::Error::other(format!("Failed to write '{}': {e}", dst.display())))?;
 
+        progress_callback(0.95, Some("Calculating peaks".to_string()));
+        tokio::task::yield_now().await;
+        let peaks = Self::compute_audio_clip_peaks(&dst)?;
+
         progress_callback(1.0, None);
         let frames = final_samples.len() / channels.max(1);
-        Ok((rel, channels.max(1), frames.max(1)))
+        Ok((rel, channels.max(1), frames.max(1), peaks))
     }
 
     async fn stretch_audio_clip_with_rubberband(
@@ -4804,9 +4867,19 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_targets_include_pitchmap_sidecars_only() {
+        assert!(Maolan::is_cleanup_target_rel("audio/clip_pitchmap.txt"));
+        assert!(Maolan::is_cleanup_target_rel("audio/clip_pitchmap_001.txt"));
+        assert!(!Maolan::is_cleanup_target_rel("audio/notes.txt"));
+        assert!(!Maolan::is_cleanup_target_rel("pitch/cache.txt"));
+    }
+
+    #[test]
     fn referenced_session_media_paths_include_indirect_and_frozen_assets() {
         let mut state = crate::state::StateData::default();
         let mut track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 1, 1);
+        let lead_pitch_cache = Maolan::pitch_correction_cache_rel("audio/lead_src.wav", 0, 0);
+        let frozen_pitch_cache = Maolan::pitch_correction_cache_rel("audio/frozen_src.wav", 0, 0);
         track.audio.clips.push(crate::state::AudioClip {
             name: "audio/lead.wav".to_string(),
             pitch_correction_source_name: Some("audio/lead_src.wav".to_string()),
@@ -4839,10 +4912,12 @@ mod tests {
         assert!(referenced.contains("audio/lead.wav"));
         assert!(referenced.contains("audio/lead_src.wav"));
         assert!(referenced.contains("peaks/lead.json"));
+        assert!(referenced.contains(&lead_pitch_cache));
         assert!(referenced.contains("midi/pattern.mid"));
         assert!(referenced.contains("audio/frozen.wav"));
         assert!(referenced.contains("audio/frozen_src.wav"));
         assert!(referenced.contains("peaks/frozen.json"));
+        assert!(referenced.contains(&frozen_pitch_cache));
         assert!(referenced.contains("midi/ghost.midi"));
         assert!(referenced.contains("audio/render.wav"));
         assert!(!referenced.contains("/tmp/external.wav"));
