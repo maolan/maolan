@@ -63,5 +63,5 @@ manual verification steps when audio or plugin behavior is involved.
 Always run `cargo clippy` for Rust verification when Clippy is
 available. Do not skip it, and do not use `cargo check` as a substitute
 unless Clippy is unavailable or the user explicitly asks for
-`cargo check`. If Clippy cannot be run, state why. Make sure code is
-formatted using `cargo fmt`.
+`cargo check`. If Clippy cannot be run, state why. Format Rust code by
+running `cargo fmt` (not `cargo fmt --check`).
