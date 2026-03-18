@@ -2170,6 +2170,7 @@ impl Maolan {
                 let mut args = vec![
                     "--quiet".to_string(),
                     "--fine".to_string(),
+                    "--pitch-hq".to_string(),
                     "--pitch".to_string(),
                     "0".to_string(),
                     "--pitchmap".to_string(),
