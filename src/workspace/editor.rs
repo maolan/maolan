@@ -2703,6 +2703,18 @@ impl Editor {
                 clip.take_lane_pinned.hash(&mut hasher);
                 clip.take_lane_locked.hash(&mut hasher);
                 clip.peaks.len().hash(&mut hasher);
+                for channel in clip.peaks.iter() {
+                    channel.len().hash(&mut hasher);
+                    if channel.is_empty() {
+                        continue;
+                    }
+                    for i in 0..CHECKPOINTS {
+                        let idx = (i * channel.len()) / CHECKPOINTS;
+                        let sample = channel[idx.min(channel.len() - 1)];
+                        sample[0].to_bits().hash(&mut hasher);
+                        sample[1].to_bits().hash(&mut hasher);
+                    }
+                }
             }
 
             for clip in &track.midi.clips {

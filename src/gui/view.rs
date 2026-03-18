@@ -504,6 +504,45 @@ impl Maolan {
                             .padding(8),
                         );
                     }
+                    if self.clip_pitch_correction_in_progress {
+                        let operation_text =
+                            if let Some(ref op) = self.clip_pitch_correction_operation {
+                                format!(" [{}]", op)
+                            } else {
+                                String::new()
+                            };
+                        content = content.push(
+                            container(
+                                column![
+                                    text(format!(
+                                        "Running pitch detection{}{}",
+                                        operation_text,
+                                        if self.clip_pitch_correction_clip_name.is_empty() {
+                                            String::new()
+                                        } else {
+                                            format!(": {}", self.clip_pitch_correction_clip_name)
+                                        }
+                                    )),
+                                    row![
+                                        text("Progress:"),
+                                        progress_bar(
+                                            0.0..=1.0,
+                                            self.clip_pitch_correction_progress
+                                        ),
+                                        text(format!(
+                                            "{:.0}%",
+                                            self.clip_pitch_correction_progress * 100.0
+                                        ))
+                                    ]
+                                    .spacing(8)
+                                    .align_y(iced::Alignment::Center),
+                                ]
+                                .spacing(8),
+                            )
+                            .width(Length::Fill)
+                            .padding(8),
+                        );
+                    }
                     if let Some(diag) = diagnostics_report.as_ref() {
                         content = content.push(text(format!("Diagnostics: {}", diag)));
                     }

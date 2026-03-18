@@ -790,6 +790,14 @@ pub enum Message {
         filename: String,
         operation: Option<String>,
     },
+    ImportPreparedAudioPeaks {
+        track_name: String,
+        clip_name: String,
+        start: usize,
+        length: usize,
+        offset: usize,
+        peaks: crate::state::ClipPeaks,
+    },
     ClipOpenPitchCorrectionProgress {
         clip_name: String,
         progress: f32,
