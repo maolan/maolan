@@ -68,7 +68,7 @@ impl NoteArea {
                 if x > notes_w {
                     break;
                 }
-                let bar_line = (beat % 4) == 0;
+                let bar_line = beat.is_multiple_of(4);
                 layers.push(
                     pin(container("")
                         .width(Length::Fixed(if bar_line { 2.0 } else { 1.0 }))

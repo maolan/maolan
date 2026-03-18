@@ -150,6 +150,11 @@ impl Maolan {
                         source_name: None,
                         source_offset: None,
                         source_length: None,
+                        preview_name: None,
+                        pitch_correction_points: vec![],
+                        pitch_correction_frame_likeness: None,
+                        pitch_correction_inertia_ms: None,
+                        pitch_correction_formant_compensation: None,
                     }));
                     tasks.push(self.send(Action::TrackSetFrozen {
                         track_name: track_name.clone(),

@@ -8,6 +8,7 @@ pub mod message;
 mod midi;
 pub mod mutex;
 pub mod plugins;
+mod rubberband;
 mod routing;
 pub mod state;
 mod track;

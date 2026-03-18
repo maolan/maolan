@@ -51,15 +51,15 @@ use maolan_engine::{
     },
 };
 use rfd::AsyncFileDialog;
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap, HashSet},
-    hash::{Hash, Hasher},
+    collections::{HashMap, HashSet, hash_map::DefaultHasher},
     fs,
+    hash::{Hash, Hasher},
     io,
     process::exit,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use serde::{Deserialize, Serialize};
 use tracing::error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,11 +103,13 @@ impl Maolan {
         source_offset: usize,
         source_length: usize,
     ) -> std::path::PathBuf {
-        session_root.join("pitch").join(Self::pitch_correction_cache_file_name(
-            source_name,
-            source_offset,
-            source_length,
-        ))
+        session_root
+            .join("pitch")
+            .join(Self::pitch_correction_cache_file_name(
+                source_name,
+                source_offset,
+                source_length,
+            ))
     }
 
     fn source_modified_unix_nanos(path: &std::path::Path) -> io::Result<u128> {
@@ -137,12 +139,13 @@ impl Maolan {
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err),
         };
-        let cache: CachedPitchCorrectionFile = serde_json::from_reader(cache_file).map_err(|e| {
-            io::Error::other(format!(
-                "Failed to read pitch correction cache '{}': {e}",
-                path.display()
-            ))
-        })?;
+        let cache: CachedPitchCorrectionFile =
+            serde_json::from_reader(cache_file).map_err(|e| {
+                io::Error::other(format!(
+                    "Failed to read pitch correction cache '{}': {e}",
+                    path.display()
+                ))
+            })?;
         if cache.source_name != request.source_name
             || cache.source_offset != request.source_offset
             || cache.source_length != request.source_length
@@ -152,7 +155,8 @@ impl Maolan {
 
         if let Some(expected_modified_nanos) = cache.source_modified_unix_nanos {
             match Self::source_modified_unix_nanos(source_path) {
-                Ok(current_modified_nanos) if current_modified_nanos == expected_modified_nanos => {}
+                Ok(current_modified_nanos) if current_modified_nanos == expected_modified_nanos => {
+                }
                 _ => return Ok(None),
             }
         }
@@ -180,7 +184,11 @@ impl Maolan {
             .min()
             .unwrap_or(1)
             .max(1);
-        let points = Self::merge_adjacent_pitch_fragments(raw_points.clone(), frame_likeness, max_gap_samples);
+        let points = Self::merge_adjacent_pitch_fragments(
+            raw_points.clone(),
+            frame_likeness,
+            max_gap_samples,
+        );
 
         Ok(Some(crate::state::PitchCorrectionData {
             track_idx: request.track_idx.clone(),
@@ -2065,6 +2073,11 @@ impl Maolan {
                         source_length: clip
                             .pitch_correction_source_length
                             .map(|value| value.min(left_len)),
+                        preview_name: None,
+                        pitch_correction_points: vec![],
+                        pitch_correction_frame_likeness: None,
+                        pitch_correction_inertia_ms: None,
+                        pitch_correction_formant_compensation: None,
                     }),
                 );
                 tasks.push(
@@ -2087,6 +2100,11 @@ impl Maolan {
                         source_length: clip
                             .pitch_correction_source_length
                             .map(|value| value.saturating_sub(left_len)),
+                        preview_name: None,
+                        pitch_correction_points: vec![],
+                        pitch_correction_frame_likeness: None,
+                        pitch_correction_inertia_ms: None,
+                        pitch_correction_formant_compensation: None,
                     }),
                 );
                 tasks.push(self.send(Action::EndHistoryGroup));
@@ -2144,6 +2162,11 @@ impl Maolan {
                     source_name: None,
                     source_offset: None,
                     source_length: None,
+                    preview_name: None,
+                    pitch_correction_points: vec![],
+                    pitch_correction_frame_likeness: None,
+                    pitch_correction_inertia_ms: None,
+                    pitch_correction_formant_compensation: None,
                 }));
                 tasks.push(self.send(Action::AddClip {
                     name: clip.name,
@@ -2160,6 +2183,11 @@ impl Maolan {
                     source_name: None,
                     source_offset: None,
                     source_length: None,
+                    preview_name: None,
+                    pitch_correction_points: vec![],
+                    pitch_correction_frame_likeness: None,
+                    pitch_correction_inertia_ms: None,
+                    pitch_correction_formant_compensation: None,
                 }));
                 tasks.push(self.send(Action::EndHistoryGroup));
                 Task::batch(tasks)
@@ -2211,6 +2239,11 @@ impl Maolan {
             source_name: None,
             source_offset: None,
             source_length: None,
+            preview_name: None,
+            pitch_correction_points: vec![],
+            pitch_correction_frame_likeness: None,
+            pitch_correction_inertia_ms: None,
+            pitch_correction_formant_compensation: None,
         })
     }
 
@@ -2225,7 +2258,7 @@ impl Maolan {
                 "Pitch correction requires an opened/saved session".to_string();
             return Task::none();
         };
-        let Some(request) = ({
+        let clip = {
             let state = self.state.blocking_read();
             state
                 .tracks
@@ -2233,23 +2266,45 @@ impl Maolan {
                 .find(|t| t.name == track_idx)
                 .and_then(|t| t.audio.clips.get(clip_idx))
                 .cloned()
-                .map(|clip| ClipPitchCorrectionRequest {
-                    track_idx: track_idx.clone(),
-                    clip_idx,
-                    clip_name: clip.name.clone(),
-                    start: clip.start,
-                    source_name: clip
-                        .pitch_correction_source_name
-                        .clone()
-                        .unwrap_or_else(|| clip.name.clone()),
-                    source_offset: clip.pitch_correction_source_offset.unwrap_or(clip.offset),
-                    source_length: clip.pitch_correction_source_length.unwrap_or(clip.length),
-                    frame_likeness: state.pitch_correction_frame_likeness,
-                })
-        }) else {
+        };
+        let Some(clip) = clip else {
             self.state.blocking_write().message = "Audio clip not found".to_string();
             return Task::none();
         };
+        let request = {
+            let state = self.state.blocking_read();
+            ClipPitchCorrectionRequest {
+                track_idx: track_idx.clone(),
+                clip_idx,
+                clip_name: clip.name.clone(),
+                start: clip.start,
+                source_name: clip
+                    .pitch_correction_source_name
+                    .clone()
+                    .unwrap_or_else(|| clip.name.clone()),
+                source_offset: clip.pitch_correction_source_offset.unwrap_or(clip.offset),
+                source_length: clip.pitch_correction_source_length.unwrap_or(clip.length),
+                frame_likeness: clip
+                    .pitch_correction_frame_likeness
+                    .unwrap_or(state.pitch_correction_frame_likeness),
+            }
+        };
+        if !clip.pitch_correction_points.is_empty() {
+            self.state.blocking_write().message =
+                format!("Opened pitch correction for '{}'", request.clip_name);
+            return Task::done(Message::ClipOpenPitchCorrectionFinished {
+                request: request.clone(),
+                result: Ok(crate::state::PitchCorrectionData {
+                    track_idx: request.track_idx.clone(),
+                    clip_index: request.clip_idx,
+                    clip_name: request.clip_name.clone(),
+                    clip_length_samples: request.source_length,
+                    frame_likeness: request.frame_likeness,
+                    raw_points: clip.pitch_correction_points.clone(),
+                    points: clip.pitch_correction_points,
+                }),
+            });
+        }
         let source_path = if std::path::Path::new(&request.source_name).is_absolute() {
             std::path::PathBuf::from(&request.source_name)
         } else {
@@ -2264,9 +2319,8 @@ impl Maolan {
         if let Ok(Some(pitch_correction)) =
             Self::load_cached_pitch_correction(&session_root, &source_path, &request)
         {
-            self.state
-                .blocking_write()
-                .message = format!("Opened cached pitch correction for '{}'", request.clip_name);
+            self.state.blocking_write().message =
+                format!("Opened cached pitch correction for '{}'", request.clip_name);
             return Task::done(Message::ClipOpenPitchCorrectionFinished {
                 request,
                 result: Ok(pitch_correction),
@@ -2312,19 +2366,18 @@ impl Maolan {
                     )
                     .await
                     .map_err(|e| e.to_string());
-                    if let Ok(ref pitch_correction) = result {
-                        if let Err(err) = Self::save_cached_pitch_correction(
+                    if let Ok(ref pitch_correction) = result
+                        && let Err(err) = Self::save_cached_pitch_correction(
                             &session_root_for_cache,
                             &source_path,
                             &request,
                             pitch_correction,
-                        ) {
-                            error!(
-                                "Failed to cache pitch correction for '{}': {}",
-                                request.clip_name,
-                                err
-                            );
-                        }
+                        )
+                    {
+                        error!(
+                            "Failed to cache pitch correction for '{}': {}",
+                            request.clip_name, err
+                        );
                     }
                     if tx
                         .send(Message::ClipOpenPitchCorrectionFinished { request, result })
@@ -2398,18 +2451,12 @@ impl Maolan {
                 "Pitch correction is unavailable while playing or paused".to_string();
             return Task::none();
         }
-        let Some(session_root) = self.session_dir.clone() else {
+        let Some(_session_root) = self.session_dir.clone() else {
             self.state.blocking_write().message =
                 "Pitch correction requires an opened/saved session".to_string();
             return Task::none();
         };
-        if !*RUBBERBAND_AVAILABLE {
-            self.state.blocking_write().message =
-                "Pitch correction is unavailable because 'rubberband' is not installed or not on PATH"
-                    .to_string();
-            return Task::none();
-        }
-        let Some(request) = ({
+        let Some((preview_name, request, frame_likeness)) = ({
             let state = self.state.blocking_read();
             let Some(pitch_correction) = state.pitch_correction.as_ref() else {
                 return Task::none();
@@ -2421,89 +2468,63 @@ impl Maolan {
                 .and_then(|t| t.audio.clips.get(pitch_correction.clip_index))
                 .cloned()
                 .map(|clip| {
-                    let clip_name = clip.name.clone();
-                    ClipPitchCorrectionApplyRequest {
-                        track_idx: pitch_correction.track_idx.clone(),
-                        clip_idx: pitch_correction.clip_index,
-                        clip_name,
-                        start: clip.start,
-                        input_channel: clip.input_channel,
-                        muted: clip.muted,
-                        fade_enabled: clip.fade_enabled,
-                        fade_in_samples: clip.fade_in_samples,
-                        fade_out_samples: clip.fade_out_samples,
-                        source_name: clip
-                            .pitch_correction_source_name
-                            .clone()
-                            .unwrap_or_else(|| clip.name.clone()),
-                        source_offset: clip.pitch_correction_source_offset.unwrap_or(clip.offset),
-                        source_length: clip.pitch_correction_source_length.unwrap_or(clip.length),
-                        points: pitch_correction.points.clone(),
-                        inertia_ms: state.pitch_correction_inertia_ms.min(1000),
-                        formant_compensation: state.pitch_correction_formant_compensation,
-                    }
+                    (
+                        clip.pitch_correction_preview_name.clone(),
+                        ClipPitchCorrectionApplyRequest {
+                            track_idx: pitch_correction.track_idx.clone(),
+                            clip_idx: pitch_correction.clip_index,
+                            clip_name: clip.name.clone(),
+                            source_name: clip
+                                .pitch_correction_source_name
+                                .clone()
+                                .unwrap_or_else(|| clip.name.clone()),
+                            source_offset: clip
+                                .pitch_correction_source_offset
+                                .unwrap_or(clip.offset),
+                            source_length: clip
+                                .pitch_correction_source_length
+                                .unwrap_or(clip.length),
+                            points: pitch_correction.points.clone(),
+                            inertia_ms: state.pitch_correction_inertia_ms.min(1000),
+                            formant_compensation: state.pitch_correction_formant_compensation,
+                        },
+                        pitch_correction.frame_likeness,
+                    )
                 })
         }) else {
             self.state.blocking_write().message = "Audio clip not found".to_string();
             return Task::none();
         };
-        let source_path = if std::path::Path::new(&request.source_name).is_absolute() {
-            std::path::PathBuf::from(&request.source_name)
-        } else {
-            session_root.join(&request.source_name)
-        };
-        if !source_path.exists() {
-            self.state.blocking_write().message =
-                format!("Audio clip source is missing: {}", source_path.display());
-            return Task::none();
-        }
-        self.state.blocking_write().message =
-            format!("Applying pitch correction to '{}'...", request.clip_name);
-        Task::run(
-            {
-                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-                tokio::spawn(async move {
-                    let tx_clone = tx.clone();
-                    let clip_name_for_progress = request.clip_name.clone();
-                    let mut last_progress_bucket: Option<u16> = None;
-                    let mut last_operation: Option<String> = None;
-                    let progress_fn = move |progress: f32, operation: Option<String>| {
-                        let clamped = progress.clamp(0.0, 1.0);
-                        let bucket = (clamped * 100.0).round() as u16;
-                        if last_progress_bucket == Some(bucket) && last_operation == operation {
-                            return;
-                        }
-                        last_progress_bucket = Some(bucket);
-                        last_operation = operation.clone();
-                        let _ = tx_clone.send(Message::PitchCorrectionApplyProgress {
-                            clip_name: clip_name_for_progress.clone(),
-                            progress: clamped,
-                            operation,
-                        });
-                    };
-                    let result = Self::render_audio_clip_pitch_correction_with_rubberband(
-                        &source_path,
-                        &session_root,
-                        &request.clip_name,
-                        request.source_offset,
-                        request.source_length,
-                        &request.points,
-                        request.inertia_ms,
-                        request.formant_compensation,
-                        progress_fn,
-                    )
-                    .await
-                    .map_err(|e| e.to_string());
-                    let _ = tx.send(Message::PitchCorrectionApplyFinished { request, result });
-                    drop(tx);
-                });
-
-                iced::futures::stream::unfold(rx, |mut rx| async move {
-                    rx.recv().await.map(|msg| (msg, rx))
-                })
-            },
-            |msg| msg,
-        )
+        self.state.blocking_write().message = format!(
+            "Applying pitch correction to '{}' in real time",
+            request.clip_name
+        );
+        Task::batch(vec![
+            self.send(Action::BeginHistoryGroup),
+            self.send(Action::SetClipPitchCorrection {
+                track_name: request.track_idx.clone(),
+                clip_index: request.clip_idx,
+                preview_name,
+                source_name: Some(request.source_name),
+                source_offset: Some(request.source_offset),
+                source_length: Some(request.source_length),
+                pitch_correction_points: request
+                    .points
+                    .into_iter()
+                    .map(|point| maolan_engine::message::PitchCorrectionPointData {
+                        start_sample: point.start_sample,
+                        length_samples: point.length_samples,
+                        detected_midi_pitch: point.detected_midi_pitch,
+                        target_midi_pitch: point.target_midi_pitch,
+                        clarity: point.clarity,
+                    })
+                    .collect(),
+                pitch_correction_frame_likeness: Some(frame_likeness),
+                pitch_correction_inertia_ms: Some(request.inertia_ms),
+                pitch_correction_formant_compensation: Some(request.formant_compensation),
+            }),
+            self.send(Action::EndHistoryGroup),
+        ])
     }
 
     fn snap_pitch_correction_points_to_nearest(&mut self, point_index: usize) -> Task<Message> {

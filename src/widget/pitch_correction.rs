@@ -178,12 +178,9 @@ impl PitchCorrection {
             row![
                 info_strip,
                 column![
-                    row![
-                        keyboard_scroll,
-                        note_scroll
-                    ]
-                    .height(Length::Fill)
-                    .width(Length::Fill),
+                    row![keyboard_scroll, note_scroll]
+                        .height(Length::Fill)
+                        .width(Length::Fill),
                     row![
                         container("")
                             .width(Length::Fixed(KEYBOARD_WIDTH))

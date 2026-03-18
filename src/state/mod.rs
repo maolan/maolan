@@ -357,7 +357,7 @@ pub struct PianoData {
     pub midnam_note_names: HashMap<u8, String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PitchCorrectionPoint {
     pub start_sample: usize,
     pub length_samples: usize,
@@ -366,6 +366,7 @@ pub struct PitchCorrectionPoint {
     pub clarity: f32,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PitchCorrectionData {
     pub track_idx: String,

@@ -842,20 +842,20 @@ impl canvas::Program<Message> for Graph {
                         }
                         return Some(Action::request_redraw());
                     }
-                    if let Some(mt) = data.moving_track.take() {
-                        if let Some(index) = data.tracks.iter().position(|t| t.name == mt.track_idx) {
-                            let moving_track = data.tracks.remove(index);
-                            let mut insert_at = data.tracks.len();
-                            for (candidate_index, track) in data.tracks.iter().enumerate() {
-                                let size = Self::track_box_size(track);
-                                if cursor_position.y < track.position.y + size.height / 2.0 {
-                                    insert_at = candidate_index;
-                                    break;
-                                }
+                    if let Some(mt) = data.moving_track.take()
+                        && let Some(index) = data.tracks.iter().position(|t| t.name == mt.track_idx)
+                    {
+                        let moving_track = data.tracks.remove(index);
+                        let mut insert_at = data.tracks.len();
+                        for (candidate_index, track) in data.tracks.iter().enumerate() {
+                            let size = Self::track_box_size(track);
+                            if cursor_position.y < track.position.y + size.height / 2.0 {
+                                insert_at = candidate_index;
+                                break;
                             }
-                            let max_len = data.tracks.len();
-                            data.tracks.insert(insert_at.min(max_len), moving_track);
                         }
+                        let max_len = data.tracks.len();
+                        data.tracks.insert(insert_at.min(max_len), moving_track);
                     }
                     data.moving_track = None;
                     return Some(Action::request_redraw());

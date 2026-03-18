@@ -1703,6 +1703,48 @@ impl Maolan {
                             source_length: clip["pitch_correction_source_length"]
                                 .as_u64()
                                 .map(|v| v as usize),
+                            preview_name: clip["pitch_correction_preview_name"]
+                                .as_str()
+                                .map(str::to_string),
+                            pitch_correction_points: clip["pitch_correction_points"]
+                                .as_array()
+                                .map(|points| {
+                                    points
+                                        .iter()
+                                        .map(|point| {
+                                            maolan_engine::message::PitchCorrectionPointData {
+                                                start_sample: point["start_sample"]
+                                                    .as_u64()
+                                                    .unwrap_or(0)
+                                                    as usize,
+                                                length_samples: point["length_samples"]
+                                                    .as_u64()
+                                                    .unwrap_or(0)
+                                                    as usize,
+                                                detected_midi_pitch: point["detected_midi_pitch"]
+                                                    .as_f64()
+                                                    .unwrap_or(0.0)
+                                                    as f32,
+                                                target_midi_pitch: point["target_midi_pitch"]
+                                                    .as_f64()
+                                                    .unwrap_or(0.0)
+                                                    as f32,
+                                                clarity: point["clarity"].as_f64().unwrap_or(0.0)
+                                                    as f32,
+                                            }
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default(),
+                            pitch_correction_frame_likeness:
+                                clip["pitch_correction_frame_likeness"]
+                                    .as_f64()
+                                    .map(|v| v as f32),
+                            pitch_correction_inertia_ms: clip["pitch_correction_inertia_ms"]
+                                .as_u64()
+                                .map(|v| v as u16),
+                            pitch_correction_formant_compensation:
+                                clip["pitch_correction_formant_compensation"].as_bool(),
                         });
                     }
                 }
@@ -1765,6 +1807,11 @@ impl Maolan {
                             source_name: None,
                             source_offset: None,
                             source_length: None,
+                            preview_name: None,
+                            pitch_correction_points: vec![],
+                            pitch_correction_frame_likeness: None,
+                            pitch_correction_inertia_ms: None,
+                            pitch_correction_formant_compensation: None,
                         });
                     }
                 }

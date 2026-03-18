@@ -276,6 +276,12 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         source_name: clip.pitch_correction_source_name.clone(),
                         source_offset: clip.pitch_correction_source_offset,
                         source_length: clip.pitch_correction_source_length,
+                        preview_name: clip.pitch_correction_preview_name.clone(),
+                        pitch_correction_points: clip.pitch_correction_points.clone(),
+                        pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
+                        pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
+                        pitch_correction_formant_compensation:
+                            clip.pitch_correction_formant_compensation,
                     })
                 }
                 Kind::MIDI => {
@@ -296,6 +302,11 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         source_name: None,
                         source_offset: None,
                         source_length: None,
+                        preview_name: None,
+                        pitch_correction_points: vec![],
+                        pitch_correction_frame_likeness: None,
+                        pitch_correction_inertia_ms: None,
+                        pitch_correction_formant_compensation: None,
                     })
                 }
             }
@@ -479,6 +490,28 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                 clip_index: *clip_index,
                 kind: *kind,
                 muted,
+            })
+        }
+        Action::SetClipPitchCorrection {
+            track_name,
+            clip_index,
+            ..
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track_lock = track.lock();
+            let clip = track_lock.audio.clips.get(*clip_index)?;
+            Some(Action::SetClipPitchCorrection {
+                track_name: track_name.clone(),
+                clip_index: *clip_index,
+                preview_name: clip.pitch_correction_preview_name.clone(),
+                source_name: clip.pitch_correction_source_name.clone(),
+                source_offset: clip.pitch_correction_source_offset,
+                source_length: clip.pitch_correction_source_length,
+                pitch_correction_points: clip.pitch_correction_points.clone(),
+                pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
+                pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
+                pitch_correction_formant_compensation: clip
+                    .pitch_correction_formant_compensation,
             })
         }
         Action::Connect {
@@ -965,6 +998,12 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     source_name: clip.pitch_correction_source_name.clone(),
                     source_offset: clip.pitch_correction_source_offset,
                     source_length: clip.pitch_correction_source_length,
+                    preview_name: clip.pitch_correction_preview_name.clone(),
+                    pitch_correction_points: clip.pitch_correction_points.clone(),
+                    pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
+                    pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
+                    pitch_correction_formant_compensation:
+                        clip.pitch_correction_formant_compensation,
                 });
             }
             for clip in &track.midi.clips {
@@ -984,6 +1023,11 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     source_name: None,
                     source_offset: None,
                     source_length: None,
+                    preview_name: None,
+                    pitch_correction_points: vec![],
+                    pitch_correction_frame_likeness: None,
+                    pitch_correction_inertia_ms: None,
+                    pitch_correction_formant_compensation: None,
                 });
             }
         }
@@ -1270,6 +1314,11 @@ mod tests {
                 source_name: None,
                 source_offset: None,
                 source_length: None,
+                preview_name: None,
+                pitch_correction_points: vec![],
+                pitch_correction_frame_likeness: None,
+                pitch_correction_inertia_ms: None,
+                pitch_correction_formant_compensation: None,
             },
             &state,
         )
