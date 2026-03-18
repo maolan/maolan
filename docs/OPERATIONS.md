@@ -1,6 +1,6 @@
 # Maolan Operations, Storage, and Recovery
 
-Last updated: 2026-03-13
+Last updated: 2026-03-18
 
 ## Runtime and Platform Behavior
 
@@ -39,12 +39,14 @@ A saved session is a directory containing:
 - `audio/`: imported or rendered audio stored in-session
 - `midi/`: copied MIDI files used by clips
 - `peaks/`: cached waveform peak data written on save
+- `pitch/`: cached pitch-analysis JSON files keyed by source clip path + source window
 - `plugins/`: plugin-related session assets
 - `.maolan_autosave/snapshots/`: autosave snapshots
 
 The session JSON persists:
 
 - tracks, clips, and track connections
+- clip pitch-correction settings and saved pitch-segment targets
 - plugin graph topology and plugin state
 - session metadata
 - transport state, tempo points, and time-signature points
@@ -124,6 +126,15 @@ Current bundle contents:
 - Multiple output formats can be written in one export run.
 - MP3 export supports only mono or stereo output.
 - Normalization and master-limiter settings are persisted in the session file.
+
+## Pitch Correction Caching and Rendering
+
+- Opening pitch correction for an audio clip requires a saved/opened session.
+- Analysis results are cached per session under `pitch/` and reused when the source file modification time still matches.
+- Cached analysis is keyed by source file, source offset, and source length, so clip corrections can target either the whole clip or a saved source window.
+- Pressing `Apply` stores the current correction points and render settings on the clip without destructively rewriting the source audio file.
+- Live transport playback applies saved pitch correction in real time.
+- Freeze preparation renders pitch-corrected clips offline first so frozen audio matches the corrected result.
 
 ## Recent Sessions
 

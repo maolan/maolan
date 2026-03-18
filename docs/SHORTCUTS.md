@@ -1,6 +1,6 @@
 # Maolan Shortcuts and Gestures
 
-Last updated: 2026-03-17
+Last updated: 2026-03-18
 
 ## Keyboard Shortcuts
 ### Global / Session
@@ -47,7 +47,7 @@ Last updated: 2026-03-17
 - `Middle click clip`: Split clip at current cursor/snap position
 - `Double click MIDI clip`: Open MIDI piano roll
 - `Right click clip`: Open clip context menu
-  - Clip actions such as rename, take-lane controls, mute/unmute, fade toggle, and audio stretch actions for audio clips
+  - Clip actions such as rename, take-lane controls, mute/unmute, pitch correction, fade toggle, and audio stretch actions for audio clips
 
 ### Track Header Markers
 - `Right click empty marker/header area`: Open the create-marker dialog at the snapped timeline position
@@ -99,6 +99,16 @@ Last updated: 2026-03-17
 - `Mouse wheel over controller event`: Adjust controller value
 - `SysEx lane`: Left drag moves SysEx event, double click opens SysEx editor
 
+### Pitch Correction
+- `Right click audio clip -> Pitch Correction`: Open the pitch-correction editor when transport is stopped
+- `Left click pitch segment`: Select one segment
+- `Shift+Left click pitch segment`: Add/remove a segment from the selection
+- `Left drag selected pitch segment(s)`: Retarget one or many selected segments vertically
+- `Left drag empty area`: Box-select pitch segments
+- `Shift+Left drag empty area`: Add box-selected segments to the current selection
+- `Double click pitch segment`: Snap the clicked segment, or the current selected group, to the nearest semitone
+- `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` in pitch-correction view: Undo/redo local pitch-segment edits
+
 ### Plugin Graph
 - `Drag plugin node`: Move plugin node in graph
 - `Drag from port to port`: Create audio or MIDI connection
@@ -109,5 +119,6 @@ Last updated: 2026-03-17
 - Current keyboard handling is `Ctrl`-based in code paths (including on macOS builds).
 - Some actions are context-dependent (current view/tool/selection state).
 - The `Q` / `H` / `G` piano shortcuts act on the current piano-roll note selection.
+- In pitch-correction view, undo/redo applies to the local correction editor instead of global engine history until you leave the view or press `Apply`.
 - Audio clip stretching is only available when the `rubberband` executable can be found on `PATH`.
 - The main editor zoom is geometric rather than linear, so equal slider movement produces equal zoom-ratio changes.
