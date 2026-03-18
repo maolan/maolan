@@ -28,12 +28,19 @@ Last updated: 2026-03-18
 - MIDI clip double-click opens piano roll
 - Audio clip pitch-correction editor
 - Pitch-correction workflow:
-  - Analyze source material with cached in-memory pitch scan for fast revisits
+  - Open from the audio clip context menu when transport is stopped
+  - Analyze source material with per-session cached pitch scans for fast revisits
+  - Reopen existing clip correction without re-analyzing when correction data is already saved on the clip
   - Tune detection granularity using frame-likeness (0.05–2.00) merge behavior
-  - Manual pitch-segment retargeting with drag/select editing and grouping
+  - Manual pitch-segment retargeting with click, shift-click, marquee select, and grouped vertical drag editing
+  - Double-click snap-to-nearest-note for one or many selected pitch segments
+  - Local pitch-correction undo/redo history while editing
   - Adjustable inertia (0–1000 ms) for smoother pitch transitions between segments
   - Optional formant compensation in render path
   - Apply pitch correction from full clip or selected source offset/length window
+  - Non-destructive clip workflow: edits stay local to the editor until Apply writes them back to the clip
+  - Real-time pitch-shift playback after Apply
+  - Offline pitch-corrected freeze preparation using Rubber Band preview renders
 - Audio warp markers with reset / half-speed / double-speed helpers
 
 ## Timeline Markers and Arrangement Aids
