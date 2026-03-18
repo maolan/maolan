@@ -1,6 +1,6 @@
 # Maolan Features
 
-Last updated: 2026-03-17
+Last updated: 2026-03-18
 
 ## Core DAW Workflow
 - Multi-track audio + MIDI session editing
@@ -27,9 +27,13 @@ Last updated: 2026-03-17
 - Clip middle-click split at cursor/snap point
 - MIDI clip double-click opens piano roll
 - Audio clip pitch-correction editor
-- Pitch-correction frame-likeness slider in the left pane
-- In-memory cached pitch scan for likeness regrouping without rescanning audio
-- Manual pitch-segment retargeting with drag-to-adjust
+- Pitch-correction workflow:
+  - Analyze source material with cached in-memory pitch scan for fast revisits
+  - Tune detection granularity using frame-likeness (0.05–2.00) merge behavior
+  - Manual pitch-segment retargeting with drag/select editing and grouping
+  - Adjustable inertia (0–1000 ms) for smoother pitch transitions between segments
+  - Optional formant compensation in render path
+  - Apply pitch correction from full clip or selected source offset/length window
 - Audio warp markers with reset / half-speed / double-speed helpers
 
 ## Timeline Markers and Arrangement Aids
