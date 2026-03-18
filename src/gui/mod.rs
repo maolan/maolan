@@ -4722,6 +4722,10 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use maolan_engine::message::PluginGraphNode;
+    use std::sync::{LazyLock, Mutex};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static AUDIO_PEAK_TEST_GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
     #[test]
     fn normalize_recent_session_paths_trims_deduplicates_and_limits() {
@@ -4870,8 +4874,103 @@ mod tests {
     fn cleanup_targets_include_pitchmap_sidecars_only() {
         assert!(Maolan::is_cleanup_target_rel("audio/clip_pitchmap.txt"));
         assert!(Maolan::is_cleanup_target_rel("audio/clip_pitchmap_001.txt"));
+        assert!(Maolan::is_cleanup_target_rel("audio/song.wav"));
+        assert!(Maolan::is_cleanup_target_rel("midi/pattern.midi"));
         assert!(!Maolan::is_cleanup_target_rel("audio/notes.txt"));
+        assert!(!Maolan::is_cleanup_target_rel("audio/../notes.txt"));
         assert!(!Maolan::is_cleanup_target_rel("pitch/cache.txt"));
+    }
+
+    #[test]
+    fn normalize_session_media_rel_rejects_unsafe_paths_and_normalizes_current_dir() {
+        assert_eq!(
+            Maolan::normalize_session_media_rel("./audio/clip.wav").as_deref(),
+            Some("audio/clip.wav")
+        );
+        assert_eq!(
+            Maolan::normalize_session_media_rel("peaks/clip.json").as_deref(),
+            Some("peaks/clip.json")
+        );
+        assert!(Maolan::normalize_session_media_rel("/tmp/clip.wav").is_none());
+        assert!(Maolan::normalize_session_media_rel("../audio/clip.wav").is_none());
+    }
+
+    #[test]
+    fn file_extension_lower_normalizes_case_and_trims_dot() {
+        assert_eq!(
+            Maolan::file_extension_lower(std::path::Path::new("Song.MP3")).as_deref(),
+            Some("mp3")
+        );
+        assert_eq!(
+            Maolan::file_extension_lower(std::path::Path::new("clip..WAV")).as_deref(),
+            Some("wav")
+        );
+        assert!(Maolan::file_extension_lower(std::path::Path::new("no_extension")).is_none());
+    }
+
+    #[test]
+    fn import_path_helpers_accept_case_insensitive_extensions() {
+        assert!(Maolan::is_import_audio_path(std::path::Path::new(
+            "take.FLAC"
+        )));
+        assert!(Maolan::is_import_audio_path(std::path::Path::new(
+            "take.Mp3"
+        )));
+        assert!(Maolan::is_import_midi_path(std::path::Path::new(
+            "pattern.MID"
+        )));
+        assert!(Maolan::is_import_midi_path(std::path::Path::new(
+            "pattern.Midi"
+        )));
+        assert!(!Maolan::is_import_audio_path(std::path::Path::new(
+            "take.txt"
+        )));
+        assert!(!Maolan::is_import_midi_path(std::path::Path::new(
+            "pattern.txt"
+        )));
+    }
+
+    #[test]
+    fn import_track_base_name_trims_and_sanitizes_file_stem() {
+        assert_eq!(
+            Maolan::import_track_base_name(std::path::Path::new("  Lead Vox!!.wav  ")),
+            "Lead_Vox__"
+        );
+        assert_eq!(
+            Maolan::import_track_base_name(std::path::Path::new("   .wav")),
+            "clip"
+        );
+    }
+
+    #[test]
+    fn unique_track_name_uses_first_available_numeric_suffix() {
+        let mut used = HashSet::from([
+            "Track".to_string(),
+            "Track_2".to_string(),
+            "Track_3".to_string(),
+        ]);
+
+        let unique = Maolan::unique_track_name("Track", &mut used);
+
+        assert_eq!(unique, "Track_4");
+        assert!(used.contains("Track_4"));
+    }
+
+    #[test]
+    fn unique_import_rel_path_appends_numeric_suffix_when_name_exists() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_test_import_{unique}"));
+        fs::create_dir_all(session_root.join("audio")).expect("create temp audio dir");
+        fs::write(session_root.join("audio/clip.wav"), b"").expect("seed existing import");
+
+        let rel = Maolan::unique_import_rel_path(&session_root, "audio", "clip", "wav").unwrap();
+
+        assert_eq!(rel, "audio/clip_001.wav");
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
     }
 
     #[test]
@@ -4921,5 +5020,295 @@ mod tests {
         assert!(referenced.contains("midi/ghost.midi"));
         assert!(referenced.contains("audio/render.wav"));
         assert!(!referenced.contains("/tmp/external.wav"));
+    }
+
+    #[test]
+    fn referenced_session_media_paths_use_source_offset_and_length_for_pitch_cache_keys() {
+        let mut state = crate::state::StateData::default();
+        let mut track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 1, 1);
+        let expected_cache = Maolan::pitch_correction_cache_rel("audio/source.wav", 128, 4096);
+        track.audio.clips.push(crate::state::AudioClip {
+            name: "audio/rendered.wav".to_string(),
+            offset: 12,
+            length: 64,
+            pitch_correction_source_name: Some("audio/source.wav".to_string()),
+            pitch_correction_source_offset: Some(128),
+            pitch_correction_source_length: Some(4096),
+            ..Default::default()
+        });
+        state.tracks.push(track);
+
+        let referenced = Maolan::referenced_session_media_paths(&state);
+
+        assert!(referenced.contains("audio/rendered.wav"));
+        assert!(referenced.contains("audio/source.wav"));
+        assert!(referenced.contains(&expected_cache));
+    }
+
+    #[test]
+    fn insert_referenced_session_media_path_ignores_unsafe_inputs() {
+        let mut referenced = HashSet::new();
+
+        Maolan::insert_referenced_session_media_path(&mut referenced, "/tmp/external.wav");
+        Maolan::insert_referenced_session_media_path(&mut referenced, "../audio/clip.wav");
+        Maolan::insert_referenced_session_media_path(&mut referenced, "audio/clip.wav");
+
+        assert_eq!(referenced, HashSet::from(["audio/clip.wav".to_string()]));
+    }
+
+    #[test]
+    fn pitch_correction_cache_rel_is_stable_and_changes_with_segment() {
+        let a = Maolan::pitch_correction_cache_rel("audio/source.wav", 0, 1024);
+        let b = Maolan::pitch_correction_cache_rel("audio/source.wav", 0, 1024);
+        let c = Maolan::pitch_correction_cache_rel("audio/source.wav", 1, 1024);
+        let d = Maolan::pitch_correction_cache_rel("audio/source.wav", 0, 2048);
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, d);
+    }
+
+    #[test]
+    fn collect_cleanup_candidate_files_recurses_and_skips_referenced_media() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_test_cleanup_{unique}"));
+        fs::create_dir_all(session_root.join("audio/nested")).expect("create nested audio dir");
+        fs::create_dir_all(session_root.join("peaks")).expect("create peaks dir");
+        fs::create_dir_all(session_root.join("pitch")).expect("create pitch dir");
+
+        fs::write(session_root.join("audio/keep.wav"), b"").expect("write keep file");
+        fs::write(session_root.join("audio/nested/drop_pitchmap.txt"), b"")
+            .expect("write nested pitchmap");
+        fs::write(session_root.join("peaks/drop.json"), b"").expect("write peak file");
+        fs::write(session_root.join("pitch/drop.json"), b"").expect("write pitch cache");
+        fs::write(session_root.join("audio/ignore.txt"), b"").expect("write ignored text");
+
+        let referenced = HashSet::from(["audio/keep.wav".to_string()]);
+        let mut out = Vec::new();
+        Maolan::collect_cleanup_candidate_files(
+            &session_root.join("audio"),
+            &session_root,
+            &referenced,
+            &mut out,
+        )
+        .expect("scan audio");
+        Maolan::collect_cleanup_candidate_files(
+            &session_root.join("peaks"),
+            &session_root,
+            &referenced,
+            &mut out,
+        )
+        .expect("scan peaks");
+        Maolan::collect_cleanup_candidate_files(
+            &session_root.join("pitch"),
+            &session_root,
+            &referenced,
+            &mut out,
+        )
+        .expect("scan pitch");
+        out.sort_by(|a, b| a.1.cmp(&b.1));
+
+        let rels: Vec<_> = out.into_iter().map(|(_, rel)| rel).collect();
+        assert_eq!(
+            rels,
+            vec![
+                "audio/nested/drop_pitchmap.txt".to_string(),
+                "peaks/drop.json".to_string(),
+                "pitch/drop.json".to_string(),
+            ]
+        );
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn import_prepared_audio_peaks_stores_precomputed_peaks_by_clip_key() {
+        let mut app = Maolan::default();
+        let peaks = Arc::new(vec![vec![[0.1_f32, 0.4_f32], [-0.2_f32, 0.3_f32]]]);
+
+        let _ = app.update(Message::ImportPreparedAudioPeaks {
+            track_name: "Track".to_string(),
+            clip_name: "audio/import.wav".to_string(),
+            start: 0,
+            length: 256,
+            offset: 0,
+            peaks: peaks.clone(),
+        });
+
+        let key = Maolan::audio_clip_key("Track", "audio/import.wav", 0, 256, 0);
+        assert_eq!(app.pending_precomputed_peaks.get(&key), Some(&peaks));
+    }
+
+    #[test]
+    fn drain_audio_peak_updates_applies_chunks_and_clears_pending_rebuilds() {
+        let _guard = AUDIO_PEAK_TEST_GUARD.lock().expect("lock audio peak test");
+        let mut app = Maolan::default();
+        let mut track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 0, 0);
+        track.audio.clips.push(crate::state::AudioClip {
+            name: "audio/import.wav".to_string(),
+            start: 0,
+            length: 256,
+            offset: 0,
+            peaks: Arc::new(Vec::new()),
+            ..Default::default()
+        });
+        app.state.blocking_write().tracks.push(track);
+
+        let key = Maolan::audio_clip_key("Track", "audio/import.wav", 0, 256, 0);
+        app.pending_peak_rebuilds.insert(key.clone());
+
+        if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+            queue.clear();
+            queue.push(AudioPeakChunkUpdate {
+                track_name: "Track".to_string(),
+                clip_name: "audio/import.wav".to_string(),
+                start: 0,
+                length: 256,
+                offset: 0,
+                channels: 1,
+                target_bins: 4,
+                bin_start: 0,
+                peaks: vec![vec![
+                    [-0.8_f32, 0.1_f32],
+                    [-0.4_f32, 0.3_f32],
+                    [-0.2_f32, 0.6_f32],
+                    [-0.1_f32, 0.9_f32],
+                ]],
+                done: false,
+            });
+            queue.push(AudioPeakChunkUpdate {
+                track_name: "Track".to_string(),
+                clip_name: "audio/import.wav".to_string(),
+                start: 0,
+                length: 256,
+                offset: 0,
+                channels: 1,
+                target_bins: 4,
+                bin_start: 0,
+                peaks: Vec::new(),
+                done: true,
+            });
+        }
+
+        let _ = app.update(Message::DrainAudioPeakUpdates);
+
+        let state = app.state.blocking_read();
+        let clip = &state.tracks[0].audio.clips[0];
+        assert_eq!(clip.peaks.len(), 1);
+        assert_eq!(clip.peaks[0].len(), 4);
+        assert_eq!(clip.peaks[0][0], [-0.8_f32, 0.1_f32]);
+        assert_eq!(clip.peaks[0][3], [-0.1_f32, 0.9_f32]);
+        drop(state);
+
+        assert!(!app.pending_peak_rebuilds.contains(&key));
+    }
+
+    #[test]
+    fn drain_audio_peak_updates_accumulates_multiple_chunks() {
+        let _guard = AUDIO_PEAK_TEST_GUARD.lock().expect("lock audio peak test");
+        let mut app = Maolan::default();
+        let mut track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 0, 0);
+        track.audio.clips.push(crate::state::AudioClip {
+            name: "audio/import.wav".to_string(),
+            start: 0,
+            length: 256,
+            offset: 0,
+            peaks: Arc::new(Vec::new()),
+            ..Default::default()
+        });
+        app.state.blocking_write().tracks.push(track);
+
+        if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+            queue.clear();
+            queue.push(AudioPeakChunkUpdate {
+                track_name: "Track".to_string(),
+                clip_name: "audio/import.wav".to_string(),
+                start: 0,
+                length: 256,
+                offset: 0,
+                channels: 1,
+                target_bins: 4,
+                bin_start: 0,
+                peaks: vec![vec![[-0.8_f32, 0.1_f32], [-0.4_f32, 0.3_f32]]],
+                done: false,
+            });
+        }
+        let _ = app.update(Message::DrainAudioPeakUpdates);
+
+        if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
+            queue.push(AudioPeakChunkUpdate {
+                track_name: "Track".to_string(),
+                clip_name: "audio/import.wav".to_string(),
+                start: 0,
+                length: 256,
+                offset: 0,
+                channels: 1,
+                target_bins: 4,
+                bin_start: 2,
+                peaks: vec![vec![[-0.2_f32, 0.6_f32], [-0.1_f32, 0.9_f32]]],
+                done: false,
+            });
+            queue.push(AudioPeakChunkUpdate {
+                track_name: "Track".to_string(),
+                clip_name: "audio/import.wav".to_string(),
+                start: 0,
+                length: 256,
+                offset: 0,
+                channels: 1,
+                target_bins: 4,
+                bin_start: 0,
+                peaks: Vec::new(),
+                done: true,
+            });
+        }
+        let _ = app.update(Message::DrainAudioPeakUpdates);
+
+        let state = app.state.blocking_read();
+        let clip = &state.tracks[0].audio.clips[0];
+        assert_eq!(
+            clip.peaks.as_ref(),
+            &vec![vec![
+                [-0.8_f32, 0.1_f32],
+                [-0.4_f32, 0.3_f32],
+                [-0.2_f32, 0.6_f32],
+                [-0.1_f32, 0.9_f32],
+            ]]
+        );
+    }
+
+    #[test]
+    fn import_progress_only_finishes_on_last_file_at_full_progress() {
+        let mut app = Maolan::default();
+        app.import_in_progress = true;
+
+        let _ = app.update(Message::ImportProgress {
+            file_index: 1,
+            total_files: 2,
+            file_progress: 1.0,
+            filename: "first.wav".to_string(),
+            operation: None,
+        });
+        assert!(app.import_in_progress);
+
+        let _ = app.update(Message::ImportProgress {
+            file_index: 2,
+            total_files: 2,
+            file_progress: 0.5,
+            filename: "second.wav".to_string(),
+            operation: Some("Decoding".to_string()),
+        });
+        assert!(app.import_in_progress);
+
+        let _ = app.update(Message::ImportProgress {
+            file_index: 2,
+            total_files: 2,
+            file_progress: 1.0,
+            filename: "second.wav".to_string(),
+            operation: None,
+        });
+        assert!(!app.import_in_progress);
     }
 }

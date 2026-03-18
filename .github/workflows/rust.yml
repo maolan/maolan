@@ -22,6 +22,7 @@ env:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build-ubuntu:
@@ -31,19 +32,62 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
     - name: Install system packages
       run: |
         sudo apt-get update
         sudo apt-get install -y software-properties-common
         sudo add-apt-repository -y ppa:rncbc/libs-noble
         sudo apt-get update
-        sudo apt-get install -y cargo pkg-config jackd2 libjack-jackd2-dev libasound2-dev liblilv-dev libsuil-dev libgtk2.0-dev librubberband-dev rubberband-cli
+        sudo apt-get install -y pkg-config jackd2 libjack-jackd2-dev libasound2-dev liblilv-dev libsuil-dev libgtk2.0-dev librubberband-dev rubberband-cli
     - name: Build
       if: ${{ !inputs.release_build }}
       run: cargo build
     - name: Run tests
       if: ${{ !inputs.release_build }}
       run: cargo test
+    - name: Install cargo-llvm-cov
+      if: ${{ !inputs.release_build }}
+      uses: taiki-e/install-action@cargo-llvm-cov
+    - name: Generate coverage report
+      if: ${{ !inputs.release_build }}
+      run: |
+        mkdir -p coverage
+        cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info
+    - name: Generate HTML coverage report
+      if: ${{ !inputs.release_build }}
+      run: cargo llvm-cov report --html --output-dir coverage/html
+    - name: Publish coverage summary
+      if: ${{ !inputs.release_build }}
+      run: |
+        {
+          echo "## Coverage Summary"
+          echo
+          cargo llvm-cov report --summary-only
+        } >> "$GITHUB_STEP_SUMMARY"
+        cargo llvm-cov report --summary-only
+    - name: Upload coverage artifact
+      if: ${{ !inputs.release_build }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: coverage-lcov
+        path: coverage/lcov.info
+    - name: Upload HTML coverage artifact
+      if: ${{ !inputs.release_build }}
+      uses: actions/upload-artifact@v6
+      with:
+        name: coverage-html
+        path: coverage/html
+    - name: Upload coverage to Codecov
+      if: ${{ !inputs.release_build }}
+      uses: codecov/codecov-action@v5
+      with:
+        files: coverage/lcov.info
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: false
     - name: Build release binary
       if: ${{ inputs.release_build }}
       run: cargo build --release --verbose

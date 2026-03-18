@@ -1237,6 +1237,39 @@ mod tests {
     }
 
     #[test]
+    fn history_clear_removes_pending_undo_and_redo_entries() {
+        let mut history = History::new(4);
+        history.record(UndoEntry {
+            forward_actions: vec![Action::SetTempo(120.0)],
+            inverse_actions: vec![Action::SetTempo(100.0)],
+        });
+        history.record(UndoEntry {
+            forward_actions: vec![Action::SetLoopEnabled(true)],
+            inverse_actions: vec![Action::SetLoopEnabled(false)],
+        });
+
+        assert!(history.undo().is_some());
+        assert!(history.redo().is_some());
+
+        history.clear();
+
+        assert!(history.undo().is_none());
+        assert!(history.redo().is_none());
+    }
+
+    #[test]
+    fn history_with_zero_capacity_discards_recorded_entries() {
+        let mut history = History::new(0);
+        history.record(UndoEntry {
+            forward_actions: vec![Action::SetTempo(120.0)],
+            inverse_actions: vec![Action::SetTempo(100.0)],
+        });
+
+        assert!(history.undo().is_none());
+        assert!(history.redo().is_none());
+    }
+
+    #[test]
     fn should_record_covers_recent_transport_and_lv2_actions() {
         assert!(should_record(&Action::SetLoopEnabled(true)));
         assert!(should_record(&Action::SetLoopRange(Some((64, 128)))));
@@ -1374,6 +1407,293 @@ mod tests {
                 assert_eq!(start, 10);
                 assert_eq!(length, 30);
                 assert_eq!(offset, 7);
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_action_for_set_clip_bounds_restores_previous_midi_bounds() {
+        let mut track = Track::new("t".to_string(), 0, 0, 1, 1, 64, 48_000.0);
+        track.midi.clips.push(crate::midi::clip::MIDIClip {
+            name: "pattern.mid".to_string(),
+            start: 24,
+            end: 120,
+            offset: 9,
+            ..Default::default()
+        });
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::SetClipBounds {
+                track_name: "t".to_string(),
+                clip_index: 0,
+                kind: Kind::MIDI,
+                start: 32,
+                length: 48,
+                offset: 4,
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        match inverse {
+            Action::SetClipBounds {
+                track_name,
+                clip_index,
+                kind,
+                start,
+                length,
+                offset,
+            } => {
+                assert_eq!(track_name, "t");
+                assert_eq!(clip_index, 0);
+                assert_eq!(kind, Kind::MIDI);
+                assert_eq!(start, 24);
+                assert_eq!(length, 120);
+                assert_eq!(offset, 9);
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_action_for_set_clip_muted_restores_audio_and_midi_flags() {
+        let mut track = Track::new("t".to_string(), 1, 1, 1, 1, 64, 48_000.0);
+        let mut audio_clip = AudioClip::new("audio.wav".to_string(), 0, 16);
+        audio_clip.muted = true;
+        track.audio.clips.push(audio_clip);
+        let midi_clip = crate::midi::clip::MIDIClip {
+            name: "pattern.mid".to_string(),
+            muted: false,
+            ..Default::default()
+        };
+        track.midi.clips.push(midi_clip);
+        let state = make_state_with_track(track);
+
+        let audio_inverse = create_inverse_action(
+            &Action::SetClipMuted {
+                track_name: "t".to_string(),
+                clip_index: 0,
+                kind: Kind::Audio,
+                muted: false,
+            },
+            &state,
+        )
+        .expect("audio inverse");
+        let midi_inverse = create_inverse_action(
+            &Action::SetClipMuted {
+                track_name: "t".to_string(),
+                clip_index: 0,
+                kind: Kind::MIDI,
+                muted: true,
+            },
+            &state,
+        )
+        .expect("midi inverse");
+
+        assert!(matches!(
+            audio_inverse,
+            Action::SetClipMuted { muted: true, kind: Kind::Audio, .. }
+        ));
+        assert!(matches!(
+            midi_inverse,
+            Action::SetClipMuted { muted: false, kind: Kind::MIDI, .. }
+        ));
+    }
+
+    #[test]
+    fn create_inverse_action_for_rename_clip_restores_previous_name() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        track
+            .audio
+            .clips
+            .push(AudioClip::new("before.wav".to_string(), 0, 16));
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::RenameClip {
+                track_name: "t".to_string(),
+                kind: Kind::Audio,
+                clip_index: 0,
+                new_name: "after.wav".to_string(),
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        assert!(matches!(
+            inverse,
+            Action::RenameClip { new_name, kind: Kind::Audio, .. } if new_name == "before.wav"
+        ));
+    }
+
+    #[test]
+    fn create_inverse_action_for_track_set_vca_master_restores_none() {
+        let track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::TrackSetVcaMaster {
+                track_name: "t".to_string(),
+                master_track: Some("bus".to_string()),
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        assert!(matches!(
+            inverse,
+            Action::TrackSetVcaMaster { track_name, master_track: None } if track_name == "t"
+        ));
+    }
+
+    #[test]
+    fn create_inverse_action_for_remove_midi_clip_restores_clip_with_default_fades() {
+        let mut track = Track::new("t".to_string(), 0, 0, 1, 1, 64, 48_000.0);
+        track.midi.clips.push(crate::midi::clip::MIDIClip {
+            name: "pattern.mid".to_string(),
+            start: 48,
+            end: 144,
+            offset: 12,
+            input_channel: 3,
+            muted: true,
+            ..Default::default()
+        });
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::RemoveClip {
+                track_name: "t".to_string(),
+                kind: Kind::MIDI,
+                clip_indices: vec![0],
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        match inverse {
+            Action::AddClip {
+                name,
+                track_name,
+                start,
+                length,
+                offset,
+                input_channel,
+                muted,
+                kind,
+                fade_enabled,
+                fade_in_samples,
+                fade_out_samples,
+                ..
+            } => {
+                assert_eq!(name, "pattern.mid");
+                assert_eq!(track_name, "t");
+                assert_eq!(start, 48);
+                assert_eq!(length, 96);
+                assert_eq!(offset, 12);
+                assert_eq!(input_channel, 3);
+                assert!(muted);
+                assert_eq!(kind, Kind::MIDI);
+                assert!(fade_enabled);
+                assert_eq!(fade_in_samples, 240);
+                assert_eq!(fade_out_samples, 240);
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_action_for_clip_copy_targets_new_destination_clip() {
+        let mut source = Track::new("src".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        source
+            .audio
+            .clips
+            .push(AudioClip::new("source.wav".to_string(), 12, 48));
+        let mut dest = Track::new("dst".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        dest.audio
+            .clips
+            .push(AudioClip::new("existing.wav".to_string(), 0, 24));
+
+        let mut state = State::default();
+        state.tracks.insert(
+            source.name.clone(),
+            Arc::new(UnsafeMutex::new(Box::new(source))),
+        );
+        state.tracks.insert(
+            dest.name.clone(),
+            Arc::new(UnsafeMutex::new(Box::new(dest))),
+        );
+
+        let inverse = create_inverse_action(
+            &Action::ClipMove {
+                kind: Kind::Audio,
+                from: ClipMoveFrom {
+                    track_name: "src".to_string(),
+                    clip_index: 0,
+                },
+                to: ClipMoveTo {
+                    track_name: "dst".to_string(),
+                    sample_offset: 96,
+                    input_channel: 0,
+                },
+                copy: true,
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        match inverse {
+            Action::RemoveClip {
+                track_name,
+                kind,
+                clip_indices,
+            } => {
+                assert_eq!(track_name, "dst");
+                assert_eq!(kind, Kind::Audio);
+                assert_eq!(clip_indices, vec![1]);
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_action_for_same_track_clip_move_reverses_last_destination_clip() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        let mut original = AudioClip::new("clip.wav".to_string(), 20, 40);
+        original.input_channel = 2;
+        let moved = AudioClip::new("moved.wav".to_string(), 80, 32);
+        track.audio.clips.push(original);
+        track.audio.clips.push(moved);
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::ClipMove {
+                kind: Kind::Audio,
+                from: ClipMoveFrom {
+                    track_name: "t".to_string(),
+                    clip_index: 0,
+                },
+                to: ClipMoveTo {
+                    track_name: "t".to_string(),
+                    sample_offset: 80,
+                    input_channel: 1,
+                },
+                copy: false,
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        match inverse {
+            Action::ClipMove { kind, from, to, copy } => {
+                assert_eq!(kind, Kind::Audio);
+                assert_eq!(from.track_name, "t");
+                assert_eq!(from.clip_index, 1);
+                assert_eq!(to.track_name, "t");
+                assert_eq!(to.sample_offset, 20);
+                assert_eq!(to.input_channel, 2);
+                assert!(!copy);
             }
             other => panic!("unexpected inverse action: {other:?}"),
         }

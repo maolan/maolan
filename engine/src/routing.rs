@@ -108,4 +108,27 @@ mod tests {
             |node| { graph.get(node).cloned().unwrap_or_default() }
         ));
     }
+
+    #[test]
+    fn allows_edge_between_disconnected_subgraphs() {
+        let graph = HashMap::from([
+            ("A".to_string(), vec!["B".to_string()]),
+            ("B".to_string(), vec![]),
+            ("X".to_string(), vec!["Y".to_string()]),
+            ("Y".to_string(), vec![]),
+        ]);
+
+        assert!(!would_create_cycle(&"A".to_string(), &"X".to_string(), |node: &String| {
+            graph.get(node).cloned().unwrap_or_default()
+        }));
+    }
+
+    #[test]
+    fn self_edge_is_always_a_cycle() {
+        let graph = HashMap::<String, Vec<String>>::new();
+        let node = "A".to_string();
+        assert!(would_create_cycle(&node, &node, |current: &String| {
+            graph.get(current).cloned().unwrap_or_default()
+        }));
+    }
 }
