@@ -4,7 +4,9 @@ use crate::{
         PITCH_MAX, TOOLS_STRIP_WIDTH, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
     },
     message::Message,
-    state::{PitchCorrectionData, PitchCorrectionPoint, State},
+    state::{
+        MIN_PITCH_CORRECTION_FRAME_LIKENESS, PitchCorrectionData, PitchCorrectionPoint, State,
+    },
     widget::{
         note_area::{NoteArea, PianoGridScrolls, piano_grid_scrollers},
         piano::OctaveKeyboard,
@@ -27,7 +29,7 @@ pub struct PitchCorrection {
 }
 
 impl PitchCorrection {
-    const FRAME_LIKENESS_MIN: f32 = 0.05;
+    const FRAME_LIKENESS_MIN: f32 = MIN_PITCH_CORRECTION_FRAME_LIKENESS;
     const FRAME_LIKENESS_MAX: f32 = 2.0;
 
     pub fn new(state: State) -> Self {
