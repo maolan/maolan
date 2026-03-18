@@ -15,7 +15,7 @@ use crate::{
     gui::visible_bars_to_zoom_slider,
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State},
-    widget::{piano, pitch_correction},
+    widget::{midi_edit, pitch_correction},
 };
 use editor::{EditorViewArgs, OwnedEditorViewArgs};
 use iced::{
@@ -111,7 +111,7 @@ pub struct Workspace {
     state: State,
     editor: editor::Editor,
     mixer: mixer::Mixer,
-    piano: piano::Piano,
+    midi_edit: midi_edit::MIDIEdit,
     pitch_correction: pitch_correction::PitchCorrection,
     ruler: ruler::Ruler,
     tempo: tempo::Tempo,
@@ -159,7 +159,7 @@ impl Workspace {
             state: state.clone(),
             editor: editor::Editor::new(state.clone()),
             mixer: mixer::Mixer::new(state.clone()),
-            piano: piano::Piano::new(state.clone()),
+            midi_edit: midi_edit::MIDIEdit::new(state.clone()),
             pitch_correction: pitch_correction::PitchCorrection::new(state.clone()),
             ruler: ruler::Ruler::new(),
             tempo: tempo::Tempo::new(),
@@ -720,7 +720,7 @@ impl Workspace {
             playhead_samples.map(|sample| (sample as f32 * horizontal_pixels_per_sample).max(0.0));
 
         let piano_content = self
-            .piano
+            .midi_edit
             .view(pixels_per_sample, samples_per_bar, playhead_x);
 
         container(

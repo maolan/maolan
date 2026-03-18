@@ -1,20 +1,24 @@
 use crate::{
     consts::widget_piano::{
-        H_SCROLL_ID, H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, KEYS_SCROLL_ID, MAIN_SPLIT_SPACING,
-        NOTES_PER_OCTAVE, NOTES_SCROLL_ID, OCTAVES, PITCH_MAX, RIGHT_SCROLL_GUTTER_WIDTH,
-        TOOLS_STRIP_WIDTH, V_SCROLL_ID, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
+        H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, NOTES_PER_OCTAVE, OCTAVES,
+        PITCH_MAX, TOOLS_STRIP_WIDTH, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
     },
     message::Message,
     state::{PitchCorrectionData, PitchCorrectionPoint, State},
+    widget::{
+        note_area::{NoteArea, PianoGridScrolls, piano_grid_scrollers},
+        piano::OctaveKeyboard,
+    },
 };
 use iced::{
     Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::{
-        Id, Stack, button, canvas,
+        button, canvas,
         canvas::{Action as CanvasAction, Frame, Geometry, Path, Program},
-        checkbox, column, container, pin, row, scrollable, slider, text, vertical_slider,
+        checkbox, column, container, pin, row, slider, text, vertical_slider,
     },
 };
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -28,10 +32,6 @@ impl PitchCorrection {
 
     pub fn new(state: State) -> Self {
         Self { state }
-    }
-
-    fn is_black_key(pitch: u8) -> bool {
-        matches!(pitch % 12, 1 | 3 | 6 | 8 | 10)
     }
 
     fn zoom_x_to_slider(zoom_x: f32) -> f32 {
@@ -55,7 +55,7 @@ impl PitchCorrection {
     pub fn view<'a>(
         &'a self,
         pixels_per_sample: f32,
-        _samples_per_bar: f32,
+        samples_per_bar: f32,
         playhead_x: Option<f32>,
     ) -> Element<'a, Message> {
         let (
@@ -91,126 +91,59 @@ impl PitchCorrection {
                 .into();
         };
 
-        let pitch_count = OCTAVES * NOTES_PER_OCTAVE;
         let row_h = ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
             * zoom_y)
             .max(1.0);
-        let notes_h = pitch_count as f32 * row_h;
-        let pps_notes = (pixels_per_sample * zoom_x).max(0.0001);
-        let notes_w = (roll.clip_length_samples as f32 * pps_notes).max(1.0);
+        let pps = (pixels_per_sample * zoom_x).max(0.0001);
+        let notes_w = (roll.clip_length_samples as f32 * pps).max(1.0);
+        let notes_h = (OCTAVES * NOTES_PER_OCTAVE) as f32 * row_h;
 
-        let mut note_layers: Vec<Element<'_, Message>> = vec![];
-        for i in 0..pitch_count {
-            let pitch = PITCH_MAX.saturating_sub(i as u8);
-            let is_black = Self::is_black_key(pitch);
-            note_layers.push(
-                pin(container("")
-                    .width(Length::Fixed(notes_w))
-                    .height(Length::Fixed(row_h))
-                    .style(move |_theme| container::Style {
-                        background: Some(Background::Color(if is_black {
-                            Color::from_rgba(0.08, 0.08, 0.10, 0.85)
-                        } else {
-                            Color::from_rgba(0.12, 0.12, 0.14, 0.85)
-                        })),
-                        ..container::Style::default()
-                    }))
-                .position(Point::new(0.0, i as f32 * row_h))
-                .into(),
-            );
-        }
-        note_layers.push(
+        let content = vec![
             pin(canvas(PitchRollCanvas::new(
                 roll.clone(),
                 selected_points,
                 dragging_points,
                 selecting_rect,
-                pps_notes,
+                pps,
                 row_h,
-                playhead_x,
+                None, // note_area handles playhead
             ))
             .width(Length::Fixed(notes_w))
             .height(Length::Fixed(notes_h)))
             .position(Point::new(0.0, 0.0))
             .into(),
-        );
+        ];
 
-        let notes_content = Stack::from_vec(note_layers)
-            .width(Length::Fixed(notes_w))
-            .height(Length::Fixed(notes_h));
+        let notes_content = NoteArea {
+            zoom_x,
+            zoom_y,
+            pixels_per_sample,
+            samples_per_bar: Some(samples_per_bar),
+            playhead_x,
+            clip_length_samples: roll.clip_length_samples,
+        }
+        .view(content);
+
         let octave_h = (notes_h / OCTAVES as f32).max(1.0);
+
         let keyboard = (0..OCTAVES).fold(column![], |col, octave_idx| {
             let octave = (OCTAVES - 1 - octave_idx) as u8;
             col.push(
-                canvas(OctaveKeyboardDisplay::new(octave))
+                canvas(OctaveKeyboard::new(octave, HashMap::new()))
                     .width(Length::Fixed(KEYBOARD_WIDTH))
                     .height(Length::Fixed(octave_h)),
             )
         });
-        let keyboard_scroll = scrollable(
-            container(keyboard)
-                .width(Length::Fixed(KEYBOARD_WIDTH))
-                .height(Length::Fixed(notes_h))
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgba(0.12, 0.12, 0.12, 1.0))),
-                    ..container::Style::default()
-                }),
-        )
-        .id(Id::new(KEYS_SCROLL_ID))
-        .direction(scrollable::Direction::Vertical(
-            scrollable::Scrollbar::hidden(),
-        ))
-        .on_scroll(|viewport| Message::PianoScrollYChanged(viewport.relative_offset().y))
-        .width(Length::Fixed(KEYBOARD_WIDTH))
-        .height(Length::Fill);
-
-        let note_scroll = scrollable(
-            container(notes_content)
-                .width(Length::Shrink)
-                .height(Length::Fixed(notes_h))
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgba(0.07, 0.07, 0.09, 1.0))),
-                    ..container::Style::default()
-                }),
-        )
-        .id(Id::new(NOTES_SCROLL_ID))
-        .direction(scrollable::Direction::Both {
-            vertical: scrollable::Scrollbar::hidden(),
-            horizontal: scrollable::Scrollbar::hidden(),
-        })
-        .on_scroll(|viewport| {
-            let offset = viewport.relative_offset();
-            Message::PianoScrollChanged {
-                x: offset.x,
-                y: offset.y,
-            }
-        })
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-        let h_scroll = scrollable(
-            container("")
-                .width(Length::Fixed(notes_w))
-                .height(Length::Fixed(1.0)),
-        )
-        .id(Id::new(H_SCROLL_ID))
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new(),
-        ))
-        .on_scroll(|viewport| Message::PianoScrollXChanged(viewport.relative_offset().x))
-        .width(Length::Fill)
-        .height(Length::Fixed(16.0));
-
-        let v_scroll = scrollable(
-            container("")
-                .width(Length::Fixed(1.0))
-                .height(Length::Fixed(notes_h)),
-        )
-        .id(Id::new(V_SCROLL_ID))
-        .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::new()))
-        .on_scroll(|viewport| Message::PianoScrollYChanged(viewport.relative_offset().y))
-        .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
-        .height(Length::Fill);
+        let keyboard = container(keyboard).style(|_theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.12, 0.12, 0.12, 1.0))),
+            ..container::Style::default()
+        });
+        let PianoGridScrolls {
+            keyboard_scroll,
+            note_scroll,
+            h_scroll,
+            v_scroll,
+        } = piano_grid_scrollers(keyboard.into(), notes_content, notes_h, notes_w);
 
         let info_strip = container(
             column![
@@ -239,6 +172,15 @@ impl PitchCorrection {
             ..container::Style::default()
         });
 
+        let pitch_control_row_h = 140.0;
+        let pitch_control_row = container("")
+            .width(Length::Fill)
+            .height(Length::Fixed(pitch_control_row_h))
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.10, 0.10, 0.13, 1.0))),
+                ..container::Style::default()
+            });
+
         let layout = row![
             row![
                 info_strip,
@@ -246,6 +188,14 @@ impl PitchCorrection {
                     row![keyboard_scroll, note_scroll]
                         .height(Length::Fill)
                         .width(Length::Fill),
+                    row![
+                        container("")
+                            .width(Length::Fixed(KEYBOARD_WIDTH))
+                            .height(Length::Fixed(pitch_control_row_h)),
+                        pitch_control_row,
+                    ]
+                    .height(Length::Fixed(pitch_control_row_h))
+                    .width(Length::Fill),
                     row![
                         container("")
                             .width(Length::Fixed(KEYBOARD_WIDTH))
@@ -451,6 +401,13 @@ impl Program<Message> for PitchRollCanvas {
                     }
                 }
             }
+            Event::Mouse(mouse::Event::WheelScrolled { .. }) => {
+                if state.drag_start.is_some() {
+                    state.drag_start = None;
+                    state.dragging_mode = PitchDraggingMode::None;
+                    state.selection_dragged = false;
+                }
+            }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
                 if state.drag_start.is_some() {
                     let mode = state.dragging_mode;
@@ -544,76 +501,6 @@ impl Program<Message> for PitchRollCanvas {
                     .with_width(1.0)
                     .with_color(Color::from_rgba(0.82, 0.90, 1.0, 0.9)),
             );
-        }
-        vec![frame.into_geometry()]
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct OctaveKeyboardDisplay {
-    octave: u8,
-}
-
-impl OctaveKeyboardDisplay {
-    fn new(octave: u8) -> Self {
-        Self { octave }
-    }
-}
-
-impl Program<Message> for OctaveKeyboardDisplay {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &Self::State,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let mut frame = Frame::new(renderer, bounds.size());
-        let note_height = bounds.height / 12.0;
-        let labels = [
-            "B", "A#", "A", "G#", "G", "F#", "F", "E", "D#", "D", "C#", "C",
-        ];
-        for (i, label) in labels.iter().enumerate() {
-            let note_in_octave = 11 - i as u8;
-            let midi_note = self.octave * 12 + note_in_octave;
-            let y = i as f32 * note_height;
-            let rect = Path::rectangle(
-                Point::new(0.0, y),
-                Size::new(bounds.width, (note_height - 1.0).max(1.0)),
-            );
-            let is_black = PitchCorrection::is_black_key(midi_note);
-            frame.fill(
-                &rect,
-                if is_black {
-                    Color::from_rgb(0.18, 0.18, 0.20)
-                } else {
-                    Color::from_rgb(0.92, 0.92, 0.94)
-                },
-            );
-            frame.stroke(
-                &rect,
-                canvas::Stroke::default()
-                    .with_width(1.0)
-                    .with_color(Color::from_rgb(0.25, 0.25, 0.28)),
-            );
-            frame.fill_text(canvas::Text {
-                content: if *label == "C" {
-                    format!("{label}{}", self.octave)
-                } else {
-                    (*label).to_string()
-                },
-                position: Point::new(4.0, y + note_height * 0.5 - 6.0),
-                color: if is_black {
-                    Color::from_rgb(0.88, 0.88, 0.92)
-                } else {
-                    Color::from_rgb(0.10, 0.10, 0.12)
-                },
-                size: 11.0.into(),
-                ..canvas::Text::default()
-            });
         }
         vec![frame.into_geometry()]
     }

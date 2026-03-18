@@ -29,7 +29,9 @@ use crate::{
         TimeSignaturePoint, Track, TrackAutomationLane, TrackAutomationPoint, View,
     },
     ui_timing::DOUBLE_CLICK,
-    widget::piano::{CTRL_SCROLL_ID, H_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID},
+    widget::midi_edit::{
+        CTRL_SCROLL_ID, H_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID,
+    },
     workspace::{
         EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID, EDITOR_TIMELINE_SCROLL_ID, PIANO_RULER_SCROLL_ID,
         PIANO_TEMPO_SCROLL_ID, TRACKS_SCROLL_ID, WORKSPACE_RULER_SCROLL_ID,
