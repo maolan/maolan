@@ -174,29 +174,15 @@ impl PitchCorrection {
             ..container::Style::default()
         });
 
-        let pitch_control_row_h = 140.0;
-        let pitch_control_row = container("")
-            .width(Length::Fill)
-            .height(Length::Fixed(pitch_control_row_h))
-            .style(|_theme| container::Style {
-                background: Some(Background::Color(Color::from_rgba(0.10, 0.10, 0.13, 1.0))),
-                ..container::Style::default()
-            });
-
         let layout = row![
             row![
                 info_strip,
                 column![
-                    row![keyboard_scroll, note_scroll]
-                        .height(Length::Fill)
-                        .width(Length::Fill),
                     row![
-                        container("")
-                            .width(Length::Fixed(KEYBOARD_WIDTH))
-                            .height(Length::Fixed(pitch_control_row_h)),
-                        pitch_control_row,
+                        keyboard_scroll,
+                        note_scroll
                     ]
-                    .height(Length::Fixed(pitch_control_row_h))
+                    .height(Length::Fill)
                     .width(Length::Fill),
                     row![
                         container("")
