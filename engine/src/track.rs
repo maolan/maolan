@@ -15,6 +15,7 @@ use crate::vst3::Vst3Processor;
 use crate::{
     audio::io::AudioIO,
     midi::io::{MIDIIO, MidiEvent},
+    rubberband::LivePitchShifter,
 };
 #[cfg(unix)]
 use crate::{kind::Kind, routing};
@@ -51,6 +52,11 @@ pub struct ClapInstance {
 struct AudioClipBuffer {
     channels: usize,
     samples: Vec<f32>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ClipPitchShifter {
+    shifter: LivePitchShifter,
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +122,7 @@ pub struct Track {
     pub session_base_dir: Option<PathBuf>,
     record_tap_enabled: bool,
     audio_clip_cache: HashMap<String, Arc<AudioClipBuffer>>,
+    pub(crate) clip_pitch_shifters: HashMap<String, ClipPitchShifter>,
     midi_clip_cache: HashMap<String, MidiClipEvents>,
     internal_output_routes_cache: Vec<Vec<Arc<AudioIO>>>,
     audio_route_cache_dirty: bool,
@@ -193,6 +200,7 @@ impl Track {
             session_base_dir: None,
             record_tap_enabled: false,
             audio_clip_cache: HashMap::new(),
+            clip_pitch_shifters: HashMap::new(),
             midi_clip_cache: HashMap::new(),
             internal_output_routes_cache: Vec::new(),
             audio_route_cache_dirty: true,
@@ -1121,16 +1129,68 @@ impl Track {
         Some(loaded)
     }
 
+    fn clip_playback_name<'a>(clip: &'a crate::audio::clip::AudioClip) -> &'a str {
+        if let Some(preview_name) = clip.pitch_correction_preview_name.as_deref() {
+            preview_name
+        } else if !clip.pitch_correction_points.is_empty() {
+            clip.pitch_correction_source_name
+                .as_deref()
+                .unwrap_or(&clip.name)
+        } else {
+            clip.name.as_str()
+        }
+    }
+
+    fn clip_pitch_key(clip: &crate::audio::clip::AudioClip) -> String {
+        format!(
+            "{}:{}:{}:{}:{}",
+            clip.name, clip.start, clip.end, clip.offset, clip.input_channel
+        )
+    }
+
+    fn pitch_shift_for_sample(
+        clip: &crate::audio::clip::AudioClip,
+        sample: usize,
+        inertia_samples: usize,
+    ) -> f32 {
+        if clip.pitch_correction_points.is_empty() {
+            return 0.0;
+        }
+        let mut points = clip.pitch_correction_points.iter().collect::<Vec<_>>();
+        points.sort_by_key(|point| point.start_sample);
+        let mut previous_shift =
+            points[0].target_midi_pitch - points[0].detected_midi_pitch;
+        if sample < points[0].start_sample {
+            return previous_shift;
+        }
+        for point in points {
+            let target_shift = point.target_midi_pitch - point.detected_midi_pitch;
+            if sample < point.start_sample {
+                break;
+            }
+            if inertia_samples > 0
+                && sample < point.start_sample.saturating_add(inertia_samples)
+                && (target_shift - previous_shift).abs() > f32::EPSILON
+            {
+                let t = (sample - point.start_sample) as f32 / inertia_samples as f32;
+                return previous_shift + (target_shift - previous_shift) * t.clamp(0.0, 1.0);
+            }
+            previous_shift = target_shift;
+        }
+        previous_shift
+    }
+
     fn preload_audio_clip_cache(&mut self) {
         let missing: Vec<String> = self
             .audio
             .clips
             .iter()
             .filter_map(|clip| {
-                if self.audio_clip_cache.contains_key(&clip.name) {
+                let clip_name = Self::clip_playback_name(clip);
+                if self.audio_clip_cache.contains_key(clip_name) {
                     None
                 } else {
-                    Some(clip.name.clone())
+                    Some(clip_name.to_string())
                 }
             })
             .collect();
@@ -1344,7 +1404,7 @@ impl Track {
         }
 
         let segments = self.cycle_segments(frames);
-        for clip in &self.audio.clips {
+        for clip in self.audio.clips.clone() {
             if clip.muted {
                 continue;
             }
@@ -1354,9 +1414,127 @@ impl Track {
                 continue;
             }
             let clip_end = clip_start.saturating_add(clip_len);
-            let Some(buffer) = self.audio_clip_cache.get(&clip.name) else {
+            let playback_name = Self::clip_playback_name(&clip);
+            let Some(buffer) = self.audio_clip_cache.get(playback_name) else {
                 continue;
             };
+            if !clip.pitch_correction_points.is_empty() {
+                let input_count = self.audio.ins.len();
+                let effective_channels = if buffer.channels == 1 {
+                    1
+                } else {
+                    input_count.min(buffer.channels).max(1)
+                };
+                let total_frames = buffer.samples.len() / buffer.channels.max(1);
+                if total_frames == 0 {
+                    continue;
+                }
+                let source_offset = clip.pitch_correction_source_offset.unwrap_or(clip.offset);
+                let inertia_samples = ((self.sample_rate as u64
+                    * clip.pitch_correction_inertia_ms.unwrap_or(100) as u64)
+                    / 1000) as usize;
+                let formant = clip.pitch_correction_formant_compensation.unwrap_or(true);
+                let key = Self::clip_pitch_key(&clip);
+                let shifter = self.clip_pitch_shifters.entry(key).or_insert_with(|| {
+                    ClipPitchShifter {
+                        shifter: LivePitchShifter::new(
+                            self.sample_rate.round().max(1.0) as usize,
+                            effective_channels,
+                            formant,
+                        )
+                        .expect("rubberband live shifter"),
+                    }
+                });
+                shifter.shifter.set_formant_preserved(formant);
+                for (segment_start, segment_end, out_offset) in &segments {
+                    if clip_end <= *segment_start || clip_start >= *segment_end {
+                        continue;
+                    }
+                    let from = (*segment_start).max(clip_start);
+                    let to = (*segment_end).min(clip_end);
+                    let request_len = to.saturating_sub(from);
+                    if request_len == 0 {
+                        continue;
+                    }
+                    let source_from =
+                        source_offset.saturating_add(from.saturating_sub(clip_start));
+                    let block_size = shifter.shifter.block_size();
+                    let corrected =
+                        shifter
+                            .shifter
+                            .render(source_from, request_len, |block_start, input| {
+                                let local_start = block_start.saturating_sub(source_offset);
+                                let local_mid = local_start.saturating_add(block_size / 2);
+                                let local_end =
+                                    local_start.saturating_add(block_size.saturating_sub(1));
+                                let semitones = (Self::pitch_shift_for_sample(
+                                    &clip,
+                                    local_start,
+                                    inertia_samples,
+                                ) + Self::pitch_shift_for_sample(
+                                    &clip,
+                                    local_mid,
+                                    inertia_samples,
+                                ) + Self::pitch_shift_for_sample(
+                                    &clip,
+                                    local_end,
+                                    inertia_samples,
+                                )) / 3.0;
+                                let scale = 2.0_f64.powf((semitones as f64) / 12.0);
+                                for ch in 0..effective_channels {
+                                    let source_channel = if buffer.channels == 1 { 0 } else { ch };
+                                    for i in 0..block_size {
+                                        let source_frame = block_start.saturating_add(i);
+                                        input[ch][i] = if source_frame < total_frames {
+                                            buffer.samples[source_frame * buffer.channels
+                                                + source_channel]
+                                        } else {
+                                            0.0
+                                        };
+                                    }
+                                }
+                                scale
+                            });
+                    for in_channel in 0..input_count {
+                        let source_channel = if effective_channels == 1 {
+                            0
+                        } else if in_channel < effective_channels {
+                            in_channel
+                        } else {
+                            continue;
+                        };
+                        let in_samples = self.audio.ins[in_channel].buffer.lock();
+                        let track_idx = out_offset + (from - *segment_start);
+                        let copy_len = request_len.min(in_samples.len().saturating_sub(track_idx));
+                        if copy_len == 0 {
+                            continue;
+                        }
+                        for i in 0..copy_len {
+                            let absolute_sample = from + i;
+                            let mut sample = corrected[source_channel][i];
+                            if clip.fade_enabled {
+                                let clip_sample_pos = absolute_sample - clip_start;
+                                if clip_sample_pos < clip.fade_in_samples {
+                                    let t = clip_sample_pos as f32
+                                        / clip.fade_in_samples.max(1) as f32;
+                                    sample *= Self::fade_in_curve(t);
+                                }
+                                if clip_sample_pos
+                                    >= clip_len.saturating_sub(clip.fade_out_samples)
+                                {
+                                    let fade_out_start =
+                                        clip_len.saturating_sub(clip.fade_out_samples);
+                                    let t = (clip_sample_pos - fade_out_start) as f32
+                                        / clip.fade_out_samples.max(1) as f32;
+                                    sample *= Self::fade_out_curve(t);
+                                }
+                            }
+                            in_samples[track_idx + i] += sample;
+                        }
+                    }
+                }
+                continue;
+            }
             let channels = buffer.channels.max(1);
             let total_frames = buffer.samples.len() / channels;
             if total_frames == 0 {
@@ -1379,9 +1557,10 @@ impl Track {
                     }
                     let from = (*segment_start).max(clip_start);
                     let to = (*segment_end).min(clip_end);
+                    let clip_offset = clip.offset;
                     for absolute_sample in from..to {
                         let track_idx = out_offset + (absolute_sample - *segment_start);
-                        let clip_idx = (absolute_sample - clip_start) + clip.offset;
+                        let clip_idx = (absolute_sample - clip_start) + clip_offset;
                         if clip_idx >= total_frames || track_idx >= in_samples.len() {
                             break;
                         }

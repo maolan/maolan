@@ -2050,6 +2050,11 @@ impl Engine {
             source_name: None,
             source_offset: None,
             source_length: None,
+            preview_name: None,
+            pitch_correction_points: vec![],
+            pitch_correction_frame_likeness: None,
+            pitch_correction_inertia_ms: None,
+            pitch_correction_formant_compensation: None,
         }))
         .await;
     }
@@ -2171,6 +2176,11 @@ impl Engine {
             source_name: None,
             source_offset: None,
             source_length: None,
+            preview_name: None,
+            pitch_correction_points: vec![],
+            pitch_correction_frame_likeness: None,
+            pitch_correction_inertia_ms: None,
+            pitch_correction_formant_compensation: None,
         }))
         .await;
     }
@@ -2264,6 +2274,11 @@ impl Engine {
         source_name: Option<String>,
         source_offset: Option<usize>,
         source_length: Option<usize>,
+        preview_name: Option<String>,
+        pitch_correction_points: Vec<crate::message::PitchCorrectionPointData>,
+        pitch_correction_frame_likeness: Option<f32>,
+        pitch_correction_inertia_ms: Option<u16>,
+        pitch_correction_formant_compensation: Option<bool>,
     ) {
         if let Some(track) = self.state.lock().tracks.get(track_name) {
             let track = track.lock();
@@ -2277,10 +2292,17 @@ impl Engine {
                     clip.fade_enabled = fade_enabled;
                     clip.fade_in_samples = fade_in_samples;
                     clip.fade_out_samples = fade_out_samples;
+                    clip.pitch_correction_preview_name = preview_name;
                     clip.pitch_correction_source_name = source_name;
                     clip.pitch_correction_source_offset = source_offset;
                     clip.pitch_correction_source_length = source_length;
+                    clip.pitch_correction_points = pitch_correction_points;
+                    clip.pitch_correction_frame_likeness = pitch_correction_frame_likeness;
+                    clip.pitch_correction_inertia_ms = pitch_correction_inertia_ms;
+                    clip.pitch_correction_formant_compensation =
+                        pitch_correction_formant_compensation;
                     track.audio.clips.push(clip);
+                    track.clip_pitch_shifters.clear();
                 }
                 Kind::MIDI => {
                     let mut clip = MIDIClip::new(name.to_string(), start, length);
@@ -2307,6 +2329,7 @@ impl Engine {
                             track.audio.clips.remove(idx);
                         }
                     }
+                    track.clip_pitch_shifters.clear();
                 }
                 Kind::MIDI => {
                     for idx in indices.into_iter().rev() {
@@ -2428,6 +2451,7 @@ impl Engine {
                     clip.end = length.max(1);
                     clip.offset = offset;
                 }
+                track.clip_pitch_shifters.clear();
             }
             Kind::MIDI => {
                 if let Some(clip) = track.midi.clips.get_mut(clip_index) {
@@ -2455,6 +2479,36 @@ impl Engine {
                     clip.muted = muted;
                 }
             }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn set_clip_pitch_correction(
+        &self,
+        track_name: &str,
+        clip_index: usize,
+        preview_name: Option<String>,
+        source_name: Option<String>,
+        source_offset: Option<usize>,
+        source_length: Option<usize>,
+        pitch_correction_points: Vec<crate::message::PitchCorrectionPointData>,
+        pitch_correction_frame_likeness: Option<f32>,
+        pitch_correction_inertia_ms: Option<u16>,
+        pitch_correction_formant_compensation: Option<bool>,
+    ) {
+        if let Some(track) = self.state.lock().tracks.get(track_name) {
+            let track = track.lock();
+            if let Some(clip) = track.audio.clips.get_mut(clip_index) {
+                clip.pitch_correction_preview_name = preview_name;
+                clip.pitch_correction_source_name = source_name;
+                clip.pitch_correction_source_offset = source_offset;
+                clip.pitch_correction_source_length = source_length;
+                clip.pitch_correction_points = pitch_correction_points;
+                clip.pitch_correction_frame_likeness = pitch_correction_frame_likeness;
+                clip.pitch_correction_inertia_ms = pitch_correction_inertia_ms;
+                clip.pitch_correction_formant_compensation = pitch_correction_formant_compensation;
+            }
+            track.clip_pitch_shifters.clear();
         }
     }
 
@@ -4781,6 +4835,11 @@ impl Engine {
                 ref source_name,
                 source_offset,
                 source_length,
+                ref preview_name,
+                ref pitch_correction_points,
+                pitch_correction_frame_likeness,
+                pitch_correction_inertia_ms,
+                pitch_correction_formant_compensation,
             } => {
                 self.add_clip_to_track(
                     name,
@@ -4797,6 +4856,11 @@ impl Engine {
                     source_name.clone(),
                     source_offset,
                     source_length,
+                    preview_name.clone(),
+                    pitch_correction_points.clone(),
+                    pitch_correction_frame_likeness,
+                    pitch_correction_inertia_ms,
+                    pitch_correction_formant_compensation,
                 );
             }
             Action::RemoveClip {
@@ -4848,6 +4912,31 @@ impl Engine {
                 muted,
             } => {
                 self.set_clip_muted(track_name, clip_index, kind, muted);
+            }
+            Action::SetClipPitchCorrection {
+                ref track_name,
+                clip_index,
+                ref preview_name,
+                ref source_name,
+                source_offset,
+                source_length,
+                ref pitch_correction_points,
+                pitch_correction_frame_likeness,
+                pitch_correction_inertia_ms,
+                pitch_correction_formant_compensation,
+            } => {
+                self.set_clip_pitch_correction(
+                    track_name,
+                    clip_index,
+                    preview_name.clone(),
+                    source_name.clone(),
+                    source_offset,
+                    source_length,
+                    pitch_correction_points.clone(),
+                    pitch_correction_frame_likeness,
+                    pitch_correction_inertia_ms,
+                    pitch_correction_formant_compensation,
+                );
             }
             Action::Connect {
                 ref from_track,

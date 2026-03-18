@@ -2083,7 +2083,6 @@ impl Maolan {
                 clip_name
             )));
         }
-
         let start_idx = start_frame * channels;
         let end_idx = start_idx + segment_frames * channels;
         let segment_samples = &samples[start_idx..end_idx];
@@ -2185,10 +2184,8 @@ impl Maolan {
             })
             .output()
             .await;
-
         let _ = fs::remove_file(&temp_path);
         let _ = fs::remove_file(&pitchmap_path);
-
         progress_callback(0.90, Some("Rendering".to_string()));
         tokio::task::yield_now().await;
 
@@ -2203,7 +2200,6 @@ impl Maolan {
                 format!("Rubber Band failed: {stderr}")
             }));
         }
-
         let output_frames = Self::audio_clip_source_length(&output_path)?;
         progress_callback(0.95, Some("Calculating peaks".to_string()));
         tokio::task::yield_now().await;
@@ -2814,7 +2810,7 @@ impl Maolan {
         progress_callback(0.0, Some("Analyzing tracks".to_string()));
         tokio::task::yield_now().await;
 
-        let (tracks, connections, total_length, selected_tracks) = {
+        let (mut tracks, connections, total_length, selected_tracks) = {
             let state = state.read().await;
             let mut max_length = 0_usize;
             let tracks_data: Vec<_> = state
@@ -2845,6 +2841,57 @@ impl Maolan {
                 state.selected.iter().cloned().collect::<HashSet<String>>(),
             )
         };
+
+        let corrected_clip_count = tracks
+            .iter()
+            .flat_map(|track| track.clips.iter())
+            .filter(|clip| !clip.pitch_correction_points.is_empty())
+            .count();
+        if corrected_clip_count > 0 {
+            let mut corrected_done = 0usize;
+            for track in &mut tracks {
+                for clip in &mut track.clips {
+                    if clip.pitch_correction_points.is_empty() {
+                        continue;
+                    }
+                    let source_name = clip
+                        .pitch_correction_source_name
+                        .clone()
+                        .unwrap_or_else(|| clip.name.clone());
+                    let source_path = if Path::new(&source_name).is_absolute() {
+                        PathBuf::from(&source_name)
+                    } else {
+                        session_root.join(&source_name)
+                    };
+                    let progress =
+                        0.1 + (corrected_done as f32 / corrected_clip_count.max(1) as f32) * 0.15;
+                    progress_callback(
+                        progress,
+                        Some(format!("Preparing offline pitch correction: {}", clip.name)),
+                    );
+                    tokio::task::yield_now().await;
+                    let (rendered_name, rendered_length, _) =
+                        Self::render_audio_clip_pitch_correction_with_rubberband(
+                            &source_path,
+                            session_root,
+                            &clip.name,
+                            clip.pitch_correction_source_offset.unwrap_or(clip.offset),
+                            clip.pitch_correction_source_length.unwrap_or(clip.length),
+                            &clip.pitch_correction_points,
+                            clip.pitch_correction_inertia_ms.unwrap_or(100),
+                            clip.pitch_correction_formant_compensation.unwrap_or(true),
+                            |_, _| {},
+                        )
+                        .await?;
+                    clip.name = rendered_name;
+                    clip.offset = 0;
+                    clip.length = rendered_length.max(1);
+                    clip.pitch_correction_preview_name = None;
+                    clip.pitch_correction_points.clear();
+                    corrected_done = corrected_done.saturating_add(1);
+                }
+            }
+        }
 
         if total_length == 0 {
             return Err(io::Error::other(

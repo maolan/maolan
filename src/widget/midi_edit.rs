@@ -203,7 +203,7 @@ impl MIDIEdit {
             if x_ctrl > ctrl_w {
                 break;
             }
-            let bar_line = (beat % 4) == 0;
+            let bar_line = beat.is_multiple_of(4);
             if x_ctrl <= ctrl_w {
                 ctrl_layers.push(
                     pin(container("")

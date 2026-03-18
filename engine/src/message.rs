@@ -86,6 +86,15 @@ pub struct OfflineBounceWork {
     pub cancel: Arc<AtomicBool>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct PitchCorrectionPointData {
+    pub start_sample: usize,
+    pub length_samples: usize,
+    pub detected_midi_pitch: f32,
+    pub target_midi_pitch: f32,
+    pub clarity: f32,
+}
+
 #[derive(Clone, Debug)]
 pub struct ClipMoveFrom {
     pub track_name: String,
@@ -275,6 +284,11 @@ pub enum Action {
         source_name: Option<String>,
         source_offset: Option<usize>,
         source_length: Option<usize>,
+        preview_name: Option<String>,
+        pitch_correction_points: Vec<PitchCorrectionPointData>,
+        pitch_correction_frame_likeness: Option<f32>,
+        pitch_correction_inertia_ms: Option<u16>,
+        pitch_correction_formant_compensation: Option<bool>,
     },
     RemoveClip {
         track_name: String,
@@ -302,6 +316,18 @@ pub enum Action {
         clip_index: usize,
         kind: Kind,
         muted: bool,
+    },
+    SetClipPitchCorrection {
+        track_name: String,
+        clip_index: usize,
+        preview_name: Option<String>,
+        source_name: Option<String>,
+        source_offset: Option<usize>,
+        source_length: Option<usize>,
+        pitch_correction_points: Vec<PitchCorrectionPointData>,
+        pitch_correction_frame_likeness: Option<f32>,
+        pitch_correction_inertia_ms: Option<u16>,
+        pitch_correction_formant_compensation: Option<bool>,
     },
     RenameClip {
         track_name: String,

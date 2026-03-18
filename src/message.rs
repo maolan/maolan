@@ -542,18 +542,18 @@ pub struct ClipPitchCorrectionApplyRequest {
     pub track_idx: String,
     pub clip_idx: usize,
     pub clip_name: String,
-    pub start: usize,
-    pub input_channel: usize,
-    pub muted: bool,
-    pub fade_enabled: bool,
-    pub fade_in_samples: usize,
-    pub fade_out_samples: usize,
     pub source_name: String,
     pub source_offset: usize,
     pub source_length: usize,
     pub points: Vec<crate::state::PitchCorrectionPoint>,
     pub inertia_ms: u16,
     pub formant_compensation: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedFreezeClip {
+    pub clip_index: usize,
+    pub preview_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -574,6 +574,11 @@ pub enum Message {
     },
     TrackFreezeToggle {
         track_name: String,
+    },
+    TrackFreezePrepared {
+        track_name: String,
+        prepared_clips: Vec<PreparedFreezeClip>,
+        result: Result<(), String>,
     },
     TrackFreezeFlatten {
         track_name: String,
@@ -1062,15 +1067,6 @@ pub enum Message {
         result: Result<crate::state::PitchCorrectionData, String>,
     },
     PitchCorrectionApply,
-    PitchCorrectionApplyProgress {
-        clip_name: String,
-        progress: f32,
-        operation: Option<String>,
-    },
-    PitchCorrectionApplyFinished {
-        request: ClipPitchCorrectionApplyRequest,
-        result: Result<(String, usize, crate::state::ClipPeaks), String>,
-    },
     TrackRenameShow(String),
     TrackRenameInput(String),
     TrackRenameConfirm,
