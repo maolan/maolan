@@ -52,15 +52,189 @@ use maolan_engine::{
 };
 use rfd::AsyncFileDialog;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet},
+    hash::{Hash, Hasher},
     fs,
+    io,
     process::exit,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use serde::{Deserialize, Serialize};
 use tracing::error;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedPitchCorrectionPoint {
+    start_sample: usize,
+    length_samples: usize,
+    detected_midi_pitch: f32,
+    target_midi_pitch: f32,
+    clarity: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedPitchCorrectionFile {
+    source_name: String,
+    source_offset: usize,
+    source_length: usize,
+    source_modified_unix_nanos: Option<u128>,
+    raw_points: Vec<CachedPitchCorrectionPoint>,
+    clip_length_samples: usize,
+    frame_likeness: f32,
+}
 
 impl Maolan {
     const PITCH_CORRECTION_HISTORY_LIMIT: usize = 100;
+
+    fn pitch_correction_cache_file_name(
+        source_name: &str,
+        source_offset: usize,
+        source_length: usize,
+    ) -> String {
+        let mut hasher = DefaultHasher::new();
+        source_name.hash(&mut hasher);
+        source_offset.hash(&mut hasher);
+        source_length.hash(&mut hasher);
+        format!("{:016x}.json", hasher.finish())
+    }
+
+    fn pitch_correction_cache_file_path(
+        session_root: &std::path::Path,
+        source_name: &str,
+        source_offset: usize,
+        source_length: usize,
+    ) -> std::path::PathBuf {
+        session_root.join("pitch").join(Self::pitch_correction_cache_file_name(
+            source_name,
+            source_offset,
+            source_length,
+        ))
+    }
+
+    fn source_modified_unix_nanos(path: &std::path::Path) -> io::Result<u128> {
+        let modified = fs::metadata(path)?.modified()?;
+        let duration = modified.duration_since(UNIX_EPOCH).map_err(|e| {
+            io::Error::other(format!(
+                "Failed to read modification time for '{}': {e}",
+                path.display()
+            ))
+        })?;
+        Ok(duration.as_nanos())
+    }
+
+    fn load_cached_pitch_correction(
+        session_root: &std::path::Path,
+        source_path: &std::path::Path,
+        request: &ClipPitchCorrectionRequest,
+    ) -> io::Result<Option<crate::state::PitchCorrectionData>> {
+        let path = Self::pitch_correction_cache_file_path(
+            session_root,
+            &request.source_name,
+            request.source_offset,
+            request.source_length,
+        );
+        let cache_file = match fs::File::open(&path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        let cache: CachedPitchCorrectionFile = serde_json::from_reader(cache_file).map_err(|e| {
+            io::Error::other(format!(
+                "Failed to read pitch correction cache '{}': {e}",
+                path.display()
+            ))
+        })?;
+        if cache.source_name != request.source_name
+            || cache.source_offset != request.source_offset
+            || cache.source_length != request.source_length
+        {
+            return Ok(None);
+        }
+
+        if let Some(expected_modified_nanos) = cache.source_modified_unix_nanos {
+            match Self::source_modified_unix_nanos(source_path) {
+                Ok(current_modified_nanos) if current_modified_nanos == expected_modified_nanos => {}
+                _ => return Ok(None),
+            }
+        }
+
+        if cache.raw_points.is_empty() {
+            return Ok(None);
+        }
+
+        let frame_likeness = request.frame_likeness.clamp(0.05, 2.0);
+        let raw_points: Vec<crate::state::PitchCorrectionPoint> = cache
+            .raw_points
+            .into_iter()
+            .map(|point| crate::state::PitchCorrectionPoint {
+                start_sample: point.start_sample,
+                length_samples: point.length_samples,
+                detected_midi_pitch: point.detected_midi_pitch,
+                target_midi_pitch: point.target_midi_pitch,
+                clarity: point.clarity,
+            })
+            .collect();
+
+        let max_gap_samples = raw_points
+            .iter()
+            .map(|point| point.length_samples)
+            .min()
+            .unwrap_or(1)
+            .max(1);
+        let points = Self::merge_adjacent_pitch_fragments(raw_points.clone(), frame_likeness, max_gap_samples);
+
+        Ok(Some(crate::state::PitchCorrectionData {
+            track_idx: request.track_idx.clone(),
+            clip_index: request.clip_idx,
+            clip_name: request.clip_name.clone(),
+            clip_length_samples: request.source_length.max(1),
+            frame_likeness,
+            raw_points,
+            points,
+        }))
+    }
+
+    fn save_cached_pitch_correction(
+        session_root: &std::path::Path,
+        source_path: &std::path::Path,
+        request: &ClipPitchCorrectionRequest,
+        pitch_correction: &crate::state::PitchCorrectionData,
+    ) -> io::Result<()> {
+        fs::create_dir_all(session_root.join("pitch"))?;
+        let path = Self::pitch_correction_cache_file_path(
+            session_root,
+            &request.source_name,
+            request.source_offset,
+            request.source_length,
+        );
+        let source_modified_unix_nanos = Self::source_modified_unix_nanos(source_path).ok();
+        let raw_points = pitch_correction
+            .raw_points
+            .iter()
+            .map(|point| CachedPitchCorrectionPoint {
+                start_sample: point.start_sample,
+                length_samples: point.length_samples,
+                detected_midi_pitch: point.detected_midi_pitch,
+                target_midi_pitch: point.target_midi_pitch,
+                clarity: point.clarity,
+            })
+            .collect();
+        let cache = CachedPitchCorrectionFile {
+            source_name: request.source_name.clone(),
+            source_offset: request.source_offset,
+            source_length: request.source_length,
+            source_modified_unix_nanos,
+            raw_points,
+            clip_length_samples: pitch_correction.clip_length_samples,
+            frame_likeness: pitch_correction.frame_likeness,
+        };
+        let file = fs::File::create(&path)?;
+        serde_json::to_writer_pretty(file, &cache).map_err(|e| {
+            io::Error::other(format!(
+                "Failed to write pitch correction cache '{}': {e}",
+                path.display()
+            ))
+        })
+    }
 
     fn push_pitch_correction_history(
         &mut self,
@@ -2086,8 +2260,22 @@ impl Maolan {
                 format!("Audio clip source is missing: {}", source_path.display());
             return Task::none();
         }
+
+        if let Ok(Some(pitch_correction)) =
+            Self::load_cached_pitch_correction(&session_root, &source_path, &request)
+        {
+            self.state
+                .blocking_write()
+                .message = format!("Opened cached pitch correction for '{}'", request.clip_name);
+            return Task::done(Message::ClipOpenPitchCorrectionFinished {
+                request,
+                result: Ok(pitch_correction),
+            });
+        }
+
         self.state.blocking_write().message =
             format!("Opening pitch correction for '{}'...", request.clip_name);
+        let session_root_for_cache = session_root.clone();
         Task::run(
             {
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -2124,6 +2312,20 @@ impl Maolan {
                     )
                     .await
                     .map_err(|e| e.to_string());
+                    if let Ok(ref pitch_correction) = result {
+                        if let Err(err) = Self::save_cached_pitch_correction(
+                            &session_root_for_cache,
+                            &source_path,
+                            &request,
+                            pitch_correction,
+                        ) {
+                            error!(
+                                "Failed to cache pitch correction for '{}': {}",
+                                request.clip_name,
+                                err
+                            );
+                        }
+                    }
                     if tx
                         .send(Message::ClipOpenPitchCorrectionFinished { request, result })
                         .is_err()

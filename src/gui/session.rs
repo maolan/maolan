@@ -659,6 +659,7 @@ impl Maolan {
         fs::create_dir_all(session_root.join("audio"))?;
         fs::create_dir_all(session_root.join("midi"))?;
         fs::create_dir_all(session_root.join("peaks"))?;
+        fs::create_dir_all(session_root.join("pitch"))?;
         let file = File::create(&p)?;
         let state = self.state.blocking_read();
         let tracks_width = match state.tracks_width {
