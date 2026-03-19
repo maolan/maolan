@@ -2,7 +2,6 @@ use super::{CLIENT, Maolan};
 use crate::{
     consts::gui::{METER_DIRTY_EPSILON_DB, METER_QUANTIZE_STEP_DB},
     message::{Message, Show},
-    platform_caps::SUPPORTS_METER_POLL,
     ui_timing::{
         PLAYHEAD_UPDATE_INTERVAL, RECORDING_PREVIEW_PEAKS_UPDATE_INTERVAL,
         RECORDING_PREVIEW_UPDATE_INTERVAL,
@@ -18,6 +17,25 @@ use std::time::Duration;
 use tokio::signal::unix::{SignalKind, signal};
 
 impl Maolan {
+    fn should_poll_meters(
+        mixer_visible: bool,
+        playing: bool,
+        paused: bool,
+        hw_out_meter_db: &[f32],
+        track_meter_dbs: impl IntoIterator<Item = impl AsRef<[f32]>>,
+    ) -> bool {
+        if !mixer_visible {
+            return false;
+        }
+        if playing || paused {
+            return true;
+        }
+        hw_out_meter_db.iter().any(|level| *level > -90.0)
+            || track_meter_dbs
+                .into_iter()
+                .any(|meter_db| meter_db.as_ref().iter().any(|level| *level > -90.0))
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         fn quantize_meter_db(level_db: f32) -> f32 {
             let step = METER_QUANTIZE_STEP_DB;
@@ -236,12 +254,23 @@ impl Maolan {
         } else {
             Subscription::none()
         };
-        let meter_poll_sub =
-            if SUPPORTS_METER_POLL && self.mixer_visible && (self.playing || self.paused) {
-                iced::time::every(Duration::from_millis(40)).map(|_| Message::MeterPollTick)
-            } else {
-                Subscription::none()
-            };
+        let should_poll_meters = if self.mixer_visible {
+            let state = self.state.blocking_read();
+            Self::should_poll_meters(
+                self.mixer_visible,
+                self.playing,
+                self.paused,
+                &state.hw_out_meter_db,
+                state.tracks.iter().map(|track| track.meter_out_db.as_slice()),
+            )
+        } else {
+            false
+        };
+        let meter_poll_sub = if should_poll_meters {
+            iced::time::every(Duration::from_millis(40)).map(|_| Message::MeterPollTick)
+        } else {
+            Subscription::none()
+        };
         let recording_preview_sub = if self.playing
             && !self.paused
             && self.record_armed
@@ -289,5 +318,52 @@ impl Maolan {
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_ui_sub,
         ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Maolan;
+
+    #[test]
+    fn polls_meters_while_playing() {
+        assert!(Maolan::should_poll_meters(true, true, false, &[-90.0], [&[-90.0][..]]));
+    }
+
+    #[test]
+    fn polls_meters_while_paused() {
+        assert!(Maolan::should_poll_meters(true, false, true, &[-90.0], [&[-90.0][..]]));
+    }
+
+    #[test]
+    fn polls_meters_after_stop_when_hw_out_is_still_active() {
+        assert!(Maolan::should_poll_meters(true, false, false, &[-24.0], [&[-90.0][..]]));
+    }
+
+    #[test]
+    fn polls_meters_after_stop_when_track_is_still_active() {
+        assert!(Maolan::should_poll_meters(true, false, false, &[-90.0], [&[-18.0][..]]));
+    }
+
+    #[test]
+    fn stops_polling_meters_when_transport_is_stopped_and_all_meters_are_silent() {
+        assert!(!Maolan::should_poll_meters(
+            true,
+            false,
+            false,
+            &[-90.0, -90.0],
+            [&[-90.0, -90.0][..], &[-90.0][..]],
+        ));
+    }
+
+    #[test]
+    fn does_not_poll_meters_when_mixer_is_hidden() {
+        assert!(!Maolan::should_poll_meters(
+            false,
+            true,
+            false,
+            &[0.0],
+            [&[0.0][..]],
+        ));
     }
 }
