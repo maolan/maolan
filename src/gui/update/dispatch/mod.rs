@@ -1,4 +1,5 @@
 use super::*;
+use maolan_engine::message::PluginGraphNode;
 mod core;
 mod plugins;
 mod response_freeze_meter;
@@ -2004,6 +2005,7 @@ impl Maolan {
                             pitch_correction_frame_likeness,
                             pitch_correction_inertia_ms,
                             pitch_correction_formant_compensation,
+                            plugin_graph_json,
                         } => {
                             let key =
                                 Self::audio_clip_key(track_name, name, *start, *length, *offset);
@@ -2076,6 +2078,7 @@ impl Maolan {
                                             take_lane_override: None,
                                             take_lane_pinned: false,
                                             take_lane_locked: false,
+                                            plugin_graph_json: plugin_graph_json.clone(),
                                         });
                                     }
                                     Kind::MIDI => {
@@ -2509,16 +2512,80 @@ impl Maolan {
                         }
                         Action::TrackClapStateSnapshot {
                             track_name,
+                            instance_id,
                             plugin_path,
                             state: clap_state,
                             ..
                         } => {
+                            {
+                                let mut state = self.state.blocking_write();
+                                state
+                                    .clap_states_by_track
+                                    .entry(track_name.clone())
+                                    .or_default()
+                                    .insert(plugin_path.clone(), clap_state.clone());
+                            }
+                            if let Some(pending) = self.pending_clap_ui_open.clone()
+                                && pending.clip_idx.is_none()
+                                && pending.track_name == *track_name
+                                && pending.instance_id == *instance_id
+                                && pending.plugin_path == *plugin_path
+                            {
+                                if let Err(e) = self.clap_ui_host.open_editor(
+                                    track_name,
+                                    None,
+                                    *instance_id,
+                                    &pending.plugin_path,
+                                    Some(clap_state.clone()),
+                                ) {
+                                    self.state.blocking_write().message = e;
+                                }
+                                self.pending_clap_ui_open = None;
+                            }
+                        }
+                        Action::ClipClapStateSnapshot {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            plugin_path,
+                            state: clap_state,
+                            ..
+                        } => {
+                            let state_json =
+                                serde_json::to_value(clap_state).unwrap_or(serde_json::Value::Null);
                             let mut state = self.state.blocking_write();
-                            state
-                                .clap_states_by_track
-                                .entry(track_name.clone())
-                                .or_default()
-                                .insert(plugin_path.clone(), clap_state.clone());
+                            if let Some(track) = state
+                                .tracks
+                                .iter_mut()
+                                .find(|track| track.name == *track_name)
+                                && let Some(clip) = track.audio.clips.get_mut(*clip_idx)
+                                && let Some(graph_json) =
+                                    Self::plugin_graph_json_with_saved_plugin_state(
+                                        clip.plugin_graph_json.as_ref(),
+                                        *instance_id,
+                                        state_json,
+                                    )
+                            {
+                                clip.plugin_graph_json = Some(graph_json);
+                            }
+                            drop(state);
+                            if let Some(pending) = self.pending_clap_ui_open.clone()
+                                && pending.clip_idx == Some(*clip_idx)
+                                && pending.track_name == *track_name
+                                && pending.instance_id == *instance_id
+                                && pending.plugin_path == *plugin_path
+                            {
+                                if let Err(e) = self.clap_ui_host.open_editor(
+                                    track_name,
+                                    Some(*clip_idx),
+                                    *instance_id,
+                                    &pending.plugin_path,
+                                    Some(clap_state.clone()),
+                                ) {
+                                    self.state.blocking_write().message = e;
+                                }
+                                self.pending_clap_ui_open = None;
+                            }
                         }
                         Action::TrackClapParameters {
                             track_name,
@@ -2682,6 +2749,7 @@ impl Maolan {
                             }
                             if let Some(pending) = self.pending_vst3_ui_open.clone()
                                 && &pending.track_name == track_name
+                                && pending.clip_idx.is_none()
                                 && pending.instance_id == *instance_id
                             {
                                 let (sample_rate_hz, block_size) = {
@@ -2689,6 +2757,60 @@ impl Maolan {
                                     (self.playback_rate_hz.max(1.0), st.oss_period_frames.max(1))
                                 };
                                 if let Err(e) = self.vst3_ui_host.open_editor(
+                                    track_name,
+                                    None,
+                                    *instance_id,
+                                    &pending.plugin_path,
+                                    &pending.plugin_name,
+                                    &pending.plugin_id,
+                                    sample_rate_hz,
+                                    block_size,
+                                    pending.audio_inputs,
+                                    pending.audio_outputs,
+                                    Some(state.clone()),
+                                ) {
+                                    self.state.blocking_write().message = e;
+                                }
+                                self.pending_vst3_ui_open = None;
+                            }
+                        }
+                        Action::ClipVst3StateSnapshot {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            state,
+                        } => {
+                            let state_json =
+                                serde_json::to_value(state).unwrap_or(serde_json::Value::Null);
+                            let mut gui_state = self.state.blocking_write();
+                            if let Some(track) = gui_state
+                                .tracks
+                                .iter_mut()
+                                .find(|track| track.name == *track_name)
+                                && let Some(clip) = track.audio.clips.get_mut(*clip_idx)
+                                && let Some(graph_json) =
+                                    Self::plugin_graph_json_with_saved_plugin_state(
+                                        clip.plugin_graph_json.as_ref(),
+                                        *instance_id,
+                                        state_json,
+                                    )
+                            {
+                                clip.plugin_graph_json = Some(graph_json);
+                            }
+                            drop(gui_state);
+                            if let Some(pending) = self.pending_vst3_ui_open.clone()
+                                && &pending.track_name == track_name
+                                && pending.clip_idx == Some(*clip_idx)
+                                && pending.instance_id == *instance_id
+                            {
+                                let (sample_rate_hz, block_size) = {
+                                    let st = self.state.blocking_read();
+                                    (self.playback_rate_hz.max(1.0), st.oss_period_frames.max(1))
+                                };
+                                if let Err(e) = self.vst3_ui_host.open_editor(
+                                    track_name,
+                                    Some(*clip_idx),
+                                    *instance_id,
                                     &pending.plugin_path,
                                     &pending.plugin_name,
                                     &pending.plugin_id,
@@ -2774,15 +2896,88 @@ impl Maolan {
                                     })
                             };
                             if let Err(err) = self.lv2_ui_host.open_editor(
-                                track_name.clone(),
-                                *instance_id,
-                                plugin_name,
-                                plugin_uri,
-                                controls.clone(),
-                                *instance_access_handle,
-                                CLIENT.clone(),
+                                crate::plugins::lv2::Lv2UiOpenRequest {
+                                    target: crate::plugins::lv2::Lv2UiTarget {
+                                        track_name: track_name.clone(),
+                                        clip_idx: None,
+                                        instance_id: *instance_id,
+                                    },
+                                    plugin_name,
+                                    plugin_uri,
+                                    controls: controls.clone(),
+                                    instance_access_handle: *instance_access_handle,
+                                    client: CLIENT.clone(),
+                                },
                             ) {
                                 self.state.blocking_write().message = err;
+                            }
+                        }
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        Action::ClipLv2PluginControls {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            controls,
+                            instance_access_handle,
+                        } => {
+                            let (plugin_name, plugin_uri) = {
+                                let state = self.state.blocking_read();
+                                state
+                                    .plugin_graph_plugins
+                                    .iter()
+                                    .find(|plugin| plugin.instance_id == *instance_id)
+                                    .map(|plugin| (plugin.name.clone(), plugin.uri.clone()))
+                                    .unwrap_or_else(|| {
+                                        (format!("LV2 #{instance_id}"), String::new())
+                                    })
+                            };
+                            if let Err(err) = self.lv2_ui_host.open_editor(
+                                crate::plugins::lv2::Lv2UiOpenRequest {
+                                    target: crate::plugins::lv2::Lv2UiTarget {
+                                        track_name: track_name.clone(),
+                                        clip_idx: Some(*clip_idx),
+                                        instance_id: *instance_id,
+                                    },
+                                    plugin_name,
+                                    plugin_uri,
+                                    controls: controls.clone(),
+                                    instance_access_handle: *instance_access_handle,
+                                    client: CLIENT.clone(),
+                                },
+                            ) {
+                                self.state.blocking_write().message = err;
+                            }
+                        }
+                        #[cfg(all(unix, not(target_os = "macos")))]
+                        Action::ClipLv2StateSnapshot {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            state: lv2_state,
+                        } => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) = state
+                                .tracks
+                                .iter_mut()
+                                .find(|track| track.name == *track_name)
+                                && let Some(clip) = track.audio.clips.get_mut(*clip_idx)
+                                && let Some(graph_json) =
+                                    Self::plugin_graph_json_with_saved_plugin_state(
+                                        clip.plugin_graph_json.as_ref(),
+                                        *instance_id,
+                                        Self::lv2_state_to_json(lv2_state),
+                                    )
+                            {
+                                clip.plugin_graph_json = Some(graph_json);
+                            }
+                            if state.plugin_graph_clip.as_ref().is_some_and(|target| {
+                                target.track_name == *track_name && target.clip_idx == *clip_idx
+                            }) && let Some(plugin) = state
+                                .plugin_graph_plugins
+                                .iter_mut()
+                                .find(|plugin| plugin.instance_id == *instance_id)
+                            {
+                                plugin.state = Some(lv2_state.clone());
                             }
                         }
                         #[cfg(all(unix, not(target_os = "macos")))]
@@ -2795,7 +2990,9 @@ impl Maolan {
                             state
                                 .plugin_graphs_by_track
                                 .insert(track_name.clone(), (plugins.clone(), connections.clone()));
-                            if state.plugin_graph_track.as_deref() == Some(track_name.as_str()) {
+                            if state.plugin_graph_clip.is_none()
+                                && state.plugin_graph_track.as_deref() == Some(track_name.as_str())
+                            {
                                 state.plugin_graph_track = Some(track_name.clone());
                                 state.plugin_graph_plugins = plugins.clone();
                                 state.plugin_graph_connections = connections.clone();
@@ -2894,6 +3091,11 @@ impl Maolan {
                             // Update LV2 graph track reference
                             if state.plugin_graph_track.as_deref() == Some(old_name) {
                                 state.plugin_graph_track = Some(new_name.clone());
+                            }
+                            if let Some(target) = state.plugin_graph_clip.as_mut()
+                                && target.track_name == *old_name
+                            {
+                                target.track_name = new_name.clone();
                             }
                             // Update LV2 graphs by track
                             #[cfg(all(unix, not(target_os = "macos")))]
@@ -3111,6 +3313,7 @@ impl Maolan {
                                 pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
                                 pitch_correction_formant_compensation: clip
                                     .pitch_correction_formant_compensation,
+                                plugin_graph_json: clip.plugin_graph_json,
                             }),
                         );
                     }
@@ -3135,6 +3338,7 @@ impl Maolan {
                             pitch_correction_frame_likeness: None,
                             pitch_correction_inertia_ms: None,
                             pitch_correction_formant_compensation: None,
+                            plugin_graph_json: None,
                         }));
                     }
                     tasks.push(self.send(Action::TrackSetFrozen {
@@ -4199,6 +4403,7 @@ impl Maolan {
                             pitch_correction_frame_likeness: None,
                             pitch_correction_inertia_ms: None,
                             pitch_correction_formant_compensation: None,
+                            plugin_graph_json: None,
                         }),
                         self.send(Action::EndHistoryGroup),
                     ]);
@@ -4602,13 +4807,16 @@ impl Maolan {
                     return self.update(Message::PianoDeleteSelectedNotes);
                 }
 
-                let selected_clips: Vec<_> = self
-                    .state
-                    .blocking_read()
-                    .selected_clips
-                    .iter()
-                    .cloned()
-                    .collect();
+                let selected_clips: Vec<_> = if matches!(view, crate::state::View::Workspace) {
+                    self.state
+                        .blocking_read()
+                        .selected_clips
+                        .iter()
+                        .cloned()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 if !selected_clips.is_empty() {
                     let mut audio_by_track: std::collections::HashMap<String, Vec<usize>> =
                         std::collections::HashMap::new();
@@ -4676,6 +4884,47 @@ impl Maolan {
                                 )
                             };
                             if let Some(track_name) = track_name {
+                                let clip_target =
+                                    self.state.blocking_read().plugin_graph_clip.clone();
+                                if clip_target.is_some() {
+                                    let mut state = self.state.blocking_write();
+                                    if let Some(instance_id) = selected_plugin {
+                                        let Some(selected_node) = state
+                                            .plugin_graph_plugins
+                                            .iter()
+                                            .find(|p| p.instance_id == instance_id)
+                                            .map(|p| p.node.clone())
+                                        else {
+                                            return Task::none();
+                                        };
+                                        state
+                                            .plugin_graph_plugins
+                                            .retain(|plugin| plugin.instance_id != instance_id);
+                                        state.plugin_graph_connections.retain(|connection| {
+                                            connection.from_node != selected_node
+                                                && connection.to_node != selected_node
+                                        });
+                                        state.plugin_graph_selected_plugin = None;
+                                        state.plugin_graph_selected_connections.clear();
+                                        let sync = Self::save_open_clip_plugin_graph(&mut state);
+                                        return sync
+                                            .map_or_else(Task::none, |action| self.send(action));
+                                    }
+                                    let selected = selected_indices.clone();
+                                    let existing = state.plugin_graph_connections.clone();
+                                    state.plugin_graph_connections = existing
+                                        .into_iter()
+                                        .enumerate()
+                                        .filter_map(|(idx, connection)| {
+                                            (!selected.contains(&idx)).then_some(connection)
+                                        })
+                                        .collect();
+                                    state.plugin_graph_selected_connections.clear();
+                                    state.plugin_graph_selected_plugin = None;
+                                    let sync = Self::save_open_clip_plugin_graph(&mut state);
+                                    return sync
+                                        .map_or_else(Task::none, |action| self.send(action));
+                                }
                                 if let Some(instance_id) = selected_plugin {
                                     self.state.blocking_write().plugin_graph_selected_plugin = None;
                                     self.state
@@ -6185,6 +6434,11 @@ impl Maolan {
                                                     pitch_correction_frame_likeness: None,
                                                     pitch_correction_inertia_ms: None,
                                                     pitch_correction_formant_compensation: None,
+                                                    plugin_graph_json: Some(
+                                                        Maolan::default_clip_plugin_graph_json(
+                                                            channels, channels,
+                                                        ),
+                                                    ),
                                                 }))
                                                 .await
                                             {
@@ -6254,6 +6508,7 @@ impl Maolan {
                                                     pitch_correction_frame_likeness: None,
                                                     pitch_correction_inertia_ms: None,
                                                     pitch_correction_formant_compensation: None,
+                                                    plugin_graph_json: None,
                                                 }))
                                                 .await
                                             {
@@ -7014,9 +7269,16 @@ impl Maolan {
                     let mut state = self.state.blocking_write();
                     state.view = View::TrackPlugins;
                     state.plugin_graph_track = Some(track_name.clone());
+                    state.plugin_graph_clip = None;
                     Self::reset_track_plugin_view_state(&mut state);
                 }
                 return self.open_track_plugins_followup(track_name.clone());
+            }
+            Message::OpenClipPlugins {
+                ref track_idx,
+                clip_idx,
+            } => {
+                return self.open_clip_plugin_view(track_idx.clone(), clip_idx);
             }
             _ => {}
         }

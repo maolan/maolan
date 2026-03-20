@@ -41,7 +41,7 @@ use crate::{
 use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
 #[cfg(all(unix, not(target_os = "macos")))]
-use maolan_engine::message::{PluginGraphNode, PluginGraphPlugin};
+use maolan_engine::message::PluginGraphPlugin;
 use maolan_engine::{
     history,
     kind::Kind,
@@ -357,8 +357,120 @@ impl Maolan {
     }
 
     fn track_has_open_plugin_graph(&self, track_name: &str) -> bool {
-        platform_caps::SUPPORTS_PLUGIN_GRAPH
-            && self.state.blocking_read().plugin_graph_track.as_deref() == Some(track_name)
+        platform_caps::SUPPORTS_PLUGIN_GRAPH && {
+            let state = self.state.blocking_read();
+            state.plugin_graph_clip.is_none()
+                && state.plugin_graph_track.as_deref() == Some(track_name)
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn save_open_clip_plugin_graph(
+        state: &mut crate::state::StateData,
+    ) -> Option<maolan_engine::message::Action> {
+        let target = state.plugin_graph_clip.clone()?;
+        if let Some(track) = state
+            .tracks
+            .iter_mut()
+            .find(|track| track.name == target.track_name)
+            && let Some(clip) = track.audio.clips.get_mut(target.clip_idx)
+        {
+            let graph_json = Self::plugin_graph_snapshot_to_json(
+                clip.plugin_graph_json.as_ref(),
+                &state.plugin_graph_plugins,
+                &state.plugin_graph_connections,
+            );
+            clip.plugin_graph_json = Some(graph_json);
+            return Some(Action::SetClipPluginGraphJson {
+                track_name: target.track_name,
+                clip_index: target.clip_idx,
+                plugin_graph_json: clip.plugin_graph_json.clone(),
+            });
+        }
+        None
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub(super) fn default_clip_plugin_graph_json(
+        audio_ins: usize,
+        audio_outs: usize,
+    ) -> serde_json::Value {
+        let connections = (0..audio_ins.min(audio_outs))
+            .map(|port| {
+                serde_json::json!({
+                    "from_node": "TrackInput",
+                    "from_port": port,
+                    "to_node": "TrackOutput",
+                    "to_port": port,
+                    "kind": "Audio",
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "plugins": [],
+            "connections": connections,
+        })
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn open_clip_plugin_view(&mut self, track_name: String, clip_idx: usize) -> Task<Message> {
+        let (graph_json, lv2_plugins, vst3_plugins, clap_plugins) = {
+            let state = self.state.blocking_read();
+            let track = state.tracks.iter().find(|track| track.name == track_name);
+            let graph_json = track
+                .and_then(|track| track.audio.clips.get(clip_idx))
+                .and_then(|clip| clip.plugin_graph_json.clone());
+            (
+                graph_json,
+                state.lv2_plugins.clone(),
+                state.vst3_plugins.clone(),
+                state.clap_plugins.clone(),
+            )
+        };
+        let (plugins, connections) = Self::plugin_graph_snapshot_from_json(
+            graph_json.as_ref(),
+            &lv2_plugins,
+            &vst3_plugins,
+            &clap_plugins,
+        );
+        let target_track_name = track_name.clone();
+        let mut state = self.state.blocking_write();
+        state.view = crate::state::View::TrackPlugins;
+        state.plugin_graph_track = Some(track_name.clone());
+        state.plugin_graph_clip = Some(crate::state::PluginGraphClipTarget {
+            track_name,
+            clip_idx,
+        });
+        Self::reset_track_plugin_view_state(&mut state);
+        state.plugin_graph_plugins = plugins.clone();
+        state.plugin_graph_connections = connections;
+        let mut new_positions = std::collections::HashMap::new();
+        for (idx, plugin) in plugins.iter().enumerate() {
+            let fallback = iced::Point::new(200.0 + idx as f32 * 180.0, 220.0);
+            let pos = state
+                .plugin_graph_plugin_positions
+                .get(&plugin.instance_id)
+                .copied()
+                .unwrap_or(fallback);
+            new_positions.insert(plugin.instance_id, pos);
+        }
+        state.plugin_graph_plugin_positions = new_positions;
+        if graph_json.is_none()
+            && let Some(track) = state
+                .tracks
+                .iter_mut()
+                .find(|track| track.name == target_track_name)
+            && let Some(clip) = track.audio.clips.get_mut(clip_idx)
+        {
+            let graph_json = Self::default_clip_plugin_graph_json(0, 0);
+            clip.plugin_graph_json = Some(graph_json.clone());
+            return self.send(Action::SetClipPluginGraphJson {
+                track_name: target_track_name,
+                clip_index: clip_idx,
+                plugin_graph_json: Some(graph_json),
+            });
+        }
+        Task::none()
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -2078,6 +2190,7 @@ impl Maolan {
                         pitch_correction_frame_likeness: None,
                         pitch_correction_inertia_ms: None,
                         pitch_correction_formant_compensation: None,
+                        plugin_graph_json: clip.plugin_graph_json.clone(),
                     }),
                 );
                 tasks.push(
@@ -2105,6 +2218,7 @@ impl Maolan {
                         pitch_correction_frame_likeness: None,
                         pitch_correction_inertia_ms: None,
                         pitch_correction_formant_compensation: None,
+                        plugin_graph_json: clip.plugin_graph_json,
                     }),
                 );
                 tasks.push(self.send(Action::EndHistoryGroup));
@@ -2167,6 +2281,7 @@ impl Maolan {
                     pitch_correction_frame_likeness: None,
                     pitch_correction_inertia_ms: None,
                     pitch_correction_formant_compensation: None,
+                    plugin_graph_json: None,
                 }));
                 tasks.push(self.send(Action::AddClip {
                     name: clip.name,
@@ -2188,6 +2303,7 @@ impl Maolan {
                     pitch_correction_frame_likeness: None,
                     pitch_correction_inertia_ms: None,
                     pitch_correction_formant_compensation: None,
+                    plugin_graph_json: None,
                 }));
                 tasks.push(self.send(Action::EndHistoryGroup));
                 Task::batch(tasks)
@@ -2244,6 +2360,7 @@ impl Maolan {
             pitch_correction_frame_likeness: None,
             pitch_correction_inertia_ms: None,
             pitch_correction_formant_compensation: None,
+            plugin_graph_json: None,
         })
     }
 

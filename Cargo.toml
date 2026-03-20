@@ -19,7 +19,7 @@ iced_aw = "0.13.1"
 iced_drop = { version = "0.2.16", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
 libloading = "0.8.9"
-maolan-engine = { version = "0.0.2", path = "./engine" }
+maolan-engine = { version = "0.0.3", path = "./engine" }
 midly = "0.5.3"
 mp3lame-encoder = "0.2"
 pitch-detection = "0.3.0"

@@ -15,7 +15,7 @@ use std::collections::HashMap;
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::ffi::{CStr, CString, c_char, c_uint, c_ulong, c_void};
 #[cfg(all(unix, not(target_os = "macos")))]
-use std::sync::mpsc;
+use std::sync::{OnceLock, mpsc};
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::thread;
 
@@ -23,34 +23,17 @@ use std::thread;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct WindowKey {
     track_name: String,
+    clip_idx: Option<usize>,
     instance_id: usize,
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-struct GenericWindowEntry {
-    _window: *mut c_void,
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-enum WindowEntry {
-    Generic(GenericWindowEntry),
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-impl WindowEntry {
-    fn cleanup(self) {
-        match self {
-            Self::Generic(_generic) => {}
-        }
-    }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 struct SliderCallbackData {
     track_name: String,
+    clip_idx: Option<usize>,
     instance_id: usize,
     port_index: u32,
-    tx: mpsc::Sender<(String, usize, u32, f32)>,
+    tx: mpsc::Sender<(String, Option<usize>, usize, u32, f32)>,
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -59,13 +42,144 @@ unsafe impl Send for SliderCallbackData {}
 #[cfg(all(unix, not(target_os = "macos")))]
 struct NativeUiController {
     track_name: String,
+    clip_idx: Option<usize>,
     instance_id: usize,
     port_symbol_to_index: HashMap<String, u32>,
-    tx: mpsc::Sender<(String, usize, u32, f32)>,
+    tx: mpsc::Sender<(String, Option<usize>, usize, u32, f32)>,
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 unsafe impl Send for NativeUiController {}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+struct NativeWindowRuntime {
+    _window: *mut c_void,
+    suil_instance: *mut SuilInstance,
+    suil_host: *mut SuilHost,
+    controller_ptr: *mut NativeUiController,
+    idle_source: c_uint,
+    idle_data_ptr: *mut UiIdleData,
+    hide_data_ptr: *mut UiHideData,
+    show_iface_ptr: *const LV2UiShowInterface,
+    hide_iface_ptr: *const LV2UiHideInterface,
+    ui_handle: *mut c_void,
+    _urid_feature: UridMapFeature,
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+impl NativeWindowRuntime {
+    fn is_visible(&self) -> bool {
+        unsafe { gtk_widget_get_visible(self._window) != 0 }
+    }
+
+    fn show(&self) {
+        if !self.show_iface_ptr.is_null()
+            && let Some(show) = unsafe { (*self.show_iface_ptr).show }
+        {
+            let _ = show(self.ui_handle);
+        }
+        unsafe {
+            gtk_widget_show_all(self._window);
+            gtk_window_present(self._window);
+        }
+    }
+
+    fn cleanup(self) {
+        if !self.hide_iface_ptr.is_null()
+            && let Some(hide) = unsafe { (*self.hide_iface_ptr).hide }
+        {
+            let _ = hide(self.ui_handle);
+        }
+        if self.idle_source != 0 {
+            unsafe {
+                g_source_remove(self.idle_source);
+            }
+        }
+        if !self.idle_data_ptr.is_null() {
+            unsafe {
+                drop(Box::from_raw(self.idle_data_ptr));
+            }
+        }
+        if !self.hide_data_ptr.is_null() {
+            unsafe {
+                drop(Box::from_raw(self.hide_data_ptr));
+            }
+        }
+        unsafe {
+            suil_instance_free(self.suil_instance);
+            suil_host_free(self.suil_host);
+            drop(Box::from_raw(self.controller_ptr));
+            gtk_widget_destroy(self._window);
+        }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+struct GenericWindowRuntime {
+    window: *mut c_void,
+    slider_data: Vec<*mut SliderCallbackData>,
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+impl GenericWindowRuntime {
+    fn is_visible(&self) -> bool {
+        unsafe { gtk_widget_get_visible(self.window) != 0 }
+    }
+
+    fn show(&self) {
+        unsafe {
+            gtk_widget_show_all(self.window);
+            gtk_window_present(self.window);
+        }
+    }
+
+    fn cleanup(self) {
+        for data_ptr in self.slider_data {
+            unsafe {
+                drop(Box::from_raw(data_ptr));
+            }
+        }
+        unsafe {
+            gtk_widget_destroy(self.window);
+        }
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+enum GtkThreadWindow {
+    Native(NativeWindowRuntime),
+    Generic(GenericWindowRuntime),
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+enum WindowEntry {
+    Native(NativeWindowRuntime),
+    Generic(GenericWindowRuntime),
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+impl WindowEntry {
+    fn is_visible(&self) -> bool {
+        match self {
+            Self::Native(window) => window.is_visible(),
+            Self::Generic(window) => window.is_visible(),
+        }
+    }
+
+    fn show(&self) {
+        match self {
+            Self::Native(window) => window.show(),
+            Self::Generic(window) => window.show(),
+        }
+    }
+
+    fn cleanup(self) {
+        match self {
+            Self::Native(window) => window.cleanup(),
+            Self::Generic(window) => window.cleanup(),
+        }
+    }
+}
 
 #[cfg(all(unix, not(target_os = "macos")))]
 #[derive(Default)]
@@ -211,6 +325,23 @@ struct NativeUiSpec {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
+pub(crate) struct Lv2UiTarget {
+    pub track_name: String,
+    pub clip_idx: Option<usize>,
+    pub instance_id: usize,
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(crate) struct Lv2UiOpenRequest {
+    pub target: Lv2UiTarget,
+    pub plugin_name: String,
+    pub plugin_uri: String,
+    pub controls: Vec<Lv2ControlPortInfo>,
+    pub instance_access_handle: Option<usize>,
+    pub client: Client,
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 #[repr(C)]
 struct LV2UiResize {
     handle: *mut c_void,
@@ -243,6 +374,12 @@ struct UiIdleData {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 unsafe impl Send for UiIdleData {}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+struct UiHideData {
+    interface: *const LV2UiHideInterface,
+    handle: *mut c_void,
+}
 
 #[cfg(all(unix, not(target_os = "macos")))]
 extern "C" fn host_ui_resize(handle: *mut c_void, width: i32, height: i32) -> i32 {
@@ -301,6 +438,7 @@ extern "C" fn suil_write_port(
         .tx
         .send((
             controller.track_name.clone(),
+            controller.clip_idx,
             controller.instance_id,
             port_index,
             value,
@@ -358,6 +496,7 @@ unsafe extern "C" fn on_slider_changed(range: *mut c_void, data: *mut c_void) {
         .tx
         .send((
             data.track_name.clone(),
+            data.clip_idx,
             data.instance_id,
             data.port_index,
             value,
@@ -374,42 +513,43 @@ unsafe extern "C" fn on_generic_slider_changed(range: *mut c_void, data: *mut c_
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-unsafe extern "C" fn on_gtk_destroy(_widget: *mut c_void, data: *mut c_void) {
+unsafe extern "C" fn on_gtk_delete(
+    widget: *mut c_void,
+    _event: *mut c_void,
+    data: *mut c_void,
+) -> i32 {
     if !data.is_null() {
-        let should_close = unsafe { &*(data as *const std::sync::atomic::AtomicBool) };
-        should_close.store(true, std::sync::atomic::Ordering::Relaxed);
+        let hide_data = unsafe { &*(data as *const UiHideData) };
+        if !hide_data.interface.is_null()
+            && let Some(hide) = unsafe { (*hide_data.interface).hide }
+        {
+            let _ = hide(hide_data.handle);
+        }
     }
+    unsafe {
+        gtk_widget_hide(widget);
+    }
+    1
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 pub struct GuiLv2UiHost {
     windows: HashMap<WindowKey, WindowEntry>,
-    closed_tx: mpsc::Sender<WindowKey>,
-    closed_rx: mpsc::Receiver<WindowKey>,
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
 impl GuiLv2UiHost {
     pub fn new() -> Self {
-        let (closed_tx, closed_rx) = mpsc::channel();
         Self {
             windows: HashMap::new(),
-            closed_tx,
-            closed_rx,
         }
     }
 
     pub fn has_open_windows(&self) -> bool {
-        !self.windows.is_empty()
+        self.windows.values().any(WindowEntry::is_visible)
     }
 
     pub fn pump(&mut self) {
-        while let Ok(key) = self.closed_rx.try_recv() {
-            if let Some(entry) = self.windows.remove(&key) {
-                entry.cleanup();
-            }
-        }
-
         unsafe {
             while gtk_events_pending() != 0 {
                 gtk_main_iteration_do(0);
@@ -417,136 +557,94 @@ impl GuiLv2UiHost {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn open_editor(
-        &mut self,
-        track_name: String,
-        instance_id: usize,
-        plugin_name: String,
-        plugin_uri: String,
-        controls: Vec<Lv2ControlPortInfo>,
-        instance_access_handle: Option<usize>,
-        client: Client,
-    ) -> Result<(), String> {
+    pub fn open_editor(&mut self, request: Lv2UiOpenRequest) -> Result<(), String> {
+        ensure_gtk_initialized()?;
         let key = WindowKey {
-            track_name: track_name.clone(),
-            instance_id,
+            track_name: request.target.track_name.clone(),
+            clip_idx: request.target.clip_idx,
+            instance_id: request.target.instance_id,
         };
         if self.windows.contains_key(&key) {
+            if let Some(entry) = self.windows.get(&key) {
+                entry.show();
+            }
             return Ok(());
         }
 
-        // Mark that a window is open for this key (before spawning thread)
-        self.windows.insert(
-            key.clone(),
-            WindowEntry::Generic(GenericWindowEntry {
-                _window: std::ptr::null_mut(),
-            }),
-        );
-
-        let closed_tx = self.closed_tx.clone();
-
-        // Spawn a thread that will run gtk_main()
-        thread::spawn(move || {
-            let result = run_lv2_ui_window(
-                track_name.clone(),
-                instance_id,
-                plugin_name,
-                plugin_uri,
-                controls,
-                instance_access_handle,
-                client,
-            );
-
-            if let Err(err) = result {
-                tracing::error!("LV2 UI window failed: {err}");
-            }
-
-            // Notify that window was closed
-            if closed_tx
-                .send(WindowKey {
-                    track_name,
-                    instance_id,
-                })
-                .is_err()
-            {
-                tracing::debug!("LV2 UI closed notification receiver dropped");
-            }
-        });
-
+        let window = create_lv2_ui_window(request)?;
+        let entry = match window {
+            GtkThreadWindow::Native(window) => WindowEntry::Native(window),
+            GtkThreadWindow::Generic(window) => WindowEntry::Generic(window),
+        };
+        self.windows.insert(key, entry);
         Ok(())
     }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn run_lv2_ui_window(
-    track_name: String,
-    instance_id: usize,
-    plugin_name: String,
-    plugin_uri: String,
-    controls: Vec<Lv2ControlPortInfo>,
-    instance_access_handle: Option<usize>,
-    client: Client,
-) -> Result<(), String> {
-    // Initialize GTK
-    let mut argc = 0;
-    let mut argv: *mut *mut c_char = std::ptr::null_mut();
-    if unsafe { gtk_init_check(&mut argc, &mut argv) } == 0 {
-        return Err("Failed to initialize GTK".to_string());
-    }
-
-    let tx = spawn_control_sender(client);
-
-    // Try to open native UI first, fall back to generic
-    let ui_spec = resolve_preferred_ui(&plugin_uri);
-
-    if let Ok(spec) = ui_spec {
-        run_native_ui_with_gtk_main(
-            track_name,
-            instance_id,
-            plugin_name,
-            spec,
-            controls,
-            instance_access_handle,
-            &tx,
-        )
-    } else {
-        run_generic_ui_with_gtk_main(plugin_name, controls, &tx)
+impl Drop for GuiLv2UiHost {
+    fn drop(&mut self) {
+        for (_, entry) in self.windows.drain() {
+            entry.cleanup();
+        }
     }
 }
 
-fn run_native_ui_with_gtk_main(
-    track_name: String,
-    instance_id: usize,
+#[cfg(all(unix, not(target_os = "macos")))]
+fn ensure_gtk_initialized() -> Result<(), String> {
+    static GTK_INIT_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
+    GTK_INIT_RESULT
+        .get_or_init(|| {
+            let mut argc = 0;
+            let mut argv: *mut *mut c_char = std::ptr::null_mut();
+            if unsafe { gtk_init_check(&mut argc, &mut argv) } == 0 {
+                Err("Failed to initialize GTK for LV2 UI host".to_string())
+            } else {
+                Ok(())
+            }
+        })
+        .clone()
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn create_lv2_ui_window(request: Lv2UiOpenRequest) -> Result<GtkThreadWindow, String> {
+    let tx = spawn_control_sender(request.client);
+    let ui_spec = resolve_preferred_ui(&request.plugin_uri);
+    if let Ok(spec) = ui_spec {
+        create_native_ui_window(
+            request.target,
+            request.plugin_name,
+            spec,
+            request.controls,
+            request.instance_access_handle,
+            &tx,
+        )
+    } else {
+        create_generic_ui_window(request.target, request.plugin_name, request.controls, &tx)
+    }
+}
+
+fn create_native_ui_window(
+    target: Lv2UiTarget,
     plugin_name: String,
     ui_spec: NativeUiSpec,
     controls: Vec<Lv2ControlPortInfo>,
     instance_access_handle: Option<usize>,
-    tx: &mpsc::Sender<(String, usize, u32, f32)>,
-) -> Result<(), String> {
+    tx: &mpsc::Sender<(String, Option<usize>, usize, u32, f32)>,
+) -> Result<GtkThreadWindow, String> {
     let window = unsafe { gtk_window_new(GTK_WINDOW_TOPLEVEL) };
     if window.is_null() {
         return Err("Failed to create LV2 UI window".to_string());
     }
 
     let title = CString::new(format!("LV2 UI - {}", plugin_name)).map_err(|e| e.to_string())?;
-    let window_open_flag = Box::new(std::sync::atomic::AtomicBool::new(false));
-    let window_open_ptr = Box::into_raw(window_open_flag);
     unsafe {
         gtk_window_set_title(window, title.as_ptr());
         gtk_window_set_default_size(window, 780, 520);
-        g_signal_connect_data(
-            window,
-            c"destroy".as_ptr(),
-            Some(on_gtk_destroy),
-            window_open_ptr.cast::<c_void>(),
-            None,
-            0,
-        );
     }
 
     let use_x11_parent = ui_spec.container_type_uri == LV2_UI_X11;
-    let parent_data: *mut c_void = if use_x11_parent {
+    let parent_widget = if use_x11_parent {
         let socket = unsafe { gtk_socket_new() };
         if socket.is_null() {
             unsafe { gtk_widget_destroy(window) };
@@ -560,12 +658,22 @@ fn run_native_ui_with_gtk_main(
         let xid = unsafe { gtk_socket_get_id(socket) };
         xid as *mut c_void
     } else {
-        window
+        let container = unsafe { gtk_alignment_new(0.0, 0.0, 1.0, 1.0) };
+        if container.is_null() {
+            unsafe { gtk_widget_destroy(window) };
+            return Err("Failed to create GTK container for LV2 UI embedding".to_string());
+        }
+        unsafe {
+            gtk_container_add(window, container);
+            gtk_widget_show_all(window);
+        }
+        container
     };
 
     let controller = Box::new(NativeUiController {
-        track_name,
-        instance_id,
+        track_name: target.track_name,
+        clip_idx: target.clip_idx,
+        instance_id: target.instance_id,
         port_symbol_to_index: ui_spec.port_symbol_to_index,
         tx: tx.clone(),
     });
@@ -610,7 +718,7 @@ fn run_native_ui_with_gtk_main(
     };
     let parent_raw = LV2FeatureRaw {
         uri: parent_uri.as_ptr(),
-        data: parent_data,
+        data: parent_widget,
     };
     let resize_raw = LV2FeatureRaw {
         uri: resize_uri.as_ptr(),
@@ -683,6 +791,20 @@ fn run_native_ui_with_gtk_main(
         suil_instance_extension_data(suil_instance, hide_iface_uri.as_ptr())
             as *const LV2UiHideInterface
     };
+    let hide_data_ptr = Box::into_raw(Box::new(UiHideData {
+        interface: hide_iface_ptr,
+        handle: ui_handle,
+    }));
+    unsafe {
+        g_signal_connect_data(
+            window,
+            c"delete-event".as_ptr(),
+            on_gtk_delete as *const c_void,
+            hide_data_ptr.cast::<c_void>(),
+            None,
+            0,
+        );
+    }
 
     let mut idle_source: c_uint = 0;
     let mut idle_data_ptr: *mut UiIdleData = std::ptr::null_mut();
@@ -719,72 +841,34 @@ fn run_native_ui_with_gtk_main(
 
     unsafe {
         if !use_x11_parent {
-            gtk_container_add(window, widget);
+            if gtk_bin_get_child(parent_widget).is_null() {
+                gtk_container_add(parent_widget, widget);
+            }
             gtk_widget_show_all(window);
         }
     }
 
-    // Manual event loop instead of blocking gtk_main()
-    // This properly pumps events for X11 UIs embedded via GtkSocket
-    loop {
-        // Pump all pending GTK events
-        unsafe {
-            while gtk_events_pending() != 0 {
-                gtk_main_iteration_do(0);
-            }
-        }
-
-        // Call idle interface if the plugin provides one
-        if !idle_iface_ptr.is_null() {
-            let idle_iface = unsafe { &*idle_iface_ptr };
-            if let Some(idle_fn) = idle_iface.idle {
-                let _ = idle_fn(ui_handle);
-            }
-        }
-
-        // Check if window was destroyed by user or system
-        let should_close = unsafe { (*window_open_ptr).load(std::sync::atomic::Ordering::Relaxed) };
-        if should_close {
-            break;
-        }
-
-        // Sleep to avoid busy-waiting (60 FPS)
-        std::thread::sleep(std::time::Duration::from_millis(16));
-    }
-
-    // Cleanup after event loop exits
-    if !hide_iface_ptr.is_null()
-        && let Some(hide) = unsafe { (*hide_iface_ptr).hide }
-    {
-        let _ = hide(ui_handle);
-    }
-    if idle_source != 0 {
-        unsafe {
-            g_source_remove(idle_source);
-        }
-    }
-    if !idle_data_ptr.is_null() {
-        unsafe {
-            drop(Box::from_raw(idle_data_ptr));
-        }
-    }
-    unsafe {
-        suil_instance_free(suil_instance);
-        suil_host_free(suil_host);
-        drop(Box::from_raw(controller_ptr));
-        drop(Box::from_raw(window_open_ptr));
-    }
-
-    let _urid_feature = urid_feature;
-
-    Ok(())
+    Ok(GtkThreadWindow::Native(NativeWindowRuntime {
+        _window: window,
+        suil_instance,
+        suil_host,
+        controller_ptr,
+        idle_source,
+        idle_data_ptr,
+        hide_data_ptr,
+        show_iface_ptr,
+        hide_iface_ptr,
+        ui_handle,
+        _urid_feature: urid_feature,
+    }))
 }
 
-fn run_generic_ui_with_gtk_main(
+fn create_generic_ui_window(
+    target: Lv2UiTarget,
     plugin_name: String,
     controls: Vec<Lv2ControlPortInfo>,
-    tx: &mpsc::Sender<(String, usize, u32, f32)>,
-) -> Result<(), String> {
+    tx: &mpsc::Sender<(String, Option<usize>, usize, u32, f32)>,
+) -> Result<GtkThreadWindow, String> {
     let window = unsafe { gtk_window_new(GTK_WINDOW_TOPLEVEL) };
     if window.is_null() {
         return Err("Failed to create generic parameter UI window".to_string());
@@ -792,16 +876,14 @@ fn run_generic_ui_with_gtk_main(
 
     let title =
         CString::new(format!("LV2 Generic UI - {}", plugin_name)).map_err(|e| e.to_string())?;
-    let window_open_flag = Box::new(std::sync::atomic::AtomicBool::new(false));
-    let window_open_ptr = Box::into_raw(window_open_flag);
     unsafe {
         gtk_window_set_title(window, title.as_ptr());
         gtk_window_set_default_size(window, 720, 480);
         g_signal_connect_data(
             window,
-            c"destroy".as_ptr(),
-            Some(on_gtk_destroy),
-            window_open_ptr.cast::<c_void>(),
+            c"delete-event".as_ptr(),
+            on_gtk_delete as *const c_void,
+            std::ptr::null_mut(),
             None,
             0,
         );
@@ -832,8 +914,9 @@ fn run_generic_ui_with_gtk_main(
         }
 
         let data = Box::new(SliderCallbackData {
-            track_name: "".to_string(), // Not used for now
-            instance_id: 0,
+            track_name: target.track_name.clone(),
+            clip_idx: target.clip_idx,
+            instance_id: target.instance_id,
             port_index: port.index,
             tx: tx.clone(),
         });
@@ -843,7 +926,7 @@ fn run_generic_ui_with_gtk_main(
             g_signal_connect_data(
                 slider,
                 c"value-changed".as_ptr(),
-                Some(on_generic_slider_changed),
+                on_generic_slider_changed as *const c_void,
                 data_ptr.cast::<c_void>(),
                 None,
                 0,
@@ -859,40 +942,14 @@ fn run_generic_ui_with_gtk_main(
         gtk_widget_show_all(window);
     }
 
-    // Manual event loop instead of blocking gtk_main()
-    loop {
-        // Pump all pending GTK events
-        unsafe {
-            while gtk_events_pending() != 0 {
-                gtk_main_iteration_do(0);
-            }
-        }
-
-        // Check if window was destroyed
-        let should_close = unsafe { (*window_open_ptr).load(std::sync::atomic::Ordering::Relaxed) };
-        if should_close {
-            break;
-        }
-
-        // Sleep to avoid busy-waiting (60 FPS)
-        std::thread::sleep(std::time::Duration::from_millis(16));
-    }
-
-    // Cleanup after event loop exits
-    for data_ptr in slider_data {
-        unsafe {
-            drop(Box::from_raw(data_ptr));
-        }
-    }
-    unsafe {
-        drop(Box::from_raw(window_open_ptr));
-    }
-
-    Ok(())
+    Ok(GtkThreadWindow::Generic(GenericWindowRuntime {
+        window,
+        slider_data,
+    }))
 }
 
-fn spawn_control_sender(client: Client) -> mpsc::Sender<(String, usize, u32, f32)> {
-    let (tx, rx) = mpsc::channel::<(String, usize, u32, f32)>();
+fn spawn_control_sender(client: Client) -> mpsc::Sender<(String, Option<usize>, usize, u32, f32)> {
+    let (tx, rx) = mpsc::channel::<(String, Option<usize>, usize, u32, f32)>();
     thread::spawn(move || {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -901,15 +958,24 @@ fn spawn_control_sender(client: Client) -> mpsc::Sender<(String, usize, u32, f32
             Ok(rt) => rt,
             Err(_) => return,
         };
-        for (track_name, instance_id, index, value) in rx {
-            let _ = runtime.block_on(client.send(EngineMessage::Request(
+        for (track_name, clip_idx, instance_id, index, value) in rx {
+            let action = if let Some(clip_idx) = clip_idx {
+                Action::ClipSetLv2ControlValue {
+                    track_name,
+                    clip_idx,
+                    instance_id,
+                    index,
+                    value,
+                }
+            } else {
                 Action::TrackSetLv2ControlValue {
                     track_name,
                     instance_id,
                     index,
                     value,
-                },
-            )));
+                }
+            };
+            let _ = runtime.block_on(client.send(EngineMessage::Request(action)));
         }
     });
     tx
@@ -1075,7 +1141,10 @@ unsafe extern "C" {
     fn gtk_window_new(window_type: i32) -> *mut c_void;
     fn gtk_window_set_title(window: *mut c_void, title: *const c_char);
     fn gtk_window_set_default_size(window: *mut c_void, width: i32, height: i32);
+    fn gtk_window_present(window: *mut c_void);
     fn gtk_window_resize(window: *mut c_void, width: i32, height: i32);
+    fn gtk_alignment_new(xalign: f32, yalign: f32, xscale: f32, yscale: f32) -> *mut c_void;
+    fn gtk_bin_get_child(bin: *mut c_void) -> *mut c_void;
     fn gtk_container_add(container: *mut c_void, widget: *mut c_void);
     fn gtk_vbox_new(homogeneous: i32, spacing: i32) -> *mut c_void;
     fn gtk_hbox_new(homogeneous: i32, spacing: i32) -> *mut c_void;
@@ -1092,6 +1161,8 @@ unsafe extern "C" {
         padding: u32,
     );
     fn gtk_widget_destroy(widget: *mut c_void);
+    fn gtk_widget_hide(widget: *mut c_void);
+    fn gtk_widget_get_visible(widget: *mut c_void) -> i32;
     fn gtk_widget_show_all(widget: *mut c_void);
     fn gtk_widget_realize(widget: *mut c_void);
     fn gtk_socket_new() -> *mut c_void;
@@ -1106,7 +1177,7 @@ unsafe extern "C" {
     fn g_signal_connect_data(
         instance: *mut c_void,
         detailed_signal: *const c_char,
-        c_handler: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
+        c_handler: *const c_void,
         data: *mut c_void,
         destroy_data: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
         connect_flags: u32,

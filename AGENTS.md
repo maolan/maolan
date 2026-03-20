@@ -44,10 +44,21 @@ the existing ALSA, OSS, CoreAudio, and LV2/VST3 modules.
 ## Testing Guidelines
 Add unit tests next to changed code with `#[cfg(test)]` modules and
 descriptive test names such as `restores_automation_after_undo`. Run
-`cargo test` before opening a PR. When touching platform or
+`cargo test` before opening a PR. During development, always run
+`cargo fmt` and `cargo clippy` after code changes. Run `cargo test`
+when the feature slice is complete, not on every intermediate step.
+Treat this as a hard requirement. When touching platform or
 plugin-hosting paths that are difficult to exercise locally, add
 coverage for the pure logic around them and call out any untested edges
 in the PR.
+
+Write code so it is testable as a hard requirement, not an aspiration.
+Prefer designs that isolate pure logic from UI, IO, threading, and
+platform glue so behavior can be covered with unit tests. When a change
+lands in a path that is awkward to test directly, extract the decision
+logic into small helpers or focused modules and test those instead of
+leaving the behavior embedded in event handlers or side-effect-heavy
+code.
 
 ## Commit & Pull Request Guidelines
 Recent history favors short imperative commit subjects, often
@@ -64,4 +75,5 @@ Always run `cargo clippy` for Rust verification when Clippy is
 available. Do not skip it, and do not use `cargo check` as a substitute
 unless Clippy is unavailable or the user explicitly asks for
 `cargo check`. If Clippy cannot be run, state why. Format Rust code by
-running `cargo fmt` (not `cargo fmt --check`).
+running `cargo fmt` (not `cargo fmt --check`). This is mandatory after
+code changes, even for intermediate feature slices.

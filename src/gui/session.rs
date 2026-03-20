@@ -1745,6 +1745,15 @@ impl Maolan {
                                 .map(|v| v as u16),
                             pitch_correction_formant_compensation:
                                 clip["pitch_correction_formant_compensation"].as_bool(),
+                            plugin_graph_json: clip
+                                .get("plugin_graph_json")
+                                .filter(|value| !value.is_null())
+                                .cloned()
+                                .or_else(|| {
+                                    Some(Self::default_clip_plugin_graph_json(
+                                        audio_ins, audio_outs,
+                                    ))
+                                }),
                         });
                     }
                 }
@@ -1812,6 +1821,7 @@ impl Maolan {
                             pitch_correction_frame_likeness: None,
                             pitch_correction_inertia_ms: None,
                             pitch_correction_formant_compensation: None,
+                            plugin_graph_json: None,
                         });
                     }
                 }

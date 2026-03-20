@@ -866,6 +866,18 @@ pub enum Message {
     ToggleTracksVisibility,
     ToggleEditorVisibility,
     OpenTrackPlugins(String),
+    OpenClipPlugins {
+        track_idx: String,
+        clip_idx: usize,
+    },
+    #[cfg(all(unix, not(target_os = "macos")))]
+    ClipConnectPlugin {
+        from_node: maolan_engine::message::PluginGraphNode,
+        from_port: usize,
+        to_node: maolan_engine::message::PluginGraphNode,
+        to_port: usize,
+        kind: maolan_engine::kind::Kind,
+    },
     OpenMidiPiano {
         track_idx: String,
         clip_idx: usize,
@@ -1003,6 +1015,7 @@ pub enum Message {
     #[cfg(all(unix, not(target_os = "macos")))]
     OpenLv2PluginUi {
         track_name: String,
+        clip_idx: Option<usize>,
         instance_id: usize,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -1016,9 +1029,15 @@ pub enum Message {
     SelectClapPlugin(String),
     LoadSelectedClapPlugins,
     PluginFormatSelected(PluginFormat),
-    ShowClapPluginUi(String),
+    ShowClapPluginUi {
+        track_name: String,
+        clip_idx: Option<usize>,
+        instance_id: usize,
+        plugin_path: String,
+    },
     OpenVst3PluginUi {
         track_name: String,
+        clip_idx: Option<usize>,
         instance_id: usize,
         plugin_path: String,
         plugin_name: String,

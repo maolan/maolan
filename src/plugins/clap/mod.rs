@@ -7,8 +7,8 @@ use crate::plugins::x11::{
 };
 use libloading::Library;
 use std::ffi::{CStr, CString, c_char, c_ulong, c_void};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -22,19 +22,62 @@ unsafe extern "C" {
     fn NSApplicationLoad() -> bool;
 }
 
-pub struct GuiClapUiHost;
+#[derive(Debug, Clone)]
+pub(crate) struct ClapUiClosedState {
+    pub track_name: String,
+    pub clip_idx: Option<usize>,
+    pub instance_id: usize,
+    pub plugin_path: String,
+    pub state: maolan_engine::clap::ClapPluginState,
+}
+
+pub struct GuiClapUiHost {
+    closed_tx: mpsc::Sender<ClapUiClosedState>,
+    closed_rx: mpsc::Receiver<ClapUiClosedState>,
+}
 
 impl GuiClapUiHost {
     pub fn new() -> Self {
-        Self
+        let (closed_tx, closed_rx) = mpsc::channel();
+        Self {
+            closed_tx,
+            closed_rx,
+        }
     }
 
-    pub fn open_editor(&mut self, plugin_spec: &str) -> Result<(), String> {
+    pub fn drain_closed_states(&mut self) -> Vec<ClapUiClosedState> {
+        let mut states = Vec::new();
+        while let Ok(state) = self.closed_rx.try_recv() {
+            states.push(state);
+        }
+        states
+    }
+
+    pub fn open_editor(
+        &mut self,
+        track_name: &str,
+        clip_idx: Option<usize>,
+        instance_id: usize,
+        plugin_spec: &str,
+        state: Option<maolan_engine::clap::ClapPluginState>,
+    ) -> Result<(), String> {
+        let track_name = track_name.to_string();
         let plugin_spec = plugin_spec.to_string();
+        let closed_tx = self.closed_tx.clone();
         thread::Builder::new()
             .name("clap-ui".to_string())
-            .spawn(move || {
-                if let Err(err) = open_editor_blocking(&plugin_spec) {
+            .spawn(move || match open_editor_blocking(&plugin_spec, state) {
+                Ok(Some(state)) => {
+                    let _ = closed_tx.send(ClapUiClosedState {
+                        track_name,
+                        clip_idx,
+                        instance_id,
+                        plugin_path: plugin_spec,
+                        state,
+                    });
+                }
+                Ok(None) => {}
+                Err(err) => {
                     tracing::error!("Failed to open CLAP editor: {err}");
                 }
             })
@@ -184,6 +227,29 @@ struct ClapHostGui {
     closed: Option<unsafe extern "C" fn(*const ClapHost, bool)>,
 }
 
+#[repr(C)]
+struct ClapPluginStateExt {
+    save: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapOStream) -> bool>,
+    load: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapIStream) -> bool>,
+}
+
+#[repr(C)]
+struct ClapOStream {
+    ctx: *mut c_void,
+    write: Option<unsafe extern "C" fn(*const ClapOStream, *const c_void, u64) -> i64>,
+}
+
+#[repr(C)]
+struct ClapIStream {
+    ctx: *mut c_void,
+    read: Option<unsafe extern "C" fn(*const ClapIStream, *mut c_void, u64) -> i64>,
+}
+
+struct ClapIStreamCtx<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
 struct UiHostState {
     should_close: AtomicBool,
     callback_requested: AtomicBool,
@@ -325,6 +391,108 @@ fn host_state(host: *const ClapHost) -> Option<&'static UiHostState> {
         return None;
     }
     Some(unsafe { &*state_ptr })
+}
+
+unsafe extern "C" fn clap_ostream_write(
+    stream: *const ClapOStream,
+    buffer: *const c_void,
+    size: u64,
+) -> i64 {
+    if stream.is_null() || buffer.is_null() {
+        return -1;
+    }
+    let stream = unsafe { &*stream };
+    let out = unsafe { &mut *(stream.ctx as *mut Vec<u8>) };
+    let bytes = unsafe { std::slice::from_raw_parts(buffer as *const u8, size as usize) };
+    out.extend_from_slice(bytes);
+    size as i64
+}
+
+unsafe extern "C" fn clap_istream_read(
+    stream: *const ClapIStream,
+    buffer: *mut c_void,
+    size: u64,
+) -> i64 {
+    if stream.is_null() || buffer.is_null() {
+        return -1;
+    }
+    let stream = unsafe { &*stream };
+    let ctx = unsafe { &mut *(stream.ctx as *mut ClapIStreamCtx<'_>) };
+    let remaining = ctx.bytes.len().saturating_sub(ctx.offset);
+    if remaining == 0 {
+        return 0;
+    }
+    let to_read = remaining.min(size as usize);
+    let src = &ctx.bytes[ctx.offset..ctx.offset + to_read];
+    let dst = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, to_read) };
+    dst.copy_from_slice(src);
+    ctx.offset += to_read;
+    to_read as i64
+}
+
+fn clap_state_ext(plugin: *const ClapPlugin) -> Option<&'static ClapPluginStateExt> {
+    let ext_id = c"clap.state";
+    let plugin_ref = unsafe { &*plugin };
+    let get_extension = plugin_ref.get_extension?;
+    let ext_ptr = unsafe { get_extension(plugin, ext_id.as_ptr()) };
+    if ext_ptr.is_null() {
+        return None;
+    }
+    Some(unsafe { &*(ext_ptr as *const ClapPluginStateExt) })
+}
+
+fn snapshot_plugin_state(
+    plugin: *const ClapPlugin,
+) -> Result<maolan_engine::clap::ClapPluginState, String> {
+    let Some(state_ext) = clap_state_ext(plugin) else {
+        return Ok(maolan_engine::clap::ClapPluginState { bytes: Vec::new() });
+    };
+    let Some(save_fn) = state_ext.save else {
+        return Ok(maolan_engine::clap::ClapPluginState { bytes: Vec::new() });
+    };
+    let mut bytes = Vec::<u8>::new();
+    let mut stream = ClapOStream {
+        ctx: (&mut bytes as *mut Vec<u8>).cast::<c_void>(),
+        write: Some(clap_ostream_write),
+    };
+    if unsafe {
+        !save_fn(
+            plugin,
+            &mut stream as *mut ClapOStream as *const ClapOStream,
+        )
+    } {
+        return Err("CLAP state save failed".to_string());
+    }
+    Ok(maolan_engine::clap::ClapPluginState { bytes })
+}
+
+fn restore_plugin_state(
+    plugin: *const ClapPlugin,
+    state: &maolan_engine::clap::ClapPluginState,
+) -> Result<(), String> {
+    let Some(state_ext) = clap_state_ext(plugin) else {
+        return Ok(());
+    };
+    let Some(load_fn) = state_ext.load else {
+        return Ok(());
+    };
+    let mut ctx = ClapIStreamCtx {
+        bytes: &state.bytes,
+        offset: 0,
+    };
+    let mut stream = ClapIStream {
+        ctx: (&mut ctx as *mut ClapIStreamCtx<'_>).cast::<c_void>(),
+        read: Some(clap_istream_read),
+    };
+    if unsafe {
+        !load_fn(
+            plugin,
+            &mut stream as *mut ClapIStream as *const ClapIStream,
+        )
+    } {
+        return Err("CLAP state load failed".to_string());
+    }
+    Ok(())
 }
 
 fn split_plugin_spec(spec: &str) -> (&str, Option<&str>) {
@@ -643,7 +811,10 @@ fn pump_platform_events_cocoa() -> bool {
     false
 }
 
-fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
+fn open_editor_blocking(
+    plugin_spec: &str,
+    initial_state: Option<maolan_engine::clap::ClapPluginState>,
+) -> Result<Option<maolan_engine::clap::ClapPluginState>, String> {
     let (plugin_path, plugin_id) = split_plugin_spec(plugin_spec);
     let mut host_state = Box::new(UiHostState {
         should_close: AtomicBool::new(false),
@@ -748,6 +919,9 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
     }
     if let Some(start_processing) = plugin_ref.start_processing {
         let _ = unsafe { start_processing(plugin) };
+    }
+    if let Some(state) = initial_state.as_ref() {
+        restore_plugin_state(plugin, state)?;
     }
 
     let get_extension = plugin_ref
@@ -868,6 +1042,8 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
         thread::sleep(Duration::from_millis(16));
     }
 
+    let final_state = snapshot_plugin_state(plugin)?;
+
     // Clean up GUI
     if let Some(hide) = gui.hide {
         let _ = unsafe { hide(plugin) };
@@ -903,5 +1079,5 @@ fn open_editor_blocking(plugin_spec: &str) -> Result<(), String> {
         }
     }
 
-    Ok(())
+    Ok(Some(final_state))
 }

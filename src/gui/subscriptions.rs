@@ -261,7 +261,10 @@ impl Maolan {
                 self.playing,
                 self.paused,
                 &state.hw_out_meter_db,
-                state.tracks.iter().map(|track| track.meter_out_db.as_slice()),
+                state
+                    .tracks
+                    .iter()
+                    .map(|track| track.meter_out_db.as_slice()),
             )
         } else {
             false
@@ -327,22 +330,46 @@ mod tests {
 
     #[test]
     fn polls_meters_while_playing() {
-        assert!(Maolan::should_poll_meters(true, true, false, &[-90.0], [&[-90.0][..]]));
+        assert!(Maolan::should_poll_meters(
+            true,
+            true,
+            false,
+            &[-90.0],
+            [&[-90.0][..]]
+        ));
     }
 
     #[test]
     fn polls_meters_while_paused() {
-        assert!(Maolan::should_poll_meters(true, false, true, &[-90.0], [&[-90.0][..]]));
+        assert!(Maolan::should_poll_meters(
+            true,
+            false,
+            true,
+            &[-90.0],
+            [&[-90.0][..]]
+        ));
     }
 
     #[test]
     fn polls_meters_after_stop_when_hw_out_is_still_active() {
-        assert!(Maolan::should_poll_meters(true, false, false, &[-24.0], [&[-90.0][..]]));
+        assert!(Maolan::should_poll_meters(
+            true,
+            false,
+            false,
+            &[-24.0],
+            [&[-90.0][..]]
+        ));
     }
 
     #[test]
     fn polls_meters_after_stop_when_track_is_still_active() {
-        assert!(Maolan::should_poll_meters(true, false, false, &[-90.0], [&[-18.0][..]]));
+        assert!(Maolan::should_poll_meters(
+            true,
+            false,
+            false,
+            &[-90.0],
+            [&[-18.0][..]]
+        ));
     }
 
     #[test]

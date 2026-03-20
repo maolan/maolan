@@ -197,6 +197,24 @@ impl Engine {
     const MIDI_CC_ALL_NOTES_OFF: u8 = 123;
     const MIDI_CC_SUSTAIN_PEDAL: u8 = 64;
 
+    fn default_clip_plugin_graph_json(audio_ins: usize, audio_outs: usize) -> serde_json::Value {
+        let connections = (0..audio_ins.min(audio_outs))
+            .map(|port| {
+                serde_json::json!({
+                    "from_node": "TrackInput",
+                    "from_port": port,
+                    "to_node": "TrackOutput",
+                    "to_port": port,
+                    "kind": "Audio",
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "plugins": [],
+            "connections": connections,
+        })
+    }
+
     fn meter_linear_to_db(peak: f32) -> f32 {
         if peak <= 1.0e-6 {
             -90.0
@@ -228,6 +246,20 @@ impl Engine {
             });
         }
         events
+    }
+
+    fn set_clip_plugin_graph_json(
+        &mut self,
+        track_name: &str,
+        clip_index: usize,
+        plugin_graph_json: Option<serde_json::Value>,
+    ) {
+        if let Some(track) = self.state.lock().tracks.get(track_name) {
+            let track = track.lock();
+            if let Some(clip) = track.audio.clips.get_mut(clip_index) {
+                clip.plugin_graph_json = plugin_graph_json;
+            }
+        }
     }
 
     fn update_active_hw_notes_for_track(&mut self, track_name: &str, device: &str, data: &[u8]) {
@@ -2032,9 +2064,16 @@ impl Engine {
         let length = rec.samples.len() / rec.channels;
         let clip_rel_name = format!("audio/{}", rec.file_name);
         let clip = AudioClip::new(clip_rel_name.clone(), rec.start_sample, length);
-        if let Some(track) = self.state.lock().tracks.get(&track_name) {
-            track.lock().audio.clips.push(clip.clone());
-        }
+        let (audio_ins, audio_outs) = if let Some(track) = self.state.lock().tracks.get(&track_name)
+        {
+            let track = track.lock();
+            let audio_ins = track.audio.ins.len();
+            let audio_outs = track.audio.outs.len();
+            track.audio.clips.push(clip.clone());
+            (audio_ins, audio_outs)
+        } else {
+            (0, 0)
+        };
         self.notify_clients(Ok(Action::AddClip {
             name: clip_rel_name,
             track_name: track_name.clone(),
@@ -2055,6 +2094,7 @@ impl Engine {
             pitch_correction_frame_likeness: None,
             pitch_correction_inertia_ms: None,
             pitch_correction_formant_compensation: None,
+            plugin_graph_json: Some(Self::default_clip_plugin_graph_json(audio_ins, audio_outs)),
         }))
         .await;
     }
@@ -2181,6 +2221,7 @@ impl Engine {
             pitch_correction_frame_likeness: None,
             pitch_correction_inertia_ms: None,
             pitch_correction_formant_compensation: None,
+            plugin_graph_json: None,
         }))
         .await;
     }
@@ -2279,6 +2320,7 @@ impl Engine {
         pitch_correction_frame_likeness: Option<f32>,
         pitch_correction_inertia_ms: Option<u16>,
         pitch_correction_formant_compensation: Option<bool>,
+        plugin_graph_json: Option<serde_json::Value>,
     ) {
         if let Some(track) = self.state.lock().tracks.get(track_name) {
             let track = track.lock();
@@ -2301,6 +2343,7 @@ impl Engine {
                     clip.pitch_correction_inertia_ms = pitch_correction_inertia_ms;
                     clip.pitch_correction_formant_compensation =
                         pitch_correction_formant_compensation;
+                    clip.plugin_graph_json = plugin_graph_json;
                     track.audio.clips.push(clip);
                     track.clip_pitch_shifters.clear();
                 }
@@ -4005,6 +4048,41 @@ impl Engine {
                 }
             }
             #[cfg(all(unix, not(target_os = "macos")))]
+            Action::ClipSetLv2PluginState {
+                ref track_name,
+                clip_idx,
+                instance_id,
+                ref state,
+            } => {
+                if self
+                    .reject_if_track_frozen(track_name, "LV2 plugin state changes")
+                    .await
+                {
+                    return;
+                }
+                let track = match self.track_handle_or_err(track_name) {
+                    Ok(track) => track,
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                        return;
+                    }
+                };
+                if let Err(e) = track
+                    .lock()
+                    .clip_set_lv2_plugin_state(clip_idx, instance_id, state.clone())
+                {
+                    self.notify_clients(Err(e)).await;
+                    return;
+                }
+                self.notify_clients(Ok(Action::ClipLv2StateSnapshot {
+                    track_name: track_name.clone(),
+                    clip_idx,
+                    instance_id,
+                    state: state.clone(),
+                }))
+                .await;
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackUnloadLv2PluginInstance {
                 ref track_name,
                 instance_id,
@@ -4073,6 +4151,37 @@ impl Engine {
                 return;
             }
             #[cfg(all(unix, not(target_os = "macos")))]
+            Action::ClipGetLv2PluginControls {
+                ref track_name,
+                clip_idx,
+                instance_id,
+            } => {
+                let track = match self.track_handle_or_err(track_name) {
+                    Ok(track) => track,
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                        return;
+                    }
+                };
+                let (controls, instance_access_handle) =
+                    match track.lock().clip_lv2_plugin_controls(clip_idx, instance_id) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                    };
+                self.notify_clients(Ok(Action::ClipLv2PluginControls {
+                    track_name: track_name.clone(),
+                    clip_idx,
+                    instance_id,
+                    controls,
+                    instance_access_handle,
+                }))
+                .await;
+                return;
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackSetLv2ControlValue {
                 ref track_name,
                 instance_id,
@@ -4099,6 +4208,45 @@ impl Engine {
                     self.notify_clients(Err(e)).await;
                     return;
                 }
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            Action::ClipSetLv2ControlValue {
+                ref track_name,
+                clip_idx,
+                instance_id,
+                index,
+                value,
+            } => {
+                if self
+                    .reject_if_track_frozen(track_name, "LV2 parameter changes")
+                    .await
+                {
+                    return;
+                }
+                let track = match self.track_handle_or_err(track_name) {
+                    Ok(track) => track,
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                        return;
+                    }
+                };
+                let state = match track
+                    .lock()
+                    .clip_set_lv2_control_value(clip_idx, instance_id, index, value)
+                {
+                    Ok(state) => state,
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                        return;
+                    }
+                };
+                self.notify_clients(Ok(Action::ClipLv2StateSnapshot {
+                    track_name: track_name.clone(),
+                    clip_idx,
+                    instance_id,
+                    state,
+                }))
+                .await;
             }
             #[cfg(unix)]
             Action::TrackGetPluginGraph { ref track_name } => {
@@ -4494,7 +4642,32 @@ impl Engine {
                     self.notify_clients(Err(e)).await;
                 }
             },
+            Action::ClipClapSnapshotState {
+                ref track_name,
+                clip_idx,
+                instance_id,
+            } => match self.track_handle_or_err(track_name) {
+                Ok(track) => match track.lock().clip_clap_snapshot_state(clip_idx, instance_id) {
+                    Ok((plugin_path, state)) => {
+                        self.notify_clients(Ok(Action::ClipClapStateSnapshot {
+                            track_name: track_name.clone(),
+                            clip_idx,
+                            instance_id,
+                            plugin_path,
+                            state,
+                        }))
+                        .await;
+                    }
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                    }
+                },
+                Err(e) => {
+                    self.notify_clients(Err(e)).await;
+                }
+            },
             Action::TrackClapStateSnapshot { .. } => {}
+            Action::ClipClapStateSnapshot { .. } => {}
             Action::TrackClapRestoreState {
                 ref track_name,
                 instance_id,
@@ -4675,7 +4848,33 @@ impl Engine {
                     self.notify_clients(Err(e)).await;
                 }
             },
+            Action::ClipVst3SnapshotState {
+                ref track_name,
+                clip_idx,
+                instance_id,
+            } => match self.track_handle_or_err(track_name) {
+                Ok(track) => match track.lock().clip_vst3_snapshot_state(clip_idx, instance_id) {
+                    Ok(state) => {
+                        self.notify_clients(Ok(Action::ClipVst3StateSnapshot {
+                            track_name: track_name.clone(),
+                            clip_idx,
+                            instance_id,
+                            state,
+                        }))
+                        .await;
+                    }
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                    }
+                },
+                Err(e) => {
+                    self.notify_clients(Err(e)).await;
+                }
+            },
             Action::TrackVst3StateSnapshot { .. } => {
+                // Response action, no handling needed
+            }
+            Action::ClipVst3StateSnapshot { .. } => {
                 // Response action, no handling needed
             }
             Action::TrackVst3RestoreState {
@@ -4840,6 +5039,7 @@ impl Engine {
                 pitch_correction_frame_likeness,
                 pitch_correction_inertia_ms,
                 pitch_correction_formant_compensation,
+                ref plugin_graph_json,
             } => {
                 self.add_clip_to_track(
                     name,
@@ -4861,6 +5061,7 @@ impl Engine {
                     pitch_correction_frame_likeness,
                     pitch_correction_inertia_ms,
                     pitch_correction_formant_compensation,
+                    plugin_graph_json.clone(),
                 );
             }
             Action::RemoveClip {
@@ -4912,6 +5113,13 @@ impl Engine {
                 muted,
             } => {
                 self.set_clip_muted(track_name, clip_index, kind, muted);
+            }
+            Action::SetClipPluginGraphJson {
+                ref track_name,
+                clip_index,
+                ref plugin_graph_json,
+            } => {
+                self.set_clip_plugin_graph_json(track_name, clip_index, plugin_graph_json.clone());
             }
             Action::SetClipPitchCorrection {
                 ref track_name,
@@ -5465,6 +5673,10 @@ impl Engine {
             }
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLv2PluginControls { .. } => {}
+            #[cfg(all(unix, not(target_os = "macos")))]
+            Action::ClipLv2PluginControls { .. } => {}
+            #[cfg(all(unix, not(target_os = "macos")))]
+            Action::ClipLv2StateSnapshot { .. } => {}
             #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackLv2Midnam { .. } => {}
             Action::SessionDiagnosticsReport { .. } => {}

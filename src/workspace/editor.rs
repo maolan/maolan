@@ -1531,6 +1531,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     clip_idx: index,
                     kind: Kind::Audio,
                 });
+                let base = base.on_double_click(Message::OpenClipPlugins {
+                    track_idx: track_name_cloned.clone(),
+                    clip_idx: index,
+                });
                 if !clip.take_lane_locked {
                     let track_name_for_drag_closure = track_name_cloned.clone();
                     base.on_move(move |point| {

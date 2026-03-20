@@ -282,6 +282,7 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
                         pitch_correction_formant_compensation:
                             clip.pitch_correction_formant_compensation,
+                        plugin_graph_json: clip.plugin_graph_json.clone(),
                     })
                 }
                 Kind::MIDI => {
@@ -307,6 +308,7 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                         pitch_correction_frame_likeness: None,
                         pitch_correction_inertia_ms: None,
                         pitch_correction_formant_compensation: None,
+                        plugin_graph_json: None,
                     })
                 }
             }
@@ -1004,6 +1006,7 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
                     pitch_correction_formant_compensation:
                         clip.pitch_correction_formant_compensation,
+                    plugin_graph_json: clip.plugin_graph_json.clone(),
                 });
             }
             for clip in &track.midi.clips {
@@ -1028,6 +1031,7 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     pitch_correction_frame_likeness: None,
                     pitch_correction_inertia_ms: None,
                     pitch_correction_formant_compensation: None,
+                    plugin_graph_json: None,
                 });
             }
         }

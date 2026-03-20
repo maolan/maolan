@@ -399,7 +399,7 @@ pub fn open_editor_blocking(
     _audio_inputs: usize,
     _audio_outputs: usize,
     state: Option<maolan_engine::vst3::Vst3PluginState>,
-) -> Result<(), String> {
+) -> Result<Option<maolan_engine::vst3::Vst3PluginState>, String> {
     let path = Path::new(plugin_path);
     let factory = PluginFactory::from_module(path)?;
     let class_count = factory.count_classes();
@@ -437,6 +437,14 @@ pub fn open_editor_blocking(
                 .setState(ibstream_ptr(&comp_stream) as *mut _)
         };
     }
+    if let Some(snapshot) = state.as_ref()
+        && !snapshot.controller_state.is_empty()
+        && let Some(controller) = instance.edit_controller.as_ref()
+    {
+        let ctrl_stream =
+            vst3::ComWrapper::new(MemoryStream::from_bytes(&snapshot.controller_state));
+        let _ = unsafe { controller.setState(ibstream_ptr(&ctrl_stream) as *mut _) };
+    }
 
     let controller = instance
         .edit_controller
@@ -448,8 +456,37 @@ pub fn open_editor_blocking(
         plugin_name.to_string()
     };
     let result = run_vst3_x11_editor(controller, title);
+    let state = if result.is_ok() {
+        use vst3::Steinberg::Vst::{IComponentTrait, IEditControllerTrait};
+
+        let comp_stream = vst3::ComWrapper::new(MemoryStream::new());
+        unsafe {
+            let snapshot_result = instance
+                .component
+                .getState(ibstream_ptr(&comp_stream) as *mut _);
+            if snapshot_result != vst3::Steinberg::kResultOk {
+                return Err("Failed to get component state".to_string());
+            }
+        }
+
+        let ctrl_stream = vst3::ComWrapper::new(MemoryStream::new());
+        if let Some(controller) = &instance.edit_controller {
+            unsafe {
+                controller.getState(ibstream_ptr(&ctrl_stream) as *mut _);
+            }
+        }
+
+        Some(maolan_engine::vst3::Vst3PluginState {
+            plugin_id: plugin_id.to_string(),
+            component_state: comp_stream.bytes(),
+            controller_state: ctrl_stream.bytes(),
+        })
+    } else {
+        None
+    };
     let _ = instance.terminate();
-    result
+    result?;
+    Ok(state)
 }
 
 fn run_vst3_x11_editor(
