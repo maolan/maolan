@@ -4994,6 +4994,9 @@ impl Maolan {
                     crate::state::View::Piano => {
                         return self.update(Message::RemoveSelected);
                     }
+                    crate::state::View::HwInputPorts | crate::state::View::HwOutputPorts => {
+                        return Task::none();
+                    }
                     crate::state::View::PitchCorrection => {
                         return Task::none();
                     }
@@ -7273,6 +7276,14 @@ impl Maolan {
                     Self::reset_track_plugin_view_state(&mut state);
                 }
                 return self.open_track_plugins_followup(track_name.clone());
+            }
+            Message::OpenHwPorts { input } => {
+                let mut state = self.state.blocking_write();
+                state.view = if input {
+                    View::HwInputPorts
+                } else {
+                    View::HwOutputPorts
+                };
             }
             Message::OpenClipPlugins {
                 ref track_idx,

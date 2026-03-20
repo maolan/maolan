@@ -243,6 +243,8 @@ pub enum ConnectionViewSelection {
 pub enum View {
     Workspace,
     Connections,
+    HwInputPorts,
+    HwOutputPorts,
     TrackPlugins,
     Piano,
     PitchCorrection,

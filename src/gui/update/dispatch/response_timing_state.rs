@@ -3,6 +3,23 @@ use super::*;
 impl Maolan {
     pub(super) fn handle_response_timing_state_action(&mut self, action: &Action) -> bool {
         match action {
+            Action::Play => {
+                self.playing = true;
+                self.paused = false;
+                self.last_playback_tick = Some(Instant::now());
+                true
+            }
+            Action::Stop => {
+                self.playing = false;
+                self.paused = false;
+                self.last_playback_tick = None;
+                self.track_automation_runtime.clear();
+                self.touch_automation_overrides.clear();
+                self.touch_active_keys.clear();
+                self.latch_automation_overrides.clear();
+                self.stop_recording_preview();
+                true
+            }
             Action::BeginSessionRestore => {
                 self.session_restore_in_progress = true;
                 self.has_unsaved_changes = false;
@@ -83,5 +100,58 @@ impl Maolan {
             }
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gui::TrackAutomationRuntime;
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn play_response_sets_transport_running_state() {
+        let mut app = Maolan {
+            paused: true,
+            ..Maolan::default()
+        };
+
+        assert!(app.handle_response_timing_state_action(&Action::Play));
+
+        assert!(app.playing);
+        assert!(!app.paused);
+        assert!(app.last_playback_tick.is_some());
+    }
+
+    #[test]
+    fn stop_response_clears_transport_and_automation_runtime_state() {
+        let mut app = Maolan {
+            playing: true,
+            paused: true,
+            recording_preview_start_sample: Some(32),
+            recording_preview_sample: Some(64),
+            ..Maolan::default()
+        };
+        app.last_playback_tick = Some(Instant::now());
+        app.track_automation_runtime
+            .insert("Track".to_string(), TrackAutomationRuntime::default());
+        app.touch_automation_overrides
+            .insert("Track".to_string(), HashMap::new());
+        app.touch_active_keys
+            .insert("Track".to_string(), HashSet::new());
+        app.latch_automation_overrides
+            .insert("Track".to_string(), HashMap::new());
+
+        assert!(app.handle_response_timing_state_action(&Action::Stop));
+
+        assert!(!app.playing);
+        assert!(!app.paused);
+        assert!(app.last_playback_tick.is_none());
+        assert!(app.track_automation_runtime.is_empty());
+        assert!(app.touch_automation_overrides.is_empty());
+        assert!(app.touch_active_keys.is_empty());
+        assert!(app.latch_automation_overrides.is_empty());
+        assert!(app.recording_preview_start_sample.is_none());
+        assert!(app.recording_preview_sample.is_none());
     }
 }
