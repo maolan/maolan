@@ -5567,8 +5567,10 @@ mod tests {
 
     #[test]
     fn import_progress_only_finishes_on_last_file_at_full_progress() {
-        let mut app = Maolan::default();
-        app.import_in_progress = true;
+        let mut app = Maolan {
+            import_in_progress: true,
+            ..Maolan::default()
+        };
 
         let _ = app.update(Message::ImportProgress {
             file_index: 1,
