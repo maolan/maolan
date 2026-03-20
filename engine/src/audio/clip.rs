@@ -51,3 +51,29 @@ impl AudioClip {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AudioClip;
+
+    #[test]
+    fn new_audio_clip_uses_expected_defaults() {
+        let clip = AudioClip::new("clip.wav".to_string(), 12, 96);
+
+        assert_eq!(clip.name, "clip.wav");
+        assert_eq!(clip.start, 12);
+        assert_eq!(clip.end, 96);
+        assert_eq!(clip.offset, 0);
+        assert_eq!(clip.input_channel, 0);
+        assert!(!clip.muted);
+        assert_eq!(clip.peaks_file, None);
+        assert!(clip.fade_enabled);
+        assert_eq!(clip.fade_in_samples, 240);
+        assert_eq!(clip.fade_out_samples, 240);
+        assert!(clip.pitch_correction_preview_name.is_none());
+        assert!(clip.pitch_correction_source_name.is_none());
+        assert!(clip.pitch_correction_points.is_empty());
+        assert!(clip.plugin_graph_json.is_none());
+        assert!(clip.grouped_clips.is_empty());
+    }
+}

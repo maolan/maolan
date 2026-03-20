@@ -371,8 +371,34 @@ impl Worker {
 #[cfg(test)]
 mod tests {
     use super::Worker;
-    use crate::message::{OfflineAutomationLane, OfflineAutomationPoint, OfflineAutomationTarget};
+    use crate::message::{
+        Action, Message, OfflineAutomationLane, OfflineAutomationPoint, OfflineAutomationTarget,
+        OfflineBounceWork,
+    };
+    use crate::mutex::UnsafeMutex;
+    use crate::state::State;
     use crate::track::Track;
+    use std::path::PathBuf;
+    use std::sync::{Arc, atomic::AtomicBool};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::sync::mpsc::channel;
+
+    fn make_state_with_track(track: Track) -> Arc<UnsafeMutex<State>> {
+        let mut state = State::default();
+        state.tracks.insert(
+            track.name.clone(),
+            Arc::new(UnsafeMutex::new(Box::new(track))),
+        );
+        Arc::new(UnsafeMutex::new(state))
+    }
+
+    fn unique_temp_wav(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!("maolan_{name}_{nanos}.wav"))
+    }
 
     #[test]
     fn prepare_track_for_freeze_render_neutralizes_level_and_balance() {
@@ -424,5 +450,232 @@ mod tests {
         assert_eq!(track.level(), 0.0);
         assert_eq!(track.balance, 0.0);
         assert!(track.muted);
+    }
+
+    #[test]
+    fn automation_lane_value_at_interpolates_between_points() {
+        let value = Worker::automation_lane_value_at(
+            &[
+                OfflineAutomationPoint {
+                    sample: 10,
+                    value: 0.25,
+                },
+                OfflineAutomationPoint {
+                    sample: 20,
+                    value: 0.75,
+                },
+            ],
+            15,
+        )
+        .expect("value");
+
+        assert!((value - 0.5).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn freeze_automation_applies_interpolated_mute_lane() {
+        let mut track = Track::new("track".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        let lanes = vec![OfflineAutomationLane {
+            target: OfflineAutomationTarget::Mute,
+            points: vec![
+                OfflineAutomationPoint {
+                    sample: 0,
+                    value: 0.0,
+                },
+                OfflineAutomationPoint {
+                    sample: 10,
+                    value: 1.0,
+                },
+            ],
+        }];
+
+        Worker::apply_freeze_automation_at_sample(&mut track, 5, &lanes);
+        assert!(track.muted);
+
+        track.set_muted(false);
+        Worker::apply_freeze_automation_at_sample(&mut track, 2, &lanes);
+        assert!(!track.muted);
+    }
+
+    #[tokio::test]
+    async fn process_offline_bounce_errors_when_track_is_missing() {
+        let (_rx_unused_tx, rx_unused) = channel(1);
+        let (tx, mut out_rx) = channel(8);
+        let worker = Worker { id: 7, rx: rx_unused, tx };
+        let job = OfflineBounceWork {
+            state: Arc::new(UnsafeMutex::new(State::default())),
+            track_name: "missing".to_string(),
+            output_path: unique_temp_wav("missing").to_string_lossy().to_string(),
+            start_sample: 0,
+            length_samples: 8,
+            tempo_bpm: 120.0,
+            tsig_num: 4,
+            tsig_denom: 4,
+            automation_lanes: vec![],
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+
+        worker.process_offline_bounce(job).await;
+
+        match out_rx.recv().await.expect("message") {
+            Message::OfflineBounceFinished { result: Err(err) } => {
+                assert!(err.contains("Track not found: missing"));
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn process_offline_bounce_cancels_and_restores_track_state() {
+        let (_rx_unused_tx, rx_unused) = channel(1);
+        let (tx, mut out_rx) = channel(8);
+        let worker = Worker { id: 5, rx: rx_unused, tx };
+        let mut track = Track::new("track".to_string(), 1, 2, 0, 0, 4, 48_000.0);
+        track.set_level(-9.0);
+        track.set_balance(-0.3);
+        let state = make_state_with_track(track);
+        let job = OfflineBounceWork {
+            state: state.clone(),
+            track_name: "track".to_string(),
+            output_path: unique_temp_wav("cancel").to_string_lossy().to_string(),
+            start_sample: 0,
+            length_samples: 8,
+            tempo_bpm: 120.0,
+            tsig_num: 4,
+            tsig_denom: 4,
+            automation_lanes: vec![],
+            cancel: Arc::new(AtomicBool::new(true)),
+        };
+
+        worker.process_offline_bounce(job).await;
+
+        match out_rx.recv().await.expect("message") {
+            Message::OfflineBounceFinished {
+                result: Ok(Action::TrackOfflineBounceCanceled { track_name }),
+            } => assert_eq!(track_name, "track"),
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert!(matches!(out_rx.recv().await, Some(Message::Ready(5))));
+        let track = state.lock().tracks.get("track").expect("track").lock();
+        assert_eq!(track.level(), -9.0);
+        assert_eq!(track.balance, -0.3);
+    }
+
+    #[tokio::test]
+    async fn process_offline_bounce_restores_track_state_on_write_failure() {
+        let (_rx_unused_tx, rx_unused) = channel(1);
+        let (tx, mut out_rx) = channel(8);
+        let worker = Worker { id: 3, rx: rx_unused, tx };
+        let mut track = Track::new("track".to_string(), 1, 2, 0, 0, 4, 48_000.0);
+        track.set_level(-4.0);
+        track.set_balance(0.25);
+        let state = make_state_with_track(track);
+        let output_path = std::env::temp_dir().to_string_lossy().to_string();
+        let job = OfflineBounceWork {
+            state: state.clone(),
+            track_name: "track".to_string(),
+            output_path,
+            start_sample: 0,
+            length_samples: 4,
+            tempo_bpm: 120.0,
+            tsig_num: 4,
+            tsig_denom: 4,
+            automation_lanes: vec![],
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+
+        worker.process_offline_bounce(job).await;
+
+        let mut saw_error = false;
+        while let Some(message) = out_rx.recv().await {
+            match message {
+                Message::OfflineBounceFinished {
+                    result: Ok(Action::TrackOfflineBounceProgress { .. }),
+                } => {}
+                Message::OfflineBounceFinished { result: Err(err) } => {
+                    assert!(err.contains("Failed to write offline bounce"));
+                    saw_error = true;
+                }
+                Message::Ready(3) => break,
+                other => panic!("unexpected message: {other:?}"),
+            }
+        }
+        assert!(saw_error);
+        let track = state.lock().tracks.get("track").expect("track").lock();
+        assert_eq!(track.level(), -4.0);
+        assert_eq!(track.balance, 0.25);
+    }
+
+    #[tokio::test]
+    async fn process_offline_bounce_emits_progress_and_completion() {
+        let (_rx_unused_tx, rx_unused) = channel(1);
+        let (tx, mut out_rx) = channel(16);
+        let worker = Worker { id: 2, rx: rx_unused, tx };
+        let mut track = Track::new("track".to_string(), 1, 1, 0, 0, 4, 48_000.0);
+        track.set_level(-3.0);
+        track.set_balance(0.4);
+        let state = make_state_with_track(track);
+        let output = unique_temp_wav("success");
+        let job = OfflineBounceWork {
+            state: state.clone(),
+            track_name: "track".to_string(),
+            output_path: output.to_string_lossy().to_string(),
+            start_sample: 0,
+            length_samples: 8,
+            tempo_bpm: 120.0,
+            tsig_num: 4,
+            tsig_denom: 4,
+            automation_lanes: vec![],
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+
+        worker.process_offline_bounce(job).await;
+
+        let mut saw_progress = false;
+        let mut saw_complete = false;
+        let mut saw_ready = false;
+        while let Some(message) = out_rx.recv().await {
+            match message {
+                Message::OfflineBounceFinished {
+                    result:
+                        Ok(Action::TrackOfflineBounceProgress {
+                            track_name,
+                            progress,
+                            ..
+                        }),
+                } => {
+                    assert_eq!(track_name, "track");
+                    assert!(progress > 0.0);
+                    saw_progress = true;
+                }
+                Message::OfflineBounceFinished {
+                    result:
+                        Ok(Action::TrackOfflineBounce {
+                            track_name,
+                            output_path,
+                            ..
+                        }),
+                } => {
+                    assert_eq!(track_name, "track");
+                    assert_eq!(output_path, output.to_string_lossy());
+                    saw_complete = true;
+                }
+                Message::Ready(2) => {
+                    saw_ready = true;
+                    break;
+                }
+                other => panic!("unexpected message: {other:?}"),
+            }
+        }
+
+        assert!(saw_progress);
+        assert!(saw_complete);
+        assert!(saw_ready);
+        assert!(output.exists());
+        std::fs::remove_file(&output).expect("remove temp wav");
+        let track = state.lock().tracks.get("track").expect("track").lock();
+        assert_eq!(track.level(), -3.0);
+        assert_eq!(track.balance, 0.4);
+        assert!(!track.muted);
     }
 }

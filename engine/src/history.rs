@@ -1774,6 +1774,204 @@ mod tests {
     }
 
     #[test]
+    fn create_inverse_action_for_remove_grouped_midi_clip_restores_group() {
+        let mut track = Track::new("t".to_string(), 0, 0, 1, 1, 64, 48_000.0);
+        let mut group = crate::midi::clip::MIDIClip::new("Group".to_string(), 32, 160);
+        group
+            .grouped_clips
+            .push(crate::midi::clip::MIDIClip::new("child.mid".to_string(), 0, 48));
+        track.midi.clips.push(group);
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::RemoveClip {
+                track_name: "t".to_string(),
+                kind: Kind::MIDI,
+                clip_indices: vec![0],
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        match inverse {
+            Action::AddGroupedClip {
+                track_name,
+                kind,
+                audio_clip,
+                midi_clip,
+            } => {
+                assert_eq!(track_name, "t");
+                assert_eq!(kind, Kind::MIDI);
+                assert!(audio_clip.is_none());
+                let midi_clip = midi_clip.expect("midi clip payload");
+                assert_eq!(midi_clip.name, "Group");
+                assert_eq!(midi_clip.grouped_clips.len(), 1);
+                assert_eq!(midi_clip.grouped_clips[0].name, "child.mid");
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_action_for_remove_grouped_audio_clip_preserves_child_metadata() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        let mut child = AudioClip::new("child.wav".to_string(), 4, 40);
+        child.peaks_file = Some("peaks/child.json".to_string());
+        child.pitch_correction_source_name = Some("source.wav".to_string());
+        child.pitch_correction_source_offset = Some(8);
+        child.pitch_correction_source_length = Some(24);
+        child.pitch_correction_preview_name = Some("preview.wav".to_string());
+        child.pitch_correction_points = vec![crate::message::PitchCorrectionPointData {
+            start_sample: 1,
+            length_samples: 2,
+            detected_midi_pitch: 60.0,
+            target_midi_pitch: 62.0,
+            clarity: 0.75,
+        }];
+        child.pitch_correction_frame_likeness = Some(0.25);
+        child.pitch_correction_inertia_ms = Some(100);
+        child.pitch_correction_formant_compensation = Some(true);
+        child.plugin_graph_json = Some(serde_json::json!({"plugins":[],"connections":[]}));
+        let mut group = AudioClip::new("Group".to_string(), 48, 144);
+        group.grouped_clips.push(child);
+        track.audio.clips.push(group);
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::RemoveClip {
+                track_name: "t".to_string(),
+                kind: Kind::Audio,
+                clip_indices: vec![0],
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        match inverse {
+            Action::AddGroupedClip {
+                audio_clip: Some(audio_clip),
+                ..
+            } => {
+                let child = &audio_clip.grouped_clips[0];
+                assert_eq!(child.peaks_file.as_deref(), Some("peaks/child.json"));
+                assert_eq!(child.source_name.as_deref(), Some("source.wav"));
+                assert_eq!(child.source_offset, Some(8));
+                assert_eq!(child.source_length, Some(24));
+                assert_eq!(child.preview_name.as_deref(), Some("preview.wav"));
+                assert_eq!(child.pitch_correction_points.len(), 1);
+                assert_eq!(child.pitch_correction_frame_likeness, Some(0.25));
+                assert_eq!(child.pitch_correction_inertia_ms, Some(100));
+                assert_eq!(child.pitch_correction_formant_compensation, Some(true));
+                assert!(child.plugin_graph_json.is_some());
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_action_for_remove_grouped_midi_clip_preserves_child_fades() {
+        let mut track = Track::new("t".to_string(), 0, 0, 1, 1, 64, 48_000.0);
+        let mut child = crate::midi::clip::MIDIClip::new("child.mid".to_string(), 0, 48);
+        child.fade_enabled = false;
+        child.fade_in_samples = 12;
+        child.fade_out_samples = 18;
+        let mut group = crate::midi::clip::MIDIClip::new("Group".to_string(), 32, 160);
+        group.grouped_clips.push(child);
+        track.midi.clips.push(group);
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::RemoveClip {
+                track_name: "t".to_string(),
+                kind: Kind::MIDI,
+                clip_indices: vec![0],
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        match inverse {
+            Action::AddGroupedClip {
+                midi_clip: Some(midi_clip),
+                ..
+            } => {
+                let child = &midi_clip.grouped_clips[0];
+                assert!(!child.fade_enabled);
+                assert_eq!(child.fade_in_samples, 12);
+                assert_eq!(child.fade_out_samples, 18);
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_action_for_set_clip_pitch_correction_restores_previous_values() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        let mut clip = AudioClip::new("audio.wav".to_string(), 0, 128);
+        clip.pitch_correction_preview_name = Some("audio_preview.wav".to_string());
+        clip.pitch_correction_source_name = Some("audio_source.wav".to_string());
+        clip.pitch_correction_source_offset = Some(12);
+        clip.pitch_correction_source_length = Some(96);
+        clip.pitch_correction_points = vec![crate::message::PitchCorrectionPointData {
+            start_sample: 4,
+            length_samples: 32,
+            detected_midi_pitch: 60.2,
+            target_midi_pitch: 61.0,
+            clarity: 0.8,
+        }];
+        clip.pitch_correction_frame_likeness = Some(0.4);
+        clip.pitch_correction_inertia_ms = Some(250);
+        clip.pitch_correction_formant_compensation = Some(false);
+        track.audio.clips.push(clip);
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::SetClipPitchCorrection {
+                track_name: "t".to_string(),
+                clip_index: 0,
+                preview_name: None,
+                source_name: None,
+                source_offset: None,
+                source_length: None,
+                pitch_correction_points: vec![],
+                pitch_correction_frame_likeness: None,
+                pitch_correction_inertia_ms: None,
+                pitch_correction_formant_compensation: None,
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        match inverse {
+            Action::SetClipPitchCorrection {
+                track_name,
+                clip_index,
+                preview_name,
+                source_name,
+                source_offset,
+                source_length,
+                pitch_correction_points,
+                pitch_correction_frame_likeness,
+                pitch_correction_inertia_ms,
+                pitch_correction_formant_compensation,
+            } => {
+                assert_eq!(track_name, "t");
+                assert_eq!(clip_index, 0);
+                assert_eq!(preview_name.as_deref(), Some("audio_preview.wav"));
+                assert_eq!(source_name.as_deref(), Some("audio_source.wav"));
+                assert_eq!(source_offset, Some(12));
+                assert_eq!(source_length, Some(96));
+                assert_eq!(pitch_correction_points.len(), 1);
+                assert_eq!(pitch_correction_points[0].target_midi_pitch, 61.0);
+                assert_eq!(pitch_correction_frame_likeness, Some(0.4));
+                assert_eq!(pitch_correction_inertia_ms, Some(250));
+                assert_eq!(pitch_correction_formant_compensation, Some(false));
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
     fn create_inverse_action_for_clip_copy_targets_new_destination_clip() {
         let mut source = Track::new("src".to_string(), 1, 1, 0, 0, 64, 48_000.0);
         source

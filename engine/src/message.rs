@@ -877,3 +877,135 @@ pub enum Message {
         result: Result<Action, String>,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{AudioClipData, MidiClipData, PitchCorrectionPointData};
+    use serde_json::json;
+
+    #[test]
+    fn audio_clip_data_serde_round_trips_nested_groups() {
+        let clip = AudioClipData {
+            name: "group.wav".to_string(),
+            start: 12,
+            length: 96,
+            offset: 3,
+            input_channel: 1,
+            muted: true,
+            peaks_file: Some("peaks/group.json".to_string()),
+            fade_enabled: false,
+            fade_in_samples: 10,
+            fade_out_samples: 20,
+            preview_name: Some("preview.wav".to_string()),
+            source_name: Some("source.wav".to_string()),
+            source_offset: Some(4),
+            source_length: Some(88),
+            pitch_correction_points: vec![PitchCorrectionPointData {
+                start_sample: 7,
+                length_samples: 11,
+                detected_midi_pitch: 60.1,
+                target_midi_pitch: 61.2,
+                clarity: 0.8,
+            }],
+            pitch_correction_frame_likeness: Some(0.5),
+            pitch_correction_inertia_ms: Some(123),
+            pitch_correction_formant_compensation: Some(false),
+            plugin_graph_json: Some(json!({"plugins":[],"connections":[{"kind":"Audio"}]})),
+            grouped_clips: vec![AudioClipData {
+                name: "child.wav".to_string(),
+                start: 0,
+                length: 48,
+                ..AudioClipData::default()
+            }],
+        };
+
+        let value = serde_json::to_value(&clip).expect("serialize");
+        let restored: AudioClipData = serde_json::from_value(value).expect("deserialize");
+
+        assert_eq!(restored.name, clip.name);
+        assert_eq!(restored.preview_name, clip.preview_name);
+        assert_eq!(restored.source_name, clip.source_name);
+        assert_eq!(restored.plugin_graph_json, clip.plugin_graph_json);
+        assert_eq!(restored.grouped_clips.len(), 1);
+        assert_eq!(restored.grouped_clips[0].name, "child.wav");
+        assert_eq!(restored.pitch_correction_points[0].target_midi_pitch, 61.2);
+    }
+
+    #[test]
+    fn midi_clip_data_serde_round_trips_nested_groups() {
+        let clip = MidiClipData {
+            name: "group.mid".to_string(),
+            start: 5,
+            length: 64,
+            offset: 2,
+            input_channel: 3,
+            muted: true,
+            fade_enabled: false,
+            fade_in_samples: 12,
+            fade_out_samples: 24,
+            grouped_clips: vec![MidiClipData {
+                name: "child.mid".to_string(),
+                start: 0,
+                length: 32,
+                ..MidiClipData::default()
+            }],
+        };
+
+        let value = serde_json::to_value(&clip).expect("serialize");
+        let restored: MidiClipData = serde_json::from_value(value).expect("deserialize");
+
+        assert_eq!(restored.name, clip.name);
+        assert!(!restored.fade_enabled);
+        assert_eq!(restored.fade_in_samples, 12);
+        assert_eq!(restored.grouped_clips.len(), 1);
+        assert_eq!(restored.grouped_clips[0].name, "child.mid");
+    }
+
+    #[test]
+    fn pitch_correction_point_data_serde_round_trips() {
+        let point = PitchCorrectionPointData {
+            start_sample: 10,
+            length_samples: 20,
+            detected_midi_pitch: 57.5,
+            target_midi_pitch: 58.0,
+            clarity: 0.9,
+        };
+
+        let value = serde_json::to_value(&point).expect("serialize");
+        let restored: PitchCorrectionPointData =
+            serde_json::from_value(value).expect("deserialize");
+
+        assert_eq!(restored.start_sample, 10);
+        assert_eq!(restored.length_samples, 20);
+        assert_eq!(restored.detected_midi_pitch, 57.5);
+        assert_eq!(restored.target_midi_pitch, 58.0);
+        assert_eq!(restored.clarity, 0.9);
+    }
+
+    #[test]
+    fn audio_clip_data_deserializes_with_omitted_optional_fields() {
+        let restored: AudioClipData = serde_json::from_value(json!({
+            "name": "clip.wav",
+            "start": 1,
+            "length": 2,
+            "offset": 3,
+            "input_channel": 0,
+            "muted": false,
+            "fade_enabled": true,
+            "fade_in_samples": 240,
+            "fade_out_samples": 240,
+            "pitch_correction_points": [],
+            "grouped_clips": []
+        }))
+        .expect("deserialize");
+
+        assert_eq!(restored.name, "clip.wav");
+        assert!(restored.peaks_file.is_none());
+        assert!(restored.preview_name.is_none());
+        assert!(restored.source_name.is_none());
+        assert!(restored.source_offset.is_none());
+        assert!(restored.source_length.is_none());
+        assert!(restored.pitch_correction_points.is_empty());
+        assert!(restored.plugin_graph_json.is_none());
+    }
+}

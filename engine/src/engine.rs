@@ -6635,6 +6635,8 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mutex::UnsafeMutex;
+    use tokio::sync::mpsc::channel;
 
     #[test]
     fn jack_transport_sync_decision_starts_and_syncs_position_on_external_play() {
@@ -6674,5 +6676,163 @@ mod tests {
 
         assert_eq!(decision.play_sync, None);
         assert_eq!(decision.position_sync, Some(900));
+    }
+
+    fn make_engine_with_client() -> (Engine, tokio::sync::mpsc::Receiver<Message>) {
+        let (engine_tx, engine_rx) = channel(16);
+        let mut engine = Engine::new(engine_rx, engine_tx);
+        let (client_tx, client_rx) = channel(16);
+        engine.clients.push(client_tx);
+        (engine, client_rx)
+    }
+
+    fn insert_track(engine: &mut Engine, track: Track) {
+        engine.state.lock().tracks.insert(
+            track.name.clone(),
+            Arc::new(UnsafeMutex::new(Box::new(track))),
+        );
+    }
+
+    #[tokio::test]
+    async fn track_offline_bounce_rejects_zero_length_requests() {
+        let (mut engine, mut client_rx) = make_engine_with_client();
+        insert_track(&mut engine, Track::new("track".to_string(), 1, 1, 0, 0, 64, 48_000.0));
+
+        engine
+            .handle_request(Action::TrackOfflineBounce {
+                track_name: "track".to_string(),
+                output_path: "/tmp/out.wav".to_string(),
+                start_sample: 0,
+                length_samples: 0,
+                automation_lanes: vec![],
+            })
+            .await;
+
+        match client_rx.recv().await.expect("response") {
+            Message::Response(Err(err)) => {
+                assert!(err.contains("has no renderable content for offline bounce"));
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn track_offline_bounce_rejects_when_another_bounce_is_active() {
+        let (mut engine, mut client_rx) = make_engine_with_client();
+        engine.offline_bounce_job = Some(OfflineBounceJob {
+            track_name: "other".to_string(),
+            cancel: Arc::new(AtomicBool::new(false)),
+        });
+
+        engine
+            .handle_request(Action::TrackOfflineBounce {
+                track_name: "track".to_string(),
+                output_path: "/tmp/out.wav".to_string(),
+                start_sample: 0,
+                length_samples: 128,
+                automation_lanes: vec![],
+            })
+            .await;
+
+        match client_rx.recv().await.expect("response") {
+            Message::Response(Err(err)) => {
+                assert_eq!(err, "Another offline bounce is already in progress");
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn reject_if_track_frozen_sends_error_and_blocks_operation() {
+        let (mut engine, mut client_rx) = make_engine_with_client();
+        let mut track = Track::new("track".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        track.set_frozen(true);
+        insert_track(&mut engine, track);
+
+        let rejected = engine
+            .reject_if_track_frozen("track", "arming/disarming")
+            .await;
+
+        assert!(rejected);
+        match client_rx.recv().await.expect("response") {
+            Message::Response(Err(err)) => {
+                assert_eq!(err, "Track 'track' is frozen; arming/disarming is blocked");
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn track_offline_bounce_queues_when_no_worker_is_ready() {
+        let (mut engine, _client_rx) = make_engine_with_client();
+        insert_track(&mut engine, Track::new("track".to_string(), 1, 1, 0, 0, 64, 48_000.0));
+
+        engine
+            .handle_request(Action::TrackOfflineBounce {
+                track_name: "track".to_string(),
+                output_path: "/tmp/out.wav".to_string(),
+                start_sample: 0,
+                length_samples: 128,
+                automation_lanes: vec![],
+            })
+            .await;
+
+        assert!(engine.offline_bounce_job.is_none());
+        assert_eq!(engine.pending_requests.len(), 1);
+        assert!(matches!(
+            engine.pending_requests.front(),
+            Some(Action::TrackOfflineBounce { track_name, length_samples, .. })
+                if track_name == "track" && *length_samples == 128
+        ));
+    }
+
+    #[tokio::test]
+    async fn track_offline_bounce_returns_missing_track_error() {
+        let (mut engine, mut client_rx) = make_engine_with_client();
+
+        engine
+            .handle_request(Action::TrackOfflineBounce {
+                track_name: "missing".to_string(),
+                output_path: "/tmp/out.wav".to_string(),
+                start_sample: 0,
+                length_samples: 128,
+                automation_lanes: vec![],
+            })
+            .await;
+
+        match client_rx.recv().await.expect("response") {
+            Message::Response(Err(err)) => {
+                assert_eq!(err, "Track not found: missing");
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn track_offline_bounce_clears_job_when_worker_send_fails() {
+        let (mut engine, mut client_rx) = make_engine_with_client();
+        insert_track(&mut engine, Track::new("track".to_string(), 1, 1, 0, 0, 64, 48_000.0));
+        let (worker_tx, worker_rx) = channel(1);
+        drop(worker_rx);
+        engine.workers.push(WorkerData::new(worker_tx, tokio::spawn(async {})));
+        engine.ready_workers.push(0);
+
+        engine
+            .handle_request(Action::TrackOfflineBounce {
+                track_name: "track".to_string(),
+                output_path: "/tmp/out.wav".to_string(),
+                start_sample: 0,
+                length_samples: 128,
+                automation_lanes: vec![],
+            })
+            .await;
+
+        assert!(engine.offline_bounce_job.is_none());
+        match client_rx.recv().await.expect("response") {
+            Message::Response(Err(err)) => {
+                assert!(err.contains("Failed to schedule offline bounce"));
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
     }
 }

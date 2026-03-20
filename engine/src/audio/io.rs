@@ -116,3 +116,89 @@ impl PartialEq for AudioIO {
 }
 
 impl Eq for AudioIO {}
+
+#[cfg(test)]
+mod tests {
+    use super::AudioIO;
+    use std::sync::Arc;
+
+    #[test]
+    fn process_with_no_connections_clears_buffer() {
+        let io = AudioIO::new(3);
+        io.buffer.lock().copy_from_slice(&[1.0, -2.0, 3.0]);
+
+        io.process();
+
+        assert_eq!(io.buffer.lock().as_ref(), &[0.0, 0.0, 0.0]);
+        assert!(*io.finished.lock());
+    }
+
+    #[test]
+    fn process_with_one_connection_copies_source() {
+        let source = Arc::new(AudioIO::new(3));
+        source.buffer.lock().copy_from_slice(&[0.1, 0.2, 0.3]);
+        *source.finished.lock() = true;
+        let dest = Arc::new(AudioIO::new(3));
+        AudioIO::connect(&source, &dest);
+
+        dest.process();
+
+        assert_eq!(dest.buffer.lock().as_ref(), &[0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn process_with_mismatched_buffer_sizes_copies_overlap_only() {
+        let source = Arc::new(AudioIO::new(2));
+        source.buffer.lock().copy_from_slice(&[0.5, -0.25]);
+        *source.finished.lock() = true;
+        let dest = Arc::new(AudioIO::new(4));
+        dest.buffer.lock().copy_from_slice(&[9.0, 9.0, 9.0, 9.0]);
+        AudioIO::connect(&source, &dest);
+
+        dest.process();
+
+        assert_eq!(dest.buffer.lock().as_ref(), &[0.5, -0.25, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn process_with_multiple_connections_sums_sources() {
+        let a = Arc::new(AudioIO::new(3));
+        let b = Arc::new(AudioIO::new(3));
+        a.buffer.lock().copy_from_slice(&[0.25, 0.5, 0.75]);
+        b.buffer.lock().copy_from_slice(&[0.75, 0.5, 0.25]);
+        *a.finished.lock() = true;
+        *b.finished.lock() = true;
+        let dest = Arc::new(AudioIO::new(3));
+        AudioIO::connect(&a, &dest);
+        AudioIO::connect(&b, &dest);
+
+        dest.process();
+
+        assert_eq!(dest.buffer.lock().as_ref(), &[1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn ready_requires_all_connected_sources_to_finish() {
+        let source = Arc::new(AudioIO::new(1));
+        let dest = Arc::new(AudioIO::new(1));
+        AudioIO::connect(&source, &dest);
+
+        assert!(!dest.ready());
+        *source.finished.lock() = true;
+        assert!(dest.ready());
+    }
+
+    #[test]
+    fn disconnect_removes_connection_from_both_sides() {
+        let source = Arc::new(AudioIO::new(1));
+        let dest = Arc::new(AudioIO::new(1));
+        AudioIO::connect(&source, &dest);
+
+        AudioIO::disconnect(&source, &dest).expect("disconnect");
+
+        assert_eq!(source.connection_count.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(dest.connection_count.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert!(source.connections.lock().is_empty());
+        assert!(dest.connections.lock().is_empty());
+    }
+}

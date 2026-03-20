@@ -4874,4 +4874,59 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].len(), 2);
     }
+
+    #[test]
+    fn grouped_audio_playback_sums_child_buffers() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 8, 48_000.0);
+        track.input_monitor = false;
+        track.disk_monitor = true;
+
+        let mut active_child = AudioClip::new("active".to_string(), 0, 4);
+        active_child.fade_enabled = false;
+        let mut muted_child = AudioClip::new("muted".to_string(), 0, 4);
+        muted_child.fade_enabled = false;
+        muted_child.muted = true;
+
+        let mut group = AudioClip::new("group".to_string(), 0, 4);
+        group.fade_enabled = false;
+        group.grouped_clips = vec![active_child, muted_child];
+        track.audio.clips.push(group);
+        track.audio_clip_cache.insert(
+            "active".to_string(),
+            Arc::new(AudioClipBuffer {
+                channels: 1,
+                samples: vec![0.6, 0.0, 0.0, 0.0],
+            }),
+        );
+        track.audio_clip_cache.insert(
+            "muted".to_string(),
+            Arc::new(AudioClipBuffer {
+                channels: 1,
+                samples: vec![0.9, 0.0, 0.0, 0.0],
+            }),
+        );
+
+        track.process();
+
+        let out = track.audio.outs[0].buffer.lock().to_vec();
+        assert_eq!(out[0], 1.5);
+    }
+
+    #[test]
+    fn direct_clip_graph_ignores_malformed_track_nodes() {
+        let graph = serde_json::json!({
+            "plugins": [],
+            "connections": [
+                {
+                    "from_node": {"type":"track_input"},
+                    "from_port": 0,
+                    "to_node": {"type":"unknown"},
+                    "to_port": 0,
+                    "kind": "audio"
+                }
+            ]
+        });
+        let outputs = Track::process_direct_clip_graph(&graph, &[vec![0.5, -0.25]], 2);
+        assert_eq!(outputs, vec![vec![0.0, 0.0]]);
+    }
 }
