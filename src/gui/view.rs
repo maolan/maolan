@@ -184,6 +184,8 @@ impl Maolan {
                             mixer_level_edit_input: &self.mixer_level_edit_input,
                         }),
                         View::Connections => self.connections.view(),
+                        View::HwInputPorts => self.hw.jack_ports_view(true),
+                        View::HwOutputPorts => self.hw.jack_ports_view(false),
                         #[cfg(all(unix, not(target_os = "macos")))]
                         View::TrackPlugins => self.track_plugins.view(),
                         View::Piano => self.workspace.piano_view(WorkspaceViewArgs {

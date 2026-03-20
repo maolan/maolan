@@ -382,6 +382,21 @@ impl canvas::Program<Message> for Graph {
                                 return Some(Action::capture());
                             }
                         }
+                        if Rectangle::new(pos, iced::Size::new(hw_width, bounds.height))
+                            .contains(cursor_position)
+                        {
+                            let now = Instant::now();
+                            if let Some((last_track, last_time)) =
+                                &data.connections_last_track_click
+                                && *last_track == HW_IN_ID
+                                && now.duration_since(*last_time) <= DOUBLE_CLICK
+                            {
+                                data.connections_last_track_click = None;
+                                return Some(Action::publish(Message::OpenHwPorts { input: true }));
+                            }
+                            data.connections_last_track_click = Some((HW_IN_ID.to_string(), now));
+                            return Some(Action::capture());
+                        }
                     }
 
                     if let Some(hw_out) = &data.hw_out {
@@ -401,6 +416,23 @@ impl canvas::Program<Message> for Graph {
                                 });
                                 return Some(Action::capture());
                             }
+                        }
+                        if Rectangle::new(pos, iced::Size::new(hw_width, bounds.height))
+                            .contains(cursor_position)
+                        {
+                            let now = Instant::now();
+                            if let Some((last_track, last_time)) =
+                                &data.connections_last_track_click
+                                && *last_track == HW_OUT_ID
+                                && now.duration_since(*last_time) <= DOUBLE_CLICK
+                            {
+                                data.connections_last_track_click = None;
+                                return Some(Action::publish(Message::OpenHwPorts {
+                                    input: false,
+                                }));
+                            }
+                            data.connections_last_track_click = Some((HW_OUT_ID.to_string(), now));
+                            return Some(Action::capture());
                         }
                     }
 
@@ -1752,5 +1784,77 @@ mod tests {
             other => panic!("unexpected selection: {other:?}"),
         }
         assert!(data.selected.contains("Track"));
+    }
+
+    #[test]
+    fn update_double_clicking_hw_in_opens_hw_input_ports_view() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        state.blocking_write().hw_in = Some(crate::state::HW { channels: 1 });
+        let graph = Graph::new(state.clone());
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let cursor = mouse::Cursor::Available(Point::new(20.0, 20.0));
+
+        let first = graph
+            .update(
+                &mut (),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("first action");
+        let (first_message, first_status) = action_message(first);
+        assert!(first_message.is_none());
+        assert_eq!(first_status, event::Status::Captured);
+
+        let second = graph
+            .update(
+                &mut (),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("second action");
+        let (second_message, second_status) = action_message(second);
+        assert!(matches!(
+            second_message,
+            Some(Message::OpenHwPorts { input: true })
+        ));
+        assert_eq!(second_status, event::Status::Ignored);
+    }
+
+    #[test]
+    fn update_double_clicking_hw_out_opens_hw_output_ports_view() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        state.blocking_write().hw_out = Some(crate::state::HW { channels: 1 });
+        let graph = Graph::new(state.clone());
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let cursor = mouse::Cursor::Available(Point::new(780.0, 20.0));
+
+        let first = graph
+            .update(
+                &mut (),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("first action");
+        let (first_message, first_status) = action_message(first);
+        assert!(first_message.is_none());
+        assert_eq!(first_status, event::Status::Captured);
+
+        let second = graph
+            .update(
+                &mut (),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("second action");
+        let (second_message, second_status) = action_message(second);
+        assert!(matches!(
+            second_message,
+            Some(Message::OpenHwPorts { input: false })
+        ));
+        assert_eq!(second_status, event::Status::Ignored);
     }
 }

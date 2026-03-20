@@ -866,6 +866,9 @@ pub enum Message {
     ToggleTracksVisibility,
     ToggleEditorVisibility,
     OpenTrackPlugins(String),
+    OpenHwPorts {
+        input: bool,
+    },
     OpenClipPlugins {
         track_idx: String,
         clip_idx: usize,

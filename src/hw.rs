@@ -4,8 +4,8 @@ use crate::{
     state::State,
 };
 use iced::{
-    Alignment, Length,
-    widget::{button, checkbox, column, container, pick_list, row, text},
+    Alignment, Border, Color, Length,
+    widget::{button, checkbox, column, container, mouse_area, pick_list, row, text},
 };
 use maolan_engine::message::Action;
 
@@ -500,6 +500,104 @@ impl HW {
         }
 
         content = content.push(submit);
+
+        container(content)
+            .style(|_theme| crate::style::app_background())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .into()
+    }
+
+    pub fn jack_ports_view(&self, input: bool) -> iced::Element<'_, Message> {
+        let (selected_backend, hw_in_channels, hw_out_channels) = {
+            let state = self.state.blocking_read();
+            (
+                state.selected_backend.clone(),
+                state.hw_in.as_ref().map(|hw| hw.channels).unwrap_or(0),
+                state.hw_out.as_ref().map(|hw| hw.channels).unwrap_or(0),
+            )
+        };
+
+        #[cfg(unix)]
+        let jack_selected = matches!(selected_backend, crate::state::AudioBackendOption::Jack);
+        #[cfg(not(unix))]
+        let jack_selected = false;
+
+        let title = if input {
+            "JACK Hardware Inputs"
+        } else {
+            "JACK Hardware Outputs"
+        };
+        let channels = if input {
+            hw_in_channels
+        } else {
+            hw_out_channels
+        };
+
+        let mut content = column![
+            row![button("Back to Connections").on_press(Message::Connections)]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            text(title).size(28),
+        ]
+        .spacing(16)
+        .align_x(Alignment::Center);
+
+        if !jack_selected {
+            content = content.push(text(
+                "Dynamic hardware port management is available only when the JACK backend is active.",
+            ));
+        } else {
+            content = content
+                .push(
+                    row![
+                        text("Port count:"),
+                        text(channels),
+                        button("+").on_press(Message::Request(if input {
+                            Action::JackAddAudioInputPort
+                        } else {
+                            Action::JackAddAudioOutputPort
+                        })),
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+                )
+                .push(text("Right-click a port below to remove it.").size(12));
+
+            let mut ports = column![].spacing(8).align_x(Alignment::Center);
+            for port_idx in 0..channels {
+                let remove_action = if input {
+                    Action::JackRemoveAudioInputPort(port_idx)
+                } else {
+                    Action::JackRemoveAudioOutputPort(port_idx)
+                };
+                let label = if input {
+                    format!("jack:in_{}", port_idx + 1)
+                } else {
+                    format!("jack:out_{}", port_idx + 1)
+                };
+                ports = ports.push(
+                    mouse_area(container(text(label)).padding([10, 14]).style(|_theme| {
+                        container::Style {
+                            background: Some(iced::Background::Color(Color::from_rgba(
+                                0.18, 0.22, 0.30, 0.96,
+                            ))),
+                            border: Border {
+                                color: Color::from_rgba(0.78, 0.87, 0.99, 0.16),
+                                width: 1.0,
+                                radius: 8.0.into(),
+                            },
+                            text_color: Some(Color::from_rgb(0.92, 0.95, 1.0)),
+                            ..container::Style::default()
+                        }
+                    }))
+                    .on_right_press(Message::Request(remove_action)),
+                );
+            }
+            content = content.push(ports);
+        }
 
         container(content)
             .style(|_theme| crate::style::app_background())
