@@ -1474,3 +1474,89 @@ fn extract_cstring(bytes: &[i8]) -> String {
     let u8_bytes: Vec<u8> = bytes[..len].iter().map(|&b| b as u8).collect();
     String::from_utf8_lossy(&u8_bytes).to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock before epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "maolan-engine-{name}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn iid_ptr_matches_rejects_null_and_non_matching_guids() {
+        let iid: TUID = [1; 16];
+        let matching_guid = [1_u8; 16];
+        let different_guid = [2_u8; 16];
+
+        assert!(!iid_ptr_matches(std::ptr::null(), &matching_guid));
+        assert!(iid_ptr_matches(&iid, &matching_guid));
+        assert!(!iid_ptr_matches(&iid, &different_guid));
+    }
+
+    #[test]
+    fn extract_cstring_stops_at_nul_and_uses_lossy_utf8() {
+        let bytes = [b'A' as i8, b'B' as i8, -1, 0, b'Z' as i8];
+
+        assert_eq!(extract_cstring(&bytes), "AB\u{FFFD}");
+    }
+
+    #[test]
+    fn extract_cstring_uses_full_slice_when_not_nul_terminated() {
+        let bytes = [b'X' as i8, b'Y' as i8, b'Z' as i8];
+
+        assert_eq!(extract_cstring(&bytes), "XYZ");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    fn get_module_path_returns_unix_shared_object_path() {
+        let bundle_path = unique_temp_dir("vst3-module").join("Example.vst3");
+        let module_path = bundle_path
+            .join("Contents")
+            .join("x86_64-linux")
+            .join("Example.so");
+        fs::create_dir_all(module_path.parent().expect("module parent"))
+            .expect("create module directory");
+        File::create(&module_path).expect("create module file");
+
+        let resolved = get_module_path(&bundle_path).expect("resolve module path");
+
+        assert_eq!(resolved, module_path);
+
+        let _ = fs::remove_dir_all(
+            bundle_path
+                .parent()
+                .expect("bundle parent")
+                .to_path_buf(),
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    fn get_module_path_errors_when_unix_module_is_missing() {
+        let bundle_path = unique_temp_dir("missing-vst3").join("Missing.vst3");
+        fs::create_dir_all(&bundle_path).expect("create bundle directory");
+
+        let err = get_module_path(&bundle_path).expect_err("missing module should error");
+
+        assert!(err.contains("Missing.so"));
+
+        let _ = fs::remove_dir_all(
+            bundle_path
+                .parent()
+                .expect("bundle parent")
+                .to_path_buf(),
+        );
+    }
+}

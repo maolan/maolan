@@ -27,3 +27,68 @@ pub fn push_unix_plugin_roots(roots: &mut Vec<PathBuf>, plugin_dir_name: &str) {
         home_dir()
     )));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{LazyLock, Mutex};
+
+    static ENV_GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    #[test]
+    fn home_dir_prefers_home_over_userprofile() {
+        let _guard = ENV_GUARD.lock().expect("lock env guard");
+        let old_home = std::env::var("HOME").ok();
+        let old_userprofile = std::env::var("USERPROFILE").ok();
+
+        unsafe {
+            std::env::set_var("HOME", "/home/tester");
+            std::env::set_var("USERPROFILE", "C:/Users/tester");
+        }
+
+        let home = home_dir();
+
+        if let Some(value) = old_home {
+            unsafe { std::env::set_var("HOME", value) };
+        } else {
+            unsafe { std::env::remove_var("HOME") };
+        }
+        if let Some(value) = old_userprofile {
+            unsafe { std::env::set_var("USERPROFILE", value) };
+        } else {
+            unsafe { std::env::remove_var("USERPROFILE") };
+        }
+
+        assert_eq!(home, "/home/tester");
+    }
+
+    #[test]
+    fn push_unix_plugin_roots_adds_system_and_user_locations() {
+        let _guard = ENV_GUARD.lock().expect("lock env guard");
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", "/home/tester");
+        }
+
+        let mut roots = Vec::new();
+        push_unix_plugin_roots(&mut roots, "clap");
+
+        if let Some(value) = old_home {
+            unsafe { std::env::set_var("HOME", value) };
+        } else {
+            unsafe { std::env::remove_var("HOME") };
+        }
+
+        assert_eq!(
+            roots,
+            vec![
+                PathBuf::from("/usr/lib/clap"),
+                PathBuf::from("/usr/lib64/clap"),
+                PathBuf::from("/usr/local/lib/clap"),
+                PathBuf::from("/usr/local/lib64/clap"),
+                PathBuf::from("/home/tester/.clap"),
+                PathBuf::from("/home/tester/.local/lib/clap"),
+            ]
+        );
+    }
+}

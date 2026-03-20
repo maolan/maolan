@@ -176,3 +176,97 @@ pub fn list_plugins() -> Vec<Vst3PluginInfo> {
     let mut host = Vst3Host::new();
     host.list_plugins()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugins::vst3::interfaces::ClassInfo;
+    use std::path::PathBuf;
+
+    #[test]
+    fn class_info_to_plugin_info_uses_capabilities_when_present() {
+        let class_info = ClassInfo {
+            name: "Synth".to_string(),
+            category: "Instrument".to_string(),
+            cid: [0x12_i8; 16],
+        };
+
+        let info = class_info_to_plugin_info(
+            &class_info,
+            Path::new("/tmp/Test.vst3"),
+            Some((2, 4, true, false)),
+        );
+
+        assert_eq!(info.id, "12121212121212121212121212121212");
+        assert_eq!(info.name, "Synth");
+        assert_eq!(info.category, "Instrument");
+        assert_eq!(info.path, "/tmp/Test.vst3");
+        assert_eq!(info.audio_inputs, 2);
+        assert_eq!(info.audio_outputs, 4);
+        assert!(info.has_midi_input);
+        assert!(!info.has_midi_output);
+    }
+
+    #[test]
+    fn class_info_to_plugin_info_defaults_capabilities_when_missing() {
+        let class_info = ClassInfo {
+            name: "Fx".to_string(),
+            category: "Audio Module".to_string(),
+            cid: [0; 16],
+        };
+
+        let info = class_info_to_plugin_info(&class_info, Path::new("/tmp/Fx.vst3"), None);
+
+        assert_eq!(info.audio_inputs, 0);
+        assert_eq!(info.audio_outputs, 0);
+        assert!(!info.has_midi_input);
+        assert!(!info.has_midi_output);
+    }
+
+    #[test]
+    fn tuid_to_string_formats_bytes_as_uppercase_hex() {
+        let tuid = [
+            0x00_i8, 0x01, 0x23, 0x45, 0x67, 0x7F, -0x80, -0x01, 0x10, 0x20, 0x30, 0x40, 0x50,
+            0x60, 0x70, 0x7E,
+        ];
+
+        assert_eq!(tuid_to_string(&tuid), "00012345677F80FF102030405060707E");
+    }
+
+    #[test]
+    fn get_plugin_info_returns_cached_plugin_by_exact_path() {
+        let mut host = Vst3Host::new();
+        host.plugins = vec![
+            Vst3PluginInfo {
+                id: "id-1".to_string(),
+                name: "First".to_string(),
+                vendor: String::new(),
+                path: "/tmp/First.vst3".to_string(),
+                category: "Instrument".to_string(),
+                version: String::new(),
+                audio_inputs: 2,
+                audio_outputs: 2,
+                has_midi_input: true,
+                has_midi_output: false,
+            },
+            Vst3PluginInfo {
+                id: "id-2".to_string(),
+                name: "Second".to_string(),
+                vendor: String::new(),
+                path: "/tmp/Second.vst3".to_string(),
+                category: "Fx".to_string(),
+                version: String::new(),
+                audio_inputs: 2,
+                audio_outputs: 2,
+                has_midi_input: false,
+                has_midi_output: false,
+            },
+        ];
+
+        let found = host.get_plugin_info("/tmp/Second.vst3").map(|p| p.name.clone());
+        let missing = host.get_plugin_info(&PathBuf::from("/tmp/missing.vst3").to_string_lossy());
+
+        assert_eq!(found.as_deref(), Some("Second"));
+        assert!(missing.is_none());
+    }
+}

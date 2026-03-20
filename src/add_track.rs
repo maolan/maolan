@@ -377,7 +377,7 @@ mod tests {
                 std::env::remove_var("HOME");
             }
         }
-        fs::remove_dir_all(&temp_home).expect("cleanup temp home");
+        let _ = fs::remove_dir_all(&temp_home);
 
         assert_eq!(view.selected_template.as_deref(), Some("Band"));
         assert_eq!(view.audio_ins, 2);
