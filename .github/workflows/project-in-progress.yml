@@ -1,0 +1,152 @@
+name: Project In Progress
+
+on:
+  workflow_run:
+    workflows: ["Rust"]
+    types: [requested]
+
+permissions:
+  contents: read
+
+jobs:
+  move-pr-card:
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Move PR card to In progress
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.PROJECTS_TOKEN }}
+        script: |
+          if (!process.env.PROJECTS_TOKEN) {
+            core.info("PROJECTS_TOKEN is not set; skipping classic project automation.");
+            return;
+          }
+
+          const projectNumber = 1;
+          const targetColumnName = "In progress";
+          const pullRequests = context.payload.workflow_run.pull_requests || [];
+
+          if (pullRequests.length === 0) {
+            core.info("No pull requests were attached to this workflow run.");
+            return;
+          }
+
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+
+          const projects = await github.paginate("GET /orgs/{org}/projects", {
+            org: owner,
+            per_page: 100,
+            headers: {
+              accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+            },
+          });
+
+          const project = projects.find((item) => item.number === projectNumber);
+          if (!project) {
+            core.setFailed(`Could not find classic org project #${projectNumber}.`);
+            return;
+          }
+
+          const { data: columns } = await github.request("GET /projects/{project_id}/columns", {
+            project_id: project.id,
+            per_page: 100,
+            headers: {
+              accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+            },
+          });
+
+          const targetColumn = columns.find(
+            (column) => column.name.toLowerCase() === targetColumnName.toLowerCase()
+          );
+          if (!targetColumn) {
+            core.setFailed(
+              `Could not find column "${targetColumnName}" in classic project #${projectNumber}.`
+            );
+            return;
+          }
+
+          for (const prRef of pullRequests) {
+            const { data: pullRequest } = await github.request(
+              "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+              {
+                owner,
+                repo,
+                pull_number: prRef.number,
+                headers: {
+                  accept: "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                },
+              }
+            );
+
+            let existingCard = null;
+            let existingColumnId = null;
+
+            for (const column of columns) {
+              const cards = await github.paginate("GET /projects/columns/{column_id}/cards", {
+                column_id: column.id,
+                per_page: 100,
+                archived_state: "not_archived",
+                headers: {
+                  accept: "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                },
+              });
+
+              const match = cards.find((card) => {
+                if (card.content_id === pullRequest.id) {
+                  return true;
+                }
+                if (!card.content_url) {
+                  return false;
+                }
+                return (
+                  card.content_url === pullRequest.url ||
+                  card.content_url === pullRequest.issue_url
+                );
+              });
+
+              if (match) {
+                existingCard = match;
+                existingColumnId = column.id;
+                break;
+              }
+            }
+
+            if (!existingCard) {
+              await github.request("POST /projects/columns/{column_id}/cards", {
+                column_id: targetColumn.id,
+                content_id: pullRequest.id,
+                content_type: "PullRequest",
+                headers: {
+                  accept: "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                },
+              });
+              core.info(`Created project card for PR #${prRef.number}.`);
+              continue;
+            }
+
+            if (existingColumnId === targetColumn.id) {
+              core.info(`PR #${prRef.number} is already in "${targetColumnName}".`);
+              continue;
+            }
+
+            await github.request("POST /projects/columns/cards/{card_id}/moves", {
+              card_id: existingCard.id,
+              column_id: targetColumn.id,
+              position: "bottom",
+              headers: {
+                accept: "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+              },
+            });
+            core.info(`Moved PR #${prRef.number} to "${targetColumnName}".`);
+          }
+      env:
+        PROJECTS_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
