@@ -19,12 +19,14 @@ Use Cargo from the repository root:
 ```bash
 cargo build
 cargo test
+cargo test -p maolan-engine
 cargo run --release
 cargo run --release -- --debug
 ```
 
 `cargo build` checks the workspace locally. `cargo test` runs the root
-crate and `engine` crate tests used by CI. `cargo run --release`
+crate tests. `cargo test -p maolan-engine` runs the engine crate tests
+used by CI. Run both test commands for verification. `cargo run --release`
 launches the app, and `-- --debug` enables extra runtime logging. On
 Linux and FreeBSD, install the native packages used in CI first,
 especially JACK, ALSA/X11, Lilv, Suil, and GTK2 development libraries.
@@ -44,10 +46,11 @@ the existing ALSA, OSS, CoreAudio, and LV2/VST3 modules.
 ## Testing Guidelines
 Add unit tests next to changed code with `#[cfg(test)]` modules and
 descriptive test names such as `restores_automation_after_undo`. Run
-`cargo test` before opening a PR. During development, always run
-`cargo fmt` and `cargo clippy` after code changes. Run `cargo test`
-when the feature slice is complete, not on every intermediate step.
-Treat this as a hard requirement. When touching platform or
+both `cargo test` and `cargo test -p maolan-engine` before opening a
+PR. During development, always run `cargo fmt` and `cargo clippy` after
+code changes. Run both test commands when the feature slice is
+complete, not on every intermediate step. Treat this as a hard
+requirement. When touching platform or
 plugin-hosting paths that are difficult to exercise locally, add
 coverage for the pure logic around them and call out any untested edges
 in the PR.
@@ -76,4 +79,5 @@ available. Do not skip it, and do not use `cargo check` as a substitute
 unless Clippy is unavailable or the user explicitly asks for
 `cargo check`. If Clippy cannot be run, state why. Format Rust code by
 running `cargo fmt` (not `cargo fmt --check`). This is mandatory after
-code changes, even for intermediate feature slices.
+code changes, even for intermediate feature slices. Running
+`cargo test -p maolan-engine` whenever tests are run is also mandatory.

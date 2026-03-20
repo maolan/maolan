@@ -28,3 +28,24 @@ impl MIDIClip {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MIDIClip;
+
+    #[test]
+    fn new_midi_clip_uses_expected_defaults() {
+        let clip = MIDIClip::new("clip.mid".to_string(), 8, 64);
+
+        assert_eq!(clip.name, "clip.mid");
+        assert_eq!(clip.start, 8);
+        assert_eq!(clip.end, 64);
+        assert_eq!(clip.offset, 0);
+        assert_eq!(clip.input_channel, 0);
+        assert!(!clip.muted);
+        assert!(clip.fade_enabled);
+        assert_eq!(clip.fade_in_samples, 240);
+        assert_eq!(clip.fade_out_samples, 240);
+        assert!(clip.grouped_clips.is_empty());
+    }
+}

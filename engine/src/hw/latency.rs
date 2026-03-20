@@ -15,3 +15,26 @@ pub fn latency_ranges(
     }
     ((input, input), (output, output))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::latency_ranges;
+
+    #[test]
+    fn latency_ranges_adds_io_offsets_and_non_sync_extra_period() {
+        let ((in_min, in_max), (out_min, out_max)) =
+            latency_ranges(128, 3, false, 11, 17);
+
+        assert_eq!((in_min, in_max), (75, 75));
+        assert_eq!((out_min, out_max), (593, 593));
+    }
+
+    #[test]
+    fn latency_ranges_clamps_zero_periods_to_one_in_sync_mode() {
+        let ((in_min, in_max), (out_min, out_max)) =
+            latency_ranges(64, 0, true, 0, 0);
+
+        assert_eq!((in_min, in_max), (32, 32));
+        assert_eq!((out_min, out_max), (96, 96));
+    }
+}
