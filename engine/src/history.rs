@@ -8,6 +8,46 @@ use crate::{
 use std::collections::VecDeque;
 use std::sync::Arc;
 
+fn audio_clip_to_data(clip: &crate::audio::clip::AudioClip) -> crate::message::AudioClipData {
+    crate::message::AudioClipData {
+        name: clip.name.clone(),
+        start: clip.start,
+        length: clip.end.saturating_sub(clip.start).max(1),
+        offset: clip.offset,
+        input_channel: clip.input_channel,
+        muted: clip.muted,
+        peaks_file: clip.peaks_file.clone(),
+        fade_enabled: clip.fade_enabled,
+        fade_in_samples: clip.fade_in_samples,
+        fade_out_samples: clip.fade_out_samples,
+        preview_name: clip.pitch_correction_preview_name.clone(),
+        source_name: clip.pitch_correction_source_name.clone(),
+        source_offset: clip.pitch_correction_source_offset,
+        source_length: clip.pitch_correction_source_length,
+        pitch_correction_points: clip.pitch_correction_points.clone(),
+        pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
+        pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
+        pitch_correction_formant_compensation: clip.pitch_correction_formant_compensation,
+        plugin_graph_json: clip.plugin_graph_json.clone(),
+        grouped_clips: clip.grouped_clips.iter().map(audio_clip_to_data).collect(),
+    }
+}
+
+fn midi_clip_to_data(clip: &crate::midi::clip::MIDIClip) -> crate::message::MidiClipData {
+    crate::message::MidiClipData {
+        name: clip.name.clone(),
+        start: clip.start,
+        length: clip.end.saturating_sub(clip.start).max(1),
+        offset: clip.offset,
+        input_channel: clip.input_channel,
+        muted: clip.muted,
+        fade_enabled: clip.fade_enabled,
+        fade_in_samples: clip.fade_in_samples,
+        fade_out_samples: clip.fade_out_samples,
+        grouped_clips: clip.grouped_clips.iter().map(midi_clip_to_data).collect(),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct UndoEntry {
     pub forward_actions: Vec<Action>,
@@ -97,6 +137,7 @@ pub fn should_record(action: &Action) -> bool {
             | Action::TrackRemoveAudioInput(_)
             | Action::TrackRemoveAudioOutput(_)
             | Action::AddClip { .. }
+            | Action::AddGroupedClip { .. }
             | Action::RemoveClip { .. }
             | Action::RenameClip { .. }
             | Action::ClipMove { .. }
@@ -242,6 +283,22 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             })
         }
 
+        Action::AddGroupedClip {
+            track_name, kind, ..
+        } => {
+            let track = state.tracks.get(track_name)?;
+            let track_lock = track.lock();
+            let clip_index = match kind {
+                Kind::Audio => track_lock.audio.clips.len(),
+                Kind::MIDI => track_lock.midi.clips.len(),
+            };
+            Some(Action::RemoveClip {
+                track_name: track_name.clone(),
+                kind: *kind,
+                clip_indices: vec![clip_index],
+            })
+        }
+
         Action::RemoveClip {
             track_name,
             kind,
@@ -260,56 +317,76 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
             match kind {
                 Kind::Audio => {
                     let clip = track_lock.audio.clips.get(clip_idx)?;
-                    let length = clip.end.saturating_sub(clip.start);
-                    Some(Action::AddClip {
-                        name: clip.name.clone(),
-                        track_name: track_name.clone(),
-                        start: clip.start,
-                        length,
-                        offset: clip.offset,
-                        input_channel: clip.input_channel,
-                        muted: clip.muted,
-                        kind: Kind::Audio,
-                        fade_enabled: clip.fade_enabled,
-                        fade_in_samples: clip.fade_in_samples,
-                        fade_out_samples: clip.fade_out_samples,
-                        source_name: clip.pitch_correction_source_name.clone(),
-                        source_offset: clip.pitch_correction_source_offset,
-                        source_length: clip.pitch_correction_source_length,
-                        preview_name: clip.pitch_correction_preview_name.clone(),
-                        pitch_correction_points: clip.pitch_correction_points.clone(),
-                        pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
-                        pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
-                        pitch_correction_formant_compensation:
-                            clip.pitch_correction_formant_compensation,
-                        plugin_graph_json: clip.plugin_graph_json.clone(),
-                    })
+                    if clip.grouped_clips.is_empty() {
+                        let length = clip.end.saturating_sub(clip.start);
+                        Some(Action::AddClip {
+                            name: clip.name.clone(),
+                            track_name: track_name.clone(),
+                            start: clip.start,
+                            length,
+                            offset: clip.offset,
+                            input_channel: clip.input_channel,
+                            muted: clip.muted,
+                            peaks_file: clip.peaks_file.clone(),
+                            kind: Kind::Audio,
+                            fade_enabled: clip.fade_enabled,
+                            fade_in_samples: clip.fade_in_samples,
+                            fade_out_samples: clip.fade_out_samples,
+                            source_name: clip.pitch_correction_source_name.clone(),
+                            source_offset: clip.pitch_correction_source_offset,
+                            source_length: clip.pitch_correction_source_length,
+                            preview_name: clip.pitch_correction_preview_name.clone(),
+                            pitch_correction_points: clip.pitch_correction_points.clone(),
+                            pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
+                            pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
+                            pitch_correction_formant_compensation:
+                                clip.pitch_correction_formant_compensation,
+                            plugin_graph_json: clip.plugin_graph_json.clone(),
+                        })
+                    } else {
+                        Some(Action::AddGroupedClip {
+                            track_name: track_name.clone(),
+                            kind: Kind::Audio,
+                            audio_clip: Some(audio_clip_to_data(clip)),
+                            midi_clip: None,
+                        })
+                    }
                 }
                 Kind::MIDI => {
                     let clip = track_lock.midi.clips.get(clip_idx)?;
-                    let length = clip.end.saturating_sub(clip.start);
-                    Some(Action::AddClip {
-                        name: clip.name.clone(),
-                        track_name: track_name.clone(),
-                        start: clip.start,
-                        length,
-                        offset: clip.offset,
-                        input_channel: clip.input_channel,
-                        muted: clip.muted,
-                        kind: Kind::MIDI,
-                        fade_enabled: true,    // Default value for MIDI clips
-                        fade_in_samples: 240,  // Default value
-                        fade_out_samples: 240, // Default value
-                        source_name: None,
-                        source_offset: None,
-                        source_length: None,
-                        preview_name: None,
-                        pitch_correction_points: vec![],
-                        pitch_correction_frame_likeness: None,
-                        pitch_correction_inertia_ms: None,
-                        pitch_correction_formant_compensation: None,
-                        plugin_graph_json: None,
-                    })
+                    if clip.grouped_clips.is_empty() {
+                        let length = clip.end.saturating_sub(clip.start);
+                        Some(Action::AddClip {
+                            name: clip.name.clone(),
+                            track_name: track_name.clone(),
+                            start: clip.start,
+                            length,
+                            offset: clip.offset,
+                            input_channel: clip.input_channel,
+                            muted: clip.muted,
+                            peaks_file: None,
+                            kind: Kind::MIDI,
+                            fade_enabled: clip.fade_enabled,
+                            fade_in_samples: clip.fade_in_samples,
+                            fade_out_samples: clip.fade_out_samples,
+                            source_name: None,
+                            source_offset: None,
+                            source_length: None,
+                            preview_name: None,
+                            pitch_correction_points: vec![],
+                            pitch_correction_frame_likeness: None,
+                            pitch_correction_inertia_ms: None,
+                            pitch_correction_formant_compensation: None,
+                            plugin_graph_json: None,
+                        })
+                    } else {
+                        Some(Action::AddGroupedClip {
+                            track_name: track_name.clone(),
+                            kind: Kind::MIDI,
+                            audio_clip: None,
+                            midi_clip: Some(midi_clip_to_data(clip)),
+                        })
+                    }
                 }
             }
         }
@@ -993,6 +1070,7 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     offset: clip.offset,
                     input_channel: clip.input_channel,
                     muted: clip.muted,
+                    peaks_file: clip.peaks_file.clone(),
                     kind: Kind::Audio,
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: clip.fade_in_samples,
@@ -1019,6 +1097,7 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     offset: clip.offset,
                     input_channel: clip.input_channel,
                     muted: clip.muted,
+                    peaks_file: None,
                     kind: Kind::MIDI,
                     fade_enabled: true,
                     fade_in_samples: 240,
@@ -1344,6 +1423,7 @@ mod tests {
                 offset: 0,
                 input_channel: 0,
                 muted: false,
+                peaks_file: None,
                 kind: Kind::Audio,
                 fade_enabled: false,
                 fade_in_samples: 0,
@@ -1551,6 +1631,91 @@ mod tests {
             inverse,
             Action::TrackSetVcaMaster { track_name, master_track: None } if track_name == "t"
         ));
+    }
+
+    #[test]
+    fn create_inverse_action_for_remove_audio_clip_restores_peaks_file() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        let mut clip = AudioClip::new("audio/clip.wav".to_string(), 48, 144);
+        clip.offset = 12;
+        clip.input_channel = 0;
+        clip.muted = true;
+        clip.peaks_file = Some("peaks/clip.json".to_string());
+        track.audio.clips.push(clip);
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::RemoveClip {
+                track_name: "t".to_string(),
+                kind: Kind::Audio,
+                clip_indices: vec![0],
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        match inverse {
+            Action::AddClip {
+                name,
+                track_name,
+                start,
+                length,
+                offset,
+                input_channel,
+                muted,
+                peaks_file,
+                kind,
+                ..
+            } => {
+                assert_eq!(name, "audio/clip.wav");
+                assert_eq!(track_name, "t");
+                assert_eq!(start, 48);
+                assert_eq!(length, 96);
+                assert_eq!(offset, 12);
+                assert_eq!(input_channel, 0);
+                assert!(muted);
+                assert_eq!(peaks_file.as_deref(), Some("peaks/clip.json"));
+                assert_eq!(kind, Kind::Audio);
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_inverse_action_for_remove_grouped_audio_clip_restores_group() {
+        let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
+        let mut group = AudioClip::new("Group".to_string(), 48, 144);
+        group.grouped_clips.push(AudioClip::new("child.wav".to_string(), 0, 32));
+        track.audio.clips.push(group);
+        let state = make_state_with_track(track);
+
+        let inverse = create_inverse_action(
+            &Action::RemoveClip {
+                track_name: "t".to_string(),
+                kind: Kind::Audio,
+                clip_indices: vec![0],
+            },
+            &state,
+        )
+        .expect("inverse action");
+
+        match inverse {
+            Action::AddGroupedClip {
+                track_name,
+                kind,
+                audio_clip,
+                midi_clip,
+            } => {
+                assert_eq!(track_name, "t");
+                assert_eq!(kind, Kind::Audio);
+                assert!(midi_clip.is_none());
+                let audio_clip = audio_clip.expect("audio clip payload");
+                assert_eq!(audio_clip.name, "Group");
+                assert_eq!(audio_clip.grouped_clips.len(), 1);
+                assert_eq!(audio_clip.grouped_clips[0].name, "child.wav");
+            }
+            other => panic!("unexpected inverse action: {other:?}"),
+        }
     }
 
     #[test]

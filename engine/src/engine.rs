@@ -2417,6 +2417,7 @@ impl Engine {
             offset: 0,
             input_channel: 0,
             muted: false,
+            peaks_file: None,
             kind: Kind::Audio,
             fade_enabled: clip.fade_enabled,
             fade_in_samples: clip.fade_in_samples,
@@ -2544,6 +2545,7 @@ impl Engine {
             offset: 0,
             input_channel: 0,
             muted: false,
+            peaks_file: None,
             kind: Kind::MIDI,
             fade_enabled: true,
             fade_in_samples: 240,
@@ -2643,6 +2645,7 @@ impl Engine {
         offset: usize,
         input_channel: usize,
         muted: bool,
+        peaks_file: Option<String>,
         kind: Kind,
         fade_enabled: bool,
         fade_in_samples: usize,
@@ -2666,6 +2669,7 @@ impl Engine {
                     let max_lane = track.audio.ins.len().saturating_sub(1);
                     clip.input_channel = input_channel.min(max_lane);
                     clip.muted = muted;
+                    clip.peaks_file = peaks_file;
                     clip.fade_enabled = fade_enabled;
                     clip.fade_in_samples = fade_in_samples;
                     clip.fade_out_samples = fade_out_samples;
@@ -2689,6 +2693,79 @@ impl Engine {
                     clip.input_channel = input_channel.min(max_lane);
                     clip.muted = muted;
                     track.midi.clips.push(clip);
+                }
+            }
+        }
+    }
+
+    fn audio_clip_from_data(data: &crate::message::AudioClipData) -> AudioClip {
+        let mut clip = AudioClip::new(data.name.clone(), data.start, data.length.max(1));
+        clip.offset = data.offset;
+        clip.input_channel = data.input_channel;
+        clip.muted = data.muted;
+        clip.peaks_file = data.peaks_file.clone();
+        clip.fade_enabled = data.fade_enabled;
+        clip.fade_in_samples = data.fade_in_samples;
+        clip.fade_out_samples = data.fade_out_samples;
+        clip.pitch_correction_preview_name = data.preview_name.clone();
+        clip.pitch_correction_source_name = data.source_name.clone();
+        clip.pitch_correction_source_offset = data.source_offset;
+        clip.pitch_correction_source_length = data.source_length;
+        clip.pitch_correction_points = data.pitch_correction_points.clone();
+        clip.pitch_correction_frame_likeness = data.pitch_correction_frame_likeness;
+        clip.pitch_correction_inertia_ms = data.pitch_correction_inertia_ms;
+        clip.pitch_correction_formant_compensation = data.pitch_correction_formant_compensation;
+        clip.plugin_graph_json = data.plugin_graph_json.clone();
+        clip.grouped_clips = data.grouped_clips.iter().map(Self::audio_clip_from_data).collect();
+        for child in &mut clip.grouped_clips {
+            child.fade_enabled = false;
+            child.fade_in_samples = 0;
+            child.fade_out_samples = 0;
+        }
+        clip
+    }
+
+    fn midi_clip_from_data(data: &crate::message::MidiClipData) -> MIDIClip {
+        let mut clip = MIDIClip::new(data.name.clone(), data.start, data.length.max(1));
+        clip.offset = data.offset;
+        clip.input_channel = data.input_channel;
+        clip.muted = data.muted;
+        clip.fade_enabled = data.fade_enabled;
+        clip.fade_in_samples = data.fade_in_samples;
+        clip.fade_out_samples = data.fade_out_samples;
+        clip.grouped_clips = data.grouped_clips.iter().map(Self::midi_clip_from_data).collect();
+        for child in &mut clip.grouped_clips {
+            child.fade_enabled = false;
+            child.fade_in_samples = 0;
+            child.fade_out_samples = 0;
+        }
+        clip
+    }
+
+    fn add_grouped_clip_to_track(
+        &self,
+        track_name: &str,
+        kind: Kind,
+        audio_clip: Option<crate::message::AudioClipData>,
+        midi_clip: Option<crate::message::MidiClipData>,
+    ) {
+        if let Some(track) = self.state.lock().tracks.get(track_name) {
+            let track = track.lock();
+            match kind {
+                Kind::Audio => {
+                    if let Some(mut clip) = audio_clip.map(|clip| Self::audio_clip_from_data(&clip)) {
+                        let max_lane = track.audio.ins.len().saturating_sub(1);
+                        clip.input_channel = clip.input_channel.min(max_lane);
+                        track.audio.clips.push(clip);
+                        track.clip_pitch_shifters.clear();
+                    }
+                }
+                Kind::MIDI => {
+                    if let Some(mut clip) = midi_clip.map(|clip| Self::midi_clip_from_data(&clip)) {
+                        let max_lane = track.midi.ins.len().saturating_sub(1);
+                        clip.input_channel = clip.input_channel.min(max_lane);
+                        track.midi.clips.push(clip);
+                    }
                 }
             }
         }
@@ -5380,6 +5457,7 @@ impl Engine {
                 offset,
                 input_channel,
                 muted,
+                ref peaks_file,
                 kind,
                 fade_enabled,
                 fade_in_samples,
@@ -5402,6 +5480,7 @@ impl Engine {
                     offset,
                     input_channel,
                     muted,
+                    peaks_file.clone(),
                     kind,
                     fade_enabled,
                     fade_in_samples,
@@ -5415,6 +5494,19 @@ impl Engine {
                     pitch_correction_inertia_ms,
                     pitch_correction_formant_compensation,
                     plugin_graph_json.clone(),
+                );
+            }
+            Action::AddGroupedClip {
+                ref track_name,
+                kind,
+                ref audio_clip,
+                ref midi_clip,
+            } => {
+                self.add_grouped_clip_to_track(
+                    track_name,
+                    kind,
+                    audio_clip.clone(),
+                    midi_clip.clone(),
                 );
             }
             Action::RemoveClip {

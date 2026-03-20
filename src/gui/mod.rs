@@ -3554,6 +3554,14 @@ impl Maolan {
         runtime_nodes: &[maolan_engine::message::PluginGraphNode],
     ) -> Option<maolan_engine::message::PluginGraphNode> {
         use maolan_engine::message::PluginGraphNode;
+        if let Some(node_name) = v.as_str() {
+            return match node_name {
+                "TrackInput" => Some(PluginGraphNode::TrackInput),
+                "TrackOutput" => Some(PluginGraphNode::TrackOutput),
+                _ => None,
+            };
+        }
+
         let t = v["type"].as_str()?;
         match t {
             "track_input" => Some(PluginGraphNode::TrackInput),
@@ -3837,8 +3845,8 @@ impl Maolan {
     #[cfg(unix)]
     fn kind_from_json(v: &Value) -> Option<Kind> {
         match v.as_str()? {
-            "audio" => Some(Kind::Audio),
-            "midi" => Some(Kind::MIDI),
+            "audio" | "Audio" => Some(Kind::Audio),
+            "midi" | "MIDI" => Some(Kind::MIDI),
             _ => None,
         }
     }
@@ -5043,6 +5051,14 @@ mod tests {
             Maolan::kind_from_json(&Value::String("other".to_string())),
             None
         );
+        assert_eq!(
+            Maolan::kind_from_json(&Value::String("Audio".to_string())),
+            Some(Kind::Audio)
+        );
+        assert_eq!(
+            Maolan::kind_from_json(&Value::String("MIDI".to_string())),
+            Some(Kind::MIDI)
+        );
     }
 
     #[test]
@@ -5109,6 +5125,14 @@ mod tests {
                 &runtime_nodes
             ),
             None
+        );
+        assert_eq!(
+            Maolan::plugin_node_from_json_with_runtime_nodes(&json!("TrackInput"), &runtime_nodes),
+            Some(PluginGraphNode::TrackInput)
+        );
+        assert_eq!(
+            Maolan::plugin_node_from_json_with_runtime_nodes(&json!("TrackOutput"), &runtime_nodes),
+            Some(PluginGraphNode::TrackOutput)
         );
     }
 

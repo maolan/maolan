@@ -746,6 +746,47 @@ fn audio_waveform_overlay(
     .into()
 }
 
+fn resolve_audio_clip_path(session_root: Option<&PathBuf>, clip_name: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(clip_name);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        session_root.map(|root| root.join(path))
+    }
+}
+
+fn grouped_audio_waveform_overlay(
+    clip: &crate::state::AudioClip,
+    session_root: Option<&PathBuf>,
+    pixels_per_sample: f32,
+    clip_height: f32,
+) -> Element<'static, Message> {
+    let mut stack = Stack::new();
+    for child in &clip.grouped_clips {
+        let child_width = (child.length as f32 * pixels_per_sample).max(12.0);
+        let child_overlay = if child.is_group() {
+            grouped_audio_waveform_overlay(child, session_root, pixels_per_sample, clip_height)
+        } else {
+            audio_waveform_overlay(
+                child.peaks.clone(),
+                resolve_audio_clip_path(session_root, &child.name),
+                child_width,
+                clip_height,
+                child.offset,
+                child.length,
+                child.max_length_samples,
+            )
+        };
+        stack = stack.push(
+            pin(child_overlay).position(Point::new(child.start as f32 * pixels_per_sample, 0.0)),
+        );
+    }
+    container(stack)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
 #[derive(Clone)]
 struct TrackBarGridCanvas {
     bar_pixels: f32,
@@ -951,13 +992,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         recording_preview_peaks,
         midi_clip_previews,
     } = args;
-    let resolve_audio_clip_path = |clip_name: &str| -> Option<PathBuf> {
-        let path = PathBuf::from(clip_name);
-        if path.is_absolute() {
-            return Some(path);
-        }
-        session_root.map(|root| root.join(path))
-    };
     let snap_sample = |sample: f32, delta_samples: f32| -> f32 {
         snap_mode.snap_sample_drag(
             sample as f64,
@@ -1325,15 +1359,19 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         ));
 
         let clip_content = container(Stack::with_children(vec![
-            audio_waveform_overlay(
-                clip_peaks.clone(),
-                resolve_audio_clip_path(&clip_name),
-                clip_width,
-                clip_height,
-                clip.offset,
-                clip.length,
-                clip.max_length_samples,
-            ),
+            if clip.is_group() {
+                grouped_audio_waveform_overlay(clip, session_root, pixels_per_sample, clip_height)
+            } else {
+                audio_waveform_overlay(
+                    clip_peaks.clone(),
+                    resolve_audio_clip_path(session_root, &clip_name),
+                    clip_width,
+                    clip_height,
+                    clip.offset,
+                    clip.length,
+                    clip.max_length_samples,
+                )
+            },
             clip_label_overlay(display_clip_label.clone()),
         ]))
         .width(Length::Fill)
@@ -1594,7 +1632,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let preview_content = container(Stack::with_children(vec![
                 audio_waveform_overlay(
                     clip_peaks,
-                    resolve_audio_clip_path(&clip_name),
+                    resolve_audio_clip_path(session_root, &clip_name),
                     clip_width,
                     clip_height,
                     clip.offset,
@@ -2149,7 +2187,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         let preview_content = container(Stack::with_children(vec![
                             audio_waveform_overlay(
                                 source_clip.peaks.clone(),
-                                resolve_audio_clip_path(&source_clip.name),
+                                resolve_audio_clip_path(session_root, &source_clip.name),
                                 clip_width,
                                 clip_height,
                                 source_clip.offset,
@@ -2422,6 +2460,49 @@ pub(super) fn clip_context_menu_overlay(
     state: &StateData,
     transport_active: bool,
 ) -> Option<(Point, Element<'static, Message>)> {
+    fn can_group_selected_clips(state: &StateData, menu_clip: &crate::state::ClipId) -> bool {
+        let mut selected: Vec<_> = state.selected_clips.iter().collect();
+        if selected.len() < 2 {
+            return false;
+        }
+        if !selected.contains(&menu_clip) {
+            return false;
+        }
+        selected.sort_by_key(|clip| clip.clip_idx);
+        let Some(first) = selected.first() else {
+            return false;
+        };
+        if selected
+            .iter()
+            .any(|clip| clip.track_idx != first.track_idx || clip.kind != first.kind)
+        {
+            return false;
+        }
+        let Some(track) = state
+            .tracks
+            .iter()
+            .find(|track| track.name == first.track_idx)
+        else {
+            return false;
+        };
+        match first.kind {
+            Kind::Audio => selected.iter().all(|clip| {
+                track
+                    .audio
+                    .clips
+                    .get(clip.clip_idx)
+                    .is_some_and(|clip| !clip.is_group())
+            }),
+            Kind::MIDI => selected.iter().all(|clip| {
+                track
+                    .midi
+                    .clips
+                    .get(clip.clip_idx)
+                    .is_some_and(|clip| !clip.is_group())
+            }),
+        }
+    }
+
     let menu = state.clip_context_menu.as_ref()?;
     let clip = &menu.clip;
     let track = state.tracks.iter().find(|t| t.name == clip.track_idx)?;
@@ -2431,9 +2512,22 @@ pub(super) fn clip_context_menu_overlay(
             let clip_ref = track.audio.clips.get(clip.clip_idx)?;
             let fade_enabled = clip_ref.fade_enabled;
             let muted = clip_ref.muted;
+            let is_group = clip_ref.is_group();
             let track_idx = clip.track_idx.clone();
             let clip_idx = clip.clip_idx;
             column![
+                crate::menu::menu_item_maybe(
+                    if is_group { "Ungroup" } else { "Group" },
+                    if is_group {
+                        Some(Message::UngroupClip {
+                            track_idx: track_idx.clone(),
+                            clip_idx,
+                            kind: Kind::Audio,
+                        })
+                    } else {
+                        can_group_selected_clips(state, clip).then_some(Message::GroupSelectedClips)
+                    },
+                ),
                 crate::menu::menu_item(
                     "Rename",
                     Message::ClipRenameShow {
@@ -2478,9 +2572,22 @@ pub(super) fn clip_context_menu_overlay(
             let clip_ref = track.midi.clips.get(clip.clip_idx)?;
             let fade_enabled = clip_ref.fade_enabled;
             let muted = clip_ref.muted;
+            let is_group = clip_ref.is_group();
             let track_idx = clip.track_idx.clone();
             let clip_idx = clip.clip_idx;
             column![
+                crate::menu::menu_item_maybe(
+                    if is_group { "Ungroup" } else { "Group" },
+                    if is_group {
+                        Some(Message::UngroupClip {
+                            track_idx: track_idx.clone(),
+                            clip_idx,
+                            kind: Kind::MIDI,
+                        })
+                    } else {
+                        can_group_selected_clips(state, clip).then_some(Message::GroupSelectedClips)
+                    },
+                ),
                 crate::menu::menu_item(
                     "Rename",
                     Message::ClipRenameShow {

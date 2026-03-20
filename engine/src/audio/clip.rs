@@ -9,6 +9,7 @@ pub struct AudioClip {
     pub offset: usize,
     pub input_channel: usize,
     pub muted: bool,
+    pub peaks_file: Option<String>,
     pub fade_enabled: bool,
     pub fade_in_samples: usize,
     pub fade_out_samples: usize,
@@ -21,6 +22,7 @@ pub struct AudioClip {
     pub pitch_correction_inertia_ms: Option<u16>,
     pub pitch_correction_formant_compensation: Option<bool>,
     pub plugin_graph_json: Option<Value>,
+    pub grouped_clips: Vec<AudioClip>,
 }
 
 impl AudioClip {
@@ -32,6 +34,7 @@ impl AudioClip {
             offset: 0,
             input_channel: 0,
             muted: false,
+            peaks_file: None,
             fade_enabled: true,
             fade_in_samples: 240, // 5ms at 48kHz
             fade_out_samples: 240,
@@ -44,6 +47,7 @@ impl AudioClip {
             pitch_correction_inertia_ms: None,
             pitch_correction_formant_compensation: None,
             plugin_graph_json: None,
+            grouped_clips: Vec::new(),
         }
     }
 }
