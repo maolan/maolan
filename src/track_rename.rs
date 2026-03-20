@@ -69,3 +69,52 @@ impl TrackRenameView {
         .into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[test]
+    fn update_sets_track_rename_input_when_dialog_is_open() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        state.blocking_write().track_rename_dialog = Some(crate::state::TrackRenameDialog {
+            old_name: "Drums".to_string(),
+            new_name: "Old".to_string(),
+        });
+        let mut view = TrackRenameView::new(state.clone());
+
+        view.update(&Message::TrackRenameInput("New".to_string()));
+
+        assert_eq!(
+            state
+                .blocking_read()
+                .track_rename_dialog
+                .as_ref()
+                .map(|dialog| dialog.new_name.as_str()),
+            Some("New")
+        );
+    }
+
+    #[test]
+    fn update_ignores_non_matching_messages() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        state.blocking_write().track_rename_dialog = Some(crate::state::TrackRenameDialog {
+            old_name: "Drums".to_string(),
+            new_name: "Old".to_string(),
+        });
+        let mut view = TrackRenameView::new(state.clone());
+
+        view.update(&Message::Cancel);
+
+        assert_eq!(
+            state
+                .blocking_read()
+                .track_rename_dialog
+                .as_ref()
+                .map(|dialog| dialog.new_name.as_str()),
+            Some("Old")
+        );
+    }
+}

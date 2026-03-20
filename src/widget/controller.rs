@@ -969,6 +969,66 @@ impl Program<Message> for ControllerRollInteraction {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::{Point, Rectangle, Size, event, mouse};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
+        let (message, _redraw, status) = action.into_inner();
+        (message, status)
+    }
+
+    #[test]
+    fn update_double_clicking_sysex_opens_editor() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        {
+            let mut data = state.blocking_write();
+            data.piano_controller_lane = PianoControllerLane::SysEx;
+            data.piano_zoom_x = 1.0;
+            data.piano = Some(crate::state::PianoData {
+                track_idx: "Track".to_string(),
+                clip_index: 0,
+                clip_length_samples: 256,
+                notes: Vec::new(),
+                controllers: Vec::new(),
+                sysexes: vec![PianoSysExPoint {
+                    sample: 10,
+                    data: vec![0xF0, 0x7E, 0xF7],
+                }],
+                midnam_note_names: HashMap::new(),
+            });
+        }
+        let interaction = ControllerRollInteraction::new(state, 1.0, 48_000.0, 192.0);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 120.0));
+        let cursor = mouse::Cursor::Available(Point::new(10.0, 20.0));
+        let mut interaction_state = ControllerRollInteractionState {
+            last_sysex_click: Some((0, Instant::now())),
+            ..ControllerRollInteractionState::default()
+        };
+
+        let action = interaction
+            .update(
+                &mut interaction_state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        match message {
+            Some(Message::PianoSysExOpenEditor(Some(index))) => assert_eq!(index, 0),
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Captured);
+        assert!(matches!(interaction_state.mode, ControllerDragMode::None));
+    }
+}
+
 pub mod controllers_lane {
     use iced::{Point, Rectangle};
 

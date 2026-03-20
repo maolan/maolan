@@ -1704,3 +1704,53 @@ impl canvas::Program<Message> for Graph {
         vec![frame.into_geometry()]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::widget::canvas::Program;
+    use iced::{Point, Rectangle, Size, event, mouse};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn action_message(action: Action<Message>) -> (Option<Message>, event::Status) {
+        let (message, _redraw, status) = action.into_inner();
+        (message, status)
+    }
+
+    #[test]
+    fn update_clicking_track_body_selects_and_moves_track() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let track = crate::state::Track::new("Track".to_string(), 0.0, 1, 1, 0, 0);
+        let click = Point::new(track.position.x + 5.0, track.position.y + 5.0);
+        state.blocking_write().tracks.push(track);
+        let graph = Graph::new(state.clone());
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(800.0, 600.0));
+        let cursor = mouse::Cursor::Available(click);
+
+        let action = graph
+            .update(
+                &mut (),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        assert!(message.is_none());
+        assert_eq!(status, event::Status::Captured);
+        let data = state.blocking_read();
+        assert_eq!(
+            data.moving_track
+                .as_ref()
+                .map(|moving| moving.track_idx.as_str()),
+            Some("Track")
+        );
+        match &data.connection_view_selection {
+            ConnectionViewSelection::Tracks(selected) => assert!(selected.contains("Track")),
+            other => panic!("unexpected selection: {other:?}"),
+        }
+        assert!(data.selected.contains("Track"));
+    }
+}

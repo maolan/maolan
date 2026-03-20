@@ -68,3 +68,40 @@ impl TemplateSaveView {
         .into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[test]
+    fn update_sets_template_name_when_dialog_is_open() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        state.blocking_write().template_save_dialog = Some(crate::state::TemplateSaveDialog {
+            name: "Old".to_string(),
+        });
+        let mut view = TemplateSaveView::new(state.clone());
+
+        view.update(&Message::TemplateSaveInput("New".to_string()));
+
+        assert_eq!(
+            state
+                .blocking_read()
+                .template_save_dialog
+                .as_ref()
+                .map(|dialog| dialog.name.as_str()),
+            Some("New")
+        );
+    }
+
+    #[test]
+    fn update_ignores_template_input_when_dialog_is_closed() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let mut view = TemplateSaveView::new(state.clone());
+
+        view.update(&Message::TemplateSaveInput("New".to_string()));
+
+        assert!(state.blocking_read().template_save_dialog.is_none());
+    }
+}

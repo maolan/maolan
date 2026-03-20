@@ -25,3 +25,15 @@ impl<G> CanvasHost<G> {
             .into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_is_a_no_op() {
+        let mut host = CanvasHost::new(());
+
+        host.update(&Message::None);
+    }
+}

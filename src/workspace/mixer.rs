@@ -1103,3 +1103,83 @@ impl Mixer {
         .into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::widget::canvas::Program;
+    use iced::{Point, Rectangle, Size, event, mouse};
+
+    fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
+        let (message, _redraw, status) = action.into_inner();
+        (message, status)
+    }
+
+    #[test]
+    fn fader_update_button_press_publishes_track_level() {
+        let canvas = FaderSliderCanvas {
+            track_name: "Bass".to_string(),
+            value: 0.0,
+            show_ticks: false,
+            fader_height: 100.0,
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(64.0, 140.0));
+        let mut state = FaderBayState::default();
+        let cursor = mouse::Cursor::Available(Point::new(
+            FaderSliderCanvas::OUTER_PAD_X + 1.0,
+            FaderSliderCanvas::OUTER_PAD_Y + 1.0,
+        ));
+
+        let action = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        match message {
+            Some(Message::Request(Action::TrackLevel(name, level))) => {
+                assert_eq!(name, "Bass");
+                assert!(level <= FADER_MAX_DB);
+                assert!(level >= FADER_MIN_DB);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Ignored);
+        assert!(state.dragging);
+    }
+
+    #[test]
+    fn pan_update_button_press_publishes_track_balance() {
+        let canvas = PanCanvas {
+            track_name: "Bass".to_string(),
+            value: 0.0,
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(100.0, 24.0));
+        let mut state = PanState::default();
+        let cursor = mouse::Cursor::Available(Point::new(99.0, 12.0));
+
+        let action = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        match message {
+            Some(Message::Request(Action::TrackBalance(name, value))) => {
+                assert_eq!(name, "Bass");
+                assert!(value > 0.95);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Ignored);
+        assert!(state.dragging);
+    }
+}

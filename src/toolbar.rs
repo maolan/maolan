@@ -235,3 +235,15 @@ impl Toolbar {
         .into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_is_a_no_op() {
+        let mut toolbar = Toolbar::new();
+
+        toolbar.update(&Message::TransportPlay);
+    }
+}

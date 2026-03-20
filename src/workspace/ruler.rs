@@ -534,3 +534,60 @@ impl canvas::Program<Message> for RulerCanvas {
         vec![geom]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::widget::canvas::Program;
+    use iced::{Point, Rectangle, Size, event, mouse};
+
+    fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
+        let (message, _redraw, status) = action.into_inner();
+        (message, status)
+    }
+
+    #[test]
+    fn update_click_release_moves_transport() {
+        let canvas = RulerCanvas {
+            playhead_x: None,
+            beat_pixels: 16.0,
+            pixels_per_sample: 2.0,
+            loop_range_samples: None,
+            snap_mode: SnapMode::NoSnap,
+            samples_per_beat: 4.0,
+            timeline_left_inset_px: 0.0,
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 40.0));
+        let mut state = RulerState::default();
+        let cursor = mouse::Cursor::Available(Point::new(100.0, 10.0));
+
+        let press = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("press action");
+        let (_, status) = action_message(press);
+        assert_eq!(status, event::Status::Captured);
+
+        let release = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("release action");
+        let (message, status) = action_message(release);
+        match message {
+            Some(Message::Request(EngineAction::TransportPosition(sample))) => {
+                assert_eq!(sample, 50);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Ignored);
+        assert!(!state.dragging);
+    }
+}

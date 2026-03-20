@@ -490,3 +490,112 @@ impl Program<Message> for PitchRollCanvas {
         vec![frame.into_geometry()]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::{Point, Rectangle, event, mouse};
+
+    fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
+        let (message, _redraw, status) = action.into_inner();
+        (message, status)
+    }
+
+    fn sample_roll() -> PitchCorrectionData {
+        PitchCorrectionData {
+            track_idx: "Track".to_string(),
+            clip_index: 0,
+            clip_name: "clip.wav".to_string(),
+            clip_length_samples: 128,
+            frame_likeness: 0.5,
+            raw_points: Vec::new(),
+            points: vec![PitchCorrectionPoint {
+                start_sample: 10,
+                length_samples: 8,
+                detected_midi_pitch: 60.0,
+                target_midi_pitch: 60.0,
+                clarity: 1.0,
+            }],
+        }
+    }
+
+    #[test]
+    fn update_double_clicking_point_snaps_to_nearest_pitch() {
+        let canvas = PitchRollCanvas::new(
+            sample_roll(),
+            std::collections::HashSet::new(),
+            None,
+            None,
+            2.0,
+            10.0,
+            None,
+        );
+        let point = canvas.point_bounds(
+            &canvas.roll.points[0],
+            Rectangle::new(Point::ORIGIN, Size::new(400.0, 400.0)),
+        );
+        let cursor = mouse::Cursor::Available(Point::new(point.x + 1.0, point.y + 1.0));
+        let mut state = PitchRollCanvasState {
+            last_click: Some((0, Instant::now())),
+            ..PitchRollCanvasState::default()
+        };
+
+        let action = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                Rectangle::new(Point::ORIGIN, Size::new(400.0, 400.0)),
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        match message {
+            Some(Message::PitchCorrectionSnapToNearest { point_index }) => {
+                assert_eq!(point_index, 0);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Captured);
+        assert!(state.drag_start.is_none());
+        assert!(matches!(state.dragging_mode, PitchDraggingMode::None));
+    }
+
+    #[test]
+    fn update_clicking_empty_space_starts_selection() {
+        let canvas = PitchRollCanvas::new(
+            sample_roll(),
+            std::collections::HashSet::new(),
+            None,
+            None,
+            2.0,
+            10.0,
+            None,
+        );
+        let mut state = PitchRollCanvasState::default();
+        let cursor = mouse::Cursor::Available(Point::new(150.0, 150.0));
+
+        let action = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                Rectangle::new(Point::ORIGIN, Size::new(400.0, 400.0)),
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        match message {
+            Some(Message::PitchCorrectionSelectRectStart { position }) => {
+                assert_eq!(position, Point::new(150.0, 150.0));
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Captured);
+        assert_eq!(state.drag_start, Some(Point::new(150.0, 150.0)));
+        assert!(matches!(
+            state.dragging_mode,
+            PitchDraggingMode::SelectingRect
+        ));
+    }
+}
