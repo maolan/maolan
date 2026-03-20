@@ -39,22 +39,23 @@ impl Worker {
         None
     }
 
-    fn apply_offline_automation_at_sample(
+    fn apply_freeze_automation_at_sample(
         track: &mut crate::track::Track,
         sample: usize,
         lanes: &[OfflineAutomationLane],
     ) {
         for lane in lanes {
+            if matches!(
+                lane.target,
+                OfflineAutomationTarget::Volume | OfflineAutomationTarget::Balance
+            ) {
+                continue;
+            }
             let Some(value) = Self::automation_lane_value_at(&lane.points, sample) else {
                 continue;
             };
             match lane.target {
-                OfflineAutomationTarget::Volume => {
-                    track.set_level((-90.0 + value * 110.0).clamp(-90.0, 20.0));
-                }
-                OfflineAutomationTarget::Balance => {
-                    track.set_balance((value * 2.0 - 1.0).clamp(-1.0, 1.0));
-                }
+                OfflineAutomationTarget::Volume | OfflineAutomationTarget::Balance => {}
                 OfflineAutomationTarget::Mute => {
                     track.set_muted(value >= 0.5);
                 }
@@ -91,6 +92,23 @@ impl Worker {
         }
     }
 
+    fn prepare_track_for_freeze_render(track: &mut crate::track::Track) -> (f32, f32) {
+        let original_level = track.level();
+        let original_balance = track.balance;
+        track.set_level(0.0);
+        track.set_balance(0.0);
+        (original_level, original_balance)
+    }
+
+    fn restore_track_after_freeze_render(
+        track: &mut crate::track::Track,
+        original_level: f32,
+        original_balance: f32,
+    ) {
+        track.set_level(original_level);
+        track.set_balance(original_balance);
+    }
+
     async fn process_offline_bounce(&self, job: OfflineBounceWork) {
         let track_handle = job.state.lock().tracks.get(&job.track_name).cloned();
         let Some(target_track) = track_handle else {
@@ -118,11 +136,23 @@ impl Worker {
                 t.sample_rate.round().max(1.0) as i32,
             )
         };
+        let (original_level, original_balance) = {
+            let mut t = target_track.lock();
+            Self::prepare_track_for_freeze_render(&mut t)
+        };
 
         let mut rendered = vec![0.0_f32; job.length_samples.saturating_mul(channels)];
         let mut cursor = 0usize;
         while cursor < job.length_samples {
             if job.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                {
+                    let mut t = target_track.lock();
+                    Self::restore_track_after_freeze_render(
+                        &mut t,
+                        original_level,
+                        original_balance,
+                    );
+                }
                 let _ = self
                     .tx
                     .send(Message::OfflineBounceFinished {
@@ -158,7 +188,7 @@ impl Worker {
                     }
                     if t.audio.ready() {
                         if t.name == job.track_name {
-                            Self::apply_offline_automation_at_sample(
+                            Self::apply_freeze_automation_at_sample(
                                 t,
                                 job.start_sample.saturating_add(cursor),
                                 &job.automation_lanes,
@@ -178,7 +208,7 @@ impl Worker {
                             continue;
                         }
                         if t.name == job.track_name {
-                            Self::apply_offline_automation_at_sample(
+                            Self::apply_freeze_automation_at_sample(
                                 t,
                                 job.start_sample.saturating_add(cursor),
                                 &job.automation_lanes,
@@ -220,6 +250,10 @@ impl Worker {
         if let Err(e) =
             write_wav::<f32, _>(&job.output_path, &rendered, sample_rate, channels as u16)
         {
+            {
+                let mut t = target_track.lock();
+                Self::restore_track_after_freeze_render(&mut t, original_level, original_balance);
+            }
             let _ = self
                 .tx
                 .send(Message::OfflineBounceFinished {
@@ -231,6 +265,11 @@ impl Worker {
                 .await;
             let _ = self.tx.send(Message::Ready(self.id)).await;
             return;
+        }
+
+        {
+            let mut t = target_track.lock();
+            Self::restore_track_after_freeze_render(&mut t, original_level, original_balance);
         }
 
         let _ = self
@@ -326,5 +365,64 @@ impl Worker {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Worker;
+    use crate::message::{OfflineAutomationLane, OfflineAutomationPoint, OfflineAutomationTarget};
+    use crate::track::Track;
+
+    #[test]
+    fn prepare_track_for_freeze_render_neutralizes_level_and_balance() {
+        let mut track = Track::new("track".to_string(), 1, 2, 0, 0, 64, 48_000.0);
+        track.set_level(-6.0);
+        track.set_balance(0.35);
+
+        let (level, balance) = Worker::prepare_track_for_freeze_render(&mut track);
+
+        assert_eq!(level, -6.0);
+        assert_eq!(balance, 0.35);
+        assert_eq!(track.level(), 0.0);
+        assert_eq!(track.balance, 0.0);
+
+        Worker::restore_track_after_freeze_render(&mut track, level, balance);
+        assert_eq!(track.level(), -6.0);
+        assert_eq!(track.balance, 0.35);
+    }
+
+    #[test]
+    fn freeze_automation_ignores_volume_and_balance_lanes() {
+        let mut track = Track::new("track".to_string(), 1, 2, 0, 0, 64, 48_000.0);
+        let lanes = vec![
+            OfflineAutomationLane {
+                target: OfflineAutomationTarget::Volume,
+                points: vec![OfflineAutomationPoint {
+                    sample: 0,
+                    value: 0.0,
+                }],
+            },
+            OfflineAutomationLane {
+                target: OfflineAutomationTarget::Balance,
+                points: vec![OfflineAutomationPoint {
+                    sample: 0,
+                    value: 1.0,
+                }],
+            },
+            OfflineAutomationLane {
+                target: OfflineAutomationTarget::Mute,
+                points: vec![OfflineAutomationPoint {
+                    sample: 0,
+                    value: 1.0,
+                }],
+            },
+        ];
+
+        Worker::apply_freeze_automation_at_sample(&mut track, 0, &lanes);
+
+        assert_eq!(track.level(), 0.0);
+        assert_eq!(track.balance, 0.0);
+        assert!(track.muted);
     }
 }

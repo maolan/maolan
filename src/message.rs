@@ -538,19 +538,6 @@ pub struct ClipPitchCorrectionRequest {
 }
 
 #[derive(Debug, Clone)]
-pub struct ClipPitchCorrectionApplyRequest {
-    pub track_idx: String,
-    pub clip_idx: usize,
-    pub clip_name: String,
-    pub source_name: String,
-    pub source_offset: usize,
-    pub source_length: usize,
-    pub points: Vec<crate::state::PitchCorrectionPoint>,
-    pub inertia_ms: u16,
-    pub formant_compensation: bool,
-}
-
-#[derive(Debug, Clone)]
 pub struct PreparedFreezeClip {
     pub clip_index: usize,
     pub preview_name: String,
@@ -1102,7 +1089,6 @@ pub enum Message {
         request: ClipPitchCorrectionRequest,
         result: Result<crate::state::PitchCorrectionData, String>,
     },
-    PitchCorrectionApply,
     TrackRenameShow(String),
     TrackRenameInput(String),
     TrackRenameConfirm,
