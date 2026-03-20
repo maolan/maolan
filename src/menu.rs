@@ -261,3 +261,20 @@ impl Menu {
         mb.into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_is_a_no_op() {
+        let mut menu = Menu::default();
+        menu.update_templates(vec!["A".to_string()]);
+        menu.update_recent_sessions(vec!["/tmp/session".to_string()]);
+
+        menu.update(&Message::Cancel);
+
+        assert_eq!(menu.available_templates, vec!["A".to_string()]);
+        assert_eq!(menu.recent_session_paths, vec!["/tmp/session".to_string()]);
+    }
+}

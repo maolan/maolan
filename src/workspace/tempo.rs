@@ -1131,3 +1131,54 @@ impl canvas::Program<Message> for TempoCanvas {
         vec![geom]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::widget::canvas::Program;
+    use iced::{Point, Rectangle, Size, event, mouse};
+
+    fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
+        let (message, _redraw, status) = action.into_inner();
+        (message, status)
+    }
+
+    #[test]
+    fn update_middle_click_in_tempo_lane_adds_tempo_point() {
+        let canvas = TempoCanvas {
+            bpm: 120.0,
+            time_signature: (4, 4),
+            pixels_per_sample: 1.0,
+            playhead_x: None,
+            punch_range_samples: None,
+            snap_mode: SnapMode::NoSnap,
+            samples_per_beat: 4.0,
+            samples_per_bar: 16.0,
+            shift_pressed: false,
+            tempo_points: vec![(0, 120.0)],
+            time_signature_points: vec![(0, 4, 4)],
+            selected_tempo_points: Vec::new(),
+            selected_time_signature_points: Vec::new(),
+            timeline_left_inset_px: 0.0,
+        };
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
+        let mut state = TempoState::default();
+        let cursor = mouse::Cursor::Available(Point::new(100.0, TEMPO_HIT_HEIGHT - 2.0));
+
+        let action = canvas
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)),
+                bounds,
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        match message {
+            Some(Message::TempoPointAdd(sample)) => assert_eq!(sample, 100),
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Captured);
+    }
+}

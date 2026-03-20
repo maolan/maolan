@@ -281,3 +281,119 @@ impl Default for AddTrackView {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        sync::{LazyLock, Mutex},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    static ENV_GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    #[test]
+    fn update_applies_basic_add_track_fields() {
+        let mut view = AddTrackView::default();
+
+        view.update(&Message::AddTrack(AddTrack::Name("Lead".to_string())));
+        view.update(&Message::AddTrack(AddTrack::Count(3)));
+        view.update(&Message::AddTrack(AddTrack::AudioIns(2)));
+        view.update(&Message::AddTrack(AddTrack::AudioOuts(4)));
+        view.update(&Message::AddTrack(AddTrack::MIDIIns(1)));
+        view.update(&Message::AddTrack(AddTrack::MIDIOuts(5)));
+
+        assert_eq!(view.name, "Lead");
+        assert_eq!(view.count, 3);
+        assert_eq!(view.audio_ins, 2);
+        assert_eq!(view.audio_outs, 4);
+        assert_eq!(view.midi_ins, 1);
+        assert_eq!(view.midi_outs, 5);
+    }
+
+    #[test]
+    fn update_clamps_track_count_to_at_least_one() {
+        let mut view = AddTrackView::default();
+
+        view.update(&Message::AddTrack(AddTrack::Count(0)));
+
+        assert_eq!(view.count, 1);
+    }
+
+    #[test]
+    fn update_selecting_empty_template_resets_default_io() {
+        let mut view = AddTrackView {
+            audio_ins: 7,
+            audio_outs: 8,
+            midi_ins: 9,
+            midi_outs: 10,
+            ..AddTrackView::default()
+        };
+
+        view.update(&Message::AddTrack(AddTrack::TemplateSelected(
+            "empty".to_string(),
+        )));
+
+        assert_eq!(view.selected_template.as_deref(), Some("empty"));
+        assert_eq!(view.audio_ins, 1);
+        assert_eq!(view.audio_outs, 1);
+        assert_eq!(view.midi_ins, 0);
+        assert_eq!(view.midi_outs, 0);
+    }
+
+    #[test]
+    fn update_selecting_template_loads_io_from_template_file() {
+        let _guard = ENV_GUARD.lock().expect("lock env guard");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_home = std::env::temp_dir().join(format!("maolan_add_track_test_{unique}"));
+        let template_dir = temp_home.join(".config/maolan/track_templates/Band");
+        fs::create_dir_all(&template_dir).expect("create template dir");
+        fs::write(
+            template_dir.join("track.json"),
+            r#"{"track":{"audio":{"ins":2,"outs":3},"midi":{"ins":4,"outs":5}}}"#,
+        )
+        .expect("write template file");
+
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let mut view = AddTrackView::default();
+        view.update(&Message::AddTrack(AddTrack::TemplateSelected(
+            "Band".to_string(),
+        )));
+
+        if let Some(home) = old_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+        fs::remove_dir_all(&temp_home).expect("cleanup temp home");
+
+        assert_eq!(view.selected_template.as_deref(), Some("Band"));
+        assert_eq!(view.audio_ins, 2);
+        assert_eq!(view.audio_outs, 3);
+        assert_eq!(view.midi_ins, 4);
+        assert_eq!(view.midi_outs, 5);
+    }
+
+    #[test]
+    fn update_ignores_non_add_track_messages() {
+        let mut view = AddTrackView::default();
+
+        view.update(&Message::Cancel);
+
+        assert_eq!(view.name, "");
+        assert_eq!(view.count, 1);
+        assert_eq!(view.selected_template.as_deref(), Some("empty"));
+    }
+}

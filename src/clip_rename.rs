@@ -97,3 +97,44 @@ impl ClipRenameView {
         .into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use maolan_engine::kind::Kind;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[test]
+    fn update_sets_clip_rename_input_when_dialog_is_open() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        state.blocking_write().clip_rename_dialog = Some(crate::state::ClipRenameDialog {
+            track_idx: "Track".to_string(),
+            clip_idx: 0,
+            kind: Kind::Audio,
+            new_name: "Old".to_string(),
+        });
+        let mut view = ClipRenameView::new(state.clone());
+
+        view.update(&Message::ClipRenameInput("New".to_string()));
+
+        assert_eq!(
+            state
+                .blocking_read()
+                .clip_rename_dialog
+                .as_ref()
+                .map(|dialog| dialog.new_name.as_str()),
+            Some("New")
+        );
+    }
+
+    #[test]
+    fn update_ignores_clip_rename_input_when_dialog_is_closed() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let mut view = ClipRenameView::new(state.clone());
+
+        view.update(&Message::ClipRenameInput("New".to_string()));
+
+        assert!(state.blocking_read().clip_rename_dialog.is_none());
+    }
+}

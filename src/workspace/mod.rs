@@ -948,3 +948,18 @@ impl Workspace {
         .into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[test]
+    fn update_is_a_no_op() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let mut workspace = Workspace::new(state);
+
+        workspace.update(&Message::Cancel);
+    }
+}

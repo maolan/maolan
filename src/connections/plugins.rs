@@ -1278,3 +1278,78 @@ impl canvas::Program<Message> for Graph {
         vec![frame.into_geometry()]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::widget::canvas::Program;
+    use iced::{Point, Rectangle, Size, event, mouse};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn action_message(action: Action<Message>) -> (Option<Message>, event::Status) {
+        let (message, _redraw, status) = action.into_inner();
+        (message, status)
+    }
+
+    #[test]
+    fn update_clicking_plugin_selects_and_starts_move() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(700.0, 400.0));
+        let plugin = PluginGraphPlugin {
+            node: PluginGraphNode::Vst3PluginInstance(7),
+            instance_id: 7,
+            format: "VST3".to_string(),
+            uri: "/plugins/test.vst3".to_string(),
+            plugin_id: "plugin-id".to_string(),
+            name: "Test".to_string(),
+            main_audio_inputs: 1,
+            main_audio_outputs: 1,
+            audio_inputs: 1,
+            audio_outputs: 1,
+            midi_inputs: 0,
+            midi_outputs: 0,
+            state: None,
+        };
+        {
+            let mut data = state.blocking_write();
+            data.tracks.push(crate::state::Track::new(
+                "Track".to_string(),
+                0.0,
+                1,
+                1,
+                0,
+                0,
+            ));
+            data.plugin_graph_track = Some("Track".to_string());
+            data.plugin_graph_plugins.push(plugin.clone());
+        }
+        let plugin_pos = {
+            let data = state.blocking_read();
+            Graph::plugin_pos(&data, &plugin, 0, bounds)
+        };
+        let cursor = mouse::Cursor::Available(Point::new(plugin_pos.x + 5.0, plugin_pos.y + 5.0));
+        let graph = Graph::new(state.clone());
+
+        let action = graph
+            .update(
+                &mut (),
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        assert!(message.is_none());
+        assert_eq!(status, event::Status::Captured);
+        let data = state.blocking_read();
+        assert_eq!(data.plugin_graph_selected_plugin, Some(7));
+        assert_eq!(
+            data.plugin_graph_moving_plugin
+                .as_ref()
+                .map(|moving| moving.instance_id),
+            Some(7)
+        );
+    }
+}

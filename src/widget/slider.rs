@@ -257,3 +257,60 @@ where
         Self::new(slider)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::Event;
+    use iced::advanced::{
+        Layout, Shell, clipboard, layout,
+        widget::{self, Tree, Widget},
+    };
+
+    #[test]
+    fn calculate_value_clamps_to_range() {
+        let slider = Slider::new(0.0..=1.0, 0.5, |value| value);
+        let bounds = Rectangle {
+            x: 10.0,
+            y: 20.0,
+            width: 14.0,
+            height: 100.0,
+        };
+
+        assert_eq!(slider.calculate_value(Point::new(15.0, 20.0), bounds), 1.0);
+        assert_eq!(slider.calculate_value(Point::new(15.0, 120.0), bounds), 0.0);
+        assert!((slider.calculate_value(Point::new(15.0, 70.0), bounds) - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn update_publishes_clicked_value() {
+        let mut slider = Slider::new(0.0..=1.0, 0.5, |value| value).height(Length::Fixed(100.0));
+        let mut tree = Tree {
+            tag: widget::tree::Tag::of::<State>(),
+            state: widget::tree::State::new(State::default()),
+            children: Vec::new(),
+        };
+        let node = layout::Node::new(Size::new(14.0, 100.0));
+        let layout = Layout::new(&node);
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        let renderer = ();
+        let mut clipboard = clipboard::Null;
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(14.0, 100.0));
+
+        <Slider<'_, f32> as Widget<f32, iced::Theme, ()>>::update(
+            &mut slider,
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            layout,
+            mouse::Cursor::Available(Point::new(7.0, 25.0)),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        assert_eq!(messages.len(), 1);
+        assert!((messages[0] - 0.75).abs() < 0.01);
+    }
+}

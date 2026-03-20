@@ -5719,4 +5719,477 @@ mod tests {
             json!([6])
         );
     }
+
+    #[test]
+    fn core_toggle_transport_requires_loaded_hw() {
+        let mut app = Maolan::default();
+        app.state.blocking_write().hw_loaded = false;
+
+        let _ = app.update(Message::ToggleTransport);
+
+        assert!(!app.playing);
+        assert!(!app.paused);
+    }
+
+    #[test]
+    fn core_toggle_transport_stops_active_playback_and_clears_preview() {
+        let mut app = Maolan {
+            playing: true,
+            paused: false,
+            recording_preview_start_sample: Some(12),
+            recording_preview_sample: Some(24),
+            ..Maolan::default()
+        };
+        app.state.blocking_write().hw_loaded = true;
+        app.track_automation_runtime
+            .insert("Track".to_string(), TrackAutomationRuntime::default());
+        app.touch_automation_overrides
+            .insert("Track".to_string(), HashMap::new());
+        app.touch_active_keys
+            .insert("Track".to_string(), HashSet::new());
+        app.latch_automation_overrides
+            .insert("Track".to_string(), HashMap::new());
+
+        let _ = app.update(Message::ToggleTransport);
+
+        assert!(!app.playing);
+        assert!(!app.paused);
+        assert!(app.recording_preview_start_sample.is_none());
+        assert!(app.track_automation_runtime.is_empty());
+        assert!(app.touch_automation_overrides.is_empty());
+        assert!(app.touch_active_keys.is_empty());
+        assert!(app.latch_automation_overrides.is_empty());
+    }
+
+    #[test]
+    fn core_toggle_transport_starts_preview_when_record_armed() {
+        let mut app = Maolan {
+            record_armed: true,
+            transport_samples: 128.0,
+            ..Maolan::default()
+        };
+        app.state.blocking_write().hw_loaded = true;
+
+        let _ = app.update(Message::ToggleTransport);
+
+        assert!(app.playing);
+        assert!(!app.paused);
+        assert_eq!(app.recording_preview_start_sample, Some(128));
+        assert_eq!(app.recording_preview_sample, Some(128));
+    }
+
+    #[test]
+    fn core_toggle_loop_and_punch_require_ranges() {
+        let mut app = Maolan::default();
+
+        let _ = app.update(Message::ToggleLoop);
+        let _ = app.update(Message::TogglePunch);
+        assert!(!app.loop_enabled);
+        assert!(!app.punch_enabled);
+
+        app.loop_range_samples = Some((10, 20));
+        app.punch_range_samples = Some((30, 40));
+        let _ = app.update(Message::ToggleLoop);
+        let _ = app.update(Message::TogglePunch);
+
+        assert!(app.loop_enabled);
+        assert!(app.punch_enabled);
+    }
+
+    #[test]
+    fn simple_ui_mp3_toggle_respects_channel_limits() {
+        let mut app = Maolan {
+            export_render_mode: ExportRenderMode::Mixdown,
+            export_hw_out_ports: BTreeSet::from([0, 1, 2]),
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::ExportFormatMp3Toggled(true));
+        assert!(!app.export_format_mp3);
+
+        app.export_hw_out_ports = BTreeSet::from([0, 1]);
+        let _ = app.update(Message::ExportFormatMp3Toggled(true));
+        assert!(app.export_format_mp3);
+    }
+
+    #[test]
+    fn simple_ui_render_mode_disables_normalize_and_clamps_mp3() {
+        let mut app = Maolan {
+            export_format_mp3: true,
+            export_normalize: true,
+            ..Maolan::default()
+        };
+        let surround = crate::state::Track::new("Surround".to_string(), 0.0, 1, 4, 0, 0);
+        {
+            let mut state = app.state.blocking_write();
+            state.selected.insert("Surround".to_string());
+            state.tracks.push(surround);
+        }
+
+        let _ = app.update(Message::ExportRenderModeSelected(
+            ExportRenderMode::StemsPostFader,
+        ));
+        assert!(!app.export_normalize);
+        assert!(!app.export_format_mp3);
+    }
+
+    #[test]
+    fn simple_ui_hw_settings_clamp_numeric_values() {
+        let mut app = Maolan::default();
+
+        let _ = app.update(Message::HWSampleRateChanged(0));
+        let _ = app.update(Message::HWPeriodFramesChanged(3));
+        let _ = app.update(Message::HWNPeriodsChanged(0));
+        let _ = app.update(Message::HWSyncModeToggled(true));
+
+        let state = app.state.blocking_read();
+        assert_eq!(state.hw_sample_rate_hz, 1);
+        assert_eq!(state.oss_period_frames, 16);
+        assert_eq!(state.oss_nperiods, 1);
+        assert!(state.oss_sync_mode);
+    }
+
+    #[test]
+    fn track_selection_modifier_messages_require_loaded_hw() {
+        let mut app = Maolan::default();
+        app.state.blocking_write().hw_loaded = false;
+
+        let _ = app.update(Message::ShiftPressed);
+        assert!(!app.state.blocking_read().shift);
+
+        app.state.blocking_write().hw_loaded = true;
+        let _ = app.update(Message::ShiftPressed);
+        assert!(app.state.blocking_read().shift);
+        let _ = app.update(Message::CtrlPressed);
+        assert!(app.state.blocking_read().ctrl);
+    }
+
+    #[test]
+    fn track_selection_select_track_ctrl_adds_to_existing_selection() {
+        let mut app = Maolan::default();
+        {
+            let mut state = app.state.blocking_write();
+            state.ctrl = true;
+            state.selected.insert("A".to_string());
+            state.connection_view_selection =
+                crate::state::ConnectionViewSelection::Tracks(HashSet::from(["A".to_string()]));
+        }
+
+        let _ = app.update(Message::SelectTrack("B".to_string()));
+
+        let state = app.state.blocking_read();
+        assert!(state.selected.contains("A"));
+        assert!(state.selected.contains("B"));
+        match &state.connection_view_selection {
+            crate::state::ConnectionViewSelection::Tracks(set) => {
+                assert!(set.contains("A"));
+                assert!(set.contains("B"));
+            }
+            other => panic!("unexpected selection: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn track_selection_double_click_schedules_open_plugins() {
+        let mut app = Maolan::default();
+        app.state.blocking_write().connections_last_track_click =
+            Some(("Track".to_string(), Instant::now()));
+
+        let _ = app.update(Message::SelectTrack("Track".to_string()));
+        assert!(
+            app.state
+                .blocking_read()
+                .connections_last_track_click
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn session_io_save_folder_selected_none_cancels_pending_exit() {
+        let mut app = Maolan {
+            pending_exit_after_save: true,
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::SaveFolderSelected(None));
+
+        assert!(!app.pending_exit_after_save);
+        assert_eq!(app.state.blocking_read().message, "Close cancelled");
+    }
+
+    #[test]
+    fn session_io_record_folder_selected_none_clears_pending_record() {
+        let mut app = Maolan {
+            pending_record_after_save: true,
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::RecordFolderSelected(None));
+        assert!(!app.pending_record_after_save);
+    }
+
+    #[test]
+    fn session_io_open_folder_selected_without_autosave_sets_loading_state() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("maolan_open_session_{unique}"));
+        fs::create_dir_all(&path).expect("create session dir");
+        let mut app = Maolan {
+            recording_preview_start_sample: Some(1),
+            recording_preview_sample: Some(2),
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::OpenFolderSelected(Some(path.clone())));
+        assert_eq!(app.session_dir.as_ref(), Some(&path));
+        assert_eq!(app.state.blocking_read().message, "Loading session...");
+        assert!(app.recording_preview_start_sample.is_none());
+
+        fs::remove_dir_all(path).expect("cleanup session dir");
+    }
+
+    #[test]
+    fn transport_set_loop_and_punch_range_normalize_invalid_ranges() {
+        let mut app = Maolan::default();
+
+        let _ = app.update(Message::SetLoopRange(Some((20, 10))));
+        let _ = app.update(Message::SetPunchRange(Some((40, 10))));
+        assert!(app.loop_range_samples.is_none());
+        assert!(app.punch_range_samples.is_none());
+        assert!(!app.loop_enabled);
+        assert!(!app.punch_enabled);
+
+        let _ = app.update(Message::SetLoopRange(Some((10, 20))));
+        let _ = app.update(Message::SetPunchRange(Some((30, 40))));
+        assert_eq!(app.loop_range_samples, Some((10, 20)));
+        assert_eq!(app.punch_range_samples, Some((30, 40)));
+        assert!(app.loop_enabled);
+        assert!(app.punch_enabled);
+    }
+
+    #[test]
+    fn transport_playback_tick_updates_tempo_and_time_signature_inputs() {
+        let mut app = Maolan {
+            last_sent_tempo_bpm: None,
+            last_sent_time_signature: None,
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::PlaybackTick);
+
+        assert_eq!(app.tempo_input, "120.00");
+        assert_eq!(app.time_signature_num_input, "4");
+        assert_eq!(app.time_signature_denom_input, "4");
+        assert_eq!(app.last_sent_tempo_bpm, Some(120.0));
+        assert_eq!(app.last_sent_time_signature, Some((4, 4)));
+    }
+
+    #[test]
+    fn confirm_close_cancel_clears_modal_and_resets_exit_flag() {
+        let mut app = Maolan {
+            modal: Some(Show::UnsavedChanges),
+            pending_exit_after_save: true,
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::ConfirmCloseCancel);
+
+        assert!(app.modal.is_none());
+        assert!(!app.pending_exit_after_save);
+        assert_eq!(app.state.blocking_read().message, "Close cancelled");
+    }
+
+    #[test]
+    fn escape_pressed_closes_add_track_modal_and_marker_dialog() {
+        let mut app = Maolan {
+            modal: Some(Show::AddTrack),
+            ..Maolan::default()
+        };
+        app.state.blocking_write().track_marker_dialog = Some(crate::state::TrackMarkerDialog {
+            track_name: "Track".to_string(),
+            sample: 10,
+            marker_index: None,
+            name: "Marker".to_string(),
+        });
+
+        let _ = app.update(Message::EscapePressed);
+        assert!(app.modal.is_none());
+        assert!(app.state.blocking_read().track_marker_dialog.is_some());
+
+        let _ = app.update(Message::EscapePressed);
+        assert!(app.state.blocking_read().track_marker_dialog.is_none());
+    }
+
+    #[test]
+    fn set_snap_mode_updates_state() {
+        let mut app = Maolan::default();
+
+        let _ = app.update(Message::SetSnapMode(SnapMode::Sixteenth));
+
+        assert_eq!(app.snap_mode, SnapMode::Sixteenth);
+    }
+
+    #[test]
+    fn recording_preview_tick_tracks_current_sample_and_respects_punch() {
+        let mut app = Maolan {
+            playing: true,
+            record_armed: true,
+            transport_samples: 96.0,
+            recording_preview_start_sample: Some(0),
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::RecordingPreviewTick);
+        assert_eq!(app.recording_preview_sample, Some(96));
+
+        app.punch_enabled = true;
+        app.punch_range_samples = Some((100, 120));
+        let _ = app.update(Message::RecordingPreviewTick);
+        assert!(app.recording_preview_sample.is_none());
+    }
+
+    #[test]
+    fn recording_preview_peaks_tick_collects_armed_track_meter_values() {
+        let mut app = Maolan {
+            playing: true,
+            record_armed: true,
+            transport_samples: 64.0,
+            recording_preview_start_sample: Some(0),
+            ..Maolan::default()
+        };
+        let mut track = crate::state::Track::new("Track".to_string(), 0.0, 1, 2, 0, 0);
+        track.armed = true;
+        track.meter_out_db = vec![-6.0, -90.0];
+        app.state.blocking_write().tracks.push(track);
+
+        let _ = app.update(Message::RecordingPreviewPeaksTick);
+
+        let peaks = app
+            .recording_preview_peaks
+            .get("Track")
+            .expect("preview peaks");
+        assert_eq!(peaks.len(), 2);
+        assert_eq!(peaks[0].len(), 1);
+        assert_eq!(peaks[1].len(), 1);
+        assert!(peaks[0][0][1] > 0.49 && peaks[0][0][1] < 0.51);
+        assert_eq!(peaks[1][0], [0.0, 0.0]);
+    }
+
+    #[test]
+    fn zoom_and_scroll_messages_clamp_and_update_positions() {
+        let mut app = Maolan {
+            size: Size::new(800.0, 600.0),
+            zoom_visible_bars: 8.0,
+            editor_scroll_origin_samples: 10_000.0,
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::ZoomSliderChanged(0.0));
+        assert_eq!(app.zoom_visible_bars, MIN_ZOOM_VISIBLE_BARS);
+        assert!(app.editor_scroll_x >= 0.0 && app.editor_scroll_x <= 1.0);
+
+        let _ = app.update(Message::EditorScrollXChanged(2.0));
+        assert_eq!(app.editor_scroll_x, 1.0);
+
+        let _ = app.update(Message::EditorScrollYChanged(-1.0));
+        assert_eq!(app.editor_scroll_y, 0.0);
+
+        let _ = app.update(Message::MixerScrollXChanged(0.25));
+        assert_eq!(app.mixer_scroll_x, 0.25);
+    }
+
+    #[test]
+    fn piano_scroll_and_zoom_messages_update_state() {
+        let mut app = Maolan::default();
+
+        let _ = app.update(Message::PianoZoomXChanged(3.0));
+        let _ = app.update(Message::PianoZoomYChanged(2.0));
+        let _ = app.update(Message::PianoScrollChanged { x: 1.5, y: -1.0 });
+        let _ = app.update(Message::PianoScrollXChanged(0.25));
+        let _ = app.update(Message::PianoScrollYChanged(0.75));
+
+        let state = app.state.blocking_read();
+        assert_eq!(state.piano_zoom_x, 3.0);
+        assert_eq!(state.piano_zoom_y, 2.0);
+        assert_eq!(state.piano_scroll_x, 0.25);
+        assert_eq!(state.piano_scroll_y, 0.75);
+    }
+
+    #[test]
+    fn piano_controller_selector_messages_switch_lane_and_sysex_panel() {
+        let mut app = Maolan::default();
+
+        let _ = app.update(Message::PianoControllerLaneSelected(
+            crate::message::PianoControllerLane::SysEx,
+        ));
+        {
+            let state = app.state.blocking_read();
+            assert_eq!(
+                state.piano_controller_lane,
+                crate::message::PianoControllerLane::SysEx
+            );
+            assert!(state.piano_sysex_panel_open);
+        }
+
+        let _ = app.update(Message::PianoControllerKindSelected(74));
+        let _ = app.update(Message::PianoVelocityKindSelected(
+            crate::message::PianoVelocityKind::ReleaseVelocity,
+        ));
+        let _ = app.update(Message::PianoRpnKindSelected(
+            crate::message::PianoRpnKind::FineTuning,
+        ));
+        let _ = app.update(Message::PianoNrpnKindSelected(
+            crate::message::PianoNrpnKind::VibratoDepth,
+        ));
+
+        let state = app.state.blocking_read();
+        assert_eq!(
+            state.piano_controller_lane,
+            crate::message::PianoControllerLane::Nrpn
+        );
+        assert_eq!(state.piano_controller_kind, 74);
+        assert_eq!(
+            state.piano_velocity_kind,
+            crate::message::PianoVelocityKind::ReleaseVelocity
+        );
+        assert_eq!(
+            state.piano_rpn_kind,
+            crate::message::PianoRpnKind::FineTuning
+        );
+        assert_eq!(
+            state.piano_nrpn_kind,
+            crate::message::PianoNrpnKind::VibratoDepth
+        );
+        assert!(!state.piano_sysex_panel_open);
+    }
+
+    #[test]
+    fn transport_record_toggle_arms_when_session_exists_and_disarms_when_already_armed() {
+        let mut app = Maolan {
+            session_dir: Some(PathBuf::from("/tmp/session")),
+            playing: true,
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::TransportRecordToggle);
+        assert!(app.record_armed);
+        assert_eq!(app.recording_preview_start_sample, Some(0));
+
+        let _ = app.update(Message::TransportRecordToggle);
+        assert!(!app.record_armed);
+        assert!(!app.pending_record_after_save);
+        assert!(app.recording_preview_start_sample.is_none());
+    }
+
+    #[test]
+    fn transport_record_toggle_without_session_sets_pending_record() {
+        let mut app = Maolan::default();
+
+        let _ = app.update(Message::TransportRecordToggle);
+
+        assert!(app.pending_record_after_save);
+        assert!(!app.record_armed);
+    }
 }

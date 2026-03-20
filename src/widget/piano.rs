@@ -785,3 +785,163 @@ impl Program<Message> for PianoRollInteraction {
         vec![frame.into_geometry()]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::widget::canvas::Program;
+    use iced::{Point, Rectangle, Size, event, mouse};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
+        let (message, _redraw, status) = action.into_inner();
+        (message, status)
+    }
+
+    fn piano_state_with_note(note: crate::state::PianoNote) -> State {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        {
+            let mut data = state.blocking_write();
+            data.piano_zoom_x = 1.0;
+            data.piano_zoom_y = 1.0;
+            data.piano = Some(crate::state::PianoData {
+                track_idx: "Track".to_string(),
+                clip_index: 0,
+                clip_length_samples: 256,
+                notes: vec![note],
+                controllers: Vec::new(),
+                sysexes: Vec::new(),
+                midnam_note_names: HashMap::new(),
+            });
+        }
+        state
+    }
+
+    #[test]
+    fn octave_keyboard_update_publishes_pressed_and_released_notes() {
+        let keyboard = OctaveKeyboard::new(4, HashMap::new());
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(20.0, 70.0));
+        let press_cursor = mouse::Cursor::Available(Point::new(15.0, 65.0));
+        let release_cursor = mouse::Cursor::Available(Point::new(15.0, 65.0));
+        let mut state = OctaveKeyboardState::default();
+
+        let press = keyboard
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                press_cursor,
+            )
+            .expect("press action");
+        let (message, status) = action_message(press);
+        match message {
+            Some(Message::PianoKeyPressed(note)) => assert_eq!(note, 48),
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Captured);
+        assert_eq!(state.active_note_class, Some(0));
+        assert!(state.pressed_notes.contains(&0));
+
+        let release = keyboard
+            .update(
+                &mut state,
+                &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                bounds,
+                release_cursor,
+            )
+            .expect("release action");
+        let (message, status) = action_message(release);
+        match message {
+            Some(Message::PianoKeyReleased(note)) => assert_eq!(note, 48),
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Ignored);
+        assert!(state.pressed_notes.is_empty());
+    }
+
+    #[test]
+    fn piano_roll_update_clicking_note_edge_starts_resize() {
+        let note = crate::state::PianoNote {
+            start_sample: 10,
+            length_samples: 20,
+            pitch: 60,
+            velocity: 100,
+            channel: 0,
+        };
+        let state = piano_state_with_note(note);
+        let interaction = PianoRollInteraction::new(state, 1.0);
+        let mut interaction_state = PianoRollInteractionState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 600.0));
+        let row_h =
+            (WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32).max(1.0);
+        let y = usize::from(PITCH_MAX.saturating_sub(60)) as f32 * row_h + 2.0;
+        let cursor = mouse::Cursor::Available(Point::new(11.0, y));
+
+        let action = interaction
+            .update(
+                &mut interaction_state,
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                bounds,
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        match message {
+            Some(Message::PianoNoteResizeStart {
+                note_index,
+                position,
+                resize_start,
+            }) => {
+                assert_eq!(note_index, 0);
+                assert_eq!(position, Point::new(11.0, y));
+                assert!(resize_start);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Captured);
+        assert_eq!(interaction_state.dragging_mode, DraggingMode::ResizingNote);
+        assert_eq!(interaction_state.drag_start, Some(Point::new(11.0, y)));
+    }
+
+    #[test]
+    fn piano_roll_update_wheel_on_note_adjusts_velocity() {
+        let note = crate::state::PianoNote {
+            start_sample: 10,
+            length_samples: 20,
+            pitch: 60,
+            velocity: 100,
+            channel: 0,
+        };
+        let state = piano_state_with_note(note);
+        let interaction = PianoRollInteraction::new(state, 1.0);
+        let mut interaction_state = PianoRollInteractionState::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 600.0));
+        let row_h =
+            (WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32).max(1.0);
+        let y = usize::from(PITCH_MAX.saturating_sub(60)) as f32 * row_h + 2.0;
+        let cursor = mouse::Cursor::Available(Point::new(20.0, y));
+
+        let action = interaction
+            .update(
+                &mut interaction_state,
+                &Event::Mouse(mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+                }),
+                bounds,
+                cursor,
+            )
+            .expect("action");
+
+        let (message, status) = action_message(action);
+        match message {
+            Some(Message::PianoAdjustVelocity { note_index, delta }) => {
+                assert_eq!(note_index, 0);
+                assert_eq!(delta, 1);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+        assert_eq!(status, event::Status::Captured);
+    }
+}

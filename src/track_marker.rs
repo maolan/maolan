@@ -79,3 +79,56 @@ impl TrackMarkerView {
         .into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[test]
+    fn update_sets_track_marker_name_when_dialog_is_open() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        state.blocking_write().track_marker_dialog = Some(crate::state::TrackMarkerDialog {
+            track_name: "Lead".to_string(),
+            sample: 128,
+            marker_index: None,
+            name: "Verse".to_string(),
+        });
+        let mut view = TrackMarkerView::new(state.clone());
+
+        view.update(&Message::TrackMarkerNameInput("Chorus".to_string()));
+
+        assert_eq!(
+            state
+                .blocking_read()
+                .track_marker_dialog
+                .as_ref()
+                .map(|dialog| dialog.name.as_str()),
+            Some("Chorus")
+        );
+    }
+
+    #[test]
+    fn update_ignores_non_matching_messages() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        state.blocking_write().track_marker_dialog = Some(crate::state::TrackMarkerDialog {
+            track_name: "Lead".to_string(),
+            sample: 128,
+            marker_index: None,
+            name: "Verse".to_string(),
+        });
+        let mut view = TrackMarkerView::new(state.clone());
+
+        view.update(&Message::Cancel);
+
+        assert_eq!(
+            state
+                .blocking_read()
+                .track_marker_dialog
+                .as_ref()
+                .map(|dialog| dialog.name.as_str()),
+            Some("Verse")
+        );
+    }
+}
