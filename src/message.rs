@@ -1084,6 +1084,12 @@ pub enum Message {
         kind: Kind,
         muted: bool,
     },
+    GroupSelectedClips,
+    UngroupClip {
+        track_idx: String,
+        clip_idx: usize,
+        kind: Kind,
+    },
     ClipStretchFinished {
         request: ClipStretchRequest,
         result: Result<(String, usize), String>,
@@ -1140,4 +1146,23 @@ pub struct PianoControllerEditData {
     pub controller: u8,
     pub value: u8,
     pub channel: u8,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SnapMode;
+
+    #[test]
+    fn snap_sample_rounds_to_nearest_interval_when_enabled() {
+        let snapped = SnapMode::Beat.snap_sample(740.0, 480.0, 1920.0);
+
+        assert_eq!(snapped, 960.0);
+    }
+
+    #[test]
+    fn snap_sample_leaves_position_when_snap_disabled() {
+        let snapped = SnapMode::NoSnap.snap_sample(740.0, 480.0, 1920.0);
+
+        assert_eq!(snapped, 740.0);
+    }
 }

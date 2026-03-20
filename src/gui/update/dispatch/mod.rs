@@ -16,6 +16,11 @@ mod transport;
 mod ui;
 
 impl Maolan {
+    fn active_workspace_cursor(&self) -> Point {
+        let state = self.state.blocking_read();
+        state.editor_cursor.unwrap_or(state.cursor)
+    }
+
     pub(super) fn request_quit(&self) -> Task<Message> {
         self.send(Action::Quit)
     }
@@ -1993,6 +1998,7 @@ impl Maolan {
                             offset,
                             input_channel,
                             muted,
+                            peaks_file,
                             kind,
                             fade_enabled,
                             fade_in_samples,
@@ -2015,7 +2021,15 @@ impl Maolan {
                             let precomputed_peaks = self.pending_precomputed_peaks.remove(&key);
                             let loaded_bins = 0usize;
                             if *kind == Kind::Audio {
-                                peaks_path_for_load = self.pending_peak_file_loads.remove(&key);
+                                peaks_path_for_load = peaks_file.as_ref().and_then(|rel| {
+                                    self.session_dir
+                                        .as_ref()
+                                        .map(|session_root| session_root.join(rel))
+                                        .filter(|path| path.exists() && path.is_file())
+                                });
+                                if peaks_path_for_load.is_none() {
+                                    peaks_path_for_load = self.pending_peak_file_loads.remove(&key);
+                                }
                                 if name.to_ascii_lowercase().ends_with(".wav") {
                                     let wav_path = if std::path::Path::new(name).is_absolute() {
                                         Some(std::path::PathBuf::from(name))
@@ -2050,7 +2064,7 @@ impl Maolan {
                                             input_channel: *input_channel,
                                             muted: *muted,
                                             max_length_samples,
-                                            peaks_file: None,
+                                            peaks_file: peaks_file.clone(),
                                             peaks: precomputed_peaks.clone().unwrap_or_default(),
                                             fade_enabled: *fade_enabled,
                                             fade_in_samples: *fade_in_samples,
@@ -2079,6 +2093,7 @@ impl Maolan {
                                             take_lane_pinned: false,
                                             take_lane_locked: false,
                                             plugin_graph_json: plugin_graph_json.clone(),
+                                            grouped_clips: vec![],
                                         });
                                     }
                                     Kind::MIDI => {
@@ -2096,6 +2111,7 @@ impl Maolan {
                                             take_lane_override: None,
                                             take_lane_pinned: false,
                                             take_lane_locked: false,
+                                            grouped_clips: vec![],
                                         });
                                     }
                                 }
@@ -2124,6 +2140,41 @@ impl Maolan {
                             }
                             if *kind == Kind::MIDI {
                                 refresh_midi_clip_previews = true;
+                            }
+                        }
+                        Action::AddGroupedClip {
+                            track_name,
+                            kind,
+                            audio_clip,
+                            midi_clip,
+                        } => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| &t.name == track_name)
+                            {
+                                match kind {
+                                    Kind::Audio => {
+                                        if let Some(clip) = audio_clip {
+                                            let max_length_samples =
+                                                clip.offset.saturating_add(clip.length).max(1);
+                                            track.audio.clips.push(Self::audio_clip_from_data(
+                                                clip,
+                                                max_length_samples,
+                                            ));
+                                        }
+                                    }
+                                    Kind::MIDI => {
+                                        if let Some(clip) = midi_clip {
+                                            let max_length_samples =
+                                                clip.offset.saturating_add(clip.length).max(1);
+                                            track.midi.clips.push(Self::midi_clip_from_data(
+                                                clip,
+                                                max_length_samples,
+                                            ));
+                                            refresh_midi_clip_previews = true;
+                                        }
+                                    }
+                                }
                             }
                         }
                         Action::SetClipMuted {
@@ -3289,6 +3340,7 @@ impl Maolan {
                                 offset: clip.offset,
                                 input_channel: clip.input_channel,
                                 muted: clip.muted,
+                                peaks_file: clip.peaks_file,
                                 kind: Kind::Audio,
                                 fade_enabled: clip.fade_enabled,
                                 fade_in_samples: clip.fade_in_samples,
@@ -3326,6 +3378,7 @@ impl Maolan {
                             offset: clip.offset,
                             input_channel: clip.input_channel,
                             muted: clip.muted,
+                            peaks_file: None,
                             kind: Kind::MIDI,
                             fade_enabled: clip.fade_enabled,
                             fade_in_samples: clip.fade_in_samples,
@@ -4322,6 +4375,16 @@ impl Maolan {
                     muted,
                 });
             }
+            Message::GroupSelectedClips => {
+                return self.group_selected_clips();
+            }
+            Message::UngroupClip {
+                ref track_idx,
+                clip_idx,
+                kind,
+            } => {
+                return self.ungroup_clip(track_idx.clone(), clip_idx, kind);
+            }
             Message::ClipOpenPitchCorrection {
                 ref track_idx,
                 clip_idx,
@@ -4391,6 +4454,7 @@ impl Maolan {
                             offset: 0,
                             input_channel: request.input_channel,
                             muted: request.muted,
+                            peaks_file: None,
                             kind: Kind::Audio,
                             fade_enabled: request.fade_enabled,
                             fade_in_samples: fade_in,
@@ -4700,8 +4764,7 @@ impl Maolan {
                     && matches!(self.state.blocking_read().view, View::Workspace)
                 {
                     if button == mouse::Button::Middle {
-                        let cursor = self.state.blocking_read().cursor;
-                        return self.split_clip_at_position(cursor);
+                        return self.split_clip_at_position(self.active_workspace_cursor());
                     }
                     match button {
                         mouse::Button::Left => {
@@ -4711,10 +4774,7 @@ impl Maolan {
                             state.clip_marquee_end = None;
                         }
                         mouse::Button::Right => {
-                            let cursor = {
-                                let state = self.state.blocking_read();
-                                state.editor_cursor.unwrap_or(state.cursor)
-                            };
+                            let cursor = self.active_workspace_cursor();
                             let clip_hit = self.clip_at_position(cursor);
                             let anchor_for_hit = cursor;
                             let mut state = self.state.blocking_write();
@@ -6425,6 +6485,7 @@ impl Maolan {
                                                     offset: 0,
                                                     input_channel: 0,
                                                     muted: false,
+                                                    peaks_file: None,
                                                     kind: Kind::Audio,
                                                     fade_enabled: true,
                                                     fade_in_samples: 240,
@@ -6499,6 +6560,7 @@ impl Maolan {
                                                     offset: 0,
                                                     input_channel: 0,
                                                     muted: false,
+                                                    peaks_file: None,
                                                     kind: Kind::MIDI,
                                                     fade_enabled: true,
                                                     fade_in_samples: 240,
@@ -7295,5 +7357,43 @@ impl Maolan {
         }
         self.update_children(&message);
         Task::none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::Point;
+
+    #[test]
+    fn active_workspace_cursor_prefers_editor_cursor() {
+        let app = Maolan {
+            state: {
+                let state = crate::state::State::default();
+                {
+                    let mut guard = state.blocking_write();
+                    guard.cursor = Point::new(10.0, 20.0);
+                    guard.editor_cursor = Some(Point::new(30.0, 40.0));
+                }
+                state
+            },
+            ..Maolan::default()
+        };
+
+        assert_eq!(app.active_workspace_cursor(), Point::new(30.0, 40.0));
+    }
+
+    #[test]
+    fn active_workspace_cursor_falls_back_to_global_cursor() {
+        let app = Maolan {
+            state: {
+                let state = crate::state::State::default();
+                state.blocking_write().cursor = Point::new(10.0, 20.0);
+                state
+            },
+            ..Maolan::default()
+        };
+
+        assert_eq!(app.active_workspace_cursor(), Point::new(10.0, 20.0));
     }
 }

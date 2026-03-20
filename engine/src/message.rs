@@ -86,13 +86,51 @@ pub struct OfflineBounceWork {
     pub cancel: Arc<AtomicBool>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct PitchCorrectionPointData {
     pub start_sample: usize,
     pub length_samples: usize,
     pub detected_midi_pitch: f32,
     pub target_midi_pitch: f32,
     pub clarity: f32,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct AudioClipData {
+    pub name: String,
+    pub start: usize,
+    pub length: usize,
+    pub offset: usize,
+    pub input_channel: usize,
+    pub muted: bool,
+    pub peaks_file: Option<String>,
+    pub fade_enabled: bool,
+    pub fade_in_samples: usize,
+    pub fade_out_samples: usize,
+    pub preview_name: Option<String>,
+    pub source_name: Option<String>,
+    pub source_offset: Option<usize>,
+    pub source_length: Option<usize>,
+    pub pitch_correction_points: Vec<PitchCorrectionPointData>,
+    pub pitch_correction_frame_likeness: Option<f32>,
+    pub pitch_correction_inertia_ms: Option<u16>,
+    pub pitch_correction_formant_compensation: Option<bool>,
+    pub plugin_graph_json: Option<serde_json::Value>,
+    pub grouped_clips: Vec<AudioClipData>,
+}
+
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct MidiClipData {
+    pub name: String,
+    pub start: usize,
+    pub length: usize,
+    pub offset: usize,
+    pub input_channel: usize,
+    pub muted: bool,
+    pub fade_enabled: bool,
+    pub fade_in_samples: usize,
+    pub fade_out_samples: usize,
+    pub grouped_clips: Vec<MidiClipData>,
 }
 
 #[derive(Clone, Debug)]
@@ -277,6 +315,7 @@ pub enum Action {
         offset: usize,
         input_channel: usize,
         muted: bool,
+        peaks_file: Option<String>,
         kind: Kind,
         fade_enabled: bool,
         fade_in_samples: usize,
@@ -290,6 +329,12 @@ pub enum Action {
         pitch_correction_inertia_ms: Option<u16>,
         pitch_correction_formant_compensation: Option<bool>,
         plugin_graph_json: Option<serde_json::Value>,
+    },
+    AddGroupedClip {
+        track_name: String,
+        kind: Kind,
+        audio_clip: Option<AudioClipData>,
+        midi_clip: Option<MidiClipData>,
     },
     RemoveClip {
         track_name: String,

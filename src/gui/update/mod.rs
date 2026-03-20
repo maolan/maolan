@@ -413,15 +413,187 @@ impl Maolan {
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
+    fn clip_plugin_graph_json_or_default(
+        graph_json: Option<serde_json::Value>,
+        audio_ins: usize,
+        audio_outs: usize,
+    ) -> serde_json::Value {
+        graph_json.unwrap_or_else(|| Self::default_clip_plugin_graph_json(audio_ins, audio_outs))
+    }
+
+    pub(crate) fn audio_clip_to_data(
+        clip: &crate::state::AudioClip,
+    ) -> maolan_engine::message::AudioClipData {
+        let mut data = maolan_engine::message::AudioClipData {
+            name: clip.name.clone(),
+            start: clip.start,
+            length: clip.length,
+            offset: clip.offset,
+            input_channel: clip.input_channel,
+            muted: clip.muted,
+            peaks_file: clip.peaks_file.clone(),
+            fade_enabled: clip.fade_enabled,
+            fade_in_samples: clip.fade_in_samples,
+            fade_out_samples: clip.fade_out_samples,
+            preview_name: clip.pitch_correction_preview_name.clone(),
+            source_name: clip.pitch_correction_source_name.clone(),
+            source_offset: clip.pitch_correction_source_offset,
+            source_length: clip.pitch_correction_source_length,
+            pitch_correction_points: clip
+                .pitch_correction_points
+                .iter()
+                .map(|point| maolan_engine::message::PitchCorrectionPointData {
+                    start_sample: point.start_sample,
+                    length_samples: point.length_samples,
+                    detected_midi_pitch: point.detected_midi_pitch,
+                    target_midi_pitch: point.target_midi_pitch,
+                    clarity: point.clarity,
+                })
+                .collect(),
+            pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
+            pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
+            pitch_correction_formant_compensation: clip.pitch_correction_formant_compensation,
+            plugin_graph_json: clip.plugin_graph_json.clone(),
+            grouped_clips: clip
+                .grouped_clips
+                .iter()
+                .map(Self::audio_clip_to_data)
+                .collect(),
+        };
+        for child in &mut data.grouped_clips {
+            child.fade_enabled = false;
+            child.fade_in_samples = 0;
+            child.fade_out_samples = 0;
+        }
+        data
+    }
+
+    pub(crate) fn audio_clip_from_data(
+        data: &maolan_engine::message::AudioClipData,
+        max_length_samples: usize,
+    ) -> crate::state::AudioClip {
+        let mut clip = crate::state::AudioClip {
+            name: data.name.clone(),
+            start: data.start,
+            length: data.length,
+            offset: data.offset,
+            input_channel: data.input_channel,
+            muted: data.muted,
+            max_length_samples,
+            peaks_file: data.peaks_file.clone(),
+            peaks: Default::default(),
+            fade_enabled: data.fade_enabled,
+            fade_in_samples: data.fade_in_samples,
+            fade_out_samples: data.fade_out_samples,
+            pitch_correction_preview_name: data.preview_name.clone(),
+            pitch_correction_source_name: data.source_name.clone(),
+            pitch_correction_source_offset: data.source_offset,
+            pitch_correction_source_length: data.source_length,
+            pitch_correction_points: data
+                .pitch_correction_points
+                .iter()
+                .map(|point| crate::state::PitchCorrectionPoint {
+                    start_sample: point.start_sample,
+                    length_samples: point.length_samples,
+                    detected_midi_pitch: point.detected_midi_pitch,
+                    target_midi_pitch: point.target_midi_pitch,
+                    clarity: point.clarity,
+                })
+                .collect(),
+            pitch_correction_frame_likeness: data.pitch_correction_frame_likeness,
+            pitch_correction_inertia_ms: data.pitch_correction_inertia_ms,
+            pitch_correction_formant_compensation: data.pitch_correction_formant_compensation,
+            take_lane_override: None,
+            take_lane_pinned: false,
+            take_lane_locked: false,
+            plugin_graph_json: data.plugin_graph_json.clone(),
+            grouped_clips: data
+                .grouped_clips
+                .iter()
+                .map(|child| Self::audio_clip_from_data(child, max_length_samples))
+                .collect(),
+        };
+        clip.normalize_group_children();
+        clip
+    }
+
+    pub(crate) fn midi_clip_to_data(
+        clip: &crate::state::MIDIClip,
+    ) -> maolan_engine::message::MidiClipData {
+        let mut data = maolan_engine::message::MidiClipData {
+            name: clip.name.clone(),
+            start: clip.start,
+            length: clip.length,
+            offset: clip.offset,
+            input_channel: clip.input_channel,
+            muted: clip.muted,
+            fade_enabled: clip.fade_enabled,
+            fade_in_samples: clip.fade_in_samples,
+            fade_out_samples: clip.fade_out_samples,
+            grouped_clips: clip
+                .grouped_clips
+                .iter()
+                .map(Self::midi_clip_to_data)
+                .collect(),
+        };
+        for child in &mut data.grouped_clips {
+            child.fade_enabled = false;
+            child.fade_in_samples = 0;
+            child.fade_out_samples = 0;
+        }
+        data
+    }
+
+    pub(crate) fn midi_clip_from_data(
+        data: &maolan_engine::message::MidiClipData,
+        max_length_samples: usize,
+    ) -> crate::state::MIDIClip {
+        let mut clip = crate::state::MIDIClip {
+            name: data.name.clone(),
+            start: data.start,
+            length: data.length,
+            offset: data.offset,
+            input_channel: data.input_channel,
+            muted: data.muted,
+            max_length_samples,
+            fade_enabled: data.fade_enabled,
+            fade_in_samples: data.fade_in_samples,
+            fade_out_samples: data.fade_out_samples,
+            take_lane_override: None,
+            take_lane_pinned: false,
+            take_lane_locked: false,
+            grouped_clips: data
+                .grouped_clips
+                .iter()
+                .map(|child| Self::midi_clip_from_data(child, max_length_samples))
+                .collect(),
+        };
+        clip.normalize_group_children();
+        clip
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn open_clip_plugin_view(&mut self, track_name: String, clip_idx: usize) -> Task<Message> {
-        let (graph_json, lv2_plugins, vst3_plugins, clap_plugins) = {
+        let (
+            graph_json,
+            track_audio_ins,
+            track_audio_outs,
+            lv2_plugins,
+            vst3_plugins,
+            clap_plugins,
+        ) = {
             let state = self.state.blocking_read();
             let track = state.tracks.iter().find(|track| track.name == track_name);
             let graph_json = track
                 .and_then(|track| track.audio.clips.get(clip_idx))
                 .and_then(|clip| clip.plugin_graph_json.clone());
+            let (track_audio_ins, track_audio_outs) = track
+                .map(|track| (track.audio.ins, track.audio.outs))
+                .unwrap_or((0, 0));
             (
                 graph_json,
+                track_audio_ins,
+                track_audio_outs,
                 state.lv2_plugins.clone(),
                 state.vst3_plugins.clone(),
                 state.clap_plugins.clone(),
@@ -462,7 +634,8 @@ impl Maolan {
                 .find(|track| track.name == target_track_name)
             && let Some(clip) = track.audio.clips.get_mut(clip_idx)
         {
-            let graph_json = Self::default_clip_plugin_graph_json(0, 0);
+            let graph_json =
+                Self::clip_plugin_graph_json_or_default(None, track_audio_ins, track_audio_outs);
             clip.plugin_graph_json = Some(graph_json.clone());
             return self.send(Action::SetClipPluginGraphJson {
                 track_name: target_track_name,
@@ -2122,6 +2295,352 @@ impl Maolan {
         None
     }
 
+    fn selected_group_candidate(&self) -> Option<(String, Kind, Vec<usize>)> {
+        let state = self.state.blocking_read();
+        let mut selected: Vec<_> = state.selected_clips.iter().cloned().collect();
+        if selected.len() < 2 {
+            return None;
+        }
+        selected.sort_by_key(|clip| clip.clip_idx);
+        let first = selected.first()?.clone();
+        if selected
+            .iter()
+            .any(|clip| clip.track_idx != first.track_idx || clip.kind != first.kind)
+        {
+            return None;
+        }
+        let track = state
+            .tracks
+            .iter()
+            .find(|track| track.name == first.track_idx)?;
+        let valid = match first.kind {
+            Kind::Audio => selected.iter().all(|clip| {
+                track
+                    .audio
+                    .clips
+                    .get(clip.clip_idx)
+                    .is_some_and(|clip| !clip.is_group())
+            }),
+            Kind::MIDI => selected.iter().all(|clip| {
+                track
+                    .midi
+                    .clips
+                    .get(clip.clip_idx)
+                    .is_some_and(|clip| !clip.is_group())
+            }),
+        };
+        if !valid {
+            return None;
+        }
+        Some((
+            first.track_idx,
+            first.kind,
+            selected.into_iter().map(|clip| clip.clip_idx).collect(),
+        ))
+    }
+
+    fn group_selected_clips(&mut self) -> Task<Message> {
+        let Some((track_name, kind, mut clip_indices)) = self.selected_group_candidate() else {
+            self.state.blocking_write().message =
+                "Select two or more clips of the same type on one track to group".to_string();
+            return Task::none();
+        };
+        clip_indices.sort_unstable();
+        let grouped_count = clip_indices.len();
+        let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+        match kind {
+            Kind::Audio => {
+                let Some(track) = self
+                    .state
+                    .blocking_read()
+                    .tracks
+                    .iter()
+                    .find(|track| track.name == track_name)
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                let mut clips: Vec<_> = clip_indices
+                    .iter()
+                    .filter_map(|idx| track.audio.clips.get(*idx).cloned())
+                    .collect();
+                if clips.len() < 2 {
+                    return Task::none();
+                }
+                clips.sort_by_key(|clip| clip.start);
+                let group_start = clips.iter().map(|clip| clip.start).min().unwrap_or(0);
+                let group_end = clips
+                    .iter()
+                    .map(|clip| clip.start.saturating_add(clip.length))
+                    .max()
+                    .unwrap_or(group_start);
+                let mut grouped_clips = clips;
+                for child in &mut grouped_clips {
+                    child.start = child.start.saturating_sub(group_start);
+                    child.fade_enabled = false;
+                    child.fade_in_samples = 0;
+                    child.fade_out_samples = 0;
+                    child.normalize_group_children();
+                }
+                tasks.push(self.send(Action::RemoveClip {
+                    track_name: track_name.clone(),
+                    kind,
+                    clip_indices: clip_indices.clone(),
+                }));
+                tasks.push(
+                    self.send(Action::AddGroupedClip {
+                        track_name: track_name.clone(),
+                        kind,
+                        audio_clip: Some(Self::audio_clip_to_data(&crate::state::AudioClip {
+                            name: "Group".to_string(),
+                            start: group_start,
+                            length: group_end.saturating_sub(group_start).max(1),
+                            offset: 0,
+                            input_channel: grouped_clips
+                                .first()
+                                .map(|clip| clip.input_channel)
+                                .unwrap_or(0),
+                            muted: grouped_clips.iter().all(|clip| clip.muted),
+                            max_length_samples: group_end.saturating_sub(group_start).max(1),
+                            peaks_file: None,
+                            peaks: Default::default(),
+                            fade_enabled: true,
+                            fade_in_samples: 240,
+                            fade_out_samples: 240,
+                            pitch_correction_preview_name: None,
+                            pitch_correction_source_name: None,
+                            pitch_correction_source_offset: None,
+                            pitch_correction_source_length: None,
+                            pitch_correction_points: vec![],
+                            pitch_correction_frame_likeness: None,
+                            pitch_correction_inertia_ms: None,
+                            pitch_correction_formant_compensation: None,
+                            take_lane_override: None,
+                            take_lane_pinned: false,
+                            take_lane_locked: false,
+                            plugin_graph_json: None,
+                            grouped_clips,
+                        })),
+                        midi_clip: None,
+                    }),
+                );
+            }
+            Kind::MIDI => {
+                let Some(track) = self
+                    .state
+                    .blocking_read()
+                    .tracks
+                    .iter()
+                    .find(|track| track.name == track_name)
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                let mut clips: Vec<_> = clip_indices
+                    .iter()
+                    .filter_map(|idx| track.midi.clips.get(*idx).cloned())
+                    .collect();
+                if clips.len() < 2 {
+                    return Task::none();
+                }
+                clips.sort_by_key(|clip| clip.start);
+                let group_start = clips.iter().map(|clip| clip.start).min().unwrap_or(0);
+                let group_end = clips
+                    .iter()
+                    .map(|clip| clip.start.saturating_add(clip.length))
+                    .max()
+                    .unwrap_or(group_start);
+                let mut grouped_clips = clips;
+                for child in &mut grouped_clips {
+                    child.start = child.start.saturating_sub(group_start);
+                    child.fade_enabled = false;
+                    child.fade_in_samples = 0;
+                    child.fade_out_samples = 0;
+                    child.normalize_group_children();
+                }
+                tasks.push(self.send(Action::RemoveClip {
+                    track_name: track_name.clone(),
+                    kind,
+                    clip_indices: clip_indices.clone(),
+                }));
+                tasks.push(
+                    self.send(Action::AddGroupedClip {
+                        track_name: track_name.clone(),
+                        kind,
+                        audio_clip: None,
+                        midi_clip: Some(Self::midi_clip_to_data(&crate::state::MIDIClip {
+                            name: "Group".to_string(),
+                            start: group_start,
+                            length: group_end.saturating_sub(group_start).max(1),
+                            offset: 0,
+                            input_channel: grouped_clips
+                                .first()
+                                .map(|clip| clip.input_channel)
+                                .unwrap_or(0),
+                            muted: grouped_clips.iter().all(|clip| clip.muted),
+                            max_length_samples: group_end.saturating_sub(group_start).max(1),
+                            fade_enabled: true,
+                            fade_in_samples: 240,
+                            fade_out_samples: 240,
+                            take_lane_override: None,
+                            take_lane_pinned: false,
+                            take_lane_locked: false,
+                            grouped_clips,
+                        })),
+                    }),
+                );
+            }
+        }
+        tasks.push(self.send(Action::EndHistoryGroup));
+        {
+            let mut state = self.state.blocking_write();
+            state.selected_clips.clear();
+            state.clip_context_menu = None;
+            state.message = format!("Grouped {} clips", grouped_count);
+        }
+        Task::batch(tasks)
+    }
+
+    fn ungroup_clip(&mut self, track_name: String, clip_idx: usize, kind: Kind) -> Task<Message> {
+        let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
+        match kind {
+            Kind::Audio => {
+                let Some(group) = self
+                    .state
+                    .blocking_read()
+                    .tracks
+                    .iter()
+                    .find(|track| track.name == track_name)
+                    .and_then(|track| track.audio.clips.get(clip_idx))
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                if !group.is_group() {
+                    return Task::none();
+                }
+                tasks.push(self.send(Action::RemoveClip {
+                    track_name: track_name.clone(),
+                    kind,
+                    clip_indices: vec![clip_idx],
+                }));
+                for mut child in group.grouped_clips {
+                    child.start = child.start.saturating_add(group.start);
+                    if child.is_group() {
+                        tasks.push(self.send(Action::AddGroupedClip {
+                            track_name: track_name.clone(),
+                            kind,
+                            audio_clip: Some(Self::audio_clip_to_data(&child)),
+                            midi_clip: None,
+                        }));
+                    } else {
+                        tasks.push(
+                            self.send(Action::AddClip {
+                                name: child.name,
+                                track_name: track_name.clone(),
+                                start: child.start,
+                                length: child.length,
+                                offset: child.offset,
+                                input_channel: child.input_channel,
+                                muted: child.muted,
+                                peaks_file: child.peaks_file,
+                                kind,
+                                fade_enabled: child.fade_enabled,
+                                fade_in_samples: child.fade_in_samples,
+                                fade_out_samples: child.fade_out_samples,
+                                source_name: child.pitch_correction_source_name,
+                                source_offset: child.pitch_correction_source_offset,
+                                source_length: child.pitch_correction_source_length,
+                                preview_name: child.pitch_correction_preview_name,
+                                pitch_correction_points: child
+                                    .pitch_correction_points
+                                    .into_iter()
+                                    .map(|point| maolan_engine::message::PitchCorrectionPointData {
+                                        start_sample: point.start_sample,
+                                        length_samples: point.length_samples,
+                                        detected_midi_pitch: point.detected_midi_pitch,
+                                        target_midi_pitch: point.target_midi_pitch,
+                                        clarity: point.clarity,
+                                    })
+                                    .collect(),
+                                pitch_correction_frame_likeness: child
+                                    .pitch_correction_frame_likeness,
+                                pitch_correction_inertia_ms: child.pitch_correction_inertia_ms,
+                                pitch_correction_formant_compensation: child
+                                    .pitch_correction_formant_compensation,
+                                plugin_graph_json: child.plugin_graph_json,
+                            }),
+                        );
+                    }
+                }
+            }
+            Kind::MIDI => {
+                let Some(group) = self
+                    .state
+                    .blocking_read()
+                    .tracks
+                    .iter()
+                    .find(|track| track.name == track_name)
+                    .and_then(|track| track.midi.clips.get(clip_idx))
+                    .cloned()
+                else {
+                    return Task::none();
+                };
+                if !group.is_group() {
+                    return Task::none();
+                }
+                tasks.push(self.send(Action::RemoveClip {
+                    track_name: track_name.clone(),
+                    kind,
+                    clip_indices: vec![clip_idx],
+                }));
+                for mut child in group.grouped_clips {
+                    child.start = child.start.saturating_add(group.start);
+                    if child.is_group() {
+                        tasks.push(self.send(Action::AddGroupedClip {
+                            track_name: track_name.clone(),
+                            kind,
+                            audio_clip: None,
+                            midi_clip: Some(Self::midi_clip_to_data(&child)),
+                        }));
+                    } else {
+                        tasks.push(self.send(Action::AddClip {
+                            name: child.name,
+                            track_name: track_name.clone(),
+                            start: child.start,
+                            length: child.length,
+                            offset: child.offset,
+                            input_channel: child.input_channel,
+                            muted: child.muted,
+                            peaks_file: None,
+                            kind,
+                            fade_enabled: child.fade_enabled,
+                            fade_in_samples: child.fade_in_samples,
+                            fade_out_samples: child.fade_out_samples,
+                            source_name: None,
+                            source_offset: None,
+                            source_length: None,
+                            preview_name: None,
+                            pitch_correction_points: vec![],
+                            pitch_correction_frame_likeness: None,
+                            pitch_correction_inertia_ms: None,
+                            pitch_correction_formant_compensation: None,
+                            plugin_graph_json: None,
+                        }));
+                    }
+                }
+            }
+        }
+        tasks.push(self.send(Action::EndHistoryGroup));
+        {
+            let mut state = self.state.blocking_write();
+            state.selected_clips.clear();
+            state.clip_context_menu = None;
+            state.message = "Ungrouped clip".to_string();
+        }
+        Task::batch(tasks)
+    }
+
     fn split_clip_at_position(&mut self, position: Point) -> Task<Message> {
         let Some((track_name, kind, clip_idx)) = self.clip_at_position(position) else {
             return Task::none();
@@ -2146,6 +2665,10 @@ impl Maolan {
                 if clip.take_lane_locked {
                     self.state.blocking_write().message =
                         "Cannot split a take-lane locked clip".to_string();
+                    return Task::none();
+                }
+                if clip.is_group() {
+                    self.state.blocking_write().message = "Cannot split a grouped clip".to_string();
                     return Task::none();
                 }
                 if split_sample <= clip.start || split_sample >= clip_end {
@@ -2176,6 +2699,7 @@ impl Maolan {
                         offset: clip.offset,
                         input_channel: clip.input_channel,
                         muted: clip.muted,
+                        peaks_file: clip.peaks_file.clone(),
                         kind: Kind::Audio,
                         fade_enabled: clip.fade_enabled,
                         fade_in_samples: left_fade_in,
@@ -2202,6 +2726,7 @@ impl Maolan {
                         offset: clip.offset.saturating_add(left_len),
                         input_channel: clip.input_channel,
                         muted: clip.muted,
+                        peaks_file: clip.peaks_file,
                         kind: Kind::Audio,
                         fade_enabled: clip.fade_enabled,
                         fade_in_samples: right_fade_in,
@@ -2242,6 +2767,10 @@ impl Maolan {
                         "Cannot split a take-lane locked clip".to_string();
                     return Task::none();
                 }
+                if clip.is_group() {
+                    self.state.blocking_write().message = "Cannot split a grouped clip".to_string();
+                    return Task::none();
+                }
                 if split_sample <= clip.start || split_sample >= clip_end {
                     return Task::none();
                 }
@@ -2269,6 +2798,7 @@ impl Maolan {
                     offset: clip.offset,
                     input_channel: clip.input_channel,
                     muted: clip.muted,
+                    peaks_file: None,
                     kind: Kind::MIDI,
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: left_fade_in,
@@ -2291,6 +2821,7 @@ impl Maolan {
                     offset: clip.offset.saturating_add(left_len),
                     input_channel: clip.input_channel,
                     muted: clip.muted,
+                    peaks_file: None,
                     kind: Kind::MIDI,
                     fade_enabled: clip.fade_enabled,
                     fade_in_samples: right_fade_in,
@@ -2348,6 +2879,7 @@ impl Maolan {
             offset: 0,
             input_channel,
             muted: false,
+            peaks_file: None,
             kind: Kind::MIDI,
             fade_enabled: true,
             fade_in_samples: 240,
@@ -2789,5 +3321,22 @@ impl Maolan {
             }
         });
         Some(Task::none())
+    }
+}
+
+#[cfg(all(test, unix, not(target_os = "macos")))]
+mod tests {
+    use super::Maolan;
+
+    #[test]
+    fn clip_plugin_graph_json_or_default_uses_track_io_counts() {
+        let graph = Maolan::clip_plugin_graph_json_or_default(None, 1, 1);
+        let connections = graph["connections"].as_array().expect("connections array");
+
+        assert_eq!(connections.len(), 1);
+        assert_eq!(connections[0]["from_node"], serde_json::json!("TrackInput"));
+        assert_eq!(connections[0]["to_node"], serde_json::json!("TrackOutput"));
+        assert_eq!(connections[0]["from_port"].as_u64(), Some(0));
+        assert_eq!(connections[0]["to_port"].as_u64(), Some(0));
     }
 }

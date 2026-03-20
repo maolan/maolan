@@ -51,6 +51,8 @@ pub struct AudioClip {
     pub take_lane_locked: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin_graph_json: Option<Value>,
+    #[serde(default)]
+    pub grouped_clips: Vec<AudioClip>,
 }
 
 fn default_fade_enabled() -> bool {
@@ -90,11 +92,43 @@ pub struct MIDIClip {
     pub take_lane_pinned: bool,
     #[serde(default = "default_take_lane_flag")]
     pub take_lane_locked: bool,
+    #[serde(default)]
+    pub grouped_clips: Vec<MIDIClip>,
+}
+
+impl AudioClip {
+    pub fn is_group(&self) -> bool {
+        !self.grouped_clips.is_empty()
+    }
+
+    pub fn normalize_group_children(&mut self) {
+        for child in &mut self.grouped_clips {
+            child.fade_enabled = false;
+            child.fade_in_samples = 0;
+            child.fade_out_samples = 0;
+            child.normalize_group_children();
+        }
+    }
+}
+
+impl MIDIClip {
+    pub fn is_group(&self) -> bool {
+        !self.grouped_clips.is_empty()
+    }
+
+    pub fn normalize_group_children(&mut self) {
+        for child in &mut self.grouped_clips {
+            child.fade_enabled = false;
+            child.fade_in_samples = 0;
+            child.fade_out_samples = 0;
+            child.normalize_group_children();
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::AudioClip;
+    use super::{AudioClip, MIDIClip};
     use serde_json::json;
 
     #[test]
@@ -112,5 +146,61 @@ mod tests {
         let restored: AudioClip = serde_json::from_value(value).expect("deserialize");
 
         assert_eq!(restored.plugin_graph_json, clip.plugin_graph_json);
+    }
+
+    #[test]
+    fn normalize_group_children_clears_audio_child_fades_recursively() {
+        let mut clip = AudioClip {
+            grouped_clips: vec![AudioClip {
+                fade_enabled: true,
+                fade_in_samples: 32,
+                fade_out_samples: 48,
+                grouped_clips: vec![AudioClip {
+                    fade_enabled: true,
+                    fade_in_samples: 12,
+                    fade_out_samples: 18,
+                    ..AudioClip::default()
+                }],
+                ..AudioClip::default()
+            }],
+            ..AudioClip::default()
+        };
+
+        clip.normalize_group_children();
+
+        assert!(!clip.grouped_clips[0].fade_enabled);
+        assert_eq!(clip.grouped_clips[0].fade_in_samples, 0);
+        assert_eq!(clip.grouped_clips[0].fade_out_samples, 0);
+        assert!(!clip.grouped_clips[0].grouped_clips[0].fade_enabled);
+        assert_eq!(clip.grouped_clips[0].grouped_clips[0].fade_in_samples, 0);
+        assert_eq!(clip.grouped_clips[0].grouped_clips[0].fade_out_samples, 0);
+    }
+
+    #[test]
+    fn normalize_group_children_clears_midi_child_fades_recursively() {
+        let mut clip = MIDIClip {
+            grouped_clips: vec![MIDIClip {
+                fade_enabled: true,
+                fade_in_samples: 32,
+                fade_out_samples: 48,
+                grouped_clips: vec![MIDIClip {
+                    fade_enabled: true,
+                    fade_in_samples: 12,
+                    fade_out_samples: 18,
+                    ..MIDIClip::default()
+                }],
+                ..MIDIClip::default()
+            }],
+            ..MIDIClip::default()
+        };
+
+        clip.normalize_group_children();
+
+        assert!(!clip.grouped_clips[0].fade_enabled);
+        assert_eq!(clip.grouped_clips[0].fade_in_samples, 0);
+        assert_eq!(clip.grouped_clips[0].fade_out_samples, 0);
+        assert!(!clip.grouped_clips[0].grouped_clips[0].fade_enabled);
+        assert_eq!(clip.grouped_clips[0].grouped_clips[0].fade_in_samples, 0);
+        assert_eq!(clip.grouped_clips[0].grouped_clips[0].fade_out_samples, 0);
     }
 }

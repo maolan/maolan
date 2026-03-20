@@ -1682,6 +1682,22 @@ impl Maolan {
                             }
                         }
 
+                        if clip
+                            .get("grouped_clips")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|children| !children.is_empty())
+                            && let Ok(grouped_clip) =
+                                serde_json::from_value::<crate::state::AudioClip>(clip.clone())
+                        {
+                            restore_actions.push(Action::AddGroupedClip {
+                                track_name: name.clone(),
+                                kind: Kind::Audio,
+                                audio_clip: Some(Self::audio_clip_to_data(&grouped_clip)),
+                                midi_clip: None,
+                            });
+                            continue;
+                        }
+
                         restore_actions.push(Action::AddClip {
                             name: clip_name,
                             track_name: name.clone(),
@@ -1690,6 +1706,7 @@ impl Maolan {
                             offset,
                             input_channel,
                             muted,
+                            peaks_file: peaks_file.clone(),
                             kind: Kind::Audio,
                             fade_enabled,
                             fade_in_samples,
@@ -1801,6 +1818,22 @@ impl Maolan {
                             }
                         }
 
+                        if clip
+                            .get("grouped_clips")
+                            .and_then(serde_json::Value::as_array)
+                            .is_some_and(|children| !children.is_empty())
+                            && let Ok(grouped_clip) =
+                                serde_json::from_value::<crate::state::MIDIClip>(clip.clone())
+                        {
+                            restore_actions.push(Action::AddGroupedClip {
+                                track_name: name.clone(),
+                                kind: Kind::MIDI,
+                                audio_clip: None,
+                                midi_clip: Some(Self::midi_clip_to_data(&grouped_clip)),
+                            });
+                            continue;
+                        }
+
                         restore_actions.push(Action::AddClip {
                             name: clip_name,
                             track_name: name.clone(),
@@ -1809,6 +1842,7 @@ impl Maolan {
                             offset,
                             input_channel,
                             muted,
+                            peaks_file: None,
                             kind: Kind::MIDI,
                             fade_enabled,
                             fade_in_samples,
