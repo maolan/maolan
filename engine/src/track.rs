@@ -4591,7 +4591,7 @@ mod tests {
 
     #[test]
     fn clip_plugin_runtime_key_changes_when_graph_changes() {
-        let mut clip = crate::audio::clip::AudioClip::new("clip.wav".to_string(), 0, 128, 0, 0);
+        let mut clip = crate::audio::clip::AudioClip::new("clip.wav".to_string(), 0, 128);
         clip.plugin_graph_json = Some(serde_json::json!({
             "plugins": [],
             "connections": [
@@ -4617,7 +4617,7 @@ mod tests {
 
     #[test]
     fn clip_plugin_runtime_key_changes_when_channel_shape_changes() {
-        let mut clip = crate::audio::clip::AudioClip::new("clip.wav".to_string(), 0, 128, 0, 0);
+        let mut clip = crate::audio::clip::AudioClip::new("clip.wav".to_string(), 0, 128);
         clip.plugin_graph_json = Some(serde_json::json!({
             "plugins": [],
             "connections": []
