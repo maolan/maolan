@@ -98,7 +98,7 @@ impl Maolan {
                         Self::apply_preferred_devices_to_state(&mut state, &prefs);
                     }
                     self.modal = Some(Show::Preferences);
-                    return Task::perform(
+                    Task::perform(
                         async {
                             (
                                 crate::state::discover_alsa_output_devices(),
@@ -109,10 +109,13 @@ impl Maolan {
                             output_devices,
                             input_devices,
                         },
-                    );
+                    )
                 }
-                self.modal = Some(Show::Preferences);
-                Task::none()
+                #[cfg(not(target_os = "linux"))]
+                {
+                    self.modal = Some(Show::Preferences);
+                    Task::none()
+                }
             }
             Show::AutosaveRecovery => {
                 self.modal = Some(Show::AutosaveRecovery);
