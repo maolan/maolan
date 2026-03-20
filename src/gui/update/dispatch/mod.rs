@@ -602,6 +602,7 @@ impl Maolan {
                         );
                         drop(state);
                         self.push_pitch_correction_history(before_points, before_selection);
+                        return self.sync_pitch_correction_realtime();
                     }
                 }
             }
@@ -695,14 +696,18 @@ impl Maolan {
                     state.pitch_correction_dragging_points = None;
                     state.pitch_correction_selecting_rect = None;
                 }
+                drop(state);
+                return self.sync_pitch_correction_realtime();
             }
             Message::PitchCorrectionInertiaChanged(value) => {
                 self.state.blocking_write().pitch_correction_inertia_ms = value.min(1000);
+                return self.sync_pitch_correction_realtime();
             }
             Message::PitchCorrectionFormantCompensationChanged(enabled) => {
                 self.state
                     .blocking_write()
                     .pitch_correction_formant_compensation = enabled;
+                return self.sync_pitch_correction_realtime();
             }
             Message::PianoNoteResizeStart {
                 note_index,
@@ -4407,9 +4412,6 @@ impl Maolan {
                     format!("Pitch correction '{clip_name}' ({percent}%)")
                 };
                 return Task::none();
-            }
-            Message::PitchCorrectionApply => {
-                return self.apply_pitch_correction();
             }
             Message::ClipStretchFinished { request, result } => match result {
                 Ok((new_name, new_length)) => {

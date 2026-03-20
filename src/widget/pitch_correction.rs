@@ -15,7 +15,7 @@ use crate::{
 use iced::{
     Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, mouse,
     widget::{
-        button, canvas,
+        canvas,
         canvas::{Action as CanvasAction, Frame, Geometry, Path, Program},
         checkbox, column, container, pin, row, slider, text, vertical_slider,
     },
@@ -161,7 +161,6 @@ impl PitchCorrection {
                 checkbox(formant_compensation)
                     .label("Formant compensation")
                     .on_toggle(Message::PitchCorrectionFormantCompensationChanged),
-                button(text("Apply").size(11)).on_press(Message::PitchCorrectionApply),
             ]
             .spacing(8)
             .width(Length::Fill),
