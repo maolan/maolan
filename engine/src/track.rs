@@ -7,7 +7,7 @@ use crate::lv2::{Lv2Processor, Lv2TransportInfo};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::message::Lv2ControlPortInfo;
 #[cfg(unix)]
-use crate::message::Lv2PluginState;
+use crate::message::{Lv2PluginState, Lv2StatePortValue, Lv2StateProperty};
 #[cfg(unix)]
 use crate::message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin};
 use crate::mutex::UnsafeMutex;
@@ -20,6 +20,7 @@ use crate::{
 #[cfg(unix)]
 use crate::{kind::Kind, routing};
 use midly::{MetaMessage, Smf, Timing, TrackEventKind, live::LiveEvent};
+use serde_json::Value;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -57,6 +58,362 @@ struct AudioClipBuffer {
 #[derive(Debug)]
 pub(crate) struct ClipPitchShifter {
     shifter: LivePitchShifter,
+}
+
+#[derive(Debug)]
+struct ClipPluginRuntime {
+    input_sources: Vec<Arc<AudioIO>>,
+    outputs: Vec<Arc<AudioIO>>,
+    #[cfg(all(unix, not(target_os = "macos")))]
+    lv2_processors: Vec<Lv2Instance>,
+    vst3_processors: Vec<Vst3Instance>,
+    clap_plugins: Vec<ClapInstance>,
+    #[cfg(unix)]
+    plugin_midi_connections: Vec<PluginGraphConnection>,
+}
+
+impl ClipPluginRuntime {
+    fn setup_ports(&self) {
+        for source in &self.input_sources {
+            source.setup();
+        }
+        for output in &self.outputs {
+            output.setup();
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        for instance in &self.lv2_processors {
+            instance.processor.setup_audio_ports();
+        }
+        for instance in &self.vst3_processors {
+            instance.processor.setup_audio_ports();
+        }
+        for instance in &self.clap_plugins {
+            instance.processor.setup_audio_ports();
+        }
+    }
+
+    fn connect_audio(
+        &mut self,
+        from_node: PluginGraphNode,
+        from_port: usize,
+        to_node: PluginGraphNode,
+        to_port: usize,
+    ) -> Result<(), String> {
+        let source = self.source_io(&from_node, from_port)?;
+        let target = self.target_io(&to_node, to_port)?;
+        Track::connect_directed_audio(&source, &target);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn connect_midi(
+        &mut self,
+        from_node: PluginGraphNode,
+        from_port: usize,
+        to_node: PluginGraphNode,
+        to_port: usize,
+    ) {
+        self.plugin_midi_connections.push(PluginGraphConnection {
+            from_node,
+            from_port,
+            to_node,
+            to_port,
+            kind: Kind::MIDI,
+        });
+    }
+
+    fn source_io(&self, node: &PluginGraphNode, port: usize) -> Result<Arc<AudioIO>, String> {
+        match node {
+            PluginGraphNode::TrackInput => self
+                .input_sources
+                .get(port)
+                .cloned()
+                .ok_or_else(|| format!("Invalid clip input port: {port}")),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            PluginGraphNode::Lv2PluginInstance(id) => self
+                .lv2_processors
+                .iter()
+                .find(|instance| instance.id == *id)
+                .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
+                .ok_or_else(|| format!("Invalid clip LV2 output port: {id}:{port}")),
+            PluginGraphNode::Vst3PluginInstance(id) => self
+                .vst3_processors
+                .iter()
+                .find(|instance| instance.id == *id)
+                .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
+                .ok_or_else(|| format!("Invalid clip VST3 output port: {id}:{port}")),
+            PluginGraphNode::ClapPluginInstance(id) => self
+                .clap_plugins
+                .iter()
+                .find(|instance| instance.id == *id)
+                .and_then(|instance| instance.processor.audio_outputs().get(port).cloned())
+                .ok_or_else(|| format!("Invalid clip CLAP output port: {id}:{port}")),
+            PluginGraphNode::TrackOutput => Err("Clip output cannot be audio source".to_string()),
+        }
+    }
+
+    fn target_io(&self, node: &PluginGraphNode, port: usize) -> Result<Arc<AudioIO>, String> {
+        match node {
+            PluginGraphNode::TrackOutput => self
+                .outputs
+                .get(port)
+                .cloned()
+                .ok_or_else(|| format!("Invalid clip output port: {port}")),
+            #[cfg(all(unix, not(target_os = "macos")))]
+            PluginGraphNode::Lv2PluginInstance(id) => self
+                .lv2_processors
+                .iter()
+                .find(|instance| instance.id == *id)
+                .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
+                .ok_or_else(|| format!("Invalid clip LV2 input port: {id}:{port}")),
+            PluginGraphNode::Vst3PluginInstance(id) => self
+                .vst3_processors
+                .iter()
+                .find(|instance| instance.id == *id)
+                .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
+                .ok_or_else(|| format!("Invalid clip VST3 input port: {id}:{port}")),
+            PluginGraphNode::ClapPluginInstance(id) => self
+                .clap_plugins
+                .iter()
+                .find(|instance| instance.id == *id)
+                .and_then(|instance| instance.processor.audio_inputs().get(port).cloned())
+                .ok_or_else(|| format!("Invalid clip CLAP input port: {id}:{port}")),
+            PluginGraphNode::TrackInput => Err("Clip input cannot be audio target".to_string()),
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn plugin_midi_ready(
+        &self,
+        node: &PluginGraphNode,
+        processed: &HashSet<PluginGraphNode>,
+    ) -> bool {
+        self.plugin_midi_connections
+            .iter()
+            .filter(|conn| {
+                conn.kind == Kind::MIDI
+                    && &conn.to_node == node
+                    && matches!(
+                        conn.from_node,
+                        PluginGraphNode::Lv2PluginInstance(_)
+                            | PluginGraphNode::Vst3PluginInstance(_)
+                            | PluginGraphNode::ClapPluginInstance(_)
+                    )
+            })
+            .all(|conn| processed.contains(&conn.from_node))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn plugin_midi_input_events(
+        &self,
+        node: &PluginGraphNode,
+        midi_inputs: usize,
+        track_input_events: &[Vec<MidiEvent>],
+        node_events: &HashMap<(PluginGraphNode, usize), Vec<MidiEvent>>,
+    ) -> Vec<Vec<MidiEvent>> {
+        let mut per_port = vec![Vec::new(); midi_inputs];
+        for conn in self.plugin_midi_connections.iter().filter(|conn| {
+            conn.kind == Kind::MIDI && &conn.to_node == node && conn.to_port < midi_inputs
+        }) {
+            let events_opt = if conn.from_node == PluginGraphNode::TrackInput {
+                track_input_events.get(conn.from_port)
+            } else {
+                node_events.get(&(conn.from_node.clone(), conn.from_port))
+            };
+            if let Some(events) = events_opt {
+                per_port[conn.to_port].extend_from_slice(events);
+            }
+        }
+        per_port
+    }
+
+    fn process(
+        &mut self,
+        input_blocks: &[Vec<f32>],
+        request_len: usize,
+        transport_sample: usize,
+        loop_enabled: bool,
+        loop_range_samples: Option<(usize, usize)>,
+        tempo_bpm: f64,
+        tsig_num: u16,
+        tsig_denom: u16,
+    ) -> Vec<Vec<f32>> {
+        self.setup_ports();
+        for (source, samples) in self.input_sources.iter().zip(input_blocks.iter()) {
+            let buffer = source.buffer.lock();
+            buffer.fill(0.0);
+            for (dst, src) in buffer.iter_mut().zip(samples.iter().take(request_len)) {
+                *dst = *src;
+            }
+            *source.finished.lock() = true;
+        }
+        for source in self.input_sources.iter().skip(input_blocks.len()) {
+            source.buffer.lock().fill(0.0);
+            *source.finished.lock() = true;
+        }
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let track_input_midi_events = vec![Vec::<MidiEvent>::new(); self.input_sources.len()];
+            let mut lv2_processed = vec![false; self.lv2_processors.len()];
+            let mut vst3_processed = vec![false; self.vst3_processors.len()];
+            let mut clap_processed = vec![false; self.clap_plugins.len()];
+            let mut remaining = lv2_processed.len() + vst3_processed.len() + clap_processed.len();
+            let mut processed_midi_plugins = HashSet::<PluginGraphNode>::new();
+            let mut midi_node_events = HashMap::<(PluginGraphNode, usize), Vec<MidiEvent>>::new();
+
+            while remaining > 0 {
+                let mut progressed = false;
+
+                for (idx, already_processed) in lv2_processed.iter_mut().enumerate() {
+                    if *already_processed {
+                        continue;
+                    }
+                    if !self.lv2_processors[idx]
+                        .processor
+                        .audio_inputs()
+                        .iter()
+                        .all(|audio_in| audio_in.ready())
+                    {
+                        continue;
+                    }
+                    let node = PluginGraphNode::Lv2PluginInstance(self.lv2_processors[idx].id);
+                    if !self.plugin_midi_ready(&node, &processed_midi_plugins) {
+                        continue;
+                    }
+                    for audio_in in self.lv2_processors[idx].processor.audio_inputs() {
+                        audio_in.process();
+                    }
+                    let midi_inputs = self.plugin_midi_input_events(
+                        &node,
+                        self.lv2_processors[idx].processor.midi_input_count(),
+                        &track_input_midi_events,
+                        &midi_node_events,
+                    );
+                    let midi_outputs = self.lv2_processors[idx].processor.process_with_audio_io(
+                        request_len,
+                        &midi_inputs,
+                        Lv2TransportInfo {
+                            transport_sample,
+                            playing: false,
+                            bpm: tempo_bpm,
+                            tsig_num: u32::from(tsig_num),
+                            tsig_denom: u32::from(tsig_denom),
+                        },
+                    );
+                    for (port, events) in midi_outputs.into_iter().enumerate() {
+                        if !events.is_empty() {
+                            midi_node_events.insert((node.clone(), port), events);
+                        }
+                    }
+                    *already_processed = true;
+                    remaining = remaining.saturating_sub(1);
+                    processed_midi_plugins.insert(node);
+                    progressed = true;
+                }
+
+                for (idx, already_processed) in vst3_processed.iter_mut().enumerate() {
+                    if *already_processed {
+                        continue;
+                    }
+                    if !self.vst3_processors[idx]
+                        .processor
+                        .audio_inputs()
+                        .iter()
+                        .all(|audio_in| audio_in.ready())
+                    {
+                        continue;
+                    }
+                    let node = PluginGraphNode::Vst3PluginInstance(self.vst3_processors[idx].id);
+                    if !self.plugin_midi_ready(&node, &processed_midi_plugins) {
+                        continue;
+                    }
+                    let midi_inputs = self.plugin_midi_input_events(
+                        &node,
+                        self.vst3_processors[idx].processor.midi_input_count(),
+                        &track_input_midi_events,
+                        &midi_node_events,
+                    );
+                    let vst3_input = midi_inputs.first().cloned().unwrap_or_default();
+                    let outputs = self.vst3_processors[idx]
+                        .processor
+                        .process_with_midi(request_len, &vst3_input);
+                    if !outputs.is_empty() {
+                        midi_node_events.insert((node.clone(), 0), outputs);
+                    }
+                    *already_processed = true;
+                    remaining = remaining.saturating_sub(1);
+                    processed_midi_plugins.insert(node);
+                    progressed = true;
+                }
+
+                for (idx, already_processed) in clap_processed.iter_mut().enumerate() {
+                    if *already_processed {
+                        continue;
+                    }
+                    if !self.clap_plugins[idx]
+                        .processor
+                        .audio_inputs()
+                        .iter()
+                        .all(|audio_in| audio_in.ready())
+                    {
+                        continue;
+                    }
+                    let node = PluginGraphNode::ClapPluginInstance(self.clap_plugins[idx].id);
+                    if !self.plugin_midi_ready(&node, &processed_midi_plugins) {
+                        continue;
+                    }
+                    let midi_inputs = self.plugin_midi_input_events(
+                        &node,
+                        self.clap_plugins[idx].processor.midi_input_count(),
+                        &track_input_midi_events,
+                        &midi_node_events,
+                    );
+                    let clap_input = midi_inputs.first().cloned().unwrap_or_default();
+                    let outputs = self.clap_plugins[idx].processor.process_with_midi(
+                        request_len,
+                        &clap_input,
+                        ClapTransportInfo {
+                            transport_sample,
+                            playing: false,
+                            loop_enabled,
+                            loop_range_samples,
+                            bpm: tempo_bpm,
+                            tsig_num,
+                            tsig_denom,
+                        },
+                    );
+                    for evt in outputs {
+                        midi_node_events
+                            .entry((node.clone(), evt.port))
+                            .or_default()
+                            .push(evt.event);
+                    }
+                    *already_processed = true;
+                    remaining = remaining.saturating_sub(1);
+                    processed_midi_plugins.insert(node);
+                    progressed = true;
+                }
+
+                if !progressed {
+                    break;
+                }
+            }
+        }
+
+        let mut outputs = Vec::with_capacity(self.outputs.len());
+        for output in &self.outputs {
+            if output.ready() {
+                output.process();
+            } else {
+                output.buffer.lock().fill(0.0);
+                *output.finished.lock() = true;
+            }
+            let buffer = output.buffer.lock();
+            outputs.push(buffer.iter().take(request_len).copied().collect::<Vec<f32>>());
+        }
+        outputs
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -122,6 +479,7 @@ pub struct Track {
     pub session_base_dir: Option<PathBuf>,
     record_tap_enabled: bool,
     audio_clip_cache: HashMap<String, Arc<AudioClipBuffer>>,
+    clip_plugin_tracks: HashMap<String, ClipPluginRuntime>,
     pub(crate) clip_pitch_shifters: HashMap<String, ClipPitchShifter>,
     midi_clip_cache: HashMap<String, MidiClipEvents>,
     internal_output_routes_cache: Vec<Vec<Arc<AudioIO>>>,
@@ -200,6 +558,7 @@ impl Track {
             session_base_dir: None,
             record_tap_enabled: false,
             audio_clip_cache: HashMap::new(),
+            clip_plugin_tracks: HashMap::new(),
             clip_pitch_shifters: HashMap::new(),
             midi_clip_cache: HashMap::new(),
             internal_output_routes_cache: Vec::new(),
@@ -1148,6 +1507,436 @@ impl Track {
         )
     }
 
+    fn clip_plugin_runtime_key(
+        clip: &crate::audio::clip::AudioClip,
+        input_count: usize,
+        output_count: usize,
+    ) -> String {
+        let graph = clip
+            .plugin_graph_json
+            .as_ref()
+            .and_then(|value| serde_json::to_string(value).ok())
+            .unwrap_or_default();
+        format!(
+            "{}:{}:{}:{}:{}:{}:{}:{}",
+            clip.name,
+            clip.start,
+            clip.end,
+            clip.offset,
+            clip.input_channel,
+            input_count,
+            output_count,
+            graph
+        )
+    }
+
+    fn clip_plugin_runtime_node_from_json(
+        value: &Value,
+        runtime_nodes: &[PluginGraphNode],
+    ) -> Option<PluginGraphNode> {
+        let kind = value.get("type")?.as_str()?;
+        match kind {
+            "track_input" => Some(PluginGraphNode::TrackInput),
+            "track_output" => Some(PluginGraphNode::TrackOutput),
+            "plugin" => runtime_nodes
+                .get(value.get("plugin_index")?.as_u64()? as usize)
+                .and_then(|node| {
+                    matches!(node, PluginGraphNode::Lv2PluginInstance(_)).then(|| node.clone())
+                }),
+            "vst3_plugin" => runtime_nodes
+                .get(value.get("plugin_index")?.as_u64()? as usize)
+                .and_then(|node| {
+                    matches!(node, PluginGraphNode::Vst3PluginInstance(_)).then(|| node.clone())
+                }),
+            "clap_plugin" => runtime_nodes
+                .get(value.get("plugin_index")?.as_u64()? as usize)
+                .and_then(|node| {
+                    matches!(node, PluginGraphNode::ClapPluginInstance(_)).then(|| node.clone())
+                }),
+            _ => None,
+        }
+    }
+
+    fn clip_graph_uses_plugin_runtime(graph: &Value) -> bool {
+        graph.get("plugins")
+            .and_then(Value::as_array)
+            .is_some_and(|plugins| !plugins.is_empty())
+    }
+
+    fn clip_graph_track_io_node(value: &Value) -> Option<bool> {
+        let kind = value.get("type")?.as_str()?;
+        match kind {
+            "track_input" => Some(true),
+            "track_output" => Some(false),
+            _ => None,
+        }
+    }
+
+    fn process_direct_clip_graph(
+        graph: &Value,
+        input_blocks: &[Vec<f32>],
+        request_len: usize,
+    ) -> Vec<Vec<f32>> {
+        let output_count = input_blocks.len().max(1);
+        let mut outputs = vec![vec![0.0; request_len]; output_count];
+        let Some(connections) = graph.get("connections").and_then(Value::as_array) else {
+            return outputs;
+        };
+        for connection in connections {
+            let Some(from_is_input) =
+                Self::clip_graph_track_io_node(connection.get("from_node").unwrap_or(&Value::Null))
+            else {
+                continue;
+            };
+            let Some(to_is_input) =
+                Self::clip_graph_track_io_node(connection.get("to_node").unwrap_or(&Value::Null))
+            else {
+                continue;
+            };
+            let from_port =
+                connection.get("from_port").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let to_port =
+                connection.get("to_port").and_then(Value::as_u64).unwrap_or(0) as usize;
+            if !from_is_input || to_is_input {
+                continue;
+            }
+            match connection.get("kind").and_then(Value::as_str) {
+                Some("audio") | Some("Audio") => {}
+                _ => continue,
+            }
+            let Some(source) = input_blocks.get(from_port) else {
+                continue;
+            };
+            let Some(target) = outputs.get_mut(to_port) else {
+                continue;
+            };
+            for (dst, src) in target.iter_mut().zip(source.iter().take(request_len)) {
+                *dst += *src;
+            }
+        }
+        outputs
+    }
+
+    fn build_clip_plugin_runtime(
+        &self,
+        clip: &crate::audio::clip::AudioClip,
+        channels: usize,
+        buffer_size: usize,
+    ) -> Result<ClipPluginRuntime, String> {
+        let input_sources = (0..channels.max(1))
+            .map(|_| Arc::new(AudioIO::new(buffer_size.max(1))))
+            .collect::<Vec<_>>();
+        let outputs = (0..channels.max(1))
+            .map(|_| Arc::new(AudioIO::new(buffer_size.max(1))))
+            .collect::<Vec<_>>();
+        let mut runtime = ClipPluginRuntime {
+            input_sources,
+            outputs,
+            #[cfg(all(unix, not(target_os = "macos")))]
+            lv2_processors: Vec::new(),
+            vst3_processors: Vec::new(),
+            clap_plugins: Vec::new(),
+            #[cfg(unix)]
+            plugin_midi_connections: Vec::new(),
+        };
+
+        let Some(graph) = clip.plugin_graph_json.as_ref() else {
+            return Ok(runtime);
+        };
+
+        let mut runtime_nodes = Vec::new();
+        let mut next_plugin_instance_id = 0usize;
+
+        if let Some(plugins) = graph.get("plugins").and_then(Value::as_array) {
+            for plugin in plugins {
+                let Some(uri) = plugin.get("uri").and_then(Value::as_str) else {
+                    continue;
+                };
+                let format = plugin
+                    .get("format")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if format.eq_ignore_ascii_case("LV2") {
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        let mut processor =
+                            Lv2Processor::new(self.sample_rate, buffer_size.max(1), uri)?;
+                        if let Some(base_dir) = &self.lv2_state_base_dir {
+                            processor.set_state_base_dir(base_dir.clone());
+                        }
+                        let instance_id = next_plugin_instance_id;
+                        next_plugin_instance_id = next_plugin_instance_id.saturating_add(1);
+                        runtime.lv2_processors.push(Lv2Instance {
+                            id: instance_id,
+                            processor,
+                        });
+                        runtime_nodes.push(PluginGraphNode::Lv2PluginInstance(instance_id));
+                        if let Some(state) = plugin.get("state").and_then(|state| {
+                            let port_values = state.get("port_values")?.as_array()?;
+                            let properties = state
+                                .get("properties")
+                                .and_then(Value::as_array)
+                                .cloned()
+                                .unwrap_or_default();
+                            Some(Lv2PluginState {
+                                port_values: port_values
+                                    .iter()
+                                    .map(|value| Lv2StatePortValue {
+                                        index: value
+                                            .get("index")
+                                            .and_then(Value::as_u64)
+                                            .unwrap_or(0) as u32,
+                                        value: value
+                                            .get("value")
+                                            .and_then(Value::as_f64)
+                                            .unwrap_or(0.0) as f32,
+                                    })
+                                    .collect(),
+                                properties: properties
+                                    .iter()
+                                    .map(|value| Lv2StateProperty {
+                                        key_uri: value
+                                            .get("key_uri")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                        type_uri: value
+                                            .get("type_uri")
+                                            .and_then(Value::as_str)
+                                            .unwrap_or_default()
+                                            .to_string(),
+                                        flags: value
+                                            .get("flags")
+                                            .and_then(Value::as_u64)
+                                            .unwrap_or(0) as u32,
+                                        value: value
+                                            .get("value")
+                                            .and_then(Value::as_array)
+                                            .map(|bytes| {
+                                                bytes
+                                                    .iter()
+                                                    .map(|byte| byte.as_u64().unwrap_or(0) as u8)
+                                                    .collect()
+                                            })
+                                            .unwrap_or_default(),
+                                    })
+                                    .collect(),
+                            })
+                        }) && let Some(instance) = runtime
+                            .lv2_processors
+                            .iter_mut()
+                            .find(|instance| instance.id == instance_id)
+                        {
+                            instance.processor.restore_state(&state)?;
+                        }
+                    }
+                } else if format.eq_ignore_ascii_case("VST3") {
+                    let instance_id = next_plugin_instance_id;
+                    next_plugin_instance_id = next_plugin_instance_id.saturating_add(1);
+                    let processor = Vst3Processor::new_with_sample_rate(
+                        self.sample_rate,
+                        buffer_size.max(1),
+                        uri,
+                        channels.max(1),
+                        channels.max(1),
+                    )?;
+                    runtime.vst3_processors.push(Vst3Instance { id: instance_id, processor });
+                    runtime_nodes.push(PluginGraphNode::Vst3PluginInstance(instance_id));
+                    if let Some(state) = plugin.get("state").cloned().and_then(|value| {
+                        serde_json::from_value::<crate::vst3::Vst3PluginState>(value).ok()
+                    }) && let Some(instance) = runtime
+                        .vst3_processors
+                        .iter_mut()
+                        .find(|instance| instance.id == instance_id)
+                    {
+                        instance.processor.restore_state(&state)?;
+                    }
+                } else if format.eq_ignore_ascii_case("CLAP") {
+                    let instance_id = next_plugin_instance_id;
+                    next_plugin_instance_id = next_plugin_instance_id.saturating_add(1);
+                    let processor = ClapProcessor::new(
+                        self.sample_rate,
+                        buffer_size.max(1),
+                        uri,
+                        channels.max(1),
+                        channels.max(1),
+                    )?;
+                    runtime.clap_plugins.push(ClapInstance { id: instance_id, processor });
+                    runtime_nodes.push(PluginGraphNode::ClapPluginInstance(instance_id));
+                    if let Some(state) = plugin.get("state").cloned().and_then(|value| {
+                        serde_json::from_value::<crate::clap::ClapPluginState>(value).ok()
+                    }) && let Some(instance) = runtime
+                        .clap_plugins
+                        .iter()
+                        .find(|instance| instance.id == instance_id)
+                    {
+                        instance.processor.restore_state(&state)?;
+                    }
+                }
+            }
+        }
+
+        if let Some(connections) = graph.get("connections").and_then(Value::as_array) {
+            for connection in connections {
+                let Some(from_node) = Self::clip_plugin_runtime_node_from_json(
+                    connection.get("from_node").unwrap_or(&Value::Null),
+                    &runtime_nodes,
+                ) else {
+                    continue;
+                };
+                let Some(to_node) = Self::clip_plugin_runtime_node_from_json(
+                    connection.get("to_node").unwrap_or(&Value::Null),
+                    &runtime_nodes,
+                ) else {
+                    continue;
+                };
+                let from_port =
+                    connection.get("from_port").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let to_port =
+                    connection.get("to_port").and_then(Value::as_u64).unwrap_or(0) as usize;
+                match connection.get("kind").and_then(Value::as_str) {
+                    Some("audio") => {
+                        runtime.connect_audio(from_node, from_port, to_node, to_port)?;
+                    }
+                    Some("midi") => {
+                        #[cfg(unix)]
+                        runtime.connect_midi(from_node, from_port, to_node, to_port);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(runtime)
+    }
+
+    fn process_clip_plugin_runtime_segment(
+        &mut self,
+        clip: &crate::audio::clip::AudioClip,
+        input_blocks: &[Vec<f32>],
+        absolute_start_sample: usize,
+        request_len: usize,
+    ) -> Result<Vec<Vec<f32>>, String> {
+        if let Some(graph) = clip.plugin_graph_json.as_ref()
+            && !Self::clip_graph_uses_plugin_runtime(graph)
+        {
+            return Ok(Self::process_direct_clip_graph(
+                graph,
+                input_blocks,
+                request_len,
+            ));
+        }
+        let input_count = input_blocks.len().max(1);
+        let runtime_key = Self::clip_plugin_runtime_key(clip, input_count, input_count);
+        if !self.clip_plugin_tracks.contains_key(&runtime_key) {
+            let runtime = self.build_clip_plugin_runtime(clip, input_count, self.process_block_size)?;
+            self.clip_plugin_tracks.insert(runtime_key.clone(), runtime);
+        }
+        let runtime = self
+            .clip_plugin_tracks
+            .get_mut(&runtime_key)
+            .ok_or_else(|| "Missing clip plugin runtime".to_string())?;
+
+        Ok(runtime.process(
+            input_blocks,
+            request_len,
+            absolute_start_sample,
+            self.loop_enabled,
+            self.loop_range_samples,
+            self.tempo_bpm,
+            self.tsig_num,
+            self.tsig_denom,
+        ))
+    }
+
+    fn ensure_clip_plugin_runtime(
+        &mut self,
+        clip_idx: usize,
+        channels: usize,
+    ) -> Result<&mut ClipPluginRuntime, String> {
+        let clip = self
+            .audio
+            .clips
+            .get(clip_idx)
+            .cloned()
+            .ok_or_else(|| format!("Track '{}' has no audio clip at index {}", self.name, clip_idx))?;
+        if clip.plugin_graph_json.is_none() {
+            return Err(format!(
+                "Track '{}' clip {} has no plugin graph",
+                self.name, clip_idx
+            ));
+        }
+        let runtime_key = Self::clip_plugin_runtime_key(&clip, channels, channels);
+        if !self.clip_plugin_tracks.contains_key(&runtime_key) {
+            let runtime = self.build_clip_plugin_runtime(&clip, channels, self.process_block_size)?;
+            self.clip_plugin_tracks.insert(runtime_key.clone(), runtime);
+        }
+        self.clip_plugin_tracks
+            .get_mut(&runtime_key)
+            .ok_or_else(|| "Missing clip plugin runtime".to_string())
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub fn clip_set_lv2_plugin_state(
+        &mut self,
+        clip_idx: usize,
+        instance_id: usize,
+        state: Lv2PluginState,
+    ) -> Result<(), String> {
+        let channels = self.audio.ins.len().max(1);
+        let runtime = self.ensure_clip_plugin_runtime(clip_idx, channels)?;
+        let Some(instance) = runtime
+            .lv2_processors
+            .iter_mut()
+            .find(|instance| instance.id == instance_id)
+        else {
+            return Err(format!("Clip LV2 instance {} not found", instance_id));
+        };
+        instance.processor.restore_state(&state)
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub fn clip_lv2_plugin_controls(
+        &mut self,
+        clip_idx: usize,
+        instance_id: usize,
+    ) -> Result<(Vec<Lv2ControlPortInfo>, Option<usize>), String> {
+        let channels = self.audio.ins.len().max(1);
+        let runtime = self.ensure_clip_plugin_runtime(clip_idx, channels)?;
+        let Some(instance) = runtime
+            .lv2_processors
+            .iter()
+            .find(|instance| instance.id == instance_id)
+        else {
+            return Err(format!("Clip LV2 instance {} not found", instance_id));
+        };
+        Ok((
+            instance.processor.control_ports_with_values(),
+            instance.processor.instance_access_handle(),
+        ))
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub fn clip_set_lv2_control_value(
+        &mut self,
+        clip_idx: usize,
+        instance_id: usize,
+        index: u32,
+        value: f32,
+    ) -> Result<Lv2PluginState, String> {
+        let channels = self.audio.ins.len().max(1);
+        let runtime = self.ensure_clip_plugin_runtime(clip_idx, channels)?;
+        let Some(instance) = runtime
+            .lv2_processors
+            .iter_mut()
+            .find(|instance| instance.id == instance_id)
+        else {
+            return Err(format!("Clip LV2 instance {} not found", instance_id));
+        };
+        instance.processor.set_control_value(index, value)?;
+        Ok(instance.processor.snapshot_state())
+    }
+
     fn pitch_shift_for_sample(
         clip: &crate::audio::clip::AudioClip,
         sample: usize,
@@ -1403,6 +2192,7 @@ impl Track {
             return;
         }
 
+        let mut active_clip_plugin_keys = HashSet::new();
         let segments = self.cycle_segments(frames);
         for clip in self.audio.clips.clone() {
             if clip.muted {
@@ -1415,9 +2205,17 @@ impl Track {
             }
             let clip_end = clip_start.saturating_add(clip_len);
             let playback_name = Self::clip_playback_name(&clip);
-            let Some(buffer) = self.audio_clip_cache.get(playback_name) else {
+            let Some(buffer) = self.audio_clip_cache.get(playback_name).cloned() else {
                 continue;
             };
+            let has_clip_plugins = clip.plugin_graph_json.is_some();
+            if has_clip_plugins {
+                active_clip_plugin_keys.insert(Self::clip_plugin_runtime_key(
+                    &clip,
+                    self.audio.ins.len(),
+                    self.audio.ins.len(),
+                ));
+            }
             if !clip.pitch_correction_points.is_empty() {
                 let input_count = self.audio.ins.len();
                 let effective_channels = if buffer.channels == 1 {
@@ -1435,17 +2233,6 @@ impl Track {
                     / 1000) as usize;
                 let formant = clip.pitch_correction_formant_compensation.unwrap_or(true);
                 let key = Self::clip_pitch_key(&clip);
-                let shifter = self.clip_pitch_shifters.entry(key).or_insert_with(|| {
-                    ClipPitchShifter {
-                        shifter: LivePitchShifter::new(
-                            self.sample_rate.round().max(1.0) as usize,
-                            effective_channels,
-                            formant,
-                        )
-                        .expect("rubberband live shifter"),
-                    }
-                });
-                shifter.shifter.set_formant_preserved(formant);
                 for (segment_start, segment_end, out_offset) in &segments {
                     if clip_end <= *segment_start || clip_start >= *segment_end {
                         continue;
@@ -1458,11 +2245,21 @@ impl Track {
                     }
                     let source_from =
                         source_offset.saturating_add(from.saturating_sub(clip_start));
-                    let block_size = shifter.shifter.block_size();
-                    let corrected =
-                        shifter
-                            .shifter
-                            .render(source_from, request_len, |block_start, input| {
+                    let corrected = {
+                        let shifter =
+                            self.clip_pitch_shifters.entry(key.clone()).or_insert_with(|| {
+                                ClipPitchShifter {
+                                    shifter: LivePitchShifter::new(
+                                        self.sample_rate.round().max(1.0) as usize,
+                                        effective_channels,
+                                        formant,
+                                    )
+                                    .expect("rubberband live shifter"),
+                                }
+                            });
+                        shifter.shifter.set_formant_preserved(formant);
+                        let block_size = shifter.shifter.block_size();
+                        shifter.shifter.render(source_from, request_len, |block_start, input| {
                                 let local_start = block_start.saturating_sub(source_offset);
                                 let local_mid = local_start.saturating_add(block_size / 2);
                                 let local_end =
@@ -1494,7 +2291,25 @@ impl Track {
                                     }
                                 }
                                 scale
-                            });
+                            })
+                    };
+                    let copy_len = request_len.min(
+                        self.audio
+                            .ins
+                            .first()
+                            .map(|audio_in| {
+                                audio_in
+                                    .buffer
+                                    .lock()
+                                    .len()
+                                    .saturating_sub(out_offset + (from - *segment_start))
+                            })
+                            .unwrap_or(0),
+                    );
+                    if copy_len == 0 {
+                        continue;
+                    }
+                    let mut input_blocks = vec![vec![0.0; copy_len]; input_count];
                     for in_channel in 0..input_count {
                         let source_channel = if effective_channels == 1 {
                             0
@@ -1503,24 +2318,17 @@ impl Track {
                         } else {
                             continue;
                         };
-                        let in_samples = self.audio.ins[in_channel].buffer.lock();
-                        let track_idx = out_offset + (from - *segment_start);
-                        let copy_len = request_len.min(in_samples.len().saturating_sub(track_idx));
-                        if copy_len == 0 {
-                            continue;
-                        }
                         for i in 0..copy_len {
                             let absolute_sample = from + i;
                             let mut sample = corrected[source_channel][i];
                             if clip.fade_enabled {
                                 let clip_sample_pos = absolute_sample - clip_start;
                                 if clip_sample_pos < clip.fade_in_samples {
-                                    let t = clip_sample_pos as f32
-                                        / clip.fade_in_samples.max(1) as f32;
+                                    let t =
+                                        clip_sample_pos as f32 / clip.fade_in_samples.max(1) as f32;
                                     sample *= Self::fade_in_curve(t);
                                 }
-                                if clip_sample_pos
-                                    >= clip_len.saturating_sub(clip.fade_out_samples)
+                                if clip_sample_pos >= clip_len.saturating_sub(clip.fade_out_samples)
                                 {
                                     let fade_out_start =
                                         clip_len.saturating_sub(clip.fade_out_samples);
@@ -1528,6 +2336,27 @@ impl Track {
                                         / clip.fade_out_samples.max(1) as f32;
                                     sample *= Self::fade_out_curve(t);
                                 }
+                            }
+                            input_blocks[in_channel][i] = sample;
+                        }
+                    }
+                    let processed_blocks = if has_clip_plugins {
+                        self.process_clip_plugin_runtime_segment(&clip, &input_blocks, from, copy_len)
+                            .unwrap_or(input_blocks)
+                    } else {
+                        input_blocks
+                    };
+                    for in_channel in 0..input_count {
+                        let in_samples = self.audio.ins[in_channel].buffer.lock();
+                        let track_idx = out_offset + (from - *segment_start);
+                        for (i, sample) in processed_blocks
+                            .get(in_channel)
+                            .or_else(|| processed_blocks.first())
+                            .into_iter()
+                            .flat_map(|channel| channel.iter().copied().enumerate())
+                        {
+                            if track_idx + i >= in_samples.len() {
+                                break;
                             }
                             in_samples[track_idx + i] += sample;
                         }
@@ -1541,42 +2370,44 @@ impl Track {
                 continue;
             }
 
-            for in_channel in 0..self.audio.ins.len() {
-                let source_channel = if channels == 1 {
-                    0
-                } else if in_channel < channels {
-                    in_channel
-                } else {
+            for (segment_start, segment_end, out_offset) in &segments {
+                if clip_end <= *segment_start || clip_start >= *segment_end {
                     continue;
-                };
-                let in_samples = self.audio.ins[in_channel].buffer.lock();
-
-                for (segment_start, segment_end, out_offset) in &segments {
-                    if clip_end <= *segment_start || clip_start >= *segment_end {
+                }
+                let from = (*segment_start).max(clip_start);
+                let to = (*segment_end).min(clip_end);
+                let clip_offset = clip.offset;
+                let track_idx = out_offset + (from - *segment_start);
+                let copy_len = to
+                    .saturating_sub(from)
+                    .min(self.audio.ins.first().map(|audio_in| {
+                        audio_in.buffer.lock().len().saturating_sub(track_idx)
+                    }).unwrap_or(0));
+                if copy_len == 0 {
+                    continue;
+                }
+                let mut input_blocks = vec![vec![0.0; copy_len]; self.audio.ins.len()];
+                for in_channel in 0..self.audio.ins.len() {
+                    let source_channel = if channels == 1 {
+                        0
+                    } else if in_channel < channels {
+                        in_channel
+                    } else {
                         continue;
-                    }
-                    let from = (*segment_start).max(clip_start);
-                    let to = (*segment_end).min(clip_end);
-                    let clip_offset = clip.offset;
-                    for absolute_sample in from..to {
-                        let track_idx = out_offset + (absolute_sample - *segment_start);
+                    };
+                    for i in 0..copy_len {
+                        let absolute_sample = from + i;
                         let clip_idx = (absolute_sample - clip_start) + clip_offset;
-                        if clip_idx >= total_frames || track_idx >= in_samples.len() {
+                        if clip_idx >= total_frames {
                             break;
                         }
                         let mut sample = buffer.samples[clip_idx * channels + source_channel];
-
-                        // Apply fade curves if enabled
                         if clip.fade_enabled {
                             let clip_sample_pos = absolute_sample - clip_start;
-
-                            // Apply fade-in
                             if clip_sample_pos < clip.fade_in_samples {
                                 let t = clip_sample_pos as f32 / clip.fade_in_samples.max(1) as f32;
                                 sample *= Self::fade_in_curve(t);
                             }
-
-                            // Apply fade-out
                             if clip_sample_pos >= clip_len.saturating_sub(clip.fade_out_samples) {
                                 let fade_out_start = clip_len.saturating_sub(clip.fade_out_samples);
                                 let t = (clip_sample_pos - fade_out_start) as f32
@@ -1584,12 +2415,33 @@ impl Track {
                                 sample *= Self::fade_out_curve(t);
                             }
                         }
-
-                        in_samples[track_idx] += sample;
+                        input_blocks[in_channel][i] = sample;
+                    }
+                }
+                let processed_blocks = if has_clip_plugins {
+                    self.process_clip_plugin_runtime_segment(&clip, &input_blocks, from, copy_len)
+                        .unwrap_or(input_blocks)
+                } else {
+                    input_blocks
+                };
+                for in_channel in 0..self.audio.ins.len() {
+                    let in_samples = self.audio.ins[in_channel].buffer.lock();
+                    for (i, sample) in processed_blocks
+                        .get(in_channel)
+                        .or_else(|| processed_blocks.first())
+                        .into_iter()
+                        .flat_map(|channel| channel.iter().copied().enumerate())
+                    {
+                        if track_idx + i >= in_samples.len() {
+                            break;
+                        }
+                        in_samples[track_idx + i] += sample;
                     }
                 }
             }
         }
+        self.clip_plugin_tracks
+            .retain(|key, _| active_clip_plugin_keys.contains(key));
     }
 
     fn mix_clip_midi_into_inputs(&mut self, input_events: &mut [Vec<MidiEvent>], frames: usize) {
@@ -2158,6 +3010,22 @@ impl Track {
         instance.processor.snapshot_state()
     }
 
+    pub fn clip_clap_snapshot_state(
+        &mut self,
+        clip_idx: usize,
+        instance_id: usize,
+    ) -> Result<(String, crate::clap::ClapPluginState), String> {
+        let channels = self.audio.ins.len().max(1);
+        let runtime = self.ensure_clip_plugin_runtime(clip_idx, channels)?;
+        let instance = runtime
+            .clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| format!("Clip CLAP instance {} not found", instance_id))?;
+        let state = instance.processor.snapshot_state()?;
+        Ok((instance.processor.path().to_string(), state))
+    }
+
     pub fn clap_restore_state(
         &self,
         instance_id: usize,
@@ -2366,6 +3234,21 @@ impl Track {
             .find(|i| i.id == instance_id)
             .ok_or_else(|| format!("VST3 instance {} not found", instance_id))?;
 
+        instance.processor.snapshot_state()
+    }
+
+    pub fn clip_vst3_snapshot_state(
+        &mut self,
+        clip_idx: usize,
+        instance_id: usize,
+    ) -> Result<crate::vst3::state::Vst3PluginState, String> {
+        let channels = self.audio.ins.len().max(1);
+        let runtime = self.ensure_clip_plugin_runtime(clip_idx, channels)?;
+        let instance = runtime
+            .vst3_processors
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| format!("Clip VST3 instance {} not found", instance_id))?;
         instance.processor.snapshot_state()
     }
 
@@ -3608,6 +4491,142 @@ mod tests {
         let out_r = track.audio.outs[1].buffer.lock().to_vec();
         assert_eq!(out_l[0], 0.25);
         assert_eq!(out_r[0], 0.0);
+    }
+
+    #[test]
+    fn direct_clip_graph_passthrough_is_audible_with_input_monitor_off() {
+        let graph = serde_json::json!({
+            "plugins": [],
+            "connections": [
+                {
+                    "from_node": {"type":"track_input"},
+                    "from_port": 0,
+                    "to_node": {"type":"track_output"},
+                    "to_port": 0,
+                    "kind": "audio"
+                }
+            ]
+        });
+        let outputs = Track::process_direct_clip_graph(&graph, &[vec![0.5, -0.25]], 2);
+        assert_eq!(outputs, vec![vec![0.5, -0.25]]);
+    }
+
+    #[test]
+    fn direct_clip_graph_empty_connections_produces_silence() {
+        let graph = serde_json::json!({
+            "plugins": [],
+            "connections": []
+        });
+        let outputs = Track::process_direct_clip_graph(&graph, &[vec![0.5, -0.25]], 2);
+        assert_eq!(outputs, vec![vec![0.0, 0.0]]);
+    }
+
+    #[test]
+    fn direct_clip_graph_respects_connection_port_fields_for_stereo() {
+        let graph = serde_json::json!({
+            "plugins": [],
+            "connections": [
+                {
+                    "from_node": {"type":"track_input"},
+                    "from_port": 0,
+                    "to_node": {"type":"track_output"},
+                    "to_port": 0,
+                    "kind": "audio"
+                },
+                {
+                    "from_node": {"type":"track_input"},
+                    "from_port": 1,
+                    "to_node": {"type":"track_output"},
+                    "to_port": 1,
+                    "kind": "audio"
+                }
+            ]
+        });
+        let outputs =
+            Track::process_direct_clip_graph(&graph, &[vec![0.25, 0.0], vec![0.75, 0.0]], 2);
+        assert_eq!(outputs, vec![vec![0.25, 0.0], vec![0.75, 0.0]]);
+    }
+
+    #[test]
+    fn direct_clip_graph_ignores_non_audio_and_non_track_io_connections() {
+        let graph = serde_json::json!({
+            "plugins": [],
+            "connections": [
+                {
+                    "from_node": {"type":"track_input"},
+                    "from_port": 0,
+                    "to_node": {"type":"track_output"},
+                    "to_port": 0,
+                    "kind": "midi"
+                },
+                {
+                    "from_node": {"type":"plugin", "plugin_index": 0},
+                    "from_port": 0,
+                    "to_node": {"type":"track_output"},
+                    "to_port": 0,
+                    "kind": "audio"
+                }
+            ]
+        });
+        let outputs = Track::process_direct_clip_graph(&graph, &[vec![0.5, -0.25]], 2);
+        assert_eq!(outputs, vec![vec![0.0, 0.0]]);
+    }
+
+    #[test]
+    fn clip_graph_uses_plugin_runtime_only_when_plugins_are_present() {
+        let no_plugins = serde_json::json!({
+            "plugins": [],
+            "connections": []
+        });
+        let with_plugin = serde_json::json!({
+            "plugins": [
+                {"format":"LV2","uri":"http://example.test/plugin"}
+            ],
+            "connections": []
+        });
+
+        assert!(!Track::clip_graph_uses_plugin_runtime(&no_plugins));
+        assert!(Track::clip_graph_uses_plugin_runtime(&with_plugin));
+    }
+
+    #[test]
+    fn clip_plugin_runtime_key_changes_when_graph_changes() {
+        let mut clip = crate::audio::clip::AudioClip::new("clip.wav".to_string(), 0, 128, 0, 0);
+        clip.plugin_graph_json = Some(serde_json::json!({
+            "plugins": [],
+            "connections": [
+                {
+                    "from_node": {"type":"track_input"},
+                    "from_port": 0,
+                    "to_node": {"type":"track_output"},
+                    "to_port": 0,
+                    "kind": "audio"
+                }
+            ]
+        }));
+        let key_before = Track::clip_plugin_runtime_key(&clip, 2, 2);
+
+        clip.plugin_graph_json = Some(serde_json::json!({
+            "plugins": [],
+            "connections": []
+        }));
+        let key_after = Track::clip_plugin_runtime_key(&clip, 2, 2);
+
+        assert_ne!(key_before, key_after);
+    }
+
+    #[test]
+    fn clip_plugin_runtime_key_changes_when_channel_shape_changes() {
+        let mut clip = crate::audio::clip::AudioClip::new("clip.wav".to_string(), 0, 128, 0, 0);
+        clip.plugin_graph_json = Some(serde_json::json!({
+            "plugins": [],
+            "connections": []
+        }));
+
+        let stereo_key = Track::clip_plugin_runtime_key(&clip, 2, 2);
+        let mono_key = Track::clip_plugin_runtime_key(&clip, 1, 1);
+
+        assert_ne!(stereo_key, mono_key);
     }
 
     #[test]

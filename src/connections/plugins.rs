@@ -539,17 +539,31 @@ impl canvas::Program<Message> for Graph {
                                     PluginGraphNode::Lv2PluginInstance(_) => {
                                         Some(Action::publish(Message::OpenLv2PluginUi {
                                             track_name,
+                                            clip_idx: data
+                                                .plugin_graph_clip
+                                                .as_ref()
+                                                .map(|target| target.clip_idx),
                                             instance_id,
                                         }))
                                     }
                                     PluginGraphNode::ClapPluginInstance(_) => {
-                                        Some(Action::publish(Message::ShowClapPluginUi(
-                                            plugin.uri.clone(),
-                                        )))
+                                        Some(Action::publish(Message::ShowClapPluginUi {
+                                            track_name,
+                                            clip_idx: data
+                                                .plugin_graph_clip
+                                                .as_ref()
+                                                .map(|target| target.clip_idx),
+                                            instance_id,
+                                            plugin_path: plugin.uri.clone(),
+                                        }))
                                     }
                                     PluginGraphNode::Vst3PluginInstance(_) => {
                                         Some(Action::publish(Message::OpenVst3PluginUi {
                                             track_name,
+                                            clip_idx: data
+                                                .plugin_graph_clip
+                                                .as_ref()
+                                                .map(|target| target.clip_idx),
                                             instance_id,
                                             plugin_path: plugin.uri.clone(),
                                             plugin_name: plugin.name.clone(),
@@ -642,7 +656,15 @@ impl canvas::Program<Message> for Graph {
                                 )
                             };
                             if from_node != to_node || from_port != to_port {
-                                let action = if connecting.kind == Kind::Audio {
+                                let action = if data.plugin_graph_clip.is_some() {
+                                    return Some(Action::publish(Message::ClipConnectPlugin {
+                                        from_node,
+                                        from_port,
+                                        to_node,
+                                        to_port,
+                                        kind: connecting.kind,
+                                    }));
+                                } else if connecting.kind == Kind::Audio {
                                     EngineAction::TrackConnectPluginAudio {
                                         track_name,
                                         from_node,
@@ -764,7 +786,17 @@ impl canvas::Program<Message> for Graph {
             };
             let active_connecting = data.plugin_graph_connecting.as_ref();
 
-            let track_header = format!("Track: {}", track.name);
+            let track_header = if let Some(target) = data.plugin_graph_clip.as_ref() {
+                let clip_label = track
+                    .audio
+                    .clips
+                    .get(target.clip_idx)
+                    .map(|clip| clip.name.clone())
+                    .unwrap_or_else(|| format!("clip {}", target.clip_idx));
+                format!("Clip: {} / {}", track.name, clip_label)
+            } else {
+                format!("Track: {}", track.name)
+            };
             frame.fill_text(Text {
                 content: Self::trim_label_to_width(&track_header, bounds.width),
                 position: Point::new(bounds.width / 2.0, 16.0),
@@ -786,7 +818,11 @@ impl canvas::Program<Message> for Graph {
                     .with_width(2.0),
             );
             frame.fill_text(Text {
-                content: "Track In".into(),
+                content: if data.plugin_graph_clip.is_some() {
+                    "Clip In".into()
+                } else {
+                    "Track In".into()
+                },
                 position: Point::new(in_rect.center_x(), in_rect.y + 18.0),
                 color: Color::WHITE,
                 align_x: Horizontal::Center.into(),
@@ -803,7 +839,11 @@ impl canvas::Program<Message> for Graph {
                     .with_width(2.0),
             );
             frame.fill_text(Text {
-                content: "Track Out".into(),
+                content: if data.plugin_graph_clip.is_some() {
+                    "Clip Out".into()
+                } else {
+                    "Track Out".into()
+                },
                 position: Point::new(out_rect.center_x(), out_rect.y + 18.0),
                 color: Color::WHITE,
                 align_x: Horizontal::Center.into(),

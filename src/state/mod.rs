@@ -303,6 +303,12 @@ pub struct TrackTemplateSaveDialog {
 }
 
 #[derive(Debug, Clone)]
+pub struct PluginGraphClipTarget {
+    pub track_name: String,
+    pub clip_idx: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct TrackMarkerDialog {
     pub track_name: String,
     pub sample: usize,
@@ -471,6 +477,7 @@ pub struct StateData {
     pub clap_states_by_track: HashMap<String, HashMap<String, ClapPluginState>>,
     pub vst3_states_by_track: HashMap<String, HashMap<usize, Vst3PluginState>>,
     pub plugin_graph_track: Option<String>,
+    pub plugin_graph_clip: Option<PluginGraphClipTarget>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub plugin_graph_plugins: Vec<PluginGraphPlugin>,
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -636,6 +643,7 @@ impl Default for StateData {
             clap_states_by_track: HashMap::new(),
             vst3_states_by_track: HashMap::new(),
             plugin_graph_track: None,
+            plugin_graph_clip: None,
             #[cfg(all(unix, not(target_os = "macos")))]
             plugin_graph_plugins: vec![],
             #[cfg(all(unix, not(target_os = "macos")))]

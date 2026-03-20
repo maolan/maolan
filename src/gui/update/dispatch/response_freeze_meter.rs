@@ -157,6 +157,7 @@ impl Maolan {
                         pitch_correction_frame_likeness: None,
                         pitch_correction_inertia_ms: None,
                         pitch_correction_formant_compensation: None,
+                        plugin_graph_json: None,
                     }));
                     tasks.push(self.send(Action::TrackSetFrozen {
                         track_name: track_name.clone(),

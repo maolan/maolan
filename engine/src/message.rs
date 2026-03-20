@@ -289,6 +289,7 @@ pub enum Action {
         pitch_correction_frame_likeness: Option<f32>,
         pitch_correction_inertia_ms: Option<u16>,
         pitch_correction_formant_compensation: Option<bool>,
+        plugin_graph_json: Option<serde_json::Value>,
     },
     RemoveClip {
         track_name: String,
@@ -316,6 +317,11 @@ pub enum Action {
         clip_index: usize,
         kind: Kind,
         muted: bool,
+    },
+    SetClipPluginGraphJson {
+        track_name: String,
+        clip_index: usize,
+        plugin_graph_json: Option<serde_json::Value>,
     },
     SetClipPitchCorrection {
         track_name: String,
@@ -469,6 +475,13 @@ pub enum Action {
         state: Lv2PluginState,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
+    ClipSetLv2PluginState {
+        track_name: String,
+        clip_idx: usize,
+        instance_id: usize,
+        state: Lv2PluginState,
+    },
+    #[cfg(all(unix, not(target_os = "macos")))]
     TrackUnloadLv2PluginInstance {
         track_name: String,
         instance_id: usize,
@@ -479,8 +492,22 @@ pub enum Action {
         instance_id: usize,
     },
     #[cfg(all(unix, not(target_os = "macos")))]
+    ClipGetLv2PluginControls {
+        track_name: String,
+        clip_idx: usize,
+        instance_id: usize,
+    },
+    #[cfg(all(unix, not(target_os = "macos")))]
     TrackLv2PluginControls {
         track_name: String,
+        instance_id: usize,
+        controls: Vec<Lv2ControlPortInfo>,
+        instance_access_handle: Option<usize>,
+    },
+    #[cfg(all(unix, not(target_os = "macos")))]
+    ClipLv2PluginControls {
+        track_name: String,
+        clip_idx: usize,
         instance_id: usize,
         controls: Vec<Lv2ControlPortInfo>,
         instance_access_handle: Option<usize>,
@@ -500,6 +527,21 @@ pub enum Action {
         instance_id: usize,
         index: u32,
         value: f32,
+    },
+    #[cfg(all(unix, not(target_os = "macos")))]
+    ClipSetLv2ControlValue {
+        track_name: String,
+        clip_idx: usize,
+        instance_id: usize,
+        index: u32,
+        value: f32,
+    },
+    #[cfg(all(unix, not(target_os = "macos")))]
+    ClipLv2StateSnapshot {
+        track_name: String,
+        clip_idx: usize,
+        instance_id: usize,
+        state: Lv2PluginState,
     },
     #[cfg(unix)]
     TrackGetPluginGraph {
@@ -598,8 +640,20 @@ pub enum Action {
         track_name: String,
         instance_id: usize,
     },
+    ClipClapSnapshotState {
+        track_name: String,
+        clip_idx: usize,
+        instance_id: usize,
+    },
     TrackClapStateSnapshot {
         track_name: String,
+        instance_id: usize,
+        plugin_path: String,
+        state: crate::clap::ClapPluginState,
+    },
+    ClipClapStateSnapshot {
+        track_name: String,
+        clip_idx: usize,
         instance_id: usize,
         plugin_path: String,
         state: crate::clap::ClapPluginState,
@@ -647,8 +701,19 @@ pub enum Action {
         track_name: String,
         instance_id: usize,
     },
+    ClipVst3SnapshotState {
+        track_name: String,
+        clip_idx: usize,
+        instance_id: usize,
+    },
     TrackVst3StateSnapshot {
         track_name: String,
+        instance_id: usize,
+        state: crate::vst3::state::Vst3PluginState,
+    },
+    ClipVst3StateSnapshot {
+        track_name: String,
+        clip_idx: usize,
         instance_id: usize,
         state: crate::vst3::state::Vst3PluginState,
     },

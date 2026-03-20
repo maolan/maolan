@@ -116,6 +116,7 @@ impl Maolan {
                     state.selected_clips.clear();
                     state.connection_view_selection = ConnectionViewSelection::None;
                     state.plugin_graph_track = None;
+                    state.plugin_graph_clip = None;
                     #[cfg(all(unix, not(target_os = "macos")))]
                     {
                         state.plugin_graph_plugins.clear();

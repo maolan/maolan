@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::Arc;
 
 pub type PeakPair = [f32; 2];
@@ -48,6 +49,8 @@ pub struct AudioClip {
     pub take_lane_pinned: bool,
     #[serde(default = "default_take_lane_flag")]
     pub take_lane_locked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_graph_json: Option<Value>,
 }
 
 fn default_fade_enabled() -> bool {
@@ -87,4 +90,27 @@ pub struct MIDIClip {
     pub take_lane_pinned: bool,
     #[serde(default = "default_take_lane_flag")]
     pub take_lane_locked: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AudioClip;
+    use serde_json::json;
+
+    #[test]
+    fn audio_clip_plugin_graph_json_round_trips() {
+        let clip = AudioClip {
+            name: "clip.wav".to_string(),
+            plugin_graph_json: Some(json!({
+                "plugins": [{"format": "CLAP", "uri": "clipfx.clap"}],
+                "connections": []
+            })),
+            ..AudioClip::default()
+        };
+
+        let value = serde_json::to_value(&clip).expect("serialize");
+        let restored: AudioClip = serde_json::from_value(value).expect("deserialize");
+
+        assert_eq!(restored.plugin_graph_json, clip.plugin_graph_json);
+    }
 }

@@ -1,4 +1,5 @@
 use crate::message::PitchCorrectionPointData;
+use serde_json::Value;
 
 #[derive(Default, Clone, Debug)]
 pub struct AudioClip {
@@ -19,6 +20,7 @@ pub struct AudioClip {
     pub pitch_correction_frame_likeness: Option<f32>,
     pub pitch_correction_inertia_ms: Option<u16>,
     pub pitch_correction_formant_compensation: Option<bool>,
+    pub plugin_graph_json: Option<Value>,
 }
 
 impl AudioClip {
@@ -41,6 +43,7 @@ impl AudioClip {
             pitch_correction_frame_likeness: None,
             pitch_correction_inertia_ms: None,
             pitch_correction_formant_compensation: None,
+            plugin_graph_json: None,
         }
     }
 }
