@@ -10,7 +10,8 @@ use cli::export::{
     export_bit_depth_options, export_session, validate_export_settings,
 };
 use cli::support::{
-    CliConfig, ExportSessionData, load_export_session_data, load_session_restore_actions,
+    CliConfig, ExportSessionData, load_export_session_data, load_session_end_sample,
+    load_session_restore_actions,
 };
 use crossterm::{
     cursor,
@@ -73,6 +74,9 @@ impl Default for CliOptions {
 enum AppCommand {
     TogglePlayStop,
     Pause,
+    JumpToStart,
+    JumpToEnd,
+    Panic,
     ToggleExport,
     MoveUp,
     MoveDown,
@@ -309,6 +313,53 @@ impl App {
                     .await;
                 true
             }
+            AppCommand::JumpToStart => {
+                self.transport_sample = 0;
+                self.status = "Rewound to start".to_string();
+                if let Err(err) = send_transport_position(client, 0).await {
+                    self.status = err;
+                    self.sticky_status = true;
+                }
+                let _ = client
+                    .send(EngineMessage::Request(Action::RequestSessionDiagnostics))
+                    .await;
+                true
+            }
+            AppCommand::JumpToEnd => {
+                let Some(session_dir) = self.session_dir.as_ref() else {
+                    self.status = "Jump to end requires an opened/saved session".to_string();
+                    return true;
+                };
+                match load_session_end_sample(session_dir) {
+                    Ok(sample) => {
+                        self.transport_sample = sample;
+                        self.status = "Jumped to end".to_string();
+                        if let Err(err) = send_transport_position(client, sample).await {
+                            self.status = err;
+                            self.sticky_status = true;
+                        }
+                    }
+                    Err(err) => {
+                        self.status = err;
+                        self.sticky_status = true;
+                    }
+                }
+                let _ = client
+                    .send(EngineMessage::Request(Action::RequestSessionDiagnostics))
+                    .await;
+                true
+            }
+            AppCommand::Panic => {
+                self.status = "Sent panic".to_string();
+                if let Err(err) = send_transport_panic(client).await {
+                    self.status = err;
+                    self.sticky_status = true;
+                }
+                let _ = client
+                    .send(EngineMessage::Request(Action::RequestSessionDiagnostics))
+                    .await;
+                true
+            }
             AppCommand::ToggleExport => {
                 self.open_export_ui();
                 true
@@ -383,7 +434,12 @@ impl App {
                 self.adjust_export_field(1);
                 true
             }
-            AppCommand::Activate | AppCommand::TogglePlayStop | AppCommand::Pause => {
+            AppCommand::Activate
+            | AppCommand::TogglePlayStop
+            | AppCommand::Pause
+            | AppCommand::JumpToStart
+            | AppCommand::JumpToEnd
+            | AppCommand::Panic => {
                 self.activate_export_field(export_tx);
                 true
             }
@@ -609,6 +665,9 @@ impl App {
             let keys = Paragraph::new(Text::from(vec![
                 Line::from("Space      play / stop"),
                 Line::from("Shift+Space pause"),
+                Line::from("Home       rewind to start"),
+                Line::from("End        rewind to end"),
+                Line::from("Ctrl+L     panic"),
                 Line::from("Ctrl+E     export"),
                 Line::from("q or Esc   quit"),
             ]))
@@ -1248,6 +1307,16 @@ async fn send_transport_stop(client: &Client) -> Result<(), String> {
     client.send(EngineMessage::Request(Action::Stop)).await
 }
 
+async fn send_transport_position(client: &Client, sample: usize) -> Result<(), String> {
+    client
+        .send(EngineMessage::Request(Action::TransportPosition(sample)))
+        .await
+}
+
+async fn send_transport_panic(client: &Client) -> Result<(), String> {
+    client.send(EngineMessage::Request(Action::Panic)).await
+}
+
 fn parse_cli_options(args: impl IntoIterator<Item = String>) -> Result<CliOptions, String> {
     let mut options = CliOptions::default();
     let mut args = args.into_iter();
@@ -1371,8 +1440,13 @@ fn map_key_event(key: KeyEvent) -> AppCommand {
         (KeyCode::Char('e'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
             AppCommand::ToggleExport
         }
+        (KeyCode::Char('l'), modifiers) if modifiers.contains(KeyModifiers::CONTROL) => {
+            AppCommand::Panic
+        }
         (KeyCode::Char('q'), _) => AppCommand::Quit,
         (KeyCode::Esc, _) => AppCommand::Back,
+        (KeyCode::Home, _) => AppCommand::JumpToStart,
+        (KeyCode::End, _) => AppCommand::JumpToEnd,
         (KeyCode::Up, _) => AppCommand::MoveUp,
         (KeyCode::Down, _) => AppCommand::MoveDown,
         (KeyCode::Left, _) => AppCommand::MoveLeft,
@@ -1590,6 +1664,24 @@ mod tests {
     fn maps_ctrl_e_to_toggle_export() {
         let key = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL);
         assert_eq!(map_key_event(key), AppCommand::ToggleExport);
+    }
+
+    #[test]
+    fn maps_home_to_jump_to_start() {
+        let key = KeyEvent::new(KeyCode::Home, KeyModifiers::NONE);
+        assert_eq!(map_key_event(key), AppCommand::JumpToStart);
+    }
+
+    #[test]
+    fn maps_end_to_jump_to_end() {
+        let key = KeyEvent::new(KeyCode::End, KeyModifiers::NONE);
+        assert_eq!(map_key_event(key), AppCommand::JumpToEnd);
+    }
+
+    #[test]
+    fn maps_ctrl_l_to_panic() {
+        let key = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL);
+        assert_eq!(map_key_event(key), AppCommand::Panic);
     }
 
     #[test]
