@@ -612,13 +612,13 @@ impl Default for StateData {
             available_input_hw: initial_hw.available_input_hw,
             #[cfg(any(target_os = "freebsd", target_os = "linux"))]
             selected_input_hw: initial_hw.selected_input_hw,
-            hw_sample_rate_hz: 48_000,
+            hw_sample_rate_hz: crate::consts::audio_defaults::SAMPLE_RATE_HZ,
             oss_exclusive: true,
             #[cfg(unix)]
             oss_bits: cfg.default_audio_bit_depth,
-            oss_period_frames: 1024,
-            oss_nperiods: 1,
-            oss_sync_mode: false,
+            oss_period_frames: crate::consts::audio_defaults::PERIOD_FRAMES,
+            oss_nperiods: crate::consts::audio_defaults::NPERIODS,
+            oss_sync_mode: crate::consts::audio_defaults::SYNC_MODE,
             opened_midi_in_hw: vec![],
             opened_midi_out_hw: vec![],
             global_midi_learn_play_pause: None,

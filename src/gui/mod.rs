@@ -8,6 +8,7 @@ mod view;
 use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, config, connections,
+    consts::audio_defaults,
     consts::gui as gui_consts,
     consts::gui_mod::{
         AUDIO_BIT_DEPTH_OPTIONS, BINS_PER_UPDATE, CHUNK_FRAMES, CLIENT, MAX_PEAK_BINS,
@@ -209,9 +210,9 @@ struct AppPreferences {
 impl Default for AppPreferences {
     fn default() -> Self {
         Self {
-            default_export_sample_rate_hz: 48_000,
+            default_export_sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ as u32,
             default_snap_mode: SnapMode::Bar,
-            default_audio_bit_depth: 32,
+            default_audio_bit_depth: audio_defaults::BIT_DEPTH,
             default_output_device_id: None,
             default_input_device_id: None,
             recent_session_paths: Vec::new(),
@@ -4726,7 +4727,7 @@ impl Maolan {
             let bits = if AUDIO_BIT_DEPTH_OPTIONS.contains(&prefs.default_audio_bit_depth) {
                 prefs.default_audio_bit_depth
             } else {
-                32
+                audio_defaults::BIT_DEPTH
             };
             state.oss_bits = bits;
         }
