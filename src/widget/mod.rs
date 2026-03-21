@@ -1,3 +1,4 @@
+pub mod clip;
 pub mod controller;
 pub mod horizontal_slider;
 pub mod midi_edit;
