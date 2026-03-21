@@ -270,6 +270,7 @@ impl Maolan {
             "ui": {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
+                "zoom_visible_bars": self.zoom_visible_bars,
             },
             "export": {
                 "sample_rate_hz": self.export_sample_rate_hz,
@@ -872,6 +873,7 @@ impl Maolan {
             "ui": {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
+                "zoom_visible_bars": self.zoom_visible_bars,
             },
             "export": {
                 "sample_rate_hz": self.export_sample_rate_hz,
@@ -1363,6 +1365,15 @@ impl Maolan {
             state.tracks_width = Length::Fixed(tracks_width as f32);
             state.mixer_height = Length::Fixed(mixer_height as f32);
         }
+        self.zoom_visible_bars = session["ui"]["zoom_visible_bars"]
+            .as_f64()
+            .map(|zoom| {
+                (zoom as f32).clamp(
+                    crate::gui::MIN_ZOOM_VISIBLE_BARS,
+                    crate::gui::MAX_ZOOM_VISIBLE_BARS,
+                )
+            })
+            .unwrap_or(self.zoom_visible_bars);
 
         if let Some(arr) = session["tracks"].as_array() {
             for track in arr {

@@ -288,6 +288,26 @@ impl Maolan {
                     return self.sync_piano_scrollbars();
                 }
             }
+            Message::PianoSysExScrollYChanged(value) => {
+                let y = value.clamp(0.0, 1.0);
+                let changed = {
+                    let mut state = self.state.blocking_write();
+                    let changed = (state.piano_sysex_scroll_y - y).abs() > 0.0005;
+                    if changed {
+                        state.piano_sysex_scroll_y = y;
+                    }
+                    changed
+                };
+                if changed {
+                    return operation::snap_to(
+                        Id::new(SYSEX_SCROLL_ID),
+                        operation::RelativeOffset {
+                            x: None,
+                            y: Some(y),
+                        },
+                    );
+                }
+            }
             Message::PianoControllerLaneSelected(lane) => {
                 let mut state = self.state.blocking_write();
                 state.piano_controller_lane = lane;
@@ -4509,6 +4529,7 @@ impl Maolan {
                         state.piano_selected_sysex = None;
                         state.piano_sysex_hex_input.clear();
                         state.piano_sysex_panel_open = false;
+                        state.piano_sysex_scroll_y = 0.0;
                         state.piano_scroll_x = 0.0;
                         state.piano_scroll_y = 0.0;
                         state.view = View::PitchCorrection;
@@ -7253,6 +7274,7 @@ impl Maolan {
                             state.piano_selected_sysex = None;
                             state.piano_sysex_hex_input.clear();
                             state.piano_sysex_panel_open = false;
+                            state.piano_sysex_scroll_y = 0.0;
                             state.pitch_correction = None;
                             state.pitch_correction_selected_points.clear();
                             state.pitch_correction_dragging_points = None;

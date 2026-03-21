@@ -16,6 +16,7 @@ use crate::{
         note_area::piano_grid_scrollers,
         piano::{self, OctaveKeyboard},
         piano_roll,
+        vertical_scrollbar::VerticalScrollbar,
     },
 };
 use iced::{
@@ -36,7 +37,7 @@ pub struct MIDIEdit {
 }
 
 pub use crate::consts::widget_piano::{
-    CTRL_SCROLL_ID, H_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, V_SCROLL_ID,
+    CTRL_SCROLL_ID, KEYS_SCROLL_ID, NOTES_SCROLL_ID, SYSEX_SCROLL_ID,
 };
 
 impl MIDIEdit {
@@ -620,7 +621,14 @@ impl MIDIEdit {
             note_scroll,
             h_scroll,
             v_scroll,
-        } = piano_grid_scrollers(keyboard_scroll.into(), notes_content, notes_h, ctrl_w);
+        } = piano_grid_scrollers(
+            keyboard_scroll.into(),
+            notes_content,
+            notes_h,
+            ctrl_w,
+            state.piano_scroll_x,
+            state.piano_scroll_y,
+        );
 
         let ctrl_scroll = scrollable(
             container(ctrl_content)
@@ -671,6 +679,7 @@ impl MIDIEdit {
                         .width(Length::Fill),
                 )
             });
+        let sysex_content_height = ((roll.sysexes.len() as f32) * 24.0).max(1.0);
         let sysex_panel = container(
             column![
                 text("SysEx").size(12),
@@ -685,9 +694,26 @@ impl MIDIEdit {
                     button(text("Cancel").size(11)).on_press(Message::PianoSysExCloseEditor),
                 ]
                 .spacing(4),
-                scrollable(sysex_rows.spacing(2).width(Length::Fill))
-                    .height(Length::Fill)
-                    .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::new())),
+                row![
+                    scrollable(sysex_rows.spacing(2).width(Length::Fill))
+                        .id(Id::new(SYSEX_SCROLL_ID))
+                        .height(Length::Fill)
+                        .direction(scrollable::Direction::Vertical(
+                            scrollable::Scrollbar::hidden(),
+                        ))
+                        .on_scroll(|viewport| {
+                            Message::PianoSysExScrollYChanged(viewport.relative_offset().y)
+                        }),
+                    VerticalScrollbar::new(
+                        sysex_content_height,
+                        state.piano_sysex_scroll_y,
+                        Message::PianoSysExScrollYChanged,
+                    )
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fill),
+                ]
+                .spacing(0)
+                .height(Length::Fill),
             ]
             .spacing(6)
             .height(Length::Fill),

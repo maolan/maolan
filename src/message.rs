@@ -764,6 +764,7 @@ pub enum Message {
     },
     PianoScrollXChanged(f32),
     PianoScrollYChanged(f32),
+    PianoSysExScrollYChanged(f32),
     TracksResizeHover(bool),
     MixerResizeHover(bool),
 

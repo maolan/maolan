@@ -5182,6 +5182,77 @@ mod tests {
     }
 
     #[test]
+    fn session_save_and_load_roundtrip_preserves_arrangement_zoom() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root = std::env::temp_dir().join(format!("maolan_zoom_session_{unique}"));
+
+        let app = Maolan {
+            zoom_visible_bars: 6.5,
+            ..Maolan::default()
+        };
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let mut restored = Maolan {
+            zoom_visible_bars: 42.0,
+            ..Maolan::default()
+        };
+        let _ = restored
+            .load(session_root.to_string_lossy().to_string())
+            .expect("load session");
+
+        assert!((restored.zoom_visible_bars - 6.5).abs() < f32::EPSILON);
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn session_load_without_saved_arrangement_zoom_keeps_current_zoom() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root =
+            std::env::temp_dir().join(format!("maolan_zoom_session_compat_{unique}"));
+
+        let app = Maolan {
+            zoom_visible_bars: 5.0,
+            ..Maolan::default()
+        };
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let session_path = session_root.join("session.json");
+        let mut session: Value =
+            serde_json::from_reader(File::open(&session_path).expect("open saved session"))
+                .expect("parse saved session");
+        session["ui"]
+            .as_object_mut()
+            .expect("ui object")
+            .remove("zoom_visible_bars");
+        serde_json::to_writer_pretty(
+            File::create(&session_path).expect("rewrite session"),
+            &session,
+        )
+        .expect("write compatibility session");
+
+        let mut restored = Maolan {
+            zoom_visible_bars: 42.0,
+            ..Maolan::default()
+        };
+        let _ = restored
+            .load(session_root.to_string_lossy().to_string())
+            .expect("load session");
+
+        assert!((restored.zoom_visible_bars - 42.0).abs() < f32::EPSILON);
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
     fn cleanup_targets_include_pitchmap_sidecars_only() {
         assert!(Maolan::is_cleanup_target_rel("audio/clip_pitchmap.txt"));
         assert!(Maolan::is_cleanup_target_rel("audio/clip_pitchmap_001.txt"));
