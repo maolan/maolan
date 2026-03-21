@@ -1,6 +1,6 @@
 # Maolan Shortcuts and Gestures
 
-Last updated: 2026-03-18
+Last updated: 2026-03-21
 
 ## Keyboard Shortcuts
 ### Global / Session
@@ -11,6 +11,8 @@ Last updated: 2026-03-18
 - `Ctrl+I`: Import files
 - `Ctrl+E`: Open export dialog
 - `Ctrl+T`: Add track
+- `Ctrl+R`: Toggle session record arm
+- `Ctrl+L`: Send transport panic / MIDI panic
 - `Ctrl+Z`: Undo
 - `Ctrl+Shift+Z`: Redo
 - `Ctrl+Y`: Redo
@@ -20,6 +22,8 @@ Last updated: 2026-03-18
 ### Transport
 - `Space`: Toggle play/stop
 - `Shift+Space`: Pause
+- `Home`: Rewind to start
+- `End`: Rewind to end
 
 ### Piano Tools
 - `Q`: Quantize selected notes

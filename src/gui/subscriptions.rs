@@ -143,78 +143,7 @@ impl Maolan {
         }
         let engine_sub = Subscription::run(listener);
 
-        let keyboard_sub = keyboard::listen().map(|event| match event {
-            KeyEvent::KeyPressed { key, modifiers, .. } => {
-                if modifiers.control()
-                    && let keyboard::Key::Character(ch) = &key
-                {
-                    let s = ch.to_ascii_lowercase();
-                    if s == "n" {
-                        return Message::NewSession;
-                    }
-                    if s == "o" {
-                        return Message::Show(Show::Open);
-                    }
-                    if s == "i" {
-                        return Message::OpenFileImporter;
-                    }
-                    if s == "e" {
-                        return Message::OpenExporter;
-                    }
-                    if s == "s" {
-                        if modifiers.shift() {
-                            return Message::Show(Show::SaveAs);
-                        }
-                        return Message::Show(Show::Save);
-                    }
-                    if s == "t" {
-                        return Message::Show(Show::AddTrack);
-                    }
-                    if s == "a" {
-                        return Message::SelectAll;
-                    }
-                    if s == "z" {
-                        if modifiers.shift() {
-                            return Message::Redo;
-                        }
-                        return Message::Undo;
-                    }
-                    if s == "y" {
-                        return Message::Redo;
-                    }
-                }
-                match key {
-                    keyboard::Key::Character(ch) if !modifiers.control() => {
-                        let s = ch.to_ascii_lowercase();
-                        if s == "q" {
-                            Message::PianoQuantizeSelectedNotes
-                        } else if s == "h" {
-                            Message::PianoHumanizeSelectedNotes
-                        } else if s == "g" {
-                            Message::PianoGrooveSelectedNotes
-                        } else {
-                            Message::None
-                        }
-                    }
-                    keyboard::Key::Named(keyboard::key::Named::Space) if modifiers.shift() => {
-                        Message::TransportPause
-                    }
-                    keyboard::Key::Named(keyboard::key::Named::Space) => Message::ToggleTransport,
-                    keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
-                    keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
-                    keyboard::Key::Named(keyboard::key::Named::Delete)
-                    | keyboard::Key::Named(keyboard::key::Named::Backspace) => Message::Remove,
-                    keyboard::Key::Named(keyboard::key::Named::Escape) => Message::EscapePressed,
-                    _ => Message::None,
-                }
-            }
-            KeyEvent::KeyReleased { key, .. } => match key {
-                keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftReleased,
-                keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlReleased,
-                _ => Message::None,
-            },
-            _ => Message::None,
-        });
+        let keyboard_sub = keyboard::listen().map(Self::keyboard_message);
 
         let event_sub = event::listen().map(|event| match event {
             event::Event::Mouse(mouse_event) => match mouse_event {
@@ -322,11 +251,96 @@ impl Maolan {
             lv2_ui_sub,
         ])
     }
+
+    fn keyboard_message(event: KeyEvent) -> Message {
+        match event {
+            KeyEvent::KeyPressed { key, modifiers, .. } => {
+                if modifiers.control()
+                    && let keyboard::Key::Character(ch) = &key
+                {
+                    let s = ch.to_ascii_lowercase();
+                    if s == "n" {
+                        return Message::NewSession;
+                    }
+                    if s == "o" {
+                        return Message::Show(Show::Open);
+                    }
+                    if s == "i" {
+                        return Message::OpenFileImporter;
+                    }
+                    if s == "e" {
+                        return Message::OpenExporter;
+                    }
+                    if s == "s" {
+                        if modifiers.shift() {
+                            return Message::Show(Show::SaveAs);
+                        }
+                        return Message::Show(Show::Save);
+                    }
+                    if s == "t" {
+                        return Message::Show(Show::AddTrack);
+                    }
+                    if s == "a" {
+                        return Message::SelectAll;
+                    }
+                    if s == "r" {
+                        return Message::TransportRecordToggle;
+                    }
+                    if s == "l" {
+                        return Message::TransportPanic;
+                    }
+                    if s == "z" {
+                        if modifiers.shift() {
+                            return Message::Redo;
+                        }
+                        return Message::Undo;
+                    }
+                    if s == "y" {
+                        return Message::Redo;
+                    }
+                }
+                match key {
+                    keyboard::Key::Character(ch) if !modifiers.control() => {
+                        let s = ch.to_ascii_lowercase();
+                        if s == "q" {
+                            Message::PianoQuantizeSelectedNotes
+                        } else if s == "h" {
+                            Message::PianoHumanizeSelectedNotes
+                        } else if s == "g" {
+                            Message::PianoGrooveSelectedNotes
+                        } else {
+                            Message::None
+                        }
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Space) if modifiers.shift() => {
+                        Message::TransportPause
+                    }
+                    keyboard::Key::Named(keyboard::key::Named::Space) => Message::ToggleTransport,
+                    keyboard::Key::Named(keyboard::key::Named::Home) => Message::JumpToStart,
+                    keyboard::Key::Named(keyboard::key::Named::End) => Message::JumpToEnd,
+                    keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftPressed,
+                    keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlPressed,
+                    keyboard::Key::Named(keyboard::key::Named::Delete)
+                    | keyboard::Key::Named(keyboard::key::Named::Backspace) => Message::Remove,
+                    keyboard::Key::Named(keyboard::key::Named::Escape) => Message::EscapePressed,
+                    _ => Message::None,
+                }
+            }
+            KeyEvent::KeyReleased { key, .. } => match key {
+                keyboard::Key::Named(keyboard::key::Named::Shift) => Message::ShiftReleased,
+                keyboard::Key::Named(keyboard::key::Named::Control) => Message::CtrlReleased,
+                _ => Message::None,
+            },
+            _ => Message::None,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Maolan;
+    use crate::message::Message;
+    use iced::keyboard::{self, Event as KeyEvent, Key, Modifiers, key::Named};
 
     #[test]
     fn polls_meters_while_playing() {
@@ -391,6 +405,61 @@ mod tests {
             false,
             &[0.0],
             [&[0.0][..]],
+        ));
+    }
+
+    #[test]
+    fn keyboard_shortcuts_map_to_transport_actions() {
+        assert!(matches!(
+            Maolan::keyboard_message(KeyEvent::KeyPressed {
+                key: Key::Character("r".into()),
+                modified_key: Key::Character("r".into()),
+                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyR),
+                location: keyboard::Location::Standard,
+                modifiers: Modifiers::CTRL,
+                text: Some("r".into()),
+                repeat: false,
+            }),
+            Message::TransportRecordToggle
+        ));
+
+        assert!(matches!(
+            Maolan::keyboard_message(KeyEvent::KeyPressed {
+                key: Key::Character("l".into()),
+                modified_key: Key::Character("l".into()),
+                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyL),
+                location: keyboard::Location::Standard,
+                modifiers: Modifiers::CTRL,
+                text: Some("l".into()),
+                repeat: false,
+            }),
+            Message::TransportPanic
+        ));
+
+        assert!(matches!(
+            Maolan::keyboard_message(KeyEvent::KeyPressed {
+                key: Key::Named(Named::Home),
+                modified_key: Key::Named(Named::Home),
+                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Home),
+                location: keyboard::Location::Standard,
+                modifiers: Modifiers::default(),
+                text: None,
+                repeat: false,
+            }),
+            Message::JumpToStart
+        ));
+
+        assert!(matches!(
+            Maolan::keyboard_message(KeyEvent::KeyPressed {
+                key: Key::Named(Named::End),
+                modified_key: Key::Named(Named::End),
+                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::End),
+                location: keyboard::Location::Standard,
+                modifiers: Modifiers::default(),
+                text: None,
+                repeat: false,
+            }),
+            Message::JumpToEnd
         ));
     }
 }

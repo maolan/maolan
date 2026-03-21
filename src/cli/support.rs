@@ -196,6 +196,15 @@ pub fn load_export_session_data(session_dir: &Path) -> Result<ExportSessionData,
     })
 }
 
+pub fn load_session_end_sample(session_dir: &Path) -> Result<usize, String> {
+    let session = load_session_json(session_dir)?;
+    Ok(session
+        .get("tracks")
+        .and_then(Value::as_array)
+        .map(|tracks| tracks.iter().map(track_end_sample).max().unwrap_or(0))
+        .unwrap_or(0))
+}
+
 fn load_session_json(session_dir: &Path) -> Result<Value, String> {
     let session_path = session_dir.join("session.json");
     let file = File::open(&session_path)
@@ -203,6 +212,32 @@ fn load_session_json(session_dir: &Path) -> Result<Value, String> {
     let reader = BufReader::new(file);
     serde_json::from_reader(reader)
         .map_err(|err| format!("Failed to parse {}: {err}", session_path.display()))
+}
+
+fn track_end_sample(track: &Value) -> usize {
+    ["audio", "midi"]
+        .into_iter()
+        .filter_map(|kind| track.get(kind))
+        .filter_map(|section| section.get("clips").and_then(Value::as_array))
+        .flat_map(|clips| clips.iter())
+        .map(clip_end_sample)
+        .max()
+        .unwrap_or(0)
+}
+
+fn clip_end_sample(clip: &Value) -> usize {
+    let own_end = clip
+        .get("start")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .saturating_add(clip.get("length").and_then(Value::as_u64).unwrap_or(0))
+        as usize;
+    let child_end = clip
+        .get("grouped_clips")
+        .and_then(Value::as_array)
+        .map(|clips| clips.iter().map(clip_end_sample).max().unwrap_or(0))
+        .unwrap_or(0);
+    own_end.max(child_end)
 }
 
 fn push_global_binding(
@@ -1052,6 +1087,49 @@ mod tests {
         assert!(actions.iter().any(
             |action| matches!(action, Action::Connect { from_track, to_track, kind, .. } if from_track == "Track 1" && to_track == "midi:hw:out:dev-out" && *kind == Kind::MIDI)
         ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_session_end_sample_uses_latest_audio_midi_and_grouped_clip_end() {
+        let dir = std::env::temp_dir().join(format!(
+            "maolan-cli-support-end-sample-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        std::fs::write(
+            dir.join("session.json"),
+            serde_json::json!({
+                "tracks": [{
+                    "name": "Track 1",
+                    "audio": {"ins": 2, "outs": 2, "clips": [{
+                        "name": "Audio A",
+                        "start": 100,
+                        "length": 50
+                    }, {
+                        "name": "Grouped",
+                        "start": 10,
+                        "length": 5,
+                        "grouped_clips": [{
+                            "name": "Child",
+                            "start": 400,
+                            "length": 25
+                        }]
+                    }]},
+                    "midi": {"ins": 1, "outs": 1, "clips": [{
+                        "name": "Midi A",
+                        "start": 250,
+                        "length": 100
+                    }]}
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write session");
+
+        assert_eq!(load_session_end_sample(&dir).expect("end sample"), 425);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

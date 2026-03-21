@@ -1,6 +1,6 @@
 # Maolan Features
 
-Last updated: 2026-03-18
+Last updated: 2026-03-21
 
 ## Core DAW Workflow
 - Multi-track audio + MIDI session editing
@@ -100,6 +100,8 @@ Last updated: 2026-03-18
 - Tempo/time-signature points add/move/delete/duplicate/reset
 - Numeric tempo/time-signature input with validation
 - Play/pause/stop/record transport control
+- GUI transport shortcuts for rewind-to-start/end, session record arm toggle, and panic
+- CLI transport shortcuts for rewind-to-start/end and panic
 - Toolbar panic button for hardware MIDI outputs (`CC64=0`, `CC120=0`, `CC123=0`)
 - Metronome enable/disable
 - Clip playback enable/disable at transport level
