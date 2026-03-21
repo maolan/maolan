@@ -18,6 +18,7 @@ use crate::{
     consts::gui::{AUTOSAVE_SNAPSHOT_INTERVAL, METER_QUANTIZE_STEP_DB},
     consts::gui_update_mod::{ATTACK_ALPHA, RELEASE_ALPHA},
     consts::state_ids::METRONOME_TRACK_ID,
+    consts::widget_piano::PITCH_MAX,
     message::{
         ClipPitchCorrectionRequest, ClipStretchRequest, ExportNormalizeMode, ExportRenderMode,
         Message, Show, TrackAutomationMode, TrackAutomationTarget,
@@ -3150,7 +3151,10 @@ impl Maolan {
         let mut snapped = 0usize;
         for idx in selection.iter().copied() {
             if let Some(point) = pitch_correction.points.get_mut(idx) {
-                let snapped_pitch = point.target_midi_pitch.round().clamp(0.0, 119.0);
+                let snapped_pitch = point
+                    .target_midi_pitch
+                    .round()
+                    .clamp(0.0, f32::from(PITCH_MAX));
                 if (point.target_midi_pitch - snapped_pitch).abs() > f32::EPSILON {
                     point.target_midi_pitch = snapped_pitch;
                     snapped = snapped.saturating_add(1);

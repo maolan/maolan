@@ -4,7 +4,7 @@ use crate::{
     },
     consts::{
         widget_piano::{
-            NOTES_PER_OCTAVE, OCTAVES, PITCH_MAX, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
+            MIDI_NOTE_COUNT, NOTES_PER_OCTAVE, PITCH_MAX, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
         },
         workspace::PLAYHEAD_WIDTH_PX,
     },
@@ -29,7 +29,7 @@ pub struct NoteArea {
 
 impl NoteArea {
     pub fn view(self, content: Vec<Element<'static, Message>>) -> Element<'static, Message> {
-        let pitch_count = OCTAVES * NOTES_PER_OCTAVE;
+        let pitch_count = MIDI_NOTE_COUNT;
         let row_h = ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
             * self.zoom_y)
             .max(1.0);

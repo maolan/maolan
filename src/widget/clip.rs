@@ -1,5 +1,6 @@
 use crate::{
     consts::{
+        widget_piano::PITCH_MAX,
         workspace::{
             AUDIO_CLIP_BASE, AUDIO_CLIP_BORDER, AUDIO_CLIP_SELECTED_BASE,
             AUDIO_CLIP_SELECTED_BORDER, CLIP_RESIZE_HANDLE_WIDTH, MIDI_CLIP_BASE, MIDI_CLIP_BORDER,
@@ -689,8 +690,8 @@ impl canvas::Program<Message> for MidiClipNotesCanvas {
                 let visible_end = visible_start.saturating_add(visible_len);
                 let clip_len = visible_len as f32;
                 let min_pitch = 0_u8;
-                let max_pitch = 119_u8;
-                let pitch_span = 120.0_f32;
+                let max_pitch = PITCH_MAX;
+                let pitch_span = f32::from(PITCH_MAX) + 1.0;
                 let note_color = Color::from_rgba(0.68, 0.92, 0.40, 0.82);
                 let note_edge = Color::from_rgba(0.86, 0.98, 0.62, 0.95);
                 let grid_major = Color::from_rgba(0.74, 0.95, 0.58, 0.14);
