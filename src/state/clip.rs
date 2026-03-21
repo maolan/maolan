@@ -80,12 +80,6 @@ pub struct MIDIClip {
     pub muted: bool,
     #[serde(skip)]
     pub max_length_samples: usize,
-    #[serde(default = "default_fade_enabled")]
-    pub fade_enabled: bool,
-    #[serde(default = "default_fade_samples")]
-    pub fade_in_samples: usize,
-    #[serde(default = "default_fade_samples")]
-    pub fade_out_samples: usize,
     #[serde(default)]
     pub take_lane_override: Option<usize>,
     #[serde(default = "default_take_lane_flag")]
@@ -118,9 +112,6 @@ impl MIDIClip {
 
     pub fn normalize_group_children(&mut self) {
         for child in &mut self.grouped_clips {
-            child.fade_enabled = false;
-            child.fade_in_samples = 0;
-            child.fade_out_samples = 0;
             child.normalize_group_children();
         }
     }
@@ -180,13 +171,7 @@ mod tests {
     fn normalize_group_children_clears_midi_child_fades_recursively() {
         let mut clip = MIDIClip {
             grouped_clips: vec![MIDIClip {
-                fade_enabled: true,
-                fade_in_samples: 32,
-                fade_out_samples: 48,
                 grouped_clips: vec![MIDIClip {
-                    fade_enabled: true,
-                    fade_in_samples: 12,
-                    fade_out_samples: 18,
                     ..MIDIClip::default()
                 }],
                 ..MIDIClip::default()
@@ -196,11 +181,7 @@ mod tests {
 
         clip.normalize_group_children();
 
-        assert!(!clip.grouped_clips[0].fade_enabled);
-        assert_eq!(clip.grouped_clips[0].fade_in_samples, 0);
-        assert_eq!(clip.grouped_clips[0].fade_out_samples, 0);
-        assert!(!clip.grouped_clips[0].grouped_clips[0].fade_enabled);
-        assert_eq!(clip.grouped_clips[0].grouped_clips[0].fade_in_samples, 0);
-        assert_eq!(clip.grouped_clips[0].grouped_clips[0].fade_out_samples, 0);
+        assert_eq!(clip.grouped_clips.len(), 1);
+        assert_eq!(clip.grouped_clips[0].grouped_clips.len(), 1);
     }
 }

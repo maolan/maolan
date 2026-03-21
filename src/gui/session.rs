@@ -1783,11 +1783,6 @@ impl Maolan {
                         let offset = clip["offset"].as_u64().unwrap_or(0) as usize;
                         let input_channel = clip["input_channel"].as_u64().unwrap_or(0) as usize;
                         let muted = clip["muted"].as_bool().unwrap_or(false);
-                        let fade_enabled = clip["fade_enabled"].as_bool().unwrap_or(true);
-                        let fade_in_samples =
-                            clip["fade_in_samples"].as_u64().unwrap_or(240) as usize;
-                        let fade_out_samples =
-                            clip["fade_out_samples"].as_u64().unwrap_or(240) as usize;
 
                         if clip_name.trim().is_empty() {
                             warnings
@@ -1844,9 +1839,9 @@ impl Maolan {
                             muted,
                             peaks_file: None,
                             kind: Kind::MIDI,
-                            fade_enabled,
-                            fade_in_samples,
-                            fade_out_samples,
+                            fade_enabled: true,
+                            fade_in_samples: 240,
+                            fade_out_samples: 240,
                             source_name: None,
                             source_offset: None,
                             source_length: None,

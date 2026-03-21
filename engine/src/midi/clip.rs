@@ -6,9 +6,6 @@ pub struct MIDIClip {
     pub offset: usize,
     pub input_channel: usize,
     pub muted: bool,
-    pub fade_enabled: bool,
-    pub fade_in_samples: usize,
-    pub fade_out_samples: usize,
     pub grouped_clips: Vec<MIDIClip>,
 }
 
@@ -21,9 +18,6 @@ impl MIDIClip {
             offset: 0,
             input_channel: 0,
             muted: false,
-            fade_enabled: true,
-            fade_in_samples: 240,
-            fade_out_samples: 240,
             grouped_clips: Vec::new(),
         }
     }
@@ -43,9 +37,6 @@ mod tests {
         assert_eq!(clip.offset, 0);
         assert_eq!(clip.input_channel, 0);
         assert!(!clip.muted);
-        assert!(clip.fade_enabled);
-        assert_eq!(clip.fade_in_samples, 240);
-        assert_eq!(clip.fade_out_samples, 240);
         assert!(clip.grouped_clips.is_empty());
     }
 }

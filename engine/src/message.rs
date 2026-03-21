@@ -127,9 +127,6 @@ pub struct MidiClipData {
     pub offset: usize,
     pub input_channel: usize,
     pub muted: bool,
-    pub fade_enabled: bool,
-    pub fade_in_samples: usize,
-    pub fade_out_samples: usize,
     pub grouped_clips: Vec<MidiClipData>,
 }
 
@@ -940,9 +937,6 @@ mod tests {
             offset: 2,
             input_channel: 3,
             muted: true,
-            fade_enabled: false,
-            fade_in_samples: 12,
-            fade_out_samples: 24,
             grouped_clips: vec![MidiClipData {
                 name: "child.mid".to_string(),
                 start: 0,
@@ -955,8 +949,6 @@ mod tests {
         let restored: MidiClipData = serde_json::from_value(value).expect("deserialize");
 
         assert_eq!(restored.name, clip.name);
-        assert!(!restored.fade_enabled);
-        assert_eq!(restored.fade_in_samples, 12);
         assert_eq!(restored.grouped_clips.len(), 1);
         assert_eq!(restored.grouped_clips[0].name, "child.mid");
     }
