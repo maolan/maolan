@@ -11,6 +11,7 @@ keywords = ["audio", "midi", "daw", "vst3", "lv2"]
 categories = ["multimedia::audio"]
 
 [dependencies]
+crossterm = "0.29.0"
 ebur128 = "0.1"
 flacenc = "0.5"
 i24 = "1.0.1"
@@ -23,6 +24,7 @@ maolan-engine = { version = "0.0.3", path = "./engine" }
 midly = "0.5.3"
 mp3lame-encoder = "0.2"
 pitch-detection = "0.3.0"
+ratatui = "0.30.0"
 rfd = "0.17.2"
 rubato = "0.16.2"
 serde = { version = "1.0.228", features = ["derive"] }

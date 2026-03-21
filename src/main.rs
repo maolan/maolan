@@ -1,4 +1,5 @@
 mod add_track;
+mod audio_defaults;
 mod clip_rename;
 mod config;
 mod connections;

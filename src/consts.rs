@@ -14,6 +14,10 @@ pub mod gui {
     pub const AUTOSAVE_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(60);
 }
 
+pub mod audio_defaults {
+    pub use crate::audio_defaults::*;
+}
+
 pub mod workspace {
     use super::Color;
 
