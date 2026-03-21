@@ -81,7 +81,6 @@ pub mod main {
 pub mod workspace_ids {
     pub const EDITOR_SCROLL_ID: &str = "workspace.editor.scroll";
     pub const EDITOR_TIMELINE_SCROLL_ID: &str = "workspace.editor.timeline.scroll";
-    pub const EDITOR_H_SCROLL_ID: &str = "workspace.editor.h_scroll";
     pub const TRACKS_SCROLL_ID: &str = "workspace.tracks.scroll";
     pub const WORKSPACE_TEMPO_SCROLL_ID: &str = "workspace.tempo.scroll";
     pub const WORKSPACE_RULER_SCROLL_ID: &str = "workspace.ruler.scroll";
@@ -175,8 +174,7 @@ pub mod widget_piano {
     pub const KEYS_SCROLL_ID: &str = "piano.keys.scroll";
     pub const NOTES_SCROLL_ID: &str = "piano.notes.scroll";
     pub const CTRL_SCROLL_ID: &str = "piano.ctrl.scroll";
-    pub const H_SCROLL_ID: &str = "piano.h.scroll";
-    pub const V_SCROLL_ID: &str = "piano.v.scroll";
+    pub const SYSEX_SCROLL_ID: &str = "piano.sysex.scroll";
 
     pub const KEYBOARD_WIDTH: f32 = 128.0;
     pub const RIGHT_SCROLL_GUTTER_WIDTH: f32 = 16.0;

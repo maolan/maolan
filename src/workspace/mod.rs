@@ -15,7 +15,10 @@ use crate::{
     gui::visible_bars_to_zoom_slider,
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State},
-    widget::{midi_edit, pitch_correction},
+    widget::{
+        horizontal_scrollbar::HorizontalScrollbar, midi_edit, pitch_correction,
+        vertical_scrollbar::VerticalScrollbar,
+    },
 };
 use editor::{EditorViewArgs, OwnedEditorViewArgs};
 use iced::{
@@ -27,8 +30,8 @@ use std::{collections::HashMap, path::PathBuf};
 use tempo::TempoViewArgs;
 
 pub use crate::consts::workspace_ids::{
-    EDITOR_H_SCROLL_ID, EDITOR_SCROLL_ID, EDITOR_TIMELINE_SCROLL_ID, PIANO_RULER_SCROLL_ID,
-    PIANO_TEMPO_SCROLL_ID, TRACKS_SCROLL_ID, WORKSPACE_RULER_SCROLL_ID, WORKSPACE_TEMPO_SCROLL_ID,
+    EDITOR_SCROLL_ID, EDITOR_TIMELINE_SCROLL_ID, PIANO_RULER_SCROLL_ID, PIANO_TEMPO_SCROLL_ID,
+    TRACKS_SCROLL_ID, WORKSPACE_RULER_SCROLL_ID, WORKSPACE_TEMPO_SCROLL_ID,
 };
 
 pub(crate) fn timeline_sample_to_x_f64(sample: f64, pixels_per_sample: f32, inset_px: f32) -> f32 {
@@ -130,6 +133,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub snap_mode: SnapMode,
     pub samples_per_beat: f64,
     pub zoom_visible_bars: f32,
+    pub editor_scroll_x: f32,
     pub mixer_scroll_x: f32,
     pub window_width: f32,
     pub window_height: f32,
@@ -198,6 +202,7 @@ impl Workspace {
             snap_mode,
             samples_per_beat,
             zoom_visible_bars,
+            editor_scroll_x,
             mixer_scroll_x,
             window_width,
             window_height,
@@ -402,25 +407,41 @@ impl Workspace {
 
         let right_lanes_scrolled = scrollable(editor_timeline_scrolled)
             .id(Id::new(EDITOR_SCROLL_ID))
-            .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::new()))
+            .direction(scrollable::Direction::Vertical(
+                scrollable::Scrollbar::hidden(),
+            ))
             .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
             .width(Length::Fill)
             .height(Length::Fill);
+        let right_lanes_with_scrollbar: Element<'_, Message> =
+            if tracks_total_height > track_viewport_height + f32::EPSILON {
+                row![
+                    right_lanes_scrolled,
+                    VerticalScrollbar::new(
+                        tracks_total_height,
+                        editor_scroll_y,
+                        Message::EditorScrollYChanged,
+                    )
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fill),
+                ]
+                .spacing(0)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+            } else {
+                right_lanes_scrolled.into()
+            };
 
-        let h_scroll = scrollable(
-            container("")
-                .width(Length::Fixed(editor_content_width))
-                .height(Length::Fixed(1.0)),
+        let h_scroll = HorizontalScrollbar::new(
+            editor_content_width,
+            editor_scroll_x,
+            Message::EditorScrollXChanged,
         )
-        .id(Id::new(EDITOR_H_SCROLL_ID))
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new(),
-        ))
-        .on_scroll(|viewport| Message::EditorScrollXChanged(viewport.relative_offset().x))
         .width(Length::Fill)
         .height(Length::Fixed(16.0));
 
-        let editor_with_zoom = right_lanes_scrolled;
+        let editor_with_zoom = right_lanes_with_scrollbar;
         let tracks_scrolled = scrollable(self.tracks.view(tracks_visible_window))
             .id(Id::new(TRACKS_SCROLL_ID))
             .direction(scrollable::Direction::Vertical(

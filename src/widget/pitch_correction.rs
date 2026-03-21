@@ -63,6 +63,8 @@ impl PitchCorrection {
         let (
             zoom_x,
             zoom_y,
+            scroll_x,
+            scroll_y,
             roll,
             selected_points,
             dragging_points,
@@ -75,6 +77,8 @@ impl PitchCorrection {
             (
                 state.piano_zoom_x.max(1.0),
                 state.piano_zoom_y.max(1.0),
+                state.piano_scroll_x,
+                state.piano_scroll_y,
                 state.pitch_correction.clone(),
                 state.pitch_correction_selected_points.clone(),
                 state.pitch_correction_dragging_points.clone(),
@@ -145,7 +149,14 @@ impl PitchCorrection {
             note_scroll,
             h_scroll,
             v_scroll,
-        } = piano_grid_scrollers(keyboard.into(), notes_content, notes_h, notes_w);
+        } = piano_grid_scrollers(
+            keyboard.into(),
+            notes_content,
+            notes_h,
+            notes_w,
+            scroll_x,
+            scroll_y,
+        );
 
         let info_strip = container(
             column![

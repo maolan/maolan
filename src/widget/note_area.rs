@@ -1,7 +1,6 @@
 use crate::{
     consts::widget_piano::{
-        H_SCROLL_ID, KEYBOARD_WIDTH, KEYS_SCROLL_ID, NOTES_SCROLL_ID, RIGHT_SCROLL_GUTTER_WIDTH,
-        V_SCROLL_ID,
+        KEYBOARD_WIDTH, KEYS_SCROLL_ID, NOTES_SCROLL_ID, RIGHT_SCROLL_GUTTER_WIDTH,
     },
     consts::{
         widget_piano::{
@@ -10,7 +9,9 @@ use crate::{
         workspace::PLAYHEAD_WIDTH_PX,
     },
     message::Message,
-    widget::piano,
+    widget::{
+        horizontal_scrollbar::HorizontalScrollbar, piano, vertical_scrollbar::VerticalScrollbar,
+    },
 };
 use iced::{
     Background, Color, Element, Length, Point,
@@ -131,6 +132,8 @@ pub fn piano_grid_scrollers(
     notes_content: Element<'static, Message>,
     notes_h: f32,
     notes_w: f32,
+    scroll_x: f32,
+    scroll_y: f32,
 ) -> PianoGridScrolls {
     let keyboard_scroll = scrollable(
         container(keyboard)
@@ -169,29 +172,13 @@ pub fn piano_grid_scrollers(
     .width(Length::Fill)
     .height(Length::Fill);
 
-    let h_scroll = scrollable(
-        container("")
-            .width(Length::Fixed(notes_w))
-            .height(Length::Fixed(1.0)),
-    )
-    .id(Id::new(H_SCROLL_ID))
-    .direction(scrollable::Direction::Horizontal(
-        scrollable::Scrollbar::new(),
-    ))
-    .on_scroll(|viewport| Message::PianoScrollXChanged(viewport.relative_offset().x))
-    .width(Length::Fill)
-    .height(Length::Fixed(16.0));
+    let h_scroll = HorizontalScrollbar::new(notes_w, scroll_x, Message::PianoScrollXChanged)
+        .width(Length::Fill)
+        .height(Length::Fixed(16.0));
 
-    let v_scroll = scrollable(
-        container("")
-            .width(Length::Fixed(1.0))
-            .height(Length::Fixed(notes_h)),
-    )
-    .id(Id::new(V_SCROLL_ID))
-    .direction(scrollable::Direction::Vertical(scrollable::Scrollbar::new()))
-    .on_scroll(|viewport| Message::PianoScrollYChanged(viewport.relative_offset().y))
-    .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
-    .height(Length::Fill);
+    let v_scroll = VerticalScrollbar::new(notes_h, scroll_y, Message::PianoScrollYChanged)
+        .width(Length::Fixed(RIGHT_SCROLL_GUTTER_WIDTH))
+        .height(Length::Fill);
 
     PianoGridScrolls {
         keyboard_scroll: keyboard_scroll.into(),
