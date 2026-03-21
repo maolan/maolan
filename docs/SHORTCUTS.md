@@ -50,8 +50,9 @@ Last updated: 2026-03-21
 - `Drag clip fade handles`: Resize fade-in/fade-out
 - `Middle click clip`: Split clip at current cursor/snap position
 - `Double click MIDI clip`: Open MIDI piano roll
+- `Double click audio clip`: Open per-clip plugin graph on supported Unix builds
 - `Right click clip`: Open clip context menu
-  - Clip actions such as rename, take-lane controls, mute/unmute, pitch correction, fade toggle, and audio stretch actions for audio clips
+  - Clip actions such as group/ungroup, rename, take-lane controls, mute/unmute, pitch correction, fade toggle, and audio stretch actions for audio clips
 
 ### Track Header Markers
 - `Right click empty marker/header area`: Open the create-marker dialog at the snapped timeline position
@@ -126,3 +127,6 @@ Last updated: 2026-03-21
 - In pitch-correction view, undo/redo applies to the local correction editor instead of global engine history until you leave the view or press `Apply`.
 - Audio clip stretching is only available when the `rubberband` executable can be found on `PATH`.
 - The main editor zoom is geometric rather than linear, so equal slider movement produces equal zoom-ratio changes.
+- `Group` is only enabled when the current selection contains two or more non-group clips from the same track and clip type.
+- `Split` is blocked for grouped clips; ungroup first.
+- Per-clip plugin graphs are audio-only and are currently built for Unix non-macOS code paths.

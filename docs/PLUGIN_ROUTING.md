@@ -1,6 +1,6 @@
 # Plugin Routing and Sidechains
 
-Last updated: 2026-03-11
+Last updated: 2026-03-21
 
 ## Overview
 
@@ -14,11 +14,14 @@ Maolan uses a per-track plugin graph instead of a fixed insert-only chain. A tra
 
 Connections are explicit. Audio and MIDI routing are managed separately.
 
+Audio clips on supported Unix builds can also carry their own per-clip plugin graph. That graph is separate from the parent track graph and is stored with the clip in session data.
+
 ## Default Behavior
 
 - A new track starts with default passthrough routing from track inputs to track outputs.
 - MIDI passthrough is also created for the first input/output path.
 - Loading plugins does not remove existing routing automatically; the graph determines the signal path.
+- Opening an audio clip plugin graph seeds a default passthrough clip graph if the clip does not already have one.
 
 ## Audio Ports
 
@@ -48,9 +51,17 @@ MIDI connections are explicit in the graph as well.
 Plugin graph state is part of save/restore workflows.
 
 - Session save/load restores plugin graph topology.
+- Session save/load also restores per-audio-clip plugin graphs.
 - Track templates restore plugin order, plugin state, and graph connections.
 - Mixed Unix graphs containing LV2 and CLAP plugins are restored in saved order.
 - VST3 state is also preserved through the plugin restore paths used by the current host integration.
+
+## Per-Clip FX Notes
+
+- Per-clip plugin graphs are currently audio-only.
+- They are opened by double-clicking an audio clip in the timeline.
+- A grouped audio clip can have its own plugin graph, and child audio clips can also keep their own plugin graphs.
+- In the current render path, child clips are rendered first, then group-level fades are applied, then the group plugin graph is processed.
 
 ## Practical Workflow
 

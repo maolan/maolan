@@ -20,12 +20,21 @@ Last updated: 2026-03-21
 - Audio clip and MIDI clip placement on timeline
 - Clip select/multi-select and marquee selection
 - Clip drag-and-drop move/copy across tracks
+- Clip group / ungroup on same-track, same-type selections
+- Nested clip groups preserved on save/load and restore on ungroup
 - Clip edge resize (left/right)
 - Clip fade-in/fade-out resize
 - Clip mute/unmute
 - Clip rename
 - Clip middle-click split at cursor/snap point
+- Grouped clips cannot be split until ungrouped
 - MIDI clip double-click opens piano roll
+- Audio clip double-click opens per-clip plugin graph on Unix
+- Per-clip FX/plugin graph for audio clips:
+  - Separate from the track plugin graph
+  - Stored per clip in session data
+  - Applies after grouped-child summing and clip fades in the current render path
+  - Supports CLAP, VST3, and LV2 on supported Unix builds
 - Audio clip pitch-correction editor
 - Pitch-correction workflow:
   - Open from the audio clip context menu when transport is stopped
