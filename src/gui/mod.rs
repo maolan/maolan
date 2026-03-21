@@ -85,7 +85,7 @@ type PianoParseResult = (
 );
 type TrackFreezeRestore = (Vec<AudioClip>, Vec<MIDIClip>, Option<String>);
 
-pub(crate) const MIN_ZOOM_VISIBLE_BARS: f32 = 1.0;
+pub(crate) const MIN_ZOOM_VISIBLE_BARS: f32 = 0.25;
 pub(crate) const MAX_ZOOM_VISIBLE_BARS: f32 = 256.0;
 pub(crate) static RUBBERBAND_AVAILABLE: LazyLock<bool> = LazyLock::new(|| {
     Command::new("rubberband")
@@ -5168,7 +5168,7 @@ mod tests {
 
     #[test]
     fn zoom_slider_roundtrip_preserves_visible_bars() {
-        for visible_bars in [1.0_f32, 2.0, 4.0, 16.0, 64.0, 256.0] {
+        for visible_bars in [0.25, 1.0, 2.0, 4.0, 16.0, 64.0, 256.0] {
             let slider = visible_bars_to_zoom_slider(visible_bars);
             let roundtrip = zoom_slider_to_visible_bars(slider);
             assert!((roundtrip - visible_bars).abs() < 0.001);
@@ -5178,7 +5178,7 @@ mod tests {
     #[test]
     fn zoom_slider_midpoint_is_geometric_midpoint() {
         let midpoint = zoom_slider_to_visible_bars(0.5);
-        assert!((midpoint - 16.0).abs() < 0.001);
+        assert!((midpoint - 8.0).abs() < 0.001);
     }
 
     #[test]
