@@ -1,17 +1,15 @@
 #[path = "../audio_defaults.rs"]
 mod audio_defaults;
-#[path = "../cli_export.rs"]
-mod cli_export;
-#[path = "../cli_support.rs"]
-mod cli_support;
+#[path = "../cli/mod.rs"]
+mod cli;
 
-use cli_export::{
+use cli::export::{
     EXPORT_MP3_BITRATES_KBPS, EXPORT_MP3_MODE_ALL, EXPORT_NORMALIZE_MODE_ALL,
-    EXPORT_RENDER_MODE_ALL, ExportBitDepth, ExportNormalizeMode, ExportRenderMode, ExportSettings,
-    STANDARD_EXPORT_SAMPLE_RATES, default_export_base_path, export_bit_depth_options,
-    export_session, validate_export_settings,
+    EXPORT_RENDER_MODE_ALL, ExportBitDepth, ExportFormat, ExportNormalizeMode, ExportRenderMode,
+    ExportSettings, STANDARD_EXPORT_SAMPLE_RATES, default_export_base_path,
+    export_bit_depth_options, export_session, validate_export_settings,
 };
-use cli_support::{
+use cli::support::{
     CliConfig, ExportSessionData, load_export_session_data, load_session_restore_actions,
 };
 use crossterm::{
@@ -744,12 +742,10 @@ impl App {
             ExportField::SampleRate,
         ];
         let selected_formats = export_ui.settings.selected_formats();
-        if selected_formats.iter().any(|format| {
-            matches!(
-                format,
-                cli_export::ExportFormat::Wav | cli_export::ExportFormat::Flac
-            )
-        }) {
+        if selected_formats
+            .iter()
+            .any(|format| matches!(format, ExportFormat::Wav | ExportFormat::Flac))
+        {
             fields.push(ExportField::BitDepth);
         }
         if export_ui.settings.format_mp3 {

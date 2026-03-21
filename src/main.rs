@@ -14,13 +14,15 @@ mod state;
 mod style;
 mod template_save;
 mod toolbar;
-mod track_group;
-mod track_marker;
-mod track_rename;
-mod track_template_save;
+mod track;
 mod ui_timing;
 mod widget;
 mod workspace;
+
+pub use track::group as track_group;
+pub use track::marker as track_marker;
+pub use track::rename as track_rename;
+pub use track::template_save as track_template_save;
 
 use gui::Maolan;
 use iced::window;
