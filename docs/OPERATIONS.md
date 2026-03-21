@@ -1,6 +1,6 @@
 # Maolan Operations, Storage, and Recovery
 
-Last updated: 2026-03-18
+Last updated: 2026-03-21
 
 ## Runtime and Platform Behavior
 
@@ -46,6 +46,8 @@ A saved session is a directory containing:
 The session JSON persists:
 
 - tracks, clips, and track connections
+- clip group membership as recursive `grouped_clips`
+- per-audio-clip plugin graph state in `plugin_graph_json`
 - clip pitch-correction settings and saved pitch-segment targets
 - plugin graph topology and plugin state
 - session metadata
@@ -135,6 +137,17 @@ Current bundle contents:
 - Pressing `Apply` stores the current correction points and render settings on the clip without destructively rewriting the source audio file.
 - Live transport playback applies saved pitch correction in real time.
 - Freeze preparation renders pitch-corrected clips offline first so frozen audio matches the corrected result.
+
+## Clip Groups and Per-Clip FX
+
+- Grouping replaces the selected top-level clips with one parent clip whose `grouped_clips` store child timing relative to the group start.
+- Grouping is only available for selections of two or more clips from the same track and the same clip kind.
+- Child fades are cleared during grouping; the group clip owns the audible fades after grouping.
+- Ungroup restores children at their absolute timeline positions and preserves nested groups.
+- Grouped clips cannot be split directly.
+- Audio clips can also store an independent plugin graph in `plugin_graph_json`.
+- On supported Unix builds, opening clip plugins seeds a default passthrough graph when a clip has no saved graph yet.
+- In the current audio engine path, grouped audio children are summed, the group fade is applied, and the group clip plugin graph runs after that sum; leaf audio clips can also run their own plugin graphs.
 
 ## Recent Sessions
 
