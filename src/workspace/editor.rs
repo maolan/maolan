@@ -95,6 +95,118 @@ fn clip_label_overlay(label: String) -> Element<'static, Message> {
     .into()
 }
 
+fn visible_fade_overlay_width(fade_samples: usize, pixels_per_sample: f32) -> f32 {
+    fade_samples as f32 * pixels_per_sample
+}
+
+fn should_draw_fade_overlay(fade_samples: usize, pixels_per_sample: f32) -> bool {
+    fade_samples as f32 * pixels_per_sample > 3.0
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FadeBezierCanvas {
+    color: Color,
+    fade_out: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_draw_fade_overlay, visible_fade_overlay_width};
+
+    #[test]
+    fn visible_fade_overlay_width_grows_with_zoom_below_full_size() {
+        let low_zoom = visible_fade_overlay_width(240, 0.01);
+        let higher_zoom = visible_fade_overlay_width(240, 0.02);
+
+        assert!(higher_zoom > low_zoom);
+        assert!((low_zoom - 2.4).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn visible_fade_overlay_width_matches_actual_size_once_large_enough() {
+        let width = visible_fade_overlay_width(240, 0.1);
+        assert_eq!(width, 24.0);
+    }
+
+    #[test]
+    fn should_draw_fade_overlay_hides_tiny_fades() {
+        assert!(!should_draw_fade_overlay(240, 0.0125));
+        assert!(should_draw_fade_overlay(240, 0.0126));
+    }
+}
+
+impl canvas::Program<Message> for FadeBezierCanvas {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        let start = if self.fade_out {
+            Point::new(0.0, 0.0)
+        } else {
+            Point::new(0.0, bounds.height)
+        };
+        let end = if self.fade_out {
+            Point::new(bounds.width, bounds.height)
+        } else {
+            Point::new(bounds.width, 0.0)
+        };
+        let c1 = if self.fade_out {
+            Point::new(bounds.width * 0.2, 0.0)
+        } else {
+            Point::new(bounds.width * 0.2, bounds.height)
+        };
+        let c2 = if self.fade_out {
+            Point::new(bounds.width * 0.8, bounds.height)
+        } else {
+            Point::new(bounds.width * 0.8, 0.0)
+        };
+        let fill = Path::new(|builder| {
+            if self.fade_out {
+                builder.move_to(Point::new(0.0, 0.0));
+                builder.line_to(Point::new(bounds.width, 0.0));
+                builder.line_to(end);
+            } else {
+                builder.move_to(Point::new(0.0, 0.0));
+                builder.line_to(end);
+            }
+            builder.bezier_curve_to(c2, c1, start);
+            builder.line_to(Point::new(0.0, 0.0));
+        });
+        frame.fill(&fill, Color::from_rgba(0.0, 0.0, 0.0, 0.22));
+
+        let path = Path::new(|builder| {
+            builder.move_to(start);
+            builder.bezier_curve_to(c1, c2, end);
+        });
+        frame.stroke(
+            &path,
+            canvas::Stroke::default()
+                .with_width(1.0)
+                .with_color(self.color),
+        );
+        vec![frame.into_geometry()]
+    }
+}
+
+fn fade_bezier_overlay(
+    width: f32,
+    height: f32,
+    color: Color,
+    fade_out: bool,
+) -> Element<'static, Message> {
+    canvas(FadeBezierCanvas { color, fade_out })
+        .width(Length::Fixed(width.max(0.0)))
+        .height(Length::Fixed(height.max(0.0)))
+        .into()
+}
+
 fn brighten(color: Color, amount: f32) -> Color {
     Color {
         r: (color.r + amount).min(1.0),
@@ -1358,43 +1470,60 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             true,
         ));
 
-        let clip_content = container(Stack::with_children(vec![
-            if clip.is_group() {
-                grouped_audio_waveform_overlay(clip, session_root, pixels_per_sample, clip_height)
-            } else {
-                audio_waveform_overlay(
-                    clip_peaks.clone(),
-                    resolve_audio_clip_path(session_root, &clip_name),
-                    clip_width,
-                    clip_height,
-                    clip.offset,
-                    clip.length,
-                    clip.max_length_samples,
-                )
-            },
-            clip_label_overlay(display_clip_label.clone()),
-        ]))
+        let clip_content = container(row![
+            container("")
+                .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
+                .height(Length::Fill),
+            container(Stack::with_children(vec![
+                if clip.is_group() {
+                    grouped_audio_waveform_overlay(
+                        clip,
+                        session_root,
+                        pixels_per_sample,
+                        clip_height,
+                    )
+                } else {
+                    audio_waveform_overlay(
+                        clip_peaks.clone(),
+                        resolve_audio_clip_path(session_root, &clip_name),
+                        clip_width,
+                        clip_height,
+                        clip.offset,
+                        clip.length,
+                        clip.max_length_samples,
+                    )
+                },
+                clip_label_overlay(display_clip_label.clone()),
+            ]))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(0)
+            .style(move |_theme| {
+                use container::Style;
+                let base = if is_selected {
+                    AUDIO_CLIP_SELECTED_BASE
+                } else {
+                    AUDIO_CLIP_BASE
+                };
+                let (muted_alpha, normal_alpha) =
+                    if clip_muted { (0.45, 0.45) } else { (1.0, 1.0) };
+                Style {
+                    background: Some(clip_two_edge_gradient(
+                        base,
+                        muted_alpha,
+                        normal_alpha,
+                        true,
+                    )),
+                    ..Style::default()
+                }
+            }),
+            container("")
+                .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
+                .height(Length::Fill),
+        ])
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(0)
-        .style(move |_theme| {
-            use container::Style;
-            let base = if is_selected {
-                AUDIO_CLIP_SELECTED_BASE
-            } else {
-                AUDIO_CLIP_BASE
-            };
-            let (muted_alpha, normal_alpha) = if clip_muted { (0.45, 0.45) } else { (1.0, 1.0) };
-            Style {
-                background: Some(clip_two_edge_gradient(
-                    base,
-                    muted_alpha,
-                    normal_alpha,
-                    true,
-                )),
-                ..Style::default()
-            }
-        });
+        .padding(0);
 
         let clip_widget = container(Stack::with_children(vec![
             clip_content.into(),
@@ -1421,35 +1550,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         // Add fade handles if fades are enabled
         let clip_with_fades: Element<'_, Message> = if clip.fade_enabled {
-            let fade_in_width = (clip.fade_in_samples as f32 * pixels_per_sample).max(5.0);
-            let fade_out_width = (clip.fade_out_samples as f32 * pixels_per_sample).max(5.0);
+            let fade_in_width = visible_fade_overlay_width(clip.fade_in_samples, pixels_per_sample);
+            let fade_out_width =
+                visible_fade_overlay_width(clip.fade_out_samples, pixels_per_sample);
 
             let mut stack = Stack::new().push(clip_widget);
 
-            // Draw fade-in curve
-            if fade_in_width > 5.0 {
-                let num_points = (fade_in_width / 3.0).min(20.0) as usize;
-                for i in 0..=num_points {
-                    let t = i as f32 / num_points as f32;
-                    let gain = (t * std::f32::consts::FRAC_PI_2).sin(); // Constant-power fade-in
-                    let x = CLIP_RESIZE_HANDLE_WIDTH + t * fade_in_width;
-                    let y = clip_height * (1.0 - gain);
-
-                    let point = container("")
-                        .width(Length::Fixed(2.0))
-                        .height(Length::Fixed(2.0))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.8,
-                                g: 0.8,
-                                b: 0.8,
-                                a: 0.6,
-                            })),
-                            ..container::Style::default()
-                        });
-                    stack = stack.push(pin(point).position(Point::new(x, y)));
-                }
-
+            if should_draw_fade_overlay(clip.fade_in_samples, pixels_per_sample) {
                 // Fade-in drag handle
                 let fade_in_track_name = track_name_cloned.clone();
                 let fade_in_handle = mouse_area(
@@ -1486,33 +1593,18 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     CLIP_RESIZE_HANDLE_WIDTH + fade_in_width - 3.0,
                     -3.0,
                 )));
+                stack = stack.push(
+                    pin(fade_bezier_overlay(
+                        fade_in_width,
+                        clip_height,
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                        false,
+                    ))
+                    .position(Point::new(CLIP_RESIZE_HANDLE_WIDTH, 0.0)),
+                );
             }
 
-            // Draw fade-out curve
-            if fade_out_width > 5.0 {
-                let num_points = (fade_out_width / 3.0).min(20.0) as usize;
-                for i in 0..=num_points {
-                    let t = i as f32 / num_points as f32;
-                    let gain = (t * std::f32::consts::FRAC_PI_2).cos(); // Constant-power fade-out
-                    let x =
-                        CLIP_RESIZE_HANDLE_WIDTH + clip_width - fade_out_width + t * fade_out_width;
-                    let y = clip_height * (1.0 - gain);
-
-                    let point = container("")
-                        .width(Length::Fixed(2.0))
-                        .height(Length::Fixed(2.0))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.8,
-                                g: 0.8,
-                                b: 0.8,
-                                a: 0.6,
-                            })),
-                            ..container::Style::default()
-                        });
-                    stack = stack.push(pin(point).position(Point::new(x, y)));
-                }
-
+            if should_draw_fade_overlay(clip.fade_out_samples, pixels_per_sample) {
                 // Fade-out drag handle
                 let fade_out_track_name = track_name_cloned.clone();
                 let fade_out_handle = mouse_area(
@@ -1549,6 +1641,18 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     CLIP_RESIZE_HANDLE_WIDTH + clip_width - fade_out_width - 3.0,
                     -3.0,
                 )));
+                stack = stack.push(
+                    pin(fade_bezier_overlay(
+                        fade_out_width,
+                        clip_height,
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                        true,
+                    ))
+                    .position(Point::new(
+                        CLIP_RESIZE_HANDLE_WIDTH + clip_width - fade_out_width,
+                        0.0,
+                    )),
+                );
             }
 
             stack.into()
@@ -1854,142 +1958,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             ..container::Style::default()
         });
 
-        // Add fade handles if fades are enabled (MIDI clips)
-        let clip_with_fades: Element<'_, Message> = if clip.fade_enabled {
-            let fade_in_width = (clip.fade_in_samples as f32 * pixels_per_sample).max(5.0);
-            let fade_out_width = (clip.fade_out_samples as f32 * pixels_per_sample).max(5.0);
-
-            let mut stack = Stack::new().push(clip_widget);
-
-            // Draw fade-in curve
-            if fade_in_width > 5.0 {
-                let num_points = (fade_in_width / 3.0).min(20.0) as usize;
-                for i in 0..=num_points {
-                    let t = i as f32 / num_points as f32;
-                    let gain = (t * std::f32::consts::FRAC_PI_2).sin(); // Constant-power fade-in
-                    let x = CLIP_RESIZE_HANDLE_WIDTH + t * fade_in_width;
-                    let y = clip_height * (1.0 - gain);
-
-                    let point = container("")
-                        .width(Length::Fixed(2.0))
-                        .height(Length::Fixed(2.0))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.7,
-                                g: 0.96,
-                                b: 0.62,
-                                a: 0.6,
-                            })),
-                            ..container::Style::default()
-                        });
-                    stack = stack.push(pin(point).position(Point::new(x, y)));
-                }
-
-                // Fade-in drag handle
-                let fade_in_track_name = track_name_cloned.clone();
-                let fade_in_handle = mouse_area(
-                    container("")
-                        .width(Length::Fixed(6.0))
-                        .height(Length::Fixed(6.0))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.9,
-                                g: 1.0,
-                                b: 0.72,
-                                a: 0.9,
-                            })),
-                            border: Border {
-                                color: Color {
-                                    r: 0.24,
-                                    g: 0.42,
-                                    b: 0.20,
-                                    a: 1.0,
-                                },
-                                width: 1.0,
-                                radius: 3.0.into(),
-                            },
-                            ..container::Style::default()
-                        }),
-                )
-                .on_press(Message::FadeResizeStart {
-                    kind: Kind::MIDI,
-                    track_idx: fade_in_track_name,
-                    clip_idx: index,
-                    is_fade_out: false,
-                });
-                stack = stack.push(pin(fade_in_handle).position(Point::new(
-                    CLIP_RESIZE_HANDLE_WIDTH + fade_in_width - 3.0,
-                    -3.0,
-                )));
-            }
-
-            // Draw fade-out curve
-            if fade_out_width > 5.0 {
-                let num_points = (fade_out_width / 3.0).min(20.0) as usize;
-                for i in 0..=num_points {
-                    let t = i as f32 / num_points as f32;
-                    let gain = (t * std::f32::consts::FRAC_PI_2).cos(); // Constant-power fade-out
-                    let x =
-                        CLIP_RESIZE_HANDLE_WIDTH + clip_width - fade_out_width + t * fade_out_width;
-                    let y = clip_height * (1.0 - gain);
-
-                    let point = container("")
-                        .width(Length::Fixed(2.0))
-                        .height(Length::Fixed(2.0))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.7,
-                                g: 0.96,
-                                b: 0.62,
-                                a: 0.6,
-                            })),
-                            ..container::Style::default()
-                        });
-                    stack = stack.push(pin(point).position(Point::new(x, y)));
-                }
-
-                // Fade-out drag handle
-                let fade_out_track_name = track_name_cloned.clone();
-                let fade_out_handle = mouse_area(
-                    container("")
-                        .width(Length::Fixed(6.0))
-                        .height(Length::Fixed(6.0))
-                        .style(|_theme| container::Style {
-                            background: Some(Background::Color(Color {
-                                r: 0.9,
-                                g: 1.0,
-                                b: 0.72,
-                                a: 0.9,
-                            })),
-                            border: Border {
-                                color: Color {
-                                    r: 0.24,
-                                    g: 0.42,
-                                    b: 0.20,
-                                    a: 1.0,
-                                },
-                                width: 1.0,
-                                radius: 3.0.into(),
-                            },
-                            ..container::Style::default()
-                        }),
-                )
-                .on_press(Message::FadeResizeStart {
-                    kind: Kind::MIDI,
-                    track_idx: fade_out_track_name,
-                    clip_idx: index,
-                    is_fade_out: true,
-                });
-                stack = stack.push(pin(fade_out_handle).position(Point::new(
-                    CLIP_RESIZE_HANDLE_WIDTH + clip_width - fade_out_width - 3.0,
-                    -3.0,
-                )));
-            }
-
-            stack.into()
-        } else {
-            clip_widget.into()
-        };
+        let clip_with_fades: Element<'_, Message> = clip_widget.into();
 
         if !dragged_to_other_track {
             let clip_with_mouse = {
@@ -2570,7 +2539,6 @@ pub(super) fn clip_context_menu_overlay(
         }
         Kind::MIDI => {
             let clip_ref = track.midi.clips.get(clip.clip_idx)?;
-            let fade_enabled = clip_ref.fade_enabled;
             let muted = clip_ref.muted;
             let is_group = clip_ref.is_group();
             let track_idx = clip.track_idx.clone();
@@ -2603,18 +2571,6 @@ pub(super) fn clip_context_menu_overlay(
                         clip_idx,
                         kind: Kind::MIDI,
                         muted: !muted,
-                    },
-                ),
-                crate::menu::menu_item(
-                    if fade_enabled {
-                        "Disable Fade"
-                    } else {
-                        "Enable Fade"
-                    },
-                    Message::ClipToggleFade {
-                        track_idx,
-                        clip_idx,
-                        kind: Kind::MIDI,
                     },
                 ),
             ]
@@ -2835,9 +2791,6 @@ impl Editor {
                 clip.offset.hash(&mut hasher);
                 clip.input_channel.hash(&mut hasher);
                 clip.muted.hash(&mut hasher);
-                clip.fade_enabled.hash(&mut hasher);
-                clip.fade_in_samples.hash(&mut hasher);
-                clip.fade_out_samples.hash(&mut hasher);
                 clip.take_lane_override.hash(&mut hasher);
                 clip.take_lane_pinned.hash(&mut hasher);
                 clip.take_lane_locked.hash(&mut hasher);

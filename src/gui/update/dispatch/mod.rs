@@ -2110,9 +2110,6 @@ impl Maolan {
                                             input_channel: *input_channel,
                                             muted: *muted,
                                             max_length_samples,
-                                            fade_enabled: *fade_enabled,
-                                            fade_in_samples: *fade_in_samples,
-                                            fade_out_samples: *fade_out_samples,
                                             take_lane_override: None,
                                             take_lane_pinned: false,
                                             take_lane_locked: false,
@@ -3385,9 +3382,9 @@ impl Maolan {
                             muted: clip.muted,
                             peaks_file: None,
                             kind: Kind::MIDI,
-                            fade_enabled: clip.fade_enabled,
-                            fade_in_samples: clip.fade_in_samples,
-                            fade_out_samples: clip.fade_out_samples,
+                            fade_enabled: true,
+                            fade_in_samples: 240,
+                            fade_out_samples: 240,
                             source_name: None,
                             source_offset: None,
                             source_length: None,
@@ -4305,26 +4302,17 @@ impl Maolan {
                 clip_idx,
                 kind,
             } => {
+                if kind == Kind::MIDI {
+                    return Task::none();
+                }
                 let new_fade_enabled = {
                     let mut state = self.state.blocking_write();
                     if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_idx) {
-                        match kind {
-                            Kind::Audio => {
-                                if let Some(clip) = track.audio.clips.get_mut(clip_idx) {
-                                    clip.fade_enabled = !clip.fade_enabled;
-                                    Some(clip.fade_enabled)
-                                } else {
-                                    None
-                                }
-                            }
-                            Kind::MIDI => {
-                                if let Some(clip) = track.midi.clips.get_mut(clip_idx) {
-                                    clip.fade_enabled = !clip.fade_enabled;
-                                    Some(clip.fade_enabled)
-                                } else {
-                                    None
-                                }
-                            }
+                        if let Some(clip) = track.audio.clips.get_mut(clip_idx) {
+                            clip.fade_enabled = !clip.fade_enabled;
+                            Some(clip.fade_enabled)
+                        } else {
+                            None
                         }
                     } else {
                         None
@@ -4336,21 +4324,10 @@ impl Maolan {
                     let (fade_in_samples, fade_out_samples) = {
                         let state = self.state.blocking_read();
                         if let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) {
-                            match kind {
-                                Kind::Audio => {
-                                    if let Some(clip) = track.audio.clips.get(clip_idx) {
-                                        (clip.fade_in_samples, clip.fade_out_samples)
-                                    } else {
-                                        (240, 240)
-                                    }
-                                }
-                                Kind::MIDI => {
-                                    if let Some(clip) = track.midi.clips.get(clip_idx) {
-                                        (clip.fade_in_samples, clip.fade_out_samples)
-                                    } else {
-                                        (240, 240)
-                                    }
-                                }
+                            if let Some(clip) = track.audio.clips.get(clip_idx) {
+                                (clip.fade_in_samples, clip.fade_out_samples)
+                            } else {
+                                (240, 240)
                             }
                         } else {
                             (240, 240)
@@ -5240,31 +5217,22 @@ impl Maolan {
                 clip_idx,
                 is_fade_out,
             } => {
+                if *kind == Kind::MIDI {
+                    return Task::none();
+                }
                 self.clip = None;
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) {
-                    let initial_samples = match kind {
-                        Kind::Audio => track.audio.clips.get(clip_idx).and_then(|clip| {
-                            if clip.take_lane_locked {
-                                return None;
-                            }
-                            if is_fade_out {
-                                Some(clip.fade_out_samples)
-                            } else {
-                                Some(clip.fade_in_samples)
-                            }
-                        }),
-                        Kind::MIDI => track.midi.clips.get(clip_idx).and_then(|clip| {
-                            if clip.take_lane_locked {
-                                return None;
-                            }
-                            if is_fade_out {
-                                Some(clip.fade_out_samples)
-                            } else {
-                                Some(clip.fade_in_samples)
-                            }
-                        }),
-                    };
+                    let initial_samples = track.audio.clips.get(clip_idx).and_then(|clip| {
+                        if clip.take_lane_locked {
+                            return None;
+                        }
+                        if is_fade_out {
+                            Some(clip.fade_out_samples)
+                        } else {
+                            Some(clip.fade_in_samples)
+                        }
+                    });
 
                     if let Some(initial_samples) = initial_samples {
                         state.resizing = Some(Resizing::Fade {
@@ -5521,16 +5489,7 @@ impl Maolan {
                                         }
                                     }
                                 }
-                                Kind::MIDI => {
-                                    if let Some(clip) = track.midi.clips.get_mut(index) {
-                                        let max_fade = clip.length / 2; // Can't fade more than half the clip
-                                        if is_fade_out {
-                                            clip.fade_out_samples = new_fade_samples.min(max_fade);
-                                        } else {
-                                            clip.fade_in_samples = new_fade_samples.min(max_fade);
-                                        }
-                                    }
-                                }
+                                Kind::MIDI => {}
                             }
                         }
                     }
@@ -5854,33 +5813,22 @@ impl Maolan {
                     ..
                 }) = resizing
                 {
+                    if kind == Kind::MIDI {
+                        return Task::none();
+                    }
                     // Send updated fade values to engine
                     let state = self.state.blocking_read();
                     if let Some(track) = state.tracks.iter().find(|t| t.name == track_name) {
-                        let (fade_enabled, fade_in_samples, fade_out_samples) = match kind {
-                            Kind::Audio => {
-                                if let Some(clip) = track.audio.clips.get(index) {
-                                    (
-                                        clip.fade_enabled,
-                                        clip.fade_in_samples,
-                                        clip.fade_out_samples,
-                                    )
-                                } else {
-                                    return Task::none();
-                                }
-                            }
-                            Kind::MIDI => {
-                                if let Some(clip) = track.midi.clips.get(index) {
-                                    (
-                                        clip.fade_enabled,
-                                        clip.fade_in_samples,
-                                        clip.fade_out_samples,
-                                    )
-                                } else {
-                                    return Task::none();
-                                }
-                            }
-                        };
+                        let (fade_enabled, fade_in_samples, fade_out_samples) =
+                            if let Some(clip) = track.audio.clips.get(index) {
+                                (
+                                    clip.fade_enabled,
+                                    clip.fade_in_samples,
+                                    clip.fade_out_samples,
+                                )
+                            } else {
+                                return Task::none();
+                            };
                         return self.send(Action::SetClipFade {
                             track_name,
                             clip_index: index,

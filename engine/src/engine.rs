@@ -2730,15 +2730,7 @@ impl Engine {
         clip.offset = data.offset;
         clip.input_channel = data.input_channel;
         clip.muted = data.muted;
-        clip.fade_enabled = data.fade_enabled;
-        clip.fade_in_samples = data.fade_in_samples;
-        clip.fade_out_samples = data.fade_out_samples;
         clip.grouped_clips = data.grouped_clips.iter().map(Self::midi_clip_from_data).collect();
-        for child in &mut clip.grouped_clips {
-            child.fade_enabled = false;
-            child.fade_in_samples = 0;
-            child.fade_out_samples = 0;
-        }
         clip
     }
 

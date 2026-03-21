@@ -803,18 +803,6 @@ fn parse_midi_clip_data(clip: &Value) -> Result<MidiClipData, String> {
             .and_then(Value::as_u64)
             .unwrap_or(0) as usize,
         muted: clip.get("muted").and_then(Value::as_bool).unwrap_or(false),
-        fade_enabled: clip
-            .get("fade_enabled")
-            .and_then(Value::as_bool)
-            .unwrap_or(true),
-        fade_in_samples: clip
-            .get("fade_in_samples")
-            .and_then(Value::as_u64)
-            .unwrap_or(240) as usize,
-        fade_out_samples: clip
-            .get("fade_out_samples")
-            .and_then(Value::as_u64)
-            .unwrap_or(240) as usize,
         grouped_clips: Vec::new(),
     };
     if let Some(children) = clip.get("grouped_clips").and_then(Value::as_array) {

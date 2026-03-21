@@ -521,28 +521,19 @@ impl Maolan {
     pub(crate) fn midi_clip_to_data(
         clip: &crate::state::MIDIClip,
     ) -> maolan_engine::message::MidiClipData {
-        let mut data = maolan_engine::message::MidiClipData {
+        maolan_engine::message::MidiClipData {
             name: clip.name.clone(),
             start: clip.start,
             length: clip.length,
             offset: clip.offset,
             input_channel: clip.input_channel,
             muted: clip.muted,
-            fade_enabled: clip.fade_enabled,
-            fade_in_samples: clip.fade_in_samples,
-            fade_out_samples: clip.fade_out_samples,
             grouped_clips: clip
                 .grouped_clips
                 .iter()
                 .map(Self::midi_clip_to_data)
                 .collect(),
-        };
-        for child in &mut data.grouped_clips {
-            child.fade_enabled = false;
-            child.fade_in_samples = 0;
-            child.fade_out_samples = 0;
         }
-        data
     }
 
     pub(crate) fn midi_clip_from_data(
@@ -557,9 +548,6 @@ impl Maolan {
             input_channel: data.input_channel,
             muted: data.muted,
             max_length_samples,
-            fade_enabled: data.fade_enabled,
-            fade_in_samples: data.fade_in_samples,
-            fade_out_samples: data.fade_out_samples,
             take_lane_override: None,
             take_lane_pinned: false,
             take_lane_locked: false,
@@ -2378,9 +2366,6 @@ impl Maolan {
                 let mut grouped_clips = clips;
                 for child in &mut grouped_clips {
                     child.start = child.start.saturating_sub(group_start);
-                    child.fade_enabled = false;
-                    child.fade_in_samples = 0;
-                    child.fade_out_samples = 0;
                     child.normalize_group_children();
                 }
                 tasks.push(self.send(Action::RemoveClip {
@@ -2454,9 +2439,6 @@ impl Maolan {
                 let mut grouped_clips = clips;
                 for child in &mut grouped_clips {
                     child.start = child.start.saturating_sub(group_start);
-                    child.fade_enabled = false;
-                    child.fade_in_samples = 0;
-                    child.fade_out_samples = 0;
                     child.normalize_group_children();
                 }
                 tasks.push(self.send(Action::RemoveClip {
@@ -2480,9 +2462,6 @@ impl Maolan {
                                 .unwrap_or(0),
                             muted: grouped_clips.iter().all(|clip| clip.muted),
                             max_length_samples: group_end.saturating_sub(group_start).max(1),
-                            fade_enabled: true,
-                            fade_in_samples: 240,
-                            fade_out_samples: 240,
                             take_lane_override: None,
                             take_lane_pinned: false,
                             take_lane_locked: false,
@@ -2615,9 +2594,9 @@ impl Maolan {
                             muted: child.muted,
                             peaks_file: None,
                             kind,
-                            fade_enabled: child.fade_enabled,
-                            fade_in_samples: child.fade_in_samples,
-                            fade_out_samples: child.fade_out_samples,
+                            fade_enabled: true,
+                            fade_in_samples: 240,
+                            fade_out_samples: 240,
                             source_name: None,
                             source_offset: None,
                             source_length: None,
@@ -2780,10 +2759,6 @@ impl Maolan {
                 if left_len == 0 || right_len == 0 {
                     return Task::none();
                 }
-                let left_fade_in = clip.fade_in_samples.min(left_len / 2);
-                let left_fade_out = clip.fade_out_samples.min(left_len / 2);
-                let right_fade_in = clip.fade_in_samples.min(right_len / 2);
-                let right_fade_out = clip.fade_out_samples.min(right_len / 2);
                 self.state.blocking_write().message = format!("Split MIDI clip '{}'", clip.name);
                 let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
                 tasks.push(self.send(Action::RemoveClip {
@@ -2801,9 +2776,9 @@ impl Maolan {
                     muted: clip.muted,
                     peaks_file: None,
                     kind: Kind::MIDI,
-                    fade_enabled: clip.fade_enabled,
-                    fade_in_samples: left_fade_in,
-                    fade_out_samples: left_fade_out,
+                    fade_enabled: true,
+                    fade_in_samples: 240,
+                    fade_out_samples: 240,
                     source_name: None,
                     source_offset: None,
                     source_length: None,
@@ -2824,9 +2799,9 @@ impl Maolan {
                     muted: clip.muted,
                     peaks_file: None,
                     kind: Kind::MIDI,
-                    fade_enabled: clip.fade_enabled,
-                    fade_in_samples: right_fade_in,
-                    fade_out_samples: right_fade_out,
+                    fade_enabled: true,
+                    fade_in_samples: 240,
+                    fade_out_samples: 240,
                     source_name: None,
                     source_offset: None,
                     source_length: None,

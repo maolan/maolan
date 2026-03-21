@@ -41,9 +41,6 @@ fn midi_clip_to_data(clip: &crate::midi::clip::MIDIClip) -> crate::message::Midi
         offset: clip.offset,
         input_channel: clip.input_channel,
         muted: clip.muted,
-        fade_enabled: clip.fade_enabled,
-        fade_in_samples: clip.fade_in_samples,
-        fade_out_samples: clip.fade_out_samples,
         grouped_clips: clip.grouped_clips.iter().map(midi_clip_to_data).collect(),
     }
 }
@@ -1719,7 +1716,7 @@ mod tests {
     }
 
     #[test]
-    fn create_inverse_action_for_remove_midi_clip_restores_clip_with_default_fades() {
+    fn create_inverse_action_for_remove_midi_clip_restores_clip() {
         let mut track = Track::new("t".to_string(), 0, 0, 1, 1, 64, 48_000.0);
         track.midi.clips.push(crate::midi::clip::MIDIClip {
             name: "pattern.mid".to_string(),
@@ -1752,9 +1749,6 @@ mod tests {
                 input_channel,
                 muted,
                 kind,
-                fade_enabled,
-                fade_in_samples,
-                fade_out_samples,
                 ..
             } => {
                 assert_eq!(name, "pattern.mid");
@@ -1765,9 +1759,6 @@ mod tests {
                 assert_eq!(input_channel, 3);
                 assert!(muted);
                 assert_eq!(kind, Kind::MIDI);
-                assert!(fade_enabled);
-                assert_eq!(fade_in_samples, 240);
-                assert_eq!(fade_out_samples, 240);
             }
             other => panic!("unexpected inverse action: {other:?}"),
         }
@@ -1869,12 +1860,9 @@ mod tests {
     }
 
     #[test]
-    fn create_inverse_action_for_remove_grouped_midi_clip_preserves_child_fades() {
+    fn create_inverse_action_for_remove_grouped_midi_clip_preserves_child_structure() {
         let mut track = Track::new("t".to_string(), 0, 0, 1, 1, 64, 48_000.0);
-        let mut child = crate::midi::clip::MIDIClip::new("child.mid".to_string(), 0, 48);
-        child.fade_enabled = false;
-        child.fade_in_samples = 12;
-        child.fade_out_samples = 18;
+        let child = crate::midi::clip::MIDIClip::new("child.mid".to_string(), 0, 48);
         let mut group = crate::midi::clip::MIDIClip::new("Group".to_string(), 32, 160);
         group.grouped_clips.push(child);
         track.midi.clips.push(group);
@@ -1896,9 +1884,9 @@ mod tests {
                 ..
             } => {
                 let child = &midi_clip.grouped_clips[0];
-                assert!(!child.fade_enabled);
-                assert_eq!(child.fade_in_samples, 12);
-                assert_eq!(child.fade_out_samples, 18);
+                assert_eq!(child.name, "child.mid");
+                assert_eq!(child.start, 0);
+                assert_eq!(child.length, 48);
             }
             other => panic!("unexpected inverse action: {other:?}"),
         }
