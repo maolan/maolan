@@ -1,4 +1,5 @@
 use super::*;
+use crate::consts::widget_piano::PITCH_MAX;
 use maolan_engine::message::PluginGraphNode;
 mod core;
 mod plugins;
@@ -608,7 +609,7 @@ impl Maolan {
                             if let Some(point) = pitch_correction.points.get_mut(point_idx) {
                                 point.target_midi_pitch = (original_point.target_midi_pitch
                                     + delta_pitch)
-                                    .clamp(0.0, 119.999);
+                                    .clamp(0.0, f32::from(PITCH_MAX) + 0.999);
                             }
                         }
                         state.message = format!(
@@ -654,8 +655,10 @@ impl Maolan {
                         .filter_map(|(idx, point)| {
                             let x = point.start_sample as f32 * pps;
                             let width = (point.length_samples as f32 * pps).max(6.0);
-                            let y =
-                                (119.0 - point.target_midi_pitch.clamp(0.0, 119.0) + 0.5) * row_h;
+                            let y = (f32::from(PITCH_MAX)
+                                - point.target_midi_pitch.clamp(0.0, f32::from(PITCH_MAX))
+                                + 0.5)
+                                * row_h;
                             let height =
                                 (row_h * (0.45 + 0.35 * point.clarity.clamp(0.0, 1.0))).max(6.0);
                             let rect_left = x;
@@ -1319,10 +1322,10 @@ impl Maolan {
                     let mut selected = std::collections::HashSet::new();
                     if let Some(piano) = state.piano.as_ref() {
                         for (idx, note) in piano.notes.iter().enumerate() {
-                            if note.pitch > 119 {
+                            if note.pitch > PITCH_MAX {
                                 continue;
                             }
-                            let y_idx = (119 - note.pitch) as usize;
+                            let y_idx = usize::from(PITCH_MAX - note.pitch);
                             let y = y_idx as f32 * row_h + 1.0;
                             let x = note.start_sample as f32 * pps;
                             let w = (note.length_samples as f32 * pps).max(2.0);
@@ -1401,8 +1404,8 @@ impl Maolan {
                 let length_samples = end_sample.saturating_sub(start_sample).max(min_len);
 
                 let pitch_row = (start.y / row_h).floor();
-                let pitch_row = pitch_row.clamp(0.0, 119.0) as usize;
-                let pitch = 119_u8.saturating_sub(pitch_row as u8);
+                let pitch_row = pitch_row.clamp(0.0, f32::from(PITCH_MAX)) as usize;
+                let pitch = PITCH_MAX.saturating_sub(pitch_row as u8);
 
                 if let Some(piano) = state.piano.as_ref() {
                     let track_name = piano.track_idx.clone();

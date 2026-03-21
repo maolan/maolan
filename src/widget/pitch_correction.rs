@@ -1,7 +1,8 @@
 use crate::{
     consts::widget_piano::{
-        H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, NOTES_PER_OCTAVE, OCTAVES,
-        PITCH_MAX, TOOLS_STRIP_WIDTH, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
+        H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, MIDI_NOTE_COUNT,
+        NOTES_PER_OCTAVE, OCTAVES, PITCH_MAX, TOOLS_STRIP_WIDTH, WHITE_KEY_HEIGHT,
+        WHITE_KEYS_PER_OCTAVE,
     },
     message::Message,
     state::{
@@ -9,7 +10,7 @@ use crate::{
     },
     widget::{
         note_area::{NoteArea, PianoGridScrolls, piano_grid_scrollers},
-        piano::OctaveKeyboard,
+        piano::{self, OctaveKeyboard},
     },
 };
 use iced::{
@@ -102,7 +103,7 @@ impl PitchCorrection {
             .max(1.0);
         let pps = (pixels_per_sample * zoom_x).max(0.0001);
         let notes_w = (roll.clip_length_samples as f32 * pps).max(1.0);
-        let notes_h = (OCTAVES * NOTES_PER_OCTAVE) as f32 * row_h;
+        let notes_h = MIDI_NOTE_COUNT as f32 * row_h;
 
         let content = vec![
             pin(canvas(PitchRollCanvas::new(
@@ -130,10 +131,9 @@ impl PitchCorrection {
         }
         .view(content);
 
-        let octave_h = (notes_h / OCTAVES as f32).max(1.0);
-
         let keyboard = (0..OCTAVES).fold(column![], |col, octave_idx| {
             let octave = (OCTAVES - 1 - octave_idx) as u8;
+            let octave_h = piano::octave_note_count(octave) as f32 * row_h;
             col.push(
                 canvas(OctaveKeyboard::new(octave, HashMap::new()))
                     .width(Length::Fixed(KEYBOARD_WIDTH))
@@ -449,8 +449,8 @@ impl Program<Message> for PitchRollCanvas {
                 .copied()
                 .zip(dragging.original_points.iter().cloned())
                 .map(|(idx, mut point)| {
-                    point.target_midi_pitch =
-                        (point.target_midi_pitch + delta_pitch).clamp(0.0, 119.999);
+                    point.target_midi_pitch = (point.target_midi_pitch + delta_pitch)
+                        .clamp(0.0, f32::from(PITCH_MAX) + 0.999);
                     (idx, point)
                 })
                 .collect::<std::collections::HashMap<usize, PitchCorrectionPoint>>()

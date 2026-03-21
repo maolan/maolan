@@ -1,8 +1,8 @@
 use crate::{
     consts::{
         widget_piano::{
-            H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, NOTES_PER_OCTAVE, OCTAVES,
-            TOOLS_STRIP_WIDTH, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
+            H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, MAIN_SPLIT_SPACING, MIDI_NOTE_COUNT,
+            NOTES_PER_OCTAVE, OCTAVES, TOOLS_STRIP_WIDTH, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
         },
         workspace::PLAYHEAD_WIDTH_PX,
     },
@@ -431,14 +431,17 @@ impl MIDIEdit {
             .width(Length::Fixed(ctrl_w))
             .height(Length::Fixed(ctrl_h));
 
-        let notes_h = (OCTAVES * NOTES_PER_OCTAVE) as f32
+        let notes_h = MIDI_NOTE_COUNT as f32
             * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
                 * zoom_y)
                 .max(1.0);
-        let octave_h = (notes_h / OCTAVES as f32).max(1.0);
         let midnam_note_names = roll.midnam_note_names.clone();
         let keyboard = (0..OCTAVES).fold(column![], |col, octave_idx| {
             let octave = (OCTAVES - 1 - octave_idx) as u8;
+            let octave_h = piano::octave_note_count(octave) as f32
+                * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
+                    * zoom_y)
+                    .max(1.0);
             col.push(
                 iced::widget::canvas(OctaveKeyboard::new(octave, midnam_note_names.clone()))
                     .width(Length::Fixed(KEYBOARD_WIDTH))

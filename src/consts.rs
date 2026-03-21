@@ -182,10 +182,11 @@ pub mod widget_piano {
     pub const MAIN_SPLIT_SPACING: f32 = 3.0;
     pub const H_ZOOM_MIN: f32 = 1.0;
     pub const H_ZOOM_MAX: f32 = 127.0;
-    pub const OCTAVES: usize = 10;
+    pub const MIDI_NOTE_COUNT: usize = 128;
+    pub const OCTAVES: usize = 11;
     pub const WHITE_KEYS_PER_OCTAVE: usize = 7;
     pub const NOTES_PER_OCTAVE: usize = 12;
-    pub const PITCH_MAX: u8 = (OCTAVES as u8 * NOTES_PER_OCTAVE as u8) - 1;
+    pub const PITCH_MAX: u8 = (MIDI_NOTE_COUNT as u8) - 1;
     pub const WHITE_KEY_HEIGHT: f32 = 14.0;
     pub const MAX_RPN_NRPN_POINTS: usize = 4096;
     pub const MIDI_DIN_BYTES_PER_SEC: f64 = 3125.0;

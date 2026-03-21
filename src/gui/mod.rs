@@ -19,6 +19,7 @@ use crate::{
         EXPORT_RENDER_MODE_ALL, SNAP_MODE_ALL,
     },
     consts::state_ids::METRONOME_TRACK_ID,
+    consts::widget_piano::PITCH_MAX,
     hw, menu,
     message::{
         DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
@@ -2044,8 +2045,8 @@ impl Maolan {
                     detected.push(PitchCorrectionPoint {
                         start_sample: cursor,
                         length_samples: hop_size.min(mono.len().saturating_sub(cursor)).max(1),
-                        detected_midi_pitch: midi_pitch.clamp(0.0, 119.999),
-                        target_midi_pitch: midi_pitch.clamp(0.0, 119.999),
+                        detected_midi_pitch: midi_pitch.clamp(0.0, f32::from(PITCH_MAX) + 0.999),
+                        target_midi_pitch: midi_pitch.clamp(0.0, f32::from(PITCH_MAX) + 0.999),
                         clarity: pitch.clarity as f32,
                     });
                 }

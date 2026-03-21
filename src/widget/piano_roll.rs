@@ -1,6 +1,6 @@
 use crate::{
     consts::widget_piano::{
-        NOTES_PER_OCTAVE, OCTAVES, PITCH_MAX, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
+        MIDI_NOTE_COUNT, NOTES_PER_OCTAVE, PITCH_MAX, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
     },
     message::Message,
     state::State,
@@ -26,7 +26,7 @@ pub fn view(state_handle: State, pixels_per_sample: f32) -> Element<'static, Mes
         .max(1.0);
     let pps = (pixels_per_sample * zoom_x).max(0.0001);
     let notes_w = (roll.clip_length_samples as f32 * pps).max(1.0);
-    let notes_h = (OCTAVES * NOTES_PER_OCTAVE) as f32 * row_h;
+    let notes_h = MIDI_NOTE_COUNT as f32 * row_h;
 
     let mut layers: Vec<Element<'static, Message>> = vec![];
     for note in &roll.notes {
