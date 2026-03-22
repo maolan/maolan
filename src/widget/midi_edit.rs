@@ -15,7 +15,7 @@ use crate::{
         note_area::PianoGridScrolls,
         note_area::piano_grid_scrollers,
         piano::{self, OctaveKeyboard},
-        piano_roll,
+        piano_roll::PianoRoll,
         vertical_scrollbar::VerticalScrollbar,
     },
 };
@@ -148,10 +148,11 @@ impl MIDIEdit {
             playhead_x,
             clip_length_samples: roll.clip_length_samples,
         }
-        .view(vec![piano_roll::view(
-            self.state.clone(),
-            pixels_per_sample,
-        )]);
+        .view(vec![
+            PianoRoll::new(self.state.clone())
+                .with_pixels_per_sample(pixels_per_sample)
+                .into_element(),
+        ]);
 
         let ctrl_line_count = controller::controller_lane_line_count(controller_lane).max(1);
         let ctrl_h = (ctrl_line_count as f32).max(140.0);

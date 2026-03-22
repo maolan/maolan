@@ -11,59 +11,78 @@ use iced::{
     widget::{container, pin},
 };
 
-pub fn view(state_handle: State, pixels_per_sample: f32) -> Element<'static, Message> {
-    let state = state_handle.blocking_read();
-    let zoom_x = state.piano_zoom_x;
-    let zoom_y = state.piano_zoom_y;
+pub struct PianoRoll {
+    state_handle: State,
+    pixels_per_sample: f32,
+}
 
-    let roll = match state.piano.as_ref() {
-        Some(r) => r,
-        None => return container("").into(),
-    };
-
-    let row_h = ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
-        * zoom_y)
-        .max(1.0);
-    let pps = (pixels_per_sample * zoom_x).max(0.0001);
-    let notes_w = (roll.clip_length_samples as f32 * pps).max(1.0);
-    let notes_h = MIDI_NOTE_COUNT as f32 * row_h;
-
-    let mut layers: Vec<Element<'static, Message>> = vec![];
-    for note in &roll.notes {
-        if note.pitch > PITCH_MAX {
-            continue;
+impl PianoRoll {
+    pub fn new(state_handle: State) -> Self {
+        Self {
+            state_handle,
+            pixels_per_sample: 1.0,
         }
-        let y_idx = usize::from(PITCH_MAX.saturating_sub(note.pitch));
-        let y = y_idx as f32 * row_h + 1.0;
-        let x = note.start_sample as f32 * pps;
-        let w = (note.length_samples as f32 * pps).max(2.0);
-        let color = piano::note_color(note.velocity, note.channel);
-        layers.push(
-            pin(container("")
-                .width(Length::Fixed(w))
-                .height(Length::Fixed((row_h - 2.0).max(2.0)))
-                .style(move |_theme| container::Style {
-                    background: Some(piano::note_two_edge_gradient(color)),
-                    ..container::Style::default()
-                }))
-            .position(Point::new(x, y))
-            .into(),
-        );
     }
 
-    layers.push(
-        pin(iced::widget::canvas(PianoRollInteraction::new(
-            state_handle.clone(),
-            pixels_per_sample,
-        ))
-        .width(Length::Fixed(notes_w))
-        .height(Length::Fixed(notes_h)))
-        .position(Point::new(0.0, 0.0))
-        .into(),
-    );
+    pub fn with_pixels_per_sample(mut self, pixels_per_sample: f32) -> Self {
+        self.pixels_per_sample = pixels_per_sample;
+        self
+    }
 
-    iced::widget::Stack::from_vec(layers)
-        .width(Length::Fixed(notes_w))
-        .height(Length::Fixed(notes_h))
-        .into()
+    pub fn into_element(self) -> Element<'static, Message> {
+        let state = self.state_handle.blocking_read();
+        let zoom_x = state.piano_zoom_x;
+        let zoom_y = state.piano_zoom_y;
+
+        let roll = match state.piano.as_ref() {
+            Some(r) => r,
+            None => return container("").into(),
+        };
+
+        let row_h = ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
+            * zoom_y)
+            .max(1.0);
+        let pps = (self.pixels_per_sample * zoom_x).max(0.0001);
+        let notes_w = (roll.clip_length_samples as f32 * pps).max(1.0);
+        let notes_h = MIDI_NOTE_COUNT as f32 * row_h;
+
+        let mut layers: Vec<Element<'static, Message>> = vec![];
+        for note in &roll.notes {
+            if note.pitch > PITCH_MAX {
+                continue;
+            }
+            let y_idx = usize::from(PITCH_MAX.saturating_sub(note.pitch));
+            let y = y_idx as f32 * row_h + 1.0;
+            let x = note.start_sample as f32 * pps;
+            let w = (note.length_samples as f32 * pps).max(2.0);
+            let color = piano::note_color(note.velocity, note.channel);
+            layers.push(
+                pin(container("")
+                    .width(Length::Fixed(w))
+                    .height(Length::Fixed((row_h - 2.0).max(2.0)))
+                    .style(move |_theme| container::Style {
+                        background: Some(piano::note_two_edge_gradient(color)),
+                        ..container::Style::default()
+                    }))
+                .position(Point::new(x, y))
+                .into(),
+            );
+        }
+
+        layers.push(
+            pin(iced::widget::canvas(PianoRollInteraction::new(
+                self.state_handle.clone(),
+                self.pixels_per_sample,
+            ))
+            .width(Length::Fixed(notes_w))
+            .height(Length::Fixed(notes_h)))
+            .position(Point::new(0.0, 0.0))
+            .into(),
+        );
+
+        iced::widget::Stack::from_vec(layers)
+            .width(Length::Fixed(notes_w))
+            .height(Length::Fixed(notes_h))
+            .into()
+    }
 }
