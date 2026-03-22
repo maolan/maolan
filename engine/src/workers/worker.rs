@@ -501,7 +501,11 @@ mod tests {
     async fn process_offline_bounce_errors_when_track_is_missing() {
         let (_rx_unused_tx, rx_unused) = channel(1);
         let (tx, mut out_rx) = channel(8);
-        let worker = Worker { id: 7, rx: rx_unused, tx };
+        let worker = Worker {
+            id: 7,
+            rx: rx_unused,
+            tx,
+        };
         let job = OfflineBounceWork {
             state: Arc::new(UnsafeMutex::new(State::default())),
             track_name: "missing".to_string(),
@@ -529,7 +533,11 @@ mod tests {
     async fn process_offline_bounce_cancels_and_restores_track_state() {
         let (_rx_unused_tx, rx_unused) = channel(1);
         let (tx, mut out_rx) = channel(8);
-        let worker = Worker { id: 5, rx: rx_unused, tx };
+        let worker = Worker {
+            id: 5,
+            rx: rx_unused,
+            tx,
+        };
         let mut track = Track::new("track".to_string(), 1, 2, 0, 0, 4, 48_000.0);
         track.set_level(-9.0);
         track.set_balance(-0.3);
@@ -565,7 +573,11 @@ mod tests {
     async fn process_offline_bounce_restores_track_state_on_write_failure() {
         let (_rx_unused_tx, rx_unused) = channel(1);
         let (tx, mut out_rx) = channel(8);
-        let worker = Worker { id: 3, rx: rx_unused, tx };
+        let worker = Worker {
+            id: 3,
+            rx: rx_unused,
+            tx,
+        };
         let mut track = Track::new("track".to_string(), 1, 2, 0, 0, 4, 48_000.0);
         track.set_level(-4.0);
         track.set_balance(0.25);
@@ -610,7 +622,11 @@ mod tests {
     async fn process_offline_bounce_emits_progress_and_completion() {
         let (_rx_unused_tx, rx_unused) = channel(1);
         let (tx, mut out_rx) = channel(16);
-        let worker = Worker { id: 2, rx: rx_unused, tx };
+        let worker = Worker {
+            id: 2,
+            rx: rx_unused,
+            tx,
+        };
         let mut track = Track::new("track".to_string(), 1, 1, 0, 0, 4, 48_000.0);
         track.set_level(-3.0);
         track.set_balance(0.4);

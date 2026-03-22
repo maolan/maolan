@@ -514,6 +514,18 @@ impl App {
             EngineMessage::Response(Ok(Action::TransportPosition(sample))) => {
                 self.transport_sample = sample;
             }
+            EngineMessage::Response(Ok(Action::Play)) => {
+                self.playing = true;
+                self.paused = false;
+            }
+            EngineMessage::Response(Ok(Action::Pause)) => {
+                self.playing = true;
+                self.paused = true;
+            }
+            EngineMessage::Response(Ok(Action::Stop)) => {
+                self.playing = false;
+                self.paused = false;
+            }
             EngineMessage::Response(Ok(Action::MeterSnapshot {
                 hw_out_db,
                 track_meters,
@@ -1546,6 +1558,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _terminal = TerminalGuard::enter()?;
     let mut terminal = init_terminal()?;
     let client = Client::default();
+    let _ = client
+        .send(EngineMessage::Request(Action::SetOscEnabled(
+            config.osc_enabled,
+        )))
+        .await;
     let mut rx = client.subscribe().await;
     let mut input_rx = spawn_input_thread();
     let (export_tx, mut export_rx) = unbounded_channel();
@@ -1694,6 +1711,7 @@ mod tests {
         let config = CliConfig {
             default_audio_bit_depth: 24,
             default_export_sample_rate_hz: 48_000,
+            osc_enabled: false,
             default_output_device_id: Some("config-device".to_string()),
             default_input_device_id: Some("config-input".to_string()),
         };
@@ -1730,6 +1748,7 @@ mod tests {
         let config = CliConfig {
             default_audio_bit_depth: 24,
             default_export_sample_rate_hz: 48_000,
+            osc_enabled: false,
             default_output_device_id: Some("config-device".to_string()),
             default_input_device_id: Some("config-input".to_string()),
         };

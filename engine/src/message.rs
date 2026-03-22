@@ -273,8 +273,10 @@ pub enum GlobalMidiLearnTarget {
 pub enum Action {
     Quit,
     Play,
+    Pause,
     Stop,
     TransportPosition(usize),
+    JumpToEnd,
     SetLoopEnabled(bool),
     SetLoopRange(Option<(usize, usize)>),
     SetPunchEnabled(bool),
@@ -285,6 +287,7 @@ pub enum Action {
         numerator: u16,
         denominator: u16,
     },
+    SetOscEnabled(bool),
     SetClipPlaybackEnabled(bool),
     SetRecordEnabled(bool),
     SetSessionPath(String),

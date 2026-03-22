@@ -367,7 +367,12 @@ impl JackRuntime {
         let port = client
             .as_client()
             .register_port(&format!("in_{}", next_index + 1), AudioIn::default())
-            .map_err(|e| format!("Failed to register JACK audio input port {}: {e}", next_index + 1))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to register JACK audio input port {}: {e}",
+                    next_index + 1
+                )
+            })?;
         self.audio_in_ports.lock().push(port);
         self.audio_ins
             .lock()
@@ -384,7 +389,12 @@ impl JackRuntime {
         let port = client
             .as_client()
             .register_port(&format!("out_{}", next_index + 1), AudioOut::default())
-            .map_err(|e| format!("Failed to register JACK audio output port {}: {e}", next_index + 1))?;
+            .map_err(|e| {
+                format!(
+                    "Failed to register JACK audio output port {}: {e}",
+                    next_index + 1
+                )
+            })?;
         self.audio_out_ports.lock().push(port);
         self.audio_outs
             .lock()

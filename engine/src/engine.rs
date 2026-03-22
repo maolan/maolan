@@ -53,6 +53,7 @@ use crate::{
     midi::clip::MIDIClip,
     midi::io::MidiEvent,
     mutex::UnsafeMutex,
+    osc::OscServer,
     routing,
     state::State,
     track::Track,
@@ -140,6 +141,7 @@ pub struct Engine {
     jack_runtime: Option<Arc<UnsafeMutex<JackRuntime>>>,
     midi_hub: Arc<UnsafeMutex<MidiHub>>,
     hw_worker: Option<WorkerData>,
+    osc_server: Option<OscServer>,
     pending_hw_midi_events: Vec<MidiEvent>,
     pending_hw_midi_events_by_device: HashMap<String, Vec<MidiEvent>>,
     pending_hw_midi_out_events: Vec<MidiEvent>,
@@ -834,7 +836,12 @@ impl Engine {
             }
             Self::finalize_midi_hw_devices(devices)
         };
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "macos")))]
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "macos"
+        )))]
         let devices = Vec::new();
         devices
     }
@@ -851,6 +858,7 @@ impl Engine {
             jack_runtime: None,
             midi_hub: Arc::new(UnsafeMutex::new(MidiHub::default())),
             hw_worker: None,
+            osc_server: None,
             pending_hw_midi_events: vec![],
             pending_hw_midi_events_by_device: HashMap::new(),
             pending_hw_midi_out_events: vec![],
@@ -932,33 +940,64 @@ impl Engine {
             .unwrap_or(0)
     }
 
+    fn session_end_sample(&self) -> usize {
+        self.state
+            .lock()
+            .tracks
+            .values()
+            .map(|track| {
+                let track = track.lock();
+                let audio_end = track
+                    .audio
+                    .clips
+                    .iter()
+                    .map(|clip| clip.end)
+                    .max()
+                    .unwrap_or(0);
+                let midi_end = track
+                    .midi
+                    .clips
+                    .iter()
+                    .map(|clip| clip.end)
+                    .max()
+                    .unwrap_or(0);
+                audio_end.max(midi_end)
+            })
+            .max()
+            .unwrap_or(0)
+    }
+
     async fn ensure_metronome_track(&mut self) {
         if self.state.lock().tracks.contains_key(Self::METRONOME_TRACK) {
             return;
         }
         let (cycle_samples, sample_rate_hz, output_channels): (usize, f64, usize) =
             if let Some(hw) = &self.hw_driver {
-            let hw = hw.lock();
-            (
-                hw.cycle_samples(),
-                hw.sample_rate() as f64,
-                hw.output_channels(),
-            )
-        } else {
-            #[cfg(unix)]
-            {
-                if let Some(jack) = &self.jack_runtime {
-                    let jack = jack.lock();
-                    (jack.buffer_size, jack.sample_rate as f64, jack.audio_outs().len())
-                } else {
+                let hw = hw.lock();
+                (
+                    hw.cycle_samples(),
+                    hw.sample_rate() as f64,
+                    hw.output_channels(),
+                )
+            } else {
+                #[cfg(unix)]
+                {
+                    if let Some(jack) = &self.jack_runtime {
+                        let jack = jack.lock();
+                        (
+                            jack.buffer_size,
+                            jack.sample_rate as f64,
+                            jack.audio_outs().len(),
+                        )
+                    } else {
+                        return;
+                    }
+                }
+                #[cfg(not(unix))]
+                {
                     return;
                 }
-            }
-            #[cfg(not(unix))]
-            {
-                return;
-            }
-        };
+            };
         if output_channels == 0 {
             return;
         }
@@ -1026,7 +1065,12 @@ impl Engine {
         let label = "sndio";
         #[cfg(target_os = "macos")]
         let label = "CoreAudio";
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "macos")))]
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "macos"
+        )))]
         let label = "Unknown";
         label
     }
@@ -1227,9 +1271,7 @@ impl Engine {
         let position_drift = normalized_frame.abs_diff(current_sample);
         let position_changed = normalized_frame != current_sample;
         let should_sync_position = position_changed
-            && (!jack_playing
-                || play_sync.is_some()
-                || position_drift > cycle_samples.max(1));
+            && (!jack_playing || play_sync.is_some() || position_drift > cycle_samples.max(1));
 
         JackTransportSyncDecision {
             play_sync,
@@ -1270,7 +1312,8 @@ impl Engine {
                 self.transport_panic_flush_pending = false;
                 self.transport_restart_pending = false;
                 let panic_events = self.note_off_events_for_all_active_tracks();
-                self.pending_hw_midi_out_events_by_device.extend(panic_events);
+                self.pending_hw_midi_out_events_by_device
+                    .extend(panic_events);
                 self.flush_recordings().await;
                 self.notify_clients(Ok(Action::Stop)).await;
             }
@@ -2729,7 +2772,11 @@ impl Engine {
         clip.pitch_correction_inertia_ms = data.pitch_correction_inertia_ms;
         clip.pitch_correction_formant_compensation = data.pitch_correction_formant_compensation;
         clip.plugin_graph_json = data.plugin_graph_json.clone();
-        clip.grouped_clips = data.grouped_clips.iter().map(Self::audio_clip_from_data).collect();
+        clip.grouped_clips = data
+            .grouped_clips
+            .iter()
+            .map(Self::audio_clip_from_data)
+            .collect();
         for child in &mut clip.grouped_clips {
             child.fade_enabled = false;
             child.fade_in_samples = 0;
@@ -2743,7 +2790,11 @@ impl Engine {
         clip.offset = data.offset;
         clip.input_channel = data.input_channel;
         clip.muted = data.muted;
-        clip.grouped_clips = data.grouped_clips.iter().map(Self::midi_clip_from_data).collect();
+        clip.grouped_clips = data
+            .grouped_clips
+            .iter()
+            .map(Self::midi_clip_from_data)
+            .collect();
         clip
     }
 
@@ -2758,7 +2809,8 @@ impl Engine {
             let track = track.lock();
             match kind {
                 Kind::Audio => {
-                    if let Some(mut clip) = audio_clip.map(|clip| Self::audio_clip_from_data(&clip)) {
+                    if let Some(mut clip) = audio_clip.map(|clip| Self::audio_clip_from_data(&clip))
+                    {
                         let max_lane = track.audio.ins.len().saturating_sub(1);
                         clip.input_channel = clip.input_channel.min(max_lane);
                         track.audio.clips.push(clip);
@@ -3597,6 +3649,37 @@ impl Engine {
                     self.request_hw_cycle().await;
                 }
             }
+            Action::Pause => {
+                self.clip_playback_enabled = false;
+                for track in self.state.lock().tracks.values() {
+                    track.lock().set_clip_playback_enabled(false);
+                }
+                if !self.playing {
+                    self.playing = true;
+                    self.transport_restart_pending = true;
+                    self.invalidate_track_cycle_state();
+                    if let Some(driver) = self.hw_driver.as_mut() {
+                        driver.lock().set_playing(true);
+                    }
+                    #[cfg(unix)]
+                    if let Some(jack) = &self.jack_runtime
+                        && let Err(e) = jack.lock().transport_start()
+                    {
+                        self.notify_clients(Err(e)).await;
+                    }
+                    if !self.awaiting_hwfinished
+                        && !self.handling_hwfinished
+                        && self.send_tracks().await
+                        && self.hw_worker.is_some()
+                    {
+                        self.transport_restart_pending = false;
+                        self.request_hw_cycle().await;
+                    }
+                }
+                self.notify_clients(Ok(Action::Pause)).await;
+                self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
+                    .await;
+            }
             Action::Stop => {
                 self.playing = false;
                 self.transport_panic_flush_pending = false;
@@ -3626,6 +3709,11 @@ impl Engine {
                 self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
                     .await;
             }
+            Action::JumpToEnd => {
+                self.transport_sample = self.normalize_transport_sample(self.session_end_sample());
+                self.notify_clients(Ok(Action::TransportPosition(self.transport_sample)))
+                    .await;
+            }
             Action::Panic => {
                 let panic_events = self.panic_events_for_all_hw_midi_outputs();
                 if let Some(worker) = &self.hw_worker {
@@ -3633,13 +3721,21 @@ impl Engine {
                         if let Err(e) = worker.tx.send(Message::ClearHWMidiOutEvents).await {
                             error!("Error clearing HW MIDI queue for panic {e}");
                         }
-                        #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
+                        #[cfg(any(
+                            target_os = "freebsd",
+                            target_os = "linux",
+                            target_os = "openbsd"
+                        ))]
                         {
                             self.midi_hub
                                 .lock()
                                 .write_events_blocking(&panic_events, Duration::from_millis(250));
                         }
-                        #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
+                        #[cfg(not(any(
+                            target_os = "freebsd",
+                            target_os = "linux",
+                            target_os = "openbsd"
+                        )))]
                         if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
                         {
                             error!("Error sending MIDI panic events {e}");
@@ -3732,6 +3828,18 @@ impl Engine {
                 self.tsig_num = numerator.max(1);
                 self.tsig_denom = denominator.max(1);
             }
+            Action::SetOscEnabled(enabled) => {
+                if enabled {
+                    if self.osc_server.is_none() {
+                        match OscServer::start(self.tx.clone()) {
+                            Ok(server) => self.osc_server = Some(server),
+                            Err(err) => self.notify_clients(Err(err)).await,
+                        }
+                    }
+                } else if let Some(mut server) = self.osc_server.take() {
+                    server.stop();
+                }
+            }
             Action::SetRecordEnabled(enabled) => {
                 self.record_enabled = enabled;
                 if !enabled {
@@ -3814,7 +3922,11 @@ impl Engine {
                             .lock()
                             .write_events_blocking(&panic_events, Duration::from_millis(250));
                     }
-                    #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
+                    #[cfg(not(any(
+                        target_os = "freebsd",
+                        target_os = "linux",
+                        target_os = "openbsd"
+                    )))]
                     if !panic_events.is_empty()
                         && let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
                     {
@@ -4502,9 +4614,10 @@ impl Engine {
                         return;
                     }
                 };
-                if let Err(e) = track
-                    .lock()
-                    .clip_set_lv2_plugin_state(clip_idx, instance_id, state.clone())
+                if let Err(e) =
+                    track
+                        .lock()
+                        .clip_set_lv2_plugin_state(clip_idx, instance_id, state.clone())
                 {
                     self.notify_clients(Err(e)).await;
                     return;
@@ -4665,10 +4778,12 @@ impl Engine {
                         return;
                     }
                 };
-                let state = match track
-                    .lock()
-                    .clip_set_lv2_control_value(clip_idx, instance_id, index, value)
-                {
+                let state = match track.lock().clip_set_lv2_control_value(
+                    clip_idx,
+                    instance_id,
+                    index,
+                    value,
+                ) {
                     Ok(state) => state,
                     Err(e) => {
                         self.notify_clients(Err(e)).await;
@@ -5930,14 +6045,18 @@ impl Engine {
                                 self.notify_clients(Err(e)).await;
                                 return;
                             }
-                            (jack.input_channels(), jack.output_channels(), jack.sample_rate)
+                            (
+                                jack.input_channels(),
+                                jack.output_channels(),
+                                jack.sample_rate,
+                            )
                         };
                         self.publish_hw_infos(input_channels, output_channels, rate)
                             .await;
                         self.notify_clients(Ok(a.clone())).await;
                     } else {
                         self.notify_clients(Err(
-                            "JACK runtime is not active; open the JACK backend first".to_string()
+                            "JACK runtime is not active; open the JACK backend first".to_string(),
                         ))
                         .await;
                     }
@@ -5945,7 +6064,7 @@ impl Engine {
                 #[cfg(not(unix))]
                 {
                     self.notify_clients(Err(
-                        "JACK backend is not available on this platform build".to_string()
+                        "JACK backend is not available on this platform build".to_string(),
                     ))
                     .await;
                 }
@@ -5963,7 +6082,7 @@ impl Engine {
                                 (Some(port), Some(io)) => (port, io),
                                 _ => {
                                     self.notify_clients(Err(
-                                        "JACK audio input port index is out of range".to_string()
+                                        "JACK audio input port index is out of range".to_string(),
                                     ))
                                     .await;
                                     return;
@@ -5987,7 +6106,11 @@ impl Engine {
                                 self.notify_clients(Err(e)).await;
                                 return;
                             }
-                            (jack.input_channels(), jack.output_channels(), jack.sample_rate)
+                            (
+                                jack.input_channels(),
+                                jack.output_channels(),
+                                jack.sample_rate,
+                            )
                         };
                         for action in reindex_notifications {
                             self.notify_clients(Ok(action)).await;
@@ -5997,7 +6120,7 @@ impl Engine {
                         self.notify_clients(Ok(a.clone())).await;
                     } else {
                         self.notify_clients(Err(
-                            "JACK runtime is not active; open the JACK backend first".to_string()
+                            "JACK runtime is not active; open the JACK backend first".to_string(),
                         ))
                         .await;
                     }
@@ -6005,7 +6128,7 @@ impl Engine {
                 #[cfg(not(unix))]
                 {
                     self.notify_clients(Err(
-                        "JACK backend is not available on this platform build".to_string()
+                        "JACK backend is not available on this platform build".to_string(),
                     ))
                     .await;
                 }
@@ -6020,14 +6143,18 @@ impl Engine {
                                 self.notify_clients(Err(e)).await;
                                 return;
                             }
-                            (jack.input_channels(), jack.output_channels(), jack.sample_rate)
+                            (
+                                jack.input_channels(),
+                                jack.output_channels(),
+                                jack.sample_rate,
+                            )
                         };
                         self.publish_hw_infos(input_channels, output_channels, rate)
                             .await;
                         self.notify_clients(Ok(a.clone())).await;
                     } else {
                         self.notify_clients(Err(
-                            "JACK runtime is not active; open the JACK backend first".to_string()
+                            "JACK runtime is not active; open the JACK backend first".to_string(),
                         ))
                         .await;
                     }
@@ -6035,7 +6162,7 @@ impl Engine {
                 #[cfg(not(unix))]
                 {
                     self.notify_clients(Err(
-                        "JACK backend is not available on this platform build".to_string()
+                        "JACK backend is not available on this platform build".to_string(),
                     ))
                     .await;
                 }
@@ -6053,7 +6180,7 @@ impl Engine {
                                 (Some(port), Some(io)) => (port, io),
                                 _ => {
                                     self.notify_clients(Err(
-                                        "JACK audio output port index is out of range".to_string()
+                                        "JACK audio output port index is out of range".to_string(),
                                     ))
                                     .await;
                                     return;
@@ -6077,7 +6204,11 @@ impl Engine {
                                 self.notify_clients(Err(e)).await;
                                 return;
                             }
-                            (jack.input_channels(), jack.output_channels(), jack.sample_rate)
+                            (
+                                jack.input_channels(),
+                                jack.output_channels(),
+                                jack.sample_rate,
+                            )
                         };
                         for action in reindex_notifications {
                             self.notify_clients(Ok(action)).await;
@@ -6087,7 +6218,7 @@ impl Engine {
                         self.notify_clients(Ok(a.clone())).await;
                     } else {
                         self.notify_clients(Err(
-                            "JACK runtime is not active; open the JACK backend first".to_string()
+                            "JACK runtime is not active; open the JACK backend first".to_string(),
                         ))
                         .await;
                     }
@@ -6095,7 +6226,7 @@ impl Engine {
                 #[cfg(not(unix))]
                 {
                     self.notify_clients(Err(
-                        "JACK backend is not available on this platform build".to_string()
+                        "JACK backend is not available on this platform build".to_string(),
                     ))
                     .await;
                 }
@@ -6385,7 +6516,9 @@ impl Engine {
                     | Action::RequestMeterSnapshot
                     | Action::Quit
                     | Action::Play
+                    | Action::Pause
                     | Action::Stop
+                    | Action::JumpToEnd
                     | Action::SetLoopEnabled(_)
                     | Action::SetLoopRange(_)
                     | Action::SetPunchEnabled(_)
@@ -6393,6 +6526,7 @@ impl Engine {
                     | Action::SetMetronomeEnabled(_)
                     | Action::SetTempo(_)
                     | Action::SetTimeSignature { .. }
+                    | Action::SetOscEnabled(_)
                     | Action::SetClipPlaybackEnabled(_)
                     | Action::SetRecordEnabled(_)
                     | Action::BeginHistoryGroup
@@ -6642,6 +6776,7 @@ mod tests {
     use super::*;
     use crate::mutex::UnsafeMutex;
     use tokio::sync::mpsc::channel;
+    use tokio::time::{Duration as TokioDuration, timeout};
 
     #[test]
     fn jack_transport_sync_decision_starts_and_syncs_position_on_external_play() {
@@ -6698,10 +6833,62 @@ mod tests {
         );
     }
 
+    fn osc_packet(address: &str) -> Vec<u8> {
+        fn push_padded_osc_string(packet: &mut Vec<u8>, value: &str) {
+            packet.extend_from_slice(value.as_bytes());
+            packet.push(0);
+            while !packet.len().is_multiple_of(4) {
+                packet.push(0);
+            }
+        }
+
+        let mut packet = Vec::new();
+        push_padded_osc_string(&mut packet, address);
+        push_padded_osc_string(&mut packet, ",");
+        packet
+    }
+
+    #[tokio::test]
+    async fn set_osc_enabled_starts_and_stops_server() {
+        let (mut engine, _client_rx) = make_engine_with_client();
+
+        engine.handle_request(Action::SetOscEnabled(true)).await;
+        assert!(engine.osc_server.is_some());
+
+        engine.handle_request(Action::SetOscEnabled(false)).await;
+        assert!(engine.osc_server.is_none());
+    }
+
+    #[tokio::test]
+    async fn osc_server_forwards_transport_packets_to_engine_channel() {
+        let (tx, mut rx) = channel(4);
+        let mut server =
+            OscServer::start_on_addr(tx, "127.0.0.1:0").expect("start osc test server");
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind sender socket");
+        let packet = osc_packet("/transport/play");
+        socket
+            .send_to(&packet, server.listen_addr())
+            .expect("send osc packet");
+
+        let message = timeout(TokioDuration::from_secs(1), rx.recv())
+            .await
+            .expect("packet delivery timeout")
+            .expect("osc message");
+        match message {
+            Message::Request(Action::Play) => {}
+            other => panic!("unexpected osc message: {other:?}"),
+        }
+
+        server.stop();
+    }
+
     #[tokio::test]
     async fn track_offline_bounce_rejects_zero_length_requests() {
         let (mut engine, mut client_rx) = make_engine_with_client();
-        insert_track(&mut engine, Track::new("track".to_string(), 1, 1, 0, 0, 64, 48_000.0));
+        insert_track(
+            &mut engine,
+            Track::new("track".to_string(), 1, 1, 0, 0, 64, 48_000.0),
+        );
 
         engine
             .handle_request(Action::TrackOfflineBounce {
@@ -6770,7 +6957,10 @@ mod tests {
     #[tokio::test]
     async fn track_offline_bounce_queues_when_no_worker_is_ready() {
         let (mut engine, _client_rx) = make_engine_with_client();
-        insert_track(&mut engine, Track::new("track".to_string(), 1, 1, 0, 0, 64, 48_000.0));
+        insert_track(
+            &mut engine,
+            Track::new("track".to_string(), 1, 1, 0, 0, 64, 48_000.0),
+        );
 
         engine
             .handle_request(Action::TrackOfflineBounce {
@@ -6816,10 +7006,15 @@ mod tests {
     #[tokio::test]
     async fn track_offline_bounce_clears_job_when_worker_send_fails() {
         let (mut engine, mut client_rx) = make_engine_with_client();
-        insert_track(&mut engine, Track::new("track".to_string(), 1, 1, 0, 0, 64, 48_000.0));
+        insert_track(
+            &mut engine,
+            Track::new("track".to_string(), 1, 1, 0, 0, 64, 48_000.0),
+        );
         let (worker_tx, worker_rx) = channel(1);
         drop(worker_rx);
-        engine.workers.push(WorkerData::new(worker_tx, tokio::spawn(async {})));
+        engine
+            .workers
+            .push(WorkerData::new(worker_tx, tokio::spawn(async {})));
         engine.ready_workers.push(0);
 
         engine

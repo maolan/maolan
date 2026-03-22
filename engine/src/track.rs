@@ -410,7 +410,13 @@ impl ClipPluginRuntime {
                 *output.finished.lock() = true;
             }
             let buffer = output.buffer.lock();
-            outputs.push(buffer.iter().take(request_len).copied().collect::<Vec<f32>>());
+            outputs.push(
+                buffer
+                    .iter()
+                    .take(request_len)
+                    .copied()
+                    .collect::<Vec<f32>>(),
+            );
         }
         outputs
     }
@@ -1241,10 +1247,7 @@ impl Track {
                             .iter()
                             .position(|input| Arc::ptr_eq(input, &sources[0]));
                         if let Some(idx) = first_idx.filter(|_| !self.input_monitor) {
-                            Self::copy_unity_with_zero_tail(
-                                tap,
-                                &record_tap_input_snapshots[idx],
-                            );
+                            Self::copy_unity_with_zero_tail(tap, &record_tap_input_snapshots[idx]);
                         } else {
                             let first = sources[0].buffer.lock();
                             Self::copy_unity_with_zero_tail(tap, first);
@@ -1593,7 +1596,8 @@ impl Track {
     }
 
     fn clip_graph_uses_plugin_runtime(graph: &Value) -> bool {
-        graph.get("plugins")
+        graph
+            .get("plugins")
             .and_then(Value::as_array)
             .is_some_and(|plugins| !plugins.is_empty())
     }
@@ -1632,10 +1636,14 @@ impl Track {
             else {
                 continue;
             };
-            let from_port =
-                connection.get("from_port").and_then(Value::as_u64).unwrap_or(0) as usize;
-            let to_port =
-                connection.get("to_port").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let from_port = connection
+                .get("from_port")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            let to_port = connection
+                .get("to_port")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
             if !from_is_input || to_is_input {
                 continue;
             }
@@ -1724,11 +1732,13 @@ impl Track {
                                         index: value
                                             .get("index")
                                             .and_then(Value::as_u64)
-                                            .unwrap_or(0) as u32,
+                                            .unwrap_or(0)
+                                            as u32,
                                         value: value
                                             .get("value")
                                             .and_then(Value::as_f64)
-                                            .unwrap_or(0.0) as f32,
+                                            .unwrap_or(0.0)
+                                            as f32,
                                     })
                                     .collect(),
                                 properties: properties
@@ -1747,7 +1757,8 @@ impl Track {
                                         flags: value
                                             .get("flags")
                                             .and_then(Value::as_u64)
-                                            .unwrap_or(0) as u32,
+                                            .unwrap_or(0)
+                                            as u32,
                                         value: value
                                             .get("value")
                                             .and_then(Value::as_array)
@@ -1779,7 +1790,10 @@ impl Track {
                         channels.max(1),
                         channels.max(1),
                     )?;
-                    runtime.vst3_processors.push(Vst3Instance { id: instance_id, processor });
+                    runtime.vst3_processors.push(Vst3Instance {
+                        id: instance_id,
+                        processor,
+                    });
                     runtime_nodes.push(PluginGraphNode::Vst3PluginInstance(instance_id));
                     if let Some(state) = plugin.get("state").cloned().and_then(|value| {
                         serde_json::from_value::<crate::vst3::Vst3PluginState>(value).ok()
@@ -1800,7 +1814,10 @@ impl Track {
                         channels.max(1),
                         channels.max(1),
                     )?;
-                    runtime.clap_plugins.push(ClapInstance { id: instance_id, processor });
+                    runtime.clap_plugins.push(ClapInstance {
+                        id: instance_id,
+                        processor,
+                    });
                     runtime_nodes.push(PluginGraphNode::ClapPluginInstance(instance_id));
                     if let Some(state) = plugin.get("state").cloned().and_then(|value| {
                         serde_json::from_value::<crate::clap::ClapPluginState>(value).ok()
@@ -1829,10 +1846,14 @@ impl Track {
                 ) else {
                     continue;
                 };
-                let from_port =
-                    connection.get("from_port").and_then(Value::as_u64).unwrap_or(0) as usize;
-                let to_port =
-                    connection.get("to_port").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let from_port = connection
+                    .get("from_port")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as usize;
+                let to_port = connection
+                    .get("to_port")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as usize;
                 match connection.get("kind").and_then(Value::as_str) {
                     Some("audio") => {
                         runtime.connect_audio(from_node, from_port, to_node, to_port)?;
@@ -1868,7 +1889,8 @@ impl Track {
         let input_count = input_blocks.len().max(1);
         let runtime_key = Self::clip_plugin_runtime_key(clip, input_count, input_count);
         if !self.clip_plugin_tracks.contains_key(&runtime_key) {
-            let runtime = self.build_clip_plugin_runtime(clip, input_count, self.process_block_size)?;
+            let runtime =
+                self.build_clip_plugin_runtime(clip, input_count, self.process_block_size)?;
             self.clip_plugin_tracks.insert(runtime_key.clone(), runtime);
         }
         let runtime = self
@@ -1973,7 +1995,13 @@ impl Track {
                     }
                 }
             }
-            Self::apply_audio_clip_fades(clip, clip_start, clip_len, absolute_from, &mut input_blocks);
+            Self::apply_audio_clip_fades(
+                clip,
+                clip_start,
+                clip_len,
+                absolute_from,
+                &mut input_blocks,
+            );
             if clip.plugin_graph_json.is_some() {
                 active_clip_plugin_keys.insert(Self::clip_plugin_runtime_key(
                     clip,
@@ -1981,8 +2009,13 @@ impl Track {
                     channel_count,
                 ));
                 return Some(
-                    self.process_clip_plugin_runtime_segment(clip, &input_blocks, absolute_from, request_len)
-                        .unwrap_or(input_blocks),
+                    self.process_clip_plugin_runtime_segment(
+                        clip,
+                        &input_blocks,
+                        absolute_from,
+                        request_len,
+                    )
+                    .unwrap_or(input_blocks),
                 );
             }
             return Some(input_blocks);
@@ -2017,39 +2050,46 @@ impl Track {
             let formant = clip.pitch_correction_formant_compensation.unwrap_or(true);
             let key = Self::clip_pitch_key(clip);
             let corrected = {
-                let shifter = self.clip_pitch_shifters.entry(key).or_insert_with(|| ClipPitchShifter {
-                    shifter: LivePitchShifter::new(
-                        self.sample_rate.round().max(1.0) as usize,
-                        effective_channels,
-                        formant,
-                    )
-                    .expect("rubberband live shifter"),
-                });
+                let shifter =
+                    self.clip_pitch_shifters
+                        .entry(key)
+                        .or_insert_with(|| ClipPitchShifter {
+                            shifter: LivePitchShifter::new(
+                                self.sample_rate.round().max(1.0) as usize,
+                                effective_channels,
+                                formant,
+                            )
+                            .expect("rubberband live shifter"),
+                        });
                 shifter.shifter.set_formant_preserved(formant);
                 let block_size = shifter.shifter.block_size();
-                let source_from = source_offset.saturating_add(absolute_from.saturating_sub(clip_start));
-                shifter.shifter.render(source_from, request_len, |block_start, input| {
-                    let local_start = block_start.saturating_sub(source_offset);
-                    let local_mid = local_start.saturating_add(block_size / 2);
-                    let local_end = local_start.saturating_add(block_size.saturating_sub(1));
-                    let semitones = (Self::pitch_shift_for_sample(clip, local_start, inertia_samples)
-                        + Self::pitch_shift_for_sample(clip, local_mid, inertia_samples)
-                        + Self::pitch_shift_for_sample(clip, local_end, inertia_samples))
-                        / 3.0;
-                    let scale = 2.0_f64.powf((semitones as f64) / 12.0);
-                    for ch in 0..effective_channels {
-                        let source_channel = if buffer.channels == 1 { 0 } else { ch };
-                        for i in 0..block_size {
-                            let source_frame = block_start.saturating_add(i);
-                            input[ch][i] = if source_frame < total_frames {
-                                buffer.samples[source_frame * buffer.channels + source_channel]
-                            } else {
-                                0.0
-                            };
+                let source_from =
+                    source_offset.saturating_add(absolute_from.saturating_sub(clip_start));
+                shifter
+                    .shifter
+                    .render(source_from, request_len, |block_start, input| {
+                        let local_start = block_start.saturating_sub(source_offset);
+                        let local_mid = local_start.saturating_add(block_size / 2);
+                        let local_end = local_start.saturating_add(block_size.saturating_sub(1));
+                        let semitones =
+                            (Self::pitch_shift_for_sample(clip, local_start, inertia_samples)
+                                + Self::pitch_shift_for_sample(clip, local_mid, inertia_samples)
+                                + Self::pitch_shift_for_sample(clip, local_end, inertia_samples))
+                                / 3.0;
+                        let scale = 2.0_f64.powf((semitones as f64) / 12.0);
+                        for ch in 0..effective_channels {
+                            let source_channel = if buffer.channels == 1 { 0 } else { ch };
+                            for i in 0..block_size {
+                                let source_frame = block_start.saturating_add(i);
+                                input[ch][i] = if source_frame < total_frames {
+                                    buffer.samples[source_frame * buffer.channels + source_channel]
+                                } else {
+                                    0.0
+                                };
+                            }
                         }
-                    }
-                    scale
-                })
+                        scale
+                    })
             };
             let mut input_blocks = vec![vec![0.0; request_len]; input_count];
             for in_channel in 0..input_count {
@@ -2064,10 +2104,21 @@ impl Track {
                     input_blocks[in_channel][i] = corrected[source_channel][i];
                 }
             }
-            Self::apply_audio_clip_fades(clip, clip_start, clip_len, absolute_from, &mut input_blocks);
+            Self::apply_audio_clip_fades(
+                clip,
+                clip_start,
+                clip_len,
+                absolute_from,
+                &mut input_blocks,
+            );
             return Some(if has_clip_plugins {
-                self.process_clip_plugin_runtime_segment(clip, &input_blocks, absolute_from, request_len)
-                    .unwrap_or(input_blocks)
+                self.process_clip_plugin_runtime_segment(
+                    clip,
+                    &input_blocks,
+                    absolute_from,
+                    request_len,
+                )
+                .unwrap_or(input_blocks)
             } else {
                 input_blocks
             });
@@ -2089,7 +2140,9 @@ impl Track {
             };
             for i in 0..request_len {
                 let absolute_sample = absolute_from + i;
-                let clip_idx = absolute_sample.saturating_sub(clip_start).saturating_add(clip.offset);
+                let clip_idx = absolute_sample
+                    .saturating_sub(clip_start)
+                    .saturating_add(clip.offset);
                 if clip_idx >= total_frames {
                     break;
                 }
@@ -2098,8 +2151,13 @@ impl Track {
         }
         Self::apply_audio_clip_fades(clip, clip_start, clip_len, absolute_from, &mut input_blocks);
         Some(if has_clip_plugins {
-            self.process_clip_plugin_runtime_segment(clip, &input_blocks, absolute_from, request_len)
-                .unwrap_or(input_blocks)
+            self.process_clip_plugin_runtime_segment(
+                clip,
+                &input_blocks,
+                absolute_from,
+                request_len,
+            )
+            .unwrap_or(input_blocks)
         } else {
             input_blocks
         })
@@ -2120,7 +2178,13 @@ impl Track {
         }
         if !clip.grouped_clips.is_empty() {
             for child in &clip.grouped_clips {
-                self.collect_midi_clip_events_recursive(child, clip_start, input_events, frames, segments);
+                self.collect_midi_clip_events_recursive(
+                    child,
+                    clip_start,
+                    input_events,
+                    frames,
+                    segments,
+                );
             }
             return;
         }
@@ -2159,12 +2223,12 @@ impl Track {
         clip_idx: usize,
         channels: usize,
     ) -> Result<&mut ClipPluginRuntime, String> {
-        let clip = self
-            .audio
-            .clips
-            .get(clip_idx)
-            .cloned()
-            .ok_or_else(|| format!("Track '{}' has no audio clip at index {}", self.name, clip_idx))?;
+        let clip = self.audio.clips.get(clip_idx).cloned().ok_or_else(|| {
+            format!(
+                "Track '{}' has no audio clip at index {}",
+                self.name, clip_idx
+            )
+        })?;
         if clip.plugin_graph_json.is_none() {
             return Err(format!(
                 "Track '{}' clip {} has no plugin graph",
@@ -2173,7 +2237,8 @@ impl Track {
         }
         let runtime_key = Self::clip_plugin_runtime_key(&clip, channels, channels);
         if !self.clip_plugin_tracks.contains_key(&runtime_key) {
-            let runtime = self.build_clip_plugin_runtime(&clip, channels, self.process_block_size)?;
+            let runtime =
+                self.build_clip_plugin_runtime(&clip, channels, self.process_block_size)?;
             self.clip_plugin_tracks.insert(runtime_key.clone(), runtime);
         }
         self.clip_plugin_tracks
@@ -2252,8 +2317,7 @@ impl Track {
         }
         let mut points = clip.pitch_correction_points.iter().collect::<Vec<_>>();
         points.sort_by_key(|point| point.start_sample);
-        let mut previous_shift =
-            points[0].target_midi_pitch - points[0].detected_midi_pitch;
+        let mut previous_shift = points[0].target_midi_pitch - points[0].detected_midi_pitch;
         if sample < points[0].start_sample {
             return previous_shift;
         }
@@ -2512,17 +2576,23 @@ impl Track {
                 let from = (*segment_start).max(clip_start);
                 let to = (*segment_end).min(clip_end);
                 let track_idx = out_offset + (from - *segment_start);
-                let copy_len = to
-                    .saturating_sub(from)
-                    .min(self.audio.ins.first().map(|audio_in| {
-                        audio_in.buffer.lock().len().saturating_sub(track_idx)
-                    }).unwrap_or(0));
+                let copy_len = to.saturating_sub(from).min(
+                    self.audio
+                        .ins
+                        .first()
+                        .map(|audio_in| audio_in.buffer.lock().len().saturating_sub(track_idx))
+                        .unwrap_or(0),
+                );
                 if copy_len == 0 {
                     continue;
                 }
-                let Some(processed_blocks) =
-                    self.render_audio_clip_segment(&clip, 0, from, copy_len, &mut active_clip_plugin_keys)
-                else {
+                let Some(processed_blocks) = self.render_audio_clip_segment(
+                    &clip,
+                    0,
+                    from,
+                    copy_len,
+                    &mut active_clip_plugin_keys,
+                ) else {
                     continue;
                 };
                 for in_channel in 0..self.audio.ins.len() {

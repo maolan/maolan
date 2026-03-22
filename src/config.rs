@@ -10,6 +10,7 @@ pub struct Config {
     pub font_size: f32,
     pub mixer_height: f32,
     pub track_width: f32,
+    pub osc_enabled: bool,
     pub default_export_sample_rate_hz: u32,
     pub default_snap_mode: SnapMode,
     pub default_audio_bit_depth: usize,
@@ -24,6 +25,7 @@ impl Default for Config {
             font_size: 16.0,
             mixer_height: 300.0,
             track_width: 200.0,
+            osc_enabled: false,
             default_export_sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ as u32,
             default_snap_mode: SnapMode::Bar,
             default_audio_bit_depth: audio_defaults::BIT_DEPTH,
@@ -120,6 +122,7 @@ mod tests {
 font_size = 16.0
 mixer_height = 300.0
 track_width = 200.0
+osc_enabled = true
 default_export_sample_rate_hz = 48000
 default_snap_mode = "Bar"
 default_audio_bit_depth = 32

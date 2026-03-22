@@ -6971,6 +6971,9 @@ impl Maolan {
             Message::PreferencesBitDepthSelected(bits) => {
                 self.prefs_audio_bit_depth = bits;
             }
+            Message::PreferencesOscEnabledToggled(enabled) => {
+                self.prefs_osc_enabled = enabled;
+            }
             Message::PreferencesOutputDeviceSelected(ref device) => {
                 self.prefs_default_output_device_id =
                     (device.id != super::super::PREF_DEVICE_AUTO_ID).then(|| device.id.clone());
@@ -6981,12 +6984,14 @@ impl Maolan {
             }
             Message::PreferencesSave => {
                 let mut cfg = crate::config::Config::load().unwrap_or_default();
+                cfg.osc_enabled = self.prefs_osc_enabled;
                 cfg.default_export_sample_rate_hz = self.prefs_export_sample_rate_hz;
                 cfg.default_snap_mode = self.prefs_snap_mode;
                 cfg.default_audio_bit_depth = self.prefs_audio_bit_depth;
                 cfg.default_output_device_id = self.prefs_default_output_device_id.clone();
                 cfg.default_input_device_id = self.prefs_default_input_device_id.clone();
                 let prefs = super::super::AppPreferences {
+                    osc_enabled: cfg.osc_enabled,
                     default_export_sample_rate_hz: cfg.default_export_sample_rate_hz,
                     default_snap_mode: cfg.default_snap_mode,
                     default_audio_bit_depth: cfg.default_audio_bit_depth,
@@ -6998,6 +7003,7 @@ impl Maolan {
                     Ok(()) => {
                         self.export_sample_rate_hz = self.prefs_export_sample_rate_hz;
                         self.snap_mode = self.prefs_snap_mode;
+                        let task = self.send(Action::SetOscEnabled(self.prefs_osc_enabled));
                         {
                             let mut state = self.state.blocking_write();
                             Self::apply_preferred_devices_to_state(&mut state, &prefs);
@@ -7005,6 +7011,7 @@ impl Maolan {
                         self.modal = None;
                         self.state.blocking_write().message =
                             "Preferences saved: ~/.config/maolan/config.toml".to_string();
+                        return task;
                     }
                     Err(e) => {
                         self.state.blocking_write().message =

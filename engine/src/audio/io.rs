@@ -196,8 +196,17 @@ mod tests {
 
         AudioIO::disconnect(&source, &dest).expect("disconnect");
 
-        assert_eq!(source.connection_count.load(std::sync::atomic::Ordering::Relaxed), 0);
-        assert_eq!(dest.connection_count.load(std::sync::atomic::Ordering::Relaxed), 0);
+        assert_eq!(
+            source
+                .connection_count
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
+        assert_eq!(
+            dest.connection_count
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
+        );
         assert!(source.connections.lock().is_empty());
         assert!(dest.connections.lock().is_empty());
     }
