@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -52,7 +52,7 @@ jobs:
       ASSET_BASENAME: maolan-${{ inputs.release_tag }}-linux-x86_64
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -134,7 +134,7 @@ jobs:
       matrix:
         include:
         - os: freebsd
-          version: '14.3'
+          version: '15.0'
           asset_suffix: freebsd-x86_64
           setup: |
             sudo mkdir -p /usr/local/etc/pkg/repos
