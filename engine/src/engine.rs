@@ -3,7 +3,7 @@ use midly::{
     live::LiveEvent,
     num::{u15, u24, u28},
 };
-#[cfg(any(target_os = "freebsd", target_os = "linux"))]
+#[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
 use std::fs::read_dir;
 use std::{
     collections::{HashMap, VecDeque},
@@ -33,12 +33,16 @@ use crate::hw::jack::JackRuntime;
 use crate::hw::oss as hw;
 #[cfg(target_os = "freebsd")]
 use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
+#[cfg(target_os = "openbsd")]
+use crate::hw::sndio::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "linux")]
 use crate::workers::alsa_worker::HwWorker;
 #[cfg(target_os = "macos")]
 use crate::workers::coreaudio_worker::HwWorker;
 #[cfg(target_os = "freebsd")]
 use crate::workers::oss_worker::HwWorker;
+#[cfg(target_os = "openbsd")]
+use crate::workers::sndio_worker::HwWorker;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
@@ -173,14 +177,14 @@ pub struct Engine {
     hw_out_balance: f32,
     hw_out_muted: bool,
     last_hw_out_meter_publish: Option<Instant>,
-    #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+    #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
     last_hw_out_meter_linear: Vec<f32>,
     hw_out_peak_hold_linear: Vec<f32>,
-    #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+    #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
     hw_out_meter_publish_phase: bool,
     last_track_meter_publish: Option<Instant>,
     track_meter_linear_by_track: HashMap<String, Vec<f32>>,
-    #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+    #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
     track_meter_last_published_linear: HashMap<String, Vec<f32>>,
     latest_hw_out_meter_db: Arc<Vec<f32>>,
     latest_track_meter_snapshot: Arc<Vec<(String, Vec<f32>)>>,
@@ -757,9 +761,9 @@ impl Engine {
     }
 
     const METER_PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
-    #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+    #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
     const HW_OUT_METER_LINEAR_EPSILON: f32 = 0.0025;
-    #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+    #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
     const TRACK_METER_LINEAR_EPSILON: f32 = 0.0025;
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -789,7 +793,7 @@ impl Engine {
         devices
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     fn discover_midi_hw_devices_from_dir(path: &str, prefixes: &[&str]) -> Vec<String> {
         let devices = read_dir(path)
             .map(|rd| {
@@ -813,6 +817,8 @@ impl Engine {
         let devices = Self::discover_midi_hw_devices_from_dir("/dev", &["umidi", "midi"]);
         #[cfg(target_os = "linux")]
         let devices = Self::discover_midi_hw_devices_from_dir("/dev/snd", &["midiC"]);
+        #[cfg(target_os = "openbsd")]
+        let devices = Self::discover_midi_hw_devices_from_dir("/dev", &["midi"]);
         #[cfg(target_os = "macos")]
         let devices = {
             let mut devices = Vec::new();
@@ -828,7 +834,7 @@ impl Engine {
             }
             Self::finalize_midi_hw_devices(devices)
         };
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "macos")))]
         let devices = Vec::new();
         devices
     }
@@ -882,14 +888,14 @@ impl Engine {
             hw_out_balance: 0.0,
             hw_out_muted: false,
             last_hw_out_meter_publish: None,
-            #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+            #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
             last_hw_out_meter_linear: vec![],
             hw_out_peak_hold_linear: vec![],
-            #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+            #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
             hw_out_meter_publish_phase: false,
             last_track_meter_publish: None,
             track_meter_linear_by_track: HashMap::new(),
-            #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+            #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
             track_meter_last_published_linear: HashMap::new(),
             latest_hw_out_meter_db: Arc::new(Vec::new()),
             latest_track_meter_snapshot: Arc::new(Vec::new()),
@@ -999,7 +1005,12 @@ impl Engine {
             HwDriver::new_with_options(device, _input_device, sample_rate_hz, bits, hw_opts)
                 .map_err(|e| e.to_string())
         }
-        #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+        #[cfg(target_os = "openbsd")]
+        {
+            HwDriver::new_with_options(device, sample_rate_hz, bits, hw_opts)
+                .map_err(|e| e.to_string())
+        }
+        #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
         {
             HwDriver::new_with_options(device, sample_rate_hz, bits, hw_opts)
                 .map_err(|e| e.to_string())
@@ -1011,9 +1022,11 @@ impl Engine {
         let label = "ALSA";
         #[cfg(target_os = "freebsd")]
         let label = "OSS";
+        #[cfg(target_os = "openbsd")]
+        let label = "sndio";
         #[cfg(target_os = "macos")]
         let label = "CoreAudio";
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd", target_os = "macos")))]
         let label = "Unknown";
         label
     }
@@ -3046,7 +3059,7 @@ impl Engine {
     }
 
     fn should_publish_hw_out_linear(&mut self, peaks_linear: &[f32]) -> bool {
-        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+        #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
         {
             self.hw_out_meter_publish_phase = !self.hw_out_meter_publish_phase;
             if !self.hw_out_meter_publish_phase {
@@ -3068,7 +3081,7 @@ impl Engine {
                 .extend_from_slice(peaks_linear);
             return true;
         }
-        #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+        #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
         {
             let _peaks_linear = peaks_linear;
             true
@@ -3076,9 +3089,9 @@ impl Engine {
     }
 
     async fn maybe_notify_hw_out_meter(&mut self, _meter_db: Vec<f32>) {
-        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+        #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
         {}
-        #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+        #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
         {
             self.notify_clients(Ok(Action::TrackMeters {
                 track_name: "hw:out".to_string(),
@@ -3092,11 +3105,11 @@ impl Engine {
         &mut self,
         _tracks: &[(String, Arc<UnsafeMutex<Box<Track>>>)],
     ) -> Vec<(String, Vec<f32>)> {
-        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+        #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
         {
             Vec::new()
         }
-        #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+        #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
         {
             let mut active_track_names = std::collections::HashSet::with_capacity(_tracks.len());
             let meters: Vec<(String, Vec<f32>)> = _tracks
@@ -3620,13 +3633,13 @@ impl Engine {
                         if let Err(e) = worker.tx.send(Message::ClearHWMidiOutEvents).await {
                             error!("Error clearing HW MIDI queue for panic {e}");
                         }
-                        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+                        #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
                         {
                             self.midi_hub
                                 .lock()
                                 .write_events_blocking(&panic_events, Duration::from_millis(250));
                         }
-                        #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+                        #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
                         if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
                         {
                             error!("Error sending MIDI panic events {e}");
@@ -3792,7 +3805,7 @@ impl Engine {
                 if let Some(worker) = self.hw_worker.take() {
                     let mut panic_events = self.note_off_events_for_all_active_tracks();
                     panic_events.extend(self.panic_events_for_all_hw_midi_outputs());
-                    #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+                    #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
                     if !panic_events.is_empty() {
                         if let Err(e) = worker.tx.send(Message::ClearHWMidiOutEvents).await {
                             error!("Error clearing HW MIDI queue during quit {e}");
@@ -3801,7 +3814,7 @@ impl Engine {
                             .lock()
                             .write_events_blocking(&panic_events, Duration::from_millis(250));
                     }
-                    #[cfg(not(any(target_os = "freebsd", target_os = "linux")))]
+                    #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
                     if !panic_events.is_empty()
                         && let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
                     {

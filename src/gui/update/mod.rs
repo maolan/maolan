@@ -11,7 +11,7 @@ use self::types::{
 };
 #[cfg(target_os = "macos")]
 use crate::message::PluginFormat;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 use crate::state::AudioDeviceOption;
 use crate::{
     connections,

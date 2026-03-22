@@ -16,7 +16,7 @@ pub use state::{MemoryStream, Vst3PluginState, ibstream_ptr};
 pub use processor::list_plugins;
 
 // Helper for VST3 search paths (moved from old vst3.rs)
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 use crate::plugins::paths;
 use std::path::PathBuf;
 
@@ -28,7 +28,7 @@ pub fn default_vst3_search_roots() -> Vec<PathBuf> {
         paths::push_macos_audio_plugin_roots(&mut roots, "VST3");
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     {
         paths::push_unix_plugin_roots(&mut roots, "vst3");
     }

@@ -9,7 +9,7 @@ pub mod error_fmt;
 #[cfg(unix)]
 pub mod jack;
 pub mod latency;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 pub mod midi_hub;
 pub mod options;
 #[cfg(target_os = "freebsd")]
@@ -17,4 +17,6 @@ pub mod oss;
 pub mod ports;
 #[cfg(target_os = "freebsd")]
 pub mod prefill;
+#[cfg(target_os = "openbsd")]
+pub mod sndio;
 pub mod traits;
