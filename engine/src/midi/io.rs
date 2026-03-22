@@ -74,7 +74,9 @@ mod tests {
         let target = Arc::new(UnsafeMutex::new(Box::new(MIDIIO::new())));
         let mut io = MIDIIO::new();
 
-        let err = io.disconnect(&target).expect_err("missing connection should error");
+        let err = io
+            .disconnect(&target)
+            .expect_err("missing connection should error");
 
         assert_eq!(err, "Connection not found");
     }

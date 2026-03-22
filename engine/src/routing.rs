@@ -118,9 +118,11 @@ mod tests {
             ("Y".to_string(), vec![]),
         ]);
 
-        assert!(!would_create_cycle(&"A".to_string(), &"X".to_string(), |node: &String| {
-            graph.get(node).cloned().unwrap_or_default()
-        }));
+        assert!(!would_create_cycle(
+            &"A".to_string(),
+            &"X".to_string(),
+            |node: &String| { graph.get(node).cloned().unwrap_or_default() }
+        ));
     }
 
     #[test]

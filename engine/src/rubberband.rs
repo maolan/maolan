@@ -54,7 +54,11 @@ pub struct LivePitchShifter {
 unsafe impl Send for LivePitchShifter {}
 
 impl LivePitchShifter {
-    pub fn new(sample_rate: usize, channels: usize, formant_preserved: bool) -> Result<Self, String> {
+    pub fn new(
+        sample_rate: usize,
+        channels: usize,
+        formant_preserved: bool,
+    ) -> Result<Self, String> {
         let mut options = RUBBERBAND_OPTION_PROCESS_REAL_TIME
             | RUBBERBAND_OPTION_THREADING_NEVER
             | RUBBERBAND_OPTION_WINDOW_SHORT
@@ -71,8 +75,7 @@ impl LivePitchShifter {
             return Err("Failed to initialize Rubber Band live shifter".to_string());
         }
         let block_size = unsafe { rubberband_live_get_block_size(state) as usize }.max(1);
-        let start_delay_remaining =
-            unsafe { rubberband_live_get_start_delay(state) as usize };
+        let start_delay_remaining = unsafe { rubberband_live_get_start_delay(state) as usize };
         let input = vec![vec![0.0; block_size]; channels.max(1)];
         let output = vec![vec![0.0; block_size]; channels.max(1)];
         let input_ptrs = input.iter().map(|channel| channel.as_ptr()).collect();

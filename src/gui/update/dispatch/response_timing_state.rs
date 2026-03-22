@@ -9,6 +9,13 @@ impl Maolan {
                 self.last_playback_tick = Some(Instant::now());
                 true
             }
+            Action::Pause => {
+                self.playing = true;
+                self.paused = true;
+                self.last_playback_tick = None;
+                self.stop_recording_preview();
+                true
+            }
             Action::Stop => {
                 self.playing = false;
                 self.paused = false;

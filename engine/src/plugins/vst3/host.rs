@@ -263,7 +263,9 @@ mod tests {
             },
         ];
 
-        let found = host.get_plugin_info("/tmp/Second.vst3").map(|p| p.name.clone());
+        let found = host
+            .get_plugin_info("/tmp/Second.vst3")
+            .map(|p| p.name.clone());
         let missing = host.get_plugin_info(&PathBuf::from("/tmp/missing.vst3").to_string_lossy());
 
         assert_eq!(found.as_deref(), Some("Second"));

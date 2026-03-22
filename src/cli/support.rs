@@ -21,6 +21,7 @@ use std::{
 pub struct CliConfig {
     pub default_audio_bit_depth: usize,
     pub default_export_sample_rate_hz: u32,
+    pub osc_enabled: bool,
     pub default_output_device_id: Option<String>,
     pub default_input_device_id: Option<String>,
 }

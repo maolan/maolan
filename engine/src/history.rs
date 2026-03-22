@@ -336,8 +336,8 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                             pitch_correction_points: clip.pitch_correction_points.clone(),
                             pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
                             pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
-                            pitch_correction_formant_compensation:
-                                clip.pitch_correction_formant_compensation,
+                            pitch_correction_formant_compensation: clip
+                                .pitch_correction_formant_compensation,
                             plugin_graph_json: clip.plugin_graph_json.clone(),
                         })
                     } else {
@@ -586,8 +586,7 @@ pub fn create_inverse_action(action: &Action, state: &State) -> Option<Action> {
                 pitch_correction_points: clip.pitch_correction_points.clone(),
                 pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
                 pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
-                pitch_correction_formant_compensation: clip
-                    .pitch_correction_formant_compensation,
+                pitch_correction_formant_compensation: clip.pitch_correction_formant_compensation,
             })
         }
         Action::Connect {
@@ -1079,8 +1078,8 @@ pub fn create_inverse_actions(action: &Action, state: &State) -> Option<Vec<Acti
                     pitch_correction_points: clip.pitch_correction_points.clone(),
                     pitch_correction_frame_likeness: clip.pitch_correction_frame_likeness,
                     pitch_correction_inertia_ms: clip.pitch_correction_inertia_ms,
-                    pitch_correction_formant_compensation:
-                        clip.pitch_correction_formant_compensation,
+                    pitch_correction_formant_compensation: clip
+                        .pitch_correction_formant_compensation,
                     plugin_graph_json: clip.plugin_graph_json.clone(),
                 });
             }
@@ -1576,11 +1575,19 @@ mod tests {
 
         assert!(matches!(
             audio_inverse,
-            Action::SetClipMuted { muted: true, kind: Kind::Audio, .. }
+            Action::SetClipMuted {
+                muted: true,
+                kind: Kind::Audio,
+                ..
+            }
         ));
         assert!(matches!(
             midi_inverse,
-            Action::SetClipMuted { muted: false, kind: Kind::MIDI, .. }
+            Action::SetClipMuted {
+                muted: false,
+                kind: Kind::MIDI,
+                ..
+            }
         ));
     }
 
@@ -1682,7 +1689,9 @@ mod tests {
     fn create_inverse_action_for_remove_grouped_audio_clip_restores_group() {
         let mut track = Track::new("t".to_string(), 1, 1, 0, 0, 64, 48_000.0);
         let mut group = AudioClip::new("Group".to_string(), 48, 144);
-        group.grouped_clips.push(AudioClip::new("child.wav".to_string(), 0, 32));
+        group
+            .grouped_clips
+            .push(AudioClip::new("child.wav".to_string(), 0, 32));
         track.audio.clips.push(group);
         let state = make_state_with_track(track);
 
@@ -1768,9 +1777,11 @@ mod tests {
     fn create_inverse_action_for_remove_grouped_midi_clip_restores_group() {
         let mut track = Track::new("t".to_string(), 0, 0, 1, 1, 64, 48_000.0);
         let mut group = crate::midi::clip::MIDIClip::new("Group".to_string(), 32, 160);
-        group
-            .grouped_clips
-            .push(crate::midi::clip::MIDIClip::new("child.mid".to_string(), 0, 48));
+        group.grouped_clips.push(crate::midi::clip::MIDIClip::new(
+            "child.mid".to_string(),
+            0,
+            48,
+        ));
         track.midi.clips.push(group);
         let state = make_state_with_track(track);
 
@@ -2042,7 +2053,12 @@ mod tests {
         .expect("inverse action");
 
         match inverse {
-            Action::ClipMove { kind, from, to, copy } => {
+            Action::ClipMove {
+                kind,
+                from,
+                to,
+                copy,
+            } => {
                 assert_eq!(kind, Kind::Audio);
                 assert_eq!(from.track_name, "t");
                 assert_eq!(from.clip_index, 1);

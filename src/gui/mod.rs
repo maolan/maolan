@@ -200,6 +200,7 @@ struct ExportTrackData {
 
 #[derive(Debug, Clone)]
 struct AppPreferences {
+    osc_enabled: bool,
     default_export_sample_rate_hz: u32,
     default_snap_mode: SnapMode,
     default_audio_bit_depth: usize,
@@ -211,6 +212,7 @@ struct AppPreferences {
 impl Default for AppPreferences {
     fn default() -> Self {
         Self {
+            osc_enabled: false,
             default_export_sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ as u32,
             default_snap_mode: SnapMode::Bar,
             default_audio_bit_depth: audio_defaults::BIT_DEPTH,
@@ -467,6 +469,7 @@ pub struct Maolan {
     pending_diagnostics_bundle_export: bool,
     diagnostics_bundle_wait_session_report: bool,
     diagnostics_bundle_wait_midi_report: bool,
+    prefs_osc_enabled: bool,
     prefs_export_sample_rate_hz: u32,
     prefs_snap_mode: SnapMode,
     prefs_audio_bit_depth: usize,
@@ -477,6 +480,7 @@ pub struct Maolan {
 fn load_preferences() -> AppPreferences {
     let cfg = config::Config::load().unwrap_or_default();
     AppPreferences {
+        osc_enabled: cfg.osc_enabled,
         default_export_sample_rate_hz: cfg.default_export_sample_rate_hz,
         default_snap_mode: cfg.default_snap_mode,
         default_audio_bit_depth: cfg.default_audio_bit_depth,
@@ -537,6 +541,13 @@ impl Default for Maolan {
         };
         Self::apply_preferred_devices_to_state(&mut state_data, &prefs);
         let state = Arc::new(RwLock::new(state_data));
+        if tokio::runtime::Handle::try_current().is_ok() {
+            let _ = CLIENT
+                .sender
+                .blocking_send(EngineMessage::Request(Action::SetOscEnabled(
+                    prefs.osc_enabled,
+                )));
+        }
         let mut menu = menu::Menu::default();
         menu.update_templates(scan_templates());
         menu.update_recent_sessions(Self::normalize_recent_session_paths(
@@ -695,6 +706,7 @@ impl Default for Maolan {
             pending_diagnostics_bundle_export: false,
             diagnostics_bundle_wait_session_report: false,
             diagnostics_bundle_wait_midi_report: false,
+            prefs_osc_enabled: prefs.osc_enabled,
             prefs_export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             prefs_snap_mode: prefs.default_snap_mode,
             prefs_audio_bit_depth: prefs.default_audio_bit_depth,
@@ -4789,6 +4801,13 @@ impl Maolan {
         container(
             column![
                 text("Preferences").size(16),
+                row![
+                    checkbox(self.prefs_osc_enabled)
+                        .label("Enable OSC")
+                        .on_toggle(Message::PreferencesOscEnabledToggled),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
                 row![
                     text("Default export sample rate (Hz):"),
                     pick_list(

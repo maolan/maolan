@@ -683,6 +683,7 @@ pub enum Message {
     PreferencesSampleRateSelected(u32),
     PreferencesSnapModeSelected(SnapMode),
     PreferencesBitDepthSelected(usize),
+    PreferencesOscEnabledToggled(bool),
     PreferencesOutputDeviceSelected(PreferencesDeviceOption),
     PreferencesInputDeviceSelected(PreferencesDeviceOption),
     PreferencesSave,

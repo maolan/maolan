@@ -119,6 +119,7 @@ jobs:
         mkdir -p "dist/${ASSET_BASENAME}"
         cp target/release/maolan "dist/${ASSET_BASENAME}/maolan"
         cp target/release/maolan-cli "dist/${ASSET_BASENAME}/maolan-cli"
+        cp target/release/maolan-osc "dist/${ASSET_BASENAME}/maolan-osc"
         tar -C dist -czf "dist/${ASSET_BASENAME}.tar.gz" "${ASSET_BASENAME}"
     - name: Upload Linux artifact
       if: ${{ inputs.release_build }}
@@ -157,6 +158,7 @@ jobs:
           mkdir -p "dist/${{ env.ASSET_BASENAME }}"
           cp target/release/maolan "dist/${{ env.ASSET_BASENAME }}/maolan"
           cp target/release/maolan-cli "dist/${{ env.ASSET_BASENAME }}/maolan-cli"
+          cp target/release/maolan-osc "dist/${{ env.ASSET_BASENAME }}/maolan-osc"
           tar -C dist -czf "dist/${{ env.ASSET_BASENAME }}.tar.gz" "${{ env.ASSET_BASENAME }}"
     - name: Upload FreeBSD artifact
       if: ${{ inputs.release_build }}
@@ -195,6 +197,7 @@ jobs:
           mkdir -p "dist/${{ env.ASSET_BASENAME }}"
           cp target/release/maolan "dist/${{ env.ASSET_BASENAME }}/maolan"
           cp target/release/maolan-cli "dist/${{ env.ASSET_BASENAME }}/maolan-cli"
+          cp target/release/maolan-osc "dist/${{ env.ASSET_BASENAME }}/maolan-osc"
           tar -C dist -czf "dist/${{ env.ASSET_BASENAME }}.tar.gz" "${{ env.ASSET_BASENAME }}"
     - name: Upload OpenBSD artifact
       if: ${{ inputs.release_build }}

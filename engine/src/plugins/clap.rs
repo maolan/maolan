@@ -1,7 +1,12 @@
 use crate::audio::io::AudioIO;
 use crate::midi::io::MidiEvent;
 use crate::mutex::UnsafeMutex;
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd"
+))]
 use crate::plugins::paths;
 use libloading::Library;
 use serde::{Deserialize, Serialize};
