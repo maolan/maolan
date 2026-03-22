@@ -1,7 +1,7 @@
 use crate::audio::io::AudioIO;
 use crate::midi::io::MidiEvent;
 use crate::mutex::UnsafeMutex;
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 use crate::plugins::paths;
 use libloading::Library;
 use serde::{Deserialize, Serialize};
@@ -1879,7 +1879,7 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
         paths::push_macos_audio_plugin_roots(&mut roots, "CLAP");
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     {
         paths::push_unix_plugin_roots(&mut roots, "clap");
     }

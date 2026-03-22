@@ -1,25 +1,25 @@
 use super::*;
 
 impl Maolan {
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     pub(super) fn apply_hw_selected(&self, hw: &AudioDeviceOption) {
         let mut state = self.state.blocking_write();
         let selected = Self::selected_output_device_for_platform(&mut state, hw);
         state.selected_hw = Some(selected);
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
     pub(super) fn apply_hw_selected(&self, hw: &String) {
         self.state.blocking_write().selected_hw = Some(hw.to_string());
     }
 
-    #[cfg(target_os = "freebsd")]
+    #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
     pub(super) fn apply_hw_input_selected(&self, hw: &AudioDeviceOption) {
         let mut state = self.state.blocking_write();
         let selected = Self::select_refreshed_device(
             &mut state.available_hw,
             hw,
-            crate::state::discover_freebsd_audio_devices,
+            crate::state::discover_output_audio_devices,
         );
         state.selected_input_hw = Some(selected.clone());
         Self::update_bits_from_selected_device(&mut state, &selected);
@@ -41,7 +41,7 @@ impl Maolan {
         let mut state = self.state.blocking_write();
         state.selected_backend = backend.clone();
         state.selected_hw = None;
-        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+        #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
         {
             state.selected_input_hw = None;
             state.oss_bits = 32;
@@ -49,7 +49,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     pub(super) fn select_refreshed_device(
         available_devices: &mut Vec<AudioDeviceOption>,
         current: &AudioDeviceOption,
@@ -67,7 +67,7 @@ impl Maolan {
         selected
     }
 
-    #[cfg(target_os = "freebsd")]
+    #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
     pub(super) fn selected_output_device_for_platform(
         state: &mut crate::state::StateData,
         hw: &AudioDeviceOption,
@@ -75,7 +75,7 @@ impl Maolan {
         let selected = Self::select_refreshed_device(
             &mut state.available_hw,
             hw,
-            crate::state::discover_freebsd_audio_devices,
+            crate::state::discover_output_audio_devices,
         );
         Self::update_bits_from_selected_device(state, &selected);
         selected
@@ -90,7 +90,7 @@ impl Maolan {
         hw.clone()
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     pub(super) fn update_bits_from_selected_device(
         state: &mut crate::state::StateData,
         selected: &AudioDeviceOption,
@@ -100,7 +100,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     pub(super) fn select_first_backend_output_device(
         state: &mut crate::state::StateData,
         discover: fn() -> Vec<AudioDeviceOption>,
@@ -132,17 +132,22 @@ impl Maolan {
         selected
     }
 
-    #[cfg(target_os = "freebsd")]
+    #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
     pub(super) fn apply_backend_device_defaults(
         state: &mut crate::state::StateData,
         backend: &crate::state::AudioBackendOption,
     ) {
+        #[cfg(target_os = "freebsd")]
         if !matches!(backend, crate::state::AudioBackendOption::Oss) {
+            return;
+        }
+        #[cfg(target_os = "openbsd")]
+        if !matches!(backend, crate::state::AudioBackendOption::Sndio) {
             return;
         }
         state.selected_hw = Self::select_first_backend_output_device(
             state,
-            crate::state::discover_freebsd_audio_devices,
+            crate::state::discover_output_audio_devices,
         );
         state.selected_input_hw = state.selected_hw.clone();
     }

@@ -147,7 +147,7 @@ impl Maolan {
                 self.apply_hw_selected(hw);
                 true
             }
-            #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+            #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
             Message::HWInputSelected(hw) => {
                 self.apply_hw_input_selected(hw);
                 true

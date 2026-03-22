@@ -143,13 +143,13 @@ impl<B: Backend> HwWorker<B> {
         #[cfg(unix)]
         {
             let thread = unsafe { libc::pthread_self() };
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
             let c_name = std::ffi::CString::new(name).map_err(|e| e.to_string())?;
             #[cfg(target_os = "linux")]
             unsafe {
                 let _ = libc::pthread_setname_np(thread, c_name.as_ptr());
             }
-            #[cfg(target_os = "freebsd")]
+            #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
             unsafe {
                 libc::pthread_set_name_np(thread, c_name.as_ptr());
             }

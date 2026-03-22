@@ -5,4 +5,6 @@ pub mod coreaudio_worker;
 pub mod hw_worker;
 #[cfg(target_os = "freebsd")]
 pub mod oss_worker;
+#[cfg(target_os = "openbsd")]
+pub mod sndio_worker;
 pub mod worker;

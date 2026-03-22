@@ -4680,14 +4680,14 @@ impl Maolan {
     fn preferences_output_device_options(&self) -> Vec<PreferencesDeviceOption> {
         let mut options = vec![Self::preferences_auto_device_option()];
         let state = self.state.blocking_read();
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
         {
             options.extend(state.available_hw.iter().map(|hw| PreferencesDeviceOption {
                 id: hw.id.clone(),
                 label: hw.label.clone(),
             }));
         }
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
         {
             options.extend(state.available_hw.iter().map(|hw| PreferencesDeviceOption {
                 id: hw.clone(),
@@ -4700,7 +4700,7 @@ impl Maolan {
     fn preferences_input_device_options(&self) -> Vec<PreferencesDeviceOption> {
         let mut options = vec![Self::preferences_auto_device_option()];
         let state = self.state.blocking_read();
-        #[cfg(target_os = "freebsd")]
+        #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
         {
             options.extend(state.available_hw.iter().map(|hw| PreferencesDeviceOption {
                 id: hw.id.clone(),
@@ -4733,7 +4733,7 @@ impl Maolan {
             state.oss_bits = bits;
         }
         if let Some(device_id) = prefs.default_output_device_id.as_deref() {
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
             if let Some(selected) = state
                 .available_hw
                 .iter()
@@ -4742,13 +4742,13 @@ impl Maolan {
             {
                 state.selected_hw = Some(selected);
             }
-            #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+            #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
             if state.available_hw.iter().any(|hw| hw == device_id) {
                 state.selected_hw = Some(device_id.to_string());
             }
         }
         if let Some(device_id) = prefs.default_input_device_id.as_deref() {
-            #[cfg(target_os = "freebsd")]
+            #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
             if let Some(selected) = state
                 .available_hw
                 .iter()
@@ -4767,7 +4767,7 @@ impl Maolan {
                 state.selected_input_hw = Some(selected);
             }
         }
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
         if let Some(selected) = state.selected_hw.as_ref()
             && let Some(bits) = selected.preferred_bits()
         {
