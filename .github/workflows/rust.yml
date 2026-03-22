@@ -18,7 +18,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  FREEBSD_VERSION: '14.3'
 
 permissions:
   contents: write
@@ -128,48 +127,50 @@ jobs:
         name: ${{ env.ASSET_BASENAME }}
         path: dist/${{ env.ASSET_BASENAME }}.tar.gz
 
-  build-freebsd:
+  build-bsd:
     needs: lint
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+        - os: freebsd
+          version: '14.3'
+          asset_suffix: freebsd-x86_64
+          setup: |
+            sudo mkdir -p /usr/local/etc/pkg/repos
+            echo 'FreeBSD: { url: "pkg+http://pkg.FreeBSD.org/${ABI}/latest", mirror_type: "srv", enabled: yes }' | sudo tee /usr/local/etc/pkg/repos/FreeBSD.conf
+            sudo pkg update -f
+            sudo pkg install -y ca_root_nss rust pkgconf libX11 gtk2 lilv suil jackit rubberband
+            export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
+        - os: openbsd
+          version: '7.8'
+          asset_suffix: openbsd-x86_64
+          setup: |
+            sudo pkg_add bash pkgconf gtk+2 lilv suil jack rubberband rust
+            export PATH="/usr/local/bin:$PATH"
     env:
-      ASSET_BASENAME: maolan-${{ inputs.release_tag }}-freebsd-x86_64
+      ASSET_BASENAME: maolan-${{ inputs.release_tag }}-${{ matrix.asset_suffix }}
 
     steps:
     - uses: actions/checkout@v5
-    - name: Build and test on FreeBSD
+    - name: Build and test on ${{ matrix.os }}
       if: ${{ !inputs.release_build }}
       uses: cross-platform-actions/action@v0.30.0
       with:
-        operating_system: freebsd
-        version: ${{ env.FREEBSD_VERSION }}
+        operating_system: ${{ matrix.os }}
+        version: ${{ matrix.version }}
         run: |
-          sudo mkdir -p /usr/local/etc/pkg/repos
-          echo 'FreeBSD: { url: "pkg+http://pkg.FreeBSD.org/${ABI}/latest", mirror_type: "srv", enabled: yes }' | sudo tee /usr/local/etc/pkg/repos/FreeBSD.conf
-          sudo pkg update -f
-          sudo pkg install -y ca_root_nss rustup-init pkgconf libX11 gtk2 lilv suil jackit rubberband
-          export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
-
-          rustup-init -y --default-toolchain stable
-          . "$HOME/.cargo/env"
-
+          ${{ matrix.setup }}
           cargo build
           cargo test
-    - name: Build, package, and upload FreeBSD artifact
+    - name: Build, package, and upload ${{ matrix.os }} artifact
       if: ${{ inputs.release_build }}
       uses: cross-platform-actions/action@v0.30.0
       with:
-        operating_system: freebsd
-        version: ${{ env.FREEBSD_VERSION }}
+        operating_system: ${{ matrix.os }}
+        version: ${{ matrix.version }}
         run: |
-          sudo mkdir -p /usr/local/etc/pkg/repos
-          echo 'FreeBSD: { url: "pkg+http://pkg.FreeBSD.org/${ABI}/latest", mirror_type: "srv", enabled: yes }' | sudo tee /usr/local/etc/pkg/repos/FreeBSD.conf
-          sudo pkg update -f
-          sudo pkg install -y ca_root_nss rustup-init pkgconf libX11 gtk2 lilv suil jackit rubberband
-          export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
-
-          rustup-init -y --default-toolchain stable
-          . "$HOME/.cargo/env"
-
+          ${{ matrix.setup }}
           cargo build --release --verbose
 
           mkdir -p dist
@@ -177,7 +178,7 @@ jobs:
           cp target/release/maolan "dist/${{ env.ASSET_BASENAME }}/maolan"
           cp target/release/maolan-cli "dist/${{ env.ASSET_BASENAME }}/maolan-cli"
           tar -C dist -czf "dist/${{ env.ASSET_BASENAME }}.tar.gz" "${{ env.ASSET_BASENAME }}"
-    - name: Upload FreeBSD artifact
+    - name: Upload ${{ matrix.os }} artifact
       if: ${{ inputs.release_build }}
       uses: actions/upload-artifact@v6
       with:
@@ -189,7 +190,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
     - build-ubuntu
-    - build-freebsd
+    - build-bsd
 
     steps:
     - name: Download release artifacts
