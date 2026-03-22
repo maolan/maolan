@@ -7,11 +7,7 @@ use crate::{
     },
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State, StateData, Track},
-    widget::clip::{
-        AudioClipPreviewArgs, AudioClipWidgetArgs, MidiClipPreviewArgs, MidiClipWidgetArgs,
-        audio_clip_preview, audio_clip_widget, audio_waveform_overlay, clean_clip_name,
-        clip_two_edge_gradient, midi_clip_preview, midi_clip_widget, trim_label_to_width,
-    },
+    widget::clip::{AudioClip as AudioClipWidget, MIDIClip as MIDIClipWidget},
 };
 use iced::{
     Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse,
@@ -522,7 +518,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let clip_name = clip.name.clone();
         let clip_label = format!(
             "{}{}{}",
-            clean_clip_name(&clip_name),
+            AudioClipWidget::clean_name(&clip_name),
             if clip.take_lane_pinned { " [P]" } else { "" },
             if clip.take_lane_locked { " [L]" } else { "" }
         );
@@ -559,7 +555,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let lane_top = lane_top_base + 1.0;
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
         let clip_height = (lane_clip_height - 2.0).max(8.0);
-        let display_clip_label = trim_label_to_width(&clip_label, clip_width);
+        let display_clip_label = AudioClipWidget::label_for_width(&clip_label, clip_width);
         let audio_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
             |(track_idx, clip_idx, kind, is_right_side)| {
                 track_idx == &track_name_cloned
@@ -579,29 +575,28 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         if !dragged_to_other_track {
             clips.push(
-                pin(audio_clip_widget(AudioClipWidgetArgs {
-                    clip,
-                    session_root,
-                    pixels_per_sample,
-                    clip_width,
-                    clip_height,
-                    label: display_clip_label.clone(),
-                    is_selected,
-                    left_handle_hovered: audio_left_handle_hovered,
-                    right_handle_hovered: audio_right_handle_hovered,
-                    track_name: track_name_cloned.clone(),
-                    clip_index: index,
-                    on_select: Message::SelectClip {
-                        track_idx: track_name_cloned.clone(),
-                        clip_idx: index,
-                        kind: Kind::Audio,
-                    },
-                    on_open: Message::OpenClipPlugins {
-                        track_idx: track_name_cloned.clone(),
-                        clip_idx: index,
-                    },
-                    drag_enabled: !clip.take_lane_locked,
-                }))
+                pin(AudioClipWidget::new(clip)
+                    .with_session_root(session_root)
+                    .with_pixels_per_sample(pixels_per_sample)
+                    .with_size(clip_width, clip_height)
+                    .with_label(display_clip_label.clone())
+                    .selected(is_selected)
+                    .hovered_handles(audio_left_handle_hovered, audio_right_handle_hovered)
+                    .interactive(
+                        track_name_cloned.clone(),
+                        index,
+                        Message::SelectClip {
+                            track_idx: track_name_cloned.clone(),
+                            clip_idx: index,
+                            kind: Kind::Audio,
+                        },
+                        Message::OpenClipPlugins {
+                            track_idx: track_name_cloned.clone(),
+                            clip_idx: index,
+                        },
+                        !clip.take_lane_locked,
+                    )
+                    .into_element())
                 .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                 .into(),
             );
@@ -641,15 +636,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 }
             };
             clips.push(
-                pin(audio_clip_preview(AudioClipPreviewArgs {
-                    clip,
-                    session_root,
-                    clip_width,
-                    clip_height,
-                    label: display_clip_label.clone(),
-                    background: preview_fill,
-                    border_color: preview_border,
-                }))
+                pin(AudioClipWidget::new(clip)
+                    .with_session_root(session_root)
+                    .with_size(clip_width, clip_height)
+                    .with_label(display_clip_label.clone())
+                    .preview(preview_fill, preview_border)
+                    .into_element())
                 .position(Point::new(preview_start * pixels_per_sample, lane_top))
                 .into(),
             );
@@ -659,7 +651,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let clip_name = clip.name.clone();
         let clip_label = format!(
             "{}{}{}",
-            clean_clip_name(&clip_name),
+            MIDIClipWidget::clean_name(&clip_name),
             if clip.take_lane_pinned { " [P]" } else { "" },
             if clip.take_lane_locked { " [L]" } else { "" }
         );
@@ -695,7 +687,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let lane_top = lane_top_base + 1.0;
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
         let clip_height = (lane_clip_height - 2.0).max(8.0);
-        let display_clip_label = trim_label_to_width(&clip_label, clip_width);
+        let display_clip_label = MIDIClipWidget::label_for_width(&clip_label, clip_width);
         let midi_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
             |(track_idx, clip_idx, kind, is_right_side)| {
                 track_idx == &track_name_cloned
@@ -718,28 +710,27 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         if !dragged_to_other_track {
             clips.push(
-                pin(midi_clip_widget(MidiClipWidgetArgs {
-                    clip: clip.clone(),
-                    clip_width,
-                    clip_height,
-                    label: display_clip_label.clone(),
-                    is_selected,
-                    left_handle_hovered: midi_left_handle_hovered,
-                    right_handle_hovered: midi_right_handle_hovered,
-                    midi_notes: midi_notes_for_clip.clone(),
-                    track_name: track_name_cloned.clone(),
-                    clip_index: index,
-                    on_select: Message::SelectClip {
-                        track_idx: track_name_cloned.clone(),
-                        clip_idx: index,
-                        kind: Kind::MIDI,
-                    },
-                    on_open: Message::OpenMidiPiano {
-                        track_idx: track_name_cloned.clone(),
-                        clip_idx: index,
-                    },
-                    drag_enabled: !clip.take_lane_locked,
-                }))
+                pin(MIDIClipWidget::new(clip)
+                    .with_size(clip_width, clip_height)
+                    .with_label(display_clip_label.clone())
+                    .selected(is_selected)
+                    .hovered_handles(midi_left_handle_hovered, midi_right_handle_hovered)
+                    .with_notes(midi_notes_for_clip.clone())
+                    .interactive(
+                        track_name_cloned.clone(),
+                        index,
+                        Message::SelectClip {
+                            track_idx: track_name_cloned.clone(),
+                            clip_idx: index,
+                            kind: Kind::MIDI,
+                        },
+                        Message::OpenMidiPiano {
+                            track_idx: track_name_cloned.clone(),
+                            clip_idx: index,
+                        },
+                        !clip.take_lane_locked,
+                    )
+                    .into_element())
                 .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                 .into(),
             );
@@ -749,9 +740,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples);
             let preview_fill = if active_target_valid {
-                clip_two_edge_gradient(MIDI_CLIP_SELECTED_BASE, 0.66, 0.66, false)
+                MIDIClipWidget::two_edge_gradient(MIDI_CLIP_SELECTED_BASE, 0.66, 0.66, false)
             } else {
-                clip_two_edge_gradient(
+                MIDIClipWidget::two_edge_gradient(
                     Color {
                         r: 0.72,
                         g: 0.18,
@@ -779,16 +770,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 }
             };
             clips.push(
-                pin(midi_clip_preview(MidiClipPreviewArgs {
-                    clip: clip.clone(),
-                    clip_width,
-                    clip_height,
-                    label: display_clip_label.clone(),
-                    midi_notes: midi_notes_for_clip.clone(),
-                    background: preview_fill,
-                    border_color: preview_border,
-                    radius: 8.0,
-                }))
+                pin(MIDIClipWidget::new(clip)
+                    .with_size(clip_width, clip_height)
+                    .with_label(display_clip_label.clone())
+                    .with_notes(midi_notes_for_clip.clone())
+                    .preview(preview_fill, preview_border, 8.0)
+                    .into_element())
                 .position(Point::new(preview_start * pixels_per_sample, lane_top))
                 .into(),
             );
@@ -824,9 +811,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             continue;
                         };
                         let preview_fill = if active_target_valid {
-                            clip_two_edge_gradient(AUDIO_CLIP_SELECTED_BASE, 0.7, 0.7, true)
+                            AudioClipWidget::two_edge_gradient(
+                                AUDIO_CLIP_SELECTED_BASE,
+                                0.7,
+                                0.7,
+                                true,
+                            )
                         } else {
-                            clip_two_edge_gradient(
+                            AudioClipWidget::two_edge_gradient(
                                 Color {
                                     r: 0.72,
                                     g: 0.18,
@@ -864,22 +856,24 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         };
                         let preview_start =
                             snap_sample(source_clip.start as f32 + delta_samples, delta_samples);
-                        let display_clip_label =
-                            trim_label_to_width(&clean_clip_name(&source_clip.name), clip_width);
+                        let display_clip_label = AudioClipWidget::label_for_width(
+                            &AudioClipWidget::clean_name(&source_clip.name),
+                            clip_width,
+                        );
                         clips.push(
-                            pin(audio_clip_preview(AudioClipPreviewArgs {
-                                clip: source_clip,
-                                session_root,
-                                clip_width,
-                                clip_height,
-                                label: display_clip_label,
-                                background: if active_target_valid {
-                                    preview_fill
-                                } else {
-                                    Background::Color(Color::TRANSPARENT)
-                                },
-                                border_color: preview_border,
-                            }))
+                            pin(AudioClipWidget::new(source_clip)
+                                .with_session_root(session_root)
+                                .with_size(clip_width, clip_height)
+                                .with_label(display_clip_label)
+                                .preview(
+                                    if active_target_valid {
+                                        preview_fill
+                                    } else {
+                                        Background::Color(Color::TRANSPARENT)
+                                    },
+                                    preview_border,
+                                )
+                                .into_element())
                             .position(Point::new(preview_start * pixels_per_sample, lane_top))
                             .into(),
                         );
@@ -906,9 +900,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             continue;
                         };
                         let preview_fill = if active_target_valid {
-                            clip_two_edge_gradient(MIDI_CLIP_SELECTED_BASE, 0.7, 0.7, false)
+                            MIDIClipWidget::two_edge_gradient(
+                                MIDI_CLIP_SELECTED_BASE,
+                                0.7,
+                                0.7,
+                                false,
+                            )
                         } else {
-                            clip_two_edge_gradient(
+                            MIDIClipWidget::two_edge_gradient(
                                 Color {
                                     r: 0.72,
                                     g: 0.18,
@@ -950,23 +949,24 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         };
                         let preview_start =
                             snap_sample(source_clip.start as f32 + delta_samples, delta_samples);
-                        let display_clip_label =
-                            trim_label_to_width(&clean_clip_name(&source_clip.name), clip_width);
+                        let display_clip_label = MIDIClipWidget::label_for_width(
+                            &MIDIClipWidget::clean_name(&source_clip.name),
+                            clip_width,
+                        );
                         clips.push(
-                            pin(midi_clip_preview(MidiClipPreviewArgs {
-                                clip: source_clip.clone(),
-                                clip_width,
-                                clip_height: lane_clip_height,
-                                label: display_clip_label,
-                                midi_notes: None,
-                                background: if active_target_valid {
-                                    preview_fill
-                                } else {
-                                    Background::Color(Color::TRANSPARENT)
-                                },
-                                border_color: preview_border,
-                                radius: 3.0,
-                            }))
+                            pin(MIDIClipWidget::new(source_clip)
+                                .with_size(clip_width, lane_clip_height)
+                                .with_label(display_clip_label)
+                                .preview(
+                                    if active_target_valid {
+                                        preview_fill
+                                    } else {
+                                        Background::Color(Color::TRANSPARENT)
+                                    },
+                                    preview_border,
+                                    3.0,
+                                )
+                                .into_element())
                             .position(Point::new(preview_start * pixels_per_sample, lane_top))
                             .into(),
                         );
@@ -990,7 +990,13 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let preview_length = preview_current - preview_start;
         let preview_clip = container(
             container(Stack::with_children(vec![
-                audio_waveform_overlay(preview_peaks, None, 0, preview_length, preview_length),
+                AudioClipWidget::waveform_overlay(
+                    preview_peaks,
+                    None,
+                    0,
+                    preview_length,
+                    preview_length,
+                ),
                 container(text("REC").size(12))
                     .width(Length::Fill)
                     .height(Length::Fill)
