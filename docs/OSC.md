@@ -23,7 +23,7 @@ The preference is stored in:
 
 The engine listens on:
 
-`127.0.0.1:9000`
+`0.0.0.0:9000`
 
 The current OSC support is intentionally basic and transport-focused.
 
@@ -34,16 +34,15 @@ These OSC addresses are accepted by the engine:
 - `/transport/play`
 - `/transport/stop`
 - `/transport/pause`
+- `/transport/start`
+- `/transport/end`
+
+The engine also accepts these compatibility addresses:
+
 - `/transport/jump_to_start`
 - `/transport/jump_to_end`
-
-The engine also accepts these compatibility aliases:
-
-- `/start`
-- `/stop`
-- `/pause`
-- `/jump_to_start`
-- `/jump_to_end`
+- `/transport/start_of_session`
+- `/transport/end_of_session`
 
 ## `maolan-osc` Helper
 
@@ -74,8 +73,8 @@ cargo run --bin maolan-osc -- end
 - `play` sends `/transport/play`
 - `stop` sends `/transport/stop`
 - `pause` sends `/transport/pause`
-- `start` sends `/transport/jump_to_start`
-- `end` sends `/transport/jump_to_end`
+- `start` sends `/transport/start`
+- `end` sends `/transport/end`
 
 ## Notes
 

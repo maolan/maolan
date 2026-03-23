@@ -44,10 +44,8 @@ impl Maolan {
                 true
             }
             Action::TransportPosition(sample) => {
-                // While paused/stopped we treat UI transport position as user-driven.
-                // Ignore late engine transport echoes to prevent pause->stop jump-forward.
+                self.transport_samples = *sample as f64;
                 if self.playing && !self.paused {
-                    self.transport_samples = *sample as f64;
                     self.last_playback_tick = Some(Instant::now());
                 }
                 true
@@ -160,5 +158,18 @@ mod tests {
         assert!(app.latch_automation_overrides.is_empty());
         assert!(app.recording_preview_start_sample.is_none());
         assert!(app.recording_preview_sample.is_none());
+    }
+
+    #[test]
+    fn stopped_transport_position_response_updates_visible_position() {
+        let mut app = Maolan {
+            transport_samples: 128.0,
+            ..Maolan::default()
+        };
+
+        assert!(app.handle_response_timing_state_action(&Action::TransportPosition(0)));
+
+        assert_eq!(app.transport_samples, 0.0);
+        assert!(app.last_playback_tick.is_none());
     }
 }

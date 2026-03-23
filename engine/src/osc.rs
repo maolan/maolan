@@ -51,11 +51,11 @@ impl OscServer {
             while !stop_thread.load(Ordering::Relaxed) {
                 match socket.recv_from(&mut buf) {
                     Ok((len, _)) => {
-                        if let Some(action) = parse_osc_action(&buf[..len]) {
-                            if let Err(err) = tx.blocking_send(Message::Request(action)) {
-                                error!("Failed to forward OSC action to engine: {err}");
-                                break;
-                            }
+                        if let Some(action) = parse_osc_action(&buf[..len])
+                            && let Err(err) = tx.blocking_send(Message::Request(action))
+                        {
+                            error!("Failed to forward OSC action to engine: {err}");
+                            break;
                         }
                     }
                     Err(err)
@@ -107,13 +107,13 @@ fn parse_osc_action(packet: &[u8]) -> Option<Action> {
     }
 
     match address.as_str() {
-        "/start" | "/transport/start" | "/transport/play" => Some(Action::Play),
-        "/stop" | "/transport/stop" => Some(Action::Stop),
-        "/pause" | "/transport/pause" => Some(Action::Pause),
-        "/jump_to_start" | "/transport/jump_to_start" | "/transport/start_of_session" => {
+        "/transport/play" => Some(Action::Play),
+        "/transport/stop" => Some(Action::Stop),
+        "/transport/pause" => Some(Action::Pause),
+        "/transport/start" | "/transport/jump_to_start" | "/transport/start_of_session" => {
             Some(Action::TransportPosition(0))
         }
-        "/jump_to_end" | "/transport/jump_to_end" | "/transport/end_of_session" => {
+        "/transport/end" | "/transport/jump_to_end" | "/transport/end_of_session" => {
             Some(Action::JumpToEnd)
         }
         _ => None,
@@ -142,7 +142,7 @@ mod tests {
         fn push_padded_string(buf: &mut Vec<u8>, value: &str) {
             buf.extend_from_slice(value.as_bytes());
             buf.push(0);
-            while buf.len() % 4 != 0 {
+            while !buf.len().is_multiple_of(4) {
                 buf.push(0);
             }
         }
@@ -156,24 +156,45 @@ mod tests {
     #[test]
     fn parses_basic_transport_messages() {
         assert!(matches!(
-            parse_osc_action(&osc_packet("/start")),
+            parse_osc_action(&osc_packet("/transport/play")),
             Some(Action::Play)
         ));
         assert!(matches!(
-            parse_osc_action(&osc_packet("/pause")),
+            parse_osc_action(&osc_packet("/transport/pause")),
             Some(Action::Pause)
         ));
         assert!(matches!(
-            parse_osc_action(&osc_packet("/stop")),
+            parse_osc_action(&osc_packet("/transport/stop")),
             Some(Action::Stop)
         ));
         assert!(matches!(
-            parse_osc_action(&osc_packet("/jump_to_start")),
+            parse_osc_action(&osc_packet("/transport/start")),
             Some(Action::TransportPosition(0))
         ));
         assert!(matches!(
-            parse_osc_action(&osc_packet("/jump_to_end")),
+            parse_osc_action(&osc_packet("/transport/end")),
             Some(Action::JumpToEnd)
         ));
+    }
+
+    #[test]
+    fn keeps_compatibility_transport_jump_aliases() {
+        assert!(matches!(
+            parse_osc_action(&osc_packet("/transport/jump_to_start")),
+            Some(Action::TransportPosition(0))
+        ));
+        assert!(matches!(
+            parse_osc_action(&osc_packet("/transport/jump_to_end")),
+            Some(Action::JumpToEnd)
+        ));
+    }
+
+    #[test]
+    fn rejects_removed_short_aliases() {
+        assert!(parse_osc_action(&osc_packet("/start")).is_none());
+        assert!(parse_osc_action(&osc_packet("/stop")).is_none());
+        assert!(parse_osc_action(&osc_packet("/pause")).is_none());
+        assert!(parse_osc_action(&osc_packet("/jump_to_start")).is_none());
+        assert!(parse_osc_action(&osc_packet("/jump_to_end")).is_none());
     }
 }

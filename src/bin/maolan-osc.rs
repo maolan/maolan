@@ -30,8 +30,8 @@ impl Command {
             Self::Play => "/transport/play",
             Self::Stop => "/transport/stop",
             Self::Pause => "/transport/pause",
-            Self::Start => "/transport/jump_to_start",
-            Self::End => "/transport/jump_to_end",
+            Self::Start => "/transport/start",
+            Self::End => "/transport/end",
         }
     }
 }
@@ -93,8 +93,8 @@ mod tests {
         assert_eq!(Command::Play.osc_address(), "/transport/play");
         assert_eq!(Command::Stop.osc_address(), "/transport/stop");
         assert_eq!(Command::Pause.osc_address(), "/transport/pause");
-        assert_eq!(Command::Start.osc_address(), "/transport/jump_to_start");
-        assert_eq!(Command::End.osc_address(), "/transport/jump_to_end");
+        assert_eq!(Command::Start.osc_address(), "/transport/start");
+        assert_eq!(Command::End.osc_address(), "/transport/end");
     }
 
     #[test]
