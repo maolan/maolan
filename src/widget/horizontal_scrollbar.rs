@@ -292,6 +292,7 @@ mod tests {
         Layout::new(node)
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn click_right_of_handle_pages_right_by_one_viewport() {
         let mut scrollbar =
@@ -324,6 +325,7 @@ mod tests {
         assert!((messages[0] - 0.75).abs() < 0.01);
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn click_left_of_handle_pages_left_by_one_viewport() {
         let mut scrollbar =
@@ -356,6 +358,7 @@ mod tests {
         assert!((messages[0] - 0.25).abs() < 0.01);
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn dragging_handle_uses_grab_offset_instead_of_jumping() {
         let mut scrollbar =
