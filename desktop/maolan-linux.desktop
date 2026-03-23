@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Maolan DAW
+Name[fr]=Maolan STAN
 Comment=Rust Digital Audio Workstation
+Comment[fr]=Station de travail audionumérique en Rust
 GenericName=Rust Digital Audio Workstation
+GenericName[fr]=Station de travail audionumérique en Rust
 Exec=/usr/bin/maolan %f
 Icon=/usr/share/icons/hicolor/scalable/apps/maolan.svg
 Terminal=false
