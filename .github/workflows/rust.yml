@@ -18,6 +18,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  BSD_CARGO_CACHE_ROOT: .github/.cache/cargo-home
+  BSD_TARGET_CACHE_ROOT: .github/.cache/target
+  BSD_ENGINE_TARGET_CACHE_ROOT: .github/.cache/engine-target
 
 permissions:
   contents: write
@@ -50,6 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ASSET_BASENAME: maolan-${{ inputs.release_tag }}-linux-x86_64
+      CACHE_MODE: ${{ inputs.release_build && 'release' || 'debug' }}
 
     steps:
     - uses: actions/checkout@v6
@@ -57,6 +61,17 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         components: llvm-tools-preview
+    - name: Restore Cargo and target caches
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo
+          target
+          engine/target
+        key: ubuntu-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', 'engine/Cargo.lock', '**/Cargo.toml') }}
+        restore-keys: |
+          ubuntu-cargo-${{ env.CACHE_MODE }}-
+          ubuntu-cargo-
     - name: Install system packages
       run: |
         sudo apt-get update
@@ -135,23 +150,50 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ASSET_BASENAME: maolan-${{ inputs.release_tag }}-x86_64
+      CACHE_MODE: ${{ inputs.release_build && 'release' || 'debug' }}
 
     steps:
     - uses: actions/checkout@v6
+    - name: Restore FreeBSD VM caches
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.BSD_CARGO_CACHE_ROOT }}
+          ${{ env.BSD_TARGET_CACHE_ROOT }}
+          ${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}
+        key: freebsd-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', 'engine/Cargo.lock', '**/Cargo.toml') }}
+        restore-keys: |
+          freebsd-cargo-${{ env.CACHE_MODE }}-
+          freebsd-cargo-
     - name: Build and test on FreeBSD
       if: ${{ !inputs.release_build }}
       uses: vmactions/freebsd-vm@v1
       with:
         run: |
+          mkdir -p "$HOME/.cargo" target engine/target
+          mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          cp -R "${{ env.BSD_CARGO_CACHE_ROOT }}/." "$HOME/.cargo/" 2>/dev/null || true
+          cp -R "${{ env.BSD_TARGET_CACHE_ROOT }}/." target/ 2>/dev/null || true
+          cp -R "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/." engine/target/ 2>/dev/null || true
           pkg install -y ca_root_nss rust pkgconf libX11 gtk2 lilv suil jackit rubberband
           export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
           cargo build
           cargo test
+          rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          cp -R "$HOME/.cargo/." "${{ env.BSD_CARGO_CACHE_ROOT }}/" 2>/dev/null || true
+          cp -R target/. "${{ env.BSD_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+          cp -R engine/target/. "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
     - name: Build, package, and upload FreeBSD artifact
       if: ${{ inputs.release_build }}
       uses: vmactions/freebsd-vm@v1
       with:
         run: |
+          mkdir -p "$HOME/.cargo" target engine/target
+          mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          cp -R "${{ env.BSD_CARGO_CACHE_ROOT }}/." "$HOME/.cargo/" 2>/dev/null || true
+          cp -R "${{ env.BSD_TARGET_CACHE_ROOT }}/." target/ 2>/dev/null || true
+          cp -R "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/." engine/target/ 2>/dev/null || true
           pkg install -y ca_root_nss rust pkgconf libX11 gtk2 lilv suil jackit rubberband
           export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
           cargo build --release --verbose
@@ -164,6 +206,11 @@ jobs:
           cp images/maolan.svg "dist/${{ env.ASSET_BASENAME }}/maolan.svg"
           cp desktop/maolan-bsd.desktop "dist/${{ env.ASSET_BASENAME }}/maolan.desktop"
           tar -C dist -czf "dist/${{ env.ASSET_BASENAME }}.tar.gz" "${{ env.ASSET_BASENAME }}"
+          rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          cp -R "$HOME/.cargo/." "${{ env.BSD_CARGO_CACHE_ROOT }}/" 2>/dev/null || true
+          cp -R target/. "${{ env.BSD_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+          cp -R engine/target/. "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
     - name: Upload FreeBSD artifact
       if: ${{ inputs.release_build }}
       uses: actions/upload-artifact@v6
@@ -176,23 +223,50 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ASSET_BASENAME: maolan-${{ inputs.release_tag }}-openbsd-x86_64
+      CACHE_MODE: ${{ inputs.release_build && 'release' || 'debug' }}
 
     steps:
     - uses: actions/checkout@v6
+    - name: Restore OpenBSD VM caches
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ env.BSD_CARGO_CACHE_ROOT }}
+          ${{ env.BSD_TARGET_CACHE_ROOT }}
+          ${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}
+        key: openbsd-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', 'engine/Cargo.lock', '**/Cargo.toml') }}
+        restore-keys: |
+          openbsd-cargo-${{ env.CACHE_MODE }}-
+          openbsd-cargo-
     - name: Build and test on OpenBSD 7.8
       if: ${{ !inputs.release_build }}
       uses: vmactions/openbsd-vm@v1
       with:
         run: |
+          mkdir -p "$HOME/.cargo" target engine/target
+          mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          cp -R "${{ env.BSD_CARGO_CACHE_ROOT }}/." "$HOME/.cargo/" 2>/dev/null || true
+          cp -R "${{ env.BSD_TARGET_CACHE_ROOT }}/." target/ 2>/dev/null || true
+          cp -R "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/." engine/target/ 2>/dev/null || true
           pkg_add bash pkgconf gtk+2 lilv suil jack rubberband rust
           export PATH="/usr/local/bin:$PATH"
           cargo build
           cargo test
+          rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          cp -R "$HOME/.cargo/." "${{ env.BSD_CARGO_CACHE_ROOT }}/" 2>/dev/null || true
+          cp -R target/. "${{ env.BSD_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+          cp -R engine/target/. "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
     - name: Build, package, and upload OpenBSD artifact
       if: ${{ inputs.release_build }}
       uses: vmactions/openbsd-vm@v1
       with:
         run: |
+          mkdir -p "$HOME/.cargo" target engine/target
+          mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          cp -R "${{ env.BSD_CARGO_CACHE_ROOT }}/." "$HOME/.cargo/" 2>/dev/null || true
+          cp -R "${{ env.BSD_TARGET_CACHE_ROOT }}/." target/ 2>/dev/null || true
+          cp -R "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/." engine/target/ 2>/dev/null || true
           pkg_add bash pkgconf gtk+2 lilv suil jack rubberband rust
           export PATH="/usr/local/bin:$PATH"
           cargo build --release --verbose
@@ -205,6 +279,11 @@ jobs:
           cp images/maolan.svg "dist/${{ env.ASSET_BASENAME }}/maolan.svg"
           cp desktop/maolan-bsd.desktop "dist/${{ env.ASSET_BASENAME }}/maolan.desktop"
           tar -C dist -czf "dist/${{ env.ASSET_BASENAME }}.tar.gz" "${{ env.ASSET_BASENAME }}"
+          rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+          cp -R "$HOME/.cargo/." "${{ env.BSD_CARGO_CACHE_ROOT }}/" 2>/dev/null || true
+          cp -R target/. "${{ env.BSD_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+          cp -R engine/target/. "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
     - name: Upload OpenBSD artifact
       if: ${{ inputs.release_build }}
       uses: actions/upload-artifact@v6
