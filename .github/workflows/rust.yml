@@ -162,7 +162,7 @@ jobs:
           cp target/release/maolan-cli "dist/${{ env.ASSET_BASENAME }}/maolan-cli"
           cp target/release/maolan-osc "dist/${{ env.ASSET_BASENAME }}/maolan-osc"
           cp images/maolan.svg "dist/${{ env.ASSET_BASENAME }}/maolan.svg"
-          cp desktop/maolan-bsd.svg "dist/${{ env.ASSET_BASENAME }}/maolan.desktop"
+          cp desktop/maolan-bsd.desktop "dist/${{ env.ASSET_BASENAME }}/maolan.desktop"
           tar -C dist -czf "dist/${{ env.ASSET_BASENAME }}.tar.gz" "${{ env.ASSET_BASENAME }}"
     - name: Upload FreeBSD artifact
       if: ${{ inputs.release_build }}
@@ -203,7 +203,7 @@ jobs:
           cp target/release/maolan-cli "dist/${{ env.ASSET_BASENAME }}/maolan-cli"
           cp target/release/maolan-osc "dist/${{ env.ASSET_BASENAME }}/maolan-osc"
           cp images/maolan.svg "dist/${{ env.ASSET_BASENAME }}/maolan.svg"
-          cp desktop/maolan-bsd.svg "dist/${{ env.ASSET_BASENAME }}/maolan.desktop"
+          cp desktop/maolan-bsd.desktop "dist/${{ env.ASSET_BASENAME }}/maolan.desktop"
           tar -C dist -czf "dist/${{ env.ASSET_BASENAME }}.tar.gz" "${{ env.ASSET_BASENAME }}"
     - name: Upload OpenBSD artifact
       if: ${{ inputs.release_build }}
