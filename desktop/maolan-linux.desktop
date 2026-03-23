@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Maolan DAW
+Comment=Rust Digital Audio Workstation
+GenericName=Rust Digital Audio Workstation
+Exec=/usr/bin/maolan %f
+Icon=/usr/share/icons/hicolor/scalable/apps/maolan.svg
+Terminal=false
+Categories=AudioVideo;Audio;Recorder;Music;
+Keywords=audio;daw;music;mixing;recording;
+StartupNotify=true
