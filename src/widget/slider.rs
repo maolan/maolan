@@ -282,6 +282,7 @@ mod tests {
         assert!((slider.calculate_value(Point::new(15.0, 70.0), bounds) - 0.5).abs() < 0.001);
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn update_publishes_clicked_value() {
         let mut slider = Slider::new(0.0..=1.0, 0.5, |value| value).height(Length::Fixed(100.0));
