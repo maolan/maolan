@@ -186,8 +186,6 @@ pub struct Engine {
     hw_out_meter_publish_phase: bool,
     last_track_meter_publish: Option<Instant>,
     track_meter_linear_by_track: HashMap<String, Vec<f32>>,
-    #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
-    track_meter_last_published_linear: HashMap<String, Vec<f32>>,
     latest_hw_out_meter_db: Arc<Vec<f32>>,
     latest_track_meter_snapshot: Arc<Vec<(String, Vec<f32>)>>,
     history: History,
@@ -763,10 +761,7 @@ impl Engine {
     }
 
     const METER_PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
-    #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
     const HW_OUT_METER_LINEAR_EPSILON: f32 = 0.0025;
-    #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
-    const TRACK_METER_LINEAR_EPSILON: f32 = 0.0025;
 
     #[cfg(all(unix, not(target_os = "macos")))]
     fn session_plugins_dir(&self) -> Option<PathBuf> {
@@ -836,13 +831,6 @@ impl Engine {
             }
             Self::finalize_midi_hw_devices(devices)
         };
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "macos"
-        )))]
-        let devices = Vec::new();
         devices
     }
 
@@ -903,8 +891,6 @@ impl Engine {
             hw_out_meter_publish_phase: false,
             last_track_meter_publish: None,
             track_meter_linear_by_track: HashMap::new(),
-            #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
-            track_meter_last_published_linear: HashMap::new(),
             latest_hw_out_meter_db: Arc::new(Vec::new()),
             latest_track_meter_snapshot: Arc::new(Vec::new()),
             history: History::default(),
@@ -927,11 +913,6 @@ impl Engine {
     #[cfg(unix)]
     fn jack_cycle_samples(&self) -> Option<usize> {
         self.jack_runtime.as_ref().map(|j| j.lock().buffer_size)
-    }
-
-    #[cfg(not(unix))]
-    fn jack_cycle_samples(&self) -> Option<usize> {
-        None
     }
 
     fn current_cycle_samples(&self) -> usize {
@@ -993,10 +974,6 @@ impl Engine {
                         return;
                     }
                 }
-                #[cfg(not(unix))]
-                {
-                    return;
-                }
             };
         if output_channels == 0 {
             return;
@@ -1049,11 +1026,6 @@ impl Engine {
             HwDriver::new_with_options(device, sample_rate_hz, bits, hw_opts)
                 .map_err(|e| e.to_string())
         }
-        #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
-        {
-            HwDriver::new_with_options(device, sample_rate_hz, bits, hw_opts)
-                .map_err(|e| e.to_string())
-        }
     }
 
     fn hw_profile_backend_label(_device: &str) -> &'static str {
@@ -1065,13 +1037,6 @@ impl Engine {
         let label = "sndio";
         #[cfg(target_os = "macos")]
         let label = "CoreAudio";
-        #[cfg(not(any(
-            target_os = "linux",
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "macos"
-        )))]
-        let label = "Unknown";
         label
     }
 
@@ -1186,28 +1151,6 @@ impl Engine {
         Some(())
     }
 
-    #[cfg(not(unix))]
-    async fn maybe_open_jack_runtime(
-        &mut self,
-        device: &str,
-        _input_device: Option<&str>,
-        _sample_rate_hz: i32,
-        _bits: i32,
-        _exclusive: bool,
-        _period_frames: usize,
-        _nperiods: usize,
-        _sync_mode: bool,
-    ) -> Option<()> {
-        if !device.eq_ignore_ascii_case("jack") {
-            return None;
-        }
-        self.notify_clients(Err(
-            "JACK backend is not available on this platform build".to_string()
-        ))
-        .await;
-        Some(())
-    }
-
     fn hw_driver_input_audio_port(&self, from_port: usize) -> Option<Arc<AudioIO>> {
         self.hw_driver
             .as_ref()
@@ -1227,21 +1170,11 @@ impl Engine {
             .and_then(|j| j.lock().input_audio_port(from_port))
     }
 
-    #[cfg(not(unix))]
-    fn jack_input_audio_port(&self, _from_port: usize) -> Option<Arc<AudioIO>> {
-        None
-    }
-
     #[cfg(unix)]
     fn jack_output_audio_port(&self, to_port: usize) -> Option<Arc<AudioIO>> {
         self.jack_runtime
             .as_ref()
             .and_then(|j| j.lock().output_audio_port(to_port))
-    }
-
-    #[cfg(not(unix))]
-    fn jack_output_audio_port(&self, _to_port: usize) -> Option<Arc<AudioIO>> {
-        None
     }
 
     fn normalize_transport_sample(&self, sample: usize) -> usize {
@@ -1422,10 +1355,7 @@ impl Engine {
     }
 
     fn can_schedule_hw_cycle(&self) -> bool {
-        #[cfg(unix)]
         let can_schedule = self.hw_worker.is_some() || self.jack_runtime.is_some();
-        #[cfg(not(unix))]
-        let can_schedule = self.hw_worker.is_some();
         can_schedule
     }
 
@@ -3131,75 +3061,19 @@ impl Engine {
             self.last_hw_out_meter_linear.clear();
             self.last_hw_out_meter_linear
                 .extend_from_slice(peaks_linear);
-            return true;
-        }
-        #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
-        {
-            let _peaks_linear = peaks_linear;
             true
         }
     }
 
     async fn maybe_notify_hw_out_meter(&mut self, _meter_db: Vec<f32>) {
-        #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
         {}
-        #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
-        {
-            self.notify_clients(Ok(Action::TrackMeters {
-                track_name: "hw:out".to_string(),
-                output_db: _meter_db,
-            }))
-            .await;
-        }
     }
 
     fn collect_changed_track_meters(
         &mut self,
         _tracks: &[(String, Arc<UnsafeMutex<Box<Track>>>)],
     ) -> Vec<(String, Vec<f32>)> {
-        #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
-        {
-            Vec::new()
-        }
-        #[cfg(not(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd")))]
-        {
-            let mut active_track_names = std::collections::HashSet::with_capacity(_tracks.len());
-            let meters: Vec<(String, Vec<f32>)> = _tracks
-                .iter()
-                .filter_map(|(name, track)| {
-                    active_track_names.insert(name.clone());
-                    let linear = self
-                        .track_meter_linear_by_track
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_else(|| track.lock().output_meter_linear());
-                    let changed =
-                        if let Some(prev) = self.track_meter_last_published_linear.get(name) {
-                            if prev.len() != linear.len() {
-                                true
-                            } else {
-                                prev.iter()
-                                    .zip(linear.iter())
-                                    .any(|(a, b)| (a - b).abs() >= Self::TRACK_METER_LINEAR_EPSILON)
-                            }
-                        } else {
-                            true
-                        };
-                    if !changed {
-                        return None;
-                    }
-                    self.track_meter_last_published_linear
-                        .insert(name.clone(), linear.clone());
-                    let output_db = linear.into_iter().map(Self::meter_linear_to_db).collect();
-                    Some((name.clone(), output_db))
-                })
-                .collect();
-            self.track_meter_last_published_linear
-                .retain(|name, _| active_track_names.contains(name));
-            self.track_meter_linear_by_track
-                .retain(|name, _| active_track_names.contains(name));
-            meters
-        }
+        Vec::new()
     }
 
     async fn apply_hw_out_gain_and_meter(&mut self) {
@@ -3216,7 +3090,6 @@ impl Engine {
                 return;
             }
         } else {
-            #[cfg(unix)]
             {
                 if let Some(jack) = self.jack_runtime.clone() {
                     jack.lock().set_output_gain_linear(gain);
@@ -3228,55 +3101,42 @@ impl Engine {
                     return;
                 }
             }
-            #[cfg(not(unix))]
-            {
-                return;
-            }
         }
         let peaks_linear = if let Some(oss) = self.hw_driver.clone() {
             oss.lock().output_meter_linear(gain, self.hw_out_balance)
-        } else {
-            #[cfg(unix)]
-            {
-                if let Some(jack) = self.jack_runtime.clone() {
-                    let outs = jack.lock().audio_outs();
-                    let out_count = outs.len();
-                    let b = if out_count == 2 {
-                        self.hw_out_balance.clamp(-1.0, 1.0)
+        } else if let Some(jack) = self.jack_runtime.clone() {
+            let outs = jack.lock().audio_outs();
+            let out_count = outs.len();
+            let b = if out_count == 2 {
+                self.hw_out_balance.clamp(-1.0, 1.0)
+            } else {
+                0.0
+            };
+            let mut meters_linear = Vec::with_capacity(out_count);
+            for (channel_idx, channel) in outs.iter().enumerate() {
+                let balance_gain = if out_count == 2 {
+                    if channel_idx == 0 {
+                        (1.0 - b).clamp(0.0, 1.0)
                     } else {
-                        0.0
-                    };
-                    let mut meters_linear = Vec::with_capacity(out_count);
-                    for (channel_idx, channel) in outs.iter().enumerate() {
-                        let balance_gain = if out_count == 2 {
-                            if channel_idx == 0 {
-                                (1.0 - b).clamp(0.0, 1.0)
-                            } else {
-                                (1.0 + b).clamp(0.0, 1.0)
-                            }
-                        } else {
-                            1.0
-                        };
-                        let buf = channel.buffer.lock();
-                        let mut peak = 0.0_f32;
-                        for &sample in buf.iter() {
-                            let v = if sample >= 0.0 { sample } else { -sample };
-                            if v > peak {
-                                peak = v;
-                            }
-                        }
-                        let peak = peak * gain * balance_gain;
-                        meters_linear.push(peak);
+                        (1.0 + b).clamp(0.0, 1.0)
                     }
-                    meters_linear
                 } else {
-                    return;
+                    1.0
+                };
+                let buf = channel.buffer.lock();
+                let mut peak = 0.0_f32;
+                for &sample in buf.iter() {
+                    let v = if sample >= 0.0 { sample } else { -sample };
+                    if v > peak {
+                        peak = v;
+                    }
                 }
+                let peak = peak * gain * balance_gain;
+                meters_linear.push(peak);
             }
-            #[cfg(not(unix))]
-            {
-                return;
-            }
+            meters_linear
+        } else {
+            return;
         };
         if self.hw_out_peak_hold_linear.len() != peaks_linear.len() {
             self.hw_out_peak_hold_linear.resize(peaks_linear.len(), 0.0);
@@ -3721,25 +3581,9 @@ impl Engine {
                         if let Err(e) = worker.tx.send(Message::ClearHWMidiOutEvents).await {
                             error!("Error clearing HW MIDI queue for panic {e}");
                         }
-                        #[cfg(any(
-                            target_os = "freebsd",
-                            target_os = "linux",
-                            target_os = "openbsd"
-                        ))]
-                        {
-                            self.midi_hub
-                                .lock()
-                                .write_events_blocking(&panic_events, Duration::from_millis(250));
-                        }
-                        #[cfg(not(any(
-                            target_os = "freebsd",
-                            target_os = "linux",
-                            target_os = "openbsd"
-                        )))]
-                        if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
-                        {
-                            error!("Error sending MIDI panic events {e}");
-                        }
+                        self.midi_hub
+                            .lock()
+                            .write_events_blocking(&panic_events, Duration::from_millis(250));
                     }
                 } else if !panic_events.is_empty() {
                     self.pending_hw_midi_out_events_by_device
@@ -3913,7 +3757,6 @@ impl Engine {
                 if let Some(worker) = self.hw_worker.take() {
                     let mut panic_events = self.note_off_events_for_all_active_tracks();
                     panic_events.extend(self.panic_events_for_all_hw_midi_outputs());
-                    #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
                     if !panic_events.is_empty() {
                         if let Err(e) = worker.tx.send(Message::ClearHWMidiOutEvents).await {
                             error!("Error clearing HW MIDI queue during quit {e}");
@@ -3921,16 +3764,6 @@ impl Engine {
                         self.midi_hub
                             .lock()
                             .write_events_blocking(&panic_events, Duration::from_millis(250));
-                    }
-                    #[cfg(not(any(
-                        target_os = "freebsd",
-                        target_os = "linux",
-                        target_os = "openbsd"
-                    )))]
-                    if !panic_events.is_empty()
-                        && let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
-                    {
-                        error!("Error sending quit MIDI panic events {e}");
                     }
                     worker
                         .tx
@@ -3963,20 +3796,11 @@ impl Engine {
                 let maybe_hw = if let Some(oss) = &self.hw_driver {
                     let hw = oss.lock();
                     Some((hw.cycle_samples(), hw.sample_rate() as f64))
+                } else if let Some(jack) = &self.jack_runtime {
+                    let j = jack.lock();
+                    Some((j.buffer_size, j.sample_rate as f64))
                 } else {
-                    #[cfg(unix)]
-                    {
-                        if let Some(jack) = &self.jack_runtime {
-                            let j = jack.lock();
-                            Some((j.buffer_size, j.sample_rate as f64))
-                        } else {
-                            None
-                        }
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        None
-                    }
+                    None
                 };
 
                 if let Some((chsamples, sample_rate)) = maybe_hw {
@@ -6302,17 +6126,10 @@ impl Engine {
                 let sample_rate_hz = if let Some(hw) = &self.hw_driver {
                     hw.lock().sample_rate() as usize
                 } else {
-                    #[cfg(unix)]
-                    {
-                        self.jack_runtime
-                            .as_ref()
-                            .map(|j| j.lock().sample_rate)
-                            .unwrap_or(0)
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        0
-                    }
+                    self.jack_runtime
+                        .as_ref()
+                        .map(|j| j.lock().sample_rate)
+                        .unwrap_or(0)
                 };
                 let cycle_samples = self.current_cycle_samples();
                 self.notify_clients(Ok(Action::SessionDiagnosticsReport {
@@ -6518,6 +6335,7 @@ impl Engine {
                     | Action::Play
                     | Action::Pause
                     | Action::Stop
+                    | Action::TransportPosition(_)
                     | Action::JumpToEnd
                     | Action::SetLoopEnabled(_)
                     | Action::SetLoopRange(_)
@@ -6610,26 +6428,11 @@ impl Engine {
                     let pending_hw_in_by_device = self.pending_hw_midi_events_by_device.clone();
                     for (track_name, track) in self.state.lock().tracks.iter() {
                         let track_lock = track.lock();
-                        #[cfg(unix)]
-                        {
-                            if self.jack_runtime.is_some() {
-                                if !self.pending_hw_midi_events.is_empty() {
-                                    track_lock.push_hw_midi_events(&self.pending_hw_midi_events);
-                                }
-                            } else {
-                                for route in
-                                    hw_in_routes.iter().filter(|r| &r.to_track == track_name)
-                                {
-                                    if let Some(events) = pending_hw_in_by_device.get(&route.device)
-                                    {
-                                        track_lock
-                                            .push_hw_midi_events_to_port(route.to_port, events);
-                                    }
-                                }
+                        if self.jack_runtime.is_some() {
+                            if !self.pending_hw_midi_events.is_empty() {
+                                track_lock.push_hw_midi_events(&self.pending_hw_midi_events);
                             }
-                        }
-                        #[cfg(not(unix))]
-                        {
+                        } else {
                             for route in hw_in_routes.iter().filter(|r| &r.to_track == track_name) {
                                 if let Some(events) = pending_hw_in_by_device.get(&route.device) {
                                     track_lock.push_hw_midi_events_to_port(route.to_port, events);
