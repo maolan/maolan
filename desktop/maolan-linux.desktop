@@ -2,10 +2,16 @@
 Type=Application
 Name=Maolan DAW
 Name[fr]=Maolan STAN
+Name[sr]=Маолан ДАВ
+Name[sr@latin]=Maolan DAW
 Comment=Rust Digital Audio Workstation
 Comment[fr]=Station de travail audionumérique en Rust
+Comment[sr]=Дигитална аудио радна станица имплементирана у Rust-у
+Comment[sr@latin]=Digitalna audio radna stanica implementirana u Rust-u
 GenericName=Rust Digital Audio Workstation
 GenericName[fr]=Station de travail audionumérique en Rust
+GenericName[sr]=Дигитална аудио радна станица имплементирана у Rust-у
+GenericName[sr@latin]=Digitalna audio radna stanica implementirana u Rust-u
 Exec=/usr/bin/maolan %f
 Icon=/usr/share/icons/hicolor/scalable/apps/maolan.svg
 Terminal=false
