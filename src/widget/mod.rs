@@ -1,12 +1,4 @@
-pub mod clip;
 pub mod controller;
-pub mod horizontal_scrollbar;
-pub mod horizontal_slider;
 pub mod midi_edit;
-pub mod note_area;
-pub mod numeric_input;
 pub mod piano;
-pub mod piano_roll;
 pub mod pitch_correction;
-pub mod slider;
-pub mod vertical_scrollbar;

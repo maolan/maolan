@@ -1,31 +1,15 @@
 use crate::{
-    consts::{
-        state_ids::METRONOME_TRACK_ID,
-        workspace::{TICK_LABELS, TICK_VALUES},
-        workspace_mixer::*,
-    },
+    consts::{state_ids::METRONOME_TRACK_ID, workspace_mixer::*},
     message::Message,
     state::{State, Track},
     style,
-    ui_timing::DOUBLE_CLICK,
 };
 use iced::{
-    Alignment, Color, Element, Length, Point, Rectangle, Renderer, Theme,
-    event::Event,
-    mouse,
-    widget::{
-        Space, canvas,
-        canvas::{Action as CanvasAction, Frame, Geometry, Path, Stroke, Text},
-        column, container, lazy, mouse_area, row, scrollable, text, text_input,
-    },
+    Alignment, Element, Length,
+    widget::{Space, column, container, lazy, mouse_area, row, scrollable, text, text_input},
 };
 use maolan_engine::message::Action;
-use std::{
-    cell::Cell,
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-    time::Instant,
-};
+use maolan_widgets::{horizontal_slider::horizontal_slider, meters, slider::slider, ticks};
 
 const STRIP_SPACING: f32 = 2.0;
 const STRIP_ROW_PADDING_X: f32 = 8.0;
@@ -48,495 +32,9 @@ struct TrackStripSpec<'a> {
     width: f32,
 }
 
-struct FaderBayState {
-    dragging: bool,
-    last_click_at: Option<Instant>,
-    cache: canvas::Cache,
-    last_hash: Cell<u64>,
-}
-
-impl Default for FaderBayState {
-    fn default() -> Self {
-        Self {
-            dragging: false,
-            last_click_at: None,
-            cache: canvas::Cache::default(),
-            last_hash: Cell::new(0),
-        }
-    }
-}
-
-#[derive(Default)]
-struct MeterState {
-    cache: canvas::Cache,
-    last_hash: Cell<u64>,
-}
-
-struct PanState {
-    dragging: bool,
-    last_click_at: Option<Instant>,
-    cache: canvas::Cache,
-    last_hash: Cell<u64>,
-}
-
-impl Default for PanState {
-    fn default() -> Self {
-        Self {
-            dragging: false,
-            last_click_at: None,
-            cache: canvas::Cache::default(),
-            last_hash: Cell::new(0),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct PanCanvas {
-    track_name: String,
-    value: f32,
-}
-
-#[derive(Clone)]
-struct SmallMeterLevels {
-    len: usize,
-    data: [u8; 32],
-}
-
-impl SmallMeterLevels {
-    fn from_db(levels_db: &[f32], channels: usize) -> Self {
-        let len = channels.clamp(1, 32);
-        let mut data = [0; 32];
-        for (idx, slot) in data.iter_mut().take(len).enumerate() {
-            *slot = Mixer::level_to_qdb(levels_db.get(idx).copied().unwrap_or(FADER_MIN_DB));
-        }
-        Self { len, data }
-    }
-
-    fn get(&self, idx: usize) -> u8 {
-        if idx < self.len { self.data[idx] } else { 0 }
-    }
-}
-
-#[derive(Clone)]
-struct FaderSliderCanvas {
-    track_name: String,
-    value: f32,
-    show_ticks: bool,
-    fader_height: f32,
-}
-
-impl FaderSliderCanvas {
-    const OUTER_PAD_X: f32 = 8.0;
-    const OUTER_PAD_Y: f32 = 7.0;
-    const INNER_GAP: f32 = 8.0;
-    const SCALE_GAP: f32 = 3.0;
-
-    fn slider_bounds(&self, bounds: Rectangle) -> Rectangle {
-        Rectangle {
-            x: bounds.x + Self::OUTER_PAD_X,
-            y: bounds.y + Self::OUTER_PAD_Y,
-            width: FADER_WIDTH,
-            height: self.fader_height,
-        }
-    }
-
-    fn value_from_cursor(&self, cursor_position: Point, bounds: Rectangle) -> f32 {
-        let slider = self.slider_bounds(bounds);
-        let y = cursor_position.y - slider.y;
-        let normalized = 1.0 - (y / slider.height.max(1.0)).clamp(0.0, 1.0);
-        let value = FADER_MIN_DB + normalized * (FADER_MAX_DB - FADER_MIN_DB);
-        value.clamp(FADER_MIN_DB, FADER_MAX_DB)
-    }
-
-    fn static_hash(&self, bounds: Rectangle) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        bounds.width.to_bits().hash(&mut hasher);
-        bounds.height.to_bits().hash(&mut hasher);
-        self.show_ticks.hash(&mut hasher);
-        self.fader_height.to_bits().hash(&mut hasher);
-        hasher.finish()
-    }
-}
-
-impl canvas::Program<Message> for FaderSliderCanvas {
-    type State = FaderBayState;
-
-    fn update(
-        &self,
-        state: &mut Self::State,
-        event: &Event,
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
-    ) -> Option<CanvasAction<Message>> {
-        let slider_bounds = self.slider_bounds(bounds);
-        match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if cursor.is_over(slider_bounds) {
-                    let now = Instant::now();
-                    let is_double_click = state
-                        .last_click_at
-                        .is_some_and(|last| now.duration_since(last) <= DOUBLE_CLICK);
-                    state.last_click_at = Some(now);
-                    state.dragging = true;
-                    if is_double_click {
-                        return Some(CanvasAction::publish(Message::Request(Action::TrackLevel(
-                            self.track_name.clone(),
-                            0.0,
-                        ))));
-                    }
-                    if let Some(cursor_position) = cursor.position() {
-                        return Some(CanvasAction::publish(Message::Request(Action::TrackLevel(
-                            self.track_name.clone(),
-                            self.value_from_cursor(cursor_position, bounds),
-                        ))));
-                    }
-                }
-            }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                state.dragging = false;
-            }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if state.dragging
-                    && let Some(cursor_position) = cursor.position()
-                {
-                    return Some(CanvasAction::publish(Message::Request(Action::TrackLevel(
-                        self.track_name.clone(),
-                        self.value_from_cursor(cursor_position, bounds),
-                    ))));
-                }
-            }
-            _ => {}
-        }
-        None
-    }
-
-    fn draw(
-        &self,
-        state: &Self::State,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        if bounds.width <= 0.0 || bounds.height <= 0.0 {
-            return vec![];
-        }
-
-        let slider_bounds = Rectangle {
-            x: Self::OUTER_PAD_X,
-            y: Self::OUTER_PAD_Y,
-            width: FADER_WIDTH,
-            height: self.fader_height,
-        };
-        let static_hash = self.static_hash(bounds);
-
-        if state.last_hash.get() != static_hash {
-            state.cache.clear();
-            state.last_hash.set(static_hash);
-        }
-
-        let back_color = Color::from_rgb(
-            0x42 as f32 / 255.0,
-            0x46 as f32 / 255.0,
-            0x4D as f32 / 255.0,
-        );
-        let border_color = Color::from_rgb(
-            0x30 as f32 / 255.0,
-            0x33 as f32 / 255.0,
-            0x3C as f32 / 255.0,
-        );
-        let filled_color = Color::from_rgb(
-            0x29 as f32 / 255.0,
-            0x66 as f32 / 255.0,
-            0xA3 as f32 / 255.0,
-        );
-        let handle_color = Color::from_rgb(
-            0x75 as f32 / 255.0,
-            0xC2 as f32 / 255.0,
-            0xFF as f32 / 255.0,
-        );
-        let border_width = 1.0;
-        let handle_height = 2.0;
-        let static_geometry = state.cache.draw(renderer, bounds.size(), |frame| {
-            frame.fill(
-                &Path::rectangle(
-                    Point::new(slider_bounds.x, slider_bounds.y),
-                    iced::Size::new(slider_bounds.width, slider_bounds.height),
-                ),
-                back_color,
-            );
-            frame.stroke(
-                &Path::rectangle(
-                    Point::new(slider_bounds.x, slider_bounds.y),
-                    iced::Size::new(slider_bounds.width, slider_bounds.height),
-                ),
-                Stroke::default()
-                    .with_width(border_width)
-                    .with_color(border_color),
-            );
-
-            if self.show_ticks {
-                let tick_x = slider_bounds.x + FADER_WIDTH + Self::SCALE_GAP;
-                for (label_y, label) in Mixer::tick_layout(self.fader_height) {
-                    frame.fill(
-                        &Path::rectangle(
-                            Point::new(tick_x, Self::OUTER_PAD_Y + label_y + 4.0),
-                            iced::Size::new(4.0, 1.0),
-                        ),
-                        Color::from_rgba(0.62, 0.67, 0.77, 0.78),
-                    );
-                    frame.fill_text(Text {
-                        content: label.to_string(),
-                        position: Point::new(tick_x + 6.0, Self::OUTER_PAD_Y + label_y),
-                        color: Color::from_rgba(0.9, 0.92, 0.96, 0.9),
-                        size: 8.0.into(),
-                        ..Default::default()
-                    });
-                }
-            }
-        });
-
-        let normalized = (self.value - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB);
-        let handle_y = slider_bounds.y
-            + ((slider_bounds.height - handle_height - border_width * 2.0) * (1.0 - normalized))
-                .round();
-        let mut dynamic_frame = Frame::new(renderer, bounds.size());
-        let filled_y = handle_y + handle_height + 1.0;
-        let filled_h = (slider_bounds.y + slider_bounds.height - filled_y).max(0.0);
-        if filled_h > 0.0 {
-            dynamic_frame.fill(
-                &Path::rectangle(
-                    Point::new(slider_bounds.x, filled_y),
-                    iced::Size::new(slider_bounds.width, filled_h),
-                ),
-                filled_color,
-            );
-        }
-        dynamic_frame.fill(
-            &Path::rectangle(
-                Point::new(slider_bounds.x, handle_y),
-                iced::Size::new(slider_bounds.width, handle_height + border_width * 2.0),
-            ),
-            handle_color,
-        );
-
-        vec![static_geometry, dynamic_frame.into_geometry()]
-    }
-}
-
-#[derive(Clone)]
-struct MeterCanvas {
-    channels: usize,
-    levels_qdb: SmallMeterLevels,
-    fader_height: f32,
-}
-
-impl MeterCanvas {
-    fn static_hash(&self, bounds: Rectangle) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        bounds.width.to_bits().hash(&mut hasher);
-        bounds.height.to_bits().hash(&mut hasher);
-        self.channels.hash(&mut hasher);
-        self.fader_height.to_bits().hash(&mut hasher);
-        hasher.finish()
-    }
-}
-
-impl canvas::Program<Message> for MeterCanvas {
-    type State = MeterState;
-
-    fn draw(
-        &self,
-        state: &Self::State,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        if bounds.width <= 0.0 || bounds.height <= 0.0 {
-            return vec![];
-        }
-
-        let static_hash = self.static_hash(bounds);
-        if state.last_hash.get() != static_hash {
-            state.cache.clear();
-            state.last_hash.set(static_hash);
-        }
-
-        let static_geometry = state.cache.draw(renderer, bounds.size(), |frame| {
-            frame.fill(
-                &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
-                Color::from_rgba(0.09, 0.10, 0.12, 1.0),
-            );
-        });
-
-        let meter_inner_h = self.fader_height.max(1.0);
-        let bar_w = METER_BAR_WIDTH;
-        let bar_gap = METER_BAR_GAP;
-        let mut dynamic_frame = Frame::new(renderer, bounds.size());
-        for channel_idx in 0..self.channels.max(1) {
-            let db = Mixer::qdb_to_level(self.levels_qdb.get(channel_idx));
-            let fill = Mixer::level_to_meter_fill(db);
-            let filled_h = (meter_inner_h * fill).max(1.0);
-            let y = (meter_inner_h - filled_h).max(0.0);
-            let x = METER_PAD_X + channel_idx as f32 * (bar_w + bar_gap);
-            dynamic_frame.fill(
-                &Path::rectangle(
-                    Point::new(x, METER_PAD_Y + y),
-                    iced::Size::new(bar_w, (filled_h - METER_PAD_Y).max(1.0)),
-                ),
-                Mixer::meter_fill_color(db),
-            );
-        }
-
-        vec![static_geometry, dynamic_frame.into_geometry()]
-    }
-}
-
-impl canvas::Program<Message> for PanCanvas {
-    type State = PanState;
-
-    fn update(
-        &self,
-        state: &mut Self::State,
-        event: &Event,
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
-    ) -> Option<CanvasAction<Message>> {
-        match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if cursor.is_over(bounds) {
-                    let now = Instant::now();
-                    let is_double_click = state
-                        .last_click_at
-                        .is_some_and(|last| now.duration_since(last) <= DOUBLE_CLICK);
-                    state.last_click_at = Some(now);
-                    state.dragging = true;
-                    if is_double_click {
-                        return Some(CanvasAction::publish(Message::Request(
-                            Action::TrackBalance(self.track_name.clone(), 0.0),
-                        )));
-                    }
-                    if let Some(cursor_position) = cursor.position() {
-                        let normalized = ((cursor_position.x - bounds.x) / bounds.width.max(1.0))
-                            .clamp(0.0, 1.0);
-                        let value = (normalized * 2.0 - 1.0).clamp(-1.0, 1.0);
-                        return Some(CanvasAction::publish(Message::Request(
-                            Action::TrackBalance(self.track_name.clone(), value),
-                        )));
-                    }
-                }
-            }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                state.dragging = false;
-            }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if state.dragging
-                    && let Some(cursor_position) = cursor.position()
-                {
-                    let normalized =
-                        ((cursor_position.x - bounds.x) / bounds.width.max(1.0)).clamp(0.0, 1.0);
-                    let value = (normalized * 2.0 - 1.0).clamp(-1.0, 1.0);
-                    return Some(CanvasAction::publish(Message::Request(
-                        Action::TrackBalance(self.track_name.clone(), value),
-                    )));
-                }
-            }
-            _ => {}
-        }
-        None
-    }
-
-    fn draw(
-        &self,
-        state: &Self::State,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        if bounds.width <= 0.0 || bounds.height <= 0.0 {
-            return vec![];
-        }
-        let mut hasher = DefaultHasher::new();
-        bounds.width.to_bits().hash(&mut hasher);
-        bounds.height.to_bits().hash(&mut hasher);
-        let static_hash = hasher.finish();
-        if state.last_hash.get() != static_hash {
-            state.cache.clear();
-            state.last_hash.set(static_hash);
-        }
-        let back_color = Color::from_rgb(
-            0x42 as f32 / 255.0,
-            0x46 as f32 / 255.0,
-            0x4D as f32 / 255.0,
-        );
-        let border_color = Color::from_rgb(
-            0x30 as f32 / 255.0,
-            0x33 as f32 / 255.0,
-            0x3C as f32 / 255.0,
-        );
-        let filled_color = Color::from_rgb(
-            0x29 as f32 / 255.0,
-            0x66 as f32 / 255.0,
-            0xA3 as f32 / 255.0,
-        );
-        let handle_color = Color::from_rgb(
-            0x75 as f32 / 255.0,
-            0xC2 as f32 / 255.0,
-            0xFF as f32 / 255.0,
-        );
-        let border_width = 1.0;
-        let handle_width = 2.0;
-
-        let static_geometry = state.cache.draw(renderer, bounds.size(), |frame| {
-            frame.fill(
-                &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
-                back_color,
-            );
-            frame.stroke(
-                &Path::rectangle(Point::new(0.0, 0.0), bounds.size()),
-                Stroke::default()
-                    .with_width(border_width)
-                    .with_color(border_color),
-            );
-        });
-
-        let center_x = bounds.width * 0.5;
-        let normalized = ((self.value.clamp(-1.0, 1.0) + 1.0) * 0.5).clamp(0.0, 1.0);
-        let handle_x = ((bounds.width - handle_width - border_width * 2.0) * normalized).round();
-        let handle_center = handle_x + (handle_width + border_width * 2.0) * 0.5;
-
-        let fill_start = center_x.min(handle_center);
-        let fill_width = (handle_center - center_x).abs();
-        let mut dynamic_frame = Frame::new(renderer, bounds.size());
-        if fill_width > 0.0 {
-            dynamic_frame.fill(
-                &Path::rectangle(
-                    Point::new(fill_start, 0.0),
-                    iced::Size::new(fill_width, bounds.height),
-                ),
-                filled_color,
-            );
-        }
-        dynamic_frame.fill(
-            &Path::rectangle(
-                Point::new(handle_x, 0.0),
-                iced::Size::new(handle_width + border_width * 2.0, bounds.height),
-            ),
-            handle_color,
-        );
-        vec![static_geometry, dynamic_frame.into_geometry()]
-    }
-}
-
 impl Mixer {
     pub fn new(state: State) -> Self {
         Self { state }
-    }
-
-    fn level_to_meter_fill(level_db: f32) -> f32 {
-        ((level_db - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB)).clamp(0.0, 1.0)
     }
 
     fn fader_height_from_panel(height: Length) -> f32 {
@@ -544,21 +42,6 @@ impl Mixer {
             Length::Fixed(panel_h) => (panel_h - 146.0).max(92.0),
             _ => 160.0,
         }
-    }
-
-    fn db_to_y(db: f32, fader_height: f32) -> f32 {
-        let normalized = ((db - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB)).clamp(0.0, 1.0);
-        fader_height * (1.0 - normalized)
-    }
-
-    fn tick_layout(fader_height: f32) -> Vec<(f32, &'static str)> {
-        let mut out = Vec::with_capacity(TICK_VALUES.len());
-        for (idx, db) in TICK_VALUES.iter().copied().enumerate() {
-            let y = Self::db_to_y(db, fader_height).clamp(0.0, fader_height - 1.0);
-            let label_y = (y - 4.0).clamp(0.0, (fader_height - 10.0).max(0.0));
-            out.push((label_y, TICK_LABELS[idx]));
-        }
-        out
     }
 
     fn trim_strip_name(name: &str, width: f32) -> String {
@@ -588,15 +71,6 @@ impl Mixer {
             Self::strip_name(name.clone(), *width_tenths as f32 / 10.0)
         })
         .into()
-    }
-
-    fn meter_inner_width(channels: usize) -> f32 {
-        let channels = channels.max(1);
-        channels as f32 * METER_BAR_WIDTH + (channels.saturating_sub(1) as f32 * METER_BAR_GAP)
-    }
-
-    fn meter_total_width(channels: usize) -> f32 {
-        Self::meter_inner_width(channels) + (METER_PAD_X * 2.0)
     }
 
     fn format_level_db(level: f32) -> &'static str {
@@ -670,13 +144,16 @@ impl Mixer {
     }
 
     fn pan_section(track_name: String, value: f32) -> Element<'static, Message> {
+        let on_change_track = track_name.clone();
         row![
             container(text(Self::format_balance(value)).size(9))
                 .width(Length::Fixed(24.0))
                 .align_x(Alignment::Center),
-            canvas(PanCanvas { track_name, value })
-                .width(Length::Fixed(PAN_SLIDER_WIDTH))
-                .height(Length::Fixed(PAN_ROW_HEIGHT)),
+            horizontal_slider(-1.0..=1.0, value, move |value| {
+                Message::Request(Action::TrackBalance(on_change_track.clone(), value))
+            })
+            .width(Length::Fixed(PAN_SLIDER_WIDTH))
+            .height(Length::Fixed(PAN_ROW_HEIGHT)),
         ]
         .spacing(4)
         .align_y(Alignment::Center)
@@ -706,16 +183,6 @@ impl Mixer {
             .into()
     }
 
-    fn meter_fill_color(level_db: f32) -> Color {
-        if level_db >= 0.0 {
-            Color::from_rgb(0.96, 0.47, 0.34)
-        } else if level_db >= -12.0 {
-            Color::from_rgb(0.69, 0.86, 0.41)
-        } else {
-            Color::from_rgb(0.20, 0.78, 0.51)
-        }
-    }
-
     fn level_to_qdb(level_db: f32) -> u8 {
         (level_db
             .clamp(FADER_MIN_DB, FADER_MAX_DB)
@@ -738,12 +205,6 @@ impl Mixer {
         show_ticks: bool,
     ) -> Element<'static, Message> {
         let channels = channels.max(1);
-        let slider_width = if show_ticks {
-            FADER_WIDTH + FaderSliderCanvas::SCALE_GAP + SCALE_WIDTH
-        } else {
-            FADER_WIDTH
-        } + (FaderSliderCanvas::OUTER_PAD_X * 2.0);
-        let meter_width = Self::meter_total_width(channels);
         container(
             row![
                 lazy(
@@ -757,26 +218,26 @@ impl Mixer {
                     move |(track_name, _channels, value_qdb, fader_height_tenths, show_ticks)| -> Element<'static, Message> {
                         let value = Self::qdb_to_level(*value_qdb);
                         let fader_height = *fader_height_tenths as f32 / 10.0;
-                        canvas(FaderSliderCanvas {
-                            track_name: track_name.clone(),
-                            value,
-                            show_ticks: *show_ticks,
-                            fader_height,
-                        })
-                        .width(Length::Fixed(slider_width))
-                        .height(Length::Fixed(fader_height + (FaderSliderCanvas::OUTER_PAD_Y * 2.0)))
-                        .into()
+                        let on_change_track = track_name.clone();
+                        let slider = container(
+                            slider(FADER_MIN_DB..=FADER_MAX_DB, value, move |value| {
+                                Message::Request(Action::TrackLevel(on_change_track.clone(), value))
+                            })
+                            .width(Length::Fixed(FADER_WIDTH))
+                            .height(Length::Fixed(fader_height))
+                        )
+                        .padding([7.0, 8.0]);
+
+                        if *show_ticks {
+                            row![slider, ticks::ticks(FADER_MIN_DB..=FADER_MAX_DB, fader_height)].into()
+                        } else {
+                            slider.into()
+                        }
                     },
                 ),
-                canvas(MeterCanvas {
-                    channels,
-                    levels_qdb: SmallMeterLevels::from_db(levels_db, channels),
-                    fader_height,
-                })
-                .width(Length::Fixed(meter_width))
-                .height(Length::Fixed(fader_height + (FaderSliderCanvas::OUTER_PAD_Y * 2.0))),
+                meters::meters(channels, levels_db, fader_height),
             ]
-            .spacing(FaderSliderCanvas::INNER_GAP),
+            .spacing(8.0),
         )
         .width(Length::Fill)
         .padding(BAY_INSET)
@@ -807,7 +268,7 @@ impl Mixer {
             + SCALE_WIDTH
             + 3.0
             + 8.0
-            + Self::meter_total_width(channels.max(1))
+            + meters::total_width(channels.max(1))
             + 16.0
             + (BAY_INSET * 2.0))
             .max(STRIP_WIDTH)
@@ -1101,85 +562,5 @@ impl Mixer {
         .width(Length::Fill)
         .height(height)
         .into()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use iced::widget::canvas::Program;
-    use iced::{Point, Rectangle, Size, event, mouse};
-
-    fn action_message(action: CanvasAction<Message>) -> (Option<Message>, event::Status) {
-        let (message, _redraw, status) = action.into_inner();
-        (message, status)
-    }
-
-    #[test]
-    fn fader_update_button_press_publishes_track_level() {
-        let canvas = FaderSliderCanvas {
-            track_name: "Bass".to_string(),
-            value: 0.0,
-            show_ticks: false,
-            fader_height: 100.0,
-        };
-        let bounds = Rectangle::new(Point::ORIGIN, Size::new(64.0, 140.0));
-        let mut state = FaderBayState::default();
-        let cursor = mouse::Cursor::Available(Point::new(
-            FaderSliderCanvas::OUTER_PAD_X + 1.0,
-            FaderSliderCanvas::OUTER_PAD_Y + 1.0,
-        ));
-
-        let action = canvas
-            .update(
-                &mut state,
-                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-                bounds,
-                cursor,
-            )
-            .expect("action");
-
-        let (message, status) = action_message(action);
-        match message {
-            Some(Message::Request(Action::TrackLevel(name, level))) => {
-                assert_eq!(name, "Bass");
-                assert!(level <= FADER_MAX_DB);
-                assert!(level >= FADER_MIN_DB);
-            }
-            other => panic!("unexpected message: {other:?}"),
-        }
-        assert_eq!(status, event::Status::Ignored);
-        assert!(state.dragging);
-    }
-
-    #[test]
-    fn pan_update_button_press_publishes_track_balance() {
-        let canvas = PanCanvas {
-            track_name: "Bass".to_string(),
-            value: 0.0,
-        };
-        let bounds = Rectangle::new(Point::ORIGIN, Size::new(100.0, 24.0));
-        let mut state = PanState::default();
-        let cursor = mouse::Cursor::Available(Point::new(99.0, 12.0));
-
-        let action = canvas
-            .update(
-                &mut state,
-                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-                bounds,
-                cursor,
-            )
-            .expect("action");
-
-        let (message, status) = action_message(action);
-        match message {
-            Some(Message::Request(Action::TrackBalance(name, value))) => {
-                assert_eq!(name, "Bass");
-                assert!(value > 0.95);
-            }
-            other => panic!("unexpected message: {other:?}"),
-        }
-        assert_eq!(status, event::Status::Ignored);
-        assert!(state.dragging);
     }
 }

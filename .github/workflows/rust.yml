@@ -108,19 +108,11 @@ jobs:
             librubberband-dev \
             rubberband-cli
 
-      - name: Build
-        if: ${{ !inputs.release_build }}
-        run: cargo build
-
-      - name: Run tests
-        if: ${{ !inputs.release_build }}
-        run: cargo test
-
       - name: Install cargo-llvm-cov
         if: ${{ !inputs.release_build }}
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Generate coverage report
+      - name: Run tests and generate coverage
         if: ${{ !inputs.release_build }}
         run: |
           mkdir -p coverage
@@ -238,6 +230,8 @@ jobs:
 
             cargo build
             cargo test
+            cargo test -p maolan-engine
+            cargo test -p maolan-widgets
 
             rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
             mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
@@ -338,6 +332,8 @@ jobs:
 
             cargo build
             cargo test
+            cargo test -p maolan-engine
+            cargo test -p maolan-widgets
 
             rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
             mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"

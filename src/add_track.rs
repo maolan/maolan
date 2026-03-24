@@ -1,10 +1,10 @@
 use crate::message::{AddTrack, Message};
-use crate::widget::numeric_input::number_input;
 use iced::{
     Alignment, Border, Color, Element, Length,
     widget::{Id, button, column, container, pick_list, row, text, text_input},
 };
 use maolan_engine::message::Action;
+use maolan_widgets::numeric_input::number_input;
 
 #[derive(Debug)]
 pub struct AddTrackView {

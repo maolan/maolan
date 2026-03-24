@@ -10,13 +10,8 @@ use crate::{
     message::{Message, PianoControllerLane},
     state::State,
     widget::{
-        controller::{self, ControllerKindOption, ControllerRollInteraction},
-        note_area::NoteArea,
-        note_area::PianoGridScrolls,
-        note_area::piano_grid_scrollers,
-        piano::{self, OctaveKeyboard},
-        piano_roll::PianoRoll,
-        vertical_scrollbar::VerticalScrollbar,
+        controller::ControllerRollInteraction,
+        piano::{self, PianoRollInteraction},
     },
 };
 use iced::{
@@ -29,6 +24,13 @@ use iced::{
 use iced_aw::{
     menu::{DrawPath, Item, Menu as IcedMenu},
     menu_bar, menu_items,
+};
+use maolan_widgets::{
+    controller::{self, ControllerKindOption},
+    note_area::{NoteArea, PianoGridScrolls, piano_grid_scrollers},
+    piano::{OctaveKeyboard, row_height},
+    piano_roll::PianoRoll,
+    vertical_scrollbar::VerticalScrollbar,
 };
 
 #[derive(Debug)]
@@ -139,6 +141,7 @@ impl MIDIEdit {
                 .height(Length::Fill)
                 .into();
         };
+        let roll = roll.clone();
 
         let notes_content = NoteArea {
             zoom_x,
@@ -146,12 +149,28 @@ impl MIDIEdit {
             pixels_per_sample,
             samples_per_bar: Some(samples_per_bar),
             playhead_x,
+            playhead_width: PLAYHEAD_WIDTH_PX,
             clip_length_samples: roll.clip_length_samples,
         }
         .view(vec![
-            PianoRoll::new(self.state.clone())
-                .with_pixels_per_sample(pixels_per_sample)
-                .into_element(),
+            PianoRoll::new(
+                roll.notes.clone(),
+                roll.clip_length_samples,
+                zoom_y,
+                pixels_per_sample,
+                zoom_x,
+                iced::widget::canvas(PianoRollInteraction::new(
+                    self.state.clone(),
+                    pixels_per_sample,
+                ))
+                .width(Length::Fixed(
+                    (roll.clip_length_samples as f32 * (pixels_per_sample * zoom_x).max(0.0001))
+                        .max(1.0),
+                ))
+                .height(Length::Fixed(MIDI_NOTE_COUNT as f32 * row_height(zoom_y)))
+                .into(),
+            )
+            .into_element(),
         ]);
 
         let ctrl_line_count = controller::controller_lane_line_count(controller_lane).max(1);
@@ -444,9 +463,14 @@ impl MIDIEdit {
                     * zoom_y)
                     .max(1.0);
             col.push(
-                iced::widget::canvas(OctaveKeyboard::new(octave, midnam_note_names.clone()))
-                    .width(Length::Fixed(KEYBOARD_WIDTH))
-                    .height(Length::Fixed(octave_h)),
+                iced::widget::canvas(OctaveKeyboard::new(
+                    octave,
+                    midnam_note_names.clone(),
+                    Message::PianoKeyPressed,
+                    Message::PianoKeyReleased,
+                ))
+                .width(Length::Fixed(KEYBOARD_WIDTH))
+                .height(Length::Fixed(octave_h)),
             )
         });
         let piano_note_keys = keyboard
@@ -632,6 +656,8 @@ impl MIDIEdit {
             ctrl_w,
             state.piano_scroll_x,
             state.piano_scroll_y,
+            Message::PianoScrollYChanged,
+            |x, y| Message::PianoScrollChanged { x, y },
         );
 
         let ctrl_scroll = scrollable(

@@ -1,3 +1,4 @@
+use crate::consts::DOUBLE_CLICK;
 use iced::advanced::Shell;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
@@ -6,8 +7,6 @@ use iced::mouse;
 use iced::{Border, Color, Element, Event, Length, Point, Rectangle, Size};
 use std::time::Instant;
 
-use crate::ui_timing::DOUBLE_CLICK;
-
 pub struct Slider<'a, Message> {
     range: std::ops::RangeInclusive<f32>,
     value: f32,
@@ -15,6 +14,7 @@ pub struct Slider<'a, Message> {
     width: Length,
     height: Length,
     handle_height: f32,
+    step: Option<f32>,
 }
 
 impl<'a, Message> Slider<'a, Message> {
@@ -29,6 +29,7 @@ impl<'a, Message> Slider<'a, Message> {
             width: Length::Fixed(14.0),
             height: Length::Fixed(300.0),
             handle_height: 2.0,
+            step: None,
         }
     }
 
@@ -41,6 +42,22 @@ impl<'a, Message> Slider<'a, Message> {
         self.height = height;
         self
     }
+
+    pub fn step(mut self, step: f32) -> Self {
+        self.step = Some(step.abs()).filter(|step| *step > 0.0);
+        self
+    }
+}
+
+pub fn slider<'a, Message, F>(
+    range: std::ops::RangeInclusive<f32>,
+    value: f32,
+    on_change: F,
+) -> Slider<'a, Message>
+where
+    F: Fn(f32) -> Message + 'a,
+{
+    Slider::new(range, value, on_change)
 }
 
 #[derive(Default)]
@@ -242,7 +259,19 @@ impl<'a, Message> Slider<'a, Message> {
         let y = cursor_position.y - bounds.y;
         let normalized = 1.0 - (y / bounds.height).clamp(0.0, 1.0);
         let value = self.range.start() + normalized * (self.range.end() - self.range.start());
-        value.clamp(*self.range.start(), *self.range.end())
+        self.clamp_to_step(value)
+    }
+
+    fn clamp_to_step(&self, value: f32) -> f32 {
+        let clamped = value.clamp(*self.range.start(), *self.range.end());
+        let Some(step) = self.step else {
+            return clamped;
+        };
+
+        let start = *self.range.start();
+        let end = *self.range.end();
+        let steps = ((clamped - start) / step).round();
+        (start + steps * step).clamp(start, end)
     }
 }
 
@@ -266,6 +295,15 @@ mod tests {
         Layout, Shell, clipboard, layout,
         widget::{self, Tree, Widget},
     };
+    use std::time::Instant;
+
+    fn test_tree_with_state(state: State) -> Tree {
+        Tree {
+            tag: widget::tree::Tag::of::<State>(),
+            state: widget::tree::State::new(state),
+            children: Vec::new(),
+        }
+    }
 
     #[test]
     fn calculate_value_clamps_to_range() {
@@ -282,15 +320,25 @@ mod tests {
         assert!((slider.calculate_value(Point::new(15.0, 70.0), bounds) - 0.5).abs() < 0.001);
     }
 
+    #[test]
+    fn calculate_value_snaps_to_step() {
+        let slider = Slider::new(-90.0..=20.0, 0.0, |value| value).step(1.0);
+        let bounds = Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: 14.0,
+            height: 110.0,
+        };
+
+        assert_eq!(slider.calculate_value(Point::new(7.0, 10.4), bounds), 10.0);
+        assert_eq!(slider.calculate_value(Point::new(7.0, 10.6), bounds), 9.0);
+    }
+
     #[cfg(debug_assertions)]
     #[test]
     fn update_publishes_clicked_value() {
         let mut slider = Slider::new(0.0..=1.0, 0.5, |value| value).height(Length::Fixed(100.0));
-        let mut tree = Tree {
-            tag: widget::tree::Tag::of::<State>(),
-            state: widget::tree::State::new(State::default()),
-            children: Vec::new(),
-        };
+        let mut tree = test_tree_with_state(State::default());
         let node = layout::Node::new(Size::new(14.0, 100.0));
         let layout = Layout::new(&node);
         let mut messages = Vec::new();
@@ -313,5 +361,36 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert!((messages[0] - 0.75).abs() < 0.01);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn update_double_click_resets_to_zero() {
+        let mut slider = Slider::new(-90.0..=20.0, 6.0, |value| value).height(Length::Fixed(110.0));
+        let mut tree = test_tree_with_state(State {
+            is_dragging: false,
+            last_click_at: Some(Instant::now()),
+        });
+        let node = layout::Node::new(Size::new(14.0, 110.0));
+        let layout = Layout::new(&node);
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        let renderer = ();
+        let mut clipboard = clipboard::Null;
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(14.0, 110.0));
+
+        <Slider<'_, f32> as Widget<f32, iced::Theme, ()>>::update(
+            &mut slider,
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            layout,
+            mouse::Cursor::Available(Point::new(7.0, 30.0)),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        assert_eq!(messages, vec![0.0]);
     }
 }

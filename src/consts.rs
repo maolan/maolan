@@ -37,22 +37,9 @@ pub mod workspace {
     pub const CONTEXT_MENU_WIDTH: f32 = 132.0;
     pub const CONTEXT_MENU_ITEM_HEIGHT: f32 = 16.0;
 
-    pub const CLIP_RESIZE_HANDLE_WIDTH: f32 = 5.0;
-    pub const AUDIO_CLIP_BASE: Color = Color::from_rgb8(68, 88, 132);
     pub const AUDIO_CLIP_SELECTED_BASE: Color = Color::from_rgb8(96, 126, 186);
-    pub const AUDIO_CLIP_BORDER: Color = Color::from_rgb8(78, 93, 130);
-    pub const AUDIO_CLIP_SELECTED_BORDER: Color = Color::from_rgb8(176, 218, 255);
-    pub const MIDI_CLIP_BASE: Color = Color::from_rgb8(55, 90, 50);
     pub const MIDI_CLIP_SELECTED_BASE: Color = Color::from_rgb8(84, 133, 72);
     pub const MIDI_CLIP_BORDER: Color = Color::from_rgb8(148, 215, 118);
-    pub const MIDI_CLIP_SELECTED_BORDER: Color = Color::from_rgb8(196, 255, 151);
-
-    pub const TICK_VALUES: [f32; 13] = [
-        20.0, 12.0, 6.0, 0.0, -6.0, -12.0, -18.0, -24.0, -36.0, -48.0, -60.0, -72.0, -90.0,
-    ];
-    pub const TICK_LABELS: [&str; 13] = [
-        "+20", "+12", "+6", "0", "-6", "-12", "-18", "-24", "-36", "-48", "-60", "-72", "-90",
-    ];
 }
 
 pub mod ui_timing {
@@ -176,26 +163,12 @@ pub mod state_platform_freebsd {
 }
 
 pub mod widget_piano {
-    pub const MIDI_CHANNELS: usize = 16;
-    pub const KEYS_SCROLL_ID: &str = "piano.keys.scroll";
-    pub const NOTES_SCROLL_ID: &str = "piano.notes.scroll";
-    pub const CTRL_SCROLL_ID: &str = "piano.ctrl.scroll";
-    pub const SYSEX_SCROLL_ID: &str = "piano.sysex.scroll";
-
-    pub const KEYBOARD_WIDTH: f32 = 128.0;
-    pub const RIGHT_SCROLL_GUTTER_WIDTH: f32 = 16.0;
-    pub const TOOLS_STRIP_WIDTH: f32 = 248.0;
-    pub const MAIN_SPLIT_SPACING: f32 = 3.0;
-    pub const H_ZOOM_MIN: f32 = 1.0;
-    pub const H_ZOOM_MAX: f32 = 127.0;
-    pub const MIDI_NOTE_COUNT: usize = 128;
-    pub const OCTAVES: usize = 11;
-    pub const WHITE_KEYS_PER_OCTAVE: usize = 7;
-    pub const NOTES_PER_OCTAVE: usize = 12;
-    pub const PITCH_MAX: u8 = (MIDI_NOTE_COUNT as u8) - 1;
-    pub const WHITE_KEY_HEIGHT: f32 = 14.0;
-    pub const MAX_RPN_NRPN_POINTS: usize = 4096;
-    pub const MIDI_DIN_BYTES_PER_SEC: f64 = 3125.0;
+    pub use maolan_widgets::midi::{
+        CTRL_SCROLL_ID, H_ZOOM_MAX, H_ZOOM_MIN, KEYBOARD_WIDTH, KEYS_SCROLL_ID, MAIN_SPLIT_SPACING,
+        MAX_RPN_NRPN_POINTS, MIDI_DIN_BYTES_PER_SEC, MIDI_NOTE_COUNT, NOTES_PER_OCTAVE,
+        NOTES_SCROLL_ID, OCTAVES, PITCH_MAX, RIGHT_SCROLL_GUTTER_WIDTH, SYSEX_SCROLL_ID,
+        TOOLS_STRIP_WIDTH, WHITE_KEY_HEIGHT, WHITE_KEYS_PER_OCTAVE,
+    };
 }
 
 pub mod workspace_mixer {
@@ -214,7 +187,6 @@ pub mod workspace_mixer {
     pub const METER_BAR_WIDTH: f32 = 3.0;
     pub const METER_BAR_GAP: f32 = 2.0;
     pub const METER_PAD_X: f32 = 3.0;
-    pub const METER_PAD_Y: f32 = 3.0;
     pub const BAY_INSET: f32 = 1.0;
 
     pub static LEVEL_LABELS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
@@ -244,8 +216,6 @@ pub mod workspace_mixer {
 }
 
 pub mod workspace_editor {
-    pub const MAX_RENDER_COLUMNS: usize = 32_767;
-    pub const RENDER_MARGIN_COLUMNS: usize = 2;
     pub const CHECKPOINTS: usize = 16;
 }
 

@@ -21,6 +21,7 @@ iced_drop = { version = "0.2.16", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
 libloading = "0.8.9"
 maolan-engine = { version = "0.0.4", path = "./engine" }
+maolan-widgets = { version = "0.0.1", path = "./widgets" }
 midly = "0.5.3"
 mp3lame-encoder = "0.2"
 pitch-detection = "0.3.0"

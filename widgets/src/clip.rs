@@ -1,16 +1,4 @@
-use crate::{
-    consts::{
-        widget_piano::PITCH_MAX,
-        workspace::{
-            AUDIO_CLIP_BASE, AUDIO_CLIP_BORDER, AUDIO_CLIP_SELECTED_BASE,
-            AUDIO_CLIP_SELECTED_BORDER, CLIP_RESIZE_HANDLE_WIDTH, MIDI_CLIP_BASE, MIDI_CLIP_BORDER,
-            MIDI_CLIP_SELECTED_BASE, MIDI_CLIP_SELECTED_BORDER,
-        },
-        workspace_editor::{CHECKPOINTS, MAX_RENDER_COLUMNS, RENDER_MARGIN_COLUMNS},
-    },
-    message::{DraggedClip, Message},
-    state::{AudioClip as AudioClipState, ClipPeaks, MIDIClip as MIDIClipState, PianoNote},
-};
+use crate::midi::{PITCH_MAX, PianoNote};
 use iced::{
     Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Theme, gradient, mouse,
     widget::{
@@ -19,7 +7,6 @@ use iced::{
         column, container, mouse_area, pin, text,
     },
 };
-use maolan_engine::kind::Kind;
 use std::{
     cell::Cell,
     hash::{Hash, Hasher},
@@ -27,6 +14,80 @@ use std::{
     sync::Arc,
 };
 use wavers::Wav;
+
+pub type PeakPair = [f32; 2];
+pub type ClipPeaksData = Vec<Vec<PeakPair>>;
+pub type ClipPeaks = Arc<ClipPeaksData>;
+
+const CHECKPOINTS: usize = 16;
+const MAX_RENDER_COLUMNS: usize = 32_767;
+const RENDER_MARGIN_COLUMNS: usize = 2;
+const DEFAULT_RESIZE_HANDLE_WIDTH: f32 = 5.0;
+
+#[derive(Debug, Clone, Default)]
+pub struct AudioClipData {
+    pub name: String,
+    pub start: usize,
+    pub length: usize,
+    pub offset: usize,
+    pub muted: bool,
+    pub max_length_samples: usize,
+    pub peaks: ClipPeaks,
+    pub fade_enabled: bool,
+    pub fade_in_samples: usize,
+    pub fade_out_samples: usize,
+    pub grouped_clips: Vec<AudioClipData>,
+}
+
+impl AudioClipData {
+    pub fn is_group(&self) -> bool {
+        !self.grouped_clips.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MIDIClipData {
+    pub name: String,
+    pub start: usize,
+    pub length: usize,
+    pub offset: usize,
+    pub input_channel: usize,
+    pub muted: bool,
+    pub max_length_samples: usize,
+    pub grouped_clips: Vec<MIDIClipData>,
+}
+
+impl MIDIClipData {
+    pub fn is_group(&self) -> bool {
+        !self.grouped_clips.is_empty()
+    }
+}
+
+#[derive(Clone)]
+pub struct ClipEdgeMessages<Message> {
+    pub left_hover_enter: Message,
+    pub left_hover_exit: Message,
+    pub left_press: Message,
+    pub right_hover_enter: Message,
+    pub right_hover_exit: Message,
+    pub right_press: Message,
+}
+
+pub struct AudioClipInteraction<Message> {
+    pub on_select: Message,
+    pub on_open: Message,
+    pub on_drag: Option<Arc<dyn Fn(Point) -> Message + Send + Sync + 'static>>,
+    pub edges: ClipEdgeMessages<Message>,
+    pub fade_in_press: Option<Message>,
+    pub fade_out_press: Option<Message>,
+}
+
+pub struct MIDIClipInteraction<Message> {
+    pub on_select: Message,
+    pub on_open: Message,
+    pub on_drag: Option<Arc<dyn Fn(Point) -> Message + Send + Sync + 'static>>,
+    pub edges: ClipEdgeMessages<Message>,
+}
 
 fn clean_clip_name(name: &str) -> String {
     let mut cleaned = name.to_string();
@@ -59,7 +120,7 @@ fn trim_label_to_width(label: &str, width_px: f32) -> String {
     label.chars().take(max_chars).collect()
 }
 
-fn clip_label_overlay(label: String) -> Element<'static, Message> {
+fn clip_label_overlay<Message: 'static>(label: String) -> Element<'static, Message> {
     container(
         column![
             Space::new().height(Length::FillPortion(1)),
@@ -76,6 +137,24 @@ fn clip_label_overlay(label: String) -> Element<'static, Message> {
     .height(Length::Fill)
     .padding([0, 5])
     .into()
+}
+
+fn brighten(color: Color, amount: f32) -> Color {
+    Color {
+        r: (color.r + amount).min(1.0),
+        g: (color.g + amount).min(1.0),
+        b: (color.b + amount).min(1.0),
+        a: color.a,
+    }
+}
+
+fn darken(color: Color, amount: f32) -> Color {
+    Color {
+        r: (color.r - amount).max(0.0),
+        g: (color.g - amount).max(0.0),
+        b: (color.b - amount).max(0.0),
+        a: color.a,
+    }
 }
 
 fn clip_two_edge_gradient(
@@ -145,7 +224,7 @@ struct FadeBezierCanvas {
     fade_out: bool,
 }
 
-impl canvas::Program<Message> for FadeBezierCanvas {
+impl<Message> canvas::Program<Message> for FadeBezierCanvas {
     type State = ();
 
     fn draw(
@@ -205,7 +284,7 @@ impl canvas::Program<Message> for FadeBezierCanvas {
     }
 }
 
-fn fade_bezier_overlay(
+fn fade_bezier_overlay<Message: 'static>(
     width: f32,
     height: f32,
     color: Color,
@@ -215,24 +294,6 @@ fn fade_bezier_overlay(
         .width(Length::Fixed(width.max(0.0)))
         .height(Length::Fixed(height.max(0.0)))
         .into()
-}
-
-fn brighten(color: Color, amount: f32) -> Color {
-    Color {
-        r: (color.r + amount).min(1.0),
-        g: (color.g + amount).min(1.0),
-        b: (color.b + amount).min(1.0),
-        a: color.a,
-    }
-}
-
-fn darken(color: Color, amount: f32) -> Color {
-    Color {
-        r: (color.r - amount).max(0.0),
-        g: (color.g - amount).max(0.0),
-        b: (color.b - amount).max(0.0),
-        a: color.a,
-    }
 }
 
 #[derive(Default)]
@@ -355,7 +416,7 @@ impl WaveformCanvas {
     }
 }
 
-impl canvas::Program<Message> for WaveformCanvas {
+impl<Message> canvas::Program<Message> for WaveformCanvas {
     type State = WaveformCanvasState;
 
     fn draw(
@@ -659,7 +720,7 @@ impl MidiClipNotesCanvas {
     }
 }
 
-impl canvas::Program<Message> for MidiClipNotesCanvas {
+impl<Message> canvas::Program<Message> for MidiClipNotesCanvas {
     type State = MidiClipNotesCanvasState;
 
     fn draw(
@@ -689,8 +750,6 @@ impl canvas::Program<Message> for MidiClipNotesCanvas {
                 let visible_len = self.clip_visible_length_samples.max(1);
                 let visible_end = visible_start.saturating_add(visible_len);
                 let clip_len = visible_len as f32;
-                let min_pitch = 0_u8;
-                let max_pitch = PITCH_MAX;
                 let pitch_span = f32::from(PITCH_MAX) + 1.0;
                 let note_color = Color::from_rgba(0.68, 0.92, 0.40, 0.82);
                 let note_edge = Color::from_rgba(0.86, 0.98, 0.62, 0.95);
@@ -734,14 +793,14 @@ impl canvas::Program<Message> for MidiClipNotesCanvas {
                     if note_end <= visible_start || note_start >= visible_end {
                         continue;
                     }
-                    let pitch = note.pitch.clamp(min_pitch, max_pitch);
+                    let pitch = note.pitch.min(PITCH_MAX);
                     let clipped_start = note_start.max(visible_start);
                     let clipped_end = note_end.min(visible_end);
                     let rel_start = clipped_start.saturating_sub(visible_start);
                     let rel_len = clipped_end.saturating_sub(clipped_start).max(1);
                     let x = (rel_start as f32 / clip_len) * inner_w;
                     let w = ((rel_len as f32 / clip_len) * inner_w).max(1.0);
-                    let pitch_pos = (i16::from(max_pitch) - i16::from(pitch)) as f32 / pitch_span;
+                    let pitch_pos = (i16::from(PITCH_MAX) - i16::from(pitch)) as f32 / pitch_span;
                     let y = pitch_pos * inner_h;
                     let h = (inner_h / pitch_span).clamp(1.0, 8.0);
                     let rect = Path::rectangle(Point::new(x, y), iced::Size::new(w, h));
@@ -759,7 +818,7 @@ impl canvas::Program<Message> for MidiClipNotesCanvas {
     }
 }
 
-fn midi_clip_notes_overlay(
+fn midi_clip_notes_overlay<Message: 'static>(
     notes: Arc<Vec<PianoNote>>,
     clip_offset_samples: usize,
     clip_visible_length_samples: usize,
@@ -774,7 +833,7 @@ fn midi_clip_notes_overlay(
     .into()
 }
 
-fn audio_waveform_overlay(
+fn audio_waveform_overlay<Message: 'static>(
     peaks: ClipPeaks,
     source_wav_path: Option<PathBuf>,
     clip_offset: usize,
@@ -802,8 +861,8 @@ fn resolve_audio_clip_path(session_root: Option<&PathBuf>, clip_name: &str) -> O
     }
 }
 
-fn grouped_audio_waveform_overlay(
-    clip: &AudioClipState,
+fn grouped_audio_waveform_overlay<Message: 'static>(
+    clip: &AudioClipData,
     session_root: Option<&PathBuf>,
     pixels_per_sample: f32,
     clip_height: f32,
@@ -841,9 +900,9 @@ enum AudioClipMode {
     Preview,
 }
 
-pub struct AudioClip<'a> {
-    clip: &'a AudioClipState,
-    session_root: Option<&'a PathBuf>,
+pub struct AudioClip<Message> {
+    clip: AudioClipData,
+    session_root: Option<PathBuf>,
     pixels_per_sample: f32,
     clip_width: f32,
     clip_height: f32,
@@ -851,19 +910,52 @@ pub struct AudioClip<'a> {
     is_selected: bool,
     left_handle_hovered: bool,
     right_handle_hovered: bool,
-    track_name: Option<String>,
-    clip_index: usize,
-    on_select: Option<Message>,
-    on_open: Option<Message>,
-    drag_enabled: bool,
+    interaction: Option<AudioClipInteraction<Message>>,
     background: Option<Background>,
     border_color: Option<Color>,
     radius: f32,
     mode: AudioClipMode,
+    base_color: Color,
+    selected_base_color: Color,
+    border: Color,
+    selected_border: Color,
+    resize_handle_width: f32,
 }
 
-impl<'a> AudioClip<'a> {
-    pub fn new(clip: &'a AudioClipState) -> Self {
+impl<Message> AudioClip<Message> {
+    pub fn clean_name(name: &str) -> String {
+        clean_clip_name(name)
+    }
+
+    pub fn label_for_width(label: &str, width_px: f32) -> String {
+        trim_label_to_width(label, width_px)
+    }
+
+    pub fn two_edge_gradient(
+        base: Color,
+        muted_alpha: f32,
+        normal_alpha: f32,
+        reverse: bool,
+    ) -> Background {
+        clip_two_edge_gradient(base, muted_alpha, normal_alpha, reverse)
+    }
+
+    pub fn waveform_overlay(
+        peaks: ClipPeaks,
+        source_wav_path: Option<PathBuf>,
+        clip_offset: usize,
+        clip_length: usize,
+        max_length: usize,
+    ) -> Element<'static, Message>
+    where
+        Message: 'static,
+    {
+        audio_waveform_overlay(peaks, source_wav_path, clip_offset, clip_length, max_length)
+    }
+}
+
+impl<Message: Clone + 'static> AudioClip<Message> {
+    pub fn new(clip: AudioClipData) -> Self {
         Self {
             clip,
             session_root: None,
@@ -874,20 +966,35 @@ impl<'a> AudioClip<'a> {
             is_selected: false,
             left_handle_hovered: false,
             right_handle_hovered: false,
-            track_name: None,
-            clip_index: 0,
-            on_select: None,
-            on_open: None,
-            drag_enabled: false,
+            interaction: None,
             background: None,
             border_color: None,
             radius: 3.0,
             mode: AudioClipMode::Widget,
+            base_color: Color::from_rgb8(68, 88, 132),
+            selected_base_color: Color::from_rgb8(96, 126, 186),
+            border: Color::from_rgb8(78, 93, 130),
+            selected_border: Color::from_rgb8(176, 218, 255),
+            resize_handle_width: DEFAULT_RESIZE_HANDLE_WIDTH,
         }
     }
 
-    pub fn with_session_root(mut self, session_root: Option<&'a PathBuf>) -> Self {
-        self.session_root = session_root;
+    pub fn with_colors(
+        mut self,
+        base_color: Color,
+        selected_base_color: Color,
+        border: Color,
+        selected_border: Color,
+    ) -> Self {
+        self.base_color = base_color;
+        self.selected_base_color = selected_base_color;
+        self.border = border;
+        self.selected_border = selected_border;
+        self
+    }
+
+    pub fn with_session_root(mut self, session_root: Option<&PathBuf>) -> Self {
+        self.session_root = session_root.cloned();
         self
     }
 
@@ -912,29 +1019,14 @@ impl<'a> AudioClip<'a> {
         self
     }
 
-    pub fn hovered_handles(
-        mut self,
-        left_handle_hovered: bool,
-        right_handle_hovered: bool,
-    ) -> Self {
-        self.left_handle_hovered = left_handle_hovered;
-        self.right_handle_hovered = right_handle_hovered;
+    pub fn hovered_handles(mut self, left: bool, right: bool) -> Self {
+        self.left_handle_hovered = left;
+        self.right_handle_hovered = right;
         self
     }
 
-    pub fn interactive(
-        mut self,
-        track_name: String,
-        clip_index: usize,
-        on_select: Message,
-        on_open: Message,
-        drag_enabled: bool,
-    ) -> Self {
-        self.track_name = Some(track_name);
-        self.clip_index = clip_index;
-        self.on_select = Some(on_select);
-        self.on_open = Some(on_open);
-        self.drag_enabled = drag_enabled;
+    pub fn interactive(mut self, interaction: AudioClipInteraction<Message>) -> Self {
+        self.interaction = Some(interaction);
         self.mode = AudioClipMode::Widget;
         self
     }
@@ -946,40 +1038,13 @@ impl<'a> AudioClip<'a> {
         self
     }
 
-    pub fn clean_name(name: &str) -> String {
-        clean_clip_name(name)
-    }
-
-    pub fn label_for_width(label: &str, width_px: f32) -> String {
-        trim_label_to_width(label, width_px)
-    }
-
-    pub fn two_edge_gradient(
-        base: Color,
-        muted_alpha: f32,
-        normal_alpha: f32,
-        reverse: bool,
-    ) -> Background {
-        clip_two_edge_gradient(base, muted_alpha, normal_alpha, reverse)
-    }
-
-    pub fn waveform_overlay(
-        peaks: ClipPeaks,
-        source_wav_path: Option<PathBuf>,
-        clip_offset: usize,
-        clip_length: usize,
-        max_length: usize,
-    ) -> Element<'static, Message> {
-        audio_waveform_overlay(peaks, source_wav_path, clip_offset, clip_length, max_length)
-    }
-
     pub fn into_element(self) -> Element<'static, Message> {
         match self.mode {
             AudioClipMode::Preview => {
                 let preview_content = container(Stack::with_children(vec![
                     audio_waveform_overlay(
                         self.clip.peaks.clone(),
-                        resolve_audio_clip_path(self.session_root, &self.clip.name),
+                        resolve_audio_clip_path(self.session_root.as_ref(), &self.clip.name),
                         self.clip.offset,
                         self.clip.length,
                         self.clip.max_length_samples,
@@ -989,12 +1054,9 @@ impl<'a> AudioClip<'a> {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .padding(0)
-                .style(move |_theme| {
-                    use container::Style;
-                    Style {
-                        background: self.background,
-                        ..Style::default()
-                    }
+                .style(move |_theme| container::Style {
+                    background: self.background,
+                    ..container::Style::default()
                 });
                 container(preview_content)
                     .width(Length::Fixed(self.clip_width))
@@ -1011,75 +1073,39 @@ impl<'a> AudioClip<'a> {
                     .into()
             }
             AudioClipMode::Widget => {
-                let track_name = self.track_name.expect("audio clip widget track name");
-                let on_select = self.on_select.expect("audio clip widget on_select");
-                let on_open = self.on_open.expect("audio clip widget on_open");
+                let interaction = self.interaction.expect("audio clip interaction");
                 let clip_muted = self.clip.muted;
                 let left_edge_zone = mouse_area(
                     Space::new()
-                        .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
+                        .width(Length::Fixed(self.resize_handle_width))
                         .height(Length::Fill),
                 )
                 .interaction(mouse::Interaction::ResizingColumn)
-                .on_enter(Message::ClipResizeHandleHover {
-                    kind: Kind::Audio,
-                    track_idx: track_name.clone(),
-                    clip_idx: self.clip_index,
-                    is_right_side: false,
-                    hovered: true,
-                })
-                .on_exit(Message::ClipResizeHandleHover {
-                    kind: Kind::Audio,
-                    track_idx: track_name.clone(),
-                    clip_idx: self.clip_index,
-                    is_right_side: false,
-                    hovered: false,
-                })
-                .on_press(Message::ClipResizeStart(
-                    Kind::Audio,
-                    track_name.clone(),
-                    self.clip_index,
-                    false,
-                ));
+                .on_enter(interaction.edges.left_hover_enter.clone())
+                .on_exit(interaction.edges.left_hover_exit.clone())
+                .on_press(interaction.edges.left_press.clone());
                 let right_edge_zone = mouse_area(
                     Space::new()
-                        .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
+                        .width(Length::Fixed(self.resize_handle_width))
                         .height(Length::Fill),
                 )
                 .interaction(mouse::Interaction::ResizingColumn)
-                .on_enter(Message::ClipResizeHandleHover {
-                    kind: Kind::Audio,
-                    track_idx: track_name.clone(),
-                    clip_idx: self.clip_index,
-                    is_right_side: true,
-                    hovered: true,
-                })
-                .on_exit(Message::ClipResizeHandleHover {
-                    kind: Kind::Audio,
-                    track_idx: track_name.clone(),
-                    clip_idx: self.clip_index,
-                    is_right_side: true,
-                    hovered: false,
-                })
-                .on_press(Message::ClipResizeStart(
-                    Kind::Audio,
-                    track_name.clone(),
-                    self.clip_index,
-                    true,
-                ));
+                .on_enter(interaction.edges.right_hover_enter.clone())
+                .on_exit(interaction.edges.right_hover_exit.clone())
+                .on_press(interaction.edges.right_press.clone());
 
                 let clip_content = container(Stack::with_children(vec![
                     if self.clip.is_group() {
                         grouped_audio_waveform_overlay(
-                            self.clip,
-                            self.session_root,
+                            &self.clip,
+                            self.session_root.as_ref(),
                             self.pixels_per_sample,
                             self.clip_height,
                         )
                     } else {
                         audio_waveform_overlay(
                             self.clip.peaks.clone(),
-                            resolve_audio_clip_path(self.session_root, &self.clip.name),
+                            resolve_audio_clip_path(self.session_root.as_ref(), &self.clip.name),
                             self.clip.offset,
                             self.clip.length,
                             self.clip.max_length_samples,
@@ -1091,22 +1117,21 @@ impl<'a> AudioClip<'a> {
                 .height(Length::Fill)
                 .padding(0)
                 .style(move |_theme| {
-                    use container::Style;
                     let base = if self.is_selected {
-                        AUDIO_CLIP_SELECTED_BASE
+                        self.selected_base_color
                     } else {
-                        AUDIO_CLIP_BASE
+                        self.base_color
                     };
                     let (muted_alpha, normal_alpha) =
                         if clip_muted { (0.45, 0.45) } else { (1.0, 1.0) };
-                    Style {
+                    container::Style {
                         background: Some(clip_two_edge_gradient(
                             base,
                             muted_alpha,
                             normal_alpha,
                             true,
                         )),
-                        ..Style::default()
+                        ..container::Style::default()
                     }
                 });
 
@@ -1114,7 +1139,7 @@ impl<'a> AudioClip<'a> {
                     clip_content.into(),
                     pin(left_edge_zone).position(Point::new(0.0, 0.0)).into(),
                     pin(right_edge_zone)
-                        .position(Point::new(self.clip_width - CLIP_RESIZE_HANDLE_WIDTH, 0.0))
+                        .position(Point::new(self.clip_width - self.resize_handle_width, 0.0))
                         .into(),
                 ]))
                 .width(Length::Fixed(self.clip_width))
@@ -1123,9 +1148,9 @@ impl<'a> AudioClip<'a> {
                     background: None,
                     border: Border {
                         color: if self.is_selected {
-                            AUDIO_CLIP_SELECTED_BORDER
+                            self.selected_border
                         } else {
-                            AUDIO_CLIP_BORDER
+                            self.border
                         },
                         width: if self.is_selected { 2.0 } else { 1.0 },
                         radius: self.radius.into(),
@@ -1144,31 +1169,28 @@ impl<'a> AudioClip<'a> {
                     );
                     let mut stack = Stack::new().push(clip_widget);
                     if should_draw_fade_overlay(self.clip.fade_in_samples, self.pixels_per_sample) {
-                        let fade_in_handle = mouse_area(
-                            container("")
-                                .width(Length::Fixed(6.0))
-                                .height(Length::Fixed(6.0))
-                                .style(|_theme| container::Style {
-                                    background: Some(Background::Color(Color::from_rgba(
-                                        1.0, 1.0, 1.0, 0.9,
-                                    ))),
-                                    border: Border {
-                                        color: Color::from_rgba(0.3, 0.3, 0.3, 1.0),
-                                        width: 1.0,
-                                        radius: 3.0.into(),
-                                    },
-                                    ..container::Style::default()
-                                }),
-                        )
-                        .on_press(Message::FadeResizeStart {
-                            kind: Kind::Audio,
-                            track_idx: track_name.clone(),
-                            clip_idx: self.clip_index,
-                            is_fade_out: false,
-                        });
-                        stack = stack.push(
-                            pin(fade_in_handle).position(Point::new(fade_in_width - 3.0, -3.0)),
-                        );
+                        if let Some(message) = interaction.fade_in_press.clone() {
+                            let fade_in_handle = mouse_area(
+                                container("")
+                                    .width(Length::Fixed(6.0))
+                                    .height(Length::Fixed(6.0))
+                                    .style(|_theme| container::Style {
+                                        background: Some(Background::Color(Color::from_rgba(
+                                            1.0, 1.0, 1.0, 0.9,
+                                        ))),
+                                        border: Border {
+                                            color: Color::from_rgba(0.3, 0.3, 0.3, 1.0),
+                                            width: 1.0,
+                                            radius: 3.0.into(),
+                                        },
+                                        ..container::Style::default()
+                                    }),
+                            )
+                            .on_press(message);
+                            stack = stack.push(
+                                pin(fade_in_handle).position(Point::new(fade_in_width - 3.0, -3.0)),
+                            );
+                        }
                         stack = stack.push(
                             pin(fade_bezier_overlay(
                                 fade_in_width,
@@ -1181,32 +1203,29 @@ impl<'a> AudioClip<'a> {
                     }
                     if should_draw_fade_overlay(self.clip.fade_out_samples, self.pixels_per_sample)
                     {
-                        let fade_out_handle = mouse_area(
-                            container("")
-                                .width(Length::Fixed(6.0))
-                                .height(Length::Fixed(6.0))
-                                .style(|_theme| container::Style {
-                                    background: Some(Background::Color(Color::from_rgba(
-                                        1.0, 1.0, 1.0, 0.9,
-                                    ))),
-                                    border: Border {
-                                        color: Color::from_rgba(0.3, 0.3, 0.3, 1.0),
-                                        width: 1.0,
-                                        radius: 3.0.into(),
-                                    },
-                                    ..container::Style::default()
-                                }),
-                        )
-                        .on_press(Message::FadeResizeStart {
-                            kind: Kind::Audio,
-                            track_idx: track_name.clone(),
-                            clip_idx: self.clip_index,
-                            is_fade_out: true,
-                        });
-                        stack = stack.push(
-                            pin(fade_out_handle)
-                                .position(Point::new(self.clip_width - fade_out_width - 3.0, -3.0)),
-                        );
+                        if let Some(message) = interaction.fade_out_press.clone() {
+                            let fade_out_handle = mouse_area(
+                                container("")
+                                    .width(Length::Fixed(6.0))
+                                    .height(Length::Fixed(6.0))
+                                    .style(|_theme| container::Style {
+                                        background: Some(Background::Color(Color::from_rgba(
+                                            1.0, 1.0, 1.0, 0.9,
+                                        ))),
+                                        border: Border {
+                                            color: Color::from_rgba(0.3, 0.3, 0.3, 1.0),
+                                            width: 1.0,
+                                            radius: 3.0.into(),
+                                        },
+                                        ..container::Style::default()
+                                    }),
+                            )
+                            .on_press(message);
+                            stack = stack.push(pin(fade_out_handle).position(Point::new(
+                                self.clip_width - fade_out_width - 3.0,
+                                -3.0,
+                            )));
+                        }
                         stack = stack.push(
                             pin(fade_bezier_overlay(
                                 fade_out_width,
@@ -1228,15 +1247,11 @@ impl<'a> AudioClip<'a> {
                 } else {
                     base
                 };
-                let base = base.on_press(on_select).on_double_click(on_open);
-                if self.drag_enabled {
-                    base.on_move(move |point| {
-                        let mut clip_data =
-                            DraggedClip::new(Kind::Audio, self.clip_index, track_name.clone());
-                        clip_data.start = point;
-                        Message::ClipDrag(clip_data)
-                    })
-                    .into()
+                let base = base
+                    .on_press(interaction.on_select)
+                    .on_double_click(interaction.on_open);
+                if let Some(on_drag) = interaction.on_drag {
+                    base.on_move(move |point| on_drag(point)).into()
                 } else {
                     base.into()
                 }
@@ -1251,8 +1266,8 @@ enum MIDIClipMode {
     Preview,
 }
 
-pub struct MIDIClip<'a> {
-    clip: &'a MIDIClipState,
+pub struct MIDIClip<Message> {
+    clip: MIDIClipData,
     clip_width: f32,
     clip_height: f32,
     label: String,
@@ -1260,19 +1275,39 @@ pub struct MIDIClip<'a> {
     left_handle_hovered: bool,
     right_handle_hovered: bool,
     midi_notes: Option<Arc<Vec<PianoNote>>>,
-    track_name: Option<String>,
-    clip_index: usize,
-    on_select: Option<Message>,
-    on_open: Option<Message>,
-    drag_enabled: bool,
+    interaction: Option<MIDIClipInteraction<Message>>,
     background: Option<Background>,
     border_color: Option<Color>,
     radius: f32,
     mode: MIDIClipMode,
+    base_color: Color,
+    selected_base_color: Color,
+    border: Color,
+    selected_border: Color,
+    resize_handle_width: f32,
 }
 
-impl<'a> MIDIClip<'a> {
-    pub fn new(clip: &'a MIDIClipState) -> Self {
+impl<Message> MIDIClip<Message> {
+    pub fn clean_name(name: &str) -> String {
+        clean_clip_name(name)
+    }
+
+    pub fn label_for_width(label: &str, width_px: f32) -> String {
+        trim_label_to_width(label, width_px)
+    }
+
+    pub fn two_edge_gradient(
+        base: Color,
+        muted_alpha: f32,
+        normal_alpha: f32,
+        reverse: bool,
+    ) -> Background {
+        clip_two_edge_gradient(base, muted_alpha, normal_alpha, reverse)
+    }
+}
+
+impl<Message: Clone + 'static> MIDIClip<Message> {
+    pub fn new(clip: MIDIClipData) -> Self {
         Self {
             clip,
             clip_width: 12.0,
@@ -1282,16 +1317,31 @@ impl<'a> MIDIClip<'a> {
             left_handle_hovered: false,
             right_handle_hovered: false,
             midi_notes: None,
-            track_name: None,
-            clip_index: 0,
-            on_select: None,
-            on_open: None,
-            drag_enabled: false,
+            interaction: None,
             background: None,
             border_color: None,
             radius: 8.0,
             mode: MIDIClipMode::Widget,
+            base_color: Color::from_rgb8(55, 90, 50),
+            selected_base_color: Color::from_rgb8(84, 133, 72),
+            border: Color::from_rgb8(148, 215, 118),
+            selected_border: Color::from_rgb8(196, 255, 151),
+            resize_handle_width: DEFAULT_RESIZE_HANDLE_WIDTH,
         }
+    }
+
+    pub fn with_colors(
+        mut self,
+        base_color: Color,
+        selected_base_color: Color,
+        border: Color,
+        selected_border: Color,
+    ) -> Self {
+        self.base_color = base_color;
+        self.selected_base_color = selected_base_color;
+        self.border = border;
+        self.selected_border = selected_border;
+        self
     }
 
     pub fn with_size(mut self, clip_width: f32, clip_height: f32) -> Self {
@@ -1310,13 +1360,9 @@ impl<'a> MIDIClip<'a> {
         self
     }
 
-    pub fn hovered_handles(
-        mut self,
-        left_handle_hovered: bool,
-        right_handle_hovered: bool,
-    ) -> Self {
-        self.left_handle_hovered = left_handle_hovered;
-        self.right_handle_hovered = right_handle_hovered;
+    pub fn hovered_handles(mut self, left: bool, right: bool) -> Self {
+        self.left_handle_hovered = left;
+        self.right_handle_hovered = right;
         self
     }
 
@@ -1325,19 +1371,8 @@ impl<'a> MIDIClip<'a> {
         self
     }
 
-    pub fn interactive(
-        mut self,
-        track_name: String,
-        clip_index: usize,
-        on_select: Message,
-        on_open: Message,
-        drag_enabled: bool,
-    ) -> Self {
-        self.track_name = Some(track_name);
-        self.clip_index = clip_index;
-        self.on_select = Some(on_select);
-        self.on_open = Some(on_open);
-        self.drag_enabled = drag_enabled;
+    pub fn interactive(mut self, interaction: MIDIClipInteraction<Message>) -> Self {
+        self.interaction = Some(interaction);
         self.mode = MIDIClipMode::Widget;
         self
     }
@@ -1348,23 +1383,6 @@ impl<'a> MIDIClip<'a> {
         self.radius = radius;
         self.mode = MIDIClipMode::Preview;
         self
-    }
-
-    pub fn clean_name(name: &str) -> String {
-        clean_clip_name(name)
-    }
-
-    pub fn label_for_width(label: &str, width_px: f32) -> String {
-        trim_label_to_width(label, width_px)
-    }
-
-    pub fn two_edge_gradient(
-        base: Color,
-        muted_alpha: f32,
-        normal_alpha: f32,
-        reverse: bool,
-    ) -> Background {
-        clip_two_edge_gradient(base, muted_alpha, normal_alpha, reverse)
     }
 
     pub fn into_element(self) -> Element<'static, Message> {
@@ -1383,12 +1401,9 @@ impl<'a> MIDIClip<'a> {
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .padding(0)
-                    .style(move |_theme| {
-                        use container::Style;
-                        Style {
-                            background: self.background,
-                            ..Style::default()
-                        }
+                    .style(move |_theme| container::Style {
+                        background: self.background,
+                        ..container::Style::default()
                     });
                 container(preview_content)
                     .width(Length::Fixed(self.clip_width))
@@ -1405,61 +1420,25 @@ impl<'a> MIDIClip<'a> {
                     .into()
             }
             MIDIClipMode::Widget => {
-                let track_name = self.track_name.expect("midi clip widget track name");
-                let on_select = self.on_select.expect("midi clip widget on_select");
-                let on_open = self.on_open.expect("midi clip widget on_open");
+                let interaction = self.interaction.expect("midi clip interaction");
                 let left_edge_zone = mouse_area(
                     Space::new()
-                        .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
+                        .width(Length::Fixed(self.resize_handle_width))
                         .height(Length::Fill),
                 )
                 .interaction(mouse::Interaction::ResizingColumn)
-                .on_enter(Message::ClipResizeHandleHover {
-                    kind: Kind::MIDI,
-                    track_idx: track_name.clone(),
-                    clip_idx: self.clip_index,
-                    is_right_side: false,
-                    hovered: true,
-                })
-                .on_exit(Message::ClipResizeHandleHover {
-                    kind: Kind::MIDI,
-                    track_idx: track_name.clone(),
-                    clip_idx: self.clip_index,
-                    is_right_side: false,
-                    hovered: false,
-                })
-                .on_press(Message::ClipResizeStart(
-                    Kind::MIDI,
-                    track_name.clone(),
-                    self.clip_index,
-                    false,
-                ));
+                .on_enter(interaction.edges.left_hover_enter.clone())
+                .on_exit(interaction.edges.left_hover_exit.clone())
+                .on_press(interaction.edges.left_press.clone());
                 let right_edge_zone = mouse_area(
                     Space::new()
-                        .width(Length::Fixed(CLIP_RESIZE_HANDLE_WIDTH))
+                        .width(Length::Fixed(self.resize_handle_width))
                         .height(Length::Fill),
                 )
                 .interaction(mouse::Interaction::ResizingColumn)
-                .on_enter(Message::ClipResizeHandleHover {
-                    kind: Kind::MIDI,
-                    track_idx: track_name.clone(),
-                    clip_idx: self.clip_index,
-                    is_right_side: true,
-                    hovered: true,
-                })
-                .on_exit(Message::ClipResizeHandleHover {
-                    kind: Kind::MIDI,
-                    track_idx: track_name.clone(),
-                    clip_idx: self.clip_index,
-                    is_right_side: true,
-                    hovered: false,
-                })
-                .on_press(Message::ClipResizeStart(
-                    Kind::MIDI,
-                    track_name.clone(),
-                    self.clip_index,
-                    true,
-                ));
+                .on_enter(interaction.edges.right_hover_enter.clone())
+                .on_exit(interaction.edges.right_hover_exit.clone())
+                .on_press(interaction.edges.right_press.clone());
 
                 let mut clip_layers = Vec::with_capacity(2);
                 if let Some(notes) = self.midi_notes {
@@ -1478,31 +1457,30 @@ impl<'a> MIDIClip<'a> {
                         .height(Length::Fill)
                         .padding(0)
                         .style(move |_theme| {
-                            use container::Style;
                             let base = if self.is_selected {
-                                MIDI_CLIP_SELECTED_BASE
+                                self.selected_base_color
                             } else {
-                                MIDI_CLIP_BASE
+                                self.base_color
                             };
                             let (muted_alpha, normal_alpha) = if clip_muted {
                                 (0.42, 0.42)
                             } else {
                                 (0.92, 0.92)
                             };
-                            Style {
+                            container::Style {
                                 background: Some(clip_two_edge_gradient(
                                     base,
                                     muted_alpha,
                                     normal_alpha,
                                     false,
                                 )),
-                                ..Style::default()
+                                ..container::Style::default()
                             }
                         })
                         .into(),
                     pin(left_edge_zone).position(Point::new(0.0, 0.0)).into(),
                     pin(right_edge_zone)
-                        .position(Point::new(self.clip_width - CLIP_RESIZE_HANDLE_WIDTH, 0.0))
+                        .position(Point::new(self.clip_width - self.resize_handle_width, 0.0))
                         .into(),
                 ]))
                 .width(Length::Fixed(self.clip_width))
@@ -1511,9 +1489,9 @@ impl<'a> MIDIClip<'a> {
                     background: None,
                     border: Border {
                         color: if self.is_selected {
-                            MIDI_CLIP_SELECTED_BORDER
+                            self.selected_border
                         } else {
-                            MIDI_CLIP_BORDER
+                            self.border
                         },
                         width: if self.is_selected { 2.2 } else { 1.4 },
                         radius: self.radius.into(),
@@ -1527,15 +1505,11 @@ impl<'a> MIDIClip<'a> {
                 } else {
                     base
                 };
-                let base = base.on_press(on_select).on_double_click(on_open);
-                if self.drag_enabled {
-                    base.on_move(move |point| {
-                        let mut clip_data =
-                            DraggedClip::new(Kind::MIDI, self.clip_index, track_name.clone());
-                        clip_data.start = point;
-                        Message::ClipDrag(clip_data)
-                    })
-                    .into()
+                let base = base
+                    .on_press(interaction.on_select)
+                    .on_double_click(interaction.on_open);
+                if let Some(on_drag) = interaction.on_drag {
+                    base.on_move(move |point| on_drag(point)).into()
                 } else {
                     base.into()
                 }

@@ -1,5 +1,6 @@
 use iced::{Point, Rectangle, Size, mouse, widget::Id};
 use maolan_engine::{kind::Kind, message::Action};
+pub use maolan_widgets::midi::{PianoControllerLane, PianoNrpnKind, PianoRpnKind};
 use std::path::PathBuf;
 
 use crate::state::AudioBackendOption;
@@ -116,15 +117,6 @@ impl fmt::Display for PreferencesDeviceOption {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PianoControllerLane {
-    Controller,
-    Velocity,
-    Rpn,
-    Nrpn,
-    SysEx,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TrackAutomationTarget {
     Volume,
@@ -185,18 +177,6 @@ impl fmt::Display for TrackAutomationTarget {
                 param_id,
                 ..
             } => write!(f, "CLAP {}:{}", instance_id, param_id),
-        }
-    }
-}
-
-impl fmt::Display for PianoControllerLane {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Controller => write!(f, "Controller"),
-            Self::Velocity => write!(f, "Velocity"),
-            Self::Rpn => write!(f, "RPN"),
-            Self::Nrpn => write!(f, "NRPN"),
-            Self::SysEx => write!(f, "SysEx"),
         }
     }
 }
@@ -265,30 +245,6 @@ impl fmt::Display for PianoVelocityKind {
             Self::ReleaseVelocity => write!(f, "Release Velocity"),
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PianoRpnKind {
-    PitchBendSensitivity,
-    FineTuning,
-    CoarseTuning,
-}
-
-impl fmt::Display for PianoRpnKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::PitchBendSensitivity => write!(f, "Pitch Bend Sensitivity"),
-            Self::FineTuning => write!(f, "Fine Tuning"),
-            Self::CoarseTuning => write!(f, "Coarse Tuning"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PianoNrpnKind {
-    Brightness,
-    VibratoRate,
-    VibratoDepth,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -374,16 +330,6 @@ impl fmt::Display for PianoChordKind {
             PianoChordKind::Dominant7 => write!(f, "7"),
             PianoChordKind::Major7 => write!(f, "Maj7"),
             PianoChordKind::Minor7 => write!(f, "Min7"),
-        }
-    }
-}
-
-impl fmt::Display for PianoNrpnKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Brightness => write!(f, "Brightness"),
-            Self::VibratoRate => write!(f, "Vibrato Rate"),
-            Self::VibratoDepth => write!(f, "Vibrato Depth"),
         }
     }
 }

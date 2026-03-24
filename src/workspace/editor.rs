@@ -7,7 +7,6 @@ use crate::{
     },
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State, StateData, Track},
-    widget::clip::{AudioClip as AudioClipWidget, MIDIClip as MIDIClipWidget},
 };
 use iced::{
     Background, Border, Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse,
@@ -18,12 +17,56 @@ use iced::{
     },
 };
 use maolan_engine::kind::Kind;
+use maolan_widgets::clip::{
+    AudioClip as AudioClipWidget, AudioClipData as WidgetAudioClipData,
+    AudioClipInteraction as WidgetAudioClipInteraction, ClipEdgeMessages as WidgetClipEdgeMessages,
+    MIDIClip as MIDIClipWidget, MIDIClipData as WidgetMIDIClipData,
+    MIDIClipInteraction as WidgetMIDIClipInteraction,
+};
 use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
     path::PathBuf,
+    sync::Arc,
 };
+
+fn widget_audio_clip_data(clip: &crate::state::AudioClip) -> WidgetAudioClipData {
+    WidgetAudioClipData {
+        name: clip.name.clone(),
+        start: clip.start,
+        length: clip.length,
+        offset: clip.offset,
+        muted: clip.muted,
+        max_length_samples: clip.max_length_samples,
+        peaks: clip.peaks.clone(),
+        fade_enabled: clip.fade_enabled,
+        fade_in_samples: clip.fade_in_samples,
+        fade_out_samples: clip.fade_out_samples,
+        grouped_clips: clip
+            .grouped_clips
+            .iter()
+            .map(widget_audio_clip_data)
+            .collect(),
+    }
+}
+
+fn widget_midi_clip_data(clip: &crate::state::MIDIClip) -> WidgetMIDIClipData {
+    WidgetMIDIClipData {
+        name: clip.name.clone(),
+        start: clip.start,
+        length: clip.length,
+        offset: clip.offset,
+        input_channel: clip.input_channel,
+        muted: clip.muted,
+        max_length_samples: clip.max_length_samples,
+        grouped_clips: clip
+            .grouped_clips
+            .iter()
+            .map(widget_midi_clip_data)
+            .collect(),
+    }
+}
 
 struct TrackElementViewArgs<'a> {
     state: &'a StateData,
@@ -518,7 +561,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let clip_name = clip.name.clone();
         let clip_label = format!(
             "{}{}{}",
-            AudioClipWidget::clean_name(&clip_name),
+            AudioClipWidget::<Message>::clean_name(&clip_name),
             if clip.take_lane_pinned { " [P]" } else { "" },
             if clip.take_lane_locked { " [L]" } else { "" }
         );
@@ -555,7 +598,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let lane_top = lane_top_base + 1.0;
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
         let clip_height = (lane_clip_height - 2.0).max(8.0);
-        let display_clip_label = AudioClipWidget::label_for_width(&clip_label, clip_width);
+        let display_clip_label =
+            AudioClipWidget::<Message>::label_for_width(&clip_label, clip_width);
         let audio_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
             |(track_idx, clip_idx, kind, is_right_side)| {
                 track_idx == &track_name_cloned
@@ -574,28 +618,87 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         );
 
         if !dragged_to_other_track {
+            let track_name_for_drag = track_name_cloned.clone();
             clips.push(
-                pin(AudioClipWidget::new(clip)
+                pin(AudioClipWidget::new(widget_audio_clip_data(clip))
                     .with_session_root(session_root)
                     .with_pixels_per_sample(pixels_per_sample)
                     .with_size(clip_width, clip_height)
                     .with_label(display_clip_label.clone())
                     .selected(is_selected)
                     .hovered_handles(audio_left_handle_hovered, audio_right_handle_hovered)
-                    .interactive(
-                        track_name_cloned.clone(),
-                        index,
-                        Message::SelectClip {
+                    .interactive(WidgetAudioClipInteraction {
+                        on_select: Message::SelectClip {
                             track_idx: track_name_cloned.clone(),
                             clip_idx: index,
                             kind: Kind::Audio,
                         },
-                        Message::OpenClipPlugins {
+                        on_open: Message::OpenClipPlugins {
                             track_idx: track_name_cloned.clone(),
                             clip_idx: index,
                         },
-                        !clip.take_lane_locked,
-                    )
+                        on_drag: (!clip.take_lane_locked).then_some(Arc::new(move |point| {
+                            let mut clip_data =
+                                DraggedClip::new(Kind::Audio, index, track_name_for_drag.clone());
+                            clip_data.start = point;
+                            Message::ClipDrag(clip_data)
+                        })
+                            as Arc<dyn Fn(Point) -> Message + Send + Sync + 'static>),
+                        edges: WidgetClipEdgeMessages {
+                            left_hover_enter: Message::ClipResizeHandleHover {
+                                kind: Kind::Audio,
+                                track_idx: track_name_cloned.clone(),
+                                clip_idx: index,
+                                is_right_side: false,
+                                hovered: true,
+                            },
+                            left_hover_exit: Message::ClipResizeHandleHover {
+                                kind: Kind::Audio,
+                                track_idx: track_name_cloned.clone(),
+                                clip_idx: index,
+                                is_right_side: false,
+                                hovered: false,
+                            },
+                            left_press: Message::ClipResizeStart(
+                                Kind::Audio,
+                                track_name_cloned.clone(),
+                                index,
+                                false,
+                            ),
+                            right_hover_enter: Message::ClipResizeHandleHover {
+                                kind: Kind::Audio,
+                                track_idx: track_name_cloned.clone(),
+                                clip_idx: index,
+                                is_right_side: true,
+                                hovered: true,
+                            },
+                            right_hover_exit: Message::ClipResizeHandleHover {
+                                kind: Kind::Audio,
+                                track_idx: track_name_cloned.clone(),
+                                clip_idx: index,
+                                is_right_side: true,
+                                hovered: false,
+                            },
+                            right_press: Message::ClipResizeStart(
+                                Kind::Audio,
+                                track_name_cloned.clone(),
+                                index,
+                                true,
+                            ),
+                        },
+                        fade_in_press: Some(Message::FadeResizeStart {
+                            kind: Kind::Audio,
+                            track_idx: track_name_cloned.clone(),
+                            clip_idx: index,
+                            is_fade_out: false,
+                        }),
+                        fade_out_press: Some(Message::FadeResizeStart {
+                            kind: Kind::Audio,
+                            track_idx: track_name_cloned.clone(),
+                            clip_idx: index,
+                            is_fade_out: true,
+                        }),
+                    })
                     .into_element())
                 .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                 .into(),
@@ -636,7 +739,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 }
             };
             clips.push(
-                pin(AudioClipWidget::new(clip)
+                pin(AudioClipWidget::new(widget_audio_clip_data(clip))
                     .with_session_root(session_root)
                     .with_size(clip_width, clip_height)
                     .with_label(display_clip_label.clone())
@@ -651,7 +754,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let clip_name = clip.name.clone();
         let clip_label = format!(
             "{}{}{}",
-            MIDIClipWidget::clean_name(&clip_name),
+            MIDIClipWidget::<Message>::clean_name(&clip_name),
             if clip.take_lane_pinned { " [P]" } else { "" },
             if clip.take_lane_locked { " [L]" } else { "" }
         );
@@ -687,7 +790,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let lane_top = lane_top_base + 1.0;
         let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
         let clip_height = (lane_clip_height - 2.0).max(8.0);
-        let display_clip_label = MIDIClipWidget::label_for_width(&clip_label, clip_width);
+        let display_clip_label =
+            MIDIClipWidget::<Message>::label_for_width(&clip_label, clip_width);
         let midi_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
             |(track_idx, clip_idx, kind, is_right_side)| {
                 track_idx == &track_name_cloned
@@ -709,27 +813,74 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .cloned();
 
         if !dragged_to_other_track {
+            let track_name_for_drag = track_name_cloned.clone();
             clips.push(
-                pin(MIDIClipWidget::new(clip)
+                pin(MIDIClipWidget::new(widget_midi_clip_data(clip))
                     .with_size(clip_width, clip_height)
                     .with_label(display_clip_label.clone())
                     .selected(is_selected)
                     .hovered_handles(midi_left_handle_hovered, midi_right_handle_hovered)
                     .with_notes(midi_notes_for_clip.clone())
-                    .interactive(
-                        track_name_cloned.clone(),
-                        index,
-                        Message::SelectClip {
+                    .interactive(WidgetMIDIClipInteraction {
+                        on_select: Message::SelectClip {
                             track_idx: track_name_cloned.clone(),
                             clip_idx: index,
                             kind: Kind::MIDI,
                         },
-                        Message::OpenMidiPiano {
+                        on_open: Message::OpenMidiPiano {
                             track_idx: track_name_cloned.clone(),
                             clip_idx: index,
                         },
-                        !clip.take_lane_locked,
-                    )
+                        on_drag: (!clip.take_lane_locked).then_some(Arc::new(move |point| {
+                            let mut clip_data =
+                                DraggedClip::new(Kind::MIDI, index, track_name_for_drag.clone());
+                            clip_data.start = point;
+                            Message::ClipDrag(clip_data)
+                        })
+                            as Arc<dyn Fn(Point) -> Message + Send + Sync + 'static>),
+                        edges: WidgetClipEdgeMessages {
+                            left_hover_enter: Message::ClipResizeHandleHover {
+                                kind: Kind::MIDI,
+                                track_idx: track_name_cloned.clone(),
+                                clip_idx: index,
+                                is_right_side: false,
+                                hovered: true,
+                            },
+                            left_hover_exit: Message::ClipResizeHandleHover {
+                                kind: Kind::MIDI,
+                                track_idx: track_name_cloned.clone(),
+                                clip_idx: index,
+                                is_right_side: false,
+                                hovered: false,
+                            },
+                            left_press: Message::ClipResizeStart(
+                                Kind::MIDI,
+                                track_name_cloned.clone(),
+                                index,
+                                false,
+                            ),
+                            right_hover_enter: Message::ClipResizeHandleHover {
+                                kind: Kind::MIDI,
+                                track_idx: track_name_cloned.clone(),
+                                clip_idx: index,
+                                is_right_side: true,
+                                hovered: true,
+                            },
+                            right_hover_exit: Message::ClipResizeHandleHover {
+                                kind: Kind::MIDI,
+                                track_idx: track_name_cloned.clone(),
+                                clip_idx: index,
+                                is_right_side: true,
+                                hovered: false,
+                            },
+                            right_press: Message::ClipResizeStart(
+                                Kind::MIDI,
+                                track_name_cloned.clone(),
+                                index,
+                                true,
+                            ),
+                        },
+                    })
                     .into_element())
                 .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                 .into(),
@@ -740,9 +891,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
             let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples);
             let preview_fill = if active_target_valid {
-                MIDIClipWidget::two_edge_gradient(MIDI_CLIP_SELECTED_BASE, 0.66, 0.66, false)
+                MIDIClipWidget::<Message>::two_edge_gradient(
+                    MIDI_CLIP_SELECTED_BASE,
+                    0.66,
+                    0.66,
+                    false,
+                )
             } else {
-                MIDIClipWidget::two_edge_gradient(
+                MIDIClipWidget::<Message>::two_edge_gradient(
                     Color {
                         r: 0.72,
                         g: 0.18,
@@ -770,7 +926,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 }
             };
             clips.push(
-                pin(MIDIClipWidget::new(clip)
+                pin(MIDIClipWidget::new(widget_midi_clip_data(clip))
                     .with_size(clip_width, clip_height)
                     .with_label(display_clip_label.clone())
                     .with_notes(midi_notes_for_clip.clone())
@@ -811,14 +967,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             continue;
                         };
                         let preview_fill = if active_target_valid {
-                            AudioClipWidget::two_edge_gradient(
+                            AudioClipWidget::<Message>::two_edge_gradient(
                                 AUDIO_CLIP_SELECTED_BASE,
                                 0.7,
                                 0.7,
                                 true,
                             )
                         } else {
-                            AudioClipWidget::two_edge_gradient(
+                            AudioClipWidget::<Message>::two_edge_gradient(
                                 Color {
                                     r: 0.72,
                                     g: 0.18,
@@ -856,12 +1012,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         };
                         let preview_start =
                             snap_sample(source_clip.start as f32 + delta_samples, delta_samples);
-                        let display_clip_label = AudioClipWidget::label_for_width(
-                            &AudioClipWidget::clean_name(&source_clip.name),
+                        let display_clip_label = AudioClipWidget::<Message>::label_for_width(
+                            &AudioClipWidget::<Message>::clean_name(&source_clip.name),
                             clip_width,
                         );
                         clips.push(
-                            pin(AudioClipWidget::new(source_clip)
+                            pin(AudioClipWidget::new(widget_audio_clip_data(source_clip))
                                 .with_session_root(session_root)
                                 .with_size(clip_width, clip_height)
                                 .with_label(display_clip_label)
@@ -900,14 +1056,14 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             continue;
                         };
                         let preview_fill = if active_target_valid {
-                            MIDIClipWidget::two_edge_gradient(
+                            MIDIClipWidget::<Message>::two_edge_gradient(
                                 MIDI_CLIP_SELECTED_BASE,
                                 0.7,
                                 0.7,
                                 false,
                             )
                         } else {
-                            MIDIClipWidget::two_edge_gradient(
+                            MIDIClipWidget::<Message>::two_edge_gradient(
                                 Color {
                                     r: 0.72,
                                     g: 0.18,
@@ -949,12 +1105,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         };
                         let preview_start =
                             snap_sample(source_clip.start as f32 + delta_samples, delta_samples);
-                        let display_clip_label = MIDIClipWidget::label_for_width(
-                            &MIDIClipWidget::clean_name(&source_clip.name),
+                        let display_clip_label = MIDIClipWidget::<Message>::label_for_width(
+                            &MIDIClipWidget::<Message>::clean_name(&source_clip.name),
                             clip_width,
                         );
                         clips.push(
-                            pin(MIDIClipWidget::new(source_clip)
+                            pin(MIDIClipWidget::new(widget_midi_clip_data(source_clip))
                                 .with_size(clip_width, lane_clip_height)
                                 .with_label(display_clip_label)
                                 .preview(
@@ -990,7 +1146,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         let preview_length = preview_current - preview_start;
         let preview_clip = container(
             container(Stack::with_children(vec![
-                AudioClipWidget::waveform_overlay(
+                AudioClipWidget::<Message>::waveform_overlay(
                     preview_peaks,
                     None,
                     0,

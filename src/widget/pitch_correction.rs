@@ -8,10 +8,7 @@ use crate::{
     state::{
         MIN_PITCH_CORRECTION_FRAME_LIKENESS, PitchCorrectionData, PitchCorrectionPoint, State,
     },
-    widget::{
-        note_area::{NoteArea, PianoGridScrolls, piano_grid_scrollers},
-        piano::{self, OctaveKeyboard},
-    },
+    widget::piano,
 };
 use iced::{
     Background, Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, mouse,
@@ -20,6 +17,10 @@ use iced::{
         canvas::{Action as CanvasAction, Frame, Geometry, Path, Program},
         checkbox, column, container, pin, row, slider, text, vertical_slider,
     },
+};
+use maolan_widgets::{
+    note_area::{NoteArea, PianoGridScrolls, piano_grid_scrollers},
+    piano::OctaveKeyboard,
 };
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -127,6 +128,7 @@ impl PitchCorrection {
             pixels_per_sample,
             samples_per_bar: Some(samples_per_bar),
             playhead_x,
+            playhead_width: crate::consts::workspace::PLAYHEAD_WIDTH_PX,
             clip_length_samples: roll.clip_length_samples,
         }
         .view(content);
@@ -135,9 +137,14 @@ impl PitchCorrection {
             let octave = (OCTAVES - 1 - octave_idx) as u8;
             let octave_h = piano::octave_note_count(octave) as f32 * row_h;
             col.push(
-                canvas(OctaveKeyboard::new(octave, HashMap::new()))
-                    .width(Length::Fixed(KEYBOARD_WIDTH))
-                    .height(Length::Fixed(octave_h)),
+                canvas(OctaveKeyboard::new(
+                    octave,
+                    HashMap::new(),
+                    |_| Message::None,
+                    |_| Message::None,
+                ))
+                .width(Length::Fixed(KEYBOARD_WIDTH))
+                .height(Length::Fixed(octave_h)),
             )
         });
         let keyboard = container(keyboard).style(|_theme| container::Style {
@@ -156,6 +163,8 @@ impl PitchCorrection {
             notes_w,
             scroll_x,
             scroll_y,
+            Message::PianoScrollYChanged,
+            |x, y| Message::PianoScrollChanged { x, y },
         );
 
         let info_strip = container(

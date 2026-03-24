@@ -25,6 +25,7 @@ use maolan_engine::{
     message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin, PluginGraphSnapshot},
     vst3::{Vst3PluginInfo, Vst3PluginState},
 };
+pub use maolan_widgets::midi::{PianoControllerPoint, PianoNote, PianoSysExPoint};
 #[cfg(target_os = "freebsd")]
 pub(crate) use platform_freebsd::discover_freebsd_audio_devices;
 #[cfg(target_os = "linux")]
@@ -324,29 +325,6 @@ pub struct TrackMarkerDialog {
     pub sample: usize,
     pub marker_index: Option<usize>,
     pub name: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct PianoNote {
-    pub start_sample: usize,
-    pub length_samples: usize,
-    pub pitch: u8,
-    pub velocity: u8,
-    pub channel: u8,
-}
-
-#[derive(Debug, Clone)]
-pub struct PianoControllerPoint {
-    pub sample: usize,
-    pub controller: u8,
-    pub value: u8,
-    pub channel: u8,
-}
-
-#[derive(Debug, Clone)]
-pub struct PianoSysExPoint {
-    pub sample: usize,
-    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]
