@@ -27,7 +27,10 @@ use iced_aw::{
 };
 use maolan_widgets::{
     controller::{self, ControllerKindOption},
-    note_area::{NoteArea, PianoGridScrolls, piano_grid_scrollers},
+    note_area::{
+        NoteArea, PianoGridScrollCallbacks, PianoGridScrollLayout, PianoGridScrolls,
+        piano_grid_scrollers,
+    },
     piano::{OctaveKeyboard, row_height},
     piano_roll::PianoRoll,
     vertical_scrollbar::VerticalScrollbar,
@@ -652,12 +655,16 @@ impl MIDIEdit {
         } = piano_grid_scrollers(
             keyboard_scroll.into(),
             notes_content,
-            notes_h,
-            ctrl_w,
-            state.piano_scroll_x,
-            state.piano_scroll_y,
-            Message::PianoScrollYChanged,
-            |x, y| Message::PianoScrollChanged { x, y },
+            PianoGridScrollLayout {
+                notes_h,
+                notes_w: ctrl_w,
+                scroll_x: state.piano_scroll_x,
+                scroll_y: state.piano_scroll_y,
+            },
+            PianoGridScrollCallbacks {
+                on_scroll_y: Message::PianoScrollYChanged,
+                on_scroll_xy: |x, y| Message::PianoScrollChanged { x, y },
+            },
         );
 
         let ctrl_scroll = scrollable(

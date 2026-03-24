@@ -118,6 +118,42 @@ enum JackTransportPlaySync {
     Stop,
 }
 
+#[derive(Clone, Copy)]
+struct AudioOpenRequest<'a> {
+    device: &'a str,
+    input_device: Option<&'a str>,
+    sample_rate_hz: i32,
+    bits: i32,
+    exclusive: bool,
+    period_frames: usize,
+    nperiods: usize,
+    sync_mode: bool,
+}
+
+struct ClipAddRequest<'a> {
+    name: &'a str,
+    track_name: &'a str,
+    start: usize,
+    length: usize,
+    offset: usize,
+    input_channel: usize,
+    muted: bool,
+    peaks_file: Option<String>,
+    kind: Kind,
+    fade_enabled: bool,
+    fade_in_samples: usize,
+    fade_out_samples: usize,
+    source_name: Option<String>,
+    source_offset: Option<usize>,
+    source_length: Option<usize>,
+    preview_name: Option<String>,
+    pitch_correction_points: Vec<crate::message::PitchCorrectionPointData>,
+    pitch_correction_frame_likeness: Option<f32>,
+    pitch_correction_inertia_ms: Option<u16>,
+    pitch_correction_formant_compensation: Option<bool>,
+    plugin_graph_json: Option<serde_json::Value>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct JackTransportSyncDecision {
     play_sync: Option<JackTransportPlaySync>,
@@ -1090,18 +1126,8 @@ impl Engine {
     }
 
     #[cfg(unix)]
-    async fn maybe_open_jack_runtime(
-        &mut self,
-        device: &str,
-        input_device: Option<&str>,
-        sample_rate_hz: i32,
-        bits: i32,
-        exclusive: bool,
-        period_frames: usize,
-        nperiods: usize,
-        sync_mode: bool,
-    ) -> Option<()> {
-        if !device.eq_ignore_ascii_case("jack") {
+    async fn maybe_open_jack_runtime(&mut self, request: AudioOpenRequest<'_>) -> Option<()> {
+        if !request.device.eq_ignore_ascii_case("jack") {
             return None;
         }
         match JackRuntime::new(
@@ -1132,14 +1158,14 @@ impl Engine {
                         .await;
                 }
                 self.notify_clients(Ok(Action::OpenAudioDevice {
-                    device: device.to_string(),
-                    input_device: input_device.map(ToOwned::to_owned),
-                    sample_rate_hz,
-                    bits,
-                    exclusive,
-                    period_frames,
-                    nperiods,
-                    sync_mode,
+                    device: request.device.to_string(),
+                    input_device: request.input_device.map(ToOwned::to_owned),
+                    sample_rate_hz: request.sample_rate_hz,
+                    bits: request.bits,
+                    exclusive: request.exclusive,
+                    period_frames: request.period_frames,
+                    nperiods: request.nperiods,
+                    sync_mode: request.sync_mode,
                 }))
                 .await;
                 self.awaiting_hwfinished = true;
@@ -1355,8 +1381,7 @@ impl Engine {
     }
 
     fn can_schedule_hw_cycle(&self) -> bool {
-        let can_schedule = self.hw_worker.is_some() || self.jack_runtime.is_some();
-        can_schedule
+        self.hw_worker.is_some() || self.jack_runtime.is_some()
     }
 
     async fn ensure_hw_worker_running(&mut self) {
@@ -2622,62 +2647,41 @@ impl Engine {
             .ok_or_else(|| format!("Track not found: {track_name}"))
     }
 
-    fn add_clip_to_track(
-        &self,
-        name: &str,
-        track_name: &str,
-        start: usize,
-        length: usize,
-        offset: usize,
-        input_channel: usize,
-        muted: bool,
-        peaks_file: Option<String>,
-        kind: Kind,
-        fade_enabled: bool,
-        fade_in_samples: usize,
-        fade_out_samples: usize,
-        source_name: Option<String>,
-        source_offset: Option<usize>,
-        source_length: Option<usize>,
-        preview_name: Option<String>,
-        pitch_correction_points: Vec<crate::message::PitchCorrectionPointData>,
-        pitch_correction_frame_likeness: Option<f32>,
-        pitch_correction_inertia_ms: Option<u16>,
-        pitch_correction_formant_compensation: Option<bool>,
-        plugin_graph_json: Option<serde_json::Value>,
-    ) {
-        if let Some(track) = self.state.lock().tracks.get(track_name) {
+    fn add_clip_to_track(&self, request: ClipAddRequest<'_>) {
+        if let Some(track) = self.state.lock().tracks.get(request.track_name) {
             let track = track.lock();
-            match kind {
+            match request.kind {
                 Kind::Audio => {
-                    let mut clip = AudioClip::new(name.to_string(), start, length);
-                    clip.offset = offset;
+                    let mut clip =
+                        AudioClip::new(request.name.to_string(), request.start, request.length);
+                    clip.offset = request.offset;
                     let max_lane = track.audio.ins.len().saturating_sub(1);
-                    clip.input_channel = input_channel.min(max_lane);
-                    clip.muted = muted;
-                    clip.peaks_file = peaks_file;
-                    clip.fade_enabled = fade_enabled;
-                    clip.fade_in_samples = fade_in_samples;
-                    clip.fade_out_samples = fade_out_samples;
-                    clip.pitch_correction_preview_name = preview_name;
-                    clip.pitch_correction_source_name = source_name;
-                    clip.pitch_correction_source_offset = source_offset;
-                    clip.pitch_correction_source_length = source_length;
-                    clip.pitch_correction_points = pitch_correction_points;
-                    clip.pitch_correction_frame_likeness = pitch_correction_frame_likeness;
-                    clip.pitch_correction_inertia_ms = pitch_correction_inertia_ms;
+                    clip.input_channel = request.input_channel.min(max_lane);
+                    clip.muted = request.muted;
+                    clip.peaks_file = request.peaks_file;
+                    clip.fade_enabled = request.fade_enabled;
+                    clip.fade_in_samples = request.fade_in_samples;
+                    clip.fade_out_samples = request.fade_out_samples;
+                    clip.pitch_correction_preview_name = request.preview_name;
+                    clip.pitch_correction_source_name = request.source_name;
+                    clip.pitch_correction_source_offset = request.source_offset;
+                    clip.pitch_correction_source_length = request.source_length;
+                    clip.pitch_correction_points = request.pitch_correction_points;
+                    clip.pitch_correction_frame_likeness = request.pitch_correction_frame_likeness;
+                    clip.pitch_correction_inertia_ms = request.pitch_correction_inertia_ms;
                     clip.pitch_correction_formant_compensation =
-                        pitch_correction_formant_compensation;
-                    clip.plugin_graph_json = plugin_graph_json;
+                        request.pitch_correction_formant_compensation;
+                    clip.plugin_graph_json = request.plugin_graph_json;
                     track.audio.clips.push(clip);
                     track.clip_pitch_shifters.clear();
                 }
                 Kind::MIDI => {
-                    let mut clip = MIDIClip::new(name.to_string(), start, length);
-                    clip.offset = offset;
+                    let mut clip =
+                        MIDIClip::new(request.name.to_string(), request.start, request.length);
+                    clip.offset = request.offset;
                     let max_lane = track.midi.ins.len().saturating_sub(1);
-                    clip.input_channel = input_channel.min(max_lane);
-                    clip.muted = muted;
+                    clip.input_channel = request.input_channel.min(max_lane);
+                    clip.muted = request.muted;
                     track.midi.clips.push(clip);
                 }
             }
@@ -3555,11 +3559,10 @@ impl Engine {
                 }
                 let panic_events = self.note_off_events_for_all_active_tracks();
                 if let Some(worker) = &self.hw_worker {
-                    if !panic_events.is_empty() {
-                        if let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
-                        {
-                            error!("Error sending stop MIDI panic events {e}");
-                        }
+                    if !panic_events.is_empty()
+                        && let Err(e) = worker.tx.send(Message::HWMidiOutEvents(panic_events)).await
+                    {
+                        error!("Error sending stop MIDI panic events {e}");
                     }
                 } else {
                     self.pending_hw_midi_out_events_by_device
@@ -4222,12 +4225,12 @@ impl Engine {
                         return;
                     }
                 };
-                if let Some(master_name) = master_track {
-                    if master_name == track_name {
-                        self.notify_clients(Err("Track cannot be its own VCA master".to_string()))
-                            .await;
-                        return;
-                    }
+                if let Some(master_name) = master_track
+                    && master_name == track_name
+                {
+                    self.notify_clients(Err("Track cannot be its own VCA master".to_string()))
+                        .await;
+                    return;
                 }
                 track.lock().set_vca_master(master_track.clone());
             }
@@ -5416,7 +5419,7 @@ impl Engine {
                 pitch_correction_formant_compensation,
                 ref plugin_graph_json,
             } => {
-                self.add_clip_to_track(
+                self.add_clip_to_track(ClipAddRequest {
                     name,
                     track_name,
                     start,
@@ -5424,21 +5427,21 @@ impl Engine {
                     offset,
                     input_channel,
                     muted,
-                    peaks_file.clone(),
+                    peaks_file: peaks_file.clone(),
                     kind,
                     fade_enabled,
                     fade_in_samples,
                     fade_out_samples,
-                    source_name.clone(),
+                    source_name: source_name.clone(),
                     source_offset,
                     source_length,
-                    preview_name.clone(),
-                    pitch_correction_points.clone(),
+                    preview_name: preview_name.clone(),
+                    pitch_correction_points: pitch_correction_points.clone(),
                     pitch_correction_frame_likeness,
                     pitch_correction_inertia_ms,
                     pitch_correction_formant_compensation,
-                    plugin_graph_json.clone(),
-                );
+                    plugin_graph_json: plugin_graph_json.clone(),
+                });
             }
             Action::AddGroupedClip {
                 ref track_name,
@@ -5824,20 +5827,17 @@ impl Engine {
                 nperiods,
                 sync_mode,
             } => {
-                if self
-                    .maybe_open_jack_runtime(
-                        device,
-                        input_device.as_deref(),
-                        sample_rate_hz,
-                        bits,
-                        exclusive,
-                        period_frames,
-                        nperiods,
-                        sync_mode,
-                    )
-                    .await
-                    .is_some()
-                {
+                let request = AudioOpenRequest {
+                    device,
+                    input_device: input_device.as_deref(),
+                    sample_rate_hz,
+                    bits,
+                    exclusive,
+                    period_frames,
+                    nperiods,
+                    sync_mode,
+                };
+                if self.maybe_open_jack_runtime(request).await.is_some() {
                     return;
                 }
                 let hw_opts = Self::build_hw_options(exclusive, period_frames, nperiods, sync_mode);

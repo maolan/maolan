@@ -137,8 +137,8 @@ impl Worker {
             )
         };
         let (original_level, original_balance) = {
-            let mut t = target_track.lock();
-            Self::prepare_track_for_freeze_render(&mut t)
+            let t = target_track.lock();
+            Self::prepare_track_for_freeze_render(t)
         };
 
         let mut rendered = vec![0.0_f32; job.length_samples.saturating_mul(channels)];
@@ -146,12 +146,8 @@ impl Worker {
         while cursor < job.length_samples {
             if job.cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 {
-                    let mut t = target_track.lock();
-                    Self::restore_track_after_freeze_render(
-                        &mut t,
-                        original_level,
-                        original_balance,
-                    );
+                    let t = target_track.lock();
+                    Self::restore_track_after_freeze_render(t, original_level, original_balance);
                 }
                 let _ = self
                     .tx
@@ -251,8 +247,8 @@ impl Worker {
             write_wav::<f32, _>(&job.output_path, &rendered, sample_rate, channels as u16)
         {
             {
-                let mut t = target_track.lock();
-                Self::restore_track_after_freeze_render(&mut t, original_level, original_balance);
+                let t = target_track.lock();
+                Self::restore_track_after_freeze_render(t, original_level, original_balance);
             }
             let _ = self
                 .tx
@@ -268,8 +264,8 @@ impl Worker {
         }
 
         {
-            let mut t = target_track.lock();
-            Self::restore_track_after_freeze_render(&mut t, original_level, original_balance);
+            let t = target_track.lock();
+            Self::restore_track_after_freeze_render(t, original_level, original_balance);
         }
 
         let _ = self

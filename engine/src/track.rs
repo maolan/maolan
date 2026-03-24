@@ -72,6 +72,16 @@ struct ClipPluginRuntime {
     plugin_midi_connections: Vec<PluginGraphConnection>,
 }
 
+#[derive(Clone, Copy)]
+struct ClipRuntimeProcessContext {
+    transport_sample: usize,
+    loop_enabled: bool,
+    loop_range_samples: Option<(usize, usize)>,
+    tempo_bpm: f64,
+    tsig_num: u16,
+    tsig_denom: u16,
+}
+
 impl ClipPluginRuntime {
     fn setup_ports(&self) {
         for source in &self.input_sources {
@@ -231,12 +241,7 @@ impl ClipPluginRuntime {
         &mut self,
         input_blocks: &[Vec<f32>],
         request_len: usize,
-        transport_sample: usize,
-        loop_enabled: bool,
-        loop_range_samples: Option<(usize, usize)>,
-        tempo_bpm: f64,
-        tsig_num: u16,
-        tsig_denom: u16,
+        context: ClipRuntimeProcessContext,
     ) -> Vec<Vec<f32>> {
         self.setup_ports();
         for (source, samples) in self.input_sources.iter().zip(input_blocks.iter()) {
@@ -294,11 +299,11 @@ impl ClipPluginRuntime {
                         request_len,
                         &midi_inputs,
                         Lv2TransportInfo {
-                            transport_sample,
+                            transport_sample: context.transport_sample,
                             playing: false,
-                            bpm: tempo_bpm,
-                            tsig_num: u32::from(tsig_num),
-                            tsig_denom: u32::from(tsig_denom),
+                            bpm: context.tempo_bpm,
+                            tsig_num: u32::from(context.tsig_num),
+                            tsig_denom: u32::from(context.tsig_denom),
                         },
                     );
                     for (port, events) in midi_outputs.into_iter().enumerate() {
@@ -374,13 +379,13 @@ impl ClipPluginRuntime {
                         request_len,
                         &clap_input,
                         ClapTransportInfo {
-                            transport_sample,
+                            transport_sample: context.transport_sample,
                             playing: false,
-                            loop_enabled,
-                            loop_range_samples,
-                            bpm: tempo_bpm,
-                            tsig_num,
-                            tsig_denom,
+                            loop_enabled: context.loop_enabled,
+                            loop_range_samples: context.loop_range_samples,
+                            bpm: context.tempo_bpm,
+                            tsig_num: context.tsig_num,
+                            tsig_denom: context.tsig_denom,
                         },
                     );
                     for evt in outputs {
@@ -746,14 +751,12 @@ impl Track {
         let needs_new = self
             .metronome_source
             .as_ref()
-            .map_or(true, |src| src.buffer.lock().len() < needed);
+            .is_none_or(|src| src.buffer.lock().len() < needed);
         if needs_new {
             self.metronome_source = Some(Arc::new(AudioIO::new(needed)));
             self.invalidate_audio_route_cache();
         }
-        let Some(src) = self.metronome_source.clone() else {
-            return None;
-        };
+        let src = self.metronome_source.clone()?;
         let mut route_changed = false;
         for out in &self.audio.outs {
             if !out
@@ -800,7 +803,7 @@ impl Track {
                 if beat_sample >= seg_start {
                     let hit_frame = frame_offset + (beat_sample - seg_start);
                     if hit_frame < frames {
-                        let accented = beat_idx % beats_per_bar == 0;
+                        let accented = beat_idx.is_multiple_of(beats_per_bar);
                         let freq = if accented { 1_760.0_f32 } else { 1_320.0_f32 };
                         let amp = if accented { 0.30_f32 } else { 0.22_f32 } * metronome_gain;
                         let click_len = ((sample_rate as usize) / 50).max(64);
@@ -1526,7 +1529,7 @@ impl Track {
         Some(loaded)
     }
 
-    fn clip_playback_name<'a>(clip: &'a crate::audio::clip::AudioClip) -> &'a str {
+    fn clip_playback_name(clip: &crate::audio::clip::AudioClip) -> &str {
         if let Some(preview_name) = clip.pitch_correction_preview_name.as_deref() {
             preview_name
         } else if !clip.pitch_correction_points.is_empty() {
@@ -1901,12 +1904,14 @@ impl Track {
         Ok(runtime.process(
             input_blocks,
             request_len,
-            absolute_start_sample,
-            self.loop_enabled,
-            self.loop_range_samples,
-            self.tempo_bpm,
-            self.tsig_num,
-            self.tsig_denom,
+            ClipRuntimeProcessContext {
+                transport_sample: absolute_start_sample,
+                loop_enabled: self.loop_enabled,
+                loop_range_samples: self.loop_range_samples,
+                tempo_bpm: self.tempo_bpm,
+                tsig_num: self.tsig_num,
+                tsig_denom: self.tsig_denom,
+            },
         ))
     }
 
@@ -2077,11 +2082,14 @@ impl Track {
                                 + Self::pitch_shift_for_sample(clip, local_end, inertia_samples))
                                 / 3.0;
                         let scale = 2.0_f64.powf((semitones as f64) / 12.0);
-                        for ch in 0..effective_channels {
+                        for (ch, channel_input) in
+                            input.iter_mut().enumerate().take(effective_channels)
+                        {
                             let source_channel = if buffer.channels == 1 { 0 } else { ch };
-                            for i in 0..block_size {
+                            for (i, sample) in channel_input.iter_mut().enumerate().take(block_size)
+                            {
                                 let source_frame = block_start.saturating_add(i);
-                                input[ch][i] = if source_frame < total_frames {
+                                *sample = if source_frame < total_frames {
                                     buffer.samples[source_frame * buffer.channels + source_channel]
                                 } else {
                                     0.0
@@ -2092,7 +2100,7 @@ impl Track {
                     })
             };
             let mut input_blocks = vec![vec![0.0; request_len]; input_count];
-            for in_channel in 0..input_count {
+            for (in_channel, block) in input_blocks.iter_mut().enumerate().take(input_count) {
                 let source_channel = if effective_channels == 1 {
                     0
                 } else if in_channel < effective_channels {
@@ -2100,9 +2108,7 @@ impl Track {
                 } else {
                     continue;
                 };
-                for i in 0..request_len {
-                    input_blocks[in_channel][i] = corrected[source_channel][i];
-                }
+                block[..request_len].copy_from_slice(&corrected[source_channel][..request_len]);
             }
             Self::apply_audio_clip_fades(
                 clip,
@@ -2130,7 +2136,11 @@ impl Track {
             return None;
         }
         let mut input_blocks = vec![vec![0.0; request_len]; self.audio.ins.len().max(1)];
-        for in_channel in 0..self.audio.ins.len().max(1) {
+        for (in_channel, block) in input_blocks
+            .iter_mut()
+            .enumerate()
+            .take(self.audio.ins.len().max(1))
+        {
             let source_channel = if channels == 1 {
                 0
             } else if in_channel < channels {
@@ -2138,7 +2148,7 @@ impl Track {
             } else {
                 continue;
             };
-            for i in 0..request_len {
+            for (i, sample) in block.iter_mut().enumerate().take(request_len) {
                 let absolute_sample = absolute_from + i;
                 let clip_idx = absolute_sample
                     .saturating_sub(clip_start)
@@ -2146,7 +2156,7 @@ impl Track {
                 if clip_idx >= total_frames {
                     break;
                 }
-                input_blocks[in_channel][i] = buffer.samples[clip_idx * channels + source_channel];
+                *sample = buffer.samples[clip_idx * channels + source_channel];
             }
         }
         Self::apply_audio_clip_fades(clip, clip_start, clip_len, absolute_from, &mut input_blocks);
@@ -2722,37 +2732,8 @@ impl Track {
     }
 
     #[cfg(unix)]
-    fn push_plugin_graph_plugin(
-        plugins: &mut Vec<PluginGraphPlugin>,
-        node: PluginGraphNode,
-        instance_id: usize,
-        format: &'static str,
-        uri: String,
-        plugin_id: String,
-        name: String,
-        main_audio_inputs: usize,
-        main_audio_outputs: usize,
-        audio_inputs: usize,
-        audio_outputs: usize,
-        midi_inputs: usize,
-        midi_outputs: usize,
-        state: Option<Lv2PluginState>,
-    ) {
-        plugins.push(PluginGraphPlugin {
-            node,
-            instance_id,
-            format: format.to_string(),
-            uri,
-            plugin_id,
-            name,
-            main_audio_inputs,
-            main_audio_outputs,
-            audio_inputs,
-            audio_outputs,
-            midi_inputs,
-            midi_outputs,
-            state,
-        });
+    fn push_plugin_graph_plugin(plugins: &mut Vec<PluginGraphPlugin>, plugin: PluginGraphPlugin) {
+        plugins.push(plugin);
     }
 
     #[cfg(unix)]
@@ -2762,55 +2743,61 @@ impl Track {
         for instance in &self.lv2_processors {
             Self::push_plugin_graph_plugin(
                 &mut plugins,
-                PluginGraphNode::Lv2PluginInstance(instance.id),
-                instance.id,
-                "LV2",
-                instance.processor.uri().to_string(),
-                String::new(),
-                instance.processor.name().to_string(),
-                instance.processor.main_audio_input_count(),
-                instance.processor.main_audio_output_count(),
-                instance.processor.audio_input_count(),
-                instance.processor.audio_output_count(),
-                instance.processor.midi_input_count(),
-                instance.processor.midi_output_count(),
-                Some(instance.processor.snapshot_state()),
+                PluginGraphPlugin {
+                    node: PluginGraphNode::Lv2PluginInstance(instance.id),
+                    instance_id: instance.id,
+                    format: "LV2".to_string(),
+                    uri: instance.processor.uri().to_string(),
+                    plugin_id: String::new(),
+                    name: instance.processor.name().to_string(),
+                    main_audio_inputs: instance.processor.main_audio_input_count(),
+                    main_audio_outputs: instance.processor.main_audio_output_count(),
+                    audio_inputs: instance.processor.audio_input_count(),
+                    audio_outputs: instance.processor.audio_output_count(),
+                    midi_inputs: instance.processor.midi_input_count(),
+                    midi_outputs: instance.processor.midi_output_count(),
+                    state: Some(instance.processor.snapshot_state()),
+                },
             );
         }
         for instance in &self.vst3_processors {
             Self::push_plugin_graph_plugin(
                 &mut plugins,
-                PluginGraphNode::Vst3PluginInstance(instance.id),
-                instance.id,
-                "VST3",
-                instance.processor.path().to_string(),
-                instance.processor.plugin_id().to_string(),
-                instance.processor.name().to_string(),
-                instance.processor.main_audio_input_count(),
-                instance.processor.main_audio_output_count(),
-                instance.processor.audio_inputs().len(),
-                instance.processor.audio_outputs().len(),
-                instance.processor.midi_input_count(),
-                instance.processor.midi_output_count(),
-                None,
+                PluginGraphPlugin {
+                    node: PluginGraphNode::Vst3PluginInstance(instance.id),
+                    instance_id: instance.id,
+                    format: "VST3".to_string(),
+                    uri: instance.processor.path().to_string(),
+                    plugin_id: instance.processor.plugin_id().to_string(),
+                    name: instance.processor.name().to_string(),
+                    main_audio_inputs: instance.processor.main_audio_input_count(),
+                    main_audio_outputs: instance.processor.main_audio_output_count(),
+                    audio_inputs: instance.processor.audio_inputs().len(),
+                    audio_outputs: instance.processor.audio_outputs().len(),
+                    midi_inputs: instance.processor.midi_input_count(),
+                    midi_outputs: instance.processor.midi_output_count(),
+                    state: None,
+                },
             );
         }
         for instance in &self.clap_plugins {
             Self::push_plugin_graph_plugin(
                 &mut plugins,
-                PluginGraphNode::ClapPluginInstance(instance.id),
-                instance.id,
-                "CLAP",
-                instance.processor.path().to_string(),
-                String::new(),
-                instance.processor.name().to_string(),
-                instance.processor.main_audio_input_count(),
-                instance.processor.main_audio_output_count(),
-                instance.processor.audio_inputs().len(),
-                instance.processor.audio_outputs().len(),
-                instance.processor.midi_input_count(),
-                instance.processor.midi_output_count(),
-                None,
+                PluginGraphPlugin {
+                    node: PluginGraphNode::ClapPluginInstance(instance.id),
+                    instance_id: instance.id,
+                    format: "CLAP".to_string(),
+                    uri: instance.processor.path().to_string(),
+                    plugin_id: String::new(),
+                    name: instance.processor.name().to_string(),
+                    main_audio_inputs: instance.processor.main_audio_input_count(),
+                    main_audio_outputs: instance.processor.main_audio_output_count(),
+                    audio_inputs: instance.processor.audio_inputs().len(),
+                    audio_outputs: instance.processor.audio_outputs().len(),
+                    midi_inputs: instance.processor.midi_input_count(),
+                    midi_outputs: instance.processor.midi_output_count(),
+                    state: None,
+                },
             );
         }
         plugins

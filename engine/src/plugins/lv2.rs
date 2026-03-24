@@ -2276,7 +2276,7 @@ fn count_main_audio_ports(
         .filter(|port| port.is_a(audio_port) && port.is_a(direction_port))
         .filter(|port| {
             port.get(port_group_predicate)
-                .is_some_and(|group| main_groups.iter().any(|main| *main == group))
+                .is_some_and(|group| main_groups.contains(&group))
         })
         .count();
 

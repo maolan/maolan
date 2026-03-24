@@ -211,10 +211,9 @@ impl ClapProcessor {
                 port.process();
             }
         }
-        let (processed, processed_midi) = match self.process_native(frames, midi_in, transport) {
-            Ok(v) => v,
-            Err(_) => (false, Vec::new()),
-        };
+        let (processed, processed_midi) = self
+            .process_native(frames, midi_in, transport)
+            .unwrap_or_default();
         if !processed {
             for out in &self.audio_outputs {
                 let out_buf = out.buffer.lock();

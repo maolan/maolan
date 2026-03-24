@@ -19,7 +19,10 @@ use iced::{
     },
 };
 use maolan_widgets::{
-    note_area::{NoteArea, PianoGridScrolls, piano_grid_scrollers},
+    note_area::{
+        NoteArea, PianoGridScrollCallbacks, PianoGridScrollLayout, PianoGridScrolls,
+        piano_grid_scrollers,
+    },
     piano::OctaveKeyboard,
 };
 use std::collections::HashMap;
@@ -159,12 +162,16 @@ impl PitchCorrection {
         } = piano_grid_scrollers(
             keyboard.into(),
             notes_content,
-            notes_h,
-            notes_w,
-            scroll_x,
-            scroll_y,
-            Message::PianoScrollYChanged,
-            |x, y| Message::PianoScrollChanged { x, y },
+            PianoGridScrollLayout {
+                notes_h,
+                notes_w,
+                scroll_x,
+                scroll_y,
+            },
+            PianoGridScrollCallbacks {
+                on_scroll_y: Message::PianoScrollYChanged,
+                on_scroll_xy: |x, y| Message::PianoScrollChanged { x, y },
+            },
         );
 
         let info_strip = container(
