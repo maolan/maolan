@@ -501,7 +501,7 @@ impl PluginInstance {
                         BusTypes_::kAux as i32
                     };
                     info.flags = if idx == 0 {
-                        BusFlags::kDefaultActive as u32
+                        BusFlags::kDefaultActive
                     } else {
                         0
                     };
@@ -546,13 +546,13 @@ impl PluginInstance {
                 };
             }
 
-            for idx in 0..bus_count {
+            for (idx, is_active) in active.iter().enumerate().take(bus_count) {
                 let _ = unsafe {
                     self.component.activateBus(
                         MediaTypes_::kAudio as i32,
                         direction,
                         idx as i32,
-                        if active[idx] { 1 } else { 0 },
+                        if *is_active { 1 } else { 0 },
                     )
                 };
             }

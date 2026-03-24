@@ -118,21 +118,39 @@ pub struct PianoGridScrolls<'a, Message> {
     pub v_scroll: Element<'a, Message>,
 }
 
+pub struct PianoGridScrollLayout {
+    pub notes_h: f32,
+    pub notes_w: f32,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
+}
+
+pub struct PianoGridScrollCallbacks<ScrollY, ScrollXY> {
+    pub on_scroll_y: ScrollY,
+    pub on_scroll_xy: ScrollXY,
+}
+
 pub fn piano_grid_scrollers<'a, Message, ScrollY, ScrollXY>(
     keyboard: Element<'a, Message>,
     notes_content: Element<'a, Message>,
-    notes_h: f32,
-    notes_w: f32,
-    scroll_x: f32,
-    scroll_y: f32,
-    on_scroll_y: ScrollY,
-    on_scroll_xy: ScrollXY,
+    layout: PianoGridScrollLayout,
+    callbacks: PianoGridScrollCallbacks<ScrollY, ScrollXY>,
 ) -> PianoGridScrolls<'a, Message>
 where
     Message: 'a + Clone,
     ScrollY: Fn(f32) -> Message + Copy + 'static,
     ScrollXY: Fn(f32, f32) -> Message + Copy + 'static,
 {
+    let PianoGridScrollLayout {
+        notes_h,
+        notes_w,
+        scroll_x,
+        scroll_y,
+    } = layout;
+    let PianoGridScrollCallbacks {
+        on_scroll_y,
+        on_scroll_xy,
+    } = callbacks;
     let keyboard_scroll = scrollable(
         container(keyboard)
             .width(Length::Fixed(KEYBOARD_WIDTH))

@@ -18,8 +18,7 @@ Use Cargo from the repository root:
 
 ```bash
 cargo build
-cargo test
-cargo test -p maolan-engine
+cargo test --workspace
 cargo run --release
 cargo run --release -- --debug
 ```
@@ -46,7 +45,7 @@ the existing ALSA, OSS, CoreAudio, and LV2/VST3 modules.
 ## Testing Guidelines
 Add unit tests next to changed code with `#[cfg(test)]` modules and
 descriptive test names such as `restores_automation_after_undo`. Run
-both `cargo test` and `cargo test -p maolan-engine` before opening a
+both `cargo test --workspace` before opening a
 PR. During development, always run `cargo fmt` and `cargo clippy` after
 code changes. Run both test commands when the feature slice is
 complete, not on every intermediate step. Treat this as a hard
@@ -80,4 +79,4 @@ unless Clippy is unavailable or the user explicitly asks for
 `cargo check`. If Clippy cannot be run, state why. Format Rust code by
 running `cargo fmt` (not `cargo fmt --check`). This is mandatory after
 code changes, even for intermediate feature slices. Running
-`cargo test -p maolan-engine` whenever tests are run is also mandatory.
+`cargo test --workspace` whenever tests are run is also mandatory.

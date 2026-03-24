@@ -10,6 +10,12 @@ homepage = "https://github.com/maolan/maolan"
 keywords = ["audio", "midi", "daw", "vst3", "lv2"]
 categories = ["multimedia::audio"]
 
+[workspace]
+members = [
+  "engine",
+  "widgets"
+]
+
 [dependencies]
 crossterm = "0.29.0"
 ebur128 = "0.1"

@@ -116,7 +116,7 @@ jobs:
         if: ${{ !inputs.release_build }}
         run: |
           mkdir -p coverage
-          cargo llvm-cov -p maolan-engine -p maolan-wodgets -p maolan-cli -p maolan-osc -p maolan --lcov --output-path coverage/lcov.info
+          cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info
 
       - name: Generate HTML coverage report
         if: ${{ !inputs.release_build }}
@@ -229,9 +229,7 @@ jobs:
             export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
 
             cargo build
-            cargo test
-            cargo test -p maolan-engine
-            cargo test -p maolan-widgets
+            cargo test --workspace
 
             rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
             mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
@@ -331,9 +329,7 @@ jobs:
             export PATH="/usr/local/bin:$PATH"
 
             cargo build
-            cargo test
-            cargo test -p maolan-engine
-            cargo test -p maolan-widgets
+            cargo test --workspace
 
             rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
             mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
