@@ -15,15 +15,15 @@ use crate::{
     gui::visible_bars_to_zoom_slider,
     message::{DraggedClip, Message, SnapMode},
     state::{ClipPeaks, MidiClipPreviewMap, State},
-    widget::{
-        horizontal_scrollbar::HorizontalScrollbar, midi_edit, pitch_correction,
-        vertical_scrollbar::VerticalScrollbar,
-    },
+    widget::{midi_edit, pitch_correction},
 };
 use editor::{EditorViewArgs, OwnedEditorViewArgs};
 use iced::{
     Background, Color, Element, Length, Point,
     widget::{Id, Space, Stack, column, container, lazy, mouse_area, pin, row, scrollable, slider},
+};
+use maolan_widgets::{
+    horizontal_scrollbar::HorizontalScrollbar, vertical_scrollbar::VerticalScrollbar,
 };
 use ruler::RulerViewArgs;
 use std::{collections::HashMap, path::PathBuf};

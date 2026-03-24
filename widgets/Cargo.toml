@@ -1,0 +1,17 @@
+[package]
+name = "maolan-widgets"
+version = "0.0.1"
+edition = "2024"
+description = "Widgets used for Maolan DAW"
+license = "BSD-2-Clause"
+readme = "README.md"
+repository = "https://github.com/maolan/maolan"
+homepage = "https://github.com/maolan/maolan"
+documentation = "https://docs.rs/maolan-widgets"
+keywords = ["audio", "midi", "daw", "widgets"]
+categories = ["multimedia::audio"]
+
+[dependencies]
+iced = { version = "0.14.0", features = ["advanced", "canvas", "image", "lazy", "tokio"] }
+iced_fonts = { version = "0.3.0", features = ["lucide"] }
+wavers = "1"
