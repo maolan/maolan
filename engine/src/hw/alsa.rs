@@ -546,9 +546,7 @@ pub struct OSSChannel<'a> {
 
 impl<'a> OSSChannel<'a> {
     pub fn run_cycle(&mut self) -> std::io::Result<()> {
-        self.driver
-            .run_cycle()
-            .map_err(|e| std::io::Error::other(e))
+        self.driver.run_cycle().map_err(std::io::Error::other)
     }
 
     pub fn run_assist_step(&mut self) -> std::io::Result<bool> {
@@ -607,7 +605,7 @@ fn configure_pcm(
     let start_threshold = actual_buffer.saturating_sub(actual_period) as u32;
     swp.set_start_threshold(start_threshold as i64)
         .map_err(|e| e.to_string())?;
-    swp.set_avail_min(actual_period as i64)
+    swp.set_avail_min(actual_period)
         .map_err(|e| e.to_string())?;
     pcm.sw_params(&swp).map_err(|e| e.to_string())?;
     pcm.prepare().map_err(|e| e.to_string())?;
