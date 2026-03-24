@@ -21,6 +21,8 @@ env:
   BSD_CARGO_CACHE_ROOT: .github/.cache/cargo-home
   BSD_TARGET_CACHE_ROOT: .github/.cache/target
   BSD_ENGINE_TARGET_CACHE_ROOT: .github/.cache/engine-target
+  BSD_WIDGETS_TARGET_CACHE_ROOT: .github/.cache/widgets-target
+  BSD_PKG_CACHE_ROOT: .github/.cache/pkg
 
 permissions:
   contents: write
@@ -69,6 +71,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Calculate cache key
+        id: cache-key
+        run: echo "key=ubuntu-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -83,7 +89,8 @@ jobs:
             ~/.cargo/git
             target
             engine/target
-          key: ubuntu-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', 'engine/Cargo.lock', '**/Cargo.toml') }}
+            widgets/target
+          key: ${{ steps.cache-key.outputs.key }}
           restore-keys: |
             ubuntu-cargo-${{ env.CACHE_MODE }}-
             ubuntu-cargo-
@@ -179,7 +186,8 @@ jobs:
             ~/.cargo/git
             target
             engine/target
-          key: ubuntu-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', 'engine/Cargo.lock', '**/Cargo.toml') }}
+            widgets/target
+          key: ${{ steps.cache-key.outputs.key }}
 
       - name: Upload Linux artifact
         if: ${{ inputs.release_build }}
@@ -197,6 +205,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Calculate cache key
+        id: cache-key
+        run: echo "key=freebsd-cargo-pkg-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
+
       - name: Restore FreeBSD VM caches
         id: cache-restore
         uses: actions/cache/restore@v4
@@ -205,10 +217,12 @@ jobs:
             ${{ env.BSD_CARGO_CACHE_ROOT }}
             ${{ env.BSD_TARGET_CACHE_ROOT }}
             ${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}
-          key: freebsd-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', 'engine/Cargo.lock', '**/Cargo.toml') }}
+            ${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}
+            ${{ env.BSD_PKG_CACHE_ROOT }}
+          key: ${{ steps.cache-key.outputs.key }}
           restore-keys: |
-            freebsd-cargo-${{ env.CACHE_MODE }}-
-            freebsd-cargo-
+            freebsd-cargo-pkg-${{ env.CACHE_MODE }}-
+            freebsd-cargo-pkg-
 
       - name: Show cache status
         run: echo "cache-hit=${{ steps.cache-restore.outputs.cache-hit }}"
@@ -218,12 +232,14 @@ jobs:
         uses: vmactions/freebsd-vm@v1
         with:
           run: |
-            mkdir -p "$HOME/.cargo" target engine/target
-            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+            mkdir -p "$HOME/.cargo" target engine/target widgets/target /var/cache/pkg
+            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
 
             cp -R "${{ env.BSD_CARGO_CACHE_ROOT }}/." "$HOME/.cargo/" 2>/dev/null || true
             cp -R "${{ env.BSD_TARGET_CACHE_ROOT }}/." target/ 2>/dev/null || true
             cp -R "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/." engine/target/ 2>/dev/null || true
+            cp -R "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/." widgets/target/ 2>/dev/null || true
+            cp -R "${{ env.BSD_PKG_CACHE_ROOT }}/." /var/cache/pkg/ 2>/dev/null || true
 
             pkg install -y ca_root_nss rust pkgconf libX11 gtk2 lilv suil jackit rubberband
             export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
@@ -231,24 +247,28 @@ jobs:
             cargo build
             cargo test --workspace
 
-            rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
-            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+            rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
+            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
 
             cp -R "$HOME/.cargo/." "${{ env.BSD_CARGO_CACHE_ROOT }}/" 2>/dev/null || true
             cp -R target/. "${{ env.BSD_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
             cp -R engine/target/. "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+            cp -R widgets/target/. "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+            cp -R /var/cache/pkg/. "${{ env.BSD_PKG_CACHE_ROOT }}/" 2>/dev/null || true
 
       - name: Build, package, and upload FreeBSD artifact
         if: ${{ inputs.release_build }}
         uses: vmactions/freebsd-vm@v1
         with:
           run: |
-            mkdir -p "$HOME/.cargo" target engine/target
-            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+            mkdir -p "$HOME/.cargo" target engine/target widgets/target /var/cache/pkg
+            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
 
             cp -R "${{ env.BSD_CARGO_CACHE_ROOT }}/." "$HOME/.cargo/" 2>/dev/null || true
             cp -R "${{ env.BSD_TARGET_CACHE_ROOT }}/." target/ 2>/dev/null || true
             cp -R "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/." engine/target/ 2>/dev/null || true
+            cp -R "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/." widgets/target/ 2>/dev/null || true
+            cp -R "${{ env.BSD_PKG_CACHE_ROOT }}/." /var/cache/pkg/ 2>/dev/null || true
 
             pkg install -y ca_root_nss rust pkgconf libX11 gtk2 lilv suil jackit rubberband
             export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
@@ -264,12 +284,14 @@ jobs:
             cp desktop/maolan-bsd.desktop "dist/${{ env.ASSET_BASENAME }}/maolan.desktop"
             tar -C dist -czf "dist/${{ env.ASSET_BASENAME }}.tar.gz" "${{ env.ASSET_BASENAME }}"
 
-            rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
-            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+            rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
+            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
 
             cp -R "$HOME/.cargo/." "${{ env.BSD_CARGO_CACHE_ROOT }}/" 2>/dev/null || true
             cp -R target/. "${{ env.BSD_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
             cp -R engine/target/. "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+            cp -R widgets/target/. "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+            cp -R /var/cache/pkg/. "${{ env.BSD_PKG_CACHE_ROOT }}/" 2>/dev/null || true
 
       - name: Save FreeBSD VM caches
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
@@ -279,7 +301,9 @@ jobs:
             ${{ env.BSD_CARGO_CACHE_ROOT }}
             ${{ env.BSD_TARGET_CACHE_ROOT }}
             ${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}
-          key: freebsd-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', 'engine/Cargo.lock', '**/Cargo.toml') }}
+            ${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}
+            ${{ env.BSD_PKG_CACHE_ROOT }}
+          key: ${{ steps.cache-key.outputs.key }}
 
       - name: Upload FreeBSD artifact
         if: ${{ inputs.release_build }}
@@ -297,6 +321,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Calculate cache key
+        id: cache-key
+        run: echo "key=openbsd-cargo-pkg-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
+
       - name: Restore OpenBSD VM caches
         id: cache-restore
         uses: actions/cache/restore@v4
@@ -305,10 +333,12 @@ jobs:
             ${{ env.BSD_CARGO_CACHE_ROOT }}
             ${{ env.BSD_TARGET_CACHE_ROOT }}
             ${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}
-          key: openbsd-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', 'engine/Cargo.lock', '**/Cargo.toml') }}
+            ${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}
+            ${{ env.BSD_PKG_CACHE_ROOT }}
+          key: ${{ steps.cache-key.outputs.key }}
           restore-keys: |
-            openbsd-cargo-${{ env.CACHE_MODE }}-
-            openbsd-cargo-
+            openbsd-cargo-pkg-${{ env.CACHE_MODE }}-
+            openbsd-cargo-pkg-
 
       - name: Show cache status
         run: echo "cache-hit=${{ steps.cache-restore.outputs.cache-hit }}"
@@ -318,12 +348,15 @@ jobs:
         uses: vmactions/openbsd-vm@v1
         with:
           run: |
-            mkdir -p "$HOME/.cargo" target engine/target
-            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+            export PKG_CACHE=/var/cache/pkg
+            mkdir -p "$HOME/.cargo" target engine/target widgets/target "$PKG_CACHE"
+            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
 
             cp -R "${{ env.BSD_CARGO_CACHE_ROOT }}/." "$HOME/.cargo/" 2>/dev/null || true
             cp -R "${{ env.BSD_TARGET_CACHE_ROOT }}/." target/ 2>/dev/null || true
             cp -R "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/." engine/target/ 2>/dev/null || true
+            cp -R "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/." widgets/target/ 2>/dev/null || true
+            cp -R "${{ env.BSD_PKG_CACHE_ROOT }}/." "$PKG_CACHE/" 2>/dev/null || true
 
             pkg_add bash pkgconf gtk+2 lilv suil jack rubberband rust
             export PATH="/usr/local/bin:$PATH"
@@ -331,24 +364,29 @@ jobs:
             cargo build
             cargo test --workspace
 
-            rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
-            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+            rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
+            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
 
             cp -R "$HOME/.cargo/." "${{ env.BSD_CARGO_CACHE_ROOT }}/" 2>/dev/null || true
             cp -R target/. "${{ env.BSD_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
             cp -R engine/target/. "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+            cp -R widgets/target/. "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+            cp -R "$PKG_CACHE/." "${{ env.BSD_PKG_CACHE_ROOT }}/" 2>/dev/null || true
 
       - name: Build, package, and upload OpenBSD artifact
         if: ${{ inputs.release_build }}
         uses: vmactions/openbsd-vm@v1
         with:
           run: |
-            mkdir -p "$HOME/.cargo" target engine/target
-            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+            export PKG_CACHE=/var/cache/pkg
+            mkdir -p "$HOME/.cargo" target engine/target widgets/target "$PKG_CACHE"
+            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
 
             cp -R "${{ env.BSD_CARGO_CACHE_ROOT }}/." "$HOME/.cargo/" 2>/dev/null || true
             cp -R "${{ env.BSD_TARGET_CACHE_ROOT }}/." target/ 2>/dev/null || true
             cp -R "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/." engine/target/ 2>/dev/null || true
+            cp -R "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/." widgets/target/ 2>/dev/null || true
+            cp -R "${{ env.BSD_PKG_CACHE_ROOT }}/." "$PKG_CACHE/" 2>/dev/null || true
 
             pkg_add bash pkgconf gtk+2 lilv suil jack rubberband rust
             export PATH="/usr/local/bin:$PATH"
@@ -364,12 +402,14 @@ jobs:
             cp desktop/maolan-bsd.desktop "dist/${{ env.ASSET_BASENAME }}/maolan.desktop"
             tar -C dist -czf "dist/${{ env.ASSET_BASENAME }}.tar.gz" "${{ env.ASSET_BASENAME }}"
 
-            rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
-            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}"
+            rm -rf "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
+            mkdir -p "${{ env.BSD_CARGO_CACHE_ROOT }}" "${{ env.BSD_TARGET_CACHE_ROOT }}" "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}" "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}" "${{ env.BSD_PKG_CACHE_ROOT }}"
 
             cp -R "$HOME/.cargo/." "${{ env.BSD_CARGO_CACHE_ROOT }}/" 2>/dev/null || true
             cp -R target/. "${{ env.BSD_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
             cp -R engine/target/. "${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+            cp -R widgets/target/. "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/" 2>/dev/null || true
+            cp -R "$PKG_CACHE/." "${{ env.BSD_PKG_CACHE_ROOT }}/" 2>/dev/null || true
 
       - name: Save OpenBSD VM caches
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
@@ -379,7 +419,9 @@ jobs:
             ${{ env.BSD_CARGO_CACHE_ROOT }}
             ${{ env.BSD_TARGET_CACHE_ROOT }}
             ${{ env.BSD_ENGINE_TARGET_CACHE_ROOT }}
-          key: openbsd-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', 'engine/Cargo.lock', '**/Cargo.toml') }}
+            ${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}
+            ${{ env.BSD_PKG_CACHE_ROOT }}
+          key: ${{ steps.cache-key.outputs.key }}
 
       - name: Upload OpenBSD artifact
         if: ${{ inputs.release_build }}
