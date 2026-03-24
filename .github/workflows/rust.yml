@@ -116,7 +116,7 @@ jobs:
         if: ${{ !inputs.release_build }}
         run: |
           mkdir -p coverage
-          cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info
+          cargo llvm-cov --workspace -p maolan-engine -p maolan-wodgets --lcov --output-path coverage/lcov.info
 
       - name: Generate HTML coverage report
         if: ${{ !inputs.release_build }}
