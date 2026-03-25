@@ -79,6 +79,8 @@ struct TrackElementViewArgs<'a> {
     active_clip_drag: Option<&'a DraggedClip>,
     active_target_track: Option<&'a str>,
     active_target_valid: bool,
+    active_clip_snap_adjust_samples: f32,
+    active_clip_snap_targets: &'a [crate::state::ClipId],
     recording_preview_bounds: Option<(usize, usize)>,
     recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
     midi_clip_previews: Option<&'a MidiClipPreviewMap>,
@@ -302,6 +304,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         active_clip_drag,
         active_target_track,
         active_target_valid,
+        active_clip_snap_adjust_samples,
+        active_clip_snap_targets,
         recording_preview_bounds,
         recording_preview_peaks,
         midi_clip_previews,
@@ -313,6 +317,20 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             samples_per_beat,
             samples_per_bar as f64,
         ) as f32
+    };
+    let clip_snap_outline = |clip_width: f32, clip_height: f32, radius: f32| {
+        container("")
+            .width(Length::Fixed(clip_width))
+            .height(Length::Fixed(clip_height))
+            .style(move |_theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.0))),
+                border: Border {
+                    color: Color::from_rgba(1.0, 0.92, 0.18, 0.98),
+                    width: 4.0,
+                    radius: radius.into(),
+                },
+                ..container::Style::default()
+            })
     };
     let mut clips: Vec<Element<'static, Message>> = vec![
         mouse_area(container("").width(Length::Fill).height(Length::Fill))
@@ -590,6 +608,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
                 snap_sample(clip.start as f32 + delta_samples, delta_samples)
+                    + active_clip_snap_adjust_samples
             })
             .unwrap_or(clip.start as f32);
         // All audio clips are displayed on lane 0 (single audio lane)
@@ -707,7 +726,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
-            let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples);
+            let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples)
+                + active_clip_snap_adjust_samples;
             let preview_fill = if active_target_valid {
                 Background::Color(Color {
                     r: 0.72,
@@ -749,6 +769,17 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .into(),
             );
         }
+        if active_clip_snap_targets.contains(&crate::state::ClipId {
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            kind: Kind::Audio,
+        }) {
+            clips.push(
+                pin(clip_snap_outline(clip_width, clip_height, 3.0))
+                    .position(Point::new(clip.start as f32 * pixels_per_sample, lane_top))
+                    .into(),
+            );
+        }
     }
     for (index, clip) in track.midi.clips.iter().enumerate() {
         let clip_name = clip.name.clone();
@@ -783,6 +814,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             .map(|d| {
                 let delta_samples = (d.end.x - d.start.x) / pixels_per_sample.max(1.0e-6);
                 snap_sample(clip.start as f32 + delta_samples, delta_samples)
+                    + active_clip_snap_adjust_samples
             })
             .unwrap_or(clip.start as f32);
         let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
@@ -889,7 +921,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
 
         if let Some(drag) = drag_for_clip.filter(|_| show_preview_in_this_track) {
             let delta_samples = (drag.end.x - drag.start.x) / pixels_per_sample.max(1.0e-6);
-            let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples);
+            let preview_start = snap_sample(clip.start as f32 + delta_samples, delta_samples)
+                + active_clip_snap_adjust_samples;
             let preview_fill = if active_target_valid {
                 MIDIClipWidget::<Message>::two_edge_gradient(
                     MIDI_CLIP_SELECTED_BASE,
@@ -934,6 +967,17 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     .into_element())
                 .position(Point::new(preview_start * pixels_per_sample, lane_top))
                 .into(),
+            );
+        }
+        if active_clip_snap_targets.contains(&crate::state::ClipId {
+            track_idx: track_name_cloned.clone(),
+            clip_idx: index,
+            kind: Kind::MIDI,
+        }) {
+            clips.push(
+                pin(clip_snap_outline(clip_width, clip_height, 8.0))
+                    .position(Point::new(clip.start as f32 * pixels_per_sample, lane_top))
+                    .into(),
             );
         }
     }
@@ -1011,7 +1055,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             track.lane_layout().header_height + 3.0
                         };
                         let preview_start =
-                            snap_sample(source_clip.start as f32 + delta_samples, delta_samples);
+                            snap_sample(source_clip.start as f32 + delta_samples, delta_samples)
+                                + active_clip_snap_adjust_samples;
                         let display_clip_label = AudioClipWidget::<Message>::label_for_width(
                             &AudioClipWidget::<Message>::clean_name(&source_clip.name),
                             clip_width,
@@ -1104,7 +1149,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             track.lane_layout().header_height + 3.0
                         };
                         let preview_start =
-                            snap_sample(source_clip.start as f32 + delta_samples, delta_samples);
+                            snap_sample(source_clip.start as f32 + delta_samples, delta_samples)
+                                + active_clip_snap_adjust_samples;
                         let display_clip_label = MIDIClipWidget::<Message>::label_for_width(
                             &MIDIClipWidget::<Message>::clean_name(&source_clip.name),
                             clip_width,
@@ -1415,6 +1461,8 @@ pub struct EditorViewArgs<'a> {
     pub active_clip_drag: Option<&'a DraggedClip>,
     pub active_target_track: Option<&'a str>,
     pub active_target_valid: bool,
+    pub active_clip_snap_adjust_samples: f32,
+    pub active_clip_snap_targets: &'a [crate::state::ClipId],
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
     pub midi_clip_previews: Option<&'a MidiClipPreviewMap>,
@@ -1431,6 +1479,8 @@ pub struct OwnedEditorViewArgs {
     pub active_clip_drag: Option<DraggedClip>,
     pub active_target_track: Option<String>,
     pub active_target_valid: bool,
+    pub active_clip_snap_adjust_samples: f32,
+    pub active_clip_snap_targets: Vec<crate::state::ClipId>,
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<HashMap<String, ClipPeaks>>,
     pub midi_clip_previews: Option<MidiClipPreviewMap>,
@@ -1454,6 +1504,10 @@ impl Editor {
         args.recording_preview_bounds.hash(&mut hasher);
         args.active_target_track.hash(&mut hasher);
         args.active_target_valid.hash(&mut hasher);
+        args.active_clip_snap_adjust_samples
+            .to_bits()
+            .hash(&mut hasher);
+        args.active_clip_snap_targets.hash(&mut hasher);
         args.visible_track_window.start_index.hash(&mut hasher);
         args.visible_track_window.end_index.hash(&mut hasher);
         args.visible_track_window
@@ -1658,6 +1712,8 @@ impl Editor {
             active_clip_drag,
             active_target_track,
             active_target_valid,
+            active_clip_snap_adjust_samples,
+            active_clip_snap_targets,
             recording_preview_bounds,
             recording_preview_peaks,
             midi_clip_previews,
@@ -1698,6 +1754,8 @@ impl Editor {
                 active_clip_drag: active_clip_drag_ref,
                 active_target_track: active_target_track_ref,
                 active_target_valid,
+                active_clip_snap_adjust_samples,
+                active_clip_snap_targets: &active_clip_snap_targets,
                 recording_preview_bounds,
                 recording_preview_peaks: recording_preview_peaks_ref,
                 midi_clip_previews: midi_clip_previews_ref,

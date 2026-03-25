@@ -1,4 +1,4 @@
-use super::{timeline_sample_to_x, timeline_x_to_sample_f32};
+use super::{ClipSnapEdge, timeline_sample_to_x, timeline_x_to_sample_f32};
 use crate::consts::workspace::{
     CONTEXT_MENU_ITEM_HEIGHT, CONTEXT_MENU_WIDTH, LEFT_HIT_WIDTH, TEMPO_HEIGHT, TEMPO_HIT_HEIGHT,
     TIME_SIG_HIT_X_SPLIT,
@@ -15,6 +15,13 @@ use maolan_engine::message::Action as EngineAction;
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+
+fn clip_kind_key(kind: maolan_engine::kind::Kind) -> u8 {
+    match kind {
+        maolan_engine::kind::Kind::Audio => 0,
+        maolan_engine::kind::Kind::MIDI => 1,
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Tempo;
@@ -78,6 +85,7 @@ struct TempoCanvas {
     pixels_per_sample: f32,
     playhead_x: Option<f32>,
     punch_range_samples: Option<(usize, usize)>,
+    clip_snap_edges: Vec<ClipSnapEdge>,
     snap_mode: SnapMode,
     samples_per_beat: f64,
     samples_per_bar: f64,
@@ -96,6 +104,7 @@ pub struct TempoViewArgs {
     pub pixels_per_sample: f32,
     pub playhead_x: Option<f32>,
     pub punch_range_samples: Option<(usize, usize)>,
+    pub clip_snap_edges: Vec<ClipSnapEdge>,
     pub snap_mode: SnapMode,
     pub samples_per_beat: f64,
     pub samples_per_bar: f64,
@@ -122,12 +131,13 @@ impl Tempo {
     fn snap_mode_key(mode: SnapMode) -> u8 {
         match mode {
             SnapMode::NoSnap => 0,
-            SnapMode::Bar => 1,
-            SnapMode::Beat => 2,
-            SnapMode::Eighth => 3,
-            SnapMode::Sixteenth => 4,
-            SnapMode::ThirtySecond => 5,
-            SnapMode::SixtyFourth => 6,
+            SnapMode::Clips => 1,
+            SnapMode::Bar => 2,
+            SnapMode::Beat => 3,
+            SnapMode::Eighth => 4,
+            SnapMode::Sixteenth => 5,
+            SnapMode::ThirtySecond => 6,
+            SnapMode::SixtyFourth => 7,
         }
     }
 
@@ -145,6 +155,7 @@ impl Tempo {
             pixels_per_sample: args.pixels_per_sample,
             playhead_x: args.playhead_x,
             punch_range_samples: args.punch_range_samples,
+            clip_snap_edges: args.clip_snap_edges,
             snap_mode: args.snap_mode,
             samples_per_beat: args.samples_per_beat,
             samples_per_bar: args.samples_per_bar,
@@ -180,6 +191,7 @@ impl canvas::Program<Message> for TempoCanvas {
         let snap_sample = |sample: usize| {
             let interval = match self.snap_mode {
                 SnapMode::NoSnap => 1.0,
+                SnapMode::Clips => 1.0,
                 SnapMode::Bar => self.samples_per_bar.max(1.0),
                 SnapMode::Beat => self.samples_per_beat.max(1.0),
                 SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
@@ -187,10 +199,46 @@ impl canvas::Program<Message> for TempoCanvas {
                 SnapMode::ThirtySecond => (self.samples_per_beat / 8.0).max(1.0),
                 SnapMode::SixtyFourth => (self.samples_per_beat / 16.0).max(1.0),
             };
-            if matches!(self.snap_mode, SnapMode::NoSnap) {
-                sample
+            if matches!(self.snap_mode, SnapMode::Clips) {
+                let threshold_samples = (12.0 / self.pixels_per_sample.max(1.0e-6)).max(1.0);
+                let mut snap_targets = self
+                    .clip_snap_edges
+                    .iter()
+                    .filter_map(|edge| {
+                        let distance = (sample as f32 - edge.sample as f32).abs();
+                        (distance <= threshold_samples).then_some((distance, edge))
+                    })
+                    .map(|(_, edge)| edge.clip_id.clone())
+                    .collect::<Vec<_>>();
+                snap_targets.sort_unstable_by(|a, b| {
+                    a.track_idx
+                        .cmp(&b.track_idx)
+                        .then_with(|| a.clip_idx.cmp(&b.clip_idx))
+                        .then_with(|| clip_kind_key(a.kind).cmp(&clip_kind_key(b.kind)))
+                });
+                snap_targets.dedup();
+                let snapped_sample = self
+                    .clip_snap_edges
+                    .iter()
+                    .filter_map(|edge| {
+                        let distance = (sample as f32 - edge.sample as f32).abs();
+                        (distance <= threshold_samples).then_some((distance, edge.sample))
+                    })
+                    .min_by(|(a, a_edge), (b, b_edge)| {
+                        a.partial_cmp(b)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| a_edge.cmp(b_edge))
+                    })
+                    .map(|(_, edge)| edge)
+                    .unwrap_or(sample);
+                (snapped_sample, snap_targets)
+            } else if matches!(self.snap_mode, SnapMode::NoSnap) {
+                (sample, Vec::new())
             } else {
-                ((sample as f64 / interval).round() * interval).max(0.0) as usize
+                (
+                    ((sample as f64 / interval).round() * interval).max(0.0) as usize,
+                    Vec::new(),
+                )
             }
         };
         let nearest_tempo_point_at_x = |x: f32| -> Option<usize> {
@@ -381,14 +429,48 @@ impl canvas::Program<Message> for TempoCanvas {
                         DragMode::None => {}
                         DragMode::Punch { last_x, .. } => {
                             *last_x = x;
+                            if matches!(self.snap_mode, SnapMode::Clips) {
+                                let drag_start_x = match state.drag_mode {
+                                    DragMode::Punch { drag_start_x, .. } => drag_start_x,
+                                    _ => x,
+                                };
+                                let start_x = drag_start_x.min(x).max(0.0);
+                                let end_x = drag_start_x.max(x).max(0.0);
+                                let mut snap_targets = snap_sample(sample_at_x(start_x)).1;
+                                snap_targets.extend(snap_sample(sample_at_x(end_x)).1);
+                                snap_targets.sort_unstable_by(|a, b| {
+                                    a.track_idx
+                                        .cmp(&b.track_idx)
+                                        .then_with(|| a.clip_idx.cmp(&b.clip_idx))
+                                        .then_with(|| {
+                                            clip_kind_key(a.kind).cmp(&clip_kind_key(b.kind))
+                                        })
+                                });
+                                snap_targets.dedup();
+                                return Some(
+                                    CanvasAction::publish(Message::SetClipSnapTargets(
+                                        snap_targets,
+                                    ))
+                                    .and_capture(),
+                                );
+                            }
                             return Some(CanvasAction::request_redraw().and_capture());
                         }
                         DragMode::AdjustPunchEdge { current_sample, .. } => {
-                            *current_sample = snap_sample(sample_at_x(x));
+                            let (snapped_sample, snap_targets) = snap_sample(sample_at_x(x));
+                            *current_sample = snapped_sample;
+                            if matches!(self.snap_mode, SnapMode::Clips) {
+                                return Some(
+                                    CanvasAction::publish(Message::SetClipSnapTargets(
+                                        snap_targets,
+                                    ))
+                                    .and_capture(),
+                                );
+                            }
                             return Some(CanvasAction::request_redraw().and_capture());
                         }
                         DragMode::Marker { current_sample, .. } => {
-                            *current_sample = snap_sample(sample_at_x(x));
+                            *current_sample = snap_sample(sample_at_x(x)).0;
                             return Some(CanvasAction::request_redraw().and_capture());
                         }
                     }
@@ -408,7 +490,7 @@ impl canvas::Program<Message> for TempoCanvas {
 
                         let drag_delta = (last_x - drag_start_x).abs();
                         if drag_delta < 3.0 {
-                            let sample = snap_sample(sample_at_x(last_x));
+                            let sample = snap_sample(sample_at_x(last_x)).0;
                             return Some(CanvasAction::publish(Message::Request(
                                 EngineAction::TransportPosition(sample),
                             )));
@@ -416,6 +498,7 @@ impl canvas::Program<Message> for TempoCanvas {
 
                         let snap_interval = match self.snap_mode {
                             SnapMode::NoSnap => 1.0,
+                            SnapMode::Clips => 1.0,
                             SnapMode::Bar => (self.samples_per_beat * 4.0).max(1.0),
                             SnapMode::Beat => self.samples_per_beat.max(1.0),
                             SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
@@ -429,14 +512,18 @@ impl canvas::Program<Message> for TempoCanvas {
 
                         let snap_interval_f32 = snap_interval as f32;
 
-                        let start_sample = if matches!(self.snap_mode, SnapMode::NoSnap) {
+                        let start_sample = if matches!(self.snap_mode, SnapMode::Clips) {
+                            snap_sample(sample_at_x(start_x)).0 as f32
+                        } else if matches!(self.snap_mode, SnapMode::NoSnap) {
                             (start_x / self.pixels_per_sample).max(0.0)
                         } else {
                             ((start_x / self.pixels_per_sample) / snap_interval_f32).floor()
                                 * snap_interval_f32
                         };
 
-                        let mut end_sample = if matches!(self.snap_mode, SnapMode::NoSnap) {
+                        let mut end_sample = if matches!(self.snap_mode, SnapMode::Clips) {
+                            snap_sample(sample_at_x(end_x)).0 as f32
+                        } else if matches!(self.snap_mode, SnapMode::NoSnap) {
                             (end_x / self.pixels_per_sample).max(0.0)
                         } else {
                             ((end_x / self.pixels_per_sample) / snap_interval_f32).ceil()
@@ -558,6 +645,7 @@ impl canvas::Program<Message> for TempoCanvas {
 
                         let snap_interval = match self.snap_mode {
                             SnapMode::NoSnap => 1.0,
+                            SnapMode::Clips => 1.0,
                             SnapMode::Bar => (self.samples_per_beat * 4.0).max(1.0),
                             SnapMode::Beat => self.samples_per_beat.max(1.0),
                             SnapMode::Eighth => (self.samples_per_beat / 2.0).max(1.0),
@@ -571,14 +659,18 @@ impl canvas::Program<Message> for TempoCanvas {
 
                         let snap_interval_f32 = snap_interval as f32;
 
-                        let start_sample = if matches!(self.snap_mode, SnapMode::NoSnap) {
+                        let start_sample = if matches!(self.snap_mode, SnapMode::Clips) {
+                            snap_sample(sample_at_x(start_x)).0 as f32
+                        } else if matches!(self.snap_mode, SnapMode::NoSnap) {
                             (start_x / self.pixels_per_sample).max(0.0)
                         } else {
                             ((start_x / self.pixels_per_sample) / snap_interval_f32).floor()
                                 * snap_interval_f32
                         };
 
-                        let mut end_sample = if matches!(self.snap_mode, SnapMode::NoSnap) {
+                        let mut end_sample = if matches!(self.snap_mode, SnapMode::Clips) {
+                            snap_sample(sample_at_x(end_x)).0 as f32
+                        } else if matches!(self.snap_mode, SnapMode::NoSnap) {
                             (end_x / self.pixels_per_sample).max(0.0)
                         } else {
                             ((end_x / self.pixels_per_sample) / snap_interval_f32).ceil()
@@ -629,7 +721,7 @@ impl canvas::Program<Message> for TempoCanvas {
                             return Some(CanvasAction::capture());
                         }
                     }
-                    let sample = snap_sample(sample_at_x(pos.x));
+                    let sample = snap_sample(sample_at_x(pos.x)).0;
                     if pos.y <= TEMPO_HIT_HEIGHT {
                         return Some(
                             CanvasAction::publish(Message::TempoPointAdd(sample)).and_capture(),
@@ -1151,6 +1243,7 @@ mod tests {
             pixels_per_sample: 1.0,
             playhead_x: None,
             punch_range_samples: None,
+            clip_snap_edges: Vec::new(),
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
             samples_per_bar: 16.0,

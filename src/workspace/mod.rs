@@ -50,6 +50,19 @@ pub(crate) fn timeline_x_to_sample_f32(x: f32, pixels_per_sample: f32, inset_px:
     }
 }
 
+fn clip_kind_key(kind: maolan_engine::kind::Kind) -> u8 {
+    match kind {
+        maolan_engine::kind::Kind::Audio => 0,
+        maolan_engine::kind::Kind::MIDI => 1,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct ClipSnapEdge {
+    pub clip_id: crate::state::ClipId,
+    pub sample: usize,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct VisibleTrackWindow {
     pub start_index: usize,
@@ -147,6 +160,8 @@ pub struct WorkspaceViewArgs<'a> {
     pub active_clip_drag: Option<&'a DraggedClip>,
     pub active_clip_target_track: Option<&'a str>,
     pub active_clip_target_valid: bool,
+    pub active_clip_snap_adjust_samples: f32,
+    pub active_clip_snap_targets: &'a [crate::state::ClipId],
     pub recording_preview_bounds: Option<(usize, usize)>,
     pub recording_preview_peaks: Option<&'a HashMap<String, ClipPeaks>>,
     pub midi_clip_previews: Option<&'a MidiClipPreviewMap>,
@@ -172,6 +187,52 @@ impl Workspace {
     }
 
     pub fn update(&mut self, _message: &Message) {}
+
+    fn collect_clip_snap_edges(&self) -> Vec<ClipSnapEdge> {
+        let state = self.state.blocking_read();
+        let mut edges = Vec::new();
+        for track in &state.tracks {
+            for (clip_idx, clip) in track.audio.clips.iter().enumerate() {
+                let clip_id = crate::state::ClipId {
+                    track_idx: track.name.clone(),
+                    clip_idx,
+                    kind: maolan_engine::kind::Kind::Audio,
+                };
+                edges.push(ClipSnapEdge {
+                    clip_id: clip_id.clone(),
+                    sample: clip.start,
+                });
+                edges.push(ClipSnapEdge {
+                    clip_id,
+                    sample: clip.start.saturating_add(clip.length),
+                });
+            }
+            for (clip_idx, clip) in track.midi.clips.iter().enumerate() {
+                let clip_id = crate::state::ClipId {
+                    track_idx: track.name.clone(),
+                    clip_idx,
+                    kind: maolan_engine::kind::Kind::MIDI,
+                };
+                edges.push(ClipSnapEdge {
+                    clip_id: clip_id.clone(),
+                    sample: clip.start,
+                });
+                edges.push(ClipSnapEdge {
+                    clip_id,
+                    sample: clip.start.saturating_add(clip.length),
+                });
+            }
+        }
+        edges.sort_unstable_by(|a, b| {
+            a.sample
+                .cmp(&b.sample)
+                .then_with(|| a.clip_id.track_idx.cmp(&b.clip_id.track_idx))
+                .then_with(|| a.clip_id.clip_idx.cmp(&b.clip_id.clip_idx))
+                .then_with(|| clip_kind_key(a.clip_id.kind).cmp(&clip_kind_key(b.clip_id.kind)))
+        });
+        edges.dedup();
+        edges
+    }
 
     fn playhead_line() -> Element<'static, Message> {
         container("")
@@ -216,6 +277,8 @@ impl Workspace {
             active_clip_drag,
             active_clip_target_track,
             active_clip_target_valid,
+            active_clip_snap_adjust_samples,
+            active_clip_snap_targets,
             recording_preview_bounds,
             recording_preview_peaks,
             midi_clip_previews,
@@ -344,6 +407,7 @@ impl Workspace {
         let playhead_x_timeline = playhead_samples.map(|sample| {
             timeline_sample_to_x_f64(sample, pixels_per_sample, TIMELINE_LEFT_INSET_PX)
         });
+        let clip_snap_edges = self.collect_clip_snap_edges();
 
         let editor_render_hash = self.editor.render_hash(&EditorViewArgs {
             session_root,
@@ -354,6 +418,8 @@ impl Workspace {
             active_clip_drag,
             active_target_track: active_clip_target_track,
             active_target_valid: active_clip_target_valid,
+            active_clip_snap_adjust_samples,
+            active_clip_snap_targets,
             recording_preview_bounds,
             recording_preview_peaks,
             midi_clip_previews,
@@ -369,6 +435,8 @@ impl Workspace {
             active_clip_drag: active_clip_drag.cloned(),
             active_target_track: active_clip_target_track.map(str::to_string),
             active_target_valid: active_clip_target_valid,
+            active_clip_snap_adjust_samples,
+            active_clip_snap_targets: active_clip_snap_targets.to_vec(),
             recording_preview_bounds,
             recording_preview_peaks: recording_preview_peaks.cloned(),
             midi_clip_previews: midi_clip_previews.cloned(),
@@ -457,6 +525,7 @@ impl Workspace {
             pixels_per_sample,
             playhead_x: playhead_x_timeline.map(|x| x.max(0.0)),
             punch_range_samples,
+            clip_snap_edges: clip_snap_edges.clone(),
             snap_mode,
             samples_per_beat,
             samples_per_bar: samples_per_bar as f64,
@@ -480,6 +549,7 @@ impl Workspace {
             beat_pixels,
             pixels_per_sample,
             loop_range_samples,
+            clip_snap_edges: clip_snap_edges.clone(),
             snap_mode,
             samples_per_beat,
             content_width: editor_content_width,
@@ -759,6 +829,7 @@ impl Workspace {
                         pixels_per_sample: horizontal_pixels_per_sample,
                         playhead_x,
                         punch_range_samples: None,
+                        clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,
                         samples_per_bar: samples_per_bar as f64,
@@ -797,6 +868,7 @@ impl Workspace {
                         beat_pixels: horizontal_beat_pixels,
                         pixels_per_sample: horizontal_pixels_per_sample,
                         loop_range_samples: None,
+                        clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,
                         content_width: timeline_content_width,
@@ -900,6 +972,7 @@ impl Workspace {
                         pixels_per_sample: horizontal_pixels_per_sample,
                         playhead_x,
                         punch_range_samples: None,
+                        clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,
                         samples_per_bar: samples_per_bar as f64,
@@ -938,6 +1011,7 @@ impl Workspace {
                         beat_pixels: horizontal_beat_pixels,
                         pixels_per_sample: horizontal_pixels_per_sample,
                         loop_range_samples: None,
+                        clip_snap_edges: self.collect_clip_snap_edges(),
                         snap_mode,
                         samples_per_beat,
                         content_width: timeline_content_width,

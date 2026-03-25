@@ -16,10 +16,243 @@ mod track_selection;
 mod transport;
 mod ui;
 
+const CLIP_EDGE_SNAP_THRESHOLD_PX: f32 = 12.0;
+
+struct MoveClipSnapArgs<'a> {
+    kind: Kind,
+    from_track_name: &'a str,
+    clip_index: usize,
+    offset: f32,
+    group_drag_active: bool,
+    selected_group: &'a [usize],
+    copy: bool,
+}
+
 impl Maolan {
     fn active_workspace_cursor(&self) -> Point {
         let state = self.state.blocking_read();
         state.editor_cursor.unwrap_or(state.cursor)
+    }
+
+    fn clip_edge_snap_threshold_samples(&self) -> f32 {
+        (CLIP_EDGE_SNAP_THRESHOLD_PX / self.pixels_per_sample().max(1.0e-6)).max(1.0)
+    }
+
+    fn clip_edge_snap_enabled(&self) -> bool {
+        matches!(self.snap_mode, crate::message::SnapMode::Clips)
+    }
+
+    fn nearest_clip_edge_sample(
+        raw_edge: f32,
+        snapped_edge: f32,
+        threshold_samples: f32,
+        candidate_edges: impl IntoIterator<Item = (crate::state::ClipId, usize)>,
+    ) -> (f32, Option<crate::state::ClipId>, Vec<crate::state::ClipId>) {
+        let mut best: Option<(f32, f32, crate::state::ClipId)> = None;
+        let mut matched_targets = Vec::new();
+
+        for (clip_id, edge) in candidate_edges {
+            let edge = edge as f32;
+            let distance = (raw_edge - edge).abs();
+            if distance > threshold_samples {
+                continue;
+            }
+            if !matched_targets.contains(&clip_id) {
+                matched_targets.push(clip_id.clone());
+            }
+
+            let replace = match best {
+                None => true,
+                Some((best_distance, best_edge, _)) => {
+                    distance < best_distance
+                        || (distance == best_distance
+                            && (edge - snapped_edge).abs() < (best_edge - snapped_edge).abs())
+                }
+            };
+
+            if replace {
+                best = Some((distance, edge, clip_id));
+            }
+        }
+
+        if let Some((_, edge, clip_id)) = best {
+            (edge.max(0.0), Some(clip_id), matched_targets)
+        } else {
+            (snapped_edge.max(0.0), None, matched_targets)
+        }
+    }
+
+    fn snapped_clip_move_start(
+        raw_start: f32,
+        clip_length: f32,
+        snapped_start: f32,
+        threshold_samples: f32,
+        candidate_edges: impl IntoIterator<Item = (crate::state::ClipId, usize)>,
+    ) -> (f32, Option<crate::state::ClipId>, Vec<crate::state::ClipId>) {
+        let raw_end = raw_start + clip_length;
+        let mut best: Option<(f32, f32, crate::state::ClipId)> = None;
+        let mut matched_targets = Vec::new();
+
+        for (clip_id, edge) in candidate_edges {
+            let edge = edge as f32;
+            let candidates = [(raw_start, edge), (raw_end, edge - clip_length)];
+
+            for (raw_edge, snapped_start_candidate) in candidates {
+                if snapped_start_candidate < 0.0 {
+                    continue;
+                }
+                let distance = (raw_edge - edge).abs();
+                if distance > threshold_samples {
+                    continue;
+                }
+                if !matched_targets.contains(&clip_id) {
+                    matched_targets.push(clip_id.clone());
+                }
+
+                let replace = match best {
+                    None => true,
+                    Some((best_distance, best_start, _)) => {
+                        distance < best_distance
+                            || (distance == best_distance
+                                && (snapped_start_candidate - snapped_start).abs()
+                                    < (best_start - snapped_start).abs())
+                    }
+                };
+
+                if replace {
+                    best = Some((distance, snapped_start_candidate, clip_id.clone()));
+                }
+            }
+        }
+
+        if let Some((_, start, clip_id)) = best {
+            (start.max(0.0), Some(clip_id), matched_targets)
+        } else {
+            (snapped_start.max(0.0), None, matched_targets)
+        }
+    }
+
+    fn clip_snap_edges(
+        &self,
+        excluded_clips: &[crate::state::ClipId],
+    ) -> Vec<(crate::state::ClipId, usize)> {
+        let state = self.state.blocking_read();
+        state
+            .tracks
+            .iter()
+            .flat_map(|track| {
+                let audio = track
+                    .audio
+                    .clips
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(clip_idx, clip)| {
+                        let clip_id = crate::state::ClipId {
+                            track_idx: track.name.clone(),
+                            clip_idx,
+                            kind: Kind::Audio,
+                        };
+                        (!excluded_clips.contains(&clip_id)).then_some([
+                            (clip_id.clone(), clip.start),
+                            (clip_id, clip.start.saturating_add(clip.length)),
+                        ])
+                    });
+                let midi = track
+                    .midi
+                    .clips
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(clip_idx, clip)| {
+                        let clip_id = crate::state::ClipId {
+                            track_idx: track.name.clone(),
+                            clip_idx,
+                            kind: Kind::MIDI,
+                        };
+                        (!excluded_clips.contains(&clip_id)).then_some([
+                            (clip_id.clone(), clip.start),
+                            (clip_id, clip.start.saturating_add(clip.length)),
+                        ])
+                    });
+                audio.chain(midi)
+            })
+            .flatten()
+            .collect()
+    }
+
+    fn move_clip_snap_adjust_and_target(
+        &self,
+        args: MoveClipSnapArgs<'_>,
+    ) -> (f32, Option<crate::state::ClipId>, Vec<crate::state::ClipId>) {
+        let MoveClipSnapArgs {
+            kind,
+            from_track_name,
+            clip_index,
+            offset,
+            group_drag_active,
+            selected_group,
+            copy,
+        } = args;
+        if !self.clip_edge_snap_enabled() {
+            return (0.0, None, Vec::new());
+        }
+
+        let excluded_clips = if !copy {
+            if group_drag_active {
+                selected_group
+                    .iter()
+                    .map(|clip_idx| crate::state::ClipId {
+                        track_idx: from_track_name.to_string(),
+                        clip_idx: *clip_idx,
+                        kind,
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                vec![crate::state::ClipId {
+                    track_idx: from_track_name.to_string(),
+                    clip_idx: clip_index,
+                    kind,
+                }]
+            }
+        } else {
+            Vec::new()
+        };
+        let candidate_edges = self.clip_snap_edges(&excluded_clips);
+        let clip_edge_snap_threshold_samples = self.clip_edge_snap_threshold_samples();
+        let state = self.state.blocking_read();
+        let source = state
+            .tracks
+            .iter()
+            .find(|track| track.name == from_track_name)
+            .and_then(|track| match kind {
+                Kind::Audio => track
+                    .audio
+                    .clips
+                    .get(clip_index)
+                    .map(|clip| (clip.start as f32, clip.length as f32)),
+                Kind::MIDI => track
+                    .midi
+                    .clips
+                    .get(clip_index)
+                    .map(|clip| (clip.start as f32, clip.length as f32)),
+            });
+        let Some((clip_start, clip_length)) = source else {
+            return (0.0, None, Vec::new());
+        };
+        let raw_start = clip_start + offset;
+        let snapped_start = self.snap_sample_to_bar_drag(raw_start, offset) as f32;
+        let (resolved_start, snap_target, snap_targets) = Self::snapped_clip_move_start(
+            raw_start,
+            clip_length,
+            snapped_start,
+            clip_edge_snap_threshold_samples,
+            candidate_edges,
+        );
+        let resolved_start = if raw_start < 0.0 {
+            resolved_start.min(snapped_start)
+        } else {
+            resolved_start
+        };
+        (resolved_start - raw_start, snap_target, snap_targets)
     }
 
     pub(super) fn request_quit(&self) -> Task<Message> {
@@ -145,6 +378,9 @@ impl Maolan {
             }
             Message::SetSnapMode(mode) => {
                 self.snap_mode = mode;
+            }
+            Message::SetClipSnapTargets(ref targets) => {
+                self.clip_snap_targets = targets.clone();
             }
             Message::RecordingPreviewTick => {
                 if self.playing
@@ -1382,6 +1618,7 @@ impl Maolan {
                 let raw_end = (x1 / pps).ceil().max(raw_start as f32 + 1.0) as usize;
                 let snap_interval = match self.snap_mode {
                     crate::message::SnapMode::NoSnap => 1.0,
+                    crate::message::SnapMode::Clips => 1.0,
                     crate::message::SnapMode::Bar => samples_per_bar.max(1.0),
                     crate::message::SnapMode::Beat => samples_per_beat.max(1.0),
                     crate::message::SnapMode::Eighth => (samples_per_beat / 2.0).max(1.0),
@@ -1390,7 +1627,10 @@ impl Maolan {
                     crate::message::SnapMode::SixtyFourth => (samples_per_beat / 16.0).max(1.0),
                 };
                 let snap_sample = |sample: f32| -> usize {
-                    if matches!(self.snap_mode, crate::message::SnapMode::NoSnap) {
+                    if matches!(
+                        self.snap_mode,
+                        crate::message::SnapMode::NoSnap | crate::message::SnapMode::Clips
+                    ) {
                         return sample.max(0.0) as usize;
                     }
                     ((sample.max(0.0) as f64 / snap_interval).round() * snap_interval) as usize
@@ -5349,6 +5589,20 @@ impl Maolan {
                             .ceil()
                             .max(snap_interval_samples)
                             .max(1.0);
+                        let clip_edge_snap_threshold_samples =
+                            self.clip_edge_snap_threshold_samples();
+                        let clip_edge_snap_enabled = self.clip_edge_snap_enabled();
+                        let resize_excluded_clip = crate::state::ClipId {
+                            track_idx: track_name.clone(),
+                            clip_idx: index,
+                            kind,
+                        };
+                        let candidate_edges = if clip_edge_snap_enabled {
+                            self.clip_snap_edges(&[resize_excluded_clip])
+                        } else {
+                            Vec::new()
+                        };
+                        let mut clip_snap_targets = Vec::new();
                         let mut state = self.state.blocking_write();
                         if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
                         {
@@ -5360,8 +5614,14 @@ impl Maolan {
                                         if is_right_side {
                                             let raw_end =
                                                 clip.start as f32 + initial_value + delta_samples;
-                                            let snapped_end =
-                                                snap_sample_drag(raw_end, delta_samples);
+                                            let (snapped_end, _snap_target, snap_targets) =
+                                                Self::nearest_clip_edge_sample(
+                                                    raw_end,
+                                                    snap_sample_drag(raw_end, delta_samples),
+                                                    clip_edge_snap_threshold_samples,
+                                                    candidate_edges.iter().cloned(),
+                                                );
+                                            clip_snap_targets = snap_targets;
                                             let min_end = clip.start as f32 + min_length_samples;
                                             let updated_end = snapped_end.max(min_end);
                                             clip.length = updated_end.max(clip.start as f32)
@@ -5371,10 +5631,15 @@ impl Maolan {
                                             let right_edge = initial_start as f32 + initial_length;
                                             let max_start =
                                                 (right_edge - min_length_samples).max(0.0);
-                                            let snapped_start = snap_sample_drag(
-                                                initial_value + delta_samples,
-                                                delta_samples,
-                                            );
+                                            let raw_start = initial_value + delta_samples;
+                                            let (snapped_start, _snap_target, snap_targets) =
+                                                Self::nearest_clip_edge_sample(
+                                                    raw_start,
+                                                    snap_sample_drag(raw_start, delta_samples),
+                                                    clip_edge_snap_threshold_samples,
+                                                    candidate_edges.iter().cloned(),
+                                                );
+                                            clip_snap_targets = snap_targets;
                                             let new_start = snapped_start.clamp(0.0, max_start);
                                             let updated_length =
                                                 (right_edge - new_start).max(min_length_samples);
@@ -5389,8 +5654,14 @@ impl Maolan {
                                         if is_right_side {
                                             let raw_end =
                                                 clip.start as f32 + initial_value + delta_samples;
-                                            let snapped_end =
-                                                snap_sample_drag(raw_end, delta_samples);
+                                            let (snapped_end, _snap_target, snap_targets) =
+                                                Self::nearest_clip_edge_sample(
+                                                    raw_end,
+                                                    snap_sample_drag(raw_end, delta_samples),
+                                                    clip_edge_snap_threshold_samples,
+                                                    candidate_edges.iter().cloned(),
+                                                );
+                                            clip_snap_targets = snap_targets;
                                             let min_end = clip.start as f32 + min_length_samples;
                                             let max_end = clip.start as f32 + max_length_samples;
                                             let updated_end = snapped_end.clamp(min_end, max_end);
@@ -5403,10 +5674,15 @@ impl Maolan {
                                                 (right_edge - min_length_samples).max(0.0);
                                             let min_start =
                                                 (right_edge - max_length_samples).max(0.0);
-                                            let snapped_start = snap_sample_drag(
-                                                initial_value + delta_samples,
-                                                delta_samples,
-                                            );
+                                            let raw_start = initial_value + delta_samples;
+                                            let (snapped_start, _snap_target, snap_targets) =
+                                                Self::nearest_clip_edge_sample(
+                                                    raw_start,
+                                                    snap_sample_drag(raw_start, delta_samples),
+                                                    clip_edge_snap_threshold_samples,
+                                                    candidate_edges.iter().cloned(),
+                                                );
+                                            clip_snap_targets = snap_targets;
                                             let new_start =
                                                 snapped_start.clamp(min_start, max_start);
                                             let updated_length = (right_edge - new_start)
@@ -5436,7 +5712,14 @@ impl Maolan {
                                     if is_right_side {
                                         let raw_end =
                                             clip.start as f32 + initial_value + delta_samples;
-                                        let snapped_end = snap_sample_drag(raw_end, delta_samples);
+                                        let (snapped_end, _snap_target, snap_targets) =
+                                            Self::nearest_clip_edge_sample(
+                                                raw_end,
+                                                snap_sample_drag(raw_end, delta_samples),
+                                                clip_edge_snap_threshold_samples,
+                                                candidate_edges.iter().cloned(),
+                                            );
+                                        clip_snap_targets = snap_targets;
                                         let min_end = clip.start as f32 + min_length_samples;
                                         let max_end = clip.start as f32 + max_length_samples;
                                         let updated_end = snapped_end.clamp(min_end, max_end);
@@ -5446,10 +5729,15 @@ impl Maolan {
                                         let right_edge = initial_value + initial_length;
                                         let max_start = (right_edge - min_length_samples).max(0.0);
                                         let min_start = (right_edge - max_length_samples).max(0.0);
-                                        let snapped_start = snap_sample_drag(
-                                            initial_value + delta_samples,
-                                            delta_samples,
-                                        );
+                                        let raw_start = initial_value + delta_samples;
+                                        let (snapped_start, _snap_target, snap_targets) =
+                                            Self::nearest_clip_edge_sample(
+                                                raw_start,
+                                                snap_sample_drag(raw_start, delta_samples),
+                                                clip_edge_snap_threshold_samples,
+                                                candidate_edges.iter().cloned(),
+                                            );
+                                        clip_snap_targets = snap_targets;
                                         let new_start = snapped_start.clamp(min_start, max_start);
                                         let updated_length = (right_edge - new_start)
                                             .clamp(min_length_samples, max_length_samples);
@@ -5468,6 +5756,7 @@ impl Maolan {
                                 }
                             }
                         }
+                        self.clip_snap_targets = clip_snap_targets;
                     }
                     Some(Resizing::Tracks(initial_width, initial_mouse_x)) => {
                         let delta = position.x - initial_mouse_x;
@@ -5691,6 +5980,10 @@ impl Maolan {
                     state.midi_clip_create_start = None;
                     state.midi_clip_create_end = None;
                     self.clip = None;
+                    self.clip_preview_target_track = None;
+                    self.clip_preview_target_valid = false;
+                    self.clip_preview_snap_adjust_samples = 0.0;
+                    self.clip_snap_targets.clear();
                     return Task::none();
                 }
                 let (resizing, marquee_start, marquee_end, create_start, create_end) = {
@@ -5712,6 +6005,8 @@ impl Maolan {
                         create_end,
                     )
                 };
+                self.clip_preview_snap_adjust_samples = 0.0;
+                self.clip_snap_targets.clear();
                 let marker_snap_update = if let Some(Resizing::TrackMarker {
                     ref track_name,
                     marker_index,
@@ -5979,6 +6274,8 @@ impl Maolan {
                         dragged.end = cursor;
                         dragged.copy = self.state.blocking_read().ctrl;
                         self.clip = Some(dragged);
+                        self.clip_preview_snap_adjust_samples = 0.0;
+                        self.clip_snap_targets.clear();
                     }
                 }
             }
@@ -6014,6 +6311,8 @@ impl Maolan {
                             self.clip = None;
                             self.clip_preview_target_track = None;
                             self.clip_preview_target_valid = false;
+                            self.clip_preview_snap_adjust_samples = 0.0;
+                            self.clip_snap_targets.clear();
                             return Task::none();
                         }
                         let local_y = (clip.end.y - to_track_rect.y).max(0.0);
@@ -6034,6 +6333,17 @@ impl Maolan {
                             Kind::Audio => {
                                 let offset = (clip.end.x - clip.start.x)
                                     / self.pixels_per_sample().max(1.0e-6);
+                                let (snap_adjust, _snap_target, snap_targets) = self
+                                    .move_clip_snap_adjust_and_target(MoveClipSnapArgs {
+                                        kind: clip.kind,
+                                        from_track_name: &from_track.name,
+                                        clip_index: clip.index,
+                                        offset,
+                                        group_drag_active,
+                                        selected_group: &selected_group,
+                                        copy: clip.copy,
+                                    });
+                                self.clip_snap_targets = snap_targets;
                                 if group_drag_active {
                                     let mut indices = selected_group.clone();
                                     if !clip.copy {
@@ -6045,10 +6355,11 @@ impl Maolan {
                                             continue;
                                         }
                                         let source = &from_track.audio.clips[idx];
-                                        let sample_offset = self.snap_sample_to_bar_drag(
-                                            source.start as f32 + offset,
-                                            offset,
-                                        );
+                                        let sample_offset =
+                                            (source.start as f32 + offset + snap_adjust)
+                                                .max(0.0)
+                                                .round()
+                                                as usize;
                                         tasks.push(self.send(Action::ClipMove {
                                             kind: clip.kind,
                                             from: ClipMoveFrom {
@@ -6066,20 +6377,24 @@ impl Maolan {
                                     self.clip = None;
                                     self.clip_preview_target_track = None;
                                     self.clip_preview_target_valid = false;
+                                    self.clip_preview_snap_adjust_samples = 0.0;
+                                    self.clip_snap_targets.clear();
                                     return Task::batch(tasks);
                                 }
                                 if clip_index >= from_track.audio.clips.len() {
                                     self.clip = None;
                                     self.clip_preview_target_valid = false;
+                                    self.clip_preview_snap_adjust_samples = 0.0;
+                                    self.clip_snap_targets.clear();
                                     return Task::none();
                                 }
                                 let clip_index_in_from_track = clip_index;
                                 let mut clip_copy =
                                     from_track.audio.clips[clip_index_in_from_track].clone();
-                                clip_copy.start = self.snap_sample_to_bar_drag(
-                                    clip_copy.start as f32 + offset,
-                                    offset,
-                                );
+                                clip_copy.start = (clip_copy.start as f32 + offset + snap_adjust)
+                                    .max(0.0)
+                                    .round()
+                                    as usize;
                                 let task = self.send(Action::ClipMove {
                                     kind: clip.kind,
                                     from: ClipMoveFrom {
@@ -6096,11 +6411,24 @@ impl Maolan {
                                 self.clip = None;
                                 self.clip_preview_target_track = None;
                                 self.clip_preview_target_valid = false;
+                                self.clip_preview_snap_adjust_samples = 0.0;
+                                self.clip_snap_targets.clear();
                                 return task;
                             }
                             Kind::MIDI => {
                                 let offset = (clip.end.x - clip.start.x)
                                     / self.pixels_per_sample().max(1.0e-6);
+                                let (snap_adjust, _snap_target, snap_targets) = self
+                                    .move_clip_snap_adjust_and_target(MoveClipSnapArgs {
+                                        kind: clip.kind,
+                                        from_track_name: &from_track.name,
+                                        clip_index: clip.index,
+                                        offset,
+                                        group_drag_active,
+                                        selected_group: &selected_group,
+                                        copy: clip.copy,
+                                    });
+                                self.clip_snap_targets = snap_targets;
                                 if group_drag_active {
                                     let mut indices = selected_group.clone();
                                     if !clip.copy {
@@ -6112,10 +6440,11 @@ impl Maolan {
                                             continue;
                                         }
                                         let source = &from_track.midi.clips[idx];
-                                        let sample_offset = self.snap_sample_to_bar_drag(
-                                            source.start as f32 + offset,
-                                            offset,
-                                        );
+                                        let sample_offset =
+                                            (source.start as f32 + offset + snap_adjust)
+                                                .max(0.0)
+                                                .round()
+                                                as usize;
                                         tasks.push(self.send(Action::ClipMove {
                                             kind: clip.kind,
                                             from: ClipMoveFrom {
@@ -6133,20 +6462,24 @@ impl Maolan {
                                     self.clip = None;
                                     self.clip_preview_target_track = None;
                                     self.clip_preview_target_valid = false;
+                                    self.clip_preview_snap_adjust_samples = 0.0;
+                                    self.clip_snap_targets.clear();
                                     return Task::batch(tasks);
                                 }
                                 if clip_index >= from_track.midi.clips.len() {
                                     self.clip = None;
                                     self.clip_preview_target_valid = false;
+                                    self.clip_preview_snap_adjust_samples = 0.0;
+                                    self.clip_snap_targets.clear();
                                     return Task::none();
                                 }
                                 let clip_index_in_from_track = clip_index;
                                 let mut clip_copy =
                                     from_track.midi.clips[clip_index_in_from_track].clone();
-                                clip_copy.start = self.snap_sample_to_bar_drag(
-                                    clip_copy.start as f32 + offset,
-                                    offset,
-                                );
+                                clip_copy.start = (clip_copy.start as f32 + offset + snap_adjust)
+                                    .max(0.0)
+                                    .round()
+                                    as usize;
                                 let task = self.send(Action::ClipMove {
                                     kind: clip.kind,
                                     from: ClipMoveFrom {
@@ -6163,6 +6496,8 @@ impl Maolan {
                                 self.clip = None;
                                 self.clip_preview_target_track = None;
                                 self.clip_preview_target_valid = false;
+                                self.clip_preview_snap_adjust_samples = 0.0;
+                                self.clip_snap_targets.clear();
                                 return task;
                             }
                         }
@@ -6171,6 +6506,8 @@ impl Maolan {
                 self.clip = None;
                 self.clip_preview_target_track = None;
                 self.clip_preview_target_valid = false;
+                self.clip_preview_snap_adjust_samples = 0.0;
+                self.clip_snap_targets.clear();
                 return Task::none();
             }
             Message::HandleClipPreviewZones(ref zones) => {
@@ -6192,6 +6529,8 @@ impl Maolan {
                     let Some(to_track_id) = to_track_id else {
                         self.clip_preview_target_track = None;
                         self.clip_preview_target_valid = false;
+                        self.clip_preview_snap_adjust_samples = 0.0;
+                        self.clip_snap_targets.clear();
                         return Task::none();
                     };
                     let to_track = state
@@ -6213,17 +6552,49 @@ impl Maolan {
                         if kind_matches {
                             self.clip_preview_target_track = Some(to_track.name.clone());
                             self.clip_preview_target_valid = true;
+                            let mut selected_group: Vec<usize> = state
+                                .selected_clips
+                                .iter()
+                                .filter(|id| {
+                                    id.kind == clip.kind && id.track_idx == clip.track_index
+                                })
+                                .map(|id| id.clip_idx)
+                                .collect();
+                            selected_group.sort_unstable();
+                            selected_group.dedup();
+                            let group_drag_active =
+                                selected_group.len() > 1 && selected_group.contains(&clip.index);
+                            let offset =
+                                (clip.end.x - clip.start.x) / self.pixels_per_sample().max(1.0e-6);
+                            let (snap_adjust, _snap_target, snap_targets) = self
+                                .move_clip_snap_adjust_and_target(MoveClipSnapArgs {
+                                    kind: clip.kind,
+                                    from_track_name: &clip.track_index,
+                                    clip_index: clip.index,
+                                    offset,
+                                    group_drag_active,
+                                    selected_group: &selected_group,
+                                    copy: clip.copy,
+                                });
+                            self.clip_preview_snap_adjust_samples = snap_adjust;
+                            self.clip_snap_targets = snap_targets;
                         } else {
                             self.clip_preview_target_track = Some(to_track.name.clone());
                             self.clip_preview_target_valid = false;
+                            self.clip_preview_snap_adjust_samples = 0.0;
+                            self.clip_snap_targets.clear();
                         }
                     } else {
                         self.clip_preview_target_track = None;
                         self.clip_preview_target_valid = false;
+                        self.clip_preview_snap_adjust_samples = 0.0;
+                        self.clip_snap_targets.clear();
                     }
                 } else {
                     self.clip_preview_target_track = None;
                     self.clip_preview_target_valid = false;
+                    self.clip_preview_snap_adjust_samples = 0.0;
+                    self.clip_snap_targets.clear();
                 }
             }
             Message::TrackDrag { index, position } => {
@@ -7377,5 +7748,127 @@ mod tests {
         };
 
         assert_eq!(app.active_workspace_cursor(), Point::new(10.0, 20.0));
+    }
+
+    #[test]
+    fn nearest_clip_edge_sample_prefers_candidate_within_threshold() {
+        let (snapped, target, targets) = Maolan::nearest_clip_edge_sample(
+            98.0,
+            96.0,
+            4.0,
+            [("a", 70usize), ("b", 100usize), ("c", 130usize)]
+                .into_iter()
+                .map(|(name, edge)| {
+                    (
+                        crate::state::ClipId {
+                            track_idx: name.to_string(),
+                            clip_idx: 0,
+                            kind: Kind::Audio,
+                        },
+                        edge,
+                    )
+                }),
+        );
+        assert_eq!(snapped, 100.0);
+        assert_eq!(target.unwrap().track_idx, "b");
+        assert_eq!(targets.len(), 1);
+    }
+
+    #[test]
+    fn nearest_clip_edge_sample_falls_back_to_grid_when_no_edge_is_close() {
+        let (snapped, target, targets) = Maolan::nearest_clip_edge_sample(
+            98.0,
+            96.0,
+            1.0,
+            [("a", 70usize), ("b", 100usize), ("c", 130usize)]
+                .into_iter()
+                .map(|(name, edge)| {
+                    (
+                        crate::state::ClipId {
+                            track_idx: name.to_string(),
+                            clip_idx: 0,
+                            kind: Kind::Audio,
+                        },
+                        edge,
+                    )
+                }),
+        );
+        assert_eq!(snapped, 96.0);
+        assert!(target.is_none());
+        assert!(targets.is_empty());
+    }
+
+    #[test]
+    fn snapped_clip_move_start_can_snap_using_right_edge() {
+        let (snapped, target, targets) = Maolan::snapped_clip_move_start(
+            70.0,
+            20.0,
+            64.0,
+            2.0,
+            std::iter::once((
+                crate::state::ClipId {
+                    track_idx: "target".to_string(),
+                    clip_idx: 0,
+                    kind: Kind::Audio,
+                },
+                90usize,
+            )),
+        );
+        assert_eq!(snapped, 70.0);
+        assert_eq!(target.unwrap().track_idx, "target");
+        assert_eq!(targets.len(), 1);
+    }
+
+    #[test]
+    fn snapped_clip_move_start_uses_clip_edge_over_grid_when_close() {
+        let (snapped, target, targets) = Maolan::snapped_clip_move_start(
+            91.0,
+            12.0,
+            96.0,
+            2.0,
+            [("left", 90usize), ("right", 140usize)]
+                .into_iter()
+                .map(|(name, edge)| {
+                    (
+                        crate::state::ClipId {
+                            track_idx: name.to_string(),
+                            clip_idx: 0,
+                            kind: Kind::Audio,
+                        },
+                        edge,
+                    )
+                }),
+        );
+        assert_eq!(snapped, 90.0);
+        assert_eq!(target.unwrap().track_idx, "left");
+        assert_eq!(targets.len(), 1);
+    }
+
+    #[test]
+    fn snapped_clip_move_start_does_not_snap_right_when_dragging_past_session_start() {
+        let raw_start = -8.0;
+        let snapped_start = 0.0;
+        let (resolved_start, _target, _targets) = Maolan::snapped_clip_move_start(
+            raw_start,
+            100.0,
+            snapped_start,
+            20.0,
+            std::iter::once((
+                crate::state::ClipId {
+                    track_idx: "other".to_string(),
+                    clip_idx: 0,
+                    kind: Kind::Audio,
+                },
+                105usize,
+            )),
+        );
+
+        assert!(resolved_start > 0.0);
+        let clamped_start = if raw_start < 0.0 {
+            resolved_start.min(snapped_start)
+        } else {
+            resolved_start
+        };
+        assert_eq!(clamped_start, 0.0);
     }
 }
