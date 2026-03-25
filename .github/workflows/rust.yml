@@ -33,6 +33,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Calculate cache key
+        id: cache-key
+        run: |
+          echo "key=ubuntu-lint-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "hash=${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore lint caches
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cache-key.outputs.key }}
+          restore-keys: |
+            ubuntu-lint-${{ steps.cache-key.outputs.hash }}-
+            ubuntu-lint-
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -62,6 +82,16 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Save lint caches
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cache-key.outputs.key }}
+
   build-ubuntu:
     needs: lint
     runs-on: ubuntu-latest
@@ -70,10 +100,14 @@ jobs:
       CACHE_MODE: ${{ inputs.release_build && 'release' || 'debug' }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Calculate cache key
         id: cache-key
-        run: echo "key=ubuntu-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "key=ubuntu-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "hash=${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -92,6 +126,7 @@ jobs:
             widgets/target
           key: ${{ steps.cache-key.outputs.key }}
           restore-keys: |
+            ubuntu-cargo-${{ env.CACHE_MODE }}-${{ steps.cache-key.outputs.hash }}-
             ubuntu-cargo-${{ env.CACHE_MODE }}-
             ubuntu-cargo-
 
@@ -204,10 +239,14 @@ jobs:
       CACHE_MODE: ${{ inputs.release_build && 'release' || 'debug' }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Calculate cache key
         id: cache-key
-        run: echo "key=freebsd-cargo-pkg-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "key=freebsd-cargo-pkg-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "hash=${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore FreeBSD VM caches
         id: cache-restore
@@ -221,6 +260,7 @@ jobs:
             ${{ env.BSD_PKG_CACHE_ROOT }}
           key: ${{ steps.cache-key.outputs.key }}
           restore-keys: |
+            freebsd-cargo-pkg-${{ env.CACHE_MODE }}-${{ steps.cache-key.outputs.hash }}-
             freebsd-cargo-pkg-${{ env.CACHE_MODE }}-
             freebsd-cargo-pkg-
 
@@ -320,10 +360,14 @@ jobs:
       CACHE_MODE: ${{ inputs.release_build && 'release' || 'debug' }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Calculate cache key
         id: cache-key
-        run: echo "key=openbsd-cargo-pkg-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "key=openbsd-cargo-pkg-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "hash=${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore OpenBSD VM caches
         id: cache-restore
@@ -337,6 +381,7 @@ jobs:
             ${{ env.BSD_PKG_CACHE_ROOT }}
           key: ${{ steps.cache-key.outputs.key }}
           restore-keys: |
+            openbsd-cargo-pkg-${{ env.CACHE_MODE }}-${{ steps.cache-key.outputs.hash }}-
             openbsd-cargo-pkg-${{ env.CACHE_MODE }}-
             openbsd-cargo-pkg-
 
