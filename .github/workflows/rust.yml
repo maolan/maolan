@@ -193,6 +193,9 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: coverage/lcov.info
+          disable_search: true
+          flags: unittests
+          name: ubuntu-llvm-cov
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 

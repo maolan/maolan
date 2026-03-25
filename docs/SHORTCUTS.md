@@ -47,6 +47,7 @@ Last updated: 2026-03-21
 - `Ctrl + drag clip`: Copy clip while dragging
 - `Drag clip left/right edge`: Resize clip bounds
 - `Shift + drag clip left/right edge`: Stretch audio clip with Rubber Band on drop, when `rubberband` is available on `PATH`
+- Snapping is applied during drag-and-drop based on the current snap mode; the "Clips" snap mode enables snapping to other clip start/end positions
 - `Drag clip fade handles`: Resize fade-in/fade-out
 - `Middle click clip`: Split clip at current cursor/snap position
 - `Double click MIDI clip`: Open MIDI piano roll
@@ -56,7 +57,7 @@ Last updated: 2026-03-21
 
 ### Track Header Markers
 - `Right click empty marker/header area`: Open the create-marker dialog at the snapped timeline position
-- `Left drag marker`: Move marker horizontally; snapping is applied on drop
+- `Left drag marker`: Move marker horizontally; snapping is applied on drop (supports "Clips" snap mode)
 - `Right click marker`: Rename marker
 - `Middle click marker`: Delete marker
 
@@ -66,7 +67,7 @@ Last updated: 2026-03-21
 
 ### Ruler (Top Timeline)
 - `Left click`: Move transport playhead
-- `Left drag`: Set loop range (snap-aware)
+- `Left drag`: Set loop range (snap-aware, supports "Clips" snap mode)
 - `Right click`: Clear loop range
 
 ### Zoom Controls
@@ -77,18 +78,18 @@ Last updated: 2026-03-21
 ### Tempo / Time Signature Lane
 - `Left click marker`: Select marker
 - `Shift+Left click marker`: Add/remove marker from selection
-- `Left drag selected marker(s)`: Move marker(s) in time
+- `Left drag selected marker(s)`: Move marker(s) in time (supports "Clips" snap mode)
 - `Left click empty timing lane`: Clear timing selection and move the playhead
-- `Left drag empty timing lane`: Clear timing selection and set punch range
+- `Left drag empty timing lane`: Clear timing selection and set punch range (supports "Clips" snap mode)
 - `Right click marker`: Open marker context menu
   - Duplicate
   - Reset to previous
   - Delete
 - `Right click empty timing lane`: Clear timing selection and clear punch range
-- `Right drag empty timing lane`: Clear timing selection and set punch range
-- `Middle click` on tempo lane: Add tempo point
-- `Middle click` on time-signature lane: Add time-signature point
-- `Middle drag` an existing punch-range edge: Adjust punch start or end
+- `Right drag empty timing lane`: Clear timing selection and set punch range (supports "Clips" snap mode)
+- `Middle click` on tempo lane: Add tempo point (supports "Clips" snap mode)
+- `Middle click` on time-signature lane: Add time-signature point (supports "Clips" snap mode)
+- `Middle drag` an existing punch-range edge: Adjust punch start or end (supports "Clips" snap mode)
 - `Mouse wheel` over left control zone on tempo row: Adjust tempo
 - `Mouse wheel` over left control zone on time-signature row, left half: Adjust numerator
 - `Mouse wheel` over left control zone on time-signature row, right half: Adjust denominator

@@ -56,6 +56,7 @@ Last updated: 2026-03-21
 - Per-track editor markers
 - Marker create / rename / move / delete workflow
 - Snap-aware marker placement and marker dragging
+- Snap-to-clip start/end for clips, loop, punch, and markers
 - Ruler playhead seek
 - Loop range set/clear
 - Punch range set/clear

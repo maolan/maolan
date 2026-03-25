@@ -43,6 +43,7 @@ impl fmt::Display for PluginFormat {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SnapMode {
     NoSnap,
+    Clips,
     Bar,
     Beat,
     Eighth,
@@ -55,6 +56,7 @@ impl fmt::Display for SnapMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoSnap => write!(f, "No Snap"),
+            Self::Clips => write!(f, "Clips"),
             Self::Bar => write!(f, "Bar"),
             Self::Beat => write!(f, "Beat"),
             Self::Eighth => write!(f, "1/8"),
@@ -69,6 +71,7 @@ impl SnapMode {
     pub fn interval_samples(self, samples_per_beat: f64, samples_per_bar: f64) -> f64 {
         match self {
             SnapMode::NoSnap => 1.0,
+            SnapMode::Clips => 1.0,
             SnapMode::Bar => samples_per_bar.max(1.0),
             SnapMode::Beat => samples_per_beat.max(1.0),
             SnapMode::Eighth => (samples_per_beat / 2.0).max(1.0),
@@ -79,7 +82,7 @@ impl SnapMode {
     }
 
     pub fn snap_sample(self, sample: f64, samples_per_beat: f64, samples_per_bar: f64) -> f64 {
-        if matches!(self, SnapMode::NoSnap) {
+        if matches!(self, SnapMode::NoSnap | SnapMode::Clips) {
             return sample.max(0.0);
         }
         let interval = self.interval_samples(samples_per_beat, samples_per_bar);
@@ -93,7 +96,7 @@ impl SnapMode {
         samples_per_beat: f64,
         samples_per_bar: f64,
     ) -> f64 {
-        if matches!(self, SnapMode::NoSnap) {
+        if matches!(self, SnapMode::NoSnap | SnapMode::Clips) {
             return sample.max(0.0);
         }
         let interval = self.interval_samples(samples_per_beat, samples_per_bar);
@@ -756,6 +759,7 @@ pub enum Message {
     SetLoopRange(Option<(usize, usize)>),
     TogglePunch,
     SetPunchRange(Option<(usize, usize)>),
+    SetClipSnapTargets(Vec<crate::state::ClipId>),
     ToggleMetronome,
     TempoAdjust(f32),
     TempoPointAdd(usize),

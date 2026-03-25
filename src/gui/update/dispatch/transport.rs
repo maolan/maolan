@@ -218,6 +218,7 @@ impl Maolan {
                 });
                 self.loop_enabled = normalized.is_some();
                 self.loop_range_samples = normalized;
+                self.clip_snap_targets.clear();
                 self.send(Action::SetLoopRange(normalized))
             }
             Message::SetPunchRange(range) => {
@@ -230,6 +231,7 @@ impl Maolan {
                 });
                 self.punch_enabled = normalized.is_some();
                 self.punch_range_samples = normalized;
+                self.clip_snap_targets.clear();
                 self.send(Action::SetPunchRange(normalized))
             }
             _ => Task::none(),

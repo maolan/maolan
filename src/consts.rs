@@ -290,8 +290,9 @@ pub mod message_lists {
         PianoNrpnKind, PianoRpnKind, PianoScaleRoot, PianoVelocityKind, SnapMode,
     };
 
-    pub const SNAP_MODE_ALL: [SnapMode; 7] = [
+    pub const SNAP_MODE_ALL: [SnapMode; 8] = [
         SnapMode::NoSnap,
+        SnapMode::Clips,
         SnapMode::Bar,
         SnapMode::Beat,
         SnapMode::Eighth,
