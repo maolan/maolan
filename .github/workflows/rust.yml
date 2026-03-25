@@ -82,7 +82,7 @@ jobs:
 
       - name: Restore Cargo and target caches
         id: cache-restore
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ~/.cargo/registry
@@ -179,7 +179,7 @@ jobs:
 
       - name: Save Cargo and target caches
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             ~/.cargo/registry
@@ -211,7 +211,7 @@ jobs:
 
       - name: Restore FreeBSD VM caches
         id: cache-restore
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ${{ env.BSD_CARGO_CACHE_ROOT }}
@@ -295,7 +295,7 @@ jobs:
 
       - name: Save FreeBSD VM caches
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             ${{ env.BSD_CARGO_CACHE_ROOT }}
@@ -327,7 +327,7 @@ jobs:
 
       - name: Restore OpenBSD VM caches
         id: cache-restore
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             ${{ env.BSD_CARGO_CACHE_ROOT }}
@@ -413,7 +413,7 @@ jobs:
 
       - name: Save OpenBSD VM caches
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             ${{ env.BSD_CARGO_CACHE_ROOT }}
