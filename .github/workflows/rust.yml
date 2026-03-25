@@ -141,14 +141,14 @@ jobs:
 
       - name: Upload coverage artifact
         if: ${{ !inputs.release_build }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-lcov
           path: coverage/lcov.info
 
       - name: Upload HTML coverage artifact
         if: ${{ !inputs.release_build }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-html
           path: coverage/html
@@ -191,7 +191,7 @@ jobs:
 
       - name: Upload Linux artifact
         if: ${{ inputs.release_build }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ASSET_BASENAME }}
           path: dist/${{ env.ASSET_BASENAME }}.tar.gz
@@ -307,7 +307,7 @@ jobs:
 
       - name: Upload FreeBSD artifact
         if: ${{ inputs.release_build }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ASSET_BASENAME }}
           path: dist/${{ env.ASSET_BASENAME }}.tar.gz
@@ -425,7 +425,7 @@ jobs:
 
       - name: Upload OpenBSD artifact
         if: ${{ inputs.release_build }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ASSET_BASENAME }}
           path: dist/${{ env.ASSET_BASENAME }}.tar.gz
