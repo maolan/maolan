@@ -22,8 +22,9 @@ use crate::{
     consts::widget_piano::PITCH_MAX,
     hw, menu,
     message::{
-        DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode, ExportNormalizeMode,
-        ExportRenderMode, Message, PluginFormat, PreferencesDeviceOption, Show, SnapMode,
+        BurnBackendOption, BurnSamplerOption, DraggedClip, ExportBitDepth, ExportFormat,
+        ExportMp3Mode, ExportNormalizeMode, ExportRenderMode, Message, PluginFormat,
+        PreferencesDeviceOption, Show, SnapMode,
     },
     platform_caps,
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
@@ -37,9 +38,14 @@ use crate::{
 use ebur128::{EbuR128, Mode as LoudnessMode};
 use flacenc::component::BitRepr;
 use flacenc::error::Verify;
+#[cfg(unix)]
+use hf_hub::{Cache as HfCache, Repo as HfRepo};
 use iced::{
     Length, Size, Task,
-    widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
+    widget::{
+        button, checkbox, column, container, pick_list, progress_bar, row, scrollable, text,
+        text_input,
+    },
 };
 #[cfg(unix)]
 use maolan_engine::kind::Kind;
@@ -52,6 +58,7 @@ use mp3lame_encoder::{
     Bitrate as Mp3Bitrate, Builder as Mp3Builder, FlushNoGap, InterleavedPcm, Quality as Mp3Quality,
 };
 use pitch_detection::detector::{PitchDetector, mcleod::McLeodDetector};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 #[cfg(unix)]
 use serde_json::json;
@@ -78,6 +85,34 @@ use wavers::Wav;
 pub(crate) use gui_consts::{MIN_CLIP_WIDTH_PX, PREF_DEVICE_AUTO_ID};
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
 type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
+
+const MAOLAN_BURN_SOCKETPAIR_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
+#[cfg(unix)]
+const MAOLAN_BURN_MODEL_DIR_ENV: &str = "MAOLAN_BURN_MODEL_DIR";
+#[cfg(unix)]
+const MAOLAN_BURN_MODEL_FILES: [(&str, &str); 3] = [
+    ("burn_t5/stable_audio_t5_sim.bpk", "T5 weights"),
+    ("burn_dit/stable_audio_dit.bpk", "DiT weights"),
+    ("burn_vae/stable_audio_vae_decoder_sim.bpk", "VAE weights"),
+];
+#[cfg(unix)]
+const MAOLAN_BURN_MODEL_REPO: &str = "kurbloid/stable-audio-open-1.0-burn";
+
+#[derive(Debug, Clone, Serialize)]
+struct BurnGenerateRequest {
+    prompt: String,
+    negative_prompt: Option<String>,
+    backend: BurnBackendOption,
+    sampler: BurnSamplerOption,
+    cfg_scale: f32,
+    steps: usize,
+    seconds_total: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct BurnGenerateResponseHeader {
+    wav_bytes_len: usize,
+}
 type PianoParseResult = (
     Vec<PianoNote>,
     Vec<PianoControllerPoint>,
@@ -418,6 +453,18 @@ pub struct Maolan {
     import_file_progress: f32,
     import_current_filename: String,
     import_current_operation: Option<String>,
+    generate_audio_prompt_input: String,
+    generate_audio_negative_prompt_input: String,
+    generate_audio_hf_token_input: String,
+    generate_audio_hf_token_visible: bool,
+    generate_audio_backend: BurnBackendOption,
+    generate_audio_sampler: BurnSamplerOption,
+    generate_audio_cfg_scale_input: String,
+    generate_audio_steps_input: String,
+    generate_audio_seconds_total_input: String,
+    generate_audio_in_progress: bool,
+    generate_audio_progress: f32,
+    generate_audio_operation: Option<String>,
     clip_pitch_correction_in_progress: bool,
     clip_pitch_correction_progress: f32,
     clip_pitch_correction_clip_name: String,
@@ -534,8 +581,77 @@ fn scan_track_templates() -> Vec<String> {
         .collect()
 }
 
+#[cfg(unix)]
+fn maolan_burn_hf_repo_cache_dir() -> PathBuf {
+    HfCache::from_env()
+        .path()
+        .join("models--kurbloid--stable-audio-open-1.0-burn")
+}
+
+#[cfg(unix)]
+fn resolve_hugging_face_snapshot_dir(repo_cache_dir: &Path) -> Option<PathBuf> {
+    let refs_main = repo_cache_dir.join("refs").join("main");
+    if let Ok(revision) = fs::read_to_string(&refs_main) {
+        let snapshot_dir = repo_cache_dir.join("snapshots").join(revision.trim());
+        if has_required_model_files(&snapshot_dir) {
+            return Some(snapshot_dir);
+        }
+    }
+
+    let snapshots_dir = repo_cache_dir.join("snapshots");
+    let mut snapshots = fs::read_dir(snapshots_dir)
+        .ok()?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| has_required_model_files(path))
+        .collect::<Vec<_>>();
+    snapshots.sort();
+    snapshots.pop()
+}
+
+#[cfg(unix)]
+fn has_required_model_files(snapshot_dir: &Path) -> bool {
+    MAOLAN_BURN_MODEL_FILES
+        .iter()
+        .all(|(relative_path, _)| snapshot_dir.join(relative_path).exists())
+}
+
+#[cfg(unix)]
+fn maolan_burn_model_dir() -> PathBuf {
+    resolve_hugging_face_snapshot_dir(&maolan_burn_hf_repo_cache_dir()).unwrap_or_else(|| {
+        maolan_burn_hf_repo_cache_dir()
+            .join("snapshots")
+            .join("main")
+    })
+}
+
+#[cfg(unix)]
+fn parse_hugging_face_stored_token(contents: &str) -> Option<String> {
+    toml::from_str::<toml::Value>(contents)
+        .ok()
+        .and_then(|value| {
+            let tables = value.as_table()?;
+            tables.values().find_map(|entry| {
+                entry
+                    .get("hf_token")
+                    .and_then(toml::Value::as_str)
+                    .map(str::trim)
+                    .filter(|token| !token.is_empty())
+                    .map(ToOwned::to_owned)
+            })
+        })
+        .or_else(|| {
+            contents.lines().find_map(|line| {
+                let trimmed = line.trim();
+                let (_, value) = trimmed.split_once('=')?;
+                let token = value.trim().trim_matches('"').trim_matches('\'');
+                (!token.is_empty() && token.starts_with("hf_")).then(|| token.to_string())
+            })
+        })
+}
+
 impl Default for Maolan {
     fn default() -> Self {
+        let cfg = config::Config::load().unwrap_or_default();
         let prefs = load_preferences();
         let mut state_data = StateData {
             available_templates: scan_templates(),
@@ -657,6 +773,18 @@ impl Default for Maolan {
             import_file_progress: 0.0,
             import_current_filename: String::new(),
             import_current_operation: None,
+            generate_audio_prompt_input: String::new(),
+            generate_audio_negative_prompt_input: cfg.burn_negative_prompt,
+            generate_audio_hf_token_input: String::new(),
+            generate_audio_hf_token_visible: false,
+            generate_audio_backend: cfg.burn_backend,
+            generate_audio_sampler: cfg.burn_sampler,
+            generate_audio_cfg_scale_input: cfg.burn_cfg_scale.to_string(),
+            generate_audio_steps_input: cfg.burn_steps.to_string(),
+            generate_audio_seconds_total_input: cfg.burn_seconds_total.to_string(),
+            generate_audio_in_progress: false,
+            generate_audio_progress: 0.0,
+            generate_audio_operation: None,
             clip_pitch_correction_in_progress: false,
             clip_pitch_correction_progress: 0.0,
             clip_pitch_correction_clip_name: String::new(),
@@ -721,6 +849,357 @@ impl Default for Maolan {
 }
 
 impl Maolan {
+    #[cfg(unix)]
+    fn maolan_workspace_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    #[cfg(unix)]
+    fn resolve_maolan_burn_binary_path(
+        current_exe: Option<&Path>,
+        workspace_root: &Path,
+    ) -> Option<PathBuf> {
+        let mut candidates = Vec::new();
+        if let Some(current_exe) = current_exe
+            && let Some(parent) = current_exe.parent()
+        {
+            candidates.push(parent.join("maolan-burn"));
+            if let Some(grandparent) = parent.parent() {
+                candidates.push(grandparent.join("maolan-burn"));
+            }
+        }
+        candidates.push(
+            workspace_root
+                .join("target")
+                .join("debug")
+                .join("maolan-burn"),
+        );
+        candidates.push(
+            workspace_root
+                .join("target")
+                .join("release")
+                .join("maolan-burn"),
+        );
+        candidates.into_iter().find(|path| path.exists())
+    }
+
+    #[cfg(unix)]
+    fn build_maolan_burn_binary(workspace_root: &Path) -> Option<PathBuf> {
+        let target_path = workspace_root
+            .join("target")
+            .join("debug")
+            .join("maolan-burn");
+        let status = Command::new("cargo")
+            .arg("build")
+            .arg("--quiet")
+            .arg("-p")
+            .arg("maolan-burn")
+            .arg("--bin")
+            .arg("maolan-burn")
+            .arg("--manifest-path")
+            .arg(workspace_root.join("Cargo.toml"))
+            .status()
+            .ok()?;
+        (status.success() && target_path.exists()).then_some(target_path)
+    }
+
+    #[cfg(unix)]
+    fn maolan_burn_command() -> Command {
+        let workspace_root = Self::maolan_workspace_root();
+        if let Some(path) = Self::resolve_maolan_burn_binary_path(
+            std::env::current_exe().ok().as_deref(),
+            &workspace_root,
+        ) {
+            return Command::new(path);
+        }
+        if cfg!(debug_assertions)
+            && let Some(path) = Self::build_maolan_burn_binary(&workspace_root)
+        {
+            return Command::new(path);
+        }
+        Command::new("maolan-burn")
+    }
+
+    #[cfg(unix)]
+    fn hugging_face_token() -> Option<String> {
+        std::env::var("HF_TOKEN")
+            .ok()
+            .map(|token| token.trim().to_string())
+            .filter(|token| !token.is_empty())
+            .or_else(|| HfCache::from_env().token())
+            .or_else(|| {
+                let path = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .ok()
+                    .map(PathBuf::from)?
+                    .join(".cache")
+                    .join("huggingface")
+                    .join("stored_tokens");
+                let contents = fs::read_to_string(path).ok()?;
+                parse_hugging_face_stored_token(&contents)
+            })
+    }
+
+    #[cfg(unix)]
+    fn save_hugging_face_token(token: &str) -> Result<(), String> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Ok(());
+        }
+        let path = HfCache::from_env().token_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create Hugging Face cache directory: {e}"))?;
+        }
+        fs::write(&path, format!("{token}\n"))
+            .map_err(|e| format!("Failed to save Hugging Face token: {e}"))
+    }
+
+    #[cfg(unix)]
+    fn missing_maolan_burn_model_files(model_dir: &Path) -> Vec<(&'static str, PathBuf)> {
+        MAOLAN_BURN_MODEL_FILES
+            .iter()
+            .filter_map(|(relative_path, _)| {
+                let path = model_dir.join(relative_path);
+                (!path.exists()).then_some((*relative_path, path))
+            })
+            .collect::<Vec<_>>()
+    }
+
+    #[cfg(unix)]
+    async fn ensure_maolan_burn_model<F>(
+        token_override: Option<String>,
+        mut progress: F,
+    ) -> Result<PathBuf, String>
+    where
+        F: FnMut(f32, Option<String>),
+    {
+        let cached_model_dir = maolan_burn_model_dir();
+        let missing_files = Self::missing_maolan_burn_model_files(&cached_model_dir);
+
+        if missing_files.is_empty() && cached_model_dir.is_dir() {
+            progress(1.0, Some("Using cached maolan-burn model".to_string()));
+            return Ok(cached_model_dir);
+        }
+
+        let token = token_override
+            .map(|token| token.trim().to_string())
+            .filter(|token| !token.is_empty())
+            .or_else(Self::hugging_face_token);
+        if token.is_none() {
+            return Err(
+                "Model download requires a Hugging Face token. Enter it in Generate Audio."
+                    .to_string(),
+            );
+        }
+
+        let total_files = MAOLAN_BURN_MODEL_FILES.len().max(1) as f32;
+        let token_value = token.expect("checked above");
+        let api = hf_hub::api::tokio::ApiBuilder::from_cache(HfCache::from_env())
+            .with_token(Some(token_value.clone()))
+            .build()
+            .map_err(|e| format!("Failed to initialize Hugging Face client: {e}"))?;
+        let repo = api.repo(HfRepo::model(MAOLAN_BURN_MODEL_REPO.to_string()));
+        let mut model_dir = None::<PathBuf>;
+
+        for (index, (relative_path, label)) in MAOLAN_BURN_MODEL_FILES.iter().enumerate() {
+            progress(
+                index as f32 / total_files,
+                Some(format!("Fetching {label}")),
+            );
+            let get_future = repo.get(relative_path);
+            tokio::pin!(get_future);
+            let mut pulsed_progress = 0.0_f32;
+            let cached_path = loop {
+                tokio::select! {
+                    result = &mut get_future => {
+                        break result.map_err(|e| format!("Failed to fetch {label}: {e}"))?;
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(150)) => {
+                        pulsed_progress = (pulsed_progress + 0.03).min(0.9);
+                        progress(
+                            (index as f32 + pulsed_progress) / total_files,
+                            Some(format!("Fetching {label}")),
+                        );
+                    }
+                }
+            };
+            let Some(snapshot_dir) = cached_path.parent().and_then(Path::parent) else {
+                return Err(format!(
+                    "Failed to resolve Hugging Face snapshot root for {label}: {}",
+                    cached_path.display()
+                ));
+            };
+            if let Some(existing) = model_dir.as_ref() {
+                if existing != snapshot_dir {
+                    return Err(format!(
+                        "Hugging Face returned inconsistent snapshot roots: {} vs {}",
+                        existing.display(),
+                        snapshot_dir.display()
+                    ));
+                }
+            } else {
+                model_dir = Some(snapshot_dir.to_path_buf());
+            }
+            progress(
+                (index as f32 + 1.0) / total_files,
+                Some(format!("Fetched {label}")),
+            );
+        }
+
+        Self::save_hugging_face_token(&token_value)?;
+        let model_dir = model_dir.ok_or_else(|| {
+            "Failed to resolve Hugging Face snapshot root for maolan-burn model".to_string()
+        })?;
+        progress(1.0, Some("Model ready".to_string()));
+        Ok(model_dir)
+    }
+
+    #[cfg(unix)]
+    fn write_ipc_message<T: Serialize>(
+        writer: &mut impl std::io::Write,
+        value: &T,
+    ) -> Result<(), String> {
+        let payload =
+            serde_json::to_vec(value).map_err(|e| format!("Failed to encode IPC request: {e}"))?;
+        let len = u64::try_from(payload.len()).map_err(|_| "IPC payload too large".to_string())?;
+        writer
+            .write_all(&len.to_le_bytes())
+            .map_err(|e| format!("Failed to write IPC request length: {e}"))?;
+        writer
+            .write_all(&payload)
+            .map_err(|e| format!("Failed to write IPC request payload: {e}"))?;
+        writer
+            .flush()
+            .map_err(|e| format!("Failed to flush IPC request: {e}"))?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn read_ipc_message<T: DeserializeOwned>(reader: &mut impl std::io::Read) -> Result<T, String> {
+        let mut len_bytes = [0_u8; 8];
+        reader
+            .read_exact(&mut len_bytes)
+            .map_err(|e| format!("Failed to read IPC response length: {e}"))?;
+        let len = usize::try_from(u64::from_le_bytes(len_bytes))
+            .map_err(|_| "IPC response too large".to_string())?;
+        let mut payload = vec![0_u8; len];
+        reader
+            .read_exact(&mut payload)
+            .map_err(|e| format!("Failed to read IPC response payload: {e}"))?;
+        serde_json::from_slice(&payload)
+            .map_err(|e| format!("Failed to decode IPC response payload: {e}"))
+    }
+
+    #[cfg(unix)]
+    fn read_ipc_bytes(reader: &mut impl std::io::Read) -> Result<Vec<u8>, String> {
+        let mut len_bytes = [0_u8; 8];
+        reader
+            .read_exact(&mut len_bytes)
+            .map_err(|e| format!("Failed to read IPC byte length: {e}"))?;
+        let len = usize::try_from(u64::from_le_bytes(len_bytes))
+            .map_err(|_| "IPC byte payload too large".to_string())?;
+        let mut payload = vec![0_u8; len];
+        reader
+            .read_exact(&mut payload)
+            .map_err(|e| format!("Failed to read IPC byte payload: {e}"))?;
+        Ok(payload)
+    }
+
+    #[cfg(unix)]
+    fn generate_audio_with_burn_socketpair(
+        request: BurnGenerateRequest,
+        model_dir: &Path,
+    ) -> Result<Vec<u8>, String> {
+        use std::os::fd::OwnedFd;
+        use std::os::unix::net::UnixStream;
+        use std::process::Stdio;
+
+        let (mut parent, child) =
+            UnixStream::pair().map_err(|e| format!("Failed to create socketpair: {e}"))?;
+        let child_read = child
+            .try_clone()
+            .map_err(|e| format!("Failed to clone child socket: {e}"))?;
+        let mut command = Self::maolan_burn_command();
+        let process = command
+            .env(MAOLAN_BURN_SOCKETPAIR_ENV, "1")
+            .env(MAOLAN_BURN_MODEL_DIR_ENV, model_dir)
+            .stdin(Stdio::from(OwnedFd::from(child_read)))
+            .stdout(Stdio::from(OwnedFd::from(child)))
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("Failed to launch maolan-burn: {e}"))?;
+
+        if let Err(err) = Self::write_ipc_message(&mut parent, &request) {
+            let output = process
+                .wait_with_output()
+                .map_err(|wait_err| format!("{err}; failed to wait for maolan-burn: {wait_err}"))?;
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return if stderr.is_empty() {
+                Err(err)
+            } else {
+                Err(format!("{err}; maolan-burn stderr: {stderr}"))
+            };
+        }
+
+        let header = match Self::read_ipc_message::<BurnGenerateResponseHeader>(&mut parent) {
+            Ok(header) => header,
+            Err(err) => {
+                let output = process.wait_with_output().map_err(|wait_err| {
+                    format!("{err}; failed to wait for maolan-burn: {wait_err}")
+                })?;
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                return if stderr.is_empty() {
+                    Err(err)
+                } else {
+                    Err(format!("{err}; maolan-burn stderr: {stderr}"))
+                };
+            }
+        };
+        let wav_bytes = match Self::read_ipc_bytes(&mut parent) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                let output = process.wait_with_output().map_err(|wait_err| {
+                    format!("{err}; failed to wait for maolan-burn: {wait_err}")
+                })?;
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                return if stderr.is_empty() {
+                    Err(err)
+                } else {
+                    Err(format!("{err}; maolan-burn stderr: {stderr}"))
+                };
+            }
+        };
+
+        let output = process
+            .wait_with_output()
+            .map_err(|e| format!("Failed to wait for maolan-burn: {e}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return if stderr.is_empty() {
+                Err("maolan-burn exited unsuccessfully".to_string())
+            } else {
+                Err(stderr)
+            };
+        }
+        if wav_bytes.len() != header.wav_bytes_len {
+            return Err(format!(
+                "maolan-burn returned {} bytes but announced {}",
+                wav_bytes.len(),
+                header.wav_bytes_len
+            ));
+        }
+        Ok(wav_bytes)
+    }
+
+    #[cfg(not(unix))]
+    fn generate_audio_with_burn_socketpair(
+        _request: BurnGenerateRequest,
+        _model_dir: &Path,
+    ) -> Result<Vec<u8>, String> {
+        Err("Generated audio via maolan-burn is only available on Unix platforms".to_string())
+    }
+
     fn plugin_graph_title(state: &StateData) -> String {
         if let Some(target) = state.plugin_graph_clip.as_ref() {
             if let Some(track) = state
@@ -1622,6 +2101,20 @@ impl Maolan {
         let candidate = Self::sanitize_peak_file_component(stem);
         if candidate.is_empty() {
             "Track".to_string()
+        } else {
+            candidate
+        }
+    }
+
+    fn sanitize_generated_track_base_name(prompt: &str) -> String {
+        let prompt = prompt.trim();
+        if prompt.is_empty() {
+            return "Generated".to_string();
+        }
+        let shortened = prompt.chars().take(32).collect::<String>();
+        let candidate = Self::sanitize_peak_file_component(&shortened);
+        if candidate.is_empty() {
+            "Generated".to_string()
         } else {
             candidate
         }
@@ -4897,6 +5390,138 @@ impl Maolan {
         .into()
     }
 
+    fn generate_audio_view(&self) -> iced::Element<'_, Message> {
+        let session_ready = self.session_dir.is_some();
+        let progress_label = if self.generate_audio_in_progress {
+            if let Some(operation) = self.generate_audio_operation.as_deref() {
+                format!(
+                    "{} ({:.0}%)",
+                    operation,
+                    (self.generate_audio_progress * 100.0).clamp(0.0, 100.0)
+                )
+            } else {
+                format!(
+                    "Generating ({:.0}%)",
+                    (self.generate_audio_progress * 100.0).clamp(0.0, 100.0)
+                )
+            }
+        } else if session_ready {
+            "Generated audio is imported as a new track in the current session.".to_string()
+        } else {
+            "Open or save a session before generating audio.".to_string()
+        };
+        let generate_button = if self.generate_audio_in_progress || !session_ready {
+            button("Generate")
+        } else {
+            button("Generate").on_press(Message::GenerateAudioSubmit)
+        };
+        let cancel_button = if self.generate_audio_in_progress {
+            button("Close").style(button::secondary)
+        } else {
+            button("Close")
+                .on_press(Message::Cancel)
+                .style(button::secondary)
+        };
+
+        container(
+            scrollable(
+                column![
+                    text("Generate Audio").size(16),
+                    text_input("Prompt", &self.generate_audio_prompt_input)
+                        .on_input(Message::GenerateAudioPromptInput)
+                        .width(Length::Fill),
+                    text_input(
+                        "Negative prompt (optional)",
+                        &self.generate_audio_negative_prompt_input
+                    )
+                    .on_input(Message::GenerateAudioNegativePromptInput)
+                    .width(Length::Fill),
+                    row![
+                        text_input(
+                            "Hugging Face token (used if model download is needed)",
+                            &self.generate_audio_hf_token_input
+                        )
+                        .secure(!self.generate_audio_hf_token_visible)
+                        .on_input(Message::GenerateAudioHfTokenInput)
+                        .width(Length::Fill),
+                        button(if self.generate_audio_hf_token_visible {
+                            "Hide"
+                        } else {
+                            "Show"
+                        })
+                        .on_press(Message::GenerateAudioToggleHfTokenVisibility),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("Backend:"),
+                        pick_list(
+                            BurnBackendOption::ALL.to_vec(),
+                            Some(self.generate_audio_backend),
+                            Message::GenerateAudioBackendSelected
+                        )
+                        .placeholder("Choose backend")
+                        .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("Sampler:"),
+                        pick_list(
+                            BurnSamplerOption::ALL.to_vec(),
+                            Some(self.generate_audio_sampler),
+                            Message::GenerateAudioSamplerSelected
+                        )
+                        .placeholder("Choose sampler")
+                        .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("CFG scale:"),
+                        text_input("6.0", &self.generate_audio_cfg_scale_input)
+                            .on_input(Message::GenerateAudioCfgScaleInput)
+                            .width(Length::Fixed(120.0)),
+                        text("Steps:"),
+                        text_input("250", &self.generate_audio_steps_input)
+                            .on_input(Message::GenerateAudioStepsInput)
+                            .width(Length::Fixed(120.0)),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("Seconds total:"),
+                        text_input("6", &self.generate_audio_seconds_total_input)
+                            .on_input(Message::GenerateAudioSecondsTotalInput)
+                            .width(Length::Fixed(120.0)),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    text(progress_label),
+                    if self.generate_audio_in_progress {
+                        container(progress_bar(
+                            0.0..=1.0,
+                            self.generate_audio_progress.clamp(0.0, 1.0),
+                        ))
+                        .width(Length::Fill)
+                    } else {
+                        container(progress_bar(0.0..=1.0, 0.0)).width(Length::Fill)
+                    },
+                    row![generate_button, cancel_button].spacing(10),
+                ]
+                .align_x(iced::Alignment::Start)
+                .spacing(12),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+        .style(|_theme| crate::style::app_background())
+        .padding(12)
+        .width(Length::Fixed(360.0))
+        .height(Length::Fill)
+        .into()
+    }
+
     fn session_metadata_view(&self) -> iced::Element<'_, Message> {
         let state = self.state.blocking_read();
         container(
@@ -5041,6 +5666,8 @@ mod tests {
     use super::*;
     #[cfg(unix)]
     use maolan_engine::message::PluginGraphNode;
+    #[cfg(unix)]
+    use std::path::PathBuf;
     use std::sync::{LazyLock, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -6311,5 +6938,68 @@ mod tests {
 
         assert!(app.pending_record_after_save);
         assert!(!app.record_armed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_hugging_face_stored_token_reads_first_token() {
+        let token = parse_hugging_face_stored_token(
+            r#"
+[default]
+hf_token = "token-1"
+
+[other]
+hf_token = "token-2"
+"#,
+        );
+        assert_eq!(token.as_deref(), Some("token-1"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn maolan_burn_model_dir_uses_cache_root() {
+        assert_eq!(
+            maolan_burn_hf_repo_cache_dir(),
+            HfCache::from_env()
+                .path()
+                .join("models--kurbloid--stable-audio-open-1.0-burn")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_maolan_burn_binary_path_prefers_sibling_binary() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("maolan-burn-path-test-{unique}"));
+        let bin_dir = root.join("target").join("debug");
+        fs::create_dir_all(&bin_dir).expect("bin dir");
+        let current_exe = bin_dir.join("maolan");
+        fs::write(bin_dir.join("maolan-burn"), []).expect("touch sibling");
+
+        let resolved = Maolan::resolve_maolan_burn_binary_path(Some(&current_exe), &root);
+
+        assert_eq!(resolved, Some(bin_dir.join("maolan-burn")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_maolan_burn_binary_path_falls_back_to_workspace_target() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("maolan-burn-target-test-{unique}"));
+        let target_path = root.join("target").join("debug").join("maolan-burn");
+        fs::create_dir_all(target_path.parent().expect("target parent")).expect("target dir");
+        fs::write(&target_path, []).expect("touch target");
+
+        let resolved = Maolan::resolve_maolan_burn_binary_path(None, &root);
+
+        assert_eq!(resolved, Some(target_path));
+        let _ = fs::remove_dir_all(root);
     }
 }

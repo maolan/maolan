@@ -455,6 +455,15 @@ impl Maolan {
                             .height(Length::Fill)
                             .into();
                     }
+                    if matches!(self.modal, Some(Show::GenerateAudio)) {
+                        view = row![
+                            container(view).width(Length::Fill),
+                            self.generate_audio_view()
+                        ]
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into();
+                    }
                     if show_track_marker_dialog {
                         view = row![
                             container(view).width(Length::Fill),

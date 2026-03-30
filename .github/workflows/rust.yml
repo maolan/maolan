@@ -284,7 +284,7 @@ jobs:
             cp -R "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/." widgets/target/ 2>/dev/null || true
             cp -R "${{ env.BSD_PKG_CACHE_ROOT }}/." /var/cache/pkg/ 2>/dev/null || true
 
-            pkg install -y ca_root_nss rust pkgconf libX11 gtk2 lilv suil jackit rubberband
+            pkg install -y ca_root_nss rust pkgconf libX11 gtk2 lilv suil jackit rubberband cmake
             export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
 
             cargo build
@@ -313,7 +313,7 @@ jobs:
             cp -R "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/." widgets/target/ 2>/dev/null || true
             cp -R "${{ env.BSD_PKG_CACHE_ROOT }}/." /var/cache/pkg/ 2>/dev/null || true
 
-            pkg install -y ca_root_nss rust pkgconf libX11 gtk2 lilv suil jackit rubberband
+            pkg install -y ca_root_nss rust pkgconf libX11 gtk2 lilv suil jackit rubberband cmake
             export SSL_CERT_FILE=/usr/local/share/certs/ca-root-nss.crt
 
             cargo build --release --verbose
@@ -406,7 +406,7 @@ jobs:
             cp -R "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/." widgets/target/ 2>/dev/null || true
             cp -R "${{ env.BSD_PKG_CACHE_ROOT }}/." "$PKG_CACHE/" 2>/dev/null || true
 
-            pkg_add bash pkgconf gtk+2 lilv suil jack rubberband rust
+            pkg_add bash pkgconf gtk+2 lilv suil jack rubberband rust cmake
             export PATH="/usr/local/bin:$PATH"
 
             cargo build
@@ -436,7 +436,7 @@ jobs:
             cp -R "${{ env.BSD_WIDGETS_TARGET_CACHE_ROOT }}/." widgets/target/ 2>/dev/null || true
             cp -R "${{ env.BSD_PKG_CACHE_ROOT }}/." "$PKG_CACHE/" 2>/dev/null || true
 
-            pkg_add bash pkgconf gtk+2 lilv suil jack rubberband rust
+            pkg_add bash pkgconf gtk+2 lilv suil jack rubberband rust cmake
             export PATH="/usr/local/bin:$PATH"
 
             cargo build --release --verbose
