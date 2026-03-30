@@ -1,5 +1,5 @@
 use crate::consts::audio_defaults;
-use crate::message::SnapMode;
+use crate::message::{BurnBackendOption, BurnSamplerOption, SnapMode};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -14,6 +14,13 @@ pub struct Config {
     pub default_export_sample_rate_hz: u32,
     pub default_snap_mode: SnapMode,
     pub default_audio_bit_depth: usize,
+    pub burn_negative_prompt: String,
+    pub burn_backend: BurnBackendOption,
+    pub burn_sampler: BurnSamplerOption,
+    pub burn_cfg_scale: f32,
+    pub burn_steps: usize,
+    pub burn_seconds_start: i64,
+    pub burn_seconds_total: i64,
     pub default_output_device_id: Option<String>,
     pub default_input_device_id: Option<String>,
     pub recent_session_paths: Vec<String>,
@@ -29,6 +36,13 @@ impl Default for Config {
             default_export_sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ as u32,
             default_snap_mode: SnapMode::Bar,
             default_audio_bit_depth: audio_defaults::BIT_DEPTH,
+            burn_negative_prompt: String::new(),
+            burn_backend: BurnBackendOption::Vulkan,
+            burn_sampler: BurnSamplerOption::Dpmpp3mSde,
+            burn_cfg_scale: 6.0,
+            burn_steps: 250,
+            burn_seconds_start: 0,
+            burn_seconds_total: 6,
             default_output_device_id: None,
             default_input_device_id: None,
             recent_session_paths: Vec::new(),
@@ -126,6 +140,13 @@ osc_enabled = true
 default_export_sample_rate_hz = 48000
 default_snap_mode = "Bar"
 default_audio_bit_depth = 32
+burn_negative_prompt = ""
+burn_backend = "vulkan"
+burn_sampler = "dpmpp-3m-sde"
+burn_cfg_scale = 6.0
+burn_steps = 250
+burn_seconds_start = 0
+burn_seconds_total = 6
 default_output_device_id = "out-dev"
 default_input_device_id = "in-dev"
 recent_session_paths = ["/tmp/old"]

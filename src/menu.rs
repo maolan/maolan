@@ -206,6 +206,7 @@ impl Menu {
                     (menu_item("Session metadata", Message::Show(Show::SessionMetadata))),
                     (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
                     (menu_item("Import", Message::OpenFileImporter)),
+                    (menu_item("Generate audio", Message::Show(Show::GenerateAudio))),
                     (menu_item("Delete unused files", Message::DeleteUnusedSessionMediaFiles)),
                     (menu_item("Export", Message::OpenExporter)),
                     (menu_item("Quit", Message::WindowCloseRequested)),

@@ -2635,6 +2635,20 @@ impl Engine {
         }
     }
 
+    fn set_osc_enabled_with<F>(&mut self, enabled: bool, start_server: F) -> Result<(), String>
+    where
+        F: FnOnce(Sender<Message>) -> Result<OscServer, String>,
+    {
+        if enabled {
+            if self.osc_server.is_none() {
+                self.osc_server = Some(start_server(self.tx.clone())?);
+            }
+        } else if let Some(mut server) = self.osc_server.take() {
+            server.stop();
+        }
+        Ok(())
+    }
+
     fn track_handle_by_name(&self, track_name: &str) -> Option<Arc<UnsafeMutex<Box<Track>>>> {
         self.state.lock().tracks.get(track_name).cloned()
     }
@@ -3676,15 +3690,8 @@ impl Engine {
                 self.tsig_denom = denominator.max(1);
             }
             Action::SetOscEnabled(enabled) => {
-                if enabled {
-                    if self.osc_server.is_none() {
-                        match OscServer::start(self.tx.clone()) {
-                            Ok(server) => self.osc_server = Some(server),
-                            Err(err) => self.notify_clients(Err(err)).await,
-                        }
-                    }
-                } else if let Some(mut server) = self.osc_server.take() {
-                    server.stop();
+                if let Err(err) = self.set_osc_enabled_with(enabled, OscServer::start) {
+                    self.notify_clients(Err(err)).await;
                 }
             }
             Action::SetRecordEnabled(enabled) => {
@@ -6655,10 +6662,14 @@ mod tests {
     async fn set_osc_enabled_starts_and_stops_server() {
         let (mut engine, _client_rx) = make_engine_with_client();
 
-        engine.handle_request(Action::SetOscEnabled(true)).await;
+        engine
+            .set_osc_enabled_with(true, |tx| OscServer::start_on_addr(tx, "127.0.0.1:0"))
+            .expect("start osc server on ephemeral port");
         assert!(engine.osc_server.is_some());
 
-        engine.handle_request(Action::SetOscEnabled(false)).await;
+        engine
+            .set_osc_enabled_with(false, OscServer::start)
+            .expect("stop osc server");
         assert!(engine.osc_server.is_none());
     }
 

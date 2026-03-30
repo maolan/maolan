@@ -12,6 +12,7 @@ use std::fmt;
 pub enum Show {
     AddTrack,
     TrackPluginList,
+    GenerateAudio,
     ExportSettings,
     SessionMetadata,
     Preferences,
@@ -21,6 +22,64 @@ pub enum Show {
     SaveAs,
     SaveTemplateAs,
     Open,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BurnBackendOption {
+    Cpu,
+    Vulkan,
+    Cuda,
+}
+
+impl BurnBackendOption {
+    pub const ALL: [Self; 3] = [Self::Cpu, Self::Vulkan, Self::Cuda];
+
+    pub fn as_ipc_str(self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::Vulkan => "vulkan",
+            Self::Cuda => "cuda",
+        }
+    }
+}
+
+impl fmt::Display for BurnBackendOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cpu => write!(f, "CPU"),
+            Self::Vulkan => write!(f, "Vulkan"),
+            Self::Cuda => write!(f, "CUDA"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum BurnSamplerOption {
+    #[serde(rename = "dpmpp-2m")]
+    Dpmpp2m,
+    #[serde(rename = "dpmpp-3m-sde")]
+    Dpmpp3mSde,
+}
+
+impl BurnSamplerOption {
+    pub const ALL: [Self; 2] = [Self::Dpmpp2m, Self::Dpmpp3mSde];
+
+    pub fn as_ipc_str(self) -> &'static str {
+        match self {
+            Self::Dpmpp2m => "dpmpp-2m",
+            Self::Dpmpp3mSde => "dpmpp-3m-sde",
+        }
+    }
+}
+
+impl fmt::Display for BurnSamplerOption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Dpmpp2m => write!(f, "DPM++ 2M"),
+            Self::Dpmpp3mSde => write!(f, "DPM++ 3M SDE"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -596,6 +655,21 @@ pub enum Message {
     RecoverAutosaveSnapshot,
     RecoverAutosaveIgnore,
     OpenExporter,
+    GenerateAudioPromptInput(String),
+    GenerateAudioNegativePromptInput(String),
+    GenerateAudioHfTokenInput(String),
+    GenerateAudioToggleHfTokenVisibility,
+    GenerateAudioBackendSelected(BurnBackendOption),
+    GenerateAudioSamplerSelected(BurnSamplerOption),
+    GenerateAudioCfgScaleInput(String),
+    GenerateAudioStepsInput(String),
+    GenerateAudioSecondsTotalInput(String),
+    GenerateAudioSubmit,
+    GenerateAudioProgress {
+        progress: f32,
+        operation: Option<String>,
+    },
+    GenerateAudioFinished(Result<String, String>),
     ExportDiagnosticsBundleRequest,
     SessionDiagnosticsRequest,
     MidiLearnMappingsPanelToggle,

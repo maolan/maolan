@@ -81,6 +81,24 @@ impl Maolan {
                 self.selected_clap_plugins.clear();
                 Task::none()
             }
+            Show::GenerateAudio => {
+                self.generate_audio_prompt_input.clear();
+                #[cfg(unix)]
+                {
+                    self.generate_audio_hf_token_input =
+                        Self::hugging_face_token().unwrap_or_default();
+                }
+                #[cfg(not(unix))]
+                {
+                    self.generate_audio_hf_token_input.clear();
+                }
+                self.generate_audio_hf_token_visible = false;
+                self.generate_audio_in_progress = false;
+                self.generate_audio_progress = 0.0;
+                self.generate_audio_operation = None;
+                self.modal = Some(Show::GenerateAudio);
+                Task::none()
+            }
             Show::ExportSettings => {
                 self.modal = Some(Show::ExportSettings);
                 Task::none()
