@@ -1,5 +1,5 @@
 use crate::consts::audio_defaults;
-use crate::message::{BurnBackendOption, BurnSamplerOption, SnapMode};
+use crate::message::{BurnBackendOption, BurnSamplerOption, GenerateAudioModelOption, SnapMode};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -14,6 +14,7 @@ pub struct Config {
     pub default_export_sample_rate_hz: u32,
     pub default_snap_mode: SnapMode,
     pub default_audio_bit_depth: usize,
+    pub generate_audio_model: GenerateAudioModelOption,
     pub burn_negative_prompt: String,
     pub burn_backend: BurnBackendOption,
     pub burn_sampler: BurnSamplerOption,
@@ -36,6 +37,7 @@ impl Default for Config {
             default_export_sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ as u32,
             default_snap_mode: SnapMode::Bar,
             default_audio_bit_depth: audio_defaults::BIT_DEPTH,
+            generate_audio_model: GenerateAudioModelOption::StableAudioOpen,
             burn_negative_prompt: String::new(),
             burn_backend: BurnBackendOption::Vulkan,
             burn_sampler: BurnSamplerOption::Dpmpp3mSde,
@@ -141,6 +143,7 @@ default_export_sample_rate_hz = 48000
 default_snap_mode = "Bar"
 default_audio_bit_depth = 32
 burn_negative_prompt = ""
+generate_audio_model = "stable-audio-open"
 burn_backend = "vulkan"
 burn_sampler = "dpmpp-3m-sde"
 burn_cfg_scale = 6.0
