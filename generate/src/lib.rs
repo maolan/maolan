@@ -1,0 +1,869 @@
+use anyhow::{Context, Result, anyhow, bail};
+use sentencepiece::SentencePieceProcessor;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::ffi::OsString;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+
+pub mod heartcodec;
+pub mod heartmula_runtime;
+
+pub const DEFAULT_MAX_PROMPT_TOKENS: usize = 128;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BackendChoice {
+    Cpu,
+    #[default]
+    Vulkan,
+    Cuda,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SamplerChoice {
+    #[serde(rename = "dpmpp-2m")]
+    Dpmpp2m,
+    #[serde(rename = "dpmpp-3m-sde")]
+    Dpmpp3mSde,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ModelChoice {
+    StableAudioOpen,
+    #[default]
+    Heartmula,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FloatSize {
+    #[default]
+    F16,
+    F32,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DecoderChoice {
+    #[default]
+    Rust,
+    Python,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct GenerateRequest {
+    #[serde(default)]
+    pub model: ModelChoice,
+    pub prompt: String,
+    pub negative_prompt: Option<String>,
+    #[serde(default)]
+    pub model_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub float_size: FloatSize,
+    #[serde(default = "default_output_path")]
+    pub output_path: PathBuf,
+    #[serde(default)]
+    pub inspect_only: bool,
+    pub backend: BackendChoice,
+    pub sampler: SamplerChoice,
+    pub cfg_scale: f32,
+    pub steps: usize,
+    pub seconds_total: i64,
+    /// ODE steps for HeartMula flow matching (lower = faster, 10 = default)
+    #[serde(default = "default_ode_steps")]
+    pub ode_steps: usize,
+    /// Lyrics prompt (alias for prompt)
+    #[serde(default)]
+    pub lyrics: Option<String>,
+    /// Tags / style prompt
+    #[serde(default)]
+    pub tags: Option<String>,
+    /// Maximum audio length in milliseconds (HeartMula)
+    #[serde(default)]
+    pub max_audio_length_ms: Option<i64>,
+    /// Top-k sampling for HeartMula token generation
+    #[serde(default = "default_topk")]
+    pub topk: usize,
+    /// Sampling temperature for HeartMula token generation
+    #[serde(default = "default_temperature")]
+    pub temperature: f32,
+    /// Select HeartCodec decoder implementation
+    #[serde(default)]
+    pub decoder: DecoderChoice,
+    /// Decode an existing frames JSON instead of generating tokens
+    #[serde(default)]
+    pub decode_only: bool,
+    /// Input frames JSON for decode-only mode
+    #[serde(default)]
+    pub frames_json: Option<PathBuf>,
+    /// Number of worker threads to use for decode-only CPU decoding
+    #[serde(default)]
+    pub decode_threads: Option<usize>,
+    /// Seed for deterministic HeartCodec decoder latent initialization
+    #[serde(default)]
+    pub decoder_seed: u64,
+    /// Load HeartMuLa/HeartCodec stages on demand and release HeartMuLa before decode
+    #[serde(default)]
+    pub lazy: bool,
+}
+
+fn default_ode_steps() -> usize {
+    10
+}
+
+fn default_topk() -> usize {
+    50
+}
+
+fn default_temperature() -> f32 {
+    1.0
+}
+
+pub type CliOptions = GenerateRequest;
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct GenerateResponseHeader {
+    pub backend: BackendChoice,
+    pub channels: usize,
+    pub frames: usize,
+    pub guidance_scale: f32,
+    pub prompt_tokens: i64,
+    pub sample_rate_hz: u32,
+    pub sampler: SamplerChoice,
+    pub seconds_total: i64,
+    pub steps: usize,
+    pub wav_bytes_len: usize,
+}
+
+fn default_output_path() -> PathBuf {
+    PathBuf::from("output.wav")
+}
+
+pub fn help_text() -> &'static str {
+    "\
+maolan-generate
+
+Usage:
+  maolan-generate [options] <prompt-or-lyrics>
+
+Options:
+  --model <stable-audio-open|heartmula>
+  --model-dir <path>
+  --float-size <f16|f32>  HeartMula defaults to f32 when omitted
+  --output <path>
+  --save-path <path>       Alias for --output
+  --inspect
+  --backend <cpu|vulkan|cuda>  Select the runtime backend (CUDA requires the `cuda` feature)
+  --sampler <dpmpp-2m|dpmpp-3m-sde>
+  --negative-prompt <text>
+  --lyrics <text>          Prompt / lyrics (positional argument also accepted)
+  --tags <text>            Style tags for HeartMula
+  --cfg-scale <float>      CFG scale (1.0=no guidance, 2.0=weak, 6.0=strong)
+  --steps <int>
+  --seconds-total <int>
+  --max-audio-length-ms <int>  HeartMula: max audio length in milliseconds
+  --topk <int>             HeartMula: top-k sampling (default: 50)
+  --temperature <float>    HeartMula: sampling temperature (default: 1.0)
+  --ode-steps <int>        HeartMula: flow matching steps (5=fast, 10=default, 20=best)
+  --decoder <rust|python>   Select HeartCodec decoder implementation
+  --decoder-seed <int>     Seed for deterministic HeartCodec decoder latents
+  --decode-only            Decode an existing frames JSON instead of generating tokens
+  --frames-json <path>     Frames JSON input for --decode-only
+  --decode-threads <int>    Number of worker threads for decode-only CPU decoding
+  --lazy                   HeartMula: release the token generator before codec decode
+  -h, --help
+"
+}
+
+pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOptions> {
+    let mut args = args.into_iter();
+    let _program = args.next();
+    let mut prompt = None;
+    let mut negative_prompt = None;
+    let mut model_dir = None;
+    let mut float_size = FloatSize::F16;
+    let mut float_size_explicit = false;
+    let mut output_path = default_output_path();
+    let mut inspect_only = false;
+    let mut model = ModelChoice::Heartmula;
+    let mut backend = BackendChoice::Vulkan;
+    let mut sampler = SamplerChoice::Dpmpp3mSde;
+    let mut cfg_scale = 1.5_f32;
+    let mut steps = 250_usize;
+    let mut seconds_total = 6_i64;
+    let mut ode_steps = 10_usize;
+    let mut lyrics = None;
+    let mut tags = None;
+    let mut max_audio_length_ms = None;
+    let mut topk = default_topk();
+    let mut temperature = default_temperature();
+    let mut decoder = DecoderChoice::Rust;
+    let mut decode_only = false;
+    let mut frames_json = None;
+    let mut decode_threads = None;
+    let mut decoder_seed = 0_u64;
+    let mut lazy = false;
+
+    while let Some(arg) = args.next() {
+        let arg = arg
+            .into_string()
+            .map_err(|_| anyhow!("arguments must be valid UTF-8"))?;
+
+        if matches!(arg.as_str(), "-h" | "--help") {
+            bail!(help_text());
+        }
+
+        if arg == "--backend" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --backend"))?
+                .into_string()
+                .map_err(|_| anyhow!("backend value must be valid UTF-8"))?;
+            backend = match value.as_str() {
+                "cpu" => BackendChoice::Cpu,
+                "vulkan" => BackendChoice::Vulkan,
+                "cuda" => BackendChoice::Cuda,
+                _ => bail!("unsupported backend '{value}', expected one of: cpu, vulkan, cuda"),
+            };
+            continue;
+        }
+
+        if arg == "--model-dir" {
+            model_dir = Some(PathBuf::from(
+                args.next()
+                    .ok_or_else(|| anyhow!("missing value after --model-dir"))?,
+            ));
+            continue;
+        }
+
+        if matches!(arg.as_str(), "--output" | "--save-path") {
+            output_path = PathBuf::from(
+                args.next()
+                    .ok_or_else(|| anyhow!("missing value after --output"))?,
+            );
+            continue;
+        }
+
+        if arg == "--lyrics" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --lyrics"))?
+                .into_string()
+                .map_err(|_| anyhow!("lyrics value must be valid UTF-8"))?;
+            lyrics = Some(value);
+            continue;
+        }
+
+        if arg == "--tags" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --tags"))?
+                .into_string()
+                .map_err(|_| anyhow!("tags value must be valid UTF-8"))?;
+            tags = Some(value);
+            continue;
+        }
+
+        if arg == "--max-audio-length-ms" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --max-audio-length-ms"))?
+                .into_string()
+                .map_err(|_| anyhow!("max-audio-length-ms value must be valid UTF-8"))?;
+            max_audio_length_ms = Some(
+                value
+                    .parse::<i64>()
+                    .map_err(|_| anyhow!("max-audio-length-ms must be a whole number"))?,
+            );
+            continue;
+        }
+
+        if arg == "--topk" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --topk"))?
+                .into_string()
+                .map_err(|_| anyhow!("topk value must be valid UTF-8"))?;
+            topk = value
+                .parse::<usize>()
+                .map_err(|_| anyhow!("topk must be a whole number"))?;
+            if topk == 0 {
+                bail!("topk must be greater than zero");
+            }
+            continue;
+        }
+
+        if arg == "--temperature" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --temperature"))?
+                .into_string()
+                .map_err(|_| anyhow!("temperature value must be valid UTF-8"))?;
+            temperature = value
+                .parse::<f32>()
+                .map_err(|_| anyhow!("temperature must be a number"))?;
+            if !temperature.is_finite() || temperature < 0.0 {
+                bail!("temperature must be a finite non-negative number");
+            }
+            continue;
+        }
+
+        if matches!(arg.as_str(), "--float-size" | "--precision") {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --float-size"))?
+                .into_string()
+                .map_err(|_| anyhow!("float-size value must be valid UTF-8"))?;
+            float_size = match value.as_str() {
+                "f16" => FloatSize::F16,
+                "f32" => FloatSize::F32,
+                _ => bail!("unsupported float-size '{value}', expected one of: f16, f32"),
+            };
+            float_size_explicit = true;
+            continue;
+        }
+
+        if arg == "--inspect" {
+            inspect_only = true;
+            continue;
+        }
+
+        if arg == "--decoder" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --decoder"))?
+                .into_string()
+                .map_err(|_| anyhow!("decoder value must be valid UTF-8"))?;
+            decoder = match value.as_str() {
+                "rust" => DecoderChoice::Rust,
+                "python" => DecoderChoice::Python,
+                _ => bail!("unsupported decoder '{value}', expected one of: rust, python"),
+            };
+            continue;
+        }
+
+        if arg == "--decode-only" {
+            decode_only = true;
+            continue;
+        }
+
+        if arg == "--frames-json" {
+            frames_json =
+                Some(PathBuf::from(args.next().ok_or_else(|| {
+                    anyhow!("missing value after --frames-json")
+                })?));
+            continue;
+        }
+
+        if arg == "--decode-threads" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --decode-threads"))?
+                .into_string()
+                .map_err(|_| anyhow!("decode-threads value must be valid UTF-8"))?;
+            decode_threads = Some(
+                value
+                    .parse::<usize>()
+                    .map_err(|_| anyhow!("decode-threads must be a whole number"))?,
+            );
+            continue;
+        }
+
+        if arg == "--decoder-seed" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --decoder-seed"))?
+                .into_string()
+                .map_err(|_| anyhow!("decoder-seed value must be valid UTF-8"))?;
+            decoder_seed = value
+                .parse::<u64>()
+                .map_err(|_| anyhow!("decoder-seed must be a whole number"))?;
+            continue;
+        }
+
+        if arg == "--lazy" {
+            lazy = true;
+            continue;
+        }
+
+        if arg == "--model" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --model"))?
+                .into_string()
+                .map_err(|_| anyhow!("model value must be valid UTF-8"))?;
+            model = match value.as_str() {
+                "stable-audio-open" => ModelChoice::StableAudioOpen,
+                "heartmula" => ModelChoice::Heartmula,
+                _ => {
+                    bail!(
+                        "unsupported model '{value}', expected one of: stable-audio-open, heartmula"
+                    )
+                }
+            };
+            continue;
+        }
+
+        if arg == "--sampler" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --sampler"))?
+                .into_string()
+                .map_err(|_| anyhow!("sampler value must be valid UTF-8"))?;
+            sampler = match value.as_str() {
+                "dpmpp-2m" => SamplerChoice::Dpmpp2m,
+                "dpmpp-3m-sde" => SamplerChoice::Dpmpp3mSde,
+                _ => {
+                    bail!("unsupported sampler '{value}', expected one of: dpmpp-2m, dpmpp-3m-sde")
+                }
+            };
+            continue;
+        }
+
+        if arg == "--negative-prompt" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --negative-prompt"))?
+                .into_string()
+                .map_err(|_| anyhow!("negative prompt must be valid UTF-8"))?;
+            let trimmed = value.trim();
+            negative_prompt = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_owned())
+            };
+            continue;
+        }
+
+        if arg == "--cfg-scale" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --cfg-scale"))?
+                .into_string()
+                .map_err(|_| anyhow!("cfg-scale value must be valid UTF-8"))?;
+            cfg_scale = value
+                .parse::<f32>()
+                .map_err(|_| anyhow!("cfg-scale must be a number"))?;
+            if !cfg_scale.is_finite() || cfg_scale < 0.0 {
+                bail!("cfg-scale must be a finite non-negative number");
+            }
+            continue;
+        }
+
+        if arg == "--steps" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --steps"))?
+                .into_string()
+                .map_err(|_| anyhow!("steps value must be valid UTF-8"))?;
+            steps = value
+                .parse::<usize>()
+                .map_err(|_| anyhow!("steps must be a whole number"))?;
+            if steps == 0 {
+                bail!("steps must be greater than zero");
+            }
+            continue;
+        }
+
+        if arg == "--seconds-total" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --seconds-total"))?
+                .into_string()
+                .map_err(|_| anyhow!("seconds-total value must be valid UTF-8"))?;
+            seconds_total = value
+                .parse::<i64>()
+                .map_err(|_| anyhow!("seconds-total must be a whole number"))?;
+            continue;
+        }
+
+        if arg == "--ode-steps" {
+            let value = args
+                .next()
+                .ok_or_else(|| anyhow!("missing value after --ode-steps"))?
+                .into_string()
+                .map_err(|_| anyhow!("ode-steps value must be valid UTF-8"))?;
+            ode_steps = value
+                .parse::<usize>()
+                .map_err(|_| anyhow!("ode-steps must be a whole number"))?;
+            if ode_steps == 0 || ode_steps > 50 {
+                bail!("ode-steps must be between 1 and 50");
+            }
+            continue;
+        }
+
+        if prompt.is_some() {
+            bail!("expected exactly one positional argument: the prompt");
+        }
+        prompt = Some(arg);
+    }
+
+    let prompt = if decode_only {
+        prompt.unwrap_or_default()
+    } else if let Some(lyrics) = lyrics {
+        lyrics
+    } else {
+        prompt.ok_or_else(|| {
+            anyhow!("missing prompt argument; provide a positional argument or --lyrics")
+        })?
+    };
+    let trimmed = prompt.trim();
+
+    if !decode_only && trimmed.is_empty() {
+        bail!("prompt argument cannot be empty");
+    }
+
+    // --tags overrides --negative-prompt for HeartMula
+    let negative_prompt = tags.or_else(|| negative_prompt.map(|s| s.trim().to_owned()));
+
+    if model == ModelChoice::Heartmula && !float_size_explicit {
+        float_size = FloatSize::F32;
+    }
+
+    validate_options(CliOptions {
+        model,
+        prompt: trimmed.to_owned(),
+        negative_prompt,
+        model_dir,
+        float_size,
+        output_path,
+        inspect_only,
+        backend,
+        sampler,
+        cfg_scale,
+        steps,
+        seconds_total,
+        ode_steps,
+        lyrics: None,
+        tags: None,
+        max_audio_length_ms,
+        topk,
+        temperature,
+        decoder,
+        decode_only,
+        frames_json,
+        decode_threads,
+        decoder_seed,
+        lazy,
+    })
+}
+
+pub fn validate_options(mut options: CliOptions) -> Result<CliOptions> {
+    let prompt = options.prompt.trim();
+    if prompt.is_empty() && !options.decode_only {
+        bail!("prompt argument cannot be empty");
+    }
+    options.prompt = prompt.to_owned();
+
+    options.negative_prompt = options
+        .negative_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+
+    options.model_dir = options
+        .model_dir
+        .as_deref()
+        .map(Path::new)
+        .map(Path::to_path_buf);
+
+    // NdArray CPU backend does not support F16; auto-switch to F32
+    if options.backend == BackendChoice::Cpu && options.float_size == FloatSize::F16 {
+        eprintln!("Warning: CPU backend does not support F16; auto-switching to F32");
+        options.float_size = FloatSize::F32;
+    }
+
+    if !options.cfg_scale.is_finite() || options.cfg_scale < 0.0 {
+        bail!("cfg-scale must be a finite non-negative number");
+    }
+    if options.steps == 0 {
+        bail!("steps must be greater than zero");
+    }
+    if options.output_path.as_os_str().is_empty() {
+        bail!("output path cannot be empty");
+    }
+    if options.decode_only && options.frames_json.is_none() {
+        bail!("--decode-only requires --frames-json");
+    }
+    if options.frames_json.is_some() && !options.decode_only {
+        bail!("--frames-json can only be used with --decode-only");
+    }
+    if let Some(threads) = options.decode_threads
+        && threads == 0
+    {
+        bail!("--decode-threads must be greater than zero");
+    }
+
+    Ok(options)
+}
+
+pub fn read_ipc_message<T: DeserializeOwned>(reader: &mut impl Read) -> Result<T> {
+    let mut len_bytes = [0_u8; 8];
+    reader
+        .read_exact(&mut len_bytes)
+        .context("failed to read IPC message length")?;
+    let len = u64::from_le_bytes(len_bytes);
+    let len = usize::try_from(len).context("IPC message length is too large")?;
+    let mut payload = vec![0_u8; len];
+    reader
+        .read_exact(&mut payload)
+        .context("failed to read IPC message payload")?;
+    serde_json::from_slice(&payload).context("failed to decode IPC JSON message")
+}
+
+pub fn write_ipc_message<T: Serialize>(writer: &mut impl Write, value: &T) -> Result<()> {
+    let payload = serde_json::to_vec(value).context("failed to encode IPC JSON message")?;
+    let len = u64::try_from(payload.len()).context("IPC payload is too large")?;
+    writer
+        .write_all(&len.to_le_bytes())
+        .context("failed to write IPC message length")?;
+    writer
+        .write_all(&payload)
+        .context("failed to write IPC message payload")?;
+    writer.flush().context("failed to flush IPC JSON message")?;
+    Ok(())
+}
+
+pub fn write_ipc_bytes(writer: &mut impl Write, bytes: &[u8]) -> Result<()> {
+    let len = u64::try_from(bytes.len()).context("IPC byte payload is too large")?;
+    writer
+        .write_all(&len.to_le_bytes())
+        .context("failed to write IPC byte length")?;
+    writer
+        .write_all(bytes)
+        .context("failed to write IPC byte payload")?;
+    writer.flush().context("failed to flush IPC byte payload")?;
+    Ok(())
+}
+
+pub fn tokenizer_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets")
+        .join("t5-base-spiece.model")
+}
+
+pub fn load_tokenizer() -> Result<SentencePieceProcessor> {
+    SentencePieceProcessor::open(tokenizer_path())
+        .context("failed to open the bundled T5 sentencepiece model")
+}
+
+pub fn encode_prompt(
+    tokenizer: &SentencePieceProcessor,
+    prompt: &str,
+    max_tokens: usize,
+) -> Result<(Vec<i64>, Vec<i64>)> {
+    let mut token_ids = Vec::with_capacity(max_tokens);
+
+    if let Some(bos_id) = tokenizer.bos_id() {
+        token_ids.push(i64::from(bos_id));
+    }
+
+    for piece in tokenizer
+        .encode(prompt)
+        .context("failed to tokenize prompt")?
+    {
+        if token_ids.len() >= max_tokens {
+            break;
+        }
+        token_ids.push(i64::from(piece.id));
+    }
+
+    if token_ids.len() < max_tokens
+        && let Some(eos_id) = tokenizer.eos_id()
+    {
+        token_ids.push(i64::from(eos_id));
+    }
+
+    if token_ids.len() > max_tokens {
+        token_ids.truncate(max_tokens);
+    }
+
+    let attention_len = token_ids.len();
+    let mut attention_mask = vec![1_i64; attention_len];
+    token_ids.resize(max_tokens, 0);
+    attention_mask.resize(max_tokens, 0);
+
+    Ok((token_ids, attention_mask))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BackendChoice, DEFAULT_MAX_PROMPT_TOKENS, FloatSize, ModelChoice, SamplerChoice,
+        parse_options,
+    };
+    use std::ffi::OsString;
+
+    #[test]
+    fn parses_single_prompt_argument() {
+        let args = [OsString::from("generate"), OsString::from("warm tape hiss")];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.prompt, "warm tape hiss");
+        assert_eq!(options.negative_prompt, None);
+        assert_eq!(options.model, ModelChoice::Heartmula);
+        assert_eq!(options.backend, BackendChoice::Vulkan);
+        // HeartMula defaults to F32 when float size is omitted
+        assert_eq!(options.float_size, FloatSize::F32);
+        assert_eq!(options.sampler, SamplerChoice::Dpmpp3mSde);
+        assert_eq!(options.cfg_scale, 1.5);
+        assert_eq!(options.steps, 250);
+        assert_eq!(options.seconds_total, 6);
+    }
+
+    #[test]
+    fn trims_surrounding_whitespace() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("  foley footsteps  "),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.prompt, "foley footsteps");
+    }
+
+    #[test]
+    fn rejects_missing_prompt() {
+        let args = [OsString::from("generate")];
+        assert!(parse_options(args).is_err());
+    }
+
+    #[test]
+    fn parses_backend_flag_after_prompt() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("warm tape hiss"),
+            OsString::from("--backend"),
+            OsString::from("vulkan"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.backend, BackendChoice::Vulkan);
+    }
+
+    #[test]
+    fn parses_sampler_flag() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--sampler"),
+            OsString::from("dpmpp-2m"),
+            OsString::from("warm tape hiss"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.sampler, SamplerChoice::Dpmpp2m);
+    }
+
+    #[test]
+    fn parses_model_flag() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--model"),
+            OsString::from("heartmula"),
+            OsString::from("verse and chorus"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.model, ModelChoice::Heartmula);
+    }
+
+    #[test]
+    fn parses_float_size_flag() {
+        let args = vec![
+            OsString::from("maolan-generate"),
+            OsString::from("--float-size"),
+            OsString::from("f32"),
+            OsString::from("prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.float_size, FloatSize::F32);
+    }
+
+    #[test]
+    fn defaults_heartmula_to_f32_when_float_size_is_omitted() {
+        let args = vec![
+            OsString::from("maolan-generate"),
+            OsString::from("--model"),
+            OsString::from("heartmula"),
+            OsString::from("prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.float_size, FloatSize::F32);
+    }
+
+    #[test]
+    fn preserves_explicit_float_size_for_heartmula() {
+        let args = vec![
+            OsString::from("maolan-generate"),
+            OsString::from("--model"),
+            OsString::from("heartmula"),
+            OsString::from("--float-size"),
+            OsString::from("f16"),
+            OsString::from("prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.float_size, FloatSize::F16);
+    }
+
+    #[test]
+    fn parses_negative_prompt_and_seconds() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--negative-prompt"),
+            OsString::from("harsh noise"),
+            OsString::from("--cfg-scale"),
+            OsString::from("4.5"),
+            OsString::from("--steps"),
+            OsString::from("300"),
+            OsString::from("--seconds-total"),
+            OsString::from("8"),
+            OsString::from("warm tape hiss"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.negative_prompt.as_deref(), Some("harsh noise"));
+        assert_eq!(options.cfg_scale, 4.5);
+        assert_eq!(options.steps, 300);
+        assert_eq!(options.seconds_total, 8);
+    }
+
+    #[test]
+    fn parses_decode_only_without_prompt() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--decode-only"),
+            OsString::from("--frames-json"),
+            OsString::from("/tmp/frames.json"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert!(options.decode_only);
+        assert_eq!(
+            options.frames_json.as_deref(),
+            Some(std::path::Path::new("/tmp/frames.json"))
+        );
+        assert!(options.prompt.is_empty());
+    }
+
+    #[test]
+    fn parses_decode_threads() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--decode-only"),
+            OsString::from("--frames-json"),
+            OsString::from("/tmp/frames.json"),
+            OsString::from("--decode-threads"),
+            OsString::from("8"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.decode_threads, Some(8));
+    }
+
+    #[test]
+    fn parses_lazy_flag() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--lazy"),
+            OsString::from("prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert!(options.lazy);
+    }
+
+    const _: () = assert!(DEFAULT_MAX_PROMPT_TOKENS == 128);
+}

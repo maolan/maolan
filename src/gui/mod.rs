@@ -23,8 +23,8 @@ use crate::{
     hw, menu,
     message::{
         BurnBackendOption, BurnSamplerOption, DraggedClip, ExportBitDepth, ExportFormat,
-        ExportMp3Mode, ExportNormalizeMode, ExportRenderMode, Message, PluginFormat,
-        PreferencesDeviceOption, Show, SnapMode,
+        ExportMp3Mode, ExportNormalizeMode, ExportRenderMode, GenerateAudioModelOption, Message,
+        PluginFormat, PreferencesDeviceOption, Show, SnapMode,
     },
     platform_caps,
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
@@ -90,6 +90,8 @@ const MAOLAN_BURN_SOCKETPAIR_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
 #[cfg(unix)]
 const MAOLAN_BURN_MODEL_DIR_ENV: &str = "MAOLAN_BURN_MODEL_DIR";
 #[cfg(unix)]
+const HEARTMULA_BURN_MODEL_DIR_ENV: &str = "HEARTMULA_BURN_MODEL_DIR";
+#[cfg(unix)]
 const MAOLAN_BURN_MODEL_FILES: [(&str, &str); 3] = [
     ("burn_t5/stable_audio_t5_sim.bpk", "T5 weights"),
     ("burn_dit/stable_audio_dit.bpk", "DiT weights"),
@@ -97,9 +99,26 @@ const MAOLAN_BURN_MODEL_FILES: [(&str, &str); 3] = [
 ];
 #[cfg(unix)]
 const MAOLAN_BURN_MODEL_REPO: &str = "kurbloid/stable-audio-open-1.0-burn";
-
+#[cfg(unix)]
+const HEARTMULA_BURN_DEFAULT_MODEL_DIR: &str = "repos/heartmula-burn/artifacts/heartmula-oss-3b";
+#[cfg(unix)]
+const HEARTMULA_BURN_DEFAULT_MODEL_FILES: [(&str, &str); 4] = [
+    ("burn_raw/heartmula_raw_f16.bpk", "HeartMula raw burnpack"),
+    ("burn_raw/heartcodec_raw_f16.bpk", "HeartCodec raw burnpack"),
+    ("tokenizer.json", "Tokenizer"),
+    ("gen_config.json", "Generation config"),
+];
+#[cfg(unix)]
+const HEARTMULA_BURN_LEGACY_MODEL_FILES: [(&str, &str); 4] = [
+    ("burn_raw/heartmula_raw.bpk", "HeartMula raw burnpack"),
+    ("burn_raw/heartcodec_raw.bpk", "HeartCodec raw burnpack"),
+    ("tokenizer.json", "Tokenizer"),
+    ("gen_config.json", "Generation config"),
+];
+#[cfg(unix)]
 #[derive(Debug, Clone, Serialize)]
 struct BurnGenerateRequest {
+    model: GenerateAudioModelOption,
     prompt: String,
     negative_prompt: Option<String>,
     backend: BurnBackendOption,
@@ -453,6 +472,7 @@ pub struct Maolan {
     import_file_progress: f32,
     import_current_filename: String,
     import_current_operation: Option<String>,
+    generate_audio_model: GenerateAudioModelOption,
     generate_audio_prompt_input: String,
     generate_audio_negative_prompt_input: String,
     generate_audio_hf_token_input: String,
@@ -625,6 +645,21 @@ fn maolan_burn_model_dir() -> PathBuf {
 }
 
 #[cfg(unix)]
+fn heartmula_burn_model_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os(HEARTMULA_BURN_MODEL_DIR_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        return path;
+    }
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join(HEARTMULA_BURN_DEFAULT_MODEL_DIR)
+}
+
+#[cfg(unix)]
 fn parse_hugging_face_stored_token(contents: &str) -> Option<String> {
     toml::from_str::<toml::Value>(contents)
         .ok()
@@ -773,6 +808,7 @@ impl Default for Maolan {
             import_file_progress: 0.0,
             import_current_filename: String::new(),
             import_current_operation: None,
+            generate_audio_model: cfg.generate_audio_model,
             generate_audio_prompt_input: String::new(),
             generate_audio_negative_prompt_input: cfg.burn_negative_prompt,
             generate_audio_hf_token_input: String::new(),
@@ -863,39 +899,31 @@ impl Maolan {
         if let Some(current_exe) = current_exe
             && let Some(parent) = current_exe.parent()
         {
-            candidates.push(parent.join("maolan-burn"));
+            candidates.push(parent.join("generate"));
             if let Some(grandparent) = parent.parent() {
-                candidates.push(grandparent.join("maolan-burn"));
+                candidates.push(grandparent.join("generate"));
             }
         }
-        candidates.push(
-            workspace_root
-                .join("target")
-                .join("debug")
-                .join("maolan-burn"),
-        );
+        candidates.push(workspace_root.join("target").join("debug").join("generate"));
         candidates.push(
             workspace_root
                 .join("target")
                 .join("release")
-                .join("maolan-burn"),
+                .join("generate"),
         );
         candidates.into_iter().find(|path| path.exists())
     }
 
     #[cfg(unix)]
     fn build_maolan_burn_binary(workspace_root: &Path) -> Option<PathBuf> {
-        let target_path = workspace_root
-            .join("target")
-            .join("debug")
-            .join("maolan-burn");
+        let target_path = workspace_root.join("target").join("debug").join("generate");
         let status = Command::new("cargo")
             .arg("build")
             .arg("--quiet")
             .arg("-p")
-            .arg("maolan-burn")
+            .arg("generate")
             .arg("--bin")
-            .arg("maolan-burn")
+            .arg("generate")
             .arg("--manifest-path")
             .arg(workspace_root.join("Cargo.toml"))
             .status()
@@ -917,7 +945,7 @@ impl Maolan {
         {
             return Command::new(path);
         }
-        Command::new("maolan-burn")
+        Command::new("generate")
     }
 
     #[cfg(unix)]
@@ -967,6 +995,28 @@ impl Maolan {
     }
 
     #[cfg(unix)]
+    fn missing_heartmula_burn_model_files(model_dir: &Path) -> Vec<(&'static str, PathBuf)> {
+        let mut missing = Vec::new();
+
+        for ((default_relative_path, _), (legacy_relative_path, _)) in
+            HEARTMULA_BURN_DEFAULT_MODEL_FILES
+                .iter()
+                .zip(HEARTMULA_BURN_LEGACY_MODEL_FILES.iter())
+        {
+            let default_path = model_dir.join(default_relative_path);
+            let legacy_path = model_dir.join(legacy_relative_path);
+            if !default_path.exists() && !legacy_path.exists() {
+                missing.push((*default_relative_path, default_path));
+                if default_relative_path != legacy_relative_path {
+                    missing.push((*legacy_relative_path, legacy_path));
+                }
+            }
+        }
+
+        missing
+    }
+
+    #[cfg(unix)]
     async fn ensure_maolan_burn_model<F>(
         token_override: Option<String>,
         mut progress: F,
@@ -978,7 +1028,7 @@ impl Maolan {
         let missing_files = Self::missing_maolan_burn_model_files(&cached_model_dir);
 
         if missing_files.is_empty() && cached_model_dir.is_dir() {
-            progress(1.0, Some("Using cached maolan-burn model".to_string()));
+            progress(1.0, Some("Using cached generate model".to_string()));
             return Ok(cached_model_dir);
         }
 
@@ -1049,10 +1099,35 @@ impl Maolan {
 
         Self::save_hugging_face_token(&token_value)?;
         let model_dir = model_dir.ok_or_else(|| {
-            "Failed to resolve Hugging Face snapshot root for maolan-burn model".to_string()
+            "Failed to resolve Hugging Face snapshot root for generate model".to_string()
         })?;
         progress(1.0, Some("Model ready".to_string()));
         Ok(model_dir)
+    }
+
+    #[cfg(unix)]
+    async fn ensure_heartmula_burn_model<F>(mut progress: F) -> Result<PathBuf, String>
+    where
+        F: FnMut(f32, Option<String>),
+    {
+        let model_dir = heartmula_burn_model_dir();
+        let missing_files = Self::missing_heartmula_burn_model_files(&model_dir);
+
+        if missing_files.is_empty() && model_dir.is_dir() {
+            progress(1.0, Some("Using local HeartMula Burn assets".to_string()));
+            return Ok(model_dir);
+        }
+
+        let missing_list = missing_files
+            .iter()
+            .map(|(relative_path, _)| (*relative_path).to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(format!(
+            "HeartMula Burn assets are missing in {}. Missing: {}. Export them with /home/meka/repos/heartmula-burn/scripts/export_heartmula_raw.py --dtype both and pack the burnpacks before generating. maolan defaults to the f16 burnpacks when both are present.",
+            model_dir.display(),
+            missing_list
+        ))
     }
 
     #[cfg(unix)]
@@ -1109,7 +1184,7 @@ impl Maolan {
     #[cfg(unix)]
     fn generate_audio_with_burn_socketpair(
         request: BurnGenerateRequest,
-        model_dir: &Path,
+        model_dir: Option<&Path>,
     ) -> Result<Vec<u8>, String> {
         use std::os::fd::OwnedFd;
         use std::os::unix::net::UnixStream;
@@ -1121,24 +1196,33 @@ impl Maolan {
             .try_clone()
             .map_err(|e| format!("Failed to clone child socket: {e}"))?;
         let mut command = Self::maolan_burn_command();
+        command.env(MAOLAN_BURN_SOCKETPAIR_ENV, "1");
+        if let Some(model_dir) = model_dir {
+            match request.model {
+                GenerateAudioModelOption::StableAudioOpen => {
+                    command.env(MAOLAN_BURN_MODEL_DIR_ENV, model_dir);
+                }
+                GenerateAudioModelOption::Heartmula => {
+                    command.env(HEARTMULA_BURN_MODEL_DIR_ENV, model_dir);
+                }
+            }
+        }
         let process = command
-            .env(MAOLAN_BURN_SOCKETPAIR_ENV, "1")
-            .env(MAOLAN_BURN_MODEL_DIR_ENV, model_dir)
             .stdin(Stdio::from(OwnedFd::from(child_read)))
             .stdout(Stdio::from(OwnedFd::from(child)))
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to launch maolan-burn: {e}"))?;
+            .map_err(|e| format!("Failed to launch generate: {e}"))?;
 
         if let Err(err) = Self::write_ipc_message(&mut parent, &request) {
             let output = process
                 .wait_with_output()
-                .map_err(|wait_err| format!("{err}; failed to wait for maolan-burn: {wait_err}"))?;
+                .map_err(|wait_err| format!("{err}; failed to wait for generate: {wait_err}"))?;
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return if stderr.is_empty() {
                 Err(err)
             } else {
-                Err(format!("{err}; maolan-burn stderr: {stderr}"))
+                Err(format!("{err}; generate stderr: {stderr}"))
             };
         }
 
@@ -1146,13 +1230,13 @@ impl Maolan {
             Ok(header) => header,
             Err(err) => {
                 let output = process.wait_with_output().map_err(|wait_err| {
-                    format!("{err}; failed to wait for maolan-burn: {wait_err}")
+                    format!("{err}; failed to wait for generate: {wait_err}")
                 })?;
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 return if stderr.is_empty() {
                     Err(err)
                 } else {
-                    Err(format!("{err}; maolan-burn stderr: {stderr}"))
+                    Err(format!("{err}; generate stderr: {stderr}"))
                 };
             }
         };
@@ -1160,31 +1244,31 @@ impl Maolan {
             Ok(bytes) => bytes,
             Err(err) => {
                 let output = process.wait_with_output().map_err(|wait_err| {
-                    format!("{err}; failed to wait for maolan-burn: {wait_err}")
+                    format!("{err}; failed to wait for generate: {wait_err}")
                 })?;
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
                 return if stderr.is_empty() {
                     Err(err)
                 } else {
-                    Err(format!("{err}; maolan-burn stderr: {stderr}"))
+                    Err(format!("{err}; generate stderr: {stderr}"))
                 };
             }
         };
 
         let output = process
             .wait_with_output()
-            .map_err(|e| format!("Failed to wait for maolan-burn: {e}"))?;
+            .map_err(|e| format!("Failed to wait for generate: {e}"))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             return if stderr.is_empty() {
-                Err("maolan-burn exited unsuccessfully".to_string())
+                Err("generate exited unsuccessfully".to_string())
             } else {
                 Err(stderr)
             };
         }
         if wav_bytes.len() != header.wav_bytes_len {
             return Err(format!(
-                "maolan-burn returned {} bytes but announced {}",
+                "generate returned {} bytes but announced {}",
                 wav_bytes.len(),
                 header.wav_bytes_len
             ));
@@ -1195,9 +1279,9 @@ impl Maolan {
     #[cfg(not(unix))]
     fn generate_audio_with_burn_socketpair(
         _request: BurnGenerateRequest,
-        _model_dir: &Path,
+        _model_dir: Option<&Path>,
     ) -> Result<Vec<u8>, String> {
-        Err("Generated audio via maolan-burn is only available on Unix platforms".to_string())
+        Err("Generated audio via generate is only available on Unix platforms".to_string())
     }
 
     fn plugin_graph_title(state: &StateData) -> String {
@@ -5406,9 +5490,57 @@ impl Maolan {
                 )
             }
         } else if session_ready {
-            "Generated audio is imported as a new track in the current session.".to_string()
+            match self.generate_audio_model {
+                GenerateAudioModelOption::StableAudioOpen => {
+                    "Generated audio is imported as a new track in the current session."
+                        .to_string()
+                }
+                GenerateAudioModelOption::Heartmula => {
+                    "HeartMula uses lyrics plus optional tags and imports the result as a new track."
+                        .to_string()
+                }
+            }
         } else {
             "Open or save a session before generating audio.".to_string()
+        };
+        let prompt_label = match self.generate_audio_model {
+            GenerateAudioModelOption::StableAudioOpen => "Prompt",
+            GenerateAudioModelOption::Heartmula => "Lyrics",
+        };
+        let negative_prompt_label = match self.generate_audio_model {
+            GenerateAudioModelOption::StableAudioOpen => "Negative prompt (optional)",
+            GenerateAudioModelOption::Heartmula => "Tags (optional)",
+        };
+        let model_source_section: iced::Element<'_, Message> = if matches!(
+            self.generate_audio_model,
+            GenerateAudioModelOption::StableAudioOpen
+        ) {
+            iced::Element::from(
+                row![
+                    text_input(
+                        "Hugging Face token (used if model download is needed)",
+                        &self.generate_audio_hf_token_input
+                    )
+                    .secure(!self.generate_audio_hf_token_visible)
+                    .on_input(Message::GenerateAudioHfTokenInput)
+                    .width(Length::Fill),
+                    button(if self.generate_audio_hf_token_visible {
+                        "Hide"
+                    } else {
+                        "Show"
+                    })
+                    .on_press(Message::GenerateAudioToggleHfTokenVisibility),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+            )
+        } else {
+            iced::Element::from(
+                text(
+                    "HeartMula expects local converted Burn assets; the Stable Audio download flow is not used."
+                )
+                .size(14),
+            )
         };
         let generate_button = if self.generate_audio_in_progress || !session_ready {
             button("Generate")
@@ -5427,32 +5559,28 @@ impl Maolan {
             scrollable(
                 column![
                     text("Generate Audio").size(16),
-                    text_input("Prompt", &self.generate_audio_prompt_input)
+                    row![
+                        text("Model:"),
+                        pick_list(
+                            GenerateAudioModelOption::ALL.to_vec(),
+                            Some(self.generate_audio_model),
+                            Message::GenerateAudioModelSelected
+                        )
+                        .placeholder("Choose model")
+                        .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
+                    text_input(prompt_label, &self.generate_audio_prompt_input)
                         .on_input(Message::GenerateAudioPromptInput)
                         .width(Length::Fill),
                     text_input(
-                        "Negative prompt (optional)",
+                        negative_prompt_label,
                         &self.generate_audio_negative_prompt_input
                     )
                     .on_input(Message::GenerateAudioNegativePromptInput)
                     .width(Length::Fill),
-                    row![
-                        text_input(
-                            "Hugging Face token (used if model download is needed)",
-                            &self.generate_audio_hf_token_input
-                        )
-                        .secure(!self.generate_audio_hf_token_visible)
-                        .on_input(Message::GenerateAudioHfTokenInput)
-                        .width(Length::Fill),
-                        button(if self.generate_audio_hf_token_visible {
-                            "Hide"
-                        } else {
-                            "Show"
-                        })
-                        .on_press(Message::GenerateAudioToggleHfTokenVisibility),
-                    ]
-                    .spacing(10)
-                    .align_y(iced::Alignment::Center),
+                    model_source_section,
                     row![
                         text("Backend:"),
                         pick_list(
@@ -6973,15 +7101,15 @@ hf_token = "token-2"
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("maolan-burn-path-test-{unique}"));
+        let root = std::env::temp_dir().join(format!("generate-path-test-{unique}"));
         let bin_dir = root.join("target").join("debug");
         fs::create_dir_all(&bin_dir).expect("bin dir");
         let current_exe = bin_dir.join("maolan");
-        fs::write(bin_dir.join("maolan-burn"), []).expect("touch sibling");
+        fs::write(bin_dir.join("generate"), []).expect("touch sibling");
 
         let resolved = Maolan::resolve_maolan_burn_binary_path(Some(&current_exe), &root);
 
-        assert_eq!(resolved, Some(bin_dir.join("maolan-burn")));
+        assert_eq!(resolved, Some(bin_dir.join("generate")));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -6992,8 +7120,8 @@ hf_token = "token-2"
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("maolan-burn-target-test-{unique}"));
-        let target_path = root.join("target").join("debug").join("maolan-burn");
+        let root = std::env::temp_dir().join(format!("generate-target-test-{unique}"));
+        let target_path = root.join("target").join("debug").join("generate");
         fs::create_dir_all(target_path.parent().expect("target parent")).expect("target dir");
         fs::write(&target_path, []).expect("touch target");
 

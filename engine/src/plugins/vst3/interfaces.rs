@@ -1539,7 +1539,7 @@ mod tests {
 
         assert_eq!(resolved, module_path);
 
-        let _ = fs::remove_dir_all(bundle_path.parent().expect("bundle parent").to_path_buf());
+        let _ = fs::remove_dir_all(bundle_path.parent().expect("bundle parent"));
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
@@ -1552,6 +1552,6 @@ mod tests {
 
         assert!(err.contains("Missing.so"));
 
-        let _ = fs::remove_dir_all(bundle_path.parent().expect("bundle parent").to_path_buf());
+        let _ = fs::remove_dir_all(bundle_path.parent().expect("bundle parent"));
     }
 }

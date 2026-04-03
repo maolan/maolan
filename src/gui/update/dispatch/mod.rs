@@ -6978,6 +6978,9 @@ impl Maolan {
                 );
             }
             Message::ImportFilesSelected(None) => {}
+            Message::GenerateAudioModelSelected(model) => {
+                self.generate_audio_model = model;
+            }
             Message::GenerateAudioPromptInput(ref value) => {
                 self.generate_audio_prompt_input = value.clone();
             }
@@ -7059,6 +7062,7 @@ impl Maolan {
                 };
 
                 let request = super::super::BurnGenerateRequest {
+                    model: self.generate_audio_model,
                     prompt,
                     negative_prompt: {
                         let trimmed = self.generate_audio_negative_prompt_input.trim();
@@ -7071,6 +7075,7 @@ impl Maolan {
                     seconds_total,
                 };
                 let mut cfg = crate::config::Config::load().unwrap_or_default();
+                cfg.generate_audio_model = request.model;
                 cfg.burn_negative_prompt = request.negative_prompt.clone().unwrap_or_default();
                 cfg.burn_backend = request.backend;
                 cfg.burn_sampler = request.sampler;
@@ -7094,7 +7099,7 @@ impl Maolan {
 
                 self.generate_audio_in_progress = true;
                 self.generate_audio_progress = 0.0;
-                self.generate_audio_operation = Some("Launching maolan-burn".to_string());
+                self.generate_audio_operation = Some("Launching generate".to_string());
 
                 return Task::run(
                     {
@@ -7105,15 +7110,43 @@ impl Maolan {
                                 super::super::Maolan::sanitize_generated_track_base_name(
                                     &request.prompt,
                                 );
+                            let model_dir = if matches!(
+                                request.model,
+                                crate::message::GenerateAudioModelOption::StableAudioOpen
+                            ) {
+                                let _ = tx.send(Message::GenerateAudioProgress {
+                                    progress: 0.05,
+                                    operation: Some("Checking generate model".to_string()),
+                                });
 
-                            let _ = tx.send(Message::GenerateAudioProgress {
-                                progress: 0.05,
-                                operation: Some("Checking maolan-burn model".to_string()),
-                            });
-
-                            let model_dir = match super::super::Maolan::ensure_maolan_burn_model(
-                                Some(download_token),
+                                match super::super::Maolan::ensure_maolan_burn_model(
+                                    Some(download_token),
+                                    {
+                                        let tx = tx.clone();
+                                        move |progress, operation| {
+                                            let _ = tx.send(Message::GenerateAudioProgress {
+                                                progress: 0.05 + progress.clamp(0.0, 1.0) * 0.35,
+                                                operation,
+                                            });
+                                        }
+                                    },
+                                )
+                                .await
                                 {
+                                    Ok(model_dir) => Some(model_dir),
+                                    Err(err) => {
+                                        let _ = tx.send(Message::GenerateAudioFinished(Err(err)));
+                                        return;
+                                    }
+                                }
+                            } else {
+                                let _ = tx.send(Message::GenerateAudioProgress {
+                                    progress: 0.05,
+                                    operation: Some(
+                                        "Checking local HeartMula Burn assets".to_string(),
+                                    ),
+                                });
+                                match super::super::Maolan::ensure_heartmula_burn_model({
                                     let tx = tx.clone();
                                     move |progress, operation| {
                                         let _ = tx.send(Message::GenerateAudioProgress {
@@ -7121,20 +7154,20 @@ impl Maolan {
                                             operation,
                                         });
                                     }
-                                },
-                            )
-                            .await
-                            {
-                                Ok(model_dir) => model_dir,
-                                Err(err) => {
-                                    let _ = tx.send(Message::GenerateAudioFinished(Err(err)));
-                                    return;
+                                })
+                                .await
+                                {
+                                    Ok(model_dir) => Some(model_dir),
+                                    Err(err) => {
+                                        let _ = tx.send(Message::GenerateAudioFinished(Err(err)));
+                                        return;
+                                    }
                                 }
                             };
 
                             let _ = tx.send(Message::GenerateAudioProgress {
                                 progress: 0.45,
-                                operation: Some("Generating in maolan-burn".to_string()),
+                                operation: Some("Generating in generate".to_string()),
                             });
 
                             let wav_bytes = match tokio::task::spawn_blocking({
@@ -7142,7 +7175,8 @@ impl Maolan {
                                 let model_dir = model_dir.clone();
                                 move || {
                                     super::super::Maolan::generate_audio_with_burn_socketpair(
-                                        request, &model_dir,
+                                        request,
+                                        model_dir.as_deref(),
                                     )
                                 }
                             })
@@ -7155,14 +7189,14 @@ impl Maolan {
                                 }
                                 Err(err) => {
                                     let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
-                                        "maolan-burn task failed: {err}"
+                                        "generate task failed: {err}"
                                     ))));
                                     return;
                                 }
                             };
 
                             let temp_path = std::env::temp_dir().join(format!(
-                                "maolan-burn-{}-{}.wav",
+                                "generate-{}-{}.wav",
                                 std::process::id(),
                                 std::time::SystemTime::now()
                                     .duration_since(std::time::UNIX_EPOCH)
