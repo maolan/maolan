@@ -6,7 +6,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let path = args.next().map(std::path::PathBuf::from).unwrap_or_else(|| {
         std::path::PathBuf::from(
-            "/home/meka/repos/heartmula-burn/artifacts/heartmula-oss-3b/burn_raw/heartmula_raw_f32.bpk",
+            "/home/meka/repos/heartmula-burn/artifacts/heartmula-happy-new-year-20260123/burn_raw/heartmula_raw_f32.bpk",
         )
     });
     let names: Vec<String> = args.collect();
