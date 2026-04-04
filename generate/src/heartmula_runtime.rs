@@ -1756,6 +1756,20 @@ pub fn decode_frames_to_wav<B: burn::prelude::Backend>(
     )
 }
 
+fn resolve_heartcodec_burnpack_path(model_dir: &Path) -> PathBuf {
+    let bundled_path = model_dir.join("burn_raw/heartcodec_raw_f32.bpk");
+    if bundled_path.exists() {
+        return bundled_path;
+    }
+
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join(
+        "repos/heartmula-burn/artifacts/heartmula-happy-new-year-20260123/burn_raw/heartcodec_raw_f32.bpk",
+    )
+}
+
 fn decode_frames_to_wav_rust<B: burn::prelude::Backend>(
     model_dir: &Path,
     frames_json: &Path,
@@ -1773,18 +1787,7 @@ fn decode_frames_to_wav_rust<B: burn::prelude::Backend>(
     eprintln!("decode_frames_to_wav_rust: seeding backend RNG with 0");
     B::seed(device, 0);
     let codes = frames_to_tensor::<B>(&frames, device);
-    let codec_path = {
-        let candidate = model_dir.join("heartcodec_f32.burnpack");
-        if candidate.exists() {
-            candidate
-        } else {
-            let home = std::env::var("HOME")
-                .or_else(|_| std::env::var("USERPROFILE"))
-                .unwrap_or_else(|_| "/tmp".to_string());
-            PathBuf::from(home)
-                .join("repos/heartmula-burn/artifacts/heartcodec-oss/heartcodec_f32.burnpack")
-        }
-    };
+    let codec_path = resolve_heartcodec_burnpack_path(model_dir);
     eprintln!(
         "decode_frames_to_wav_rust: model_dir={}",
         model_dir.display()
@@ -1819,18 +1822,7 @@ pub fn decode_frames_to_plan_rust<B: burn::prelude::Backend>(
     eprintln!("decode_frames_to_wav_rust: seeding backend RNG with 0");
     B::seed(device, 0);
     let codes = frames_to_tensor::<B>(&frames, device);
-    let codec_path = {
-        let candidate = model_dir.join("heartcodec_f32.burnpack");
-        if candidate.exists() {
-            candidate
-        } else {
-            let home = std::env::var("HOME")
-                .or_else(|_| std::env::var("USERPROFILE"))
-                .unwrap_or_else(|_| "/tmp".to_string());
-            PathBuf::from(home)
-                .join("repos/heartmula-burn/artifacts/heartcodec-oss/heartcodec_f32.burnpack")
-        }
-    };
+    let codec_path = resolve_heartcodec_burnpack_path(model_dir);
     eprintln!(
         "decode_frames_to_wav_rust: model_dir={}",
         model_dir.display()
@@ -1861,18 +1853,7 @@ pub fn decode_plan_to_wav_rust<B: burn::prelude::Backend>(
 ) -> Result<()> {
     let stage_plan_json = current_codec_stage_plan_json()?;
     let plan = load_codec_stage_plan::<B>(&stage_plan_json, device)?;
-    let codec_path = {
-        let candidate = model_dir.join("heartcodec_f32.burnpack");
-        if candidate.exists() {
-            candidate
-        } else {
-            let home = std::env::var("HOME")
-                .or_else(|_| std::env::var("USERPROFILE"))
-                .unwrap_or_else(|_| "/tmp".to_string());
-            PathBuf::from(home)
-                .join("repos/heartmula-burn/artifacts/heartcodec-oss/heartcodec_f32.burnpack")
-        }
-    };
+    let codec_path = resolve_heartcodec_burnpack_path(model_dir);
     let scalar_model = crate::heartcodec::ScalarModel::<B>::from_burnpack(&codec_path, device)?;
     let wav = crate::heartcodec::HeartCodecModel::<B>::decode_scalar_plan_impl(&scalar_model, plan);
     write_decoder_wav(output_wav, wav, 0.0)

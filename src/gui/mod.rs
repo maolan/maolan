@@ -90,7 +90,8 @@ const MAOLAN_BURN_SOCKETPAIR_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
 #[cfg(unix)]
 const HEARTMULA_BURN_MODEL_DIR_ENV: &str = "HEARTMULA_BURN_MODEL_DIR";
 #[cfg(unix)]
-const HEARTMULA_BURN_DEFAULT_MODEL_DIR: &str = "repos/heartmula-burn/artifacts/heartmula-oss-3b";
+const HEARTMULA_BURN_DEFAULT_MODEL_DIR: &str =
+    "repos/heartmula-burn/artifacts/heartmula-happy-new-year-20260123";
 #[cfg(unix)]
 const HEARTMULA_BURN_DEFAULT_MODEL_FILES: [(&str, &str); 4] = [
     ("burn_raw/heartmula_raw_f16.bpk", "HeartMula raw burnpack"),
