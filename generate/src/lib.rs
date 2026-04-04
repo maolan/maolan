@@ -39,7 +39,6 @@ pub struct GenerateRequest {
     #[serde(default)]
     pub model: ModelChoice,
     pub prompt: String,
-    pub negative_prompt: Option<String>,
     #[serde(default)]
     pub model_dir: Option<PathBuf>,
     #[serde(default = "default_output_path")]
@@ -128,7 +127,6 @@ Options:
   --inspect
   --backend <cpu|vulkan|cuda>  Select the runtime backend (CUDA requires the `cuda` feature)
   --sampler <dpmpp-2m|dpmpp-3m-sde>
-  --negative-prompt <text>
   --lyrics <text>          Prompt / lyrics (positional argument also accepted)
   --tags <text>            Style tags for HeartMula
   --cfg-scale <float>      CFG scale (1.0=no guidance, 2.0=weak, 6.0=strong)
@@ -149,7 +147,6 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
     let mut args = args.into_iter();
     let _program = args.next();
     let mut prompt = None;
-    let mut negative_prompt = None;
     let mut model_dir = None;
     let mut output_path = default_output_path();
     let mut inspect_only = false;
@@ -346,21 +343,6 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
             continue;
         }
 
-        if arg == "--negative-prompt" {
-            let value = args
-                .next()
-                .ok_or_else(|| anyhow!("missing value after --negative-prompt"))?
-                .into_string()
-                .map_err(|_| anyhow!("negative prompt must be valid UTF-8"))?;
-            let trimmed = value.trim();
-            negative_prompt = if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_owned())
-            };
-            continue;
-        }
-
         if arg == "--cfg-scale" {
             let value = args
                 .next()
@@ -427,13 +409,9 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
         bail!("prompt argument cannot be empty");
     }
 
-    // --tags overrides --negative-prompt for HeartMula
-    let negative_prompt = tags.or_else(|| negative_prompt.map(|s| s.trim().to_owned()));
-
     validate_options(CliOptions {
         model,
         prompt: trimmed.to_owned(),
-        negative_prompt,
         model_dir,
         output_path,
         inspect_only,
@@ -444,7 +422,7 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
         length,
         ode_steps,
         lyrics: None,
-        tags: None,
+        tags,
         topk,
         temperature,
         decode_only,
@@ -461,8 +439,8 @@ pub fn validate_options(mut options: CliOptions) -> Result<CliOptions> {
     }
     options.prompt = prompt.to_owned();
 
-    options.negative_prompt = options
-        .negative_prompt
+    options.tags = options
+        .tags
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -602,7 +580,6 @@ mod tests {
         let args = [OsString::from("generate"), OsString::from("warm tape hiss")];
         let options = parse_options(args).expect("options should parse");
         assert_eq!(options.prompt, "warm tape hiss");
-        assert_eq!(options.negative_prompt, None);
         assert_eq!(options.model, ModelChoice::Heartmula);
         assert_eq!(options.backend, BackendChoice::Vulkan);
         assert_eq!(options.sampler, SamplerChoice::Dpmpp3mSde);
@@ -664,21 +641,20 @@ mod tests {
     }
 
     #[test]
-    fn parses_negative_prompt_and_length() {
+    fn parses_tags_cfg_and_length() {
         let args = [
             OsString::from("generate"),
-            OsString::from("--negative-prompt"),
-            OsString::from("harsh noise"),
+            OsString::from("--tags"),
+            OsString::from("warm tape hiss"),
             OsString::from("--cfg-scale"),
             OsString::from("4.5"),
             OsString::from("--steps"),
             OsString::from("300"),
             OsString::from("--length"),
             OsString::from("8000"),
-            OsString::from("warm tape hiss"),
+            OsString::from("verse and chorus"),
         ];
         let options = parse_options(args).expect("options should parse");
-        assert_eq!(options.negative_prompt.as_deref(), Some("harsh noise"));
         assert_eq!(options.cfg_scale, 4.5);
         assert_eq!(options.steps, 300);
         assert_eq!(options.length, 8_000);

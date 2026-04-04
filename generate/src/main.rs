@@ -205,9 +205,6 @@ fn spawn_generate_subprocess(options: &maolan_generate::CliOptions) -> Result<()
     if let Some(model_dir) = &options.model_dir {
         command.arg("--model-dir").arg(model_dir);
     }
-    if let Some(tags) = &options.negative_prompt {
-        command.arg("--tags").arg(tags);
-    }
     let status = command
         .status()
         .context("failed to spawn generation subprocess")?;
@@ -700,7 +697,7 @@ where
     )?;
     let tags = heartmula_runtime::normalize_tags(
         options
-            .negative_prompt
+            .tags
             .as_deref()
             .unwrap_or(heartmula_runtime::default_tags()),
     );
@@ -733,12 +730,7 @@ where
         println!("mode=tokens");
         println!("model_dir={}", model_paths.model_dir.display());
         println!("prompt={}", lyrics);
-        if let Some(negative_prompt) = &options.negative_prompt {
-            println!(
-                "tags={}",
-                heartmula_runtime::normalize_tags(negative_prompt)
-            );
-        }
+        println!("tags={}", tags);
         println!("backend={}", backend_name(backend));
         println!("cfg_scale={}", options.cfg_scale);
         println!("generated_frame_count={}", generated_frame_count);
@@ -763,12 +755,7 @@ where
     println!("mode=tokens");
     println!("model_dir={}", model_paths.model_dir.display());
     println!("prompt={}", lyrics);
-    if let Some(negative_prompt) = &options.negative_prompt {
-        println!(
-            "tags={}",
-            heartmula_runtime::normalize_tags(negative_prompt)
-        );
-    }
+    println!("tags={}", tags);
     println!("backend={}", backend_name(backend));
     println!("cfg_scale={}", options.cfg_scale);
     println!("ode_steps={}", options.ode_steps);

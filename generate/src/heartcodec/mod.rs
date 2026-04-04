@@ -23,6 +23,7 @@ pub use conv::{PlainConv1d, WNConv1d, WNConvTranspose1d};
 
 const HEARTMULA_SAMPLE_RATE: usize = 48_000;
 const HEARTCODEC_WINDOW_FRAMES: usize = 93;
+const HEARTCODEC_SEGMENT_DURATION_SECONDS: f32 = 29.76;
 type TensorLookup = dyn Fn(&str) -> Option<(Vec<f32>, Vec<usize>)>;
 
 /// Configuration for HeartCodec
@@ -298,7 +299,8 @@ impl<B: Backend> HeartCodecModel<B> {
         );
 
         let duration_seconds = seq_len as f32 / 12.5;
-        let latent_length = (duration_seconds * 25.0) as usize;
+        let segment_duration_seconds = HEARTCODEC_SEGMENT_DURATION_SECONDS;
+        let latent_length = (segment_duration_seconds * 25.0) as usize;
         eprintln!(
             "HeartCodec.decode: duration_seconds = {:.3}, latent_length = {}",
             duration_seconds, latent_length
@@ -308,9 +310,13 @@ impl<B: Backend> HeartCodecModel<B> {
             [batch, latent_length, 256],
             "initial latent shape must match [batch, latent_length, 256]"
         );
-        let min_samples = seq_len.clamp(1, HEARTCODEC_WINDOW_FRAMES);
-        let hop_samples = min_samples;
-        let ovlp_samples = 0usize;
+        let min_samples = ((segment_duration_seconds * 12.5) as usize).max(1);
+        let mut hop_samples = (min_samples / HEARTCODEC_WINDOW_FRAMES) * 80;
+        let mut ovlp_samples = min_samples.saturating_sub(hop_samples);
+        if hop_samples == 0 {
+            hop_samples = 1;
+            ovlp_samples = min_samples;
+        }
         let ovlp_frames = ovlp_samples * 2;
         let target_len = (duration_seconds * HEARTMULA_SAMPLE_RATE as f32) as usize;
         let audio_target_len = target_len;
@@ -322,15 +328,30 @@ impl<B: Backend> HeartCodecModel<B> {
             codes = codes.slice([0..batch, 0..num_quantizers, 0..min_samples]);
         }
 
-        let codes_len = codes.dims()[2];
+        let mut codes_len = codes.dims()[2];
+        if !(codes_len.saturating_sub(ovlp_frames)).is_multiple_of(hop_samples) {
+            let len_codes = codes_len.saturating_sub(ovlp_samples).div_ceil(hop_samples)
+                * hop_samples
+                + ovlp_samples;
+            while codes.dims()[2] < len_codes {
+                codes = Tensor::cat(vec![codes.clone(), codes], 2);
+            }
+            codes = codes.slice([0..batch, 0..num_quantizers, 0..len_codes]);
+            codes_len = len_codes;
+        }
         eprintln!(
-            "HeartCodec.decode: first_latent shape = {:?}",
-            first_latent.dims()
+            "HeartCodec.decode: first_latent shape = {:?}, segment_duration_seconds = {:.2}, min_samples = {}, hop_samples = {}, ovlp_samples = {}",
+            first_latent.dims(),
+            segment_duration_seconds,
+            min_samples,
+            hop_samples,
+            ovlp_samples
         );
 
         let mut windows = Vec::new();
+        let mut previous_latent: Option<Tensor<B, 3>> = None;
         let mut sinx = 0usize;
-        while sinx < codes_len {
+        while sinx + min_samples <= codes_len {
             let window_end = (sinx + min_samples).min(codes_len);
             let codes_input = codes
                 .clone()
@@ -347,7 +368,7 @@ impl<B: Backend> HeartCodecModel<B> {
                     0..window_latent_length.min(first_latent.dims()[1]),
                     0..first_latent.dims()[2],
                 ]);
-                windows.push(Self::build_scalar_input_window(
+                let latent = Self::run_flow_matching_window(
                     flow_matching,
                     guidance_scale,
                     ode_steps,
@@ -356,18 +377,19 @@ impl<B: Backend> HeartCodecModel<B> {
                     window_latent_length,
                     0,
                     Some(initial_window_latent),
-                ));
+                );
+                windows.push(Self::latent_to_scalar_input(latent.clone()));
+                previous_latent = Some(latent);
             } else {
-                let true_latent = windows
-                    .last()
-                    .expect("latent windows are not empty")
-                    .clone()
-                    .slice([
-                        0..2,
-                        0..1,
-                        latent_length.saturating_sub(ovlp_frames)..latent_length,
-                    ]);
-                let len_add_to_latent = latent_length - true_latent.dims()[2];
+                let prev_latent = previous_latent
+                    .as_ref()
+                    .expect("previous latent window is required when overlap is enabled");
+                let true_latent = prev_latent.clone().slice([
+                    0..batch,
+                    prev_latent.dims()[1].saturating_sub(ovlp_frames)..prev_latent.dims()[1],
+                    0..prev_latent.dims()[2],
+                ]);
+                let len_add_to_latent = window_latent_length.saturating_sub(true_latent.dims()[1]);
                 let true_latent = if len_add_to_latent == 0 {
                     true_latent
                 } else {
@@ -375,19 +397,15 @@ impl<B: Backend> HeartCodecModel<B> {
                         vec![
                             true_latent.clone(),
                             Tensor::<B, 3>::random(
-                                [
-                                    true_latent.dims()[0],
-                                    true_latent.dims()[1],
-                                    len_add_to_latent,
-                                ],
+                                [batch, len_add_to_latent, true_latent.dims()[2]],
                                 burn::tensor::Distribution::Normal(0.0, 1.0),
                                 &device,
                             ),
                         ],
-                        2,
+                        1,
                     )
                 };
-                windows.push(Self::build_scalar_input_window(
+                let latent = Self::run_flow_matching_window(
                     flow_matching,
                     guidance_scale,
                     ode_steps,
@@ -396,7 +414,9 @@ impl<B: Backend> HeartCodecModel<B> {
                     window_latent_length,
                     ovlp_frames,
                     None,
-                ));
+                );
+                windows.push(Self::latent_to_scalar_input(latent.clone()));
+                previous_latent = Some(latent);
             }
             sinx += hop_samples.max(1);
         }
@@ -417,7 +437,13 @@ impl<B: Backend> HeartCodecModel<B> {
             .first()
             .expect("expected at least one scalar decode window")
             .device();
-        let ovlp_samples = 0usize;
+        let min_samples = plan
+            .windows
+            .first()
+            .map(|window| window.dims()[2] * HEARTMULA_SAMPLE_RATE / 25)
+            .expect("expected at least one scalar decode window");
+        let hop_samples = ((min_samples / HEARTCODEC_WINDOW_FRAMES) * 80).max(1);
+        let ovlp_samples = min_samples.saturating_sub(hop_samples);
         let mut output: Option<Tensor<B, 3>> = None;
 
         for scalar_input in plan.windows {
@@ -430,7 +456,7 @@ impl<B: Backend> HeartCodecModel<B> {
             cur_output = cur_output.slice([
                 0..cur_output_dims[0],
                 0..1,
-                0..plan.audio_target_len.min(cur_output_dims[2]),
+                0..min_samples.min(cur_output_dims[2]),
             ]);
             if let Some(prev) = output {
                 if ovlp_samples == 0 {
@@ -456,9 +482,14 @@ impl<B: Backend> HeartCodecModel<B> {
                         cur_output
                             .clone()
                             .slice([0..cur_dims[0], 0..1, 0..ovlp_samples]);
-                    let one_minus =
-                        Tensor::<B, 3>::ones([1, 1, ovlp_samples], &device) - ov_win.clone();
-                    let blended = prev_tail * one_minus + cur_head * ov_win;
+                    let prev_energy = prev_tail.clone().square();
+                    let cur_energy = cur_head.clone().square();
+                    let energy_sum = prev_energy.clone() + cur_energy.clone() + 1.0e-8;
+                    let transient_cur = cur_energy / energy_sum;
+                    let cur_weight = (ov_win.clone() + transient_cur) * 0.5;
+                    let prev_weight =
+                        Tensor::<B, 3>::ones([1, 1, ovlp_samples], &device) - cur_weight.clone();
+                    let blended = prev_tail * prev_weight + cur_head * cur_weight;
                     output = Some(Tensor::cat(
                         vec![
                             prev_head,
@@ -479,7 +510,7 @@ impl<B: Backend> HeartCodecModel<B> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn build_scalar_input_window(
+    fn run_flow_matching_window(
         flow_matching: &FlowMatching<B>,
         guidance_scale: f32,
         ode_steps: usize,
@@ -489,24 +520,8 @@ impl<B: Backend> HeartCodecModel<B> {
         incontext_length: usize,
         initial_latent_override: Option<Tensor<B, 3>>,
     ) -> Tensor<B, 3> {
-        let [batch, num_quantizers, seq_len] = codes.dims();
-
-        let mut quantized_sum = Tensor::<B, 3>::zeros([batch, seq_len, 32], &codes.device());
-        for q in 0..num_quantizers.min(8) {
-            let q_codes_3d = codes.clone().slice([0..batch, q..q + 1, 0..seq_len]);
-            let q_codes = q_codes_3d.reshape([batch, seq_len]);
-
-            let embed = flow_matching.vq_embed.layers[q]._codebook.embed.val();
-            let embed_dim = embed.dims()[2];
-            let codebook_size = embed.dims()[1];
-
-            let q_emb = gather_codebook(embed, q_codes, codebook_size, embed_dim);
-            quantized_sum = quantized_sum + q_emb;
-        }
-        let _ = quantized_sum;
-
-        let latent = flow_matching.inference_codes(
-            vec![codes.clone()],
+        flow_matching.inference_codes(
+            vec![codes],
             true_latents,
             latent_length,
             incontext_length,
@@ -515,7 +530,10 @@ impl<B: Backend> HeartCodecModel<B> {
             false,
             "other_seg",
             initial_latent_override,
-        );
+        )
+    }
+
+    fn latent_to_scalar_input(latent: Tensor<B, 3>) -> Tensor<B, 3> {
         let [batch, seq_len, channels] = latent.dims();
         eprintln!(
             "HeartCodec.decode_window: flow matching latent shape = [{}, {}, {}]",
@@ -564,9 +582,8 @@ impl<B: Backend> HeartCodecModel<B> {
     /// 2. Flow matching ODE solver to generate latents
     /// 3. Scalar model decode to audio
     pub fn decode(&self, codes: Tensor<B, 3, Int>) -> Tensor<B, 3> {
-        let [batch, _num_quantizers, seq_len] = codes.dims();
-        let duration_seconds = seq_len as f32 / 12.5;
-        let latent_length = (duration_seconds * 25.0) as usize;
+        let [batch, _num_quantizers, _seq_len] = codes.dims();
+        let latent_length = (HEARTCODEC_SEGMENT_DURATION_SECONDS * 25.0) as usize;
         let first_latent = Tensor::<B, 3>::random(
             [batch, latent_length, 256],
             burn::tensor::Distribution::Normal(0.0, 1.0),
@@ -583,21 +600,6 @@ impl<B: Backend> HeartCodecModel<B> {
         let plan = self.build_scalar_decode_plan(codes, first_latent);
         self.decode_scalar_plan(plan)
     }
-}
-
-fn gather_codebook<B: Backend>(
-    embed: Tensor<B, 3>,
-    indices: Tensor<B, 2, Int>,
-    codebook_size: usize,
-    dim: usize,
-) -> Tensor<B, 3> {
-    let [batch, seq_len] = indices.dims();
-    let embed_2d: Tensor<B, 2> = embed.squeeze_dim(0);
-    let indices_flat: Tensor<B, 1, Int> = indices.reshape([batch * seq_len]);
-    let max_idx = (codebook_size as i64) - 1;
-    let indices_clamped: Tensor<B, 1, Int> = indices_flat.clamp(0, max_idx);
-    let gathered = embed_2d.select(0, indices_clamped);
-    gathered.reshape([batch, seq_len, dim])
 }
 
 /// FlowMatching module
@@ -701,9 +703,25 @@ impl<B: Backend> FlowMatching<B> {
             .clone()
             .reshape([1, 1, 512])
             .repeat(&[batch, seq_len_interp, 1]);
+        let active_mask = Tensor::<B, 3>::from_data(
+            TensorData::new(
+                latent_masks
+                    .iter()
+                    .map(|&mask| if mask > 0 { 1.0 } else { 0.0 })
+                    .collect::<Vec<_>>(),
+                [1, seq_len_interp, 1],
+            ),
+            &device,
+        )
+        .repeat(&[batch, 1, 512]);
+        let inactive_mask =
+            Tensor::<B, 3>::ones([batch, seq_len_interp, 512], &device) - active_mask.clone();
+        let cond_with_mask = cond_interp.clone() * active_mask + zero_cond.clone() * inactive_mask;
+        let uncond_mask = Tensor::<B, 3>::zeros([batch, seq_len_interp, 512], &device);
         eprintln!(
-            "FlowMatching.solve_ode: cond_interp = {:?}, zero_cond = {:?}, latent_masks len = {}, masked_incontext_length = {}",
+            "FlowMatching.solve_ode: cond_interp = {:?}, cond_with_mask = {:?}, zero_cond = {:?}, latent_masks len = {}, masked_incontext_length = {}",
             cond_interp.dims(),
+            cond_with_mask.dims(),
             zero_cond.dims(),
             latent_masks.len(),
             masked_incontext_length
@@ -776,9 +794,9 @@ impl<B: Backend> FlowMatching<B> {
             let velocity = if guidance_scale > 1.0 {
                 // Classifier-Free Guidance (CFG)
                 // Run estimator twice: once with conditioning, once without
-                // Unconditional: x, incontext_x, learned zero conditioning
+                // Unconditional branch uses zeros_like(mu) in the reference implementation.
                 let uncond_input = Tensor::cat(
-                    vec![latent.clone(), incontext_x.clone(), zero_cond.clone()],
+                    vec![latent.clone(), incontext_x.clone(), uncond_mask.clone()],
                     2,
                 );
                 let uncond_vel = self.estimator.forward(&uncond_input, t, step);
@@ -791,7 +809,7 @@ impl<B: Backend> FlowMatching<B> {
 
                 // Conditional: x, incontext_x, cond_interp
                 let cond_input = Tensor::cat(
-                    vec![latent.clone(), incontext_x.clone(), cond_interp.clone()],
+                    vec![latent.clone(), incontext_x.clone(), cond_with_mask.clone()],
                     2,
                 );
                 let cond_vel = self.estimator.forward(&cond_input, t, step);
@@ -807,7 +825,7 @@ impl<B: Backend> FlowMatching<B> {
             } else {
                 // No CFG - standard forward pass
                 let estimator_input = Tensor::cat(
-                    vec![latent.clone(), incontext_x.clone(), cond_interp.clone()],
+                    vec![latent.clone(), incontext_x.clone(), cond_with_mask.clone()],
                     2,
                 );
                 let out = self.estimator.forward(&estimator_input, t, step);
