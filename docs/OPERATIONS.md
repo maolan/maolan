@@ -1,6 +1,6 @@
 # Maolan Operations, Storage, and Recovery
 
-Last updated: 2026-03-21
+Last updated: 2026-04-04
 
 ## Runtime and Platform Behavior
 
@@ -28,6 +28,16 @@ Current persisted keys:
 - `default_output_device_id`
 - `default_input_device_id`
 - `recent_session_paths`
+
+Additional generation-related preferences currently persisted in the config file:
+
+- `generate_audio_model`
+- `burn_negative_prompt`
+- `burn_backend`
+- `burn_sampler`
+- `burn_cfg_scale`
+- `burn_steps`
+- `burn_seconds_total`
 
 If the file does not exist, Maolan creates it on startup with defaults.
 
@@ -128,6 +138,23 @@ Current bundle contents:
 - Multiple output formats can be written in one export run.
 - MP3 export supports only mono or stereo output.
 - Normalization and master-limiter settings are persisted in the session file.
+
+## HeartMuLa Generation Operations
+
+The current HeartMuLa generation path uses the `maolan-generate` crate/binary.
+
+- The GUI launches generate through the local `maolan-generate` binary and exchanges requests over a socketpair IPC path.
+- Prompt generation runs as a dedicated HeartMuLa token-generation subprocess, then decode runs in-process with HeartCodec.
+- When `--model-dir <path>` is not provided, the generate path resolves models from the Hugging Face cache via `hf-hub`.
+- The expected Hugging Face Burn repos are:
+  - `maolandaw/HeartMuLa-happy-new-year-burn`
+  - `maolandaw/HeartCodec-oss-20260123-burn`
+- The generate path currently expects these repo file layouts:
+  - HeartMuLa repo: `heartmula.bpk`, `tokenizer.json`, `gen_config.json`
+  - HeartCodec repo: `heartcodec.bpk`
+- The current CLI uses `--length <int>` in milliseconds for output duration.
+- `--decode-only` requires `--frames-json <path>`.
+- `--model-dir <path>` can be used to bypass Hugging Face cache resolution and point at a local export directly.
 
 ## Pitch Correction Caching and Rendering
 

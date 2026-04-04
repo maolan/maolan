@@ -88,8 +88,6 @@ type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
 
 const MAOLAN_BURN_SOCKETPAIR_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
 #[cfg(unix)]
-const HEARTMULA_BURN_MODEL_DIR_ENV: &str = "HEARTMULA_BURN_MODEL_DIR";
-#[cfg(unix)]
 const HEARTMULA_BURN_DEFAULT_MODEL_DIR: &str =
     "repos/heartmula-burn/artifacts/heartmula-happy-new-year-20260123";
 #[cfg(unix)]
@@ -116,7 +114,7 @@ struct BurnGenerateRequest {
     sampler: BurnSamplerOption,
     cfg_scale: f32,
     steps: usize,
-    seconds_total: i64,
+    length: i64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -594,13 +592,6 @@ fn scan_track_templates() -> Vec<String> {
 
 #[cfg(unix)]
 fn heartmula_burn_model_dir() -> PathBuf {
-    if let Some(path) = std::env::var_os(HEARTMULA_BURN_MODEL_DIR_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-    {
-        return path;
-    }
-
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| "/tmp".to_string());
@@ -1017,7 +1008,7 @@ impl Maolan {
     #[cfg(unix)]
     fn generate_audio_with_burn_socketpair(
         request: BurnGenerateRequest,
-        model_dir: Option<&Path>,
+        _model_dir: Option<&Path>,
     ) -> Result<Vec<u8>, String> {
         use std::os::fd::OwnedFd;
         use std::os::unix::net::UnixStream;
@@ -1030,9 +1021,6 @@ impl Maolan {
             .map_err(|e| format!("Failed to clone child socket: {e}"))?;
         let mut command = Self::maolan_burn_command();
         command.env(MAOLAN_BURN_SOCKETPAIR_ENV, "1");
-        if let Some(model_dir) = model_dir {
-            command.env(HEARTMULA_BURN_MODEL_DIR_ENV, model_dir);
-        }
         let process = command
             .stdin(Stdio::from(OwnedFd::from(child_read)))
             .stdout(Stdio::from(OwnedFd::from(child)))

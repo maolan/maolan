@@ -1757,17 +1757,7 @@ pub fn decode_frames_to_wav<B: burn::prelude::Backend>(
 }
 
 fn resolve_heartcodec_burnpack_path(model_dir: &Path) -> PathBuf {
-    let bundled_path = model_dir.join("burn_raw/heartcodec_raw_f32.bpk");
-    if bundled_path.exists() {
-        return bundled_path;
-    }
-
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(
-        "repos/heartmula-burn/artifacts/heartmula-happy-new-year-20260123/burn_raw/heartcodec_raw_f32.bpk",
-    )
+    model_dir.join("heartcodec.bpk")
 }
 
 fn decode_frames_to_wav_rust<B: burn::prelude::Backend>(
