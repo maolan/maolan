@@ -1,4 +1,3 @@
-use crate::DecoderChoice;
 use crate::heartcodec::frames_to_tensor;
 use anyhow::{Context, Result, anyhow};
 use burn::module::{
@@ -18,7 +17,6 @@ use std::fs;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tokenizers::Tokenizer;
 
 const HEARTMULA_PARALLEL_TOKENS: usize = 9;
@@ -38,7 +36,6 @@ const HEARTMULA_ROPE_SCALE_FACTOR: f32 = 32.0;
 const HEARTMULA_OLD_CONTEXT_LEN: f32 = 8192.0;
 const HEARTMULA_LOW_FREQ_FACTOR: f32 = 1.0;
 const HEARTMULA_HIGH_FREQ_FACTOR: f32 = 4.0;
-const TOKENIZER_HELPER_PYTHON: &str = "/home/meka/.virtualenvs/sao/bin/python";
 const HEARTCODEC_STAGE_ENV: &str = "MAOLAN_HEARTCODEC_STAGE";
 const HEARTCODEC_STAGE_FLOW: &str = "flow";
 const HEARTCODEC_STAGE_SCALAR: &str = "scalar";
@@ -1727,25 +1724,8 @@ pub fn decode_frames_to_wav<B: burn::prelude::Backend>(
     duration_seconds: f32,
     device: &B::Device,
     ode_steps: usize,
-    decoder: DecoderChoice,
     decoder_seed: u64,
 ) -> Result<()> {
-    if matches!(decoder, DecoderChoice::Python) {
-        eprintln!("decode_frames_to_wav: decoder=python, using Python");
-        let shared_initial_latent =
-            prepare_shared_decoder_initial_latent(frames_json, decoder_seed, output_wav)?;
-        return decode_frames_to_wav_python(
-            model_dir,
-            float_size_arg,
-            frames_json,
-            output_wav,
-            duration_seconds,
-            ode_steps,
-            &shared_initial_latent,
-            decoder_seed,
-        );
-    }
-
     if let Some(stage) =
         env::var_os(HEARTCODEC_STAGE_ENV).and_then(|value| value.into_string().ok())
     {
@@ -1762,7 +1742,9 @@ pub fn decode_frames_to_wav<B: burn::prelude::Backend>(
         };
     }
 
-    eprintln!("decode_frames_to_wav: decoder=rust, using Rust HeartCodec decoder");
+    let _ = float_size_arg;
+    let _ = duration_seconds;
+    eprintln!("decode_frames_to_wav: using Rust HeartCodec decoder");
     decode_frames_to_wav_rust::<B>(
         model_dir,
         frames_json,
@@ -2060,84 +2042,6 @@ fn read_f32_vec(reader: &mut dyn Read) -> Result<Vec<f32>> {
             ]);
         });
     Ok(values)
-}
-
-/// Python-based decoder for HeartCodec
-///
-/// This is the current working implementation while the Rust version
-/// is being developed incrementally.
-#[allow(clippy::too_many_arguments)]
-pub fn decode_frames_to_wav_python(
-    _model_dir: &Path,
-    _float_size_arg: &str,
-    frames_json: &Path,
-    output_wav: &Path,
-    duration_seconds: f32,
-    ode_steps: usize,
-    initial_latent_json: &Path,
-    decoder_seed: u64,
-) -> Result<()> {
-    let script = heartcodec_detokenizer_script();
-    if !script.exists() {
-        anyhow::bail!(
-            "missing HeartCodec decode script at {}; run detokenizer from repository root",
-            script.display()
-        );
-    }
-
-    // Use the checkpoint directory for the Python model
-    // The ckpt directory is at /home/meka/ckpt/heartmula/HeartCodec-oss
-    let ckpt_dir = PathBuf::from("/home/meka/ckpt/heartmula/HeartCodec-oss");
-
-    let mut command = Command::new(TOKENIZER_HELPER_PYTHON);
-    command
-        .arg(&script)
-        .arg("--model-dir")
-        .arg(&ckpt_dir)
-        .arg("--frames-json")
-        .arg(frames_json)
-        .arg("--output")
-        .arg(output_wav)
-        .arg("--duration")
-        .arg(duration_seconds.to_string())
-        .arg("--num-steps")
-        .arg(ode_steps.to_string())
-        .arg("--guidance-scale")
-        .arg("1.0")
-        .arg("--seed")
-        .arg(decoder_seed.to_string())
-        .arg("--initial-latent-json")
-        .arg(initial_latent_json);
-
-    eprintln!("decode_frames_to_wav_python: running Python detokenizer");
-    eprintln!("  script: {}", script.display());
-    eprintln!("  model_dir: {}", ckpt_dir.display());
-    eprintln!("  frames_json: {}", frames_json.display());
-    eprintln!("  output_wav: {}", output_wav.display());
-
-    let output = command.output().with_context(|| {
-        format!(
-            "failed to spawn HeartCodec decode script at {}",
-            script.display()
-        )
-    })?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "HeartCodec decode script failed (stdout: {}; stderr: {})",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    eprintln!("decode_frames_to_wav_python: Python detokenizer completed successfully");
-    Ok(())
-}
-
-fn heartcodec_detokenizer_script() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("generate crate must live inside workspace")
-        .join("scripts")
-        .join("heartcodec_detokenize.py")
 }
 
 fn prepare_shared_decoder_initial_latent(

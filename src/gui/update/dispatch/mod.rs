@@ -7094,7 +7094,7 @@ impl Maolan {
                     .iter()
                     .map(|track| track.name.clone())
                     .collect();
-                let download_token = self.generate_audio_hf_token_input.clone();
+                let _download_token = self.generate_audio_hf_token_input.clone();
                 let playback_rate_hz = self.playback_rate_hz.max(1.0);
 
                 self.generate_audio_in_progress = true;
@@ -7110,42 +7110,11 @@ impl Maolan {
                                 super::super::Maolan::sanitize_generated_track_base_name(
                                     &request.prompt,
                                 );
-                            let model_dir = if matches!(
-                                request.model,
-                                crate::message::GenerateAudioModelOption::StableAudioOpen
-                            ) {
-                                let _ = tx.send(Message::GenerateAudioProgress {
-                                    progress: 0.05,
-                                    operation: Some("Checking generate model".to_string()),
-                                });
-
-                                match super::super::Maolan::ensure_maolan_burn_model(
-                                    Some(download_token),
-                                    {
-                                        let tx = tx.clone();
-                                        move |progress, operation| {
-                                            let _ = tx.send(Message::GenerateAudioProgress {
-                                                progress: 0.05 + progress.clamp(0.0, 1.0) * 0.35,
-                                                operation,
-                                            });
-                                        }
-                                    },
-                                )
-                                .await
-                                {
-                                    Ok(model_dir) => Some(model_dir),
-                                    Err(err) => {
-                                        let _ = tx.send(Message::GenerateAudioFinished(Err(err)));
-                                        return;
-                                    }
-                                }
-                            } else {
-                                let _ = tx.send(Message::GenerateAudioProgress {
-                                    progress: 0.05,
-                                    operation: Some(
-                                        "Checking local HeartMula Burn assets".to_string(),
-                                    ),
-                                });
+                            let _ = tx.send(Message::GenerateAudioProgress {
+                                progress: 0.05,
+                                operation: Some("Checking local HeartMula Burn assets".to_string()),
+                            });
+                            let model_dir =
                                 match super::super::Maolan::ensure_heartmula_burn_model({
                                     let tx = tx.clone();
                                     move |progress, operation| {
@@ -7162,8 +7131,7 @@ impl Maolan {
                                         let _ = tx.send(Message::GenerateAudioFinished(Err(err)));
                                         return;
                                     }
-                                }
-                            };
+                                };
 
                             let _ = tx.send(Message::GenerateAudioProgress {
                                 progress: 0.45,

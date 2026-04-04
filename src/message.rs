@@ -57,18 +57,16 @@ impl fmt::Display for BurnBackendOption {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GenerateAudioModelOption {
-    StableAudioOpen,
     Heartmula,
 }
 
 impl GenerateAudioModelOption {
-    pub const ALL: [Self; 2] = [Self::StableAudioOpen, Self::Heartmula];
+    pub const ALL: [Self; 1] = [Self::Heartmula];
 }
 
 impl fmt::Display for GenerateAudioModelOption {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::StableAudioOpen => write!(f, "Stable Audio Open"),
             Self::Heartmula => write!(f, "HeartMula"),
         }
     }

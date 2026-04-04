@@ -39,7 +39,7 @@ use ebur128::{EbuR128, Mode as LoudnessMode};
 use flacenc::component::BitRepr;
 use flacenc::error::Verify;
 #[cfg(unix)]
-use hf_hub::{Cache as HfCache, Repo as HfRepo};
+use hf_hub::Cache as HfCache;
 use iced::{
     Length, Size, Task,
     widget::{
@@ -88,17 +88,7 @@ type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
 
 const MAOLAN_BURN_SOCKETPAIR_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
 #[cfg(unix)]
-const MAOLAN_BURN_MODEL_DIR_ENV: &str = "MAOLAN_BURN_MODEL_DIR";
-#[cfg(unix)]
 const HEARTMULA_BURN_MODEL_DIR_ENV: &str = "HEARTMULA_BURN_MODEL_DIR";
-#[cfg(unix)]
-const MAOLAN_BURN_MODEL_FILES: [(&str, &str); 3] = [
-    ("burn_t5/stable_audio_t5_sim.bpk", "T5 weights"),
-    ("burn_dit/stable_audio_dit.bpk", "DiT weights"),
-    ("burn_vae/stable_audio_vae_decoder_sim.bpk", "VAE weights"),
-];
-#[cfg(unix)]
-const MAOLAN_BURN_MODEL_REPO: &str = "kurbloid/stable-audio-open-1.0-burn";
 #[cfg(unix)]
 const HEARTMULA_BURN_DEFAULT_MODEL_DIR: &str = "repos/heartmula-burn/artifacts/heartmula-oss-3b";
 #[cfg(unix)]
@@ -602,49 +592,6 @@ fn scan_track_templates() -> Vec<String> {
 }
 
 #[cfg(unix)]
-fn maolan_burn_hf_repo_cache_dir() -> PathBuf {
-    HfCache::from_env()
-        .path()
-        .join("models--kurbloid--stable-audio-open-1.0-burn")
-}
-
-#[cfg(unix)]
-fn resolve_hugging_face_snapshot_dir(repo_cache_dir: &Path) -> Option<PathBuf> {
-    let refs_main = repo_cache_dir.join("refs").join("main");
-    if let Ok(revision) = fs::read_to_string(&refs_main) {
-        let snapshot_dir = repo_cache_dir.join("snapshots").join(revision.trim());
-        if has_required_model_files(&snapshot_dir) {
-            return Some(snapshot_dir);
-        }
-    }
-
-    let snapshots_dir = repo_cache_dir.join("snapshots");
-    let mut snapshots = fs::read_dir(snapshots_dir)
-        .ok()?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| has_required_model_files(path))
-        .collect::<Vec<_>>();
-    snapshots.sort();
-    snapshots.pop()
-}
-
-#[cfg(unix)]
-fn has_required_model_files(snapshot_dir: &Path) -> bool {
-    MAOLAN_BURN_MODEL_FILES
-        .iter()
-        .all(|(relative_path, _)| snapshot_dir.join(relative_path).exists())
-}
-
-#[cfg(unix)]
-fn maolan_burn_model_dir() -> PathBuf {
-    resolve_hugging_face_snapshot_dir(&maolan_burn_hf_repo_cache_dir()).unwrap_or_else(|| {
-        maolan_burn_hf_repo_cache_dir()
-            .join("snapshots")
-            .join("main")
-    })
-}
-
-#[cfg(unix)]
 fn heartmula_burn_model_dir() -> PathBuf {
     if let Some(path) = std::env::var_os(HEARTMULA_BURN_MODEL_DIR_ENV)
         .filter(|value| !value.is_empty())
@@ -969,32 +916,6 @@ impl Maolan {
     }
 
     #[cfg(unix)]
-    fn save_hugging_face_token(token: &str) -> Result<(), String> {
-        let token = token.trim();
-        if token.is_empty() {
-            return Ok(());
-        }
-        let path = HfCache::from_env().token_path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create Hugging Face cache directory: {e}"))?;
-        }
-        fs::write(&path, format!("{token}\n"))
-            .map_err(|e| format!("Failed to save Hugging Face token: {e}"))
-    }
-
-    #[cfg(unix)]
-    fn missing_maolan_burn_model_files(model_dir: &Path) -> Vec<(&'static str, PathBuf)> {
-        MAOLAN_BURN_MODEL_FILES
-            .iter()
-            .filter_map(|(relative_path, _)| {
-                let path = model_dir.join(relative_path);
-                (!path.exists()).then_some((*relative_path, path))
-            })
-            .collect::<Vec<_>>()
-    }
-
-    #[cfg(unix)]
     fn missing_heartmula_burn_model_files(model_dir: &Path) -> Vec<(&'static str, PathBuf)> {
         let mut missing = Vec::new();
 
@@ -1014,95 +935,6 @@ impl Maolan {
         }
 
         missing
-    }
-
-    #[cfg(unix)]
-    async fn ensure_maolan_burn_model<F>(
-        token_override: Option<String>,
-        mut progress: F,
-    ) -> Result<PathBuf, String>
-    where
-        F: FnMut(f32, Option<String>),
-    {
-        let cached_model_dir = maolan_burn_model_dir();
-        let missing_files = Self::missing_maolan_burn_model_files(&cached_model_dir);
-
-        if missing_files.is_empty() && cached_model_dir.is_dir() {
-            progress(1.0, Some("Using cached generate model".to_string()));
-            return Ok(cached_model_dir);
-        }
-
-        let token = token_override
-            .map(|token| token.trim().to_string())
-            .filter(|token| !token.is_empty())
-            .or_else(Self::hugging_face_token);
-        if token.is_none() {
-            return Err(
-                "Model download requires a Hugging Face token. Enter it in Generate Audio."
-                    .to_string(),
-            );
-        }
-
-        let total_files = MAOLAN_BURN_MODEL_FILES.len().max(1) as f32;
-        let token_value = token.expect("checked above");
-        let api = hf_hub::api::tokio::ApiBuilder::from_cache(HfCache::from_env())
-            .with_token(Some(token_value.clone()))
-            .build()
-            .map_err(|e| format!("Failed to initialize Hugging Face client: {e}"))?;
-        let repo = api.repo(HfRepo::model(MAOLAN_BURN_MODEL_REPO.to_string()));
-        let mut model_dir = None::<PathBuf>;
-
-        for (index, (relative_path, label)) in MAOLAN_BURN_MODEL_FILES.iter().enumerate() {
-            progress(
-                index as f32 / total_files,
-                Some(format!("Fetching {label}")),
-            );
-            let get_future = repo.get(relative_path);
-            tokio::pin!(get_future);
-            let mut pulsed_progress = 0.0_f32;
-            let cached_path = loop {
-                tokio::select! {
-                    result = &mut get_future => {
-                        break result.map_err(|e| format!("Failed to fetch {label}: {e}"))?;
-                    }
-                    _ = tokio::time::sleep(Duration::from_millis(150)) => {
-                        pulsed_progress = (pulsed_progress + 0.03).min(0.9);
-                        progress(
-                            (index as f32 + pulsed_progress) / total_files,
-                            Some(format!("Fetching {label}")),
-                        );
-                    }
-                }
-            };
-            let Some(snapshot_dir) = cached_path.parent().and_then(Path::parent) else {
-                return Err(format!(
-                    "Failed to resolve Hugging Face snapshot root for {label}: {}",
-                    cached_path.display()
-                ));
-            };
-            if let Some(existing) = model_dir.as_ref() {
-                if existing != snapshot_dir {
-                    return Err(format!(
-                        "Hugging Face returned inconsistent snapshot roots: {} vs {}",
-                        existing.display(),
-                        snapshot_dir.display()
-                    ));
-                }
-            } else {
-                model_dir = Some(snapshot_dir.to_path_buf());
-            }
-            progress(
-                (index as f32 + 1.0) / total_files,
-                Some(format!("Fetched {label}")),
-            );
-        }
-
-        Self::save_hugging_face_token(&token_value)?;
-        let model_dir = model_dir.ok_or_else(|| {
-            "Failed to resolve Hugging Face snapshot root for generate model".to_string()
-        })?;
-        progress(1.0, Some("Model ready".to_string()));
-        Ok(model_dir)
     }
 
     #[cfg(unix)]
@@ -1198,14 +1030,7 @@ impl Maolan {
         let mut command = Self::maolan_burn_command();
         command.env(MAOLAN_BURN_SOCKETPAIR_ENV, "1");
         if let Some(model_dir) = model_dir {
-            match request.model {
-                GenerateAudioModelOption::StableAudioOpen => {
-                    command.env(MAOLAN_BURN_MODEL_DIR_ENV, model_dir);
-                }
-                GenerateAudioModelOption::Heartmula => {
-                    command.env(HEARTMULA_BURN_MODEL_DIR_ENV, model_dir);
-                }
-            }
+            command.env(HEARTMULA_BURN_MODEL_DIR_ENV, model_dir);
         }
         let process = command
             .stdin(Stdio::from(OwnedFd::from(child_read)))
@@ -5490,58 +5315,16 @@ impl Maolan {
                 )
             }
         } else if session_ready {
-            match self.generate_audio_model {
-                GenerateAudioModelOption::StableAudioOpen => {
-                    "Generated audio is imported as a new track in the current session."
-                        .to_string()
-                }
-                GenerateAudioModelOption::Heartmula => {
-                    "HeartMula uses lyrics plus optional tags and imports the result as a new track."
-                        .to_string()
-                }
-            }
+            "HeartMula uses lyrics plus optional tags and imports the result as a new track."
+                .to_string()
         } else {
             "Open or save a session before generating audio.".to_string()
         };
-        let prompt_label = match self.generate_audio_model {
-            GenerateAudioModelOption::StableAudioOpen => "Prompt",
-            GenerateAudioModelOption::Heartmula => "Lyrics",
-        };
-        let negative_prompt_label = match self.generate_audio_model {
-            GenerateAudioModelOption::StableAudioOpen => "Negative prompt (optional)",
-            GenerateAudioModelOption::Heartmula => "Tags (optional)",
-        };
-        let model_source_section: iced::Element<'_, Message> = if matches!(
-            self.generate_audio_model,
-            GenerateAudioModelOption::StableAudioOpen
-        ) {
-            iced::Element::from(
-                row![
-                    text_input(
-                        "Hugging Face token (used if model download is needed)",
-                        &self.generate_audio_hf_token_input
-                    )
-                    .secure(!self.generate_audio_hf_token_visible)
-                    .on_input(Message::GenerateAudioHfTokenInput)
-                    .width(Length::Fill),
-                    button(if self.generate_audio_hf_token_visible {
-                        "Hide"
-                    } else {
-                        "Show"
-                    })
-                    .on_press(Message::GenerateAudioToggleHfTokenVisibility),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-            )
-        } else {
-            iced::Element::from(
-                text(
-                    "HeartMula expects local converted Burn assets; the Stable Audio download flow is not used."
-                )
-                .size(14),
-            )
-        };
+        let prompt_label = "Lyrics";
+        let negative_prompt_label = "Tags (optional)";
+        let model_source_section: iced::Element<'_, Message> = iced::Element::from(
+            text("HeartMula expects local converted Burn assets; the Stable Audio download flow is not used.").size(14),
+        );
         let generate_button = if self.generate_audio_in_progress || !session_ready {
             button("Generate")
         } else {
@@ -7081,17 +6864,6 @@ hf_token = "token-2"
 "#,
         );
         assert_eq!(token.as_deref(), Some("token-1"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn maolan_burn_model_dir_uses_cache_root() {
-        assert_eq!(
-            maolan_burn_hf_repo_cache_dir(),
-            HfCache::from_env()
-                .path()
-                .join("models--kurbloid--stable-audio-open-1.0-burn")
-        );
     }
 
     #[cfg(unix)]
