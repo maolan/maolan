@@ -37,7 +37,7 @@ impl Default for Config {
             default_export_sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ as u32,
             default_snap_mode: SnapMode::Bar,
             default_audio_bit_depth: audio_defaults::BIT_DEPTH,
-            generate_audio_model: GenerateAudioModelOption::StableAudioOpen,
+            generate_audio_model: GenerateAudioModelOption::Heartmula,
             burn_negative_prompt: String::new(),
             burn_backend: BurnBackendOption::Vulkan,
             burn_sampler: BurnSamplerOption::Dpmpp3mSde,
@@ -143,7 +143,7 @@ default_export_sample_rate_hz = 48000
 default_snap_mode = "Bar"
 default_audio_bit_depth = 32
 burn_negative_prompt = ""
-generate_audio_model = "stable-audio-open"
+generate_audio_model = "heartmula"
 burn_backend = "vulkan"
 burn_sampler = "dpmpp-3m-sde"
 burn_cfg_scale = 6.0

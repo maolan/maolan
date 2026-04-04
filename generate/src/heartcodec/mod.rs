@@ -14,6 +14,9 @@ use burn::nn::{LayerNorm, LayerNormConfig, Linear, LinearConfig, LinearLayout};
 use burn::prelude::Backend;
 use burn::tensor::{DType, Int, Tensor, TensorData};
 use burn_store::{BurnpackStore, ModuleSnapshot, ModuleStore};
+use rayon::prelude::*;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 // Re-export conv modules for use in model
 pub use conv::PostProcessor;
 pub use conv::{PlainConv1d, WNConv1d, WNConvTranspose1d};
@@ -2282,28 +2285,45 @@ impl<B: Backend> ScalarModel<B> {
         // This matches Python's round_func9 in sq_codec.py
         let x_quantized = (x.clone() * 9.0).round() / 9.0;
 
+        eprintln!("ScalarModel.decode_with_sync: starting decoder_0");
         let h = self.decoder_0.forward(x_quantized);
+        eprintln!("ScalarModel.decode_with_sync: finished decoder_0");
         let _ = h.to_data(); // Sync after decoder_0
 
+        eprintln!("ScalarModel.decode_with_sync: starting decoder_1");
         let h = self.decoder_1.forward(h);
+        eprintln!("ScalarModel.decode_with_sync: finished decoder_1");
         let _ = h.to_data(); // Sync after decoder_1
 
+        eprintln!("ScalarModel.decode_with_sync: starting decoder_2");
         let h = self.decoder_2.forward(h);
+        eprintln!("ScalarModel.decode_with_sync: finished decoder_2");
         let _ = h.to_data(); // Sync after decoder_2
 
+        eprintln!("ScalarModel.decode_with_sync: starting decoder_3");
         let h = self.decoder_3.forward(h);
+        eprintln!("ScalarModel.decode_with_sync: finished decoder_3");
         let _ = h.to_data(); // Sync after decoder_3
 
+        eprintln!("ScalarModel.decode_with_sync: starting decoder_4");
         let h = self.decoder_4.forward(h);
+        eprintln!("ScalarModel.decode_with_sync: finished decoder_4");
         let _ = h.to_data(); // Sync after decoder_4
 
+        eprintln!("ScalarModel.decode_with_sync: starting decoder_5");
         let h = self.decoder_5.forward(h);
+        eprintln!("ScalarModel.decode_with_sync: finished decoder_5");
         let _ = h.to_data(); // Sync after decoder_5
 
+        eprintln!("ScalarModel.decode_with_sync: starting decoder_6");
         let h = self.decoder_6.forward(h);
+        eprintln!("ScalarModel.decode_with_sync: finished decoder_6");
         let _ = h.to_data(); // Sync after decoder_6
 
-        self.decoder_7.forward(h)
+        eprintln!("ScalarModel.decode_with_sync: starting decoder_7");
+        let h = self.decoder_7.forward(h);
+        eprintln!("ScalarModel.decode_with_sync: finished decoder_7");
+        h
     }
 
     pub fn decode_latent_with_sync(&self, latent: Tensor<B, 3>) -> Tensor<B, 3> {
@@ -2709,29 +2729,12 @@ impl<B: Backend> PReLU<B> {
 
 /// Write WAV file from f32 samples
 pub fn write_wav_from_f32(samples: &[f32], sample_rate: u32, path: &std::path::Path) -> Result<()> {
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-
-    let mut writer = hound::WavWriter::create(path, spec)
-        .with_context(|| format!("failed to create WAV writer for {}", path.display()))?;
-
-    for sample in samples {
-        let clipped = sample.clamp(-1.0, 1.0);
-        let int_sample = (clipped * 32767.0) as i16;
-        writer
-            .write_sample(int_sample)
-            .with_context(|| "failed to write WAV sample")?;
-    }
-
-    writer
-        .finalize()
-        .with_context(|| "failed to finalize WAV file")?;
-
-    Ok(())
+    write_wav_float32_impl(samples.len(), 1, sample_rate, path, |bytes| {
+        bytes
+            .par_chunks_mut(std::mem::size_of::<f32>())
+            .zip(samples.par_iter())
+            .for_each(|(chunk, sample)| chunk.copy_from_slice(&sample.to_le_bytes()));
+    })
 }
 
 pub fn write_wav_from_f32_interleaved(
@@ -2741,36 +2744,112 @@ pub fn write_wav_from_f32_interleaved(
     sample_rate: u32,
     path: &std::path::Path,
 ) -> Result<()> {
-    let spec = hound::WavSpec {
-        channels: channels as u16,
-        sample_rate,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
+    let sample_count = channels
+        .checked_mul(frames)
+        .context("interleaved float WAV sample count overflow")?;
+    write_wav_float32_impl(sample_count, channels, sample_rate, path, |bytes| {
+        bytes
+            .par_chunks_mut(std::mem::size_of::<f32>())
+            .enumerate()
+            .for_each(|(sample_index, chunk)| {
+                let frame = sample_index / channels;
+                let channel = sample_index % channels;
+                let source_index = channel
+                    .checked_mul(frames)
+                    .and_then(|base| base.checked_add(frame))
+                    .unwrap_or(0);
+                let sample = samples.get(source_index).copied().unwrap_or_default();
+                chunk.copy_from_slice(&sample.to_le_bytes());
+            });
+    })
+}
 
-    let mut writer = hound::WavWriter::create(path, spec)
+fn write_wav_float32_impl(
+    sample_count: usize,
+    channels: usize,
+    sample_rate: u32,
+    path: &std::path::Path,
+    fill_payload: impl FnOnce(&mut [u8]),
+) -> Result<()> {
+    eprintln!(
+        "write_wav_float32_impl: rayon_threads={} available_parallelism={}",
+        rayon::current_num_threads(),
+        std::thread::available_parallelism()
+            .map(|threads| threads.get().to_string())
+            .unwrap_or_else(|_| "unknown".to_string())
+    );
+    let channels = u16::try_from(channels).context("float WAV channel count exceeds u16")?;
+    let bits_per_sample = 32_u16;
+    let bytes_per_sample = usize::from(bits_per_sample / 8);
+    let data_bytes = sample_count
+        .checked_mul(bytes_per_sample)
+        .context("float WAV payload size overflow")?;
+    let riff_chunk_size = 36_u32
+        .checked_add(u32::try_from(data_bytes).context("float WAV payload exceeds RIFF size")?)
+        .context("float WAV RIFF chunk size overflow")?;
+    let byte_rate = sample_rate
+        .checked_mul(u32::from(channels))
+        .and_then(|value| value.checked_mul(u32::from(bits_per_sample / 8)))
+        .context("float WAV byte rate overflow")?;
+    let block_align = channels
+        .checked_mul(bits_per_sample / 8)
+        .context("float WAV block align overflow")?;
+
+    let file = File::create(path)
         .with_context(|| format!("failed to create WAV writer for {}", path.display()))?;
-
-    for frame in 0..frames {
-        for channel in 0..channels {
-            let index = channel
-                .checked_mul(frames)
-                .and_then(|base| base.checked_add(frame))
-                .unwrap_or(0);
-            let sample = samples
-                .get(index)
-                .copied()
-                .unwrap_or_default()
-                .clamp(-1.0, 1.0);
-            let int_sample = (sample * 32767.0) as i16;
-            writer
-                .write_sample(int_sample)
-                .with_context(|| "failed to write WAV sample")?;
-        }
-    }
+    let mut writer = BufWriter::new(file);
 
     writer
-        .finalize()
+        .write_all(b"RIFF")
+        .with_context(|| "failed to write WAV RIFF header")?;
+    writer
+        .write_all(&riff_chunk_size.to_le_bytes())
+        .with_context(|| "failed to write WAV RIFF size")?;
+    writer
+        .write_all(b"WAVE")
+        .with_context(|| "failed to write WAV format header")?;
+    writer
+        .write_all(b"fmt ")
+        .with_context(|| "failed to write WAV fmt chunk")?;
+    writer
+        .write_all(&16_u32.to_le_bytes())
+        .with_context(|| "failed to write WAV fmt size")?;
+    writer
+        .write_all(&3_u16.to_le_bytes())
+        .with_context(|| "failed to write WAV float format code")?;
+    writer
+        .write_all(&channels.to_le_bytes())
+        .with_context(|| "failed to write WAV channel count")?;
+    writer
+        .write_all(&sample_rate.to_le_bytes())
+        .with_context(|| "failed to write WAV sample rate")?;
+    writer
+        .write_all(&byte_rate.to_le_bytes())
+        .with_context(|| "failed to write WAV byte rate")?;
+    writer
+        .write_all(&block_align.to_le_bytes())
+        .with_context(|| "failed to write WAV block align")?;
+    writer
+        .write_all(&bits_per_sample.to_le_bytes())
+        .with_context(|| "failed to write WAV bits per sample")?;
+    writer
+        .write_all(b"data")
+        .with_context(|| "failed to write WAV data chunk tag")?;
+    writer
+        .write_all(
+            &u32::try_from(data_bytes)
+                .context("float WAV data section exceeds RIFF size")?
+                .to_le_bytes(),
+        )
+        .with_context(|| "failed to write WAV data size")?;
+
+    let mut payload = vec![0_u8; data_bytes];
+    fill_payload(&mut payload);
+    writer
+        .write_all(&payload)
+        .with_context(|| "failed to write WAV float payload")?;
+    writer
+        .flush()
         .with_context(|| "failed to finalize WAV file")?;
 
     Ok(())
@@ -2923,4 +3002,60 @@ where
     };
 
     Ok(Param::from_tensor(tensor))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{write_wav_from_f32, write_wav_from_f32_interleaved};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_wav_path(name: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("maolan_{name}_{nanos}.wav"))
+    }
+
+    #[test]
+    fn writes_mono_wav_as_f32() {
+        let path = temp_wav_path("mono_f32");
+        write_wav_from_f32(&[0.25, -0.5, 1.25], 48_000, &path).expect("write mono wav");
+
+        let mut reader = hound::WavReader::open(&path).expect("open mono wav");
+        let spec = reader.spec();
+        assert_eq!(spec.channels, 1);
+        assert_eq!(spec.sample_rate, 48_000);
+        assert_eq!(spec.bits_per_sample, 32);
+        assert_eq!(spec.sample_format, hound::SampleFormat::Float);
+        let samples: Vec<f32> = reader
+            .samples::<f32>()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read mono float samples");
+        assert_eq!(samples, vec![0.25, -0.5, 1.25]);
+
+        std::fs::remove_file(&path).expect("remove mono wav");
+    }
+
+    #[test]
+    fn writes_interleaved_wav_as_f32() {
+        let path = temp_wav_path("stereo_f32");
+        let planar_samples = [0.1, 0.2, 0.3, -0.1, -0.2, -0.3];
+        write_wav_from_f32_interleaved(&planar_samples, 2, 3, 48_000, &path)
+            .expect("write stereo wav");
+
+        let mut reader = hound::WavReader::open(&path).expect("open stereo wav");
+        let spec = reader.spec();
+        assert_eq!(spec.channels, 2);
+        assert_eq!(spec.sample_rate, 48_000);
+        assert_eq!(spec.bits_per_sample, 32);
+        assert_eq!(spec.sample_format, hound::SampleFormat::Float);
+        let samples: Vec<f32> = reader
+            .samples::<f32>()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read stereo float samples");
+        assert_eq!(samples, vec![0.1, -0.1, 0.2, -0.2, 0.3, -0.3]);
+
+        std::fs::remove_file(&path).expect("remove stereo wav");
+    }
 }

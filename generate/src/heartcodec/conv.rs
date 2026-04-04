@@ -392,21 +392,31 @@ impl<B: Backend> PostProcessor<B> {
 
     pub fn forward(&self, x: Tensor<B, 3>) -> Tensor<B, 3> {
         let [batch, channels, time] = x.dims();
+        eprintln!(
+            "PostProcessor.forward: input dims = [{}, {}, {}]",
+            batch, channels, time
+        );
         let x = x.swap_dims(1, 2);
         let x = if self.num_samples <= 1 {
             x
         } else {
-            let mut repeated_steps = Vec::with_capacity(time * self.num_samples);
-            for step in 0..time {
-                let slice = x.clone().slice([0..batch, step..step + 1, 0..channels]);
-                for _ in 0..self.num_samples {
-                    repeated_steps.push(slice.clone());
-                }
-            }
-            Tensor::cat(repeated_steps, 1)
+            eprintln!(
+                "PostProcessor.forward: starting temporal repeat num_samples={}",
+                self.num_samples
+            );
+            let repeated: Tensor<B, 4> = x.unsqueeze_dim::<4>(2).repeat_dim(2, self.num_samples);
+            let repeated = repeated.reshape([batch, time * self.num_samples, channels]);
+            eprintln!("PostProcessor.forward: finished temporal repeat");
+            repeated
         };
         let x = x.swap_dims(1, 2);
-        self.activation.forward(self.conv.forward(x))
+        eprintln!("PostProcessor.forward: starting conv");
+        let x = self.conv.forward(x);
+        eprintln!("PostProcessor.forward: finished conv");
+        eprintln!("PostProcessor.forward: starting activation");
+        let x = self.activation.forward(x);
+        eprintln!("PostProcessor.forward: finished activation");
+        x
     }
 }
 

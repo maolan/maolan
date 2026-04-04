@@ -30,7 +30,6 @@ pub enum SamplerChoice {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelChoice {
-    StableAudioOpen,
     #[default]
     Heartmula,
 }
@@ -41,14 +40,6 @@ pub enum FloatSize {
     #[default]
     F16,
     F32,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DecoderChoice {
-    #[default]
-    Rust,
-    Python,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -88,9 +79,6 @@ pub struct GenerateRequest {
     /// Sampling temperature for HeartMula token generation
     #[serde(default = "default_temperature")]
     pub temperature: f32,
-    /// Select HeartCodec decoder implementation
-    #[serde(default)]
-    pub decoder: DecoderChoice,
     /// Decode an existing frames JSON instead of generating tokens
     #[serde(default)]
     pub decode_only: bool,
@@ -103,9 +91,6 @@ pub struct GenerateRequest {
     /// Seed for deterministic HeartCodec decoder latent initialization
     #[serde(default)]
     pub decoder_seed: u64,
-    /// Load HeartMuLa/HeartCodec stages on demand and release HeartMuLa before decode
-    #[serde(default)]
-    pub lazy: bool,
 }
 
 fn default_ode_steps() -> usize {
@@ -148,7 +133,7 @@ Usage:
   maolan-generate [options] <prompt-or-lyrics>
 
 Options:
-  --model <stable-audio-open|heartmula>
+  --model <heartmula>
   --model-dir <path>
   --float-size <f16|f32>  HeartMula defaults to f32 when omitted
   --output <path>
@@ -166,12 +151,10 @@ Options:
   --topk <int>             HeartMula: top-k sampling (default: 50)
   --temperature <float>    HeartMula: sampling temperature (default: 1.0)
   --ode-steps <int>        HeartMula: flow matching steps (5=fast, 10=default, 20=best)
-  --decoder <rust|python>   Select HeartCodec decoder implementation
   --decoder-seed <int>     Seed for deterministic HeartCodec decoder latents
   --decode-only            Decode an existing frames JSON instead of generating tokens
   --frames-json <path>     Frames JSON input for --decode-only
   --decode-threads <int>    Number of worker threads for decode-only CPU decoding
-  --lazy                   HeartMula: release the token generator before codec decode
   -h, --help
 "
 }
@@ -198,12 +181,10 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
     let mut max_audio_length_ms = None;
     let mut topk = default_topk();
     let mut temperature = default_temperature();
-    let mut decoder = DecoderChoice::Rust;
     let mut decode_only = false;
     let mut frames_json = None;
     let mut decode_threads = None;
     let mut decoder_seed = 0_u64;
-    let mut lazy = false;
 
     while let Some(arg) = args.next() {
         let arg = arg
@@ -329,20 +310,6 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
             continue;
         }
 
-        if arg == "--decoder" {
-            let value = args
-                .next()
-                .ok_or_else(|| anyhow!("missing value after --decoder"))?
-                .into_string()
-                .map_err(|_| anyhow!("decoder value must be valid UTF-8"))?;
-            decoder = match value.as_str() {
-                "rust" => DecoderChoice::Rust,
-                "python" => DecoderChoice::Python,
-                _ => bail!("unsupported decoder '{value}', expected one of: rust, python"),
-            };
-            continue;
-        }
-
         if arg == "--decode-only" {
             decode_only = true;
             continue;
@@ -382,11 +349,6 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
             continue;
         }
 
-        if arg == "--lazy" {
-            lazy = true;
-            continue;
-        }
-
         if arg == "--model" {
             let value = args
                 .next()
@@ -394,12 +356,9 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
                 .into_string()
                 .map_err(|_| anyhow!("model value must be valid UTF-8"))?;
             model = match value.as_str() {
-                "stable-audio-open" => ModelChoice::StableAudioOpen,
                 "heartmula" => ModelChoice::Heartmula,
                 _ => {
-                    bail!(
-                        "unsupported model '{value}', expected one of: stable-audio-open, heartmula"
-                    )
+                    bail!("unsupported model '{value}', expected: heartmula")
                 }
             };
             continue;
@@ -540,12 +499,10 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
         max_audio_length_ms,
         topk,
         temperature,
-        decoder,
         decode_only,
         frames_json,
         decode_threads,
         decoder_seed,
-        lazy,
     })
 }
 
@@ -852,17 +809,6 @@ mod tests {
         ];
         let options = parse_options(args).expect("options should parse");
         assert_eq!(options.decode_threads, Some(8));
-    }
-
-    #[test]
-    fn parses_lazy_flag() {
-        let args = [
-            OsString::from("generate"),
-            OsString::from("--lazy"),
-            OsString::from("prompt"),
-        ];
-        let options = parse_options(args).expect("options should parse");
-        assert!(options.lazy);
     }
 
     const _: () = assert!(DEFAULT_MAX_PROMPT_TOKENS == 128);
