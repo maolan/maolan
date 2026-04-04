@@ -32,7 +32,6 @@ Current persisted keys:
 Additional generation-related preferences currently persisted in the config file:
 
 - `generate_audio_model`
-- `burn_negative_prompt`
 - `burn_backend`
 - `burn_sampler`
 - `burn_cfg_scale`

@@ -41,6 +41,7 @@ const HEARTCODEC_STAGE_FLOW: &str = "flow";
 const HEARTCODEC_STAGE_SCALAR: &str = "scalar";
 const HEARTCODEC_STAGE_PLAN_JSON_ENV: &str = "MAOLAN_HEARTCODEC_STAGE_PLAN_JSON";
 const HEARTCODEC_STAGE_PLAN_MAGIC: &[u8; 8] = b"MHCPLAN1";
+const HEARTCODEC_SEGMENT_DURATION_SECONDS: f32 = 29.76;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HeartmulaJsonOutput {
@@ -1788,7 +1789,7 @@ fn decode_frames_to_wav_rust<B: burn::prelude::Backend>(
     );
     let model = crate::heartcodec::HeartCodecModel::<B>::from_burnpack(&codec_path, device)?
         .with_ode_steps(ode_steps)
-        .with_guidance_scale(1.0);
+        .with_guidance_scale(1.25);
     let shared_initial_latent = load_initial_latent_tensor::<B>(
         &prepare_shared_decoder_initial_latent(frames_json, decoder_seed, output_wav)?,
         device,
@@ -1826,7 +1827,7 @@ pub fn decode_frames_to_plan_rust<B: burn::prelude::Backend>(
     let initial_latent = load_initial_latent_tensor::<B>(initial_latent_json, device)?;
     let plan = crate::heartcodec::HeartCodecModel::<B>::build_scalar_decode_plan_impl(
         &flow_matching,
-        1.0,
+        1.25,
         ode_steps,
         codes,
         initial_latent,
@@ -2016,17 +2017,11 @@ fn read_f32_vec(reader: &mut dyn Read) -> Result<Vec<f32>> {
 }
 
 fn prepare_shared_decoder_initial_latent(
-    frames_json: &Path,
+    _frames_json: &Path,
     decoder_seed: u64,
     output_wav: &Path,
 ) -> Result<PathBuf> {
-    let frames_text = fs::read_to_string(frames_json)
-        .with_context(|| format!("failed to read {}", frames_json.display()))?;
-    let payload: HeartmulaJsonOutput = serde_json::from_str(&frames_text)
-        .with_context(|| format!("failed to parse {}", frames_json.display()))?;
-    let seq_len = payload.frame_count.max(payload.frames.len());
-    let duration_seconds = seq_len as f32 / 12.5;
-    let latent_length = (duration_seconds * 25.0) as usize;
+    let latent_length = (HEARTCODEC_SEGMENT_DURATION_SECONDS * 25.0) as usize;
     let dims = [1, latent_length, 256];
     let data = generate_decoder_latent_data(decoder_seed, dims[0] * dims[1] * dims[2]);
     let latent = LatentTensorFile { dims, data };
