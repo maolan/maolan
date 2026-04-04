@@ -1,11 +1,11 @@
 use anyhow::{Context, Result, anyhow};
 use burn::prelude::Backend;
 use burn_store::{BurnpackStore, ModuleStore, TensorSnapshot};
-use half::f16;
+use huggingface_hub::{Repo, RepoType, api::sync::ApiBuilder};
 use maolan_generate::heartmula_runtime;
 use maolan_generate::{
-    BackendChoice, FloatSize, GenerateResponseHeader, ModelChoice, help_text, parse_options,
-    read_ipc_message, validate_options, write_ipc_bytes, write_ipc_message,
+    BackendChoice, GenerateResponseHeader, ModelChoice, help_text, parse_options, read_ipc_message,
+    validate_options, write_ipc_bytes, write_ipc_message,
 };
 use std::collections::BTreeMap;
 use std::env;
@@ -17,15 +17,14 @@ include!(concat!(env!("OUT_DIR"), "/model_bindings.rs"));
 
 const IPC_MODE_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
 const HEARTMULA_GENERATE_ONLY_ENV: &str = "MAOLAN_HEARTMULA_GENERATE_ONLY";
-const HEARTMULA_MODEL_DIR_ENV: &str = "HEARTMULA_BURN_MODEL_DIR";
-const DEFAULT_HEARTMULA_MODEL_REPO_DIR: &str =
-    "repos/heartmula-burn/artifacts/heartmula-happy-new-year-20260123";
+const HEARTMULA_REPO_ID: &str = "maolandaw/HeartMuLa-happy-new-year-burn";
+const HEARTCODEC_REPO_ID: &str = "maolandaw/HeartCodec-oss-20260123-burn";
 const HEARTMULA_TOKENIZER_REL: &str = "tokenizer.json";
 const HEARTMULA_GEN_CONFIG_REL: &str = "gen_config.json";
 
 struct HeartmulaModelPaths {
     model_dir: PathBuf,
-    float_size: FloatSize,
+    heartcodec_model_dir: PathBuf,
     heartmula_raw_bpk: PathBuf,
     heartcodec_raw_bpk: PathBuf,
     tokenizer_json: PathBuf,
@@ -110,8 +109,11 @@ fn run_decode_with_frames_json(
     options: &maolan_generate::CliOptions,
     frames_json: &Path,
 ) -> Result<()> {
-    let model_dir = resolve_heartmula_model_dir(options.model_dir.as_deref())?;
-    println!("decode_only_model_dir={}", model_dir.display());
+    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref())?;
+    println!(
+        "decode_only_model_dir={}",
+        model_paths.heartcodec_model_dir.display()
+    );
     println!("decode_only_frames_json={}", frames_json.display());
     if let Some(threads) = options.decode_threads {
         rayon::ThreadPoolBuilder::new()
@@ -123,7 +125,7 @@ fn run_decode_with_frames_json(
     match options.backend {
         BackendChoice::Cpu => run_decode_only_with_backend::<burn::backend::NdArray<f32>>(
             options,
-            &model_dir,
+            &model_paths.heartcodec_model_dir,
             frames_json,
         ),
         BackendChoice::Vulkan => {
@@ -132,29 +134,18 @@ fn run_decode_with_frames_json(
                 &device,
                 vulkan_runtime_options(),
             );
-            match options.float_size {
-                FloatSize::F16 => {
-                    run_decode_only_with_backend::<burn::backend::Wgpu<f16, i64, u32>>(
-                        options,
-                        &model_dir,
-                        frames_json,
-                    )
-                }
-                FloatSize::F32 => {
-                    run_decode_only_with_backend::<burn::backend::Wgpu<f32, i64, u32>>(
-                        options,
-                        &model_dir,
-                        frames_json,
-                    )
-                }
-            }
+            run_decode_only_with_backend::<burn::backend::Wgpu<f32, i64, u32>>(
+                options,
+                &model_paths.heartcodec_model_dir,
+                frames_json,
+            )
         }
         BackendChoice::Cuda => {
             #[cfg(feature = "cuda")]
             {
                 return run_decode_only_with_backend::<burn::backend::Cuda<f32, i64>>(
                     options,
-                    &model_dir,
+                    &model_paths.heartcodec_model_dir,
                     frames_json,
                 );
             }
@@ -177,10 +168,10 @@ where
     heartmula_runtime::decode_frames_to_wav::<B>(
         model_dir,
         backend_name(options.backend),
-        float_size_name(options.float_size),
+        "f32",
         frames_json,
         &options.output_path,
-        options.seconds_total as f32,
+        options.length as f32 / 1000.0,
         &Default::default(),
         options.ode_steps,
         options.decoder_seed,
@@ -197,8 +188,6 @@ fn spawn_generate_subprocess(options: &maolan_generate::CliOptions) -> Result<()
         .arg("heartmula")
         .arg("--backend")
         .arg(backend_name(options.backend))
-        .arg("--float-size")
-        .arg(float_size_name(options.float_size))
         .arg("--output")
         .arg(&options.output_path)
         .arg("--lyrics")
@@ -209,8 +198,8 @@ fn spawn_generate_subprocess(options: &maolan_generate::CliOptions) -> Result<()
         .arg(options.topk.to_string())
         .arg("--temperature")
         .arg(options.temperature.to_string())
-        .arg("--seconds-total")
-        .arg(options.seconds_total.to_string())
+        .arg("--length")
+        .arg(options.length.to_string())
         .arg("--ode-steps")
         .arg(options.ode_steps.to_string());
     if let Some(model_dir) = &options.model_dir {
@@ -218,11 +207,6 @@ fn spawn_generate_subprocess(options: &maolan_generate::CliOptions) -> Result<()
     }
     if let Some(tags) = &options.negative_prompt {
         command.arg("--tags").arg(tags);
-    }
-    if let Some(max_audio_length_ms) = options.max_audio_length_ms {
-        command
-            .arg("--max-audio-length-ms")
-            .arg(max_audio_length_ms.to_string());
     }
     let status = command
         .status()
@@ -278,57 +262,79 @@ fn backend_name(backend: BackendChoice) -> &'static str {
     }
 }
 
-fn float_size_name(float_size: FloatSize) -> &'static str {
-    match float_size {
-        FloatSize::F16 => "f16",
-        FloatSize::F32 => "f32",
-    }
+fn heartmula_raw_bpk_rel() -> &'static str {
+    "heartmula.bpk"
 }
 
-fn resolve_heartmula_model_dir(model_dir_override: Option<&Path>) -> Result<PathBuf> {
-    if let Some(path) = model_dir_override.map(Path::to_path_buf) {
-        return Ok(path);
-    }
-
-    if let Some(path) = env::var_os(HEARTMULA_MODEL_DIR_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-    {
-        return Ok(path);
-    }
-
-    let home = env::var("HOME")
-        .or_else(|_| env::var("USERPROFILE"))
-        .unwrap_or_else(|_| "/tmp".to_string());
-    Ok(PathBuf::from(home).join(DEFAULT_HEARTMULA_MODEL_REPO_DIR))
+fn heartcodec_raw_bpk_rel() -> &'static str {
+    "heartcodec.bpk"
 }
 
-fn heartmula_raw_bpk_rel(float_size: FloatSize) -> &'static str {
-    match float_size {
-        FloatSize::F16 => "burn_raw/heartmula_raw_f16.bpk",
-        FloatSize::F32 => "burn_raw/heartmula_raw_f32.bpk",
-    }
+fn heartmula_required_relative_files() -> [&'static str; 3] {
+    [
+        heartmula_raw_bpk_rel(),
+        HEARTMULA_TOKENIZER_REL,
+        HEARTMULA_GEN_CONFIG_REL,
+    ]
 }
 
-fn heartcodec_raw_bpk_rel(float_size: FloatSize) -> &'static str {
-    match float_size {
-        FloatSize::F16 => "burn_raw/heartcodec_raw_f16.bpk",
-        FloatSize::F32 => "burn_raw/heartcodec_raw_f32.bpk",
-    }
+fn heartcodec_required_relative_files() -> [&'static str; 1] {
+    [heartcodec_raw_bpk_rel()]
 }
 
-fn resolve_heartmula_model_paths(
-    model_dir_override: Option<&Path>,
-    float_size: FloatSize,
-) -> Result<HeartmulaModelPaths> {
-    let model_dir = resolve_heartmula_model_dir(model_dir_override)?;
+fn ensure_repo_snapshot_dir(repo_id: &str, required_files: &[&'static str]) -> Result<PathBuf> {
+    let api = ApiBuilder::new()
+        .with_progress(true)
+        .build()
+        .context("failed to initialize Hugging Face client")?;
+    let repo = api.repo(Repo::new(repo_id.to_string(), RepoType::Model));
+
+    let mut snapshot_dir: Option<PathBuf> = None;
+
+    for relative_path in required_files {
+        let cached_path = repo
+            .get(relative_path)
+            .with_context(|| format!("failed to fetch {repo_id}/{relative_path}"))?;
+        let file_snapshot_dir = cached_path.parent().ok_or_else(|| {
+            anyhow!(
+                "cached Hugging Face file {} has no parent directory",
+                cached_path.display()
+            )
+        })?;
+        match &snapshot_dir {
+            Some(existing) if existing != file_snapshot_dir => {
+                anyhow::bail!(
+                    "required files for {repo_id} resolved to multiple snapshot directories: {} and {}",
+                    existing.display(),
+                    file_snapshot_dir.display()
+                );
+            }
+            Some(_) => {}
+            None => snapshot_dir = Some(file_snapshot_dir.to_path_buf()),
+        }
+    }
+
+    snapshot_dir.ok_or_else(|| anyhow!("no files resolved for {repo_id}"))
+}
+
+fn resolve_heartmula_model_paths(model_dir_override: Option<&Path>) -> Result<HeartmulaModelPaths> {
+    let (model_dir, heartcodec_model_dir) = if let Some(model_dir) = model_dir_override {
+        (model_dir.to_path_buf(), model_dir.to_path_buf())
+    } else {
+        let heartmula_snapshot_dir =
+            ensure_repo_snapshot_dir(HEARTMULA_REPO_ID, &heartmula_required_relative_files())?;
+        let heartcodec_snapshot_dir =
+            ensure_repo_snapshot_dir(HEARTCODEC_REPO_ID, &heartcodec_required_relative_files())?;
+        (heartmula_snapshot_dir, heartcodec_snapshot_dir)
+    };
+
     let paths = HeartmulaModelPaths {
-        float_size,
-        heartmula_raw_bpk: model_dir.join(heartmula_raw_bpk_rel(float_size)),
-        heartcodec_raw_bpk: model_dir.join(heartcodec_raw_bpk_rel(float_size)),
+        model_dir: model_dir.clone(),
+        heartcodec_model_dir: heartcodec_model_dir.clone(),
+        heartmula_raw_bpk: model_dir.join(heartmula_raw_bpk_rel()),
+        heartcodec_raw_bpk: heartcodec_model_dir.join(heartcodec_raw_bpk_rel()),
         tokenizer_json: model_dir.join(HEARTMULA_TOKENIZER_REL),
         gen_config_json: model_dir.join(HEARTMULA_GEN_CONFIG_REL),
-        model_dir,
     };
     ensure_heartmula_model_paths(&paths)?;
     Ok(paths)
@@ -336,14 +342,8 @@ fn resolve_heartmula_model_paths(
 
 fn ensure_heartmula_model_paths(paths: &HeartmulaModelPaths) -> Result<()> {
     let missing = [
-        (
-            heartmula_raw_bpk_rel(paths.float_size),
-            &paths.heartmula_raw_bpk,
-        ),
-        (
-            heartcodec_raw_bpk_rel(paths.float_size),
-            &paths.heartcodec_raw_bpk,
-        ),
+        (heartmula_raw_bpk_rel(), &paths.heartmula_raw_bpk),
+        (heartcodec_raw_bpk_rel(), &paths.heartcodec_raw_bpk),
         (HEARTMULA_TOKENIZER_REL, &paths.tokenizer_json),
         (HEARTMULA_GEN_CONFIG_REL, &paths.gen_config_json),
     ]
@@ -356,8 +356,9 @@ fn ensure_heartmula_model_paths(paths: &HeartmulaModelPaths) -> Result<()> {
     }
 
     anyhow::bail!(
-        "HeartMula assets are incomplete in {}. Missing: {}",
+        "HeartMula assets are incomplete in {} and {}. Missing: {}",
         paths.model_dir.display(),
+        paths.heartcodec_model_dir.display(),
         missing.join(", ")
     )
 }
@@ -365,8 +366,7 @@ fn ensure_heartmula_model_paths(paths: &HeartmulaModelPaths) -> Result<()> {
 fn generate_heartmula_placeholder_output(
     options: &maolan_generate::CliOptions,
 ) -> Result<GeneratedOutput> {
-    let model_paths =
-        resolve_heartmula_model_paths(options.model_dir.as_deref(), options.float_size)?;
+    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref())?;
     anyhow::bail!(
         "HeartMula assets are available in {}, but the Burn runtime is not implemented yet. Found {}, {}, {}, and {}. The next step is to add generated/runtime model modules to generate and map these burnpacks into actual Burn modules.",
         model_paths.model_dir.display(),
@@ -378,8 +378,7 @@ fn generate_heartmula_placeholder_output(
 }
 
 fn inspect_heartmula_cli(options: &maolan_generate::CliOptions) -> Result<()> {
-    let model_paths =
-        resolve_heartmula_model_paths(options.model_dir.as_deref(), options.float_size)?;
+    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref())?;
     let config = load_heartmula_gen_config(&model_paths.gen_config_json)?;
     let heartmula_summary =
         summarize_burnpack(&model_paths.heartmula_raw_bpk, heartmula_required_tensors())?;
@@ -390,7 +389,6 @@ fn inspect_heartmula_cli(options: &maolan_generate::CliOptions) -> Result<()> {
     let runtime_summary = inspect_heartmula_runtime(&model_paths)?;
     println!("generate");
     println!("model=heartmula");
-    println!("float_size={}", float_size_name(model_paths.float_size));
     println!("model_dir={}", model_paths.model_dir.display());
     println!(
         "heartmula_raw_bpk={}",
@@ -684,8 +682,7 @@ fn run_heartmula_with_backend<B: Backend>(
 where
     B::Device: Default,
 {
-    let model_paths =
-        resolve_heartmula_model_paths(options.model_dir.as_deref(), options.float_size)?;
+    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref())?;
     let config = load_heartmula_gen_config(&model_paths.gen_config_json)?;
     let runtime_summary = inspect_heartmula_runtime(&model_paths)?;
     let heartmula_summary =
@@ -710,11 +707,7 @@ where
     let lyrics = options.prompt.trim().to_lowercase();
     let lyrics_ids = heartmula_runtime::tokenize_text(&model_paths.tokenizer_json, &lyrics)?;
     let tags_ids = heartmula_runtime::tokenize_text(&model_paths.tokenizer_json, &tags)?;
-    let max_audio_frames = if let Some(ms) = options.max_audio_length_ms {
-        ((ms.max(1) as usize) / 80).max(1)
-    } else {
-        ((options.seconds_total.max(1) as usize) * 1000) / 80
-    };
+    let max_audio_frames = ((options.length.max(1) as usize) / 80).max(1);
     let generation_config = heartmula_runtime::HeartmulaGenerationConfig {
         text_bos_id: config.text_bos_id,
         text_eos_id: config.text_eos_id,
@@ -738,7 +731,6 @@ where
         println!("generate");
         println!("model=heartmula");
         println!("mode=tokens");
-        println!("float_size={}", float_size_name(model_paths.float_size));
         println!("model_dir={}", model_paths.model_dir.display());
         println!("prompt={}", lyrics);
         if let Some(negative_prompt) = &options.negative_prompt {
@@ -756,12 +748,12 @@ where
         return Ok(());
     }
     heartmula_runtime::decode_frames_to_wav::<B>(
-        &model_paths.model_dir,
+        &model_paths.heartcodec_model_dir,
         backend_name(backend),
-        float_size_name(model_paths.float_size),
+        "f32",
         &frames_json_path,
         &options.output_path,
-        options.seconds_total as f32,
+        options.length as f32 / 1000.0,
         &device,
         options.ode_steps,
         options.decoder_seed,
@@ -769,7 +761,6 @@ where
     println!("generate");
     println!("model=heartmula");
     println!("mode=tokens");
-    println!("float_size={}", float_size_name(model_paths.float_size));
     println!("model_dir={}", model_paths.model_dir.display());
     println!("prompt={}", lyrics);
     if let Some(negative_prompt) = &options.negative_prompt {
@@ -835,16 +826,7 @@ fn run_heartmula_vulkan(options: &maolan_generate::CliOptions) -> Result<()> {
         &device,
         vulkan_runtime_options(),
     );
-    match options.float_size {
-        FloatSize::F16 => run_heartmula_with_backend::<burn::backend::Wgpu<f16, i64, u32>>(
-            options,
-            BackendChoice::Vulkan,
-        ),
-        FloatSize::F32 => run_heartmula_with_backend::<burn::backend::Wgpu<f32, i64, u32>>(
-            options,
-            BackendChoice::Vulkan,
-        ),
-    }
+    run_heartmula_with_backend::<burn::backend::Wgpu<f32, i64, u32>>(options, BackendChoice::Vulkan)
 }
 
 fn run_heartmula_cuda(options: &maolan_generate::CliOptions) -> Result<()> {
@@ -866,11 +848,10 @@ mod tests {
     use super::{
         HEARTMULA_GEN_CONFIG_REL, HEARTMULA_TOKENIZER_REL, HeartmulaModelPaths,
         count_numbered_layers, ensure_heartmula_model_paths, heartcodec_raw_bpk_rel,
-        heartmula_raw_bpk_rel, infer_heartmula_runtime_summary, resolve_heartmula_model_dir,
+        heartmula_raw_bpk_rel, infer_heartmula_runtime_summary,
     };
     use crate::heartmula_runtime::normalize_tags;
-    use maolan_generate::FloatSize;
-    use std::{collections::BTreeMap, env, fs, path::PathBuf};
+    use std::{collections::BTreeMap, env, fs};
 
     #[test]
     fn normalize_tags_wraps_and_lowercases() {
@@ -880,23 +861,6 @@ mod tests {
     #[test]
     fn normalize_tags_preserves_existing_wrappers() {
         assert_eq!(normalize_tags("<tag>piano</tag>"), "<tag>piano</tag>");
-    }
-
-    #[test]
-    fn resolve_heartmula_model_dir_prefers_runtime_override() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let expected = PathBuf::from(format!("/tmp/heartmula-{unique}"));
-        unsafe {
-            env::set_var("HEARTMULA_BURN_MODEL_DIR", &expected);
-        }
-        let resolved = resolve_heartmula_model_dir(None).expect("resolve");
-        assert_eq!(resolved, expected);
-        unsafe {
-            env::remove_var("HEARTMULA_BURN_MODEL_DIR");
-        }
     }
 
     #[test]
@@ -911,16 +875,16 @@ mod tests {
 
         let paths = HeartmulaModelPaths {
             model_dir: root.clone(),
-            float_size: FloatSize::F16,
-            heartmula_raw_bpk: root.join(heartmula_raw_bpk_rel(FloatSize::F16)),
-            heartcodec_raw_bpk: root.join(heartcodec_raw_bpk_rel(FloatSize::F16)),
+            heartcodec_model_dir: root.clone(),
+            heartmula_raw_bpk: root.join(heartmula_raw_bpk_rel()),
+            heartcodec_raw_bpk: root.join(heartcodec_raw_bpk_rel()),
             tokenizer_json: root.join(HEARTMULA_TOKENIZER_REL),
             gen_config_json: root.join(HEARTMULA_GEN_CONFIG_REL),
         };
         let err = ensure_heartmula_model_paths(&paths).expect_err("missing files should error");
         let message = err.to_string();
-        assert!(message.contains(heartmula_raw_bpk_rel(FloatSize::F16)));
-        assert!(message.contains(heartcodec_raw_bpk_rel(FloatSize::F16)));
+        assert!(message.contains(heartmula_raw_bpk_rel()));
+        assert!(message.contains(heartcodec_raw_bpk_rel()));
         assert!(message.contains(HEARTMULA_GEN_CONFIG_REL));
 
         let _ = fs::remove_dir_all(root);

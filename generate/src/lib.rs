@@ -34,14 +34,6 @@ pub enum ModelChoice {
     Heartmula,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum FloatSize {
-    #[default]
-    F16,
-    F32,
-}
-
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GenerateRequest {
     #[serde(default)]
@@ -50,8 +42,6 @@ pub struct GenerateRequest {
     pub negative_prompt: Option<String>,
     #[serde(default)]
     pub model_dir: Option<PathBuf>,
-    #[serde(default)]
-    pub float_size: FloatSize,
     #[serde(default = "default_output_path")]
     pub output_path: PathBuf,
     #[serde(default)]
@@ -60,7 +50,8 @@ pub struct GenerateRequest {
     pub sampler: SamplerChoice,
     pub cfg_scale: f32,
     pub steps: usize,
-    pub seconds_total: i64,
+    #[serde(alias = "seconds_total", alias = "max_audio_length_ms")]
+    pub length: i64,
     /// ODE steps for HeartMula flow matching (lower = faster, 10 = default)
     #[serde(default = "default_ode_steps")]
     pub ode_steps: usize,
@@ -70,9 +61,6 @@ pub struct GenerateRequest {
     /// Tags / style prompt
     #[serde(default)]
     pub tags: Option<String>,
-    /// Maximum audio length in milliseconds (HeartMula)
-    #[serde(default)]
-    pub max_audio_length_ms: Option<i64>,
     /// Top-k sampling for HeartMula token generation
     #[serde(default = "default_topk")]
     pub topk: usize,
@@ -116,7 +104,7 @@ pub struct GenerateResponseHeader {
     pub prompt_tokens: i64,
     pub sample_rate_hz: u32,
     pub sampler: SamplerChoice,
-    pub seconds_total: i64,
+    pub length: i64,
     pub steps: usize,
     pub wav_bytes_len: usize,
 }
@@ -135,7 +123,6 @@ Usage:
 Options:
   --model <heartmula>
   --model-dir <path>
-  --float-size <f16|f32>  HeartMula defaults to f32 when omitted
   --output <path>
   --save-path <path>       Alias for --output
   --inspect
@@ -146,8 +133,7 @@ Options:
   --tags <text>            Style tags for HeartMula
   --cfg-scale <float>      CFG scale (1.0=no guidance, 2.0=weak, 6.0=strong)
   --steps <int>
-  --seconds-total <int>
-  --max-audio-length-ms <int>  HeartMula: max audio length in milliseconds
+  --length <int>           HeartMula: output length in milliseconds
   --topk <int>             HeartMula: top-k sampling (default: 50)
   --temperature <float>    HeartMula: sampling temperature (default: 1.0)
   --ode-steps <int>        HeartMula: flow matching steps (5=fast, 10=default, 20=best)
@@ -165,8 +151,6 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
     let mut prompt = None;
     let mut negative_prompt = None;
     let mut model_dir = None;
-    let mut float_size = FloatSize::F16;
-    let mut float_size_explicit = false;
     let mut output_path = default_output_path();
     let mut inspect_only = false;
     let mut model = ModelChoice::Heartmula;
@@ -174,11 +158,10 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
     let mut sampler = SamplerChoice::Dpmpp3mSde;
     let mut cfg_scale = 1.5_f32;
     let mut steps = 250_usize;
-    let mut seconds_total = 6_i64;
+    let mut length = 6_000_i64;
     let mut ode_steps = 10_usize;
     let mut lyrics = None;
     let mut tags = None;
-    let mut max_audio_length_ms = None;
     let mut topk = default_topk();
     let mut temperature = default_temperature();
     let mut decode_only = false;
@@ -246,17 +229,15 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
             continue;
         }
 
-        if arg == "--max-audio-length-ms" {
+        if arg == "--length" {
             let value = args
                 .next()
-                .ok_or_else(|| anyhow!("missing value after --max-audio-length-ms"))?
+                .ok_or_else(|| anyhow!("missing value after --length"))?
                 .into_string()
-                .map_err(|_| anyhow!("max-audio-length-ms value must be valid UTF-8"))?;
-            max_audio_length_ms = Some(
-                value
-                    .parse::<i64>()
-                    .map_err(|_| anyhow!("max-audio-length-ms must be a whole number"))?,
-            );
+                .map_err(|_| anyhow!("length value must be valid UTF-8"))?;
+            length = value
+                .parse::<i64>()
+                .map_err(|_| anyhow!("length must be a whole number"))?;
             continue;
         }
 
@@ -287,21 +268,6 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
             if !temperature.is_finite() || temperature < 0.0 {
                 bail!("temperature must be a finite non-negative number");
             }
-            continue;
-        }
-
-        if matches!(arg.as_str(), "--float-size" | "--precision") {
-            let value = args
-                .next()
-                .ok_or_else(|| anyhow!("missing value after --float-size"))?
-                .into_string()
-                .map_err(|_| anyhow!("float-size value must be valid UTF-8"))?;
-            float_size = match value.as_str() {
-                "f16" => FloatSize::F16,
-                "f32" => FloatSize::F32,
-                _ => bail!("unsupported float-size '{value}', expected one of: f16, f32"),
-            };
-            float_size_explicit = true;
             continue;
         }
 
@@ -425,18 +391,6 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
             continue;
         }
 
-        if arg == "--seconds-total" {
-            let value = args
-                .next()
-                .ok_or_else(|| anyhow!("missing value after --seconds-total"))?
-                .into_string()
-                .map_err(|_| anyhow!("seconds-total value must be valid UTF-8"))?;
-            seconds_total = value
-                .parse::<i64>()
-                .map_err(|_| anyhow!("seconds-total must be a whole number"))?;
-            continue;
-        }
-
         if arg == "--ode-steps" {
             let value = args
                 .next()
@@ -476,27 +430,21 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
     // --tags overrides --negative-prompt for HeartMula
     let negative_prompt = tags.or_else(|| negative_prompt.map(|s| s.trim().to_owned()));
 
-    if model == ModelChoice::Heartmula && !float_size_explicit {
-        float_size = FloatSize::F32;
-    }
-
     validate_options(CliOptions {
         model,
         prompt: trimmed.to_owned(),
         negative_prompt,
         model_dir,
-        float_size,
         output_path,
         inspect_only,
         backend,
         sampler,
         cfg_scale,
         steps,
-        seconds_total,
+        length,
         ode_steps,
         lyrics: None,
         tags: None,
-        max_audio_length_ms,
         topk,
         temperature,
         decode_only,
@@ -526,14 +474,11 @@ pub fn validate_options(mut options: CliOptions) -> Result<CliOptions> {
         .map(Path::new)
         .map(Path::to_path_buf);
 
-    // NdArray CPU backend does not support F16; auto-switch to F32
-    if options.backend == BackendChoice::Cpu && options.float_size == FloatSize::F16 {
-        eprintln!("Warning: CPU backend does not support F16; auto-switching to F32");
-        options.float_size = FloatSize::F32;
-    }
-
     if !options.cfg_scale.is_finite() || options.cfg_scale < 0.0 {
         bail!("cfg-scale must be a finite non-negative number");
+    }
+    if options.length <= 0 {
+        bail!("length must be a whole number greater than zero");
     }
     if options.steps == 0 {
         bail!("steps must be greater than zero");
@@ -648,8 +593,7 @@ pub fn encode_prompt(
 #[cfg(test)]
 mod tests {
     use super::{
-        BackendChoice, DEFAULT_MAX_PROMPT_TOKENS, FloatSize, ModelChoice, SamplerChoice,
-        parse_options,
+        BackendChoice, DEFAULT_MAX_PROMPT_TOKENS, ModelChoice, SamplerChoice, parse_options,
     };
     use std::ffi::OsString;
 
@@ -661,12 +605,10 @@ mod tests {
         assert_eq!(options.negative_prompt, None);
         assert_eq!(options.model, ModelChoice::Heartmula);
         assert_eq!(options.backend, BackendChoice::Vulkan);
-        // HeartMula defaults to F32 when float size is omitted
-        assert_eq!(options.float_size, FloatSize::F32);
         assert_eq!(options.sampler, SamplerChoice::Dpmpp3mSde);
         assert_eq!(options.cfg_scale, 1.5);
         assert_eq!(options.steps, 250);
-        assert_eq!(options.seconds_total, 6);
+        assert_eq!(options.length, 6_000);
     }
 
     #[test]
@@ -722,45 +664,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_float_size_flag() {
-        let args = vec![
-            OsString::from("maolan-generate"),
-            OsString::from("--float-size"),
-            OsString::from("f32"),
-            OsString::from("prompt"),
-        ];
-        let options = parse_options(args).expect("options should parse");
-        assert_eq!(options.float_size, FloatSize::F32);
-    }
-
-    #[test]
-    fn defaults_heartmula_to_f32_when_float_size_is_omitted() {
-        let args = vec![
-            OsString::from("maolan-generate"),
-            OsString::from("--model"),
-            OsString::from("heartmula"),
-            OsString::from("prompt"),
-        ];
-        let options = parse_options(args).expect("options should parse");
-        assert_eq!(options.float_size, FloatSize::F32);
-    }
-
-    #[test]
-    fn preserves_explicit_float_size_for_heartmula() {
-        let args = vec![
-            OsString::from("maolan-generate"),
-            OsString::from("--model"),
-            OsString::from("heartmula"),
-            OsString::from("--float-size"),
-            OsString::from("f16"),
-            OsString::from("prompt"),
-        ];
-        let options = parse_options(args).expect("options should parse");
-        assert_eq!(options.float_size, FloatSize::F16);
-    }
-
-    #[test]
-    fn parses_negative_prompt_and_seconds() {
+    fn parses_negative_prompt_and_length() {
         let args = [
             OsString::from("generate"),
             OsString::from("--negative-prompt"),
@@ -769,15 +673,15 @@ mod tests {
             OsString::from("4.5"),
             OsString::from("--steps"),
             OsString::from("300"),
-            OsString::from("--seconds-total"),
-            OsString::from("8"),
+            OsString::from("--length"),
+            OsString::from("8000"),
             OsString::from("warm tape hiss"),
         ];
         let options = parse_options(args).expect("options should parse");
         assert_eq!(options.negative_prompt.as_deref(), Some("harsh noise"));
         assert_eq!(options.cfg_scale, 4.5);
         assert_eq!(options.steps, 300);
-        assert_eq!(options.seconds_total, 8);
+        assert_eq!(options.length, 8_000);
     }
 
     #[test]

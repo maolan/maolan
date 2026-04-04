@@ -7072,7 +7072,7 @@ impl Maolan {
                     sampler: self.generate_audio_sampler,
                     cfg_scale,
                     steps,
-                    seconds_total,
+                    length: seconds_total.saturating_mul(1000),
                 };
                 let mut cfg = crate::config::Config::load().unwrap_or_default();
                 cfg.generate_audio_model = request.model;
@@ -7081,7 +7081,7 @@ impl Maolan {
                 cfg.burn_sampler = request.sampler;
                 cfg.burn_cfg_scale = request.cfg_scale;
                 cfg.burn_steps = request.steps;
-                cfg.burn_seconds_total = request.seconds_total;
+                cfg.burn_seconds_total = seconds_total;
                 if let Err(err) = cfg.save() {
                     self.state.blocking_write().message =
                         format!("Failed to save generated audio defaults: {err}");

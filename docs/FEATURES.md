@@ -1,6 +1,6 @@
 # Maolan Features
 
-Last updated: 2026-03-21
+Last updated: 2026-04-04
 
 ## Core DAW Workflow
 - Multi-track audio + MIDI session editing
@@ -172,6 +172,27 @@ Last updated: 2026-03-21
 - Metadata tagging on supported formats:
   - MP3 (ID3 fields used by current encoder path)
   - OGG Vorbis comments
+
+## AI Audio Generation
+- HeartMuLa text-to-audio generation through `maolan-generate`
+- Prompt / lyrics driven generation with optional style tags
+- Burn backend options:
+  - CPU
+  - Vulkan
+  - CUDA when compiled with the `cuda` feature
+- Burn generation controls:
+  - CFG scale
+  - Steps
+  - Top-k
+  - Temperature
+  - ODE steps
+  - Decoder seed
+  - Output `--length` in milliseconds
+- Decode-only mode from a saved frames JSON
+- Hugging Face cache-backed model resolution for the current Burn repos:
+  - `maolandaw/HeartMuLa-happy-new-year-burn`
+  - `maolandaw/HeartCodec-oss-20260123-burn`
+- Local model directory override with `--model-dir`
 
 ## Session Safety and Recovery
 - Dirty-state tracking

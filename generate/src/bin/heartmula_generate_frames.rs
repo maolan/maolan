@@ -1,8 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use burn::prelude::Backend;
-use half::f16;
+use maolan_generate::BackendChoice;
 use maolan_generate::heartmula_runtime;
-use maolan_generate::{BackendChoice, FloatSize};
 use serde::Deserialize;
 use std::env;
 use std::ffi::OsString;
@@ -10,17 +9,15 @@ use std::path::{Path, PathBuf};
 
 const DEFAULT_HEARTMULA_MODEL_REPO_DIR: &str =
     "repos/heartmula-burn/artifacts/heartmula-happy-new-year-20260123";
-const HEARTMULA_MODEL_DIR_ENV: &str = "HEARTMULA_BURN_MODEL_DIR";
 
 #[derive(Debug, Clone)]
 struct Options {
     backend: BackendChoice,
-    float_size: FloatSize,
     model_dir: Option<PathBuf>,
     output_frames: PathBuf,
     lyrics: String,
     tags: String,
-    max_audio_length_ms: i64,
+    length: i64,
     topk: usize,
     temperature: f32,
     cfg_scale: f32,
@@ -43,12 +40,11 @@ Usage:
 
 Options:
   --backend <cpu|vulkan|cuda>  CUDA requires the `cuda` feature
-  --float-size <f16|f32>
   --model-dir <path>
   --output-frames <path>
   --lyrics <text>
   --tags <text>
-  --max-audio-length-ms <int>
+  --length <int>
   --topk <int>
   --temperature <float>
   --cfg-scale <float>
@@ -61,12 +57,11 @@ fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<Options> {
     let _program = args.next();
 
     let mut backend = BackendChoice::Cpu;
-    let mut float_size = FloatSize::F32;
     let mut model_dir = None;
     let mut output_frames = PathBuf::from("heartmula.frames.json");
     let mut lyrics = None;
     let mut tags = Some(heartmula_runtime::default_tags().to_string());
-    let mut max_audio_length_ms = 2000_i64;
+    let mut length = 2000_i64;
     let mut topk = 50_usize;
     let mut temperature = 1.0_f32;
     let mut cfg_scale = 6.0_f32;
@@ -90,18 +85,6 @@ fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<Options> {
                     "vulkan" => BackendChoice::Vulkan,
                     "cuda" => BackendChoice::Cuda,
                     _ => bail!("unsupported backend '{value}', expected cpu, vulkan, or cuda"),
-                };
-            }
-            "--float-size" | "--precision" => {
-                let value = args
-                    .next()
-                    .ok_or_else(|| anyhow!("missing value after --float-size"))?
-                    .into_string()
-                    .map_err(|_| anyhow!("float-size value must be valid UTF-8"))?;
-                float_size = match value.as_str() {
-                    "f16" => FloatSize::F16,
-                    "f32" => FloatSize::F32,
-                    _ => bail!("unsupported float-size '{value}', expected f16 or f32"),
                 };
             }
             "--model-dir" => {
@@ -132,15 +115,15 @@ fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<Options> {
                         .map_err(|_| anyhow!("tags value must be valid UTF-8"))?,
                 );
             }
-            "--max-audio-length-ms" => {
+            "--length" => {
                 let value = args
                     .next()
-                    .ok_or_else(|| anyhow!("missing value after --max-audio-length-ms"))?
+                    .ok_or_else(|| anyhow!("missing value after --length"))?
                     .into_string()
-                    .map_err(|_| anyhow!("max-audio-length-ms value must be valid UTF-8"))?;
-                max_audio_length_ms = value
+                    .map_err(|_| anyhow!("length value must be valid UTF-8"))?;
+                length = value
                     .parse::<i64>()
-                    .map_err(|_| anyhow!("max-audio-length-ms must be a whole number"))?;
+                    .map_err(|_| anyhow!("length must be a whole number"))?;
             }
             "--topk" => {
                 let value = args
@@ -183,12 +166,11 @@ fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<Options> {
     let tags = heartmula_runtime::normalize_tags(tags.as_deref().unwrap_or_default());
     Ok(Options {
         backend,
-        float_size,
         model_dir,
         output_frames,
         lyrics,
         tags,
-        max_audio_length_ms,
+        length,
         topk,
         temperature,
         cfg_scale,
@@ -199,23 +181,14 @@ fn resolve_model_dir(override_dir: Option<&Path>) -> Result<PathBuf> {
     if let Some(path) = override_dir.map(Path::to_path_buf) {
         return Ok(path);
     }
-    if let Some(path) = env::var_os(HEARTMULA_MODEL_DIR_ENV)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-    {
-        return Ok(path);
-    }
     let home = env::var("HOME")
         .or_else(|_| env::var("USERPROFILE"))
         .unwrap_or_else(|_| "/tmp".to_string());
     Ok(PathBuf::from(home).join(DEFAULT_HEARTMULA_MODEL_REPO_DIR))
 }
 
-fn heartmula_raw_bpk_rel(float_size: FloatSize) -> &'static str {
-    match float_size {
-        FloatSize::F16 => "burn_raw/heartmula_raw_f16.bpk",
-        FloatSize::F32 => "burn_raw/heartmula_raw_f32.bpk",
-    }
+fn heartmula_raw_bpk_rel() -> &'static str {
+    "heartmula.bpk"
 }
 
 fn load_gen_config(path: &Path) -> Result<HeartmulaGenConfig> {
@@ -233,7 +206,7 @@ where
     B::Device: Default,
 {
     let model_dir = resolve_model_dir(options.model_dir.as_deref())?;
-    let heartmula_raw_bpk = model_dir.join(heartmula_raw_bpk_rel(options.float_size));
+    let heartmula_raw_bpk = model_dir.join(heartmula_raw_bpk_rel());
     let tokenizer_json = model_dir.join("tokenizer.json");
     let gen_config_json = model_dir.join("gen_config.json");
     let device = Default::default();
@@ -253,7 +226,7 @@ where
         empty_id: config.empty_id,
         lyrics_ids: &lyrics_ids,
         tags_ids: &tags_ids,
-        max_audio_frames: ((options.max_audio_length_ms.max(1) as usize) / 80).max(1),
+        max_audio_frames: ((options.length.max(1) as usize) / 80).max(1),
         temperature: options.temperature,
         topk: options.topk,
         cfg_scale: options.cfg_scale,
@@ -288,10 +261,7 @@ fn main() -> Result<()> {
                 &device,
                 Default::default(),
             );
-            match options.float_size {
-                FloatSize::F16 => run_with_backend::<burn::backend::Wgpu<f16, i64, u32>>(&options),
-                FloatSize::F32 => run_with_backend::<burn::backend::Wgpu<f32, i64, u32>>(&options),
-            }
+            run_with_backend::<burn::backend::Wgpu<f32, i64, u32>>(&options)
         }
         BackendChoice::Cuda => {
             #[cfg(feature = "cuda")]
