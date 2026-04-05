@@ -55,19 +55,22 @@ impl fmt::Display for BurnBackendOption {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
 pub enum GenerateAudioModelOption {
-    Heartmula,
+    #[serde(rename = "happy-new-year")]
+    HappyNewYear,
+    #[serde(rename = "RL")]
+    Rl,
 }
 
 impl GenerateAudioModelOption {
-    pub const ALL: [Self; 1] = [Self::Heartmula];
+    pub const ALL: [Self; 2] = [Self::HappyNewYear, Self::Rl];
 }
 
 impl fmt::Display for GenerateAudioModelOption {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Heartmula => write!(f, "HeartMula"),
+            Self::HappyNewYear => write!(f, "happy-new-year"),
+            Self::Rl => write!(f, "RL"),
         }
     }
 }
@@ -651,7 +654,7 @@ pub enum Message {
     GenerateAudioTagsInput(String),
     GenerateAudioBackendSelected(BurnBackendOption),
 
-    GenerateAudioCfgScaleInput(f32),
+    GenerateAudioCfgScaleInput(String),
     GenerateAudioStepsInput(usize),
     GenerateAudioSecondsTotalInput(usize),
     GenerateAudioSubmit,

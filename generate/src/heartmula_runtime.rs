@@ -19,6 +19,14 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use tokenizers::Tokenizer;
 
+macro_rules! eprintln {
+    ($($arg:tt)*) => {
+        if crate::stderr_logging_enabled() {
+            std::eprintln!($($arg)*);
+        }
+    };
+}
+
 const HEARTMULA_PARALLEL_TOKENS: usize = 9;
 const HEARTMULA_AUDIO_CODEBOOKS: usize = 8;
 const HEARTMULA_HIDDEN_SIZE: usize = 3072;

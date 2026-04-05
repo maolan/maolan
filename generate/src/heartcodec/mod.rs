@@ -17,6 +17,14 @@ use burn_store::{BurnpackStore, ModuleSnapshot, ModuleStore};
 use rayon::prelude::*;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+
+macro_rules! eprintln {
+    ($($arg:tt)*) => {
+        if crate::stderr_logging_enabled() {
+            std::eprintln!($($arg)*);
+        }
+    };
+}
 // Re-export conv modules for use in model
 pub use conv::PostProcessor;
 pub use conv::{PlainConv1d, WNConv1d, WNConvTranspose1d};

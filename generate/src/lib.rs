@@ -9,6 +9,12 @@ pub mod heartcodec;
 pub mod heartmula_runtime;
 
 pub const DEFAULT_MAX_PROMPT_TOKENS: usize = 128;
+pub const DEFAULT_CFG_SCALE: f32 = 1.5;
+pub const IPC_MODE_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
+
+pub fn stderr_logging_enabled() -> bool {
+    std::env::var_os(IPC_MODE_ENV).is_none()
+}
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -19,10 +25,12 @@ pub enum BackendChoice {
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
 pub enum ModelChoice {
+    #[serde(rename = "happy-new-year")]
     #[default]
-    Heartmula,
+    HappyNewYear,
+    #[serde(rename = "RL")]
+    Rl,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -115,7 +123,7 @@ Usage:
   maolan-generate [options] <prompt-or-lyrics>
 
 Options:
-  --model <heartmula>
+  --model <happy-new-year|RL>
   --model-dir <path>
   --output <path>
   --inspect
@@ -142,9 +150,9 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
     let mut model_dir = None;
     let mut output_path = default_output_path();
     let mut inspect_only = false;
-    let mut model = ModelChoice::Heartmula;
+    let mut model = ModelChoice::HappyNewYear;
     let mut backend = BackendChoice::Vulkan;
-    let mut cfg_scale = 1.5_f32;
+    let mut cfg_scale = DEFAULT_CFG_SCALE;
     let mut length = 6_000_usize;
     let mut ode_steps = 10_usize;
     let mut lyrics = None;
@@ -308,9 +316,10 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
                 .into_string()
                 .map_err(|_| anyhow!("model value must be valid UTF-8"))?;
             model = match value.as_str() {
-                "heartmula" => ModelChoice::Heartmula,
+                "happy-new-year" => ModelChoice::HappyNewYear,
+                "RL" => ModelChoice::Rl,
                 _ => {
-                    bail!("unsupported model '{value}', expected: heartmula")
+                    bail!("unsupported model '{value}', expected one of: happy-new-year, RL")
                 }
             };
             continue;
@@ -531,7 +540,7 @@ mod tests {
         let args = [OsString::from("generate"), OsString::from("warm tape hiss")];
         let options = parse_options(args).expect("options should parse");
         assert_eq!(options.prompt, "warm tape hiss");
-        assert_eq!(options.model, ModelChoice::Heartmula);
+        assert_eq!(options.model, ModelChoice::HappyNewYear);
         assert_eq!(options.backend, BackendChoice::Vulkan);
         assert_eq!(options.cfg_scale, 1.5);
         assert_eq!(options.length, 6_000);
@@ -570,11 +579,23 @@ mod tests {
         let args = [
             OsString::from("generate"),
             OsString::from("--model"),
-            OsString::from("heartmula"),
+            OsString::from("happy-new-year"),
             OsString::from("verse and chorus"),
         ];
         let options = parse_options(args).expect("options should parse");
-        assert_eq!(options.model, ModelChoice::Heartmula);
+        assert_eq!(options.model, ModelChoice::HappyNewYear);
+    }
+
+    #[test]
+    fn parses_rl_model_flag() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--model"),
+            OsString::from("RL"),
+            OsString::from("verse and chorus"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.model, ModelChoice::Rl);
     }
 
     #[test]
