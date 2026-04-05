@@ -39,7 +39,7 @@ Usage:
   cargo run --release -p maolan-generate --bin heartmula_generate_frames -- [options]
 
 Options:
-  --backend <cpu|vulkan|cuda>  CUDA requires the `cuda` feature
+  --backend <cpu|vulkan>
   --model-dir <path>
   --output-frames <path>
   --lyrics <text>
@@ -83,8 +83,7 @@ fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<Options> {
                 backend = match value.as_str() {
                     "cpu" => BackendChoice::Cpu,
                     "vulkan" => BackendChoice::Vulkan,
-                    "cuda" => BackendChoice::Cuda,
-                    _ => bail!("unsupported backend '{value}', expected cpu, vulkan, or cuda"),
+                    _ => bail!("unsupported backend '{value}', expected cpu or vulkan"),
                 };
             }
             "--model-dir" => {
@@ -197,10 +196,6 @@ fn load_gen_config(path: &Path) -> Result<HeartmulaGenConfig> {
     serde_json::from_slice(&bytes).with_context(|| format!("failed to parse {}", path.display()))
 }
 
-fn cuda_feature_error() -> anyhow::Error {
-    anyhow!("CUDA backend requested, but this build was compiled without the `cuda` feature")
-}
-
 fn run_with_backend<B: Backend>(options: &Options) -> Result<()>
 where
     B::Device: Default,
@@ -219,7 +214,7 @@ where
         128_256,
         8_197,
     )?;
-    let generation_config = heartmula_runtime::HeartmulaGenerationConfig {
+    let mut generation_config = heartmula_runtime::HeartmulaGenerationConfig {
         text_bos_id: config.text_bos_id,
         text_eos_id: config.text_eos_id,
         audio_eos_id: config.audio_eos_id,
@@ -230,8 +225,9 @@ where
         temperature: options.temperature,
         topk: options.topk,
         cfg_scale: options.cfg_scale,
+        progress_callback: None,
     };
-    let frames = model.generate_frames(&device, &generation_config)?;
+    let frames = model.generate_frames(&device, &mut generation_config)?;
     heartmula_runtime::write_frames_json(
         &options.output_frames,
         &options.lyrics,
@@ -262,16 +258,6 @@ fn main() -> Result<()> {
                 Default::default(),
             );
             run_with_backend::<burn::backend::Wgpu<f32, i64, u32>>(&options)
-        }
-        BackendChoice::Cuda => {
-            #[cfg(feature = "cuda")]
-            {
-                run_with_backend::<burn::backend::Cuda<f32, i64>>(&options)
-            }
-            #[cfg(not(feature = "cuda"))]
-            {
-                Err(cuda_feature_error())
-            }
         }
     }
 }

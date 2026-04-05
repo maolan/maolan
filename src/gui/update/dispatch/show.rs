@@ -1,4 +1,5 @@
 use super::*;
+use iced::widget::text_editor;
 
 impl Maolan {
     pub(super) fn handle_show_message(&mut self, show: &Show) -> Task<Message> {
@@ -82,17 +83,10 @@ impl Maolan {
                 Task::none()
             }
             Show::GenerateAudio => {
-                self.generate_audio_prompt_input.clear();
-                #[cfg(unix)]
-                {
-                    self.generate_audio_hf_token_input =
-                        Self::hugging_face_token().unwrap_or_default();
-                }
-                #[cfg(not(unix))]
-                {
-                    self.generate_audio_hf_token_input.clear();
-                }
-                self.generate_audio_hf_token_visible = false;
+                self.generate_audio_prompt_editor = text_editor::Content::new();
+                self.generate_audio_tags_input.clear();
+                self.generate_audio_steps_input = 10;
+                self.generate_audio_seconds_total_input = 180;
                 self.generate_audio_in_progress = false;
                 self.generate_audio_progress = 0.0;
                 self.generate_audio_operation = None;

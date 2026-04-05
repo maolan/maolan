@@ -22,9 +22,9 @@ use crate::{
     consts::widget_piano::PITCH_MAX,
     hw, menu,
     message::{
-        BurnBackendOption, BurnSamplerOption, DraggedClip, ExportBitDepth, ExportFormat,
-        ExportMp3Mode, ExportNormalizeMode, ExportRenderMode, GenerateAudioModelOption, Message,
-        PluginFormat, PreferencesDeviceOption, Show, SnapMode,
+        BurnBackendOption, DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode,
+        ExportNormalizeMode, ExportRenderMode, GenerateAudioModelOption, Message, PluginFormat,
+        PreferencesDeviceOption, Show, SnapMode,
     },
     platform_caps,
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
@@ -38,18 +38,16 @@ use crate::{
 use ebur128::{EbuR128, Mode as LoudnessMode};
 use flacenc::component::BitRepr;
 use flacenc::error::Verify;
-#[cfg(unix)]
-use hf_hub::Cache as HfCache;
 use iced::{
     Length, Size, Task,
     widget::{
         button, checkbox, column, container, pick_list, progress_bar, row, scrollable, text,
-        text_input,
+        text_editor, text_input,
     },
 };
-#[cfg(unix)]
 use maolan_engine::kind::Kind;
 use maolan_engine::message::{Action, Message as EngineMessage};
+use maolan_widgets::numeric_input::number_input;
 use midly::{
     Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
     num::{u15, u24, u28},
@@ -58,9 +56,8 @@ use mp3lame_encoder::{
     Bitrate as Mp3Bitrate, Builder as Mp3Builder, FlushNoGap, InterleavedPcm, Quality as Mp3Quality,
 };
 use pitch_detection::detector::{PitchDetector, mcleod::McLeodDetector};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::Serialize;
 use serde_json::Value;
-#[cfg(unix)]
 use serde_json::json;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
@@ -88,39 +85,18 @@ type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
 
 const MAOLAN_BURN_SOCKETPAIR_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
 #[cfg(unix)]
-const HEARTMULA_BURN_DEFAULT_MODEL_DIR: &str =
-    "repos/heartmula-burn/artifacts/heartmula-happy-new-year-20260123";
-#[cfg(unix)]
-const HEARTMULA_BURN_DEFAULT_MODEL_FILES: [(&str, &str); 4] = [
-    ("burn_raw/heartmula_raw_f16.bpk", "HeartMula raw burnpack"),
-    ("burn_raw/heartcodec_raw_f16.bpk", "HeartCodec raw burnpack"),
-    ("tokenizer.json", "Tokenizer"),
-    ("gen_config.json", "Generation config"),
-];
-#[cfg(unix)]
-const HEARTMULA_BURN_LEGACY_MODEL_FILES: [(&str, &str); 4] = [
-    ("burn_raw/heartmula_raw.bpk", "HeartMula raw burnpack"),
-    ("burn_raw/heartcodec_raw.bpk", "HeartCodec raw burnpack"),
-    ("tokenizer.json", "Tokenizer"),
-    ("gen_config.json", "Generation config"),
-];
-#[cfg(unix)]
 #[derive(Debug, Clone, Serialize)]
 struct BurnGenerateRequest {
     model: GenerateAudioModelOption,
     prompt: String,
-    negative_prompt: Option<String>,
+    output_path: PathBuf,
+    tags: Option<String>,
     backend: BurnBackendOption,
-    sampler: BurnSamplerOption,
     cfg_scale: f32,
-    steps: usize,
-    length: i64,
+    ode_steps: usize,
+    length: usize,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct BurnGenerateResponseHeader {
-    wav_bytes_len: usize,
-}
 type PianoParseResult = (
     Vec<PianoNote>,
     Vec<PianoControllerPoint>,
@@ -462,18 +438,20 @@ pub struct Maolan {
     import_current_filename: String,
     import_current_operation: Option<String>,
     generate_audio_model: GenerateAudioModelOption,
-    generate_audio_prompt_input: String,
-    generate_audio_negative_prompt_input: String,
-    generate_audio_hf_token_input: String,
-    generate_audio_hf_token_visible: bool,
+    generate_audio_prompt_editor: text_editor::Content,
+
+    generate_audio_tags_input: String,
     generate_audio_backend: BurnBackendOption,
-    generate_audio_sampler: BurnSamplerOption,
-    generate_audio_cfg_scale_input: String,
-    generate_audio_steps_input: String,
-    generate_audio_seconds_total_input: String,
+
+    generate_audio_cfg_scale_input: f32,
+    generate_audio_steps_input: usize,
+    generate_audio_seconds_total_input: usize,
     generate_audio_in_progress: bool,
     generate_audio_progress: f32,
     generate_audio_operation: Option<String>,
+    generate_audio_abort_handle: Option<tokio::task::AbortHandle>,
+    #[cfg(unix)]
+    generate_audio_process_id: Option<u32>,
     clip_pitch_correction_in_progress: bool,
     clip_pitch_correction_progress: f32,
     clip_pitch_correction_clip_name: String,
@@ -590,42 +568,8 @@ fn scan_track_templates() -> Vec<String> {
         .collect()
 }
 
-#[cfg(unix)]
-fn heartmula_burn_model_dir() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(HEARTMULA_BURN_DEFAULT_MODEL_DIR)
-}
-
-#[cfg(unix)]
-fn parse_hugging_face_stored_token(contents: &str) -> Option<String> {
-    toml::from_str::<toml::Value>(contents)
-        .ok()
-        .and_then(|value| {
-            let tables = value.as_table()?;
-            tables.values().find_map(|entry| {
-                entry
-                    .get("hf_token")
-                    .and_then(toml::Value::as_str)
-                    .map(str::trim)
-                    .filter(|token| !token.is_empty())
-                    .map(ToOwned::to_owned)
-            })
-        })
-        .or_else(|| {
-            contents.lines().find_map(|line| {
-                let trimmed = line.trim();
-                let (_, value) = trimmed.split_once('=')?;
-                let token = value.trim().trim_matches('"').trim_matches('\'');
-                (!token.is_empty() && token.starts_with("hf_")).then(|| token.to_string())
-            })
-        })
-}
-
 impl Default for Maolan {
     fn default() -> Self {
-        let cfg = config::Config::load().unwrap_or_default();
         let prefs = load_preferences();
         let mut state_data = StateData {
             available_templates: scan_templates(),
@@ -747,19 +691,21 @@ impl Default for Maolan {
             import_file_progress: 0.0,
             import_current_filename: String::new(),
             import_current_operation: None,
-            generate_audio_model: cfg.generate_audio_model,
-            generate_audio_prompt_input: String::new(),
-            generate_audio_negative_prompt_input: cfg.burn_negative_prompt,
-            generate_audio_hf_token_input: String::new(),
-            generate_audio_hf_token_visible: false,
-            generate_audio_backend: cfg.burn_backend,
-            generate_audio_sampler: cfg.burn_sampler,
-            generate_audio_cfg_scale_input: cfg.burn_cfg_scale.to_string(),
-            generate_audio_steps_input: cfg.burn_steps.to_string(),
-            generate_audio_seconds_total_input: cfg.burn_seconds_total.to_string(),
+            generate_audio_model: GenerateAudioModelOption::Heartmula,
+            generate_audio_prompt_editor: text_editor::Content::new(),
+
+            generate_audio_tags_input: String::new(),
+            generate_audio_backend: BurnBackendOption::Vulkan,
+
+            generate_audio_cfg_scale_input: 6.0,
+            generate_audio_steps_input: 10,
+            generate_audio_seconds_total_input: 180_usize,
             generate_audio_in_progress: false,
             generate_audio_progress: 0.0,
             generate_audio_operation: None,
+            generate_audio_abort_handle: None,
+            #[cfg(unix)]
+            generate_audio_process_id: None,
             clip_pitch_correction_in_progress: false,
             clip_pitch_correction_progress: 0.0,
             clip_pitch_correction_clip_name: String::new(),
@@ -834,124 +780,50 @@ impl Maolan {
         current_exe: Option<&Path>,
         workspace_root: &Path,
     ) -> Option<PathBuf> {
+        // Check artifact dependency location first (set by Cargo when using artifact = "bin")
+        if let Ok(bin_dir) = std::env::var("CARGO_BIN_DIR_MAOLAN_GENERATE") {
+            let artifact_path = PathBuf::from(bin_dir).join("maolan-generate");
+            if artifact_path.exists() {
+                return Some(artifact_path);
+            }
+        }
+
         let mut candidates = Vec::new();
+        // Check same directory as maolan binary first
         if let Some(current_exe) = current_exe
             && let Some(parent) = current_exe.parent()
         {
-            candidates.push(parent.join("generate"));
+            candidates.push(parent.join("maolan-generate"));
             if let Some(grandparent) = parent.parent() {
-                candidates.push(grandparent.join("generate"));
+                candidates.push(grandparent.join("maolan-generate"));
             }
         }
-        candidates.push(workspace_root.join("target").join("debug").join("generate"));
+        candidates.push(
+            workspace_root
+                .join("target")
+                .join("debug")
+                .join("maolan-generate"),
+        );
         candidates.push(
             workspace_root
                 .join("target")
                 .join("release")
-                .join("generate"),
+                .join("maolan-generate"),
         );
         candidates.into_iter().find(|path| path.exists())
     }
 
     #[cfg(unix)]
-    fn build_maolan_burn_binary(workspace_root: &Path) -> Option<PathBuf> {
-        let target_path = workspace_root.join("target").join("debug").join("generate");
-        let status = Command::new("cargo")
-            .arg("build")
-            .arg("--quiet")
-            .arg("-p")
-            .arg("generate")
-            .arg("--bin")
-            .arg("generate")
-            .arg("--manifest-path")
-            .arg(workspace_root.join("Cargo.toml"))
-            .status()
-            .ok()?;
-        (status.success() && target_path.exists()).then_some(target_path)
-    }
-
-    #[cfg(unix)]
     fn maolan_burn_command() -> Command {
         let workspace_root = Self::maolan_workspace_root();
+
         if let Some(path) = Self::resolve_maolan_burn_binary_path(
             std::env::current_exe().ok().as_deref(),
             &workspace_root,
         ) {
             return Command::new(path);
         }
-        if cfg!(debug_assertions)
-            && let Some(path) = Self::build_maolan_burn_binary(&workspace_root)
-        {
-            return Command::new(path);
-        }
-        Command::new("generate")
-    }
-
-    #[cfg(unix)]
-    fn hugging_face_token() -> Option<String> {
-        std::env::var("HF_TOKEN")
-            .ok()
-            .map(|token| token.trim().to_string())
-            .filter(|token| !token.is_empty())
-            .or_else(|| HfCache::from_env().token())
-            .or_else(|| {
-                let path = std::env::var("HOME")
-                    .or_else(|_| std::env::var("USERPROFILE"))
-                    .ok()
-                    .map(PathBuf::from)?
-                    .join(".cache")
-                    .join("huggingface")
-                    .join("stored_tokens");
-                let contents = fs::read_to_string(path).ok()?;
-                parse_hugging_face_stored_token(&contents)
-            })
-    }
-
-    #[cfg(unix)]
-    fn missing_heartmula_burn_model_files(model_dir: &Path) -> Vec<(&'static str, PathBuf)> {
-        let mut missing = Vec::new();
-
-        for ((default_relative_path, _), (legacy_relative_path, _)) in
-            HEARTMULA_BURN_DEFAULT_MODEL_FILES
-                .iter()
-                .zip(HEARTMULA_BURN_LEGACY_MODEL_FILES.iter())
-        {
-            let default_path = model_dir.join(default_relative_path);
-            let legacy_path = model_dir.join(legacy_relative_path);
-            if !default_path.exists() && !legacy_path.exists() {
-                missing.push((*default_relative_path, default_path));
-                if default_relative_path != legacy_relative_path {
-                    missing.push((*legacy_relative_path, legacy_path));
-                }
-            }
-        }
-
-        missing
-    }
-
-    #[cfg(unix)]
-    async fn ensure_heartmula_burn_model<F>(mut progress: F) -> Result<PathBuf, String>
-    where
-        F: FnMut(f32, Option<String>),
-    {
-        let model_dir = heartmula_burn_model_dir();
-        let missing_files = Self::missing_heartmula_burn_model_files(&model_dir);
-
-        if missing_files.is_empty() && model_dir.is_dir() {
-            progress(1.0, Some("Using local HeartMula Burn assets".to_string()));
-            return Ok(model_dir);
-        }
-
-        let missing_list = missing_files
-            .iter()
-            .map(|(relative_path, _)| (*relative_path).to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        Err(format!(
-            "HeartMula Burn assets are missing in {}. Missing: {}. Export them with /home/meka/repos/heartmula-burn/scripts/export_heartmula_raw.py --dtype both and pack the burnpacks before generating. maolan defaults to the f16 burnpacks when both are present.",
-            model_dir.display(),
-            missing_list
-        ))
+        Command::new("maolan-generate")
     }
 
     #[cfg(unix)]
@@ -975,7 +847,7 @@ impl Maolan {
     }
 
     #[cfg(unix)]
-    fn read_ipc_message<T: DeserializeOwned>(reader: &mut impl std::io::Read) -> Result<T, String> {
+    fn read_ipc_payload(reader: &mut impl std::io::Read) -> Result<Vec<u8>, String> {
         let mut len_bytes = [0_u8; 8];
         reader
             .read_exact(&mut len_bytes)
@@ -986,118 +858,92 @@ impl Maolan {
         reader
             .read_exact(&mut payload)
             .map_err(|e| format!("Failed to read IPC response payload: {e}"))?;
-        serde_json::from_slice(&payload)
-            .map_err(|e| format!("Failed to decode IPC response payload: {e}"))
-    }
-
-    #[cfg(unix)]
-    fn read_ipc_bytes(reader: &mut impl std::io::Read) -> Result<Vec<u8>, String> {
-        let mut len_bytes = [0_u8; 8];
-        reader
-            .read_exact(&mut len_bytes)
-            .map_err(|e| format!("Failed to read IPC byte length: {e}"))?;
-        let len = usize::try_from(u64::from_le_bytes(len_bytes))
-            .map_err(|_| "IPC byte payload too large".to_string())?;
-        let mut payload = vec![0_u8; len];
-        reader
-            .read_exact(&mut payload)
-            .map_err(|e| format!("Failed to read IPC byte payload: {e}"))?;
         Ok(payload)
     }
 
     #[cfg(unix)]
-    fn generate_audio_with_burn_socketpair(
-        request: BurnGenerateRequest,
-        _model_dir: Option<&Path>,
-    ) -> Result<Vec<u8>, String> {
+    #[cfg(unix)]
+    fn spawn_generate_process(
+        request: &BurnGenerateRequest,
+    ) -> Result<(u32, std::os::unix::net::UnixStream), String> {
         use std::os::fd::OwnedFd;
         use std::os::unix::net::UnixStream;
         use std::process::Stdio;
 
         let (mut parent, child) =
             UnixStream::pair().map_err(|e| format!("Failed to create socketpair: {e}"))?;
+
         let child_read = child
             .try_clone()
             .map_err(|e| format!("Failed to clone child socket: {e}"))?;
         let mut command = Self::maolan_burn_command();
         command.env(MAOLAN_BURN_SOCKETPAIR_ENV, "1");
-        let process = command
+        let mut process = command
             .stdin(Stdio::from(OwnedFd::from(child_read)))
             .stdout(Stdio::from(OwnedFd::from(child)))
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("Failed to launch generate: {e}"))?;
 
-        if let Err(err) = Self::write_ipc_message(&mut parent, &request) {
-            let output = process
-                .wait_with_output()
-                .map_err(|wait_err| format!("{err}; failed to wait for generate: {wait_err}"))?;
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return if stderr.is_empty() {
-                Err(err)
-            } else {
-                Err(format!("{err}; generate stderr: {stderr}"))
-            };
+        let pid = process.id();
+
+        // Send the request
+        if let Err(err) = Self::write_ipc_message(&mut parent, request) {
+            let _ = process.kill();
+            return Err(err);
         }
 
-        let header = match Self::read_ipc_message::<BurnGenerateResponseHeader>(&mut parent) {
-            Ok(header) => header,
-            Err(err) => {
-                let output = process.wait_with_output().map_err(|wait_err| {
-                    format!("{err}; failed to wait for generate: {wait_err}")
-                })?;
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                return if stderr.is_empty() {
-                    Err(err)
-                } else {
-                    Err(format!("{err}; generate stderr: {stderr}"))
-                };
-            }
-        };
-        let wav_bytes = match Self::read_ipc_bytes(&mut parent) {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                let output = process.wait_with_output().map_err(|wait_err| {
-                    format!("{err}; failed to wait for generate: {wait_err}")
-                })?;
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                return if stderr.is_empty() {
-                    Err(err)
-                } else {
-                    Err(format!("{err}; generate stderr: {stderr}"))
-                };
-            }
-        };
+        // Drop our reference to the process - it will be managed by the caller
+        // We need to forget the process or it will be killed when dropped
+        std::mem::forget(process);
 
-        let output = process
-            .wait_with_output()
-            .map_err(|e| format!("Failed to wait for generate: {e}"))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return if stderr.is_empty() {
-                Err("generate exited unsuccessfully".to_string())
-            } else {
-                Err(stderr)
-            };
+        Ok((pid, parent))
+    }
+
+    #[cfg(unix)]
+    fn communicate_with_generate_process<F>(
+        mut socket: std::os::unix::net::UnixStream,
+        mut progress_callback: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(&str, f32, &str),
+    {
+        use maolan_generate::GenerateProgress;
+        use maolan_generate::GenerateResponseHeader;
+
+        // Read messages until we get the header
+        // Progress messages come before the header
+        let header: GenerateResponseHeader;
+        loop {
+            let payload = Self::read_ipc_payload(&mut socket)?;
+
+            match serde_json::from_slice::<GenerateProgress>(&payload) {
+                Ok(progress) => {
+                    progress_callback(&progress.phase, progress.progress, &progress.operation);
+                    continue;
+                }
+                Err(_) => {
+                    header = match serde_json::from_slice::<GenerateResponseHeader>(&payload) {
+                        Ok(h) => h,
+                        Err(err) => {
+                            return Err(format!("Failed to decode IPC response payload: {err}"));
+                        }
+                    };
+                    break;
+                }
+            }
         }
-        if wav_bytes.len() != header.wav_bytes_len {
-            return Err(format!(
-                "generate returned {} bytes but announced {}",
-                wav_bytes.len(),
-                header.wav_bytes_len
-            ));
-        }
-        Ok(wav_bytes)
+
+        // Drop the socket to signal EOF
+        drop(socket);
+        let _ = header;
+        Ok(())
     }
 
     #[cfg(not(unix))]
-    fn generate_audio_with_burn_socketpair(
-        _request: BurnGenerateRequest,
-        _model_dir: Option<&Path>,
-    ) -> Result<Vec<u8>, String> {
+    fn spawn_generate_process(_request: &BurnGenerateRequest) -> Result<(u32, ()), String> {
         Err("Generated audio via generate is only available on Unix platforms".to_string())
     }
-
     fn plugin_graph_title(state: &StateData) -> String {
         if let Some(target) = state.plugin_graph_clip.as_ref() {
             if let Some(track) = state
@@ -5303,24 +5149,19 @@ impl Maolan {
                     (self.generate_audio_progress * 100.0).clamp(0.0, 100.0)
                 )
             }
-        } else if session_ready {
-            "HeartMula uses lyrics plus optional tags and imports the result as a new track."
-                .to_string()
         } else {
             "Open or save a session before generating audio.".to_string()
         };
         let prompt_label = "Lyrics";
-        let negative_prompt_label = "Tags (optional)";
-        let model_source_section: iced::Element<'_, Message> = iced::Element::from(
-            text("HeartMula expects local converted Burn assets; the Stable Audio download flow is not used.").size(14),
-        );
         let generate_button = if self.generate_audio_in_progress || !session_ready {
             button("Generate")
         } else {
             button("Generate").on_press(Message::GenerateAudioSubmit)
         };
         let cancel_button = if self.generate_audio_in_progress {
-            button("Close").style(button::secondary)
+            button("Cancel")
+                .on_press(Message::GenerateAudioCancel)
+                .style(button::danger)
         } else {
             button("Close")
                 .on_press(Message::Cancel)
@@ -5343,16 +5184,13 @@ impl Maolan {
                     ]
                     .spacing(10)
                     .align_y(iced::Alignment::Center),
-                    text_input(prompt_label, &self.generate_audio_prompt_input)
-                        .on_input(Message::GenerateAudioPromptInput)
+                    text_editor(&self.generate_audio_prompt_editor)
+                        .on_action(Message::GenerateAudioPromptAction)
+                        .height(Length::Fixed(120.0))
+                        .placeholder(prompt_label),
+                    text_input("Tags (optional)", &self.generate_audio_tags_input)
+                        .on_input(Message::GenerateAudioTagsInput)
                         .width(Length::Fill),
-                    text_input(
-                        negative_prompt_label,
-                        &self.generate_audio_negative_prompt_input
-                    )
-                    .on_input(Message::GenerateAudioNegativePromptInput)
-                    .width(Length::Fill),
-                    model_source_section,
                     row![
                         text("Backend:"),
                         pick_list(
@@ -5366,34 +5204,28 @@ impl Maolan {
                     .spacing(10)
                     .align_y(iced::Alignment::Center),
                     row![
-                        text("Sampler:"),
-                        pick_list(
-                            BurnSamplerOption::ALL.to_vec(),
-                            Some(self.generate_audio_sampler),
-                            Message::GenerateAudioSamplerSelected
-                        )
-                        .placeholder("Choose sampler")
-                        .width(Length::Fill),
-                    ]
-                    .spacing(10)
-                    .align_y(iced::Alignment::Center),
-                    row![
-                        text("CFG scale:"),
-                        text_input("6.0", &self.generate_audio_cfg_scale_input)
-                            .on_input(Message::GenerateAudioCfgScaleInput)
-                            .width(Length::Fixed(120.0)),
+                        text("CFG scale"),
+                        number_input(
+                            &self.generate_audio_cfg_scale_input,
+                            0.0..=20.0,
+                            Message::GenerateAudioCfgScaleInput
+                        ),
                         text("Steps:"),
-                        text_input("250", &self.generate_audio_steps_input)
-                            .on_input(Message::GenerateAudioStepsInput)
-                            .width(Length::Fixed(120.0)),
+                        number_input(
+                            &self.generate_audio_steps_input,
+                            1..=50,
+                            Message::GenerateAudioStepsInput
+                        ),
                     ]
                     .spacing(10)
                     .align_y(iced::Alignment::Center),
                     row![
                         text("Seconds total:"),
-                        text_input("6", &self.generate_audio_seconds_total_input)
-                            .on_input(Message::GenerateAudioSecondsTotalInput)
-                            .width(Length::Fixed(120.0)),
+                        number_input(
+                            &self.generate_audio_seconds_total_input,
+                            1..=600,
+                            Message::GenerateAudioSecondsTotalInput
+                        ),
                     ]
                     .spacing(10)
                     .align_y(iced::Alignment::Center),
@@ -6842,21 +6674,6 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn parse_hugging_face_stored_token_reads_first_token() {
-        let token = parse_hugging_face_stored_token(
-            r#"
-[default]
-hf_token = "token-1"
-
-[other]
-hf_token = "token-2"
-"#,
-        );
-        assert_eq!(token.as_deref(), Some("token-1"));
-    }
-
-    #[cfg(unix)]
-    #[test]
     fn resolve_maolan_burn_binary_path_prefers_sibling_binary() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -6866,11 +6683,11 @@ hf_token = "token-2"
         let bin_dir = root.join("target").join("debug");
         fs::create_dir_all(&bin_dir).expect("bin dir");
         let current_exe = bin_dir.join("maolan");
-        fs::write(bin_dir.join("generate"), []).expect("touch sibling");
+        fs::write(bin_dir.join("maolan-generate"), []).expect("touch sibling");
 
         let resolved = Maolan::resolve_maolan_burn_binary_path(Some(&current_exe), &root);
 
-        assert_eq!(resolved, Some(bin_dir.join("generate")));
+        assert_eq!(resolved, Some(bin_dir.join("maolan-generate")));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -6882,7 +6699,7 @@ hf_token = "token-2"
             .expect("time")
             .as_nanos();
         let root = std::env::temp_dir().join(format!("generate-target-test-{unique}"));
-        let target_path = root.join("target").join("debug").join("generate");
+        let target_path = root.join("target").join("debug").join("maolan-generate");
         fs::create_dir_all(target_path.parent().expect("target parent")).expect("target dir");
         fs::write(&target_path, []).expect("touch target");
 

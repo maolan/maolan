@@ -765,6 +765,11 @@ impl<B: Backend> FlowMatching<B> {
         // Simple Euler integration
         let dt = 1.0 / num_steps as f32;
 
+        eprintln!(
+            "FlowMatching.solve_ode: starting ODE integration with {} steps",
+            num_steps
+        );
+
         // Adaptive sync frequency based on number of steps
         // More steps = sync more frequently to prevent timeout
         let sync_interval = if num_steps <= 5 { 5 } else { 3 };
@@ -800,12 +805,6 @@ impl<B: Backend> FlowMatching<B> {
                     2,
                 );
                 let uncond_vel = self.estimator.forward(&uncond_input, t, step);
-                eprintln!(
-                    "FlowMatching.solve_ode: step {} uncond_input = {:?}, uncond_vel = {:?}",
-                    step,
-                    uncond_input.dims(),
-                    uncond_vel.dims()
-                );
 
                 // Conditional: x, incontext_x, cond_interp
                 let cond_input = Tensor::cat(
@@ -813,12 +812,6 @@ impl<B: Backend> FlowMatching<B> {
                     2,
                 );
                 let cond_vel = self.estimator.forward(&cond_input, t, step);
-                eprintln!(
-                    "FlowMatching.solve_ode: step {} cond_input = {:?}, cond_vel = {:?}",
-                    step,
-                    cond_input.dims(),
-                    cond_vel.dims()
-                );
 
                 // Apply CFG: v = v_uncond + scale * (v_cond - v_uncond)
                 uncond_vel.clone() + (cond_vel - uncond_vel) * guidance_scale
@@ -828,22 +821,10 @@ impl<B: Backend> FlowMatching<B> {
                     vec![latent.clone(), incontext_x.clone(), cond_with_mask.clone()],
                     2,
                 );
-                let out = self.estimator.forward(&estimator_input, t, step);
-                eprintln!(
-                    "FlowMatching.solve_ode: step {} estimator_input = {:?}, velocity = {:?}",
-                    step,
-                    estimator_input.dims(),
-                    out.dims()
-                );
-                out
+                self.estimator.forward(&estimator_input, t, step)
             };
             // Euler step
             latent = latent + velocity * dt;
-            eprintln!(
-                "FlowMatching.solve_ode: step {} latent after euler = {:?}",
-                step,
-                latent.dims()
-            );
             // Periodically sync to prevent GPU timeout
             if step > 0 && step % sync_interval == 0 {
                 let _ = latent.to_data(); // Force GPU sync
@@ -2303,44 +2284,30 @@ impl<B: Backend> ScalarModel<B> {
         // This matches Python's round_func9 in sq_codec.py
         let x_quantized = (x.clone() * 9.0).round() / 9.0;
 
-        eprintln!("ScalarModel.decode_with_sync: starting decoder_0");
+        eprintln!("ScalarModel.decode_with_sync: starting decode");
         let h = self.decoder_0.forward(x_quantized);
-        eprintln!("ScalarModel.decode_with_sync: finished decoder_0");
         let _ = h.to_data(); // Sync after decoder_0
 
-        eprintln!("ScalarModel.decode_with_sync: starting decoder_1");
         let h = self.decoder_1.forward(h);
-        eprintln!("ScalarModel.decode_with_sync: finished decoder_1");
         let _ = h.to_data(); // Sync after decoder_1
 
-        eprintln!("ScalarModel.decode_with_sync: starting decoder_2");
         let h = self.decoder_2.forward(h);
-        eprintln!("ScalarModel.decode_with_sync: finished decoder_2");
         let _ = h.to_data(); // Sync after decoder_2
 
-        eprintln!("ScalarModel.decode_with_sync: starting decoder_3");
         let h = self.decoder_3.forward(h);
-        eprintln!("ScalarModel.decode_with_sync: finished decoder_3");
         let _ = h.to_data(); // Sync after decoder_3
 
-        eprintln!("ScalarModel.decode_with_sync: starting decoder_4");
         let h = self.decoder_4.forward(h);
-        eprintln!("ScalarModel.decode_with_sync: finished decoder_4");
         let _ = h.to_data(); // Sync after decoder_4
 
-        eprintln!("ScalarModel.decode_with_sync: starting decoder_5");
         let h = self.decoder_5.forward(h);
-        eprintln!("ScalarModel.decode_with_sync: finished decoder_5");
         let _ = h.to_data(); // Sync after decoder_5
 
-        eprintln!("ScalarModel.decode_with_sync: starting decoder_6");
         let h = self.decoder_6.forward(h);
-        eprintln!("ScalarModel.decode_with_sync: finished decoder_6");
         let _ = h.to_data(); // Sync after decoder_6
 
-        eprintln!("ScalarModel.decode_with_sync: starting decoder_7");
         let h = self.decoder_7.forward(h);
-        eprintln!("ScalarModel.decode_with_sync: finished decoder_7");
+        eprintln!("ScalarModel.decode_with_sync: finished decode");
         h
     }
 

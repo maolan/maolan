@@ -16,15 +16,6 @@ pub enum BackendChoice {
     Cpu,
     #[default]
     Vulkan,
-    Cuda,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum SamplerChoice {
-    #[serde(rename = "dpmpp-2m")]
-    Dpmpp2m,
-    #[serde(rename = "dpmpp-3m-sde")]
-    Dpmpp3mSde,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -46,11 +37,9 @@ pub struct GenerateRequest {
     #[serde(default)]
     pub inspect_only: bool,
     pub backend: BackendChoice,
-    pub sampler: SamplerChoice,
     pub cfg_scale: f32,
-    pub steps: usize,
     #[serde(alias = "seconds_total", alias = "max_audio_length_ms")]
-    pub length: i64,
+    pub length: usize,
     /// ODE steps for HeartMula flow matching (lower = faster, 10 = default)
     #[serde(default = "default_ode_steps")]
     pub ode_steps: usize,
@@ -102,10 +91,16 @@ pub struct GenerateResponseHeader {
     pub guidance_scale: f32,
     pub prompt_tokens: i64,
     pub sample_rate_hz: u32,
-    pub sampler: SamplerChoice,
-    pub length: i64,
+    pub length: usize,
     pub steps: usize,
-    pub wav_bytes_len: usize,
+}
+
+/// Progress update message sent during generation
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct GenerateProgress {
+    pub phase: String, // "generator" or "decoder"
+    pub progress: f32, // 0.0 to 1.0 within the phase
+    pub operation: String,
 }
 
 fn default_output_path() -> PathBuf {
@@ -123,14 +118,11 @@ Options:
   --model <heartmula>
   --model-dir <path>
   --output <path>
-  --save-path <path>       Alias for --output
   --inspect
-  --backend <cpu|vulkan|cuda>  Select the runtime backend (CUDA requires the `cuda` feature)
-  --sampler <dpmpp-2m|dpmpp-3m-sde>
+  --backend <cpu|vulkan>       Select the runtime backend
   --lyrics <text>          Prompt / lyrics (positional argument also accepted)
   --tags <text>            Style tags for HeartMula
   --cfg-scale <float>      CFG scale (1.0=no guidance, 2.0=weak, 6.0=strong)
-  --steps <int>
   --length <int>           HeartMula: output length in milliseconds
   --topk <int>             HeartMula: top-k sampling (default: 50)
   --temperature <float>    HeartMula: sampling temperature (default: 1.0)
@@ -152,10 +144,8 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
     let mut inspect_only = false;
     let mut model = ModelChoice::Heartmula;
     let mut backend = BackendChoice::Vulkan;
-    let mut sampler = SamplerChoice::Dpmpp3mSde;
     let mut cfg_scale = 1.5_f32;
-    let mut steps = 250_usize;
-    let mut length = 6_000_i64;
+    let mut length = 6_000_usize;
     let mut ode_steps = 10_usize;
     let mut lyrics = None;
     let mut tags = None;
@@ -184,8 +174,7 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
             backend = match value.as_str() {
                 "cpu" => BackendChoice::Cpu,
                 "vulkan" => BackendChoice::Vulkan,
-                "cuda" => BackendChoice::Cuda,
-                _ => bail!("unsupported backend '{value}', expected one of: cpu, vulkan, cuda"),
+                _ => bail!("unsupported backend '{value}', expected one of: cpu, vulkan"),
             };
             continue;
         }
@@ -198,7 +187,7 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
             continue;
         }
 
-        if matches!(arg.as_str(), "--output" | "--save-path") {
+        if arg == "--output" {
             output_path = PathBuf::from(
                 args.next()
                     .ok_or_else(|| anyhow!("missing value after --output"))?,
@@ -233,7 +222,7 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
                 .into_string()
                 .map_err(|_| anyhow!("length value must be valid UTF-8"))?;
             length = value
-                .parse::<i64>()
+                .parse::<usize>()
                 .map_err(|_| anyhow!("length must be a whole number"))?;
             continue;
         }
@@ -327,22 +316,6 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
             continue;
         }
 
-        if arg == "--sampler" {
-            let value = args
-                .next()
-                .ok_or_else(|| anyhow!("missing value after --sampler"))?
-                .into_string()
-                .map_err(|_| anyhow!("sampler value must be valid UTF-8"))?;
-            sampler = match value.as_str() {
-                "dpmpp-2m" => SamplerChoice::Dpmpp2m,
-                "dpmpp-3m-sde" => SamplerChoice::Dpmpp3mSde,
-                _ => {
-                    bail!("unsupported sampler '{value}', expected one of: dpmpp-2m, dpmpp-3m-sde")
-                }
-            };
-            continue;
-        }
-
         if arg == "--cfg-scale" {
             let value = args
                 .next()
@@ -354,21 +327,6 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
                 .map_err(|_| anyhow!("cfg-scale must be a number"))?;
             if !cfg_scale.is_finite() || cfg_scale < 0.0 {
                 bail!("cfg-scale must be a finite non-negative number");
-            }
-            continue;
-        }
-
-        if arg == "--steps" {
-            let value = args
-                .next()
-                .ok_or_else(|| anyhow!("missing value after --steps"))?
-                .into_string()
-                .map_err(|_| anyhow!("steps value must be valid UTF-8"))?;
-            steps = value
-                .parse::<usize>()
-                .map_err(|_| anyhow!("steps must be a whole number"))?;
-            if steps == 0 {
-                bail!("steps must be greater than zero");
             }
             continue;
         }
@@ -416,9 +374,7 @@ pub fn parse_options(args: impl IntoIterator<Item = OsString>) -> Result<CliOpti
         output_path,
         inspect_only,
         backend,
-        sampler,
         cfg_scale,
-        steps,
         length,
         ode_steps,
         lyrics: None,
@@ -455,11 +411,8 @@ pub fn validate_options(mut options: CliOptions) -> Result<CliOptions> {
     if !options.cfg_scale.is_finite() || options.cfg_scale < 0.0 {
         bail!("cfg-scale must be a finite non-negative number");
     }
-    if options.length <= 0 {
-        bail!("length must be a whole number greater than zero");
-    }
-    if options.steps == 0 {
-        bail!("steps must be greater than zero");
+    if options.length == 0 {
+        bail!("length must be greater than zero");
     }
     if options.output_path.as_os_str().is_empty() {
         bail!("output path cannot be empty");
@@ -570,9 +523,7 @@ pub fn encode_prompt(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        BackendChoice, DEFAULT_MAX_PROMPT_TOKENS, ModelChoice, SamplerChoice, parse_options,
-    };
+    use super::{BackendChoice, DEFAULT_MAX_PROMPT_TOKENS, ModelChoice, parse_options};
     use std::ffi::OsString;
 
     #[test]
@@ -582,9 +533,7 @@ mod tests {
         assert_eq!(options.prompt, "warm tape hiss");
         assert_eq!(options.model, ModelChoice::Heartmula);
         assert_eq!(options.backend, BackendChoice::Vulkan);
-        assert_eq!(options.sampler, SamplerChoice::Dpmpp3mSde);
         assert_eq!(options.cfg_scale, 1.5);
-        assert_eq!(options.steps, 250);
         assert_eq!(options.length, 6_000);
     }
 
@@ -617,18 +566,6 @@ mod tests {
     }
 
     #[test]
-    fn parses_sampler_flag() {
-        let args = [
-            OsString::from("generate"),
-            OsString::from("--sampler"),
-            OsString::from("dpmpp-2m"),
-            OsString::from("warm tape hiss"),
-        ];
-        let options = parse_options(args).expect("options should parse");
-        assert_eq!(options.sampler, SamplerChoice::Dpmpp2m);
-    }
-
-    #[test]
     fn parses_model_flag() {
         let args = [
             OsString::from("generate"),
@@ -648,15 +585,15 @@ mod tests {
             OsString::from("warm tape hiss"),
             OsString::from("--cfg-scale"),
             OsString::from("4.5"),
-            OsString::from("--steps"),
-            OsString::from("300"),
+            OsString::from("--ode-steps"),
+            OsString::from("20"),
             OsString::from("--length"),
             OsString::from("8000"),
             OsString::from("verse and chorus"),
         ];
         let options = parse_options(args).expect("options should parse");
         assert_eq!(options.cfg_scale, 4.5);
-        assert_eq!(options.steps, 300);
+        assert_eq!(options.ode_steps, 20);
         assert_eq!(options.length, 8_000);
     }
 

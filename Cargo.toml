@@ -18,10 +18,6 @@ members = [
   "widgets"
 ]
 
-[features]
-default = []
-cuda = ["maolan-generate/cuda"]
-
 [dependencies]
 crossterm = "0.29.0"
 ebur128 = "0.1"
@@ -62,4 +58,5 @@ nvtree = "0.0.2"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 lilv = "0.2.4"
+nix = { version = "0.31.2", features = ["signal", "process"] }
 x11-dl = "2.21.0"
