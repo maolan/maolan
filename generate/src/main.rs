@@ -4,8 +4,8 @@ use burn_store::{BurnpackStore, ModuleStore, TensorSnapshot};
 use huggingface_hub::{Repo, RepoType, api::sync::ApiBuilder};
 use maolan_generate::heartmula_runtime;
 use maolan_generate::{
-    BackendChoice, GenerateResponseHeader, ModelChoice, help_text, parse_options, read_ipc_message,
-    validate_options, write_ipc_bytes, write_ipc_message,
+    BackendChoice, GenerateProgress, GenerateResponseHeader, ModelChoice, help_text, parse_options,
+    read_ipc_message, validate_options, write_ipc_message,
 };
 use std::collections::BTreeMap;
 use std::env;
@@ -78,7 +78,7 @@ fn main() -> Result<()> {
     }
 
     eprintln!(
-        "generate: mode=cli model={} backend={} sampler=topk-temperature",
+        "generate: mode=cli model={} backend={}",
         model_name(options.model),
         backend_name(options.backend),
     );
@@ -93,8 +93,17 @@ fn vulkan_runtime_options() -> burn::backend::wgpu::RuntimeOptions {
     }
 }
 
-fn cuda_feature_error() -> anyhow::Error {
-    anyhow!("CUDA backend requested, but this build was compiled without the `cuda` feature")
+fn should_forward_ipc_progress(last_progress: Option<f32>, progress: f32) -> bool {
+    match last_progress {
+        None => true,
+        Some(last) => (progress - last).abs() > f32::EPSILON,
+    }
+}
+
+fn release_backend_allocations<B: Backend>(device: &B::Device) -> Result<()> {
+    B::sync(device)?;
+    B::memory_cleanup(device);
+    Ok(())
 }
 
 fn run_decode_only(options: &maolan_generate::CliOptions) -> Result<()> {
@@ -139,20 +148,6 @@ fn run_decode_with_frames_json(
                 &model_paths.heartcodec_model_dir,
                 frames_json,
             )
-        }
-        BackendChoice::Cuda => {
-            #[cfg(feature = "cuda")]
-            {
-                return run_decode_only_with_backend::<burn::backend::Cuda<f32, i64>>(
-                    options,
-                    &model_paths.heartcodec_model_dir,
-                    frames_json,
-                );
-            }
-            #[cfg(not(feature = "cuda"))]
-            {
-                Err(cuda_feature_error())
-            }
         }
     }
 }
@@ -227,24 +222,47 @@ fn run_ipc() -> Result<()> {
     let mut stdout = io::stdout().lock();
     let options = validate_options(read_ipc_message(&mut stdin)?)?;
     eprintln!(
-        "generate: mode=ipc model={} backend={} sampler=topk-temperature",
+        "generate: mode=ipc model={} backend={}",
         model_name(options.model),
         backend_name(options.backend),
     );
-    let output = generate_heartmula_placeholder_output(&options)?;
+
+    let output = match options.backend {
+        BackendChoice::Cpu => {
+            let device = Default::default();
+            run_heartmula_ipc_with_backend::<burn::backend::NdArray<f32>>(
+                &options,
+                &device,
+                BackendChoice::Cpu,
+                &mut stdout,
+            )
+        }
+        BackendChoice::Vulkan => {
+            let device = burn::backend::wgpu::WgpuDevice::default();
+            burn::backend::wgpu::init_setup::<burn::backend::wgpu::graphics::Vulkan>(
+                &device,
+                vulkan_runtime_options(),
+            );
+            run_heartmula_ipc_with_backend::<burn::backend::Wgpu<f32, i64, u32>>(
+                &options,
+                &device,
+                BackendChoice::Vulkan,
+                &mut stdout,
+            )
+        }
+    }?;
+
     write_ipc_message(&mut stdout, &output.header)?;
-    write_ipc_bytes(&mut stdout, &output.wav_bytes)?;
     eprintln!(
-        "generate: mode=ipc complete backend={} wav_bytes={}",
+        "generate: mode=ipc complete backend={} output={}",
         backend_name(options.backend),
-        output.wav_bytes.len()
+        options.output_path.display()
     );
     Ok(())
 }
 
 struct GeneratedOutput {
     header: GenerateResponseHeader,
-    wav_bytes: Vec<u8>,
 }
 
 fn model_name(_model: ModelChoice) -> &'static str {
@@ -255,7 +273,6 @@ fn backend_name(backend: BackendChoice) -> &'static str {
     match backend {
         BackendChoice::Cpu => "cpu",
         BackendChoice::Vulkan => "vulkan",
-        BackendChoice::Cuda => "cuda",
     }
 }
 
@@ -360,18 +377,152 @@ fn ensure_heartmula_model_paths(paths: &HeartmulaModelPaths) -> Result<()> {
     )
 }
 
-fn generate_heartmula_placeholder_output(
+fn run_heartmula_ipc_with_backend<B: Backend>(
     options: &maolan_generate::CliOptions,
+    device: &B::Device,
+    backend: BackendChoice,
+    stdout: &mut impl std::io::Write,
 ) -> Result<GeneratedOutput> {
     let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref())?;
-    anyhow::bail!(
-        "HeartMula assets are available in {}, but the Burn runtime is not implemented yet. Found {}, {}, {}, and {}. The next step is to add generated/runtime model modules to generate and map these burnpacks into actual Burn modules.",
-        model_paths.model_dir.display(),
-        model_paths.heartmula_raw_bpk.display(),
-        model_paths.heartcodec_raw_bpk.display(),
-        model_paths.tokenizer_json.display(),
-        model_paths.gen_config_json.display(),
-    )
+    let config = load_heartmula_gen_config(&model_paths.gen_config_json)?;
+    let runtime_summary = inspect_heartmula_runtime(&model_paths)?;
+
+    // Send initial progress
+    let progress = GenerateProgress {
+        phase: "generator".to_string(),
+        progress: 0.0,
+        operation: "Loading model".to_string(),
+    };
+    write_ipc_message(stdout, &progress)?;
+
+    let model = heartmula_runtime::HeartmulaModel::<B>::from_burnpack(
+        &model_paths.heartmula_raw_bpk,
+        device,
+        runtime_summary.text_vocab_size,
+        runtime_summary.audio_head_vocab_size,
+    )?;
+    let tags = heartmula_runtime::normalize_tags(
+        options
+            .tags
+            .as_deref()
+            .unwrap_or(heartmula_runtime::default_tags()),
+    );
+    let lyrics = options.prompt.trim().to_lowercase();
+    let lyrics_ids = heartmula_runtime::tokenize_text(&model_paths.tokenizer_json, &lyrics)?;
+    let tags_ids = heartmula_runtime::tokenize_text(&model_paths.tokenizer_json, &tags)?;
+    let max_audio_frames = (options.length.max(1) / 80).max(1);
+
+    // Use Cell for interior mutability since callback runs on the same thread.
+    use std::cell::Cell;
+    let last_progress = Cell::new(None::<f32>);
+
+    // Create progress callback that writes directly to stdout
+    // The callback runs synchronously during generate_frames on the main thread
+    let progress_callback = |phase: &str, p: f32, op: &str| {
+        if should_forward_ipc_progress(last_progress.get(), p) {
+            last_progress.set(Some(p));
+            let progress = GenerateProgress {
+                phase: phase.to_string(),
+                progress: p,
+                operation: op.to_string(),
+            };
+            let _ = write_ipc_message(stdout, &progress);
+            let _ = stdout.flush();
+        }
+    };
+
+    let mut generation_config = heartmula_runtime::HeartmulaGenerationConfig {
+        text_bos_id: config.text_bos_id,
+        text_eos_id: config.text_eos_id,
+        audio_eos_id: config.audio_eos_id,
+        empty_id: config.empty_id,
+        lyrics_ids: &lyrics_ids,
+        tags_ids: &tags_ids,
+        max_audio_frames,
+        temperature: options.temperature,
+        topk: options.topk,
+        cfg_scale: options.cfg_scale,
+        progress_callback: Some(Box::new(progress_callback)),
+    };
+
+    // Run generation - progress will be reported via callback
+    let frames = model.generate_frames(device, &mut generation_config)?;
+    let generated_frame_count = frames.len();
+
+    // Drop generation_config to release the stdout borrow from the callback
+    std::mem::drop(generation_config);
+
+    // Release generator-side GPU allocations before the decoder starts.
+    drop(model);
+    release_backend_allocations::<B>(device)?;
+
+    // Write frames to a temp file for decoding (HeartCodec expects a file)
+    let temp_dir = std::env::temp_dir();
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("time")
+        .as_nanos();
+    let frames_json_path = temp_dir.join(format!("maolan_ipc_frames_{}.json", unique));
+    let output_wav_path = options.output_path.clone();
+
+    heartmula_runtime::write_frames_json(&frames_json_path, &lyrics, &tags, &frames)?;
+
+    // Report decoder phase start
+    let progress = GenerateProgress {
+        phase: "decoder".to_string(),
+        progress: 0.0,
+        operation: "Decoding audio".to_string(),
+    };
+    write_ipc_message(stdout, &progress)?;
+
+    // Decode frames to WAV file
+    heartmula_runtime::decode_frames_to_wav::<B>(
+        &model_paths.heartcodec_model_dir,
+        backend_name(backend),
+        "f32",
+        &frames_json_path,
+        &output_wav_path,
+        options.length as f32 / 1000.0,
+        device,
+        options.ode_steps,
+        options.decoder_seed,
+    )?;
+
+    // Report decoder complete
+    let progress = GenerateProgress {
+        phase: "decoder".to_string(),
+        progress: 0.99,
+        operation: "Finalizing".to_string(),
+    };
+    write_ipc_message(stdout, &progress)?;
+
+    // Read the WAV file into memory
+    // Clean up temp files
+    let _ = std::fs::remove_file(&frames_json_path);
+
+    // Sync backend to ensure all pending GPU operations complete before process exit
+    eprintln!("generate: syncing backend before exit...");
+    release_backend_allocations::<B>(device)?;
+
+    eprintln!(
+        "generate: ipc backend={} frames={} output={}",
+        backend_name(backend),
+        generated_frame_count,
+        output_wav_path.display()
+    );
+
+    let header = GenerateResponseHeader {
+        backend,
+        channels: 1,
+        frames: generated_frame_count,
+        guidance_scale: options.cfg_scale,
+        prompt_tokens: lyrics_ids.len() as i64,
+        sample_rate_hz: 48_000,
+        length: options.length,
+        steps: options.ode_steps,
+    };
+
+    Ok(GeneratedOutput { header })
 }
 
 fn inspect_heartmula_cli(options: &maolan_generate::CliOptions) -> Result<()> {
@@ -668,7 +819,6 @@ fn run_heartmula_cli(options: &maolan_generate::CliOptions) -> Result<()> {
     match options.backend {
         BackendChoice::Cpu => run_heartmula_cpu(options),
         BackendChoice::Vulkan => run_heartmula_vulkan(options),
-        BackendChoice::Cuda => run_heartmula_cuda(options),
     }
 }
 
@@ -704,8 +854,8 @@ where
     let lyrics = options.prompt.trim().to_lowercase();
     let lyrics_ids = heartmula_runtime::tokenize_text(&model_paths.tokenizer_json, &lyrics)?;
     let tags_ids = heartmula_runtime::tokenize_text(&model_paths.tokenizer_json, &tags)?;
-    let max_audio_frames = ((options.length.max(1) as usize) / 80).max(1);
-    let generation_config = heartmula_runtime::HeartmulaGenerationConfig {
+    let max_audio_frames = (options.length.max(1) / 80).max(1);
+    let mut generation_config = heartmula_runtime::HeartmulaGenerationConfig {
         text_bos_id: config.text_bos_id,
         text_eos_id: config.text_eos_id,
         audio_eos_id: config.audio_eos_id,
@@ -716,8 +866,9 @@ where
         temperature: options.temperature,
         topk: options.topk,
         cfg_scale: options.cfg_scale,
+        progress_callback: None,
     };
-    let frames = model.generate_frames(&device, &generation_config)?;
+    let frames = model.generate_frames(&device, &mut generation_config)?;
     let generated_frame_count = frames.len();
     let frames_json_path = options.output_path.with_extension("frames.json");
     heartmula_runtime::write_frames_json(&frames_json_path, &lyrics, &tags, &frames)?;
@@ -725,12 +876,11 @@ where
     if env::var_os(HEARTMULA_GENERATE_ONLY_ENV).is_some() {
         eprintln!("generate: unloading HeartMuLa before process exit");
         drop(model);
+        release_backend_allocations::<B>(&device)?;
         println!("generate");
         println!("model=heartmula");
         println!("mode=tokens");
         println!("model_dir={}", model_paths.model_dir.display());
-        println!("prompt={}", lyrics);
-        println!("tags={}", tags);
         println!("backend={}", backend_name(backend));
         println!("cfg_scale={}", options.cfg_scale);
         println!("generated_frame_count={}", generated_frame_count);
@@ -739,6 +889,8 @@ where
         println!("note=HeartMuLa token generation completed in a dedicated subprocess");
         return Ok(());
     }
+    drop(model);
+    release_backend_allocations::<B>(&device)?;
     heartmula_runtime::decode_frames_to_wav::<B>(
         &model_paths.heartcodec_model_dir,
         backend_name(backend),
@@ -754,8 +906,6 @@ where
     println!("model=heartmula");
     println!("mode=tokens");
     println!("model_dir={}", model_paths.model_dir.display());
-    println!("prompt={}", lyrics);
-    println!("tags={}", tags);
     println!("backend={}", backend_name(backend));
     println!("cfg_scale={}", options.cfg_scale);
     println!("ode_steps={}", options.ode_steps);
@@ -816,26 +966,12 @@ fn run_heartmula_vulkan(options: &maolan_generate::CliOptions) -> Result<()> {
     run_heartmula_with_backend::<burn::backend::Wgpu<f32, i64, u32>>(options, BackendChoice::Vulkan)
 }
 
-fn run_heartmula_cuda(options: &maolan_generate::CliOptions) -> Result<()> {
-    #[cfg(feature = "cuda")]
-    {
-        return run_heartmula_with_backend::<burn::backend::Cuda<f32, i64>>(
-            options,
-            BackendChoice::Cuda,
-        );
-    }
-    #[cfg(not(feature = "cuda"))]
-    {
-        let _ = options;
-        Err(cuda_feature_error())
-    }
-}
 #[cfg(test)]
 mod tests {
     use super::{
         HEARTMULA_GEN_CONFIG_REL, HEARTMULA_TOKENIZER_REL, HeartmulaModelPaths,
         count_numbered_layers, ensure_heartmula_model_paths, heartcodec_raw_bpk_rel,
-        heartmula_raw_bpk_rel, infer_heartmula_runtime_summary,
+        heartmula_raw_bpk_rel, infer_heartmula_runtime_summary, should_forward_ipc_progress,
     };
     use crate::heartmula_runtime::normalize_tags;
     use std::{collections::BTreeMap, env, fs};
@@ -848,6 +984,12 @@ mod tests {
     #[test]
     fn normalize_tags_preserves_existing_wrappers() {
         assert_eq!(normalize_tags("<tag>piano</tag>"), "<tag>piano</tag>");
+    }
+
+    #[test]
+    fn normalize_tags_removes_spaces_after_commas() {
+        assert_eq!(normalize_tags("Piano, Happy"), "<tag>piano,happy</tag>");
+        assert_eq!(normalize_tags("a,  b,   c"), "<tag>a,b,c</tag>");
     }
 
     #[test]
@@ -932,5 +1074,13 @@ mod tests {
         assert_eq!(summary.decoder_layer_count, 1);
         assert_eq!(summary.codec_condition_width, 512);
         assert_eq!(summary.codec_scalar_decoder_channels, 64);
+    }
+
+    #[test]
+    fn ipc_progress_forwarding_emits_each_new_chunk_progress() {
+        assert!(should_forward_ipc_progress(None, 0.0));
+        assert!(should_forward_ipc_progress(Some(0.0), 0.08));
+        assert!(should_forward_ipc_progress(Some(0.08), 0.16));
+        assert!(!should_forward_ipc_progress(Some(0.16), 0.16));
     }
 }

@@ -43,6 +43,8 @@ const HEARTCODEC_STAGE_PLAN_JSON_ENV: &str = "MAOLAN_HEARTCODEC_STAGE_PLAN_JSON"
 const HEARTCODEC_STAGE_PLAN_MAGIC: &[u8; 8] = b"MHCPLAN1";
 const HEARTCODEC_SEGMENT_DURATION_SECONDS: f32 = 29.76;
 
+type ProgressCallback<'a> = dyn FnMut(&str, f32, &str) + 'a;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HeartmulaJsonOutput {
     pub model: String,
@@ -148,6 +150,10 @@ pub struct HeartmulaGenerationConfig<'a> {
     pub topk: usize,
     /// CFG scale for classifier-free guidance (1.0 = no CFG, higher = stronger guidance)
     pub cfg_scale: f32,
+    /// Optional progress callback: (phase, progress_0_to_1, operation_description)
+    /// phase is either "generator" or "decoder"
+    /// Note: This callback is called synchronously on the same thread during generation
+    pub progress_callback: Option<Box<ProgressCallback<'a>>>,
 }
 
 #[derive(Clone)]
@@ -290,7 +296,7 @@ impl<B: Backend> HeartmulaModel<B> {
     pub fn generate_frames(
         &self,
         device: &B::Device,
-        config: &HeartmulaGenerationConfig<'_>,
+        config: &mut HeartmulaGenerationConfig<'_>,
     ) -> Result<Vec<Vec<i64>>> {
         let normalized_tags =
             normalize_text_ids(config.text_bos_id, config.text_eos_id, config.tags_ids);
@@ -329,6 +335,12 @@ impl<B: Backend> HeartmulaModel<B> {
                 chunk_start,
                 chunk_end - 1
             );
+
+            // Report chunk progress (0-99% for generator phase)
+            let progress = (chunk_idx as f32 / total_chunks as f32) * 0.99;
+            if let Some(ref mut cb) = config.progress_callback {
+                cb("generator", progress, "Generating audio tokens");
+            }
 
             for _ in 0..frames_in_chunk {
                 if frames.len() >= config.max_audio_frames {
@@ -386,7 +398,7 @@ impl<B: Backend> HeartmulaModel<B> {
     pub fn debug_first_frame(
         &self,
         device: &B::Device,
-        config: &HeartmulaGenerationConfig<'_>,
+        config: &mut HeartmulaGenerationConfig<'_>,
     ) -> Result<HeartmulaFirstFrameDebug> {
         let normalized_tags =
             normalize_text_ids(config.text_bos_id, config.text_eos_id, config.tags_ids);
@@ -1691,6 +1703,10 @@ pub fn default_tags() -> &'static str {
 
 pub fn normalize_tags(tags: &str) -> String {
     let mut normalized = tags.trim().to_lowercase();
+    // Remove all spaces after commas (handles multiple spaces)
+    while normalized.contains(", ") {
+        normalized = normalized.replace(", ", ",");
+    }
     if !normalized.starts_with("<tag>") {
         normalized = format!("<tag>{normalized}");
     }

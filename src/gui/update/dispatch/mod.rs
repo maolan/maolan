@@ -6981,41 +6981,41 @@ impl Maolan {
             Message::GenerateAudioModelSelected(model) => {
                 self.generate_audio_model = model;
             }
-            Message::GenerateAudioPromptInput(ref value) => {
-                self.generate_audio_prompt_input = value.clone();
+            Message::GenerateAudioPromptAction(ref action) => {
+                self.generate_audio_prompt_editor.perform(action.clone());
             }
-            Message::GenerateAudioNegativePromptInput(ref value) => {
-                self.generate_audio_negative_prompt_input = value.clone();
+
+            Message::GenerateAudioTagsInput(ref value) => {
+                self.generate_audio_tags_input = value.clone();
             }
-            Message::GenerateAudioHfTokenInput(ref value) => {
-                self.generate_audio_hf_token_input = value.clone();
-            }
-            Message::GenerateAudioToggleHfTokenVisibility => {
-                self.generate_audio_hf_token_visible = !self.generate_audio_hf_token_visible;
-            }
+
             Message::GenerateAudioBackendSelected(backend) => {
                 self.generate_audio_backend = backend;
             }
-            Message::GenerateAudioSamplerSelected(sampler) => {
-                self.generate_audio_sampler = sampler;
+
+            Message::GenerateAudioCfgScaleInput(value) => {
+                self.generate_audio_cfg_scale_input = value;
             }
-            Message::GenerateAudioCfgScaleInput(ref value) => {
-                self.generate_audio_cfg_scale_input = value.clone();
+            Message::GenerateAudioStepsInput(value) => {
+                self.generate_audio_steps_input = value;
             }
-            Message::GenerateAudioStepsInput(ref value) => {
-                self.generate_audio_steps_input = value
-                    .chars()
-                    .filter(|c| c.is_ascii_digit())
-                    .collect::<String>();
+            Message::GenerateAudioSecondsTotalInput(value) => {
+                self.generate_audio_seconds_total_input = value;
             }
-            Message::GenerateAudioSecondsTotalInput(ref value) => {
-                self.generate_audio_seconds_total_input = value
-                    .chars()
-                    .enumerate()
-                    .filter_map(|(idx, c)| {
-                        (c.is_ascii_digit() || (idx == 0 && c == '-')).then_some(c)
-                    })
-                    .collect::<String>();
+            Message::GenerateAudioCancel => {
+                #[cfg(unix)]
+                if let Some(pid) = self.generate_audio_process_id.take() {
+                    use nix::sys::signal::{self, Signal};
+                    use nix::unistd::Pid;
+                    let _ = signal::kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
+                }
+                if let Some(handle) = self.generate_audio_abort_handle.take() {
+                    handle.abort();
+                }
+                self.generate_audio_in_progress = false;
+                self.generate_audio_progress = 0.0;
+                self.generate_audio_operation = None;
+                self.state.blocking_write().message = "Generation cancelled".to_string();
             }
             Message::GenerateAudioSubmit => {
                 if self.generate_audio_in_progress {
@@ -7027,66 +7027,48 @@ impl Maolan {
                     return Task::none();
                 };
 
-                let prompt = self.generate_audio_prompt_input.trim().to_string();
+                let prompt = self.generate_audio_prompt_editor.text().trim().to_string();
                 if prompt.is_empty() {
                     self.state.blocking_write().message = "Prompt cannot be empty".to_string();
                     return Task::none();
                 }
-                let cfg_scale = match self.generate_audio_cfg_scale_input.trim().parse::<f32>() {
-                    Ok(value) if value.is_finite() && value >= 0.0 => value,
-                    _ => {
-                        self.state.blocking_write().message =
-                            "CFG scale must be a finite non-negative number".to_string();
-                        return Task::none();
-                    }
-                };
-                let steps = match self.generate_audio_steps_input.trim().parse::<usize>() {
-                    Ok(value) if value > 0 => value,
-                    _ => {
-                        self.state.blocking_write().message =
-                            "Steps must be a whole number greater than zero".to_string();
-                        return Task::none();
-                    }
-                };
-                let seconds_total = match self
-                    .generate_audio_seconds_total_input
-                    .trim()
-                    .parse::<i64>()
-                {
-                    Ok(value) => value,
-                    Err(_) => {
-                        self.state.blocking_write().message =
-                            "Seconds total must be a whole number".to_string();
-                        return Task::none();
-                    }
-                };
-
+                let cfg_scale = self.generate_audio_cfg_scale_input;
+                let ode_steps = self.generate_audio_steps_input;
+                if ode_steps == 0 || ode_steps > 50 {
+                    self.state.blocking_write().message =
+                        "ODE steps must be between 1 and 50".to_string();
+                    return Task::none();
+                }
+                let output_stem = super::super::Maolan::sanitize_generated_track_base_name(&prompt);
                 let request = super::super::BurnGenerateRequest {
                     model: self.generate_audio_model,
                     prompt,
-                    negative_prompt: {
-                        let trimmed = self.generate_audio_negative_prompt_input.trim();
+                    output_path: {
+                        let output_rel = match super::super::Maolan::unique_import_rel_path(
+                            &session_root,
+                            "audio",
+                            &output_stem,
+                            "wav",
+                        ) {
+                            Ok(rel) => rel,
+                            Err(err) => {
+                                self.state.blocking_write().message =
+                                    format!("Failed to prepare generated output path: {err}");
+                                return Task::none();
+                            }
+                        };
+                        session_root.join(output_rel)
+                    },
+                    tags: {
+                        let trimmed = self.generate_audio_tags_input.trim();
                         (!trimmed.is_empty()).then(|| trimmed.to_string())
                     },
                     backend: self.generate_audio_backend,
-                    sampler: self.generate_audio_sampler,
                     cfg_scale,
-                    steps,
-                    length: seconds_total.saturating_mul(1000),
+                    ode_steps,
+                    length: self.generate_audio_seconds_total_input.saturating_mul(1000),
                 };
-                let mut cfg = crate::config::Config::load().unwrap_or_default();
-                cfg.generate_audio_model = request.model;
-                cfg.burn_negative_prompt = request.negative_prompt.clone().unwrap_or_default();
-                cfg.burn_backend = request.backend;
-                cfg.burn_sampler = request.sampler;
-                cfg.burn_cfg_scale = request.cfg_scale;
-                cfg.burn_steps = request.steps;
-                cfg.burn_seconds_total = seconds_total;
-                if let Err(err) = cfg.save() {
-                    self.state.blocking_write().message =
-                        format!("Failed to save generated audio defaults: {err}");
-                    return Task::none();
-                }
+
                 let used_track_names: HashSet<String> = self
                     .state
                     .blocking_read()
@@ -7094,211 +7076,230 @@ impl Maolan {
                     .iter()
                     .map(|track| track.name.clone())
                     .collect();
-                let _download_token = self.generate_audio_hf_token_input.clone();
-                let playback_rate_hz = self.playback_rate_hz.max(1.0);
 
                 self.generate_audio_in_progress = true;
                 self.generate_audio_progress = 0.0;
                 self.generate_audio_operation = Some("Launching generate".to_string());
 
-                return Task::run(
-                    {
-                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-                        tokio::spawn(async move {
-                            let mut used_names = used_track_names;
-                            let base_name =
-                                super::super::Maolan::sanitize_generated_track_base_name(
-                                    &request.prompt,
-                                );
-                            let _ = tx.send(Message::GenerateAudioProgress {
-                                progress: 0.05,
-                                operation: Some("Checking local HeartMula Burn assets".to_string()),
-                            });
-                            let model_dir =
-                                match super::super::Maolan::ensure_heartmula_burn_model({
-                                    let tx = tx.clone();
-                                    move |progress, operation| {
-                                        let _ = tx.send(Message::GenerateAudioProgress {
-                                            progress: 0.05 + progress.clamp(0.0, 1.0) * 0.35,
-                                            operation,
-                                        });
-                                    }
-                                })
-                                .await
-                                {
-                                    Ok(model_dir) => Some(model_dir),
-                                    Err(err) => {
-                                        let _ = tx.send(Message::GenerateAudioFinished(Err(err)));
-                                        return;
-                                    }
-                                };
+                // Spawn the subprocess and get its PID
+                #[cfg(unix)]
+                let (pid, socket) = match super::super::Maolan::spawn_generate_process(&request) {
+                    Ok((pid, socket)) => (pid, socket),
+                    Err(err) => {
+                        self.generate_audio_in_progress = false;
+                        self.state.blocking_write().message = err;
+                        return Task::none();
+                    }
+                };
+                #[cfg(unix)]
+                {
+                    self.generate_audio_process_id = Some(pid);
+                }
 
-                            let _ = tx.send(Message::GenerateAudioProgress {
-                                progress: 0.45,
-                                operation: Some("Generating in generate".to_string()),
-                            });
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                let task_handle = tokio::spawn(async move {
+                    let mut used_names = used_track_names;
+                    let base_name =
+                        super::super::Maolan::sanitize_generated_track_base_name(&request.prompt);
+                    let output_path = request.output_path.clone();
+                    let _ = tx.send(Message::GenerateAudioProgress {
+                        progress: 0.05,
+                        operation: Some("Generating audio".to_string()),
+                    });
 
-                            let wav_bytes = match tokio::task::spawn_blocking({
-                                let request = request.clone();
-                                let model_dir = model_dir.clone();
-                                move || {
-                                    super::super::Maolan::generate_audio_with_burn_socketpair(
-                                        request,
-                                        model_dir.as_deref(),
-                                    )
-                                }
-                            })
-                            .await
-                            {
-                                Ok(Ok(bytes)) => bytes,
-                                Ok(Err(err)) => {
-                                    let _ = tx.send(Message::GenerateAudioFinished(Err(err)));
-                                    return;
-                                }
-                                Err(err) => {
-                                    let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
-                                        "generate task failed: {err}"
-                                    ))));
-                                    return;
-                                }
-                            };
-
-                            let temp_path = std::env::temp_dir().join(format!(
-                                "generate-{}-{}.wav",
-                                std::process::id(),
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_nanos())
-                                    .unwrap_or_default()
-                            ));
-
-                            if let Err(err) = tokio::fs::write(&temp_path, &wav_bytes).await {
-                                let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
-                                    "Failed to stage generated audio: {err}"
-                                ))));
-                                return;
-                            }
-
-                            let tx_clone = tx.clone();
-                            let mut last_progress_bucket: Option<u16> = None;
-                            let mut last_operation: Option<String> = None;
-                            let progress_fn = move |progress: f32, operation: Option<String>| {
-                                let adjusted = 0.55 + progress.clamp(0.0, 1.0) * 0.45;
-                                let bucket = (adjusted * 100.0).round() as u16;
-                                if last_progress_bucket == Some(bucket)
-                                    && last_operation == operation
-                                {
-                                    return;
-                                }
-                                last_progress_bucket = Some(bucket);
-                                last_operation = operation.clone();
-                                let _ = tx_clone.send(Message::GenerateAudioProgress {
-                                    progress: adjusted,
-                                    operation,
+                    #[cfg(unix)]
+                    let tx_progress = tx.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        super::super::Maolan::communicate_with_generate_process(
+                            socket,
+                            |phase, progress, operation| {
+                                let _ = tx_progress.send(Message::GenerateAudioProgress {
+                                    progress: progress.clamp(0.0, 1.0),
+                                    operation: Some(format!("{}: {}", phase, operation)),
                                 });
-                            };
+                            },
+                        )
+                    })
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(err)) => {
+                            let _ = tx.send(Message::GenerateAudioFinished(Err(err)));
+                            return;
+                        }
+                        Err(err) => {
+                            let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
+                                "generate task failed: {err}"
+                            ))));
+                            return;
+                        }
+                    };
+                    #[cfg(not(unix))]
+                    {
+                        let _ = tx.send(Message::GenerateAudioFinished(Err(
+                            "Generated audio is only available on Unix platforms".to_string(),
+                        )));
+                        return;
+                    };
 
-                            let import_result =
-                                super::super::Maolan::import_audio_to_session_wav_with_progress(
-                                    &temp_path,
-                                    &session_root,
-                                    playback_rate_hz.round().max(1.0) as u32,
-                                    progress_fn,
-                                )
-                                .await;
-                            let _ = tokio::fs::remove_file(&temp_path).await;
-
-                            let (clip_rel, channels, length, peaks) = match import_result {
-                                Ok(result) => result,
-                                Err(err) => {
-                                    let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
-                                        "Failed to import generated audio: {err}"
-                                    ))));
-                                    return;
-                                }
-                            };
-
-                            let track_name = super::super::Maolan::unique_track_name(
-                                &base_name,
-                                &mut used_names,
-                            );
-                            if tx
-                                .send(Message::ImportPreparedAudioPeaks {
-                                    track_name: track_name.clone(),
-                                    clip_name: clip_rel.clone(),
-                                    start: 0,
-                                    length,
-                                    offset: 0,
-                                    peaks,
-                                })
-                                .is_err()
-                            {
-                                return;
-                            }
-
-                            if let Err(err) = CLIENT
-                                .send(EngineMessage::Request(Action::AddTrack {
-                                    name: track_name.clone(),
-                                    audio_ins: channels,
-                                    midi_ins: 0,
-                                    audio_outs: channels,
-                                    midi_outs: 0,
-                                }))
-                                .await
-                            {
-                                let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
-                                    "Failed to add generated track: {err}"
-                                ))));
-                                return;
-                            }
-
-                            if let Err(err) = CLIENT
-                                .send(EngineMessage::Request(Action::AddClip {
-                                    name: clip_rel,
-                                    track_name: track_name.clone(),
-                                    start: 0,
-                                    length,
-                                    offset: 0,
-                                    input_channel: 0,
-                                    muted: false,
-                                    peaks_file: None,
-                                    kind: Kind::Audio,
-                                    fade_enabled: true,
-                                    fade_in_samples: 240,
-                                    fade_out_samples: 240,
-                                    source_name: None,
-                                    source_offset: None,
-                                    source_length: None,
-                                    preview_name: None,
-                                    pitch_correction_points: vec![],
-                                    pitch_correction_frame_likeness: None,
-                                    pitch_correction_inertia_ms: None,
-                                    pitch_correction_formant_compensation: None,
-                                    plugin_graph_json: Some(
-                                        super::super::Maolan::default_clip_plugin_graph_json(
-                                            channels, channels,
-                                        ),
-                                    ),
-                                }))
-                                .await
-                            {
-                                let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
-                                    "Failed to add generated clip: {err}"
-                                ))));
-                                return;
-                            }
-
-                            let _ = tx.send(Message::GenerateAudioProgress {
-                                progress: 1.0,
-                                operation: Some("Complete".to_string()),
-                            });
-                            let _ = tx.send(Message::GenerateAudioFinished(Ok(track_name)));
+                    let tx_clone = tx.clone();
+                    let mut last_progress_bucket: Option<u16> = None;
+                    let mut last_operation: Option<String> = None;
+                    let mut progress_fn = move |progress: f32, operation: Option<String>| {
+                        let adjusted = 0.55 + progress.clamp(0.0, 1.0) * 0.45;
+                        let bucket = (adjusted * 100.0).round() as u16;
+                        if last_progress_bucket == Some(bucket) && last_operation == operation {
+                            return;
+                        }
+                        last_progress_bucket = Some(bucket);
+                        last_operation = operation.clone();
+                        let _ = tx_clone.send(Message::GenerateAudioProgress {
+                            progress: adjusted,
+                            operation,
                         });
+                    };
 
-                        iced::futures::stream::unfold(rx, |mut rx| async move {
-                            rx.recv().await.map(|msg| (msg, rx))
+                    progress_fn(0.95, Some("Calculating peaks".to_string()));
+                    let generated_file_result = tokio::task::spawn_blocking(move || {
+                        let clip_rel = output_path
+                            .strip_prefix(&session_root)
+                            .ok()
+                            .and_then(|path| path.to_str())
+                            .map(|path| path.replace('\\', "/"))
+                            .ok_or_else(|| {
+                                format!(
+                                    "Generated audio path '{}' is outside the session directory",
+                                    output_path.display()
+                                )
+                            })?;
+                        let wav = wavers::Wav::<f32>::from_path(&output_path).map_err(|e| {
+                            format!(
+                                "Failed to open generated WAV '{}': {e}",
+                                output_path.display()
+                            )
+                        })?;
+                        let channels = wav.n_channels().max(1) as usize;
+                        drop(wav);
+                        let length = super::super::Maolan::audio_clip_source_length(&output_path)
+                            .map_err(|e| {
+                            format!(
+                                "Failed to read generated audio length '{}': {e}",
+                                output_path.display()
+                            )
+                        })?;
+                        let peaks = super::super::Maolan::compute_audio_clip_peaks(&output_path)
+                            .map_err(|e| {
+                                format!(
+                                    "Failed to compute generated audio peaks '{}': {e}",
+                                    output_path.display()
+                                )
+                            })?;
+                        Ok::<_, String>((clip_rel, channels, length.max(1), peaks))
+                    })
+                    .await;
+
+                    progress_fn(1.0, Some("Complete".to_string()));
+
+                    let (clip_rel, channels, length, peaks): (
+                        String,
+                        usize,
+                        usize,
+                        crate::state::ClipPeaks,
+                    ) = match generated_file_result {
+                        Ok(Ok(result)) => result,
+                        Ok(Err(err)) => {
+                            let _ = tx.send(Message::GenerateAudioFinished(Err(err)));
+                            return;
+                        }
+                        Err(err) => {
+                            let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
+                                "Failed to inspect generated audio: {err}"
+                            ))));
+                            return;
+                        }
+                    };
+
+                    let track_name =
+                        super::super::Maolan::unique_track_name(&base_name, &mut used_names);
+                    if tx
+                        .send(Message::ImportPreparedAudioPeaks {
+                            track_name: track_name.clone(),
+                            clip_name: clip_rel.clone(),
+                            start: 0,
+                            length,
+                            offset: 0,
+                            peaks,
                         })
-                    },
+                        .is_err()
+                    {
+                        return;
+                    }
+
+                    if let Err(err) = CLIENT
+                        .send(EngineMessage::Request(Action::AddTrack {
+                            name: track_name.clone(),
+                            audio_ins: channels,
+                            midi_ins: 0,
+                            audio_outs: channels,
+                            midi_outs: 0,
+                        }))
+                        .await
+                    {
+                        let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
+                            "Failed to add generated track: {err}"
+                        ))));
+                        return;
+                    }
+
+                    if let Err(err) = CLIENT
+                        .send(EngineMessage::Request(Action::AddClip {
+                            name: clip_rel,
+                            track_name: track_name.clone(),
+                            start: 0,
+                            length,
+                            offset: 0,
+                            input_channel: 0,
+                            muted: false,
+                            peaks_file: None,
+                            kind: Kind::Audio,
+                            fade_enabled: true,
+                            fade_in_samples: 240,
+                            fade_out_samples: 240,
+                            source_name: None,
+                            source_offset: None,
+                            source_length: None,
+                            preview_name: None,
+                            pitch_correction_points: vec![],
+                            pitch_correction_frame_likeness: None,
+                            pitch_correction_inertia_ms: None,
+                            pitch_correction_formant_compensation: None,
+                            plugin_graph_json: Some(
+                                super::super::Maolan::default_clip_plugin_graph_json(
+                                    channels, channels,
+                                ),
+                            ),
+                        }))
+                        .await
+                    {
+                        let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
+                            "Failed to add generated clip: {err}"
+                        ))));
+                        return;
+                    }
+
+                    let _ = tx.send(Message::GenerateAudioProgress {
+                        progress: 1.0,
+                        operation: Some("Complete".to_string()),
+                    });
+                    let _ = tx.send(Message::GenerateAudioFinished(Ok(track_name)));
+                });
+
+                self.generate_audio_abort_handle = Some(task_handle.abort_handle());
+
+                return Task::run(
+                    iced::futures::stream::unfold(rx, |mut rx| async move {
+                        rx.recv().await.map(|msg| (msg, rx))
+                    }),
                     |msg| msg,
                 );
             }
@@ -7316,8 +7317,11 @@ impl Maolan {
                 self.generate_audio_in_progress = false;
                 self.generate_audio_progress = if result.is_ok() { 1.0 } else { 0.0 };
                 self.generate_audio_operation = None;
-                self.generate_audio_hf_token_input.clear();
-                self.generate_audio_hf_token_visible = false;
+                self.generate_audio_abort_handle = None;
+                #[cfg(unix)]
+                {
+                    self.generate_audio_process_id = None;
+                }
                 match result {
                     Ok(track_name) => {
                         self.modal = None;
@@ -8221,5 +8225,21 @@ mod tests {
             resolved_start
         };
         assert_eq!(clamped_start, 0.0);
+    }
+
+    #[test]
+    fn generate_audio_progress_message_uses_normalized_scale() {
+        let mut app = Maolan {
+            generate_audio_in_progress: true,
+            ..Maolan::default()
+        };
+
+        let _ = app.update(Message::GenerateAudioProgress {
+            progress: 0.42,
+            operation: Some("Generating".to_string()),
+        });
+
+        assert!((app.generate_audio_progress - 0.42).abs() < f32::EPSILON);
+        assert_eq!(app.generate_audio_operation.as_deref(), Some("Generating"));
     }
 }
