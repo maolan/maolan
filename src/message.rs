@@ -872,6 +872,8 @@ pub enum Message {
     ToggleMixerVisibility,
     ToggleTracksVisibility,
     ToggleEditorVisibility,
+    ToggleLogVisibility,
+    LogViewAction(text_editor::Action),
     OpenTrackPlugins(String),
     OpenHwPorts {
         input: bool,

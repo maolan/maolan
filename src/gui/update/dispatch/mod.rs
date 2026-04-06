@@ -271,6 +271,17 @@ impl Maolan {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        struct SyncLogOnDrop(*mut Maolan);
+
+        impl Drop for SyncLogOnDrop {
+            fn drop(&mut self) {
+                unsafe {
+                    (*self.0).sync_message_log_from_state();
+                }
+            }
+        }
+
+        let _sync_log_on_drop = SyncLogOnDrop(self as *mut _);
         if self.handle_simple_ui_message(&message) {
             self.update_children(&message);
             return Task::none();
@@ -7015,35 +7026,32 @@ impl Maolan {
                 self.generate_audio_in_progress = false;
                 self.generate_audio_progress = 0.0;
                 self.generate_audio_operation = None;
-                self.state.blocking_write().message = "Generation cancelled".to_string();
+                self.info("Generation cancelled");
             }
             Message::GenerateAudioSubmit => {
                 if self.generate_audio_in_progress {
                     return Task::none();
                 }
                 let Some(session_root) = self.session_dir.clone() else {
-                    self.state.blocking_write().message =
-                        "Generated audio requires an opened/saved session".to_string();
+                    self.warning("Generated audio requires an opened/saved session");
                     return Task::none();
                 };
 
                 let prompt = self.generate_audio_prompt_editor.text().trim().to_string();
                 if prompt.is_empty() {
-                    self.state.blocking_write().message = "Prompt cannot be empty".to_string();
+                    self.warning("Prompt cannot be empty");
                     return Task::none();
                 }
                 let cfg_scale = match self.generate_audio_cfg_scale_input.trim().parse::<f32>() {
                     Ok(value) if value.is_finite() && (0.0..=20.0).contains(&value) => value,
                     _ => {
-                        self.state.blocking_write().message =
-                            "CFG scale must be a number between 0 and 20".to_string();
+                        self.warning("CFG scale must be a number between 0 and 20");
                         return Task::none();
                     }
                 };
                 let ode_steps = self.generate_audio_steps_input;
                 if ode_steps == 0 || ode_steps > 50 {
-                    self.state.blocking_write().message =
-                        "ODE steps must be between 1 and 50".to_string();
+                    self.warning("ODE steps must be between 1 and 50");
                     return Task::none();
                 }
                 let transport_sample = self.transport_samples.max(0.0) as usize;
@@ -7064,8 +7072,9 @@ impl Maolan {
                         ) {
                             Ok(rel) => rel,
                             Err(err) => {
-                                self.state.blocking_write().message =
-                                    format!("Failed to prepare generated output path: {err}");
+                                self.error(format!(
+                                    "Failed to prepare generated output path: {err}"
+                                ));
                                 return Task::none();
                             }
                         };
@@ -7103,7 +7112,7 @@ impl Maolan {
                     Ok((pid, socket)) => (pid, socket),
                     Err(err) => {
                         self.generate_audio_in_progress = false;
-                        self.state.blocking_write().message = err;
+                        self.error(err);
                         return Task::none();
                     }
                 };
@@ -7341,11 +7350,10 @@ impl Maolan {
                 match result {
                     Ok(track_name) => {
                         self.modal = None;
-                        self.state.blocking_write().message =
-                            format!("Generated audio imported to track '{track_name}'");
+                        self.info(format!("Generated audio imported to track '{track_name}'"));
                     }
                     Err(err) => {
-                        self.state.blocking_write().message = err.to_string();
+                        self.error(err.to_string());
                     }
                 }
             }
@@ -7751,13 +7759,11 @@ impl Maolan {
                             Self::apply_preferred_devices_to_state(&mut state, &prefs);
                         }
                         self.modal = None;
-                        self.state.blocking_write().message =
-                            "Preferences saved: ~/.config/maolan/config.toml".to_string();
+                        self.info("Preferences saved: ~/.config/maolan/config.toml");
                         return task;
                     }
                     Err(e) => {
-                        self.state.blocking_write().message =
-                            format!("Failed to save preferences: {e}");
+                        self.error(format!("Failed to save preferences: {e}"));
                     }
                 }
             }
@@ -7945,6 +7951,14 @@ impl Maolan {
             }
             Message::ToggleEditorVisibility => {
                 self.editor_visible = !self.editor_visible;
+            }
+            Message::ToggleLogVisibility => {
+                self.show_log_window = !self.show_log_window;
+            }
+            Message::LogViewAction(ref action) => {
+                if !action.is_edit() {
+                    self.log_viewer_content.perform(action.clone());
+                }
             }
             Message::Connections => {
                 let mut state = self.state.blocking_write();

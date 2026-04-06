@@ -376,6 +376,30 @@ pub const MIN_PITCH_CORRECTION_FRAME_LIKENESS: f32 = 0.05;
 pub const DEFAULT_PITCH_CORRECTION_FRAME_LIKENESS: f32 = MIN_PITCH_CORRECTION_FRAME_LIKENESS;
 pub const DEFAULT_PITCH_CORRECTION_INERTIA_MS: u16 = 100;
 pub const DEFAULT_PITCH_CORRECTION_FORMANT_COMPENSATION: bool = true;
+pub const LOG_HISTORY_LIMIT: usize = 512;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogLevel {
+    Info,
+    Warning,
+    Error,
+}
+
+impl std::fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Info => f.write_str("INFO"),
+            Self::Warning => f.write_str("WARN"),
+            Self::Error => f.write_str("ERROR"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogEntry {
+    pub level: LogLevel,
+    pub message: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct DraggingPitchCorrectionPoints {
@@ -400,6 +424,7 @@ pub struct StateData {
     pub track_context_hover: Option<(String, Point)>,
     pub clip_click_consumed: bool,
     pub message: String,
+    pub log_entries: Vec<LogEntry>,
     pub diagnostics_report: Option<String>,
     pub resizing: Option<Resizing>,
     pub connecting: Option<Connecting>,
@@ -555,6 +580,7 @@ impl Default for StateData {
     fn default() -> Self {
         let cfg = config::Config::load().unwrap_or_default();
         let initial_hw = initial_hw_config();
+        let initial_message = "Thank you for using Maolan!".to_string();
         Self {
             shift: false,
             ctrl: false,
@@ -566,7 +592,11 @@ impl Default for StateData {
             track_context_menu: None,
             track_context_hover: None,
             clip_click_consumed: false,
-            message: "Thank you for using Maolan!".to_string(),
+            message: initial_message.clone(),
+            log_entries: vec![LogEntry {
+                level: LogLevel::Info,
+                message: initial_message,
+            }],
             diagnostics_report: None,
             resizing: None,
             connecting: None,

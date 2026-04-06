@@ -29,8 +29,9 @@ use crate::{
     platform_caps,
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{
-        AudioClip, ClipPeaks, MIDIClip, MidiClipPreviewMap, PianoControllerPoint, PianoNote,
-        PianoSysExPoint, PitchCorrectionData, PitchCorrectionPoint, State, StateData,
+        AudioClip, ClipPeaks, LOG_HISTORY_LIMIT, LogEntry, LogLevel, MIDIClip, MidiClipPreviewMap,
+        PianoControllerPoint, PianoNote, PianoSysExPoint, PitchCorrectionData,
+        PitchCorrectionPoint, State, StateData,
     },
     template_save, toolbar, track_group, track_marker, track_rename, track_template_save,
     workspace,
@@ -431,6 +432,7 @@ pub struct Maolan {
     tracks_visible: bool,
     editor_visible: bool,
     mixer_visible: bool,
+    show_log_window: bool,
     mixer_level_edit_track: Option<String>,
     mixer_level_edit_input: String,
     record_armed: bool,
@@ -446,6 +448,7 @@ pub struct Maolan {
     import_current_operation: Option<String>,
     generate_audio_model: GenerateAudioModelOption,
     generate_audio_prompt_editor: text_editor::Content,
+    log_viewer_content: text_editor::Content,
 
     generate_audio_tags_input: String,
     generate_audio_backend: BurnBackendOption,
@@ -685,6 +688,7 @@ impl Default for Maolan {
             tracks_visible: true,
             editor_visible: true,
             mixer_visible: true,
+            show_log_window: false,
             mixer_level_edit_track: None,
             mixer_level_edit_input: String::new(),
             record_armed: false,
@@ -700,6 +704,9 @@ impl Default for Maolan {
             import_current_operation: None,
             generate_audio_model: GenerateAudioModelOption::HappyNewYear,
             generate_audio_prompt_editor: text_editor::Content::new(),
+            log_viewer_content: text_editor::Content::with_text(
+                "[INFO] Thank you for using Maolan!",
+            ),
 
             generate_audio_tags_input: String::new(),
             generate_audio_backend: BurnBackendOption::Vulkan,
@@ -777,6 +784,69 @@ impl Default for Maolan {
 }
 
 impl Maolan {
+    fn push_log_entry(state: &mut StateData, level: LogLevel, message: String) {
+        state.message = message.clone();
+        state.log_entries.push(LogEntry { level, message });
+        if state.log_entries.len() > LOG_HISTORY_LIMIT {
+            let drop_count = state.log_entries.len() - LOG_HISTORY_LIMIT;
+            state.log_entries.drain(0..drop_count);
+        }
+    }
+
+    fn refresh_log_viewer_content(&mut self) {
+        let log_text = self
+            .state
+            .blocking_read()
+            .log_entries
+            .iter()
+            .map(|entry| format!("[{}] {}", entry.level, entry.message))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.log_viewer_content = text_editor::Content::with_text(&log_text);
+    }
+
+    fn sync_message_log_from_state(&mut self) {
+        let mut state = self.state.blocking_write();
+        let needs_append = state
+            .log_entries
+            .last()
+            .map(|entry| entry.message.as_str() != state.message.as_str())
+            .unwrap_or(true);
+        if needs_append {
+            let message = state.message.clone();
+            Self::push_log_entry(&mut state, LogLevel::Info, message);
+            drop(state);
+            self.refresh_log_viewer_content();
+        }
+    }
+
+    fn info(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        tracing::info!("{message}");
+        let mut state = self.state.blocking_write();
+        Self::push_log_entry(&mut state, LogLevel::Info, message);
+        drop(state);
+        self.refresh_log_viewer_content();
+    }
+
+    fn warning(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        tracing::warn!("{message}");
+        let mut state = self.state.blocking_write();
+        Self::push_log_entry(&mut state, LogLevel::Warning, message);
+        drop(state);
+        self.refresh_log_viewer_content();
+    }
+
+    fn error(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        tracing::error!("{message}");
+        let mut state = self.state.blocking_write();
+        Self::push_log_entry(&mut state, LogLevel::Error, message);
+        drop(state);
+        self.refresh_log_viewer_content();
+    }
+
     #[cfg(unix)]
     fn maolan_workspace_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -924,6 +994,7 @@ impl Maolan {
     where
         F: FnMut(&str, f32, &str),
     {
+        use maolan_generate::GenerateError;
         use maolan_generate::GenerateProgress;
         use maolan_generate::GenerateResponseHeader;
 
@@ -964,6 +1035,9 @@ impl Maolan {
                     continue;
                 }
                 Err(_) => {
+                    if let Ok(error) = serde_json::from_slice::<GenerateError>(&payload) {
+                        return Err(error.error);
+                    }
                     header = match serde_json::from_slice::<GenerateResponseHeader>(&payload) {
                         Ok(h) => h,
                         Err(err) => {
