@@ -85,6 +85,8 @@ impl Maolan {
             Show::GenerateAudio => {
                 self.generate_audio_prompt_editor = text_editor::Content::new();
                 self.generate_audio_tags_input.clear();
+                self.generate_audio_cfg_scale_input =
+                    maolan_generate::DEFAULT_CFG_SCALE.to_string();
                 self.generate_audio_steps_input = 10;
                 self.generate_audio_seconds_total_input = 180;
                 self.generate_audio_in_progress = false;

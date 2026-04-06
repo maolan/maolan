@@ -154,3 +154,96 @@ where
     .style(shell_style)
     .into()
 }
+
+fn format_decimal_value(value: f32) -> String {
+    let mut formatted = format!("{value:.3}");
+    while formatted.contains('.') && formatted.ends_with('0') {
+        formatted.pop();
+    }
+    if formatted.ends_with('.') {
+        formatted.pop();
+    }
+    formatted
+}
+
+pub fn number_input_f32<'a, Message>(
+    value: &'a str,
+    bounds: RangeInclusive<f32>,
+    step: f32,
+    on_change: impl Fn(String) -> Message + 'a + Copy,
+) -> Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    let min = *bounds.start();
+    let max = *bounds.end();
+    let parsed_current = value.trim().parse::<f32>().ok();
+    let current = parsed_current.unwrap_or(min).clamp(min, max);
+    let dec_value = (current - step).clamp(min, max);
+    let inc_value = (current + step).clamp(min, max);
+
+    let input = text_input("", value)
+        .on_input(on_change)
+        .style(input_style)
+        .padding([5, 8])
+        .width(Length::Fixed(72.0))
+        .size(14);
+
+    let decrement = button(
+        container(chevron_down().size(14))
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .style(spinner_button_style)
+    .padding(0)
+    .width(Length::Fixed(22.0))
+    .height(Length::Fixed(15.0));
+    let decrement = if current > min {
+        decrement.on_press(on_change(format_decimal_value(dec_value)))
+    } else {
+        decrement
+    };
+
+    let increment = button(
+        container(chevron_up().size(14))
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .style(spinner_button_style)
+    .padding(0)
+    .width(Length::Fixed(22.0))
+    .height(Length::Fixed(15.0));
+    let increment = if current < max {
+        increment.on_press(on_change(format_decimal_value(inc_value)))
+    } else {
+        increment
+    };
+
+    container(
+        row![
+            container(input)
+                .width(Length::Fixed(72.0))
+                .center_y(Length::Fixed(30.0)),
+            column![increment, decrement]
+                .spacing(0)
+                .width(Length::Fixed(22.0))
+                .align_x(Alignment::Center),
+        ]
+        .spacing(0)
+        .align_y(Alignment::Center),
+    )
+    .style(shell_style)
+    .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_decimal_value;
+
+    #[test]
+    fn format_decimal_value_trims_trailing_zeroes() {
+        assert_eq!(format_decimal_value(6.1), "6.1");
+        assert_eq!(format_decimal_value(6.0), "6");
+        assert_eq!(format_decimal_value(6.125), "6.125");
+    }
+}

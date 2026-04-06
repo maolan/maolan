@@ -6993,8 +6993,8 @@ impl Maolan {
                 self.generate_audio_backend = backend;
             }
 
-            Message::GenerateAudioCfgScaleInput(value) => {
-                self.generate_audio_cfg_scale_input = value;
+            Message::GenerateAudioCfgScaleInput(ref value) => {
+                self.generate_audio_cfg_scale_input = value.clone();
             }
             Message::GenerateAudioStepsInput(value) => {
                 self.generate_audio_steps_input = value;
@@ -7032,13 +7032,25 @@ impl Maolan {
                     self.state.blocking_write().message = "Prompt cannot be empty".to_string();
                     return Task::none();
                 }
-                let cfg_scale = self.generate_audio_cfg_scale_input;
+                let cfg_scale = match self.generate_audio_cfg_scale_input.trim().parse::<f32>() {
+                    Ok(value) if value.is_finite() && (0.0..=20.0).contains(&value) => value,
+                    _ => {
+                        self.state.blocking_write().message =
+                            "CFG scale must be a number between 0 and 20".to_string();
+                        return Task::none();
+                    }
+                };
                 let ode_steps = self.generate_audio_steps_input;
                 if ode_steps == 0 || ode_steps > 50 {
                     self.state.blocking_write().message =
                         "ODE steps must be between 1 and 50".to_string();
                     return Task::none();
                 }
+                let transport_sample = self.transport_samples.max(0.0) as usize;
+                let (bpm, time_signature_num, time_signature_denom) = {
+                    let state = self.state.blocking_read();
+                    Self::timing_at_sample(&state, transport_sample)
+                };
                 let output_stem = super::super::Maolan::sanitize_generated_track_base_name(&prompt);
                 let request = super::super::BurnGenerateRequest {
                     model: self.generate_audio_model,
@@ -7060,8 +7072,12 @@ impl Maolan {
                         session_root.join(output_rel)
                     },
                     tags: {
-                        let trimmed = self.generate_audio_tags_input.trim();
-                        (!trimmed.is_empty()).then(|| trimmed.to_string())
+                        Some(super::super::Maolan::generate_audio_tags_with_timing(
+                            self.generate_audio_tags_input.trim(),
+                            bpm,
+                            time_signature_num,
+                            time_signature_denom,
+                        ))
                     },
                     backend: self.generate_audio_backend,
                     cfg_scale,

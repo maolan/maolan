@@ -4,8 +4,8 @@ use burn_store::{BurnpackStore, ModuleStore, TensorSnapshot};
 use huggingface_hub::{Repo, RepoType, api::sync::ApiBuilder};
 use maolan_generate::heartmula_runtime;
 use maolan_generate::{
-    BackendChoice, GenerateProgress, GenerateResponseHeader, ModelChoice, help_text, parse_options,
-    read_ipc_message, validate_options, write_ipc_message,
+    BackendChoice, GenerateProgress, GenerateResponseHeader, IPC_MODE_ENV, ModelChoice, help_text,
+    parse_options, read_ipc_message, validate_options, write_ipc_message,
 };
 use std::collections::BTreeMap;
 use std::env;
@@ -15,12 +15,20 @@ use std::process::Command;
 
 include!(concat!(env!("OUT_DIR"), "/model_bindings.rs"));
 
-const IPC_MODE_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
 const HEARTMULA_GENERATE_ONLY_ENV: &str = "MAOLAN_HEARTMULA_GENERATE_ONLY";
-const HEARTMULA_REPO_ID: &str = "maolandaw/HeartMuLa-happy-new-year-burn";
+const HEARTMULA_HAPPY_NEW_YEAR_REPO_ID: &str = "maolandaw/HeartMuLa-happy-new-year-burn";
+const HEARTMULA_RL_REPO_ID: &str = "maolandaw/HeartMuLa-RL-oss-3B-20260123";
 const HEARTCODEC_REPO_ID: &str = "maolandaw/HeartCodec-oss-20260123-burn";
 const HEARTMULA_TOKENIZER_REL: &str = "tokenizer.json";
 const HEARTMULA_GEN_CONFIG_REL: &str = "gen_config.json";
+
+macro_rules! eprintln {
+    ($($arg:tt)*) => {
+        if maolan_generate::stderr_logging_enabled() {
+            std::eprintln!($($arg)*);
+        }
+    };
+}
 
 struct HeartmulaModelPaths {
     model_dir: PathBuf,
@@ -118,7 +126,7 @@ fn run_decode_with_frames_json(
     options: &maolan_generate::CliOptions,
     frames_json: &Path,
 ) -> Result<()> {
-    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref())?;
+    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref(), options.model)?;
     println!(
         "decode_only_model_dir={}",
         model_paths.heartcodec_model_dir.display()
@@ -180,7 +188,7 @@ fn spawn_generate_subprocess(options: &maolan_generate::CliOptions) -> Result<()
     command
         .env(HEARTMULA_GENERATE_ONLY_ENV, "1")
         .arg("--model")
-        .arg("heartmula")
+        .arg(model_name(options.model))
         .arg("--backend")
         .arg(backend_name(options.backend))
         .arg("--output")
@@ -265,8 +273,18 @@ struct GeneratedOutput {
     header: GenerateResponseHeader,
 }
 
-fn model_name(_model: ModelChoice) -> &'static str {
-    "heartmula"
+fn model_name(model: ModelChoice) -> &'static str {
+    match model {
+        ModelChoice::HappyNewYear => "happy-new-year",
+        ModelChoice::Rl => "RL",
+    }
+}
+
+fn heartmula_repo_id(model: ModelChoice) -> &'static str {
+    match model {
+        ModelChoice::HappyNewYear => HEARTMULA_HAPPY_NEW_YEAR_REPO_ID,
+        ModelChoice::Rl => HEARTMULA_RL_REPO_ID,
+    }
 }
 
 fn backend_name(backend: BackendChoice) -> &'static str {
@@ -331,12 +349,17 @@ fn ensure_repo_snapshot_dir(repo_id: &str, required_files: &[&'static str]) -> R
     snapshot_dir.ok_or_else(|| anyhow!("no files resolved for {repo_id}"))
 }
 
-fn resolve_heartmula_model_paths(model_dir_override: Option<&Path>) -> Result<HeartmulaModelPaths> {
+fn resolve_heartmula_model_paths(
+    model_dir_override: Option<&Path>,
+    model: ModelChoice,
+) -> Result<HeartmulaModelPaths> {
     let (model_dir, heartcodec_model_dir) = if let Some(model_dir) = model_dir_override {
         (model_dir.to_path_buf(), model_dir.to_path_buf())
     } else {
-        let heartmula_snapshot_dir =
-            ensure_repo_snapshot_dir(HEARTMULA_REPO_ID, &heartmula_required_relative_files())?;
+        let heartmula_snapshot_dir = ensure_repo_snapshot_dir(
+            heartmula_repo_id(model),
+            &heartmula_required_relative_files(),
+        )?;
         let heartcodec_snapshot_dir =
             ensure_repo_snapshot_dir(HEARTCODEC_REPO_ID, &heartcodec_required_relative_files())?;
         (heartmula_snapshot_dir, heartcodec_snapshot_dir)
@@ -383,7 +406,7 @@ fn run_heartmula_ipc_with_backend<B: Backend>(
     backend: BackendChoice,
     stdout: &mut impl std::io::Write,
 ) -> Result<GeneratedOutput> {
-    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref())?;
+    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref(), options.model)?;
     let config = load_heartmula_gen_config(&model_paths.gen_config_json)?;
     let runtime_summary = inspect_heartmula_runtime(&model_paths)?;
 
@@ -526,7 +549,7 @@ fn run_heartmula_ipc_with_backend<B: Backend>(
 }
 
 fn inspect_heartmula_cli(options: &maolan_generate::CliOptions) -> Result<()> {
-    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref())?;
+    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref(), options.model)?;
     let config = load_heartmula_gen_config(&model_paths.gen_config_json)?;
     let heartmula_summary =
         summarize_burnpack(&model_paths.heartmula_raw_bpk, heartmula_required_tensors())?;
@@ -829,7 +852,7 @@ fn run_heartmula_with_backend<B: Backend>(
 where
     B::Device: Default,
 {
-    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref())?;
+    let model_paths = resolve_heartmula_model_paths(options.model_dir.as_deref(), options.model)?;
     let config = load_heartmula_gen_config(&model_paths.gen_config_json)?;
     let runtime_summary = inspect_heartmula_runtime(&model_paths)?;
     let heartmula_summary =

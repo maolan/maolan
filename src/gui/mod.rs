@@ -47,7 +47,7 @@ use iced::{
 };
 use maolan_engine::kind::Kind;
 use maolan_engine::message::{Action, Message as EngineMessage};
-use maolan_widgets::numeric_input::number_input;
+use maolan_widgets::numeric_input::{number_input, number_input_f32};
 use midly::{
     Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
     num::{u15, u24, u28},
@@ -95,6 +95,13 @@ struct BurnGenerateRequest {
     cfg_scale: f32,
     ode_steps: usize,
     length: usize,
+}
+
+#[cfg(unix)]
+struct BurnGenerateProcessHandle {
+    socket: std::os::unix::net::UnixStream,
+    stderr_log: Arc<Mutex<Vec<String>>>,
+    exit_status: Arc<Mutex<Option<std::process::ExitStatus>>>,
 }
 
 type PianoParseResult = (
@@ -443,7 +450,7 @@ pub struct Maolan {
     generate_audio_tags_input: String,
     generate_audio_backend: BurnBackendOption,
 
-    generate_audio_cfg_scale_input: f32,
+    generate_audio_cfg_scale_input: String,
     generate_audio_steps_input: usize,
     generate_audio_seconds_total_input: usize,
     generate_audio_in_progress: bool,
@@ -691,13 +698,13 @@ impl Default for Maolan {
             import_file_progress: 0.0,
             import_current_filename: String::new(),
             import_current_operation: None,
-            generate_audio_model: GenerateAudioModelOption::Heartmula,
+            generate_audio_model: GenerateAudioModelOption::HappyNewYear,
             generate_audio_prompt_editor: text_editor::Content::new(),
 
             generate_audio_tags_input: String::new(),
             generate_audio_backend: BurnBackendOption::Vulkan,
 
-            generate_audio_cfg_scale_input: 6.0,
+            generate_audio_cfg_scale_input: maolan_generate::DEFAULT_CFG_SCALE.to_string(),
             generate_audio_steps_input: 10,
             generate_audio_seconds_total_input: 180_usize,
             generate_audio_in_progress: false,
@@ -778,38 +785,14 @@ impl Maolan {
     #[cfg(unix)]
     fn resolve_maolan_burn_binary_path(
         current_exe: Option<&Path>,
-        workspace_root: &Path,
+        _workspace_root: &Path,
     ) -> Option<PathBuf> {
-        // Check artifact dependency location first (set by Cargo when using artifact = "bin")
-        if let Ok(bin_dir) = std::env::var("CARGO_BIN_DIR_MAOLAN_GENERATE") {
-            let artifact_path = PathBuf::from(bin_dir).join("maolan-generate");
-            if artifact_path.exists() {
-                return Some(artifact_path);
-            }
-        }
-
         let mut candidates = Vec::new();
-        // Check same directory as maolan binary first
         if let Some(current_exe) = current_exe
             && let Some(parent) = current_exe.parent()
         {
             candidates.push(parent.join("maolan-generate"));
-            if let Some(grandparent) = parent.parent() {
-                candidates.push(grandparent.join("maolan-generate"));
-            }
         }
-        candidates.push(
-            workspace_root
-                .join("target")
-                .join("debug")
-                .join("maolan-generate"),
-        );
-        candidates.push(
-            workspace_root
-                .join("target")
-                .join("release")
-                .join("maolan-generate"),
-        );
         candidates.into_iter().find(|path| path.exists())
     }
 
@@ -865,7 +848,8 @@ impl Maolan {
     #[cfg(unix)]
     fn spawn_generate_process(
         request: &BurnGenerateRequest,
-    ) -> Result<(u32, std::os::unix::net::UnixStream), String> {
+    ) -> Result<(u32, BurnGenerateProcessHandle), String> {
+        use std::io::{BufRead, BufReader};
         use std::os::fd::OwnedFd;
         use std::os::unix::net::UnixStream;
         use std::process::Stdio;
@@ -884,25 +868,57 @@ impl Maolan {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("Failed to launch generate: {e}"))?;
-
         let pid = process.id();
 
+        let stderr_log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let exit_status = Arc::new(Mutex::new(None));
+
+        let stderr_log_bg = stderr_log.clone();
+        let exit_status_bg = exit_status.clone();
+        std::thread::spawn(move || {
+            if let Some(stderr) = process.stderr.take() {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines() {
+                    match line {
+                        Ok(line) => {
+                            error!("maolan-generate: {line}");
+                            if let Ok(mut log) = stderr_log_bg.lock() {
+                                log.push(line);
+                                if log.len() > 64 {
+                                    let drop_count = log.len() - 64;
+                                    log.drain(0..drop_count);
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            error!("Failed to read maolan-generate stderr: {err}");
+                            break;
+                        }
+                    }
+                }
+            }
+            let status = process.wait().ok();
+            if let Ok(mut slot) = exit_status_bg.lock() {
+                *slot = status;
+            }
+        });
+
         // Send the request
-        if let Err(err) = Self::write_ipc_message(&mut parent, request) {
-            let _ = process.kill();
-            return Err(err);
-        }
+        Self::write_ipc_message(&mut parent, request)?;
 
-        // Drop our reference to the process - it will be managed by the caller
-        // We need to forget the process or it will be killed when dropped
-        std::mem::forget(process);
-
-        Ok((pid, parent))
+        Ok((
+            pid,
+            BurnGenerateProcessHandle {
+                socket: parent,
+                stderr_log,
+                exit_status,
+            },
+        ))
     }
 
     #[cfg(unix)]
     fn communicate_with_generate_process<F>(
-        mut socket: std::os::unix::net::UnixStream,
+        mut process: BurnGenerateProcessHandle,
         mut progress_callback: F,
     ) -> Result<(), String>
     where
@@ -915,7 +931,32 @@ impl Maolan {
         // Progress messages come before the header
         let header: GenerateResponseHeader;
         loop {
-            let payload = Self::read_ipc_payload(&mut socket)?;
+            let payload = match Self::read_ipc_payload(&mut process.socket) {
+                Ok(payload) => payload,
+                Err(err) => {
+                    let stderr_tail = process
+                        .stderr_log
+                        .lock()
+                        .ok()
+                        .map(|log| log.join("\n"))
+                        .unwrap_or_default();
+                    let exit_status = process
+                        .exit_status
+                        .lock()
+                        .ok()
+                        .and_then(|status| *status)
+                        .map(|status| status.to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let stderr_suffix = if stderr_tail.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!("\nChild stderr:\n{stderr_tail}")
+                    };
+                    return Err(format!(
+                        "{err}\nmaolan-generate exited before completing IPC (status: {exit_status}){stderr_suffix}"
+                    ));
+                }
+            };
 
             match serde_json::from_slice::<GenerateProgress>(&payload) {
                 Ok(progress) => {
@@ -935,7 +976,7 @@ impl Maolan {
         }
 
         // Drop the socket to signal EOF
-        drop(socket);
+        drop(process.socket);
         let _ = header;
         Ok(())
     }
@@ -1862,6 +1903,27 @@ impl Maolan {
         } else {
             candidate
         }
+    }
+
+    fn generate_audio_tags_with_timing(
+        tags: &str,
+        bpm: f32,
+        time_signature_num: u8,
+        time_signature_denom: u8,
+    ) -> String {
+        let mut parts = tags
+            .split(',')
+            .map(str::trim)
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        parts.push(format!("{:.0}bpm", bpm.clamp(20.0, 300.0)));
+        parts.push(format!(
+            "{}/{} tempo signature",
+            time_signature_num.max(1),
+            time_signature_denom.max(1)
+        ));
+        parts.join(",")
     }
 
     fn unique_track_name(base: &str, used_names: &mut HashSet<String>) -> String {
@@ -5205,9 +5267,10 @@ impl Maolan {
                     .align_y(iced::Alignment::Center),
                     row![
                         text("CFG scale"),
-                        number_input(
+                        number_input_f32(
                             &self.generate_audio_cfg_scale_input,
                             0.0..=20.0,
+                            0.1,
                             Message::GenerateAudioCfgScaleInput
                         ),
                         text("Steps:"),
@@ -6693,19 +6756,49 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn resolve_maolan_burn_binary_path_falls_back_to_workspace_target() {
+    fn resolve_maolan_burn_binary_path_does_not_probe_parent_directory() {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("generate-target-test-{unique}"));
-        let target_path = root.join("target").join("debug").join("maolan-generate");
-        fs::create_dir_all(target_path.parent().expect("target parent")).expect("target dir");
-        fs::write(&target_path, []).expect("touch target");
+        let root = std::env::temp_dir().join(format!("generate-parent-test-{unique}"));
+        let bin_dir = root.join("target").join("debug");
+        fs::create_dir_all(&bin_dir).expect("bin dir");
+        let current_exe = bin_dir.join("maolan");
+        let parent_candidate = root.join("target").join("maolan-generate");
+        fs::write(&parent_candidate, []).expect("touch parent candidate");
 
-        let resolved = Maolan::resolve_maolan_burn_binary_path(None, &root);
+        let resolved = Maolan::resolve_maolan_burn_binary_path(Some(&current_exe), &root);
 
-        assert_eq!(resolved, Some(target_path));
+        assert_eq!(resolved, None);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gui_generate_audio_defaults_match_generate_defaults() {
+        let app = Maolan::default();
+        assert_eq!(
+            app.generate_audio_cfg_scale_input,
+            maolan_generate::DEFAULT_CFG_SCALE.to_string()
+        );
+    }
+
+    #[test]
+    fn generate_audio_tags_with_timing_appends_bpm_and_time_signature() {
+        assert_eq!(
+            Maolan::generate_audio_tags_with_timing("rock, upbeat", 127.6, 7, 8),
+            "rock,upbeat,128bpm,7/8 tempo signature"
+        );
+        assert_eq!(
+            Maolan::generate_audio_tags_with_timing("", 120.0, 4, 4),
+            "120bpm,4/4 tempo signature"
+        );
+    }
+
+    #[test]
+    fn generate_audio_cfg_scale_input_preserves_decimal_text() {
+        let mut app = Maolan::default();
+        let _ = app.update(Message::GenerateAudioCfgScaleInput("6.1".to_string()));
+        assert_eq!(app.generate_audio_cfg_scale_input, "6.1");
     }
 }
