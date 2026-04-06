@@ -68,7 +68,7 @@ pub mod platform_caps {
 }
 
 pub mod main {
-    pub const ICON_BYTES: &[u8] = include_bytes!("../images/maolan.png");
+    pub const ICON_BYTES: &[u8] = include_bytes!("../images/icon.png");
 }
 
 pub mod workspace_ids {
