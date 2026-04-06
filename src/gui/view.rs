@@ -8,10 +8,71 @@ use crate::{
 };
 use iced::{
     Border, Color, Length,
-    widget::{button, column, container, progress_bar, row, scrollable, text, text_input},
+    widget::{
+        Stack, button, column, container, progress_bar, row, scrollable, text, text_editor,
+        text_input,
+    },
 };
 
 impl Maolan {
+    fn log_window(&self) -> iced::Element<'_, Message> {
+        container(
+            column![
+                row![
+                    text("Log").size(18),
+                    button("Close").on_press(Message::ToggleLogVisibility),
+                ]
+                .spacing(12),
+                text_editor(&self.log_viewer_content)
+                    .on_action(Message::LogViewAction)
+                    .height(Length::Fill),
+            ]
+            .spacing(12),
+        )
+        .padding(16)
+        .width(Length::Fixed(560.0))
+        .height(Length::Fixed(320.0))
+        .style(|theme: &iced::Theme| {
+            let palette = theme.extended_palette();
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(Color::from_rgba(
+                    palette.background.strong.color.r,
+                    palette.background.strong.color.g,
+                    palette.background.strong.color.b,
+                    0.97,
+                ))),
+                border: Border::default()
+                    .rounded(8.0)
+                    .width(1.0)
+                    .color(Color::from_rgba(
+                        palette.background.strong.text.r,
+                        palette.background.strong.text.g,
+                        palette.background.strong.text.b,
+                        0.2,
+                    )),
+                text_color: Some(palette.background.strong.text),
+                ..Default::default()
+            }
+        })
+        .into()
+    }
+
+    fn wrap_with_log_window<'a>(
+        &'a self,
+        content: iced::Element<'a, Message>,
+    ) -> iced::Element<'a, Message> {
+        if !self.show_log_window {
+            return content;
+        }
+        let overlay = container(self.log_window())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(24)
+            .align_x(iced::alignment::Horizontal::Right)
+            .align_y(iced::alignment::Vertical::Bottom);
+        Stack::with_children(vec![content, overlay.into()]).into()
+    }
+
     fn playhead_bar_beat(&self, state: &crate::state::StateData, sample: usize) -> (u64, u64) {
         let mut bpm = state
             .tempo_points
@@ -95,30 +156,42 @@ impl Maolan {
         let state = self.state.blocking_read();
         if state.hw_loaded {
             if state.clip_rename_dialog.is_some() {
-                return self.clip_rename.view();
+                return self.wrap_with_log_window(self.clip_rename.view());
             }
             if state.track_rename_dialog.is_some() {
-                return self.track_rename.view();
+                return self.wrap_with_log_window(self.track_rename.view());
             }
             if state.track_group_dialog.is_some() {
-                return self.track_group.view();
+                return self.wrap_with_log_window(self.track_group.view());
             }
             if state.track_template_save_dialog.is_some() {
-                return self.track_template_save.view();
+                return self.wrap_with_log_window(self.track_template_save.view());
             }
             if state.template_save_dialog.is_some() {
-                return self.template_save.view();
+                return self.wrap_with_log_window(self.template_save.view());
             }
             match self.modal {
-                Some(Show::ExportSettings) => self.export_settings_view(),
-                Some(Show::SessionMetadata) => self.session_metadata_view(),
-                Some(Show::Preferences) => self.preferences_view(),
-                Some(Show::AutosaveRecovery) => self.autosave_recovery_view(),
-                Some(Show::UnsavedChanges) => self.unsaved_changes_view(),
+                Some(Show::ExportSettings) => {
+                    self.wrap_with_log_window(self.export_settings_view())
+                }
+                Some(Show::SessionMetadata) => {
+                    self.wrap_with_log_window(self.session_metadata_view())
+                }
+                Some(Show::Preferences) => self.wrap_with_log_window(self.preferences_view()),
+                Some(Show::AutosaveRecovery) => {
+                    self.wrap_with_log_window(self.autosave_recovery_view())
+                }
+                Some(Show::UnsavedChanges) => {
+                    self.wrap_with_log_window(self.unsaved_changes_view())
+                }
                 #[cfg(all(unix, not(target_os = "macos")))]
-                Some(Show::TrackPluginList) => self.track_plugin_list_view(),
+                Some(Show::TrackPluginList) => {
+                    self.wrap_with_log_window(self.track_plugin_list_view())
+                }
                 #[cfg(target_os = "macos")]
-                Some(Show::TrackPluginList) => self.track_plugin_list_view(),
+                Some(Show::TrackPluginList) => {
+                    self.wrap_with_log_window(self.track_plugin_list_view())
+                }
                 _ => {
                     let view_kind = state.view.clone();
                     let shift_pressed = state.shift;
@@ -290,7 +363,8 @@ impl Maolan {
                     let mut content = column![self.menu.view(
                         self.tracks_visible,
                         self.editor_visible,
-                        self.mixer_visible
+                        self.mixer_visible,
+                        self.show_log_window
                     ),];
                     content = content.push(self.toolbar.view(ToolbarViewState {
                         playing: self.playing,
@@ -569,29 +643,33 @@ impl Maolan {
                     let status_bar = container(text(format!("Last message: {}", status_message)))
                         .width(Length::Fill)
                         .padding(8);
-                    column![
-                        container(content).width(Length::Fill).height(Length::Fill),
-                        status_bar,
-                    ]
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .into()
+                    self.wrap_with_log_window(
+                        column![
+                            container(content).width(Length::Fill).height(Length::Fill),
+                            status_bar,
+                        ]
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into(),
+                    )
                 }
             }
         } else {
             let message = state.message.clone();
             drop(state);
-            column![
-                container(self.hw.audio_view())
-                    .width(Length::Fill)
-                    .height(Length::Fill),
-                container(text(format!("Last message: {}", message)))
-                    .width(Length::Fill)
-                    .padding(8),
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            self.wrap_with_log_window(
+                column![
+                    container(self.hw.audio_view())
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                    container(text(format!("Last message: {}", message)))
+                        .width(Length::Fill)
+                        .padding(8),
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into(),
+            )
         }
     }
 }

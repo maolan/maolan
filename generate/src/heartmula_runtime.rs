@@ -1796,30 +1796,44 @@ fn decode_frames_to_wav_rust<B: burn::prelude::Backend>(
 ) -> Result<()> {
     let frames_text = std::fs::read_to_string(frames_json)
         .with_context(|| format!("failed to read {}", frames_json.display()))?;
-    let payload: HeartmulaJsonOutput = serde_json::from_str(&frames_text)
+    let _payload: HeartmulaJsonOutput = serde_json::from_str(&frames_text)
         .with_context(|| format!("failed to parse {}", frames_json.display()))?;
-    let frames = payload.frames;
     eprintln!("decode_frames_to_wav_rust: seeding backend RNG with 0");
     B::seed(device, 0);
-    let codes = frames_to_tensor::<B>(&frames, device);
-    let codec_path = resolve_heartcodec_burnpack_path(model_dir);
     eprintln!(
         "decode_frames_to_wav_rust: model_dir={}",
         model_dir.display()
     );
-    eprintln!(
-        "decode_frames_to_wav_rust: codec_path={}",
-        codec_path.display()
-    );
-    let model = crate::heartcodec::HeartCodecModel::<B>::from_burnpack(&codec_path, device)?
-        .with_ode_steps(ode_steps)
-        .with_guidance_scale(1.25);
-    let shared_initial_latent = load_initial_latent_tensor::<B>(
-        &prepare_shared_decoder_initial_latent(frames_json, decoder_seed, output_wav)?,
+    eprintln!("decode_frames_to_wav_rust: staging flow-matching decode plan");
+    let initial_latent_json =
+        prepare_shared_decoder_initial_latent(frames_json, decoder_seed, output_wav)?;
+    let stage_plan_json = output_wav.with_extension("heartcodec-stage-plan.bin");
+
+    unsafe {
+        std::env::set_var(HEARTCODEC_STAGE_PLAN_JSON_ENV, &stage_plan_json);
+    }
+
+    let plan_result = decode_frames_to_plan_rust::<B>(
+        model_dir,
+        frames_json,
         device,
-    )?;
-    let wav = model.decode_with_initial_latent(codes, shared_initial_latent);
-    write_decoder_wav(output_wav, wav, duration_seconds)
+        ode_steps,
+        &initial_latent_json,
+    );
+    sync_and_cleanup_backend::<B>(device)?;
+    plan_result?;
+
+    eprintln!("decode_frames_to_wav_rust: flow-matching plan complete; starting scalar decode");
+    let decode_result = decode_plan_to_wav_rust::<B>(model_dir, output_wav, device);
+    sync_and_cleanup_backend::<B>(device)?;
+
+    let _ = std::fs::remove_file(&stage_plan_json);
+    let _ = std::fs::remove_file(&initial_latent_json);
+
+    decode_result?;
+    eprintln!("decode_frames_to_wav_rust: staged decode complete");
+    let _ = duration_seconds;
+    Ok(())
 }
 
 pub fn decode_frames_to_plan_rust<B: burn::prelude::Backend>(

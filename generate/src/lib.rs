@@ -103,6 +103,11 @@ pub struct GenerateResponseHeader {
     pub steps: usize,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct GenerateError {
+    pub error: String,
+}
+
 /// Progress update message sent during generation
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct GenerateProgress {

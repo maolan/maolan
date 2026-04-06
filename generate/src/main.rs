@@ -4,12 +4,13 @@ use burn_store::{BurnpackStore, ModuleStore, TensorSnapshot};
 use huggingface_hub::{Repo, RepoType, api::sync::ApiBuilder};
 use maolan_generate::heartmula_runtime;
 use maolan_generate::{
-    BackendChoice, GenerateProgress, GenerateResponseHeader, IPC_MODE_ENV, ModelChoice, help_text,
-    parse_options, read_ipc_message, validate_options, write_ipc_message,
+    BackendChoice, GenerateError, GenerateProgress, GenerateResponseHeader, IPC_MODE_ENV,
+    ModelChoice, help_text, parse_options, read_ipc_message, validate_options, write_ipc_message,
 };
 use std::collections::BTreeMap;
 use std::env;
-use std::io;
+use std::io::{self, Write};
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -235,7 +236,7 @@ fn run_ipc() -> Result<()> {
         backend_name(options.backend),
     );
 
-    let output = match options.backend {
+    let output = match catch_ipc_generation_failure(AssertUnwindSafe(|| match options.backend {
         BackendChoice::Cpu => {
             let device = Default::default();
             run_heartmula_ipc_with_backend::<burn::backend::NdArray<f32>>(
@@ -258,7 +259,17 @@ fn run_ipc() -> Result<()> {
                 &mut stdout,
             )
         }
-    }?;
+    })) {
+        Ok(output) => output,
+        Err(err) => {
+            let error = GenerateError {
+                error: err.to_string(),
+            };
+            let _ = write_ipc_message(&mut stdout, &error);
+            let _ = stdout.flush();
+            return Err(err);
+        }
+    };
 
     write_ipc_message(&mut stdout, &output.header)?;
     eprintln!(
@@ -267,6 +278,47 @@ fn run_ipc() -> Result<()> {
         options.output_path.display()
     );
     Ok(())
+}
+
+fn catch_ipc_generation_failure<F, T>(f: F) -> Result<T>
+where
+    F: FnOnce() -> Result<T> + panic::UnwindSafe,
+{
+    match panic::catch_unwind(f) {
+        Ok(result) => result,
+        Err(payload) => Err(anyhow!(format_generation_panic(&payload))),
+    }
+}
+
+fn format_generation_panic(payload: &Box<dyn std::any::Any + Send>) -> String {
+    let reason = if let Some(message) = payload.downcast_ref::<&'static str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic payload".to_string()
+    };
+
+    if is_vulkan_device_loss_message(&reason) {
+        format!("Vulkan backend device was lost during generation: {reason}")
+    } else {
+        format!("Generation panicked: {reason}")
+    }
+}
+
+fn is_vulkan_device_loss_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    [
+        "device is lost",
+        "device lost",
+        "parent device is lost",
+        "context is lost",
+        "bufferasyncerror",
+        "failed to map buffer",
+        "the cs has been cancelled because the context is lost",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 struct GeneratedOutput {
@@ -994,7 +1046,8 @@ mod tests {
     use super::{
         HEARTMULA_GEN_CONFIG_REL, HEARTMULA_TOKENIZER_REL, HeartmulaModelPaths,
         count_numbered_layers, ensure_heartmula_model_paths, heartcodec_raw_bpk_rel,
-        heartmula_raw_bpk_rel, infer_heartmula_runtime_summary, should_forward_ipc_progress,
+        heartmula_raw_bpk_rel, infer_heartmula_runtime_summary, is_vulkan_device_loss_message,
+        should_forward_ipc_progress,
     };
     use crate::heartmula_runtime::normalize_tags;
     use std::{collections::BTreeMap, env, fs};
@@ -1007,6 +1060,18 @@ mod tests {
     #[test]
     fn normalize_tags_preserves_existing_wrappers() {
         assert_eq!(normalize_tags("<tag>piano</tag>"), "<tag>piano</tag>");
+    }
+
+    #[test]
+    fn detects_vulkan_device_loss_messages() {
+        assert!(is_vulkan_device_loss_message(
+            "Failed to map buffer: BufferAsyncError"
+        ));
+        assert!(is_vulkan_device_loss_message("Parent device is lost"));
+        assert!(is_vulkan_device_loss_message(
+            "radv/amdgpu: The CS has been cancelled because the context is lost."
+        ));
+        assert!(!is_vulkan_device_loss_message("missing tokenizer.json"));
     }
 
     #[test]
