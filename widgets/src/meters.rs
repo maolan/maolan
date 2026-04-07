@@ -210,4 +210,57 @@ mod tests {
         assert_eq!(level_to_meter_fill(FADER_MAX_DB + 10.0), 1.0);
         assert!((level_to_meter_fill(-35.0) - 0.5).abs() < 0.001);
     }
+
+    #[test]
+    fn level_to_qdb_clamps_extremes() {
+        assert_eq!(level_to_qdb(-100.0), 0);
+        assert_eq!(level_to_qdb(50.0), 110);
+        assert_eq!(level_to_qdb(FADER_MIN_DB), 0);
+        assert_eq!(level_to_qdb(FADER_MAX_DB), 110);
+    }
+
+    #[test]
+    fn qdb_to_level_handles_all_valid_values() {
+        assert_eq!(qdb_to_level(0), -90.0);
+        assert_eq!(qdb_to_level(90), 0.0);
+        assert_eq!(qdb_to_level(110), 20.0);
+    }
+
+    #[test]
+    fn small_meter_levels_handles_empty_input() {
+        let levels = SmallMeterLevels::from_db(&[], 1);
+        assert_eq!(levels.len, 1);
+        assert_eq!(qdb_to_level(levels.get(0)), FADER_MIN_DB);
+    }
+
+    #[test]
+    fn small_meter_levels_clamps_to_max_32() {
+        let levels = SmallMeterLevels::from_db(&[0.0; 64], 64);
+        assert_eq!(levels.len, 32);
+    }
+
+    #[test]
+    fn small_meter_levels_get_returns_zero_for_out_of_bounds() {
+        let levels = SmallMeterLevels::from_db(&[-12.0], 1);
+        assert_eq!(levels.get(100), 0);
+    }
+
+    #[test]
+    fn meter_fill_color_at_exact_thresholds() {
+        assert_eq!(meter_fill_color(0.0), Color::from_rgb(0.96, 0.47, 0.34));
+        assert_eq!(meter_fill_color(-12.0), Color::from_rgb(0.69, 0.86, 0.41));
+    }
+
+    #[test]
+    fn total_width_calculates_correctly_for_multiple_channels() {
+        // 1 channel: 3 + 3*2 = 9
+        // 2 channels: 3*2 + 2*1 + 3*2 = 6 + 2 + 6 = 14
+        // 3 channels: 3*3 + 2*2 + 3*2 = 9 + 4 + 6 = 19
+        let w1 = total_width(1);
+        let w2 = total_width(2);
+        let w3 = total_width(3);
+
+        assert!((w2 - w1 - 5.0).abs() < 0.001);
+        assert!((w3 - w2 - 5.0).abs() < 0.001);
+    }
 }

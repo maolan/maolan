@@ -44,3 +44,30 @@ fn track_toggle_button_style(theme: &Theme, active: bool, accent: Color) -> Styl
         ..Style::default()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_background_returns_style() {
+        let style = app_background();
+        assert!(style.background.is_some());
+    }
+
+    #[test]
+    fn track_toggle_button_style_returns_style() {
+        let theme = Theme::Dark;
+        let style = track_toggle_button_style(&theme, false, Color::from_rgb(1.0, 0.0, 0.0));
+        assert!(style.background.is_some());
+        assert!(style.border.width > 0.0);
+    }
+
+    #[test]
+    fn track_toggle_button_style_active_has_different_border() {
+        let theme = Theme::Dark;
+        let inactive = track_toggle_button_style(&theme, false, Color::from_rgb(1.0, 0.0, 0.0));
+        let active = track_toggle_button_style(&theme, true, Color::from_rgb(1.0, 0.0, 0.0));
+        assert_ne!(inactive.border.width, active.border.width);
+    }
+}

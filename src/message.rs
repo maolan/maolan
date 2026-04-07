@@ -1158,19 +1158,173 @@ pub struct PianoControllerEditData {
 
 #[cfg(test)]
 mod tests {
-    use super::SnapMode;
+    use super::*;
 
     #[test]
     fn snap_sample_rounds_to_nearest_interval_when_enabled() {
         let snapped = SnapMode::Beat.snap_sample(740.0, 480.0, 1920.0);
-
         assert_eq!(snapped, 960.0);
     }
 
     #[test]
     fn snap_sample_leaves_position_when_snap_disabled() {
         let snapped = SnapMode::NoSnap.snap_sample(740.0, 480.0, 1920.0);
-
         assert_eq!(snapped, 740.0);
+    }
+
+    #[test]
+    fn snap_mode_interval_samples_bar() {
+        assert_eq!(SnapMode::Bar.interval_samples(480.0, 1920.0), 1920.0);
+    }
+
+    #[test]
+    fn snap_mode_interval_samples_beat() {
+        assert_eq!(SnapMode::Beat.interval_samples(480.0, 1920.0), 480.0);
+    }
+
+    #[test]
+    fn snap_mode_interval_samples_eighth() {
+        assert_eq!(SnapMode::Eighth.interval_samples(480.0, 1920.0), 240.0);
+    }
+
+    #[test]
+    fn snap_mode_interval_samples_sixteenth() {
+        assert_eq!(SnapMode::Sixteenth.interval_samples(480.0, 1920.0), 120.0);
+    }
+
+    #[test]
+    fn snap_mode_interval_samples_no_snap() {
+        assert_eq!(SnapMode::NoSnap.interval_samples(480.0, 1920.0), 1.0);
+    }
+
+    #[test]
+    fn snap_mode_interval_samples_clips() {
+        assert_eq!(SnapMode::Clips.interval_samples(480.0, 1920.0), 1.0);
+    }
+
+    #[test]
+    fn snap_sample_drag_positive_delta() {
+        let result = SnapMode::Beat.snap_sample_drag(740.0, 10.0, 480.0, 1920.0);
+        assert_eq!(result, 480.0);
+    }
+
+    #[test]
+    fn snap_sample_drag_negative_delta() {
+        let result = SnapMode::Beat.snap_sample_drag(740.0, -10.0, 480.0, 1920.0);
+        assert_eq!(result, 960.0);
+    }
+
+    #[test]
+    fn midi_lane_channel_selection_from_engine_some() {
+        assert_eq!(
+            MidiLaneChannelSelection::from_engine(Some(5)),
+            MidiLaneChannelSelection::Channel(5)
+        );
+    }
+
+    #[test]
+    fn midi_lane_channel_selection_from_engine_none() {
+        assert_eq!(
+            MidiLaneChannelSelection::from_engine(None),
+            MidiLaneChannelSelection::Omni
+        );
+    }
+
+    #[test]
+    fn midi_lane_channel_selection_to_engine_omni() {
+        assert_eq!(MidiLaneChannelSelection::Omni.to_engine(), None);
+    }
+
+    #[test]
+    fn midi_lane_channel_selection_to_engine_channel() {
+        assert_eq!(MidiLaneChannelSelection::Channel(7).to_engine(), Some(7));
+    }
+
+    #[test]
+    fn midi_lane_channel_selection_to_engine_clamps() {
+        assert_eq!(MidiLaneChannelSelection::Channel(20).to_engine(), Some(15));
+    }
+
+    #[test]
+    fn burn_backend_option_as_ipc_str() {
+        assert_eq!(BurnBackendOption::Cpu.as_ipc_str(), "cpu");
+        assert_eq!(BurnBackendOption::Vulkan.as_ipc_str(), "vulkan");
+    }
+
+    #[test]
+    fn plugin_format_display() {
+        assert_eq!(format!("{}", PluginFormat::Lv2), "LV2");
+        assert_eq!(format!("{}", PluginFormat::Clap), "CLAP");
+        assert_eq!(format!("{}", PluginFormat::Vst3), "VST3");
+    }
+
+    #[test]
+    fn snap_mode_display() {
+        assert_eq!(format!("{}", SnapMode::NoSnap), "No Snap");
+        assert_eq!(format!("{}", SnapMode::Bar), "Bar");
+        assert_eq!(format!("{}", SnapMode::Beat), "Beat");
+        assert_eq!(format!("{}", SnapMode::Eighth), "1/8");
+        assert_eq!(format!("{}", SnapMode::Sixteenth), "1/16");
+    }
+
+    #[test]
+    fn track_automation_mode_display() {
+        assert_eq!(format!("{}", TrackAutomationMode::Read), "Read");
+        assert_eq!(format!("{}", TrackAutomationMode::Touch), "Touch");
+        assert_eq!(format!("{}", TrackAutomationMode::Latch), "Latch");
+        assert_eq!(format!("{}", TrackAutomationMode::Write), "Write");
+    }
+
+    #[test]
+    fn piano_scale_root_semitone() {
+        assert_eq!(PianoScaleRoot::C.semitone(), 0);
+        assert_eq!(PianoScaleRoot::CSharp.semitone(), 1);
+        assert_eq!(PianoScaleRoot::D.semitone(), 2);
+        assert_eq!(PianoScaleRoot::A.semitone(), 9);
+        assert_eq!(PianoScaleRoot::B.semitone(), 11);
+    }
+
+    #[test]
+    fn piano_scale_root_display() {
+        assert_eq!(format!("{}", PianoScaleRoot::C), "C");
+        assert_eq!(format!("{}", PianoScaleRoot::CSharp), "C#");
+        assert_eq!(format!("{}", PianoScaleRoot::FSharp), "F#");
+    }
+
+    #[test]
+    fn piano_chord_kind_intervals() {
+        assert_eq!(PianoChordKind::MajorTriad.intervals(), &[4, 7]);
+        assert_eq!(PianoChordKind::MinorTriad.intervals(), &[3, 7]);
+        assert_eq!(PianoChordKind::Dominant7.intervals(), &[4, 7, 10]);
+        assert_eq!(PianoChordKind::Major7.intervals(), &[4, 7, 11]);
+        assert_eq!(PianoChordKind::Minor7.intervals(), &[3, 7, 10]);
+    }
+
+    #[test]
+    fn piano_chord_kind_display() {
+        assert_eq!(format!("{}", PianoChordKind::MajorTriad), "Maj");
+        assert_eq!(format!("{}", PianoChordKind::MinorTriad), "Min");
+        assert_eq!(format!("{}", PianoChordKind::Dominant7), "7");
+    }
+
+    #[test]
+    fn piano_velocity_kind_display() {
+        assert_eq!(
+            format!("{}", PianoVelocityKind::NoteVelocity),
+            "Note Velocity"
+        );
+        assert_eq!(
+            format!("{}", PianoVelocityKind::ReleaseVelocity),
+            "Release Velocity"
+        );
+    }
+
+    #[test]
+    fn generate_audio_model_option_display() {
+        assert_eq!(
+            format!("{}", GenerateAudioModelOption::HappyNewYear),
+            "happy-new-year"
+        );
+        assert_eq!(format!("{}", GenerateAudioModelOption::Rl), "RL");
     }
 }

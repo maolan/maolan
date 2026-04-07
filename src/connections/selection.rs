@@ -112,3 +112,61 @@ pub fn plugin_disconnect_actions(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_bezier_hit_detects_nearby_points() {
+        let start = iced::Point::new(0.0, 0.0);
+        let end = iced::Point::new(100.0, 0.0);
+        let cursor = iced::Point::new(50.0, 0.0);
+
+        assert!(is_bezier_hit(start, end, cursor, 10, 10.0));
+    }
+
+    #[test]
+    fn is_bezier_hit_rejects_far_points() {
+        let start = iced::Point::new(0.0, 0.0);
+        let end = iced::Point::new(100.0, 0.0);
+        let cursor = iced::Point::new(50.0, 100.0);
+
+        assert!(!is_bezier_hit(start, end, cursor, 10, 5.0));
+    }
+
+    #[test]
+    fn select_connection_indices_adds_index() {
+        let mut selected = HashSet::new();
+        select_connection_indices(&mut selected, 5, false);
+        assert!(selected.contains(&5));
+        assert_eq!(selected.len(), 1);
+    }
+
+    #[test]
+    fn select_connection_indices_clears_others_without_ctrl() {
+        let mut selected = HashSet::new();
+        selected.insert(1);
+        selected.insert(2);
+        select_connection_indices(&mut selected, 5, false);
+        assert!(selected.contains(&5));
+        assert!(!selected.contains(&1));
+        assert!(!selected.contains(&2));
+    }
+
+    #[test]
+    fn select_connection_indices_toggles_with_ctrl() {
+        let mut selected = HashSet::new();
+        selected.insert(1);
+
+        // Adding new index
+        select_connection_indices(&mut selected, 5, true);
+        assert!(selected.contains(&5));
+        assert!(selected.contains(&1));
+
+        // Removing existing index
+        select_connection_indices(&mut selected, 5, true);
+        assert!(!selected.contains(&5));
+        assert!(selected.contains(&1));
+    }
+}

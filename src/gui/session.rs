@@ -2302,3 +2302,208 @@ impl Maolan {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn export_render_mode_to_json_mixdown() {
+        let result = Maolan::export_render_mode_to_json(crate::message::ExportRenderMode::Mixdown);
+        assert_eq!(result, json!("mixdown"));
+    }
+
+    #[test]
+    fn export_render_mode_to_json_stems_post_fader() {
+        let result =
+            Maolan::export_render_mode_to_json(crate::message::ExportRenderMode::StemsPostFader);
+        assert_eq!(result, json!("stems_post_fader"));
+    }
+
+    #[test]
+    fn export_render_mode_to_json_stems_pre_fader() {
+        let result =
+            Maolan::export_render_mode_to_json(crate::message::ExportRenderMode::StemsPreFader);
+        assert_eq!(result, json!("stems_pre_fader"));
+    }
+
+    #[test]
+    fn export_render_mode_from_json_mixdown() {
+        let result = Maolan::export_render_mode_from_json(Some(&json!("mixdown")));
+        assert!(matches!(result, crate::message::ExportRenderMode::Mixdown));
+    }
+
+    #[test]
+    fn export_render_mode_from_json_stems_post_fader() {
+        let result = Maolan::export_render_mode_from_json(Some(&json!("stems_post_fader")));
+        assert!(matches!(
+            result,
+            crate::message::ExportRenderMode::StemsPostFader
+        ));
+    }
+
+    #[test]
+    fn export_render_mode_from_json_stems_pre_fader() {
+        let result = Maolan::export_render_mode_from_json(Some(&json!("stems_pre_fader")));
+        assert!(matches!(
+            result,
+            crate::message::ExportRenderMode::StemsPreFader
+        ));
+    }
+
+    #[test]
+    fn export_render_mode_from_json_defaults_to_mixdown() {
+        let result = Maolan::export_render_mode_from_json(Some(&json!("unknown")));
+        assert!(matches!(result, crate::message::ExportRenderMode::Mixdown));
+        let result = Maolan::export_render_mode_from_json(None);
+        assert!(matches!(result, crate::message::ExportRenderMode::Mixdown));
+    }
+
+    #[test]
+    fn export_bit_depth_to_json_int16() {
+        let result = Maolan::export_bit_depth_to_json(crate::message::ExportBitDepth::Int16);
+        assert_eq!(result, json!("int16"));
+    }
+
+    #[test]
+    fn export_bit_depth_to_json_int24() {
+        let result = Maolan::export_bit_depth_to_json(crate::message::ExportBitDepth::Int24);
+        assert_eq!(result, json!("int24"));
+    }
+
+    #[test]
+    fn export_bit_depth_to_json_int32() {
+        let result = Maolan::export_bit_depth_to_json(crate::message::ExportBitDepth::Int32);
+        assert_eq!(result, json!("int32"));
+    }
+
+    #[test]
+    fn export_bit_depth_to_json_float32() {
+        let result = Maolan::export_bit_depth_to_json(crate::message::ExportBitDepth::Float32);
+        assert_eq!(result, json!("float32"));
+    }
+
+    #[test]
+    fn export_bit_depth_from_json_int16() {
+        let result = Maolan::export_bit_depth_from_json(Some(&json!("int16")));
+        assert!(matches!(result, crate::message::ExportBitDepth::Int16));
+    }
+
+    #[test]
+    fn export_bit_depth_from_json_int32() {
+        let result = Maolan::export_bit_depth_from_json(Some(&json!("int32")));
+        assert!(matches!(result, crate::message::ExportBitDepth::Int32));
+    }
+
+    #[test]
+    fn export_bit_depth_from_json_float32() {
+        let result = Maolan::export_bit_depth_from_json(Some(&json!("float32")));
+        assert!(matches!(result, crate::message::ExportBitDepth::Float32));
+    }
+
+    #[test]
+    fn export_bit_depth_from_json_defaults_to_int24() {
+        let result = Maolan::export_bit_depth_from_json(Some(&json!("unknown")));
+        assert!(matches!(result, crate::message::ExportBitDepth::Int24));
+        let result = Maolan::export_bit_depth_from_json(None);
+        assert!(matches!(result, crate::message::ExportBitDepth::Int24));
+    }
+
+    #[test]
+    fn export_mp3_mode_to_json_cbr() {
+        let result = Maolan::export_mp3_mode_to_json(crate::message::ExportMp3Mode::Cbr);
+        assert_eq!(result, json!("cbr"));
+    }
+
+    #[test]
+    fn export_mp3_mode_to_json_vbr() {
+        let result = Maolan::export_mp3_mode_to_json(crate::message::ExportMp3Mode::Vbr);
+        assert_eq!(result, json!("vbr"));
+    }
+
+    #[test]
+    fn export_mp3_mode_from_json_cbr() {
+        let result = Maolan::export_mp3_mode_from_json(Some(&json!("cbr")));
+        assert!(matches!(result, crate::message::ExportMp3Mode::Cbr));
+    }
+
+    #[test]
+    fn export_mp3_mode_from_json_vbr() {
+        let result = Maolan::export_mp3_mode_from_json(Some(&json!("vbr")));
+        assert!(matches!(result, crate::message::ExportMp3Mode::Vbr));
+    }
+
+    #[test]
+    fn export_mp3_mode_from_json_defaults_to_cbr() {
+        let result = Maolan::export_mp3_mode_from_json(Some(&json!("unknown")));
+        assert!(matches!(result, crate::message::ExportMp3Mode::Cbr));
+        let result = Maolan::export_mp3_mode_from_json(None);
+        assert!(matches!(result, crate::message::ExportMp3Mode::Cbr));
+    }
+
+    #[test]
+    fn export_normalize_mode_to_json_peak() {
+        let result =
+            Maolan::export_normalize_mode_to_json(crate::message::ExportNormalizeMode::Peak);
+        assert_eq!(result, json!("peak"));
+    }
+
+    #[test]
+    fn export_normalize_mode_to_json_loudness() {
+        let result =
+            Maolan::export_normalize_mode_to_json(crate::message::ExportNormalizeMode::Loudness);
+        assert_eq!(result, json!("loudness"));
+    }
+
+    #[test]
+    fn export_normalize_mode_from_json_peak() {
+        let result = Maolan::export_normalize_mode_from_json(Some(&json!("peak")));
+        assert!(matches!(result, crate::message::ExportNormalizeMode::Peak));
+    }
+
+    #[test]
+    fn export_normalize_mode_from_json_loudness() {
+        let result = Maolan::export_normalize_mode_from_json(Some(&json!("loudness")));
+        assert!(matches!(
+            result,
+            crate::message::ExportNormalizeMode::Loudness
+        ));
+    }
+
+    #[test]
+    fn export_normalize_mode_from_json_defaults_to_peak() {
+        let result = Maolan::export_normalize_mode_from_json(Some(&json!("unknown")));
+        assert!(matches!(result, crate::message::ExportNormalizeMode::Peak));
+        let result = Maolan::export_normalize_mode_from_json(None);
+        assert!(matches!(result, crate::message::ExportNormalizeMode::Peak));
+    }
+
+    #[test]
+    fn kind_to_json_audio() {
+        assert_eq!(Maolan::kind_to_json(Kind::Audio), json!("audio"));
+    }
+
+    #[test]
+    fn kind_to_json_midi() {
+        assert_eq!(Maolan::kind_to_json(Kind::MIDI), json!("midi"));
+    }
+
+    #[test]
+    fn kind_from_json_audio() {
+        let result = Maolan::kind_from_json(&json!("audio"));
+        assert_eq!(result, Some(Kind::Audio));
+    }
+
+    #[test]
+    fn kind_from_json_midi() {
+        let result = Maolan::kind_from_json(&json!("midi"));
+        assert_eq!(result, Some(Kind::MIDI));
+    }
+
+    #[test]
+    fn kind_from_json_unknown() {
+        let result = Maolan::kind_from_json(&json!("unknown"));
+        assert_eq!(result, None);
+    }
+}

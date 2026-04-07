@@ -244,4 +244,39 @@ mod tests {
         assert_eq!(TicksCanvas::format_tick_label(12.0), "+12");
         assert_eq!(TicksCanvas::format_tick_label(-3.5), "-3.5");
     }
+
+    #[test]
+    fn format_tick_label_handles_negative_integers() {
+        assert_eq!(TicksCanvas::format_tick_label(-12.0), "-12");
+    }
+
+    #[test]
+    fn value_to_y_clamps_out_of_range() {
+        let height = 110.0;
+        let range = -90.0..=20.0;
+
+        // Above max should return 0 (top)
+        assert_eq!(TicksCanvas::value_to_y(&range, 100.0, height), 0.0);
+        // Below min should return height (bottom)
+        assert_eq!(TicksCanvas::value_to_y(&range, -200.0, height), height);
+    }
+
+    #[test]
+    fn tick_values_for_small_range() {
+        let range = -10.0..=10.0;
+        let values = TicksCanvas::tick_values(&range);
+
+        assert!(values.contains(&0.0));
+        assert!(values.contains(&-10.0));
+        assert!(values.contains(&10.0));
+    }
+
+    #[test]
+    fn tick_values_for_zero_range() {
+        let range = 0.0..=0.0;
+        let values = TicksCanvas::tick_values(&range);
+
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0], 0.0);
+    }
 }

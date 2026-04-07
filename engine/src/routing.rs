@@ -133,4 +133,128 @@ mod tests {
             graph.get(current).cloned().unwrap_or_default()
         }));
     }
+
+    #[test]
+    fn detects_long_cycle() {
+        let graph = HashMap::from([
+            ("A".to_string(), vec!["B".to_string()]),
+            ("B".to_string(), vec!["C".to_string()]),
+            ("C".to_string(), vec!["D".to_string()]),
+            ("D".to_string(), vec!["E".to_string()]),
+            ("E".to_string(), vec!["A".to_string()]), // Creates cycle
+        ]);
+
+        // Connecting any node in the cycle to any other should detect the cycle
+        assert!(would_create_cycle(
+            &"E".to_string(),
+            &"A".to_string(),
+            |node: &String| { graph.get(node).cloned().unwrap_or_default() }
+        ));
+    }
+
+    #[test]
+    fn allows_connecting_sibling_nodes() {
+        // Two disconnected trees
+        let graph = HashMap::from([
+            ("A".to_string(), vec!["B".to_string()]),
+            ("B".to_string(), vec![]),
+            ("C".to_string(), vec!["D".to_string()]),
+            ("D".to_string(), vec![]),
+        ]);
+
+        // Adding edge from one tree to another should not create cycle
+        assert!(!would_create_cycle(
+            &"B".to_string(),
+            &"C".to_string(),
+            |node: &String| { graph.get(node).cloned().unwrap_or_default() }
+        ));
+    }
+
+    #[test]
+    fn diamond_graph_connecting_new_node() {
+        let graph = HashMap::from([
+            ("A".to_string(), vec!["B".to_string(), "C".to_string()]),
+            ("B".to_string(), vec!["D".to_string()]),
+            ("C".to_string(), vec!["D".to_string()]),
+            ("D".to_string(), vec![]),
+        ]);
+
+        // Connecting a new node E to D should not create a cycle
+        assert!(!would_create_cycle(
+            &"E".to_string(),
+            &"D".to_string(),
+            |node: &String| { graph.get(node).cloned().unwrap_or_default() }
+        ));
+    }
+
+    #[test]
+    fn empty_graph_allows_any_edge() {
+        let graph: HashMap<String, Vec<String>> = HashMap::new();
+
+        assert!(!would_create_cycle(
+            &"A".to_string(),
+            &"B".to_string(),
+            |node: &String| { graph.get(node).cloned().unwrap_or_default() }
+        ));
+    }
+
+    #[test]
+    fn detects_cycle_in_bidirectional_graph() {
+        let graph = HashMap::from([
+            ("A".to_string(), vec!["B".to_string()]),
+            ("B".to_string(), vec!["A".to_string()]),
+        ]);
+
+        // A->B->A already forms a cycle
+        assert!(would_create_cycle(
+            &"B".to_string(),
+            &"A".to_string(),
+            |node: &String| { graph.get(node).cloned().unwrap_or_default() }
+        ));
+    }
+
+    #[test]
+    fn handles_missing_nodes() {
+        let graph = HashMap::from([
+            ("A".to_string(), vec!["B".to_string()]),
+            ("B".to_string(), vec!["C".to_string()]),
+        ]);
+
+        // Connecting to/from a node not in the graph
+        assert!(!would_create_cycle(
+            &"X".to_string(),
+            &"A".to_string(),
+            |node: &String| { graph.get(node).cloned().unwrap_or_default() }
+        ));
+    }
+
+    #[test]
+    fn single_node_no_edges() {
+        let graph = HashMap::from([("A".to_string(), vec![])]);
+
+        // Self-edge on single node is a cycle
+        assert!(would_create_cycle(
+            &"A".to_string(),
+            &"A".to_string(),
+            |node: &String| { graph.get(node).cloned().unwrap_or_default() }
+        ));
+    }
+
+    #[test]
+    fn connecting_to_new_node_from_diamond() {
+        let graph = HashMap::from([
+            ("A".to_string(), vec!["B".to_string(), "C".to_string()]),
+            ("B".to_string(), vec!["D".to_string()]),
+            ("C".to_string(), vec!["D".to_string()]),
+            ("D".to_string(), vec!["E".to_string()]),
+            ("E".to_string(), vec![]),
+        ]);
+
+        // Connecting a new node F to E should be allowed
+        assert!(!would_create_cycle(
+            &"F".to_string(),
+            &"E".to_string(),
+            |node: &String| { graph.get(node).cloned().unwrap_or_default() }
+        ));
+    }
 }
