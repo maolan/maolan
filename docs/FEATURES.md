@@ -1,6 +1,6 @@
 # Maolan Features
 
-Last updated: 2026-04-04
+Last updated: 2026-04-07
 
 ## Core DAW Workflow
 - Multi-track audio + MIDI session editing
@@ -179,7 +179,9 @@ Last updated: 2026-04-04
 - Burn backend options:
   - CPU
   - Vulkan
-  - CUDA when compiled with the `cuda` feature
+- Model options:
+  - `happy-new-year`
+  - `RL`
 - Burn generation controls:
   - CFG scale
   - Steps
@@ -189,6 +191,7 @@ Last updated: 2026-04-04
   - Decoder seed
   - Output `--length` in milliseconds
 - Decode-only mode from a saved frames JSON
+- Decode-only CPU worker override with `--decode-threads`
 - Hugging Face cache-backed model resolution for the current Burn repos:
   - `maolandaw/HeartMuLa-happy-new-year-burn`
   - `maolandaw/HeartCodec-oss-20260123-burn`
