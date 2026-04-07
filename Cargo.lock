@@ -4671,7 +4671,7 @@ dependencies = [
 
 [[package]]
 name = "maolan"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "alsa",
  "crossterm",
@@ -4735,7 +4735,7 @@ dependencies = [
 
 [[package]]
 name = "maolan-generate"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "anyhow",
  "burn",

@@ -2488,3 +2488,552 @@ fn uninitialized_param<B: Backend, const D: usize>(
         shape.into(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_tags_returns_expected() {
+        assert_eq!(super::default_tags(), "<tag></tag>");
+    }
+
+    #[test]
+    fn normalize_tags_adds_wrappers() {
+        let input = "pop, electronic";
+        let result = super::normalize_tags(input);
+        assert_eq!(result, "<tag>pop,electronic</tag>");
+    }
+
+    #[test]
+    fn normalize_tags_preserves_existing_wrappers() {
+        let input = "<tag>pop</tag>";
+        let result = super::normalize_tags(input);
+        assert_eq!(result, "<tag>pop</tag>");
+    }
+
+    #[test]
+    fn normalize_tags_removes_spaces_after_commas() {
+        let input = "pop, rock, jazz";
+        let result = super::normalize_tags(input);
+        assert_eq!(result, "<tag>pop,rock,jazz</tag>");
+    }
+
+    #[test]
+    fn normalize_tags_converts_to_lowercase() {
+        let input = "POP, ROCK";
+        let result = super::normalize_tags(input);
+        assert_eq!(result, "<tag>pop,rock</tag>");
+    }
+
+    #[test]
+    fn normalize_tags_trims_whitespace() {
+        let input = "  pop, rock  ";
+        let result = super::normalize_tags(input);
+        assert_eq!(result, "<tag>pop,rock</tag>");
+    }
+
+    #[test]
+    fn build_prompt_history_basic() {
+        let text_bos_id = 1_i64;
+        let text_eos_id = 2_i64;
+        let lyrics_ids = vec![10, 11, 12];
+        let tags_ids = vec![20, 21];
+
+        let history = super::build_prompt_history(text_bos_id, text_eos_id, &lyrics_ids, &tags_ids);
+
+        // Tags should be: [BOS, 20, 21, EOS]
+        // Empty separator row
+        // Lyrics should be: [BOS, 10, 11, 12, EOS]
+        // Total: 4 + 1 + 5 = 10 rows
+        assert_eq!(history.len(), 10);
+
+        // Check first tag row has BOS
+        assert_eq!(history[0][HEARTMULA_AUDIO_CODEBOOKS], text_bos_id);
+
+        // Check empty separator row
+        assert!(history[4].iter().all(|&x| x == 0));
+
+        // Check first lyrics row after separator
+        assert_eq!(history[5][HEARTMULA_AUDIO_CODEBOOKS], text_bos_id);
+    }
+
+    #[test]
+    fn normalize_text_ids_adds_bos_and_eos() {
+        let text_bos_id = 1_i64;
+        let text_eos_id = 2_i64;
+        let ids = vec![10, 11, 12];
+
+        let result = super::normalize_text_ids(text_bos_id, text_eos_id, &ids);
+
+        assert_eq!(result[0], text_bos_id);
+        assert_eq!(result[result.len() - 1], text_eos_id);
+        assert_eq!(result, vec![1, 10, 11, 12, 2]);
+    }
+
+    #[test]
+    fn normalize_text_ids_preserves_existing_bos_eos() {
+        let text_bos_id = 1_i64;
+        let text_eos_id = 2_i64;
+        let ids = vec![1, 10, 11, 12, 2];
+
+        let result = super::normalize_text_ids(text_bos_id, text_eos_id, &ids);
+
+        assert_eq!(result, vec![1, 10, 11, 12, 2]);
+    }
+
+    #[test]
+    fn build_audio_history_row() {
+        let frame = vec![100, 200, 300, 400, 500, 600, 700, 800];
+        let empty_id = 0_i64;
+
+        let row = super::build_audio_history_row(&frame, empty_id);
+
+        // First 8 elements should be the frame tokens
+        for i in 0..HEARTMULA_AUDIO_CODEBOOKS {
+            assert_eq!(row[i], frame[i] as i64);
+        }
+        // The text token position should be empty_id
+        assert_eq!(row[HEARTMULA_AUDIO_CODEBOOKS], empty_id);
+    }
+
+    #[test]
+    fn build_audio_history_row_with_short_frame() {
+        let frame = vec![100, 200]; // Only 2 tokens
+        let empty_id = 999_i64;
+
+        let row = super::build_audio_history_row(&frame, empty_id);
+
+        // First 2 elements should be the frame tokens
+        assert_eq!(row[0], 100);
+        assert_eq!(row[1], 200);
+        // Remaining audio positions should be empty_id
+        for i in 2..HEARTMULA_AUDIO_CODEBOOKS {
+            assert_eq!(row[i], empty_id);
+        }
+    }
+
+    #[test]
+    fn single_position_tensor() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let tensor = super::single_position_tensor::<NdArray<f32>>(42, &device);
+
+        assert_eq!(tensor.dims(), [1, 1]);
+        let data = tensor.to_data().to_vec::<i64>().unwrap();
+        assert_eq!(data[0], 42);
+    }
+
+    #[test]
+    fn position_tensor() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let positions = vec![0, 1, 2, 3, 4];
+        let tensor = super::position_tensor::<NdArray<f32>>(positions, &device);
+
+        assert_eq!(tensor.dims(), [1, 5]);
+        let data = tensor.to_data().to_vec::<i64>().unwrap();
+        assert_eq!(data, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn repeat_kv_heads() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let tensor = Tensor::<NdArray<f32>, 4>::from_data(
+            TensorData::new(vec![1.0; 32], [1, 2, 4, 4]),
+            &device,
+        );
+
+        let repeated = super::repeat_kv_heads(tensor, 2);
+        assert_eq!(repeated.dims(), [1, 2, 8, 4]);
+    }
+
+    #[test]
+    fn repeat_cached_kv_heads() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let tensor = Tensor::<NdArray<f32>, 4>::from_data(
+            TensorData::new(vec![1.0; 32], [1, 4, 2, 4]),
+            &device,
+        );
+
+        let repeated = super::repeat_cached_kv_heads(tensor, 3);
+        assert_eq!(repeated.dims(), [1, 12, 2, 4]);
+    }
+
+    #[test]
+    fn take_last_token() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let tensor = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [1, 3, 2]),
+            &device,
+        );
+
+        let last = super::take_last_token(tensor);
+        assert_eq!(last.dims(), [1, 2]);
+    }
+
+    #[test]
+    fn tensor_to_f32_vec_success() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let tensor = Tensor::<NdArray<f32>, 2>::from_data(
+            TensorData::new(vec![1.0, 2.0, 3.0, 4.0], [2, 2]),
+            &device,
+        );
+
+        let vec = super::tensor_to_f32_vec(tensor).unwrap();
+        assert_eq!(vec, vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn write_frames_json_creates_valid_json() {
+        use std::io::Read;
+
+        let temp_dir = std::env::temp_dir();
+        let path = temp_dir.join("test_frames.json");
+
+        let frames: Vec<Vec<i64>> = vec![
+            vec![1, 2, 3, 4, 5, 6, 7, 8],
+            vec![9, 10, 11, 12, 13, 14, 15, 16],
+        ];
+
+        super::write_frames_json(&path, "test lyrics", "test tags", &frames).unwrap();
+
+        // Read and verify the file
+        let mut file = std::fs::File::open(&path).unwrap();
+        let mut contents = String::new();
+        file.read_to_string(&mut contents).unwrap();
+
+        assert!(contents.contains("heartmula"));
+        assert!(contents.contains("test lyrics"));
+        assert!(contents.contains("test tags"));
+        assert!(contents.contains("frame_count"));
+        assert!(contents.contains("48000"));
+
+        // Clean up
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn heartmula_generation_config_defaults() {
+        let lyrics_ids: &[i64] = &[1, 2, 3];
+        let tags_ids: &[i64] = &[4, 5];
+
+        let config = HeartmulaGenerationConfig {
+            text_bos_id: 1,
+            text_eos_id: 2,
+            audio_eos_id: 1000,
+            empty_id: 0,
+            lyrics_ids,
+            tags_ids,
+            max_audio_frames: 100,
+            temperature: 0.8,
+            topk: 25,
+            cfg_scale: 2.0,
+            progress_callback: None,
+        };
+
+        assert_eq!(config.temperature, 0.8);
+        assert_eq!(config.topk, 25);
+        assert_eq!(config.cfg_scale, 2.0);
+        assert_eq!(config.max_audio_frames, 100);
+    }
+
+    #[test]
+    fn splitmix64_produces_deterministic_sequence() {
+        let mut state1 = 123456789_u64;
+        let mut state2 = 123456789_u64;
+
+        for _ in 0..10 {
+            assert_eq!(
+                super::splitmix64_next(&mut state1),
+                super::splitmix64_next(&mut state2)
+            );
+        }
+    }
+
+    #[test]
+    fn uniform01_open_produces_values_in_range() {
+        let mut state = 123456789_u64;
+
+        for _ in 0..100 {
+            let value = super::uniform01_open(&mut state);
+            assert!(value > 0.0);
+            assert!(value < 1.0);
+        }
+    }
+
+    #[test]
+    fn generate_decoder_latent_data_deterministic() {
+        let data1 = super::generate_decoder_latent_data(42, 100);
+        let data2 = super::generate_decoder_latent_data(42, 100);
+
+        assert_eq!(data1, data2);
+        assert_eq!(data1.len(), 100);
+    }
+
+    #[test]
+    fn scaled_theta_produces_expected_length() {
+        let head_dim = 64;
+        let theta = super::scaled_theta(head_dim);
+
+        // Should have head_dim / 2 elements
+        assert_eq!(theta.len(), head_dim / 2);
+    }
+
+    #[test]
+    fn scaled_theta_frequency_scaling() {
+        let theta_64 = super::scaled_theta(64);
+        let theta_128 = super::scaled_theta(128);
+
+        // Both should have frequencies in decreasing order
+        for i in 1..theta_64.len() {
+            assert!(theta_64[i] <= theta_64[i - 1]);
+        }
+
+        for i in 1..theta_128.len() {
+            assert!(theta_128[i] <= theta_128[i - 1]);
+        }
+    }
+
+    #[test]
+    fn heartmula_rms_norm_forward() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let norm = super::HeartmulaRmsNorm::<NdArray<f32>>::new(&device, 64, 1e-5);
+
+        let input = Tensor::<NdArray<f32>, 3>::ones([1, 4, 64], &device);
+        let output = norm.forward(input);
+
+        assert_eq!(output.dims(), [1, 4, 64]);
+    }
+
+    #[test]
+    fn heartmula_mlp_forward() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let mlp = super::HeartmulaMlp::<NdArray<f32>>::new(&device);
+
+        let input = Tensor::<NdArray<f32>, 3>::ones([1, 4, HEARTMULA_HIDDEN_SIZE], &device);
+        let output = mlp.forward(input);
+
+        assert_eq!(output.dims(), [1, 4, HEARTMULA_HIDDEN_SIZE]);
+    }
+
+    #[test]
+    fn heartmula_attention_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let attn = super::HeartmulaAttention::<NdArray<f32>>::new(
+            &device,
+            HEARTMULA_BACKBONE_HEADS,
+            HEARTMULA_BACKBONE_KV_HEADS,
+        );
+
+        assert_eq!(attn.meta.0.num_heads, HEARTMULA_BACKBONE_HEADS);
+        assert_eq!(attn.meta.0.num_kv_heads, HEARTMULA_BACKBONE_KV_HEADS);
+    }
+
+    #[test]
+    fn heartmula_transformer_layer_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let layer = super::HeartmulaTransformerLayer::<NdArray<f32>>::new(
+            &device,
+            HEARTMULA_BACKBONE_HEADS,
+            HEARTMULA_BACKBONE_KV_HEADS,
+        );
+
+        assert_eq!(layer.attn.meta.0.num_heads, HEARTMULA_BACKBONE_HEADS);
+    }
+
+    #[test]
+    fn heartmula_transformer_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let transformer = super::HeartmulaTransformer::<NdArray<f32>>::new(
+            &device,
+            HEARTMULA_BACKBONE_LAYERS,
+            HEARTMULA_BACKBONE_HEADS,
+            HEARTMULA_BACKBONE_KV_HEADS,
+        );
+
+        assert_eq!(transformer.layers.len(), HEARTMULA_BACKBONE_LAYERS);
+    }
+
+    #[test]
+    fn heartmula_model_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let model = super::HeartmulaModel::<NdArray<f32>>::new(&device, 1000, 1024);
+
+        // Check that model was created with expected dimensions
+        assert_eq!(model.audio_head.dims()[0], HEARTMULA_AUDIO_CODEBOOKS - 1);
+        assert_eq!(model.audio_head.dims()[1], HEARTMULA_HIDDEN_SIZE);
+        assert_eq!(model.audio_head.dims()[2], 1024); // audio_vocab_size
+    }
+
+    #[test]
+    fn heartmula_model_audio_vocab_size() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let model = super::HeartmulaModel::<NdArray<f32>>::new(&device, 1000, 1024);
+
+        assert_eq!(model.audio_vocab_size(), 1024);
+    }
+
+    #[test]
+    fn history_tokens_tensor_shape() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let history: Vec<[i64; HEARTMULA_PARALLEL_TOKENS]> = vec![
+            [1, 2, 3, 4, 5, 6, 7, 8, 100],
+            [9, 10, 11, 12, 13, 14, 15, 16, 101],
+        ];
+
+        let tensor = super::history_tokens_tensor::<NdArray<f32>>(&history, &device);
+        assert_eq!(tensor.dims(), [1, 2, HEARTMULA_PARALLEL_TOKENS]);
+    }
+
+    #[test]
+    fn history_mask_tensor_shape() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let history: Vec<[i64; HEARTMULA_PARALLEL_TOKENS]> =
+            vec![[1, 2, 3, 4, 5, 6, 7, 8, 100], [0, 0, 0, 0, 0, 0, 0, 0, 101]];
+
+        let tensor = super::history_mask_tensor::<NdArray<f32>>(&history, &device);
+        assert_eq!(tensor.dims(), [1, 2, HEARTMULA_PARALLEL_TOKENS]);
+    }
+
+    #[test]
+    fn causal_mask_shape() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let mask = super::causal_mask::<NdArray<f32>>(5, &device);
+
+        assert_eq!(mask.dims(), [1, 1, 5, 5]);
+    }
+
+    #[test]
+    fn causal_mask_values() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let mask = super::causal_mask::<NdArray<f32>>(3, &device);
+        let data = mask.to_data().to_vec::<bool>().unwrap();
+
+        // Expected (causal) mask for seq_len=3:
+        // [false, true,  true ]
+        // [false, false, true ]
+        // [false, false, false]
+        assert_eq!(data[0], false); // [0,0]
+        assert_eq!(data[1], true); // [0,1]
+        assert_eq!(data[2], true); // [0,2]
+        assert_eq!(data[3], false); // [1,0]
+        assert_eq!(data[4], false); // [1,1]
+        assert_eq!(data[5], true); // [1,2]
+        assert_eq!(data[6], false); // [2,0]
+        assert_eq!(data[7], false); // [2,1]
+        assert_eq!(data[8], false); // [2,2]
+    }
+
+    #[test]
+    fn apply_scaled_rope_preserves_shape() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let tensor = Tensor::<NdArray<f32>, 4>::ones([1, 4, 8, 64], &device);
+        let positions = Tensor::<NdArray<f32>, 2, Int>::from_data(
+            TensorData::new(vec![0, 1, 2, 3], [1, 4]),
+            &device,
+        );
+
+        let rotated = super::apply_scaled_rope(tensor, &positions);
+        assert_eq!(rotated.dims(), [1, 4, 8, 64]);
+    }
+
+    #[test]
+    fn scaled_rope_cache_shape() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let positions = vec![0, 1, 2, 3, 4];
+        let cache = super::scaled_rope_cache::<NdArray<f32>>(&device, &positions, 64);
+
+        assert_eq!(cache.dims(), [5, 32, 2]); // [seq_len, head_dim/2, 2]
+    }
+
+    #[test]
+    fn splice_sequence_token_middle() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let hidden = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [1, 3, 2]),
+            &device,
+        );
+        let replacement = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![9.0, 9.0], [1, 1, 2]),
+            &device,
+        );
+
+        let result = super::splice_sequence_token(hidden, replacement, 1);
+        assert_eq!(result.dims(), [1, 3, 2]);
+    }
+
+    #[test]
+    fn splice_sequence_token_at_start() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let hidden = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![1.0, 2.0, 3.0, 4.0], [1, 2, 2]),
+            &device,
+        );
+        let replacement = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![9.0, 9.0], [1, 1, 2]),
+            &device,
+        );
+
+        let result = super::splice_sequence_token(hidden, replacement, 0);
+        assert_eq!(result.dims(), [1, 2, 2]);
+    }
+
+    #[test]
+    fn splice_sequence_token_at_end() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as Backend>::Device::default();
+        let hidden = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![1.0, 2.0, 3.0, 4.0], [1, 2, 2]),
+            &device,
+        );
+        let replacement = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![9.0, 9.0], [1, 1, 2]),
+            &device,
+        );
+
+        let result = super::splice_sequence_token(hidden, replacement, 1);
+        assert_eq!(result.dims(), [1, 2, 2]);
+    }
+}
