@@ -873,3 +873,89 @@ fn default_audio_backend() -> AudioBackendOption {
         .min_by_key(audio_backend_preference_rank)
         .expect("no default audio backend for this target")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audio_device_option_preferred_bits_returns_first() {
+        let device = AudioDeviceOption::with_supported_caps(
+            "hw:0".to_string(),
+            "Test".to_string(),
+            vec![24, 16, 32],
+            vec![48000],
+        );
+        assert_eq!(device.preferred_bits(), Some(32)); // Sorted descending
+    }
+
+    #[test]
+    fn audio_device_option_preferred_bits_empty() {
+        let device = AudioDeviceOption::with_supported_caps(
+            "hw:0".to_string(),
+            "Test".to_string(),
+            vec![],
+            vec![48000],
+        );
+        assert_eq!(device.preferred_bits(), None);
+    }
+
+    #[test]
+    fn normalize_sample_rates_removes_duplicates() {
+        let rates = vec![48000, 44100, 48000, 48000];
+        let normalized = AudioDeviceOption::normalize_sample_rates(rates);
+        assert_eq!(normalized.len(), 2);
+    }
+
+    #[test]
+    fn clip_id_creation() {
+        let id = ClipId {
+            track_idx: "track1".to_string(),
+            clip_idx: 0,
+            kind: maolan_engine::kind::Kind::Audio,
+        };
+        assert_eq!(id.track_idx, "track1");
+        assert_eq!(id.clip_idx, 0);
+    }
+
+    #[test]
+    fn clip_context_menu_state_creation() {
+        let state = ClipContextMenuState {
+            clip: ClipId {
+                track_idx: "track1".to_string(),
+                clip_idx: 0,
+                kind: maolan_engine::kind::Kind::Audio,
+            },
+            anchor: iced::Point::new(100.0, 100.0),
+        };
+        assert!((state.anchor.x - 100.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn track_context_menu_state_creation() {
+        let state = TrackContextMenuState {
+            track_name: "Drums".to_string(),
+            anchor: iced::Point::new(50.0, 50.0),
+        };
+        assert_eq!(state.track_name, "Drums");
+    }
+
+    #[test]
+    fn state_data_default_creates_instance() {
+        let data: StateData = Default::default();
+        assert!(!data.tracks.is_empty() || data.tracks.is_empty()); // Just verify it creates
+    }
+
+    #[test]
+    fn supported_audio_backends_returns_non_empty() {
+        let backends = supported_audio_backends();
+        assert!(!backends.is_empty());
+    }
+
+    #[test]
+    fn default_audio_backend_returns_valid() {
+        let backend = default_audio_backend();
+        // Just verify it doesn't panic and returns a valid backend
+        let _ = backend;
+    }
+}

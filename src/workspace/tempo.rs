@@ -1236,6 +1236,36 @@ mod tests {
     }
 
     #[test]
+    fn clip_kind_key_returns_expected_values() {
+        assert_eq!(clip_kind_key(maolan_engine::kind::Kind::Audio), 0);
+        assert_eq!(clip_kind_key(maolan_engine::kind::Kind::MIDI), 1);
+    }
+
+    #[test]
+    fn snap_mode_key_returns_expected_values() {
+        assert_eq!(Tempo::snap_mode_key(SnapMode::NoSnap), 0);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::Clips), 1);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::Bar), 2);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::Beat), 3);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::Eighth), 4);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::Sixteenth), 5);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::ThirtySecond), 6);
+        assert_eq!(Tempo::snap_mode_key(SnapMode::SixtyFourth), 7);
+    }
+
+    #[test]
+    fn lane_key_returns_expected_values() {
+        assert_eq!(Tempo::lane_key(MarkerLane::Tempo), 0);
+        assert_eq!(Tempo::lane_key(MarkerLane::TimeSignature), 1);
+    }
+
+    #[test]
+    fn tempo_new_creates_instance() {
+        let tempo = Tempo::new();
+        assert_eq!(tempo.height(), TEMPO_HEIGHT);
+    }
+
+    #[test]
     fn update_middle_click_in_tempo_lane_adds_tempo_point() {
         let canvas = TempoCanvas {
             bpm: 120.0,

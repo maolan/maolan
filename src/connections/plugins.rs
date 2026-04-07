@@ -1352,4 +1352,51 @@ mod tests {
             Some(7)
         );
     }
+
+    #[test]
+    fn required_height_for_ports_zero_ports() {
+        let height = Graph::required_height_for_ports(0, 6.0);
+        assert_eq!(height, 0.0);
+    }
+
+    #[test]
+    fn required_height_for_ports_single_port() {
+        let height = Graph::required_height_for_ports(1, 6.0);
+        assert!(height > 0.0);
+    }
+
+    #[test]
+    fn required_height_for_ports_multiple_ports() {
+        let height_1 = Graph::required_height_for_ports(1, 6.0);
+        let height_4 = Graph::required_height_for_ports(4, 6.0);
+        assert!(height_4 > height_1);
+    }
+
+    #[test]
+    fn trim_label_to_width_short_label_unchanged() {
+        let label = Graph::trim_label_to_width("Test", 1000.0);
+        assert_eq!(label, "Test");
+    }
+
+    #[test]
+    fn trim_label_to_width_long_label_truncated() {
+        let label = Graph::trim_label_to_width("Very Long Plugin Name That Exceeds Width", 50.0);
+        assert!(label.len() < "Very Long Plugin Name That Exceeds Width".len());
+    }
+
+    #[test]
+    fn track_input_rect_calculates_correctly() {
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(100.0, 100.0));
+        let rect = Graph::track_input_rect(bounds);
+        assert!(rect.width > 0.0);
+        assert!(rect.height > 0.0);
+    }
+
+    #[test]
+    fn track_output_rect_calculates_correctly() {
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(100.0, 100.0));
+        let rect = Graph::track_output_rect(bounds);
+        assert!(rect.width > 0.0);
+        assert!(rect.height > 0.0);
+    }
 }

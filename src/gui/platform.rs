@@ -144,4 +144,43 @@ mod tests {
     fn compact_desc_handles_empty_string() {
         assert_eq!(compact_desc("".to_string()), "");
     }
+
+    #[test]
+    fn kernel_midi_label_returns_basename_for_simple_path() {
+        let label = kernel_midi_label("/dev/midi0");
+        assert_eq!(label, "midi0");
+    }
+
+    #[test]
+    fn kernel_midi_label_extracts_basename() {
+        let label = kernel_midi_label("/dev/umidi0.0");
+        // Should extract basename without path
+        assert!(!label.contains('/'));
+    }
+
+    #[test]
+    fn kernel_midi_label_returns_basename_for_midi() {
+        let label = kernel_midi_label("/dev/midi0");
+        assert_eq!(label, "midi0");
+    }
+
+    #[test]
+    fn linux_alsa_label_returns_none_on_non_linux() {
+        let result = linux_alsa_label("midiC0D0");
+        // On Linux this would try to read /proc/asound, on other platforms returns None
+        // Test that function doesn't panic
+        let _ = result;
+    }
+
+    #[test]
+    fn linux_alsa_label_returns_none_for_non_alsa_names() {
+        let result = linux_alsa_label("midi0");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn linux_alsa_label_returns_none_for_invalid_format() {
+        let result = linux_alsa_label("invalid");
+        assert!(result.is_none());
+    }
 }

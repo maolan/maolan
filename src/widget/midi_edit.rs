@@ -894,3 +894,36 @@ impl MIDIEdit {
             .into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[test]
+    fn zoom_x_to_slider_roundtrip() {
+        let original = 1.0;
+        let slider = MIDIEdit::zoom_x_to_slider(original);
+        let back = MIDIEdit::slider_to_zoom_x(slider);
+        assert!((back - original).abs() < 0.001, "Roundtrip failed");
+    }
+
+    #[test]
+    fn zoom_x_to_slider_clamps_min() {
+        let result = MIDIEdit::zoom_x_to_slider(0.1);
+        assert!(result >= H_ZOOM_MIN);
+    }
+
+    #[test]
+    fn zoom_x_to_slider_clamps_max() {
+        let result = MIDIEdit::zoom_x_to_slider(100.0);
+        assert!(result <= H_ZOOM_MAX);
+    }
+
+    #[test]
+    fn midi_edit_new_creates_instance() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let _midi_edit = MIDIEdit::new(state);
+    }
+}
