@@ -283,4 +283,46 @@ mod tests {
         assert_eq!(menu.available_templates, vec!["A".to_string()]);
         assert_eq!(menu.recent_session_paths, vec!["/tmp/session".to_string()]);
     }
+
+    #[test]
+    fn update_templates_replaces_list() {
+        let mut menu = Menu::default();
+        menu.update_templates(vec!["Template1".to_string(), "Template2".to_string()]);
+        assert_eq!(menu.available_templates.len(), 2);
+        assert_eq!(menu.available_templates[0], "Template1");
+    }
+
+    #[test]
+    fn update_recent_sessions_replaces_list() {
+        let mut menu = Menu::default();
+        menu.update_recent_sessions(vec!["/path/one".to_string(), "/path/two".to_string()]);
+        assert_eq!(menu.recent_session_paths.len(), 2);
+    }
+
+    #[test]
+    fn recent_session_label_formats_with_filename() {
+        let label = Menu::recent_session_label("/home/user/projects/my_session");
+        assert!(label.contains("my_session"));
+        assert!(label.contains("/home/user/projects/my_session"));
+    }
+
+    #[test]
+    fn recent_session_label_handles_plain_name() {
+        let label = Menu::recent_session_label("just_a_name");
+        assert!(label.contains("just_a_name"));
+    }
+
+    #[test]
+    fn menu_default_is_empty() {
+        let menu = Menu::default();
+        assert!(menu.available_templates.is_empty());
+        assert!(menu.recent_session_paths.is_empty());
+    }
+
+    #[test]
+    fn menu_can_be_created() {
+        let menu = Menu::default();
+        assert!(menu.available_templates.is_empty());
+        assert!(menu.recent_session_paths.is_empty());
+    }
 }

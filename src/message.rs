@@ -92,8 +92,9 @@ impl fmt::Display for PluginFormat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum SnapMode {
+    #[default]
     NoSnap,
     Clips,
     Bar,

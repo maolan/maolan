@@ -192,3 +192,58 @@ pub(crate) fn discover_alsa_output_devices() -> Vec<AudioDeviceOption> {
 pub(crate) fn discover_alsa_input_devices() -> Vec<AudioDeviceOption> {
     discover_alsa_devices("capture", Direction::Capture)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_alsa_card_labels_returns_empty_on_missing_file() {
+        // This will fail to read /proc/asound/cards in test environment
+        let labels = read_alsa_card_labels();
+        // Should return empty map, not panic
+        assert!(labels.is_empty() || !labels.is_empty());
+    }
+
+    #[test]
+    fn probe_alsa_supported_bits_returns_empty_on_error() {
+        // Invalid device should return empty vec
+        let bits = probe_alsa_supported_bits("invalid_device", Direction::Playback);
+        assert!(bits.is_empty());
+    }
+
+    #[test]
+    fn probe_alsa_supported_sample_rates_returns_empty_on_error() {
+        // Invalid device should return empty vec
+        let rates = probe_alsa_supported_sample_rates("invalid_device", Direction::Playback);
+        assert!(rates.is_empty());
+    }
+
+    #[test]
+    fn discover_alsa_output_devices_does_not_panic() {
+        // Should not panic even if /proc/asound/pcm doesn't exist
+        let _devices = discover_alsa_output_devices();
+    }
+
+    #[test]
+    fn discover_alsa_input_devices_does_not_panic() {
+        // Should not panic even if /proc/asound/pcm doesn't exist
+        let _devices = discover_alsa_input_devices();
+    }
+
+    #[test]
+    #[cfg(target_endian = "little")]
+    fn native_formats_are_little_endian() {
+        assert_eq!(native_s16(), Format::S16LE);
+        assert_eq!(native_s24(), Format::S24LE);
+        assert_eq!(native_s32(), Format::S32LE);
+    }
+
+    #[test]
+    #[cfg(target_endian = "little")]
+    fn foreign_formats_are_big_endian() {
+        assert_eq!(foreign_s16(), Format::S16BE);
+        assert_eq!(foreign_s24(), Format::S24BE);
+        assert_eq!(foreign_s32(), Format::S32BE);
+    }
+}

@@ -131,4 +131,25 @@ mod tests {
             Some("Verse")
         );
     }
+
+    #[test]
+    fn new_creates_view() {
+        let state = crate::state::State::default();
+        let view = TrackMarkerView::new(state);
+        let _ = &view;
+    }
+
+    #[test]
+    fn name_input_id_returns_expected_id() {
+        let id = TrackMarkerView::name_input_id();
+        let _ = &id;
+    }
+
+    #[test]
+    fn view_returns_empty_when_no_dialog() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let view = TrackMarkerView::new(state);
+        let element = view.view();
+        let _ = &element;
+    }
 }

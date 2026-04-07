@@ -170,3 +170,72 @@ impl Maolan {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn apply_hw_backend_selected_updates_state() {
+        let app = Maolan::default();
+        let backend = crate::state::AudioBackendOption::Alsa;
+
+        app.apply_hw_backend_selected(&backend);
+
+        let state = app.state.blocking_read();
+        assert!(matches!(
+            state.selected_backend,
+            crate::state::AudioBackendOption::Alsa
+        ));
+        assert!(state.selected_hw.is_none());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn apply_hw_backend_selected_jack_updates_state() {
+        let app = Maolan::default();
+        let backend = crate::state::AudioBackendOption::Jack;
+
+        app.apply_hw_backend_selected(&backend);
+
+        let state = app.state.blocking_read();
+        assert!(matches!(
+            state.selected_backend,
+            crate::state::AudioBackendOption::Jack
+        ));
+        assert!(state.selected_hw.is_none());
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    fn select_refreshed_device_returns_clone_when_not_found() {
+        let current = AudioDeviceOption::with_supported_caps(
+            "hw:0".to_string(),
+            "Test Device".to_string(),
+            vec![16, 24, 32],
+            vec![44100, 48000],
+        );
+        let mut available = Vec::new();
+
+        let selected = Maolan::select_refreshed_device(&mut available, &current, Vec::new);
+
+        assert_eq!(selected.id, current.id);
+    }
+
+    #[test]
+    fn update_bits_from_selected_device_sets_oss_bits() {
+        let mut state = crate::state::StateData::default();
+        let device = AudioDeviceOption::with_supported_caps(
+            "hw:0".to_string(),
+            "Test".to_string(),
+            vec![16, 24],
+            vec![48000],
+        );
+
+        Maolan::update_bits_from_selected_device(&mut state, &device);
+
+        // oss_bits should be set to preferred bits (highest supported due to sorting)
+        assert_eq!(state.oss_bits, 24);
+    }
+}

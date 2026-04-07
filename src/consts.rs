@@ -350,3 +350,125 @@ pub mod message_lists {
         ExportBitDepth::Float32,
     ];
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_background_color_has_expected_values() {
+        // Verify the RGB components
+        assert!((APP_BACKGROUND_COLOR.r - 0.09).abs() < 0.01); // 23/255
+        assert!((APP_BACKGROUND_COLOR.g - 0.12).abs() < 0.01); // 31/255
+        assert!((APP_BACKGROUND_COLOR.b - 0.19).abs() < 0.01); // 48/255
+    }
+
+    #[test]
+    fn gui_constants_are_expected_values() {
+        assert_eq!(gui::PREF_DEVICE_AUTO_ID, "__auto__");
+        assert_eq!(gui::AUTOSAVE_SNAPSHOT_INTERVAL.as_secs(), 60);
+    }
+
+    #[test]
+    fn workspace_constants_are_expected_values() {
+        assert_eq!(workspace::BEATS_PER_BAR, 4);
+        assert_eq!(workspace::MIN_LABEL_SPACING_PX, 64.0);
+    }
+
+    #[test]
+    fn ui_timing_constants_are_expected_values() {
+        assert_eq!(ui_timing::DOUBLE_CLICK.as_millis(), 350);
+        assert_eq!(ui_timing::PLAYHEAD_UPDATE_INTERVAL.as_millis(), 50);
+        assert_eq!(ui_timing::RECORDING_PREVIEW_UPDATE_INTERVAL.as_secs(), 1);
+    }
+
+    #[test]
+    fn main_icon_bytes_is_not_empty() {
+        assert!(!main::ICON_BYTES.is_empty());
+    }
+
+    #[test]
+    fn workspace_ids_are_unique() {
+        let ids = [
+            workspace_ids::EDITOR_SCROLL_ID,
+            workspace_ids::EDITOR_TIMELINE_SCROLL_ID,
+            workspace_ids::TRACKS_SCROLL_ID,
+            workspace_ids::WORKSPACE_TEMPO_SCROLL_ID,
+            workspace_ids::WORKSPACE_RULER_SCROLL_ID,
+            workspace_ids::PIANO_TEMPO_SCROLL_ID,
+            workspace_ids::PIANO_RULER_SCROLL_ID,
+        ];
+        let unique: std::collections::HashSet<_> = ids.iter().collect();
+        assert_eq!(unique.len(), ids.len());
+    }
+
+    #[test]
+    fn state_ids_are_expected_values() {
+        assert_eq!(state_ids::HW_IN_ID, "hw:in");
+        assert_eq!(state_ids::HW_OUT_ID, "hw:out");
+        assert_eq!(state_ids::METRONOME_TRACK_ID, "metronome");
+        assert_eq!(state_ids::MIDI_HW_IN_ID, "midi:hw:in");
+        assert_eq!(state_ids::MIDI_HW_OUT_ID, "midi:hw:out");
+    }
+
+    #[test]
+    fn state_track_constants_are_expected_values() {
+        assert_eq!(state_track::TRACK_FOLDER_HEADER_HEIGHT, 24.0);
+        assert_eq!(state_track::TRACK_SUBTRACK_GAP, 2.0);
+        assert_eq!(state_track::TRACK_SUBTRACK_MIN_HEIGHT, 40.0);
+    }
+
+    #[test]
+    fn connections_plugins_constants_are_expected_values() {
+        assert_eq!(connections_plugins::PLUGIN_W, 170.0);
+        assert_eq!(connections_plugins::MIN_PLUGIN_H, 96.0);
+        assert_eq!(connections_plugins::AUDIO_PORT_RADIUS, 4.5);
+        assert_eq!(connections_plugins::MIDI_PORT_RADIUS, 3.5);
+    }
+
+    #[test]
+    fn plugins_x11_constants_exist() {
+        let _ = plugins_x11::CLIENT_MESSAGE;
+        let _ = plugins_x11::DESTROY_NOTIFY;
+        let _ = plugins_x11::STRUCTURE_NOTIFY_MASK;
+        let _ = plugins_x11::EXPOSURE_MASK;
+    }
+
+    #[test]
+    fn plugins_lv2_constants_exist() {
+        assert!(!plugins_lv2::LV2_URID_MAP.is_empty());
+        assert!(!plugins_lv2::LV2_URID_UNMAP.is_empty());
+        assert!(!plugins_lv2::LV2_UI_X11.is_empty());
+    }
+
+    #[test]
+    fn workspace_mixer_level_labels_is_populated() {
+        assert!(!workspace_mixer::LEVEL_LABELS.is_empty());
+        assert!(workspace_mixer::LEVEL_LABELS.len() > 1000);
+    }
+
+    #[test]
+    fn workspace_mixer_balance_labels_is_populated() {
+        assert!(!workspace_mixer::BALANCE_LABELS.is_empty());
+        assert_eq!(workspace_mixer::BALANCE_LABELS.len(), 201); // -100 to 100
+    }
+
+    #[test]
+    fn gui_mod_constants_are_valid() {
+        assert_eq!(gui_mod::MAX_RECENT_SESSIONS, 12);
+        assert_eq!(gui_mod::AUDIO_BIT_DEPTH_OPTIONS, [32, 24, 16, 8]);
+        assert_eq!(gui_mod::MAX_PEAK_BINS, 32768);
+        assert_eq!(gui_mod::BINS_PER_UPDATE, 2048);
+        assert_eq!(gui_mod::CHUNK_FRAMES, 16384);
+        assert!(!gui_mod::STANDARD_EXPORT_SAMPLE_RATES.is_empty());
+    }
+
+    #[test]
+    fn message_lists_are_populated() {
+        assert_eq!(message_lists::SNAP_MODE_ALL.len(), 8);
+        assert_eq!(message_lists::PIANO_SCALE_ROOT_ALL.len(), 12);
+        assert_eq!(message_lists::PIANO_CHORD_KIND_ALL.len(), 5);
+        assert_eq!(message_lists::EXPORT_BIT_DEPTH_ALL.len(), 4);
+        assert_eq!(message_lists::EXPORT_RENDER_MODE_ALL.len(), 3);
+    }
+}

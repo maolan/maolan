@@ -119,7 +119,7 @@ impl MIDIClip {
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioClip, MIDIClip};
+    use super::{AudioClip, MIDIClip, PeakPair};
     use serde_json::json;
 
     #[test]
@@ -183,5 +183,57 @@ mod tests {
 
         assert_eq!(clip.grouped_clips.len(), 1);
         assert_eq!(clip.grouped_clips[0].grouped_clips.len(), 1);
+    }
+
+    #[test]
+    fn audio_clip_default_creation() {
+        let clip = AudioClip::default();
+        assert_eq!(clip.name, "");
+        assert_eq!(clip.start, 0);
+        assert_eq!(clip.length, 0);
+    }
+
+    #[test]
+    fn midi_clip_default_values() {
+        let clip = MIDIClip::default();
+        assert_eq!(clip.start, 0);
+        assert_eq!(clip.length, 0);
+        assert_eq!(clip.offset, 0);
+    }
+
+    #[test]
+    fn peak_pair_creation() {
+        let pair: PeakPair = [0.5, -0.3];
+        assert!((pair[0] - 0.5).abs() < f32::EPSILON);
+        assert!((pair[1] - (-0.3)).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn audio_clip_creation() {
+        let clip = AudioClip {
+            name: "test.wav".to_string(),
+            start: 100,
+            length: 500,
+            offset: 50,
+            ..AudioClip::default()
+        };
+        assert_eq!(clip.name, "test.wav");
+        assert_eq!(clip.start, 100);
+        assert_eq!(clip.length, 500);
+        assert_eq!(clip.offset, 50);
+    }
+
+    #[test]
+    fn midi_clip_creation() {
+        let clip = MIDIClip {
+            name: "test.mid".to_string(),
+            start: 200,
+            length: 1000,
+            offset: 100,
+            ..MIDIClip::default()
+        };
+        assert_eq!(clip.name, "test.mid");
+        assert_eq!(clip.start, 200);
+        assert_eq!(clip.length, 1000);
     }
 }
