@@ -1,4 +1,4 @@
-![Maolan](images/maolan.png)
+![Maolan](images/maolan.svg)
 
 # Maolan
 
