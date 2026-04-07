@@ -3357,4 +3357,134 @@ mod tests {
             other => panic!("unexpected action: {other:?}"),
         }
     }
+
+    #[test]
+    fn normalize_period_frames_power_of_two() {
+        assert_eq!(Maolan::normalize_period_frames(64), 64);
+        assert_eq!(Maolan::normalize_period_frames(512), 512);
+        assert_eq!(Maolan::normalize_period_frames(4096), 4096);
+    }
+
+    #[test]
+    fn normalize_period_frames_non_power_of_two() {
+        assert_eq!(Maolan::normalize_period_frames(100), 128);
+        assert_eq!(Maolan::normalize_period_frames(500), 512);
+        assert_eq!(Maolan::normalize_period_frames(3000), 4096);
+    }
+
+    #[test]
+    fn normalize_period_frames_clamps_to_bounds() {
+        assert_eq!(Maolan::normalize_period_frames(5), 16);
+        assert_eq!(Maolan::normalize_period_frames(100000), 65536);
+    }
+
+    #[test]
+    fn quantize_meter_db_clamps_and_steps() {
+        assert_eq!(Maolan::quantize_meter_db(-100.0), -90.0);
+        assert_eq!(Maolan::quantize_meter_db(25.0), 20.0);
+        // Steps of 1.0 dB
+        assert_eq!(Maolan::quantize_meter_db(5.3), 5.0);
+        assert_eq!(Maolan::quantize_meter_db(5.7), 6.0);
+    }
+
+    #[test]
+    fn deterministic_note_jitter_is_deterministic() {
+        let j1 = Maolan::deterministic_note_jitter(100, 200, 10);
+        let j2 = Maolan::deterministic_note_jitter(100, 200, 10);
+        assert_eq!(j1, j2);
+    }
+
+    #[test]
+    fn deterministic_note_jitter_respects_amplitude() {
+        let j1 = Maolan::deterministic_note_jitter(100, 200, 10);
+        assert!((-10..=10).contains(&j1));
+    }
+
+    #[test]
+    fn nearest_scale_pitch_major() {
+        // C major scale: C=0, D=2, E=4, F=5, G=7, A=9, B=11
+        assert_eq!(Maolan::nearest_scale_pitch(0, 0, false), 0); // C
+        assert_eq!(Maolan::nearest_scale_pitch(1, 0, false), 0); // C# -> C
+        assert_eq!(Maolan::nearest_scale_pitch(6, 0, false), 5); // F# -> F
+    }
+
+    #[test]
+    fn nearest_scale_pitch_minor() {
+        // C minor scale: C=0, D=2, D#=3, F=5, G=7, G#=8, A#=10
+        assert_eq!(Maolan::nearest_scale_pitch(0, 0, true), 0); // C
+        assert_eq!(Maolan::nearest_scale_pitch(1, 0, true), 0); // C# -> C
+        assert_eq!(Maolan::nearest_scale_pitch(4, 0, true), 3); // E -> D#
+    }
+
+    #[test]
+    fn format_sysex_hex_formats_bytes() {
+        assert_eq!(Maolan::format_sysex_hex(&[0xF0, 0x01, 0x02]), "F0 01 02");
+        assert_eq!(Maolan::format_sysex_hex(&[]), "");
+    }
+
+    #[test]
+    fn parse_sysex_hex_parses_valid_hex() {
+        // Parser adds 0xF0 at start and 0xF7 at end if not present
+        assert_eq!(
+            Maolan::parse_sysex_hex("01 02").unwrap(),
+            vec![0xF0, 0x01, 0x02, 0xF7]
+        );
+        assert_eq!(
+            Maolan::parse_sysex_hex("f0,01,02").unwrap(),
+            vec![0xF0, 0x01, 0x02, 0xF7]
+        );
+    }
+
+    #[test]
+    fn parse_sysex_hex_rejects_invalid() {
+        assert!(Maolan::parse_sysex_hex("GG HH").is_err());
+        assert!(Maolan::parse_sysex_hex("").is_err());
+    }
+
+    #[test]
+    fn timing_at_sample_basic() {
+        let state = crate::state::StateData {
+            tempo: 120.0,
+            time_signature_num: 4,
+            time_signature_denom: 4,
+            hw_sample_rate_hz: 48000,
+            ..Default::default()
+        };
+
+        let (bpm, num, denom) = Maolan::timing_at_sample(&state, 0);
+        assert_eq!(bpm, 120.0);
+        assert_eq!(num, 4);
+        assert_eq!(denom, 4);
+    }
+
+    #[test]
+    fn automation_key_equality() {
+        use crate::message::TrackAutomationTarget;
+
+        let key1 = Maolan::automation_key(TrackAutomationTarget::Volume);
+        let key2 = Maolan::automation_key(TrackAutomationTarget::Volume);
+        let key3 = Maolan::automation_key(TrackAutomationTarget::Balance);
+
+        assert_eq!(key1, key2);
+        assert_ne!(key1, key3);
+    }
+
+    #[test]
+    fn key_has_explicit_gesture_lifecycle() {
+        use super::AutomationWriteKey;
+
+        // Only CLAP keys have explicit gesture lifecycle
+        assert!(!Maolan::key_has_explicit_gesture_lifecycle(
+            AutomationWriteKey::Mute
+        ));
+        assert!(!Maolan::key_has_explicit_gesture_lifecycle(
+            AutomationWriteKey::Volume
+        ));
+        assert!(Maolan::key_has_explicit_gesture_lifecycle(
+            AutomationWriteKey::Clap {
+                instance_id: 0,
+                param_id: 0
+            }
+        ));
+    }
 }
