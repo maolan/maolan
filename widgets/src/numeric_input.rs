@@ -246,4 +246,27 @@ mod tests {
         assert_eq!(format_decimal_value(6.0), "6");
         assert_eq!(format_decimal_value(6.125), "6.125");
     }
+
+    #[test]
+    fn format_decimal_value_handles_negative() {
+        assert_eq!(format_decimal_value(-6.5), "-6.5");
+        assert_eq!(format_decimal_value(-6.0), "-6");
+    }
+
+    #[test]
+    fn format_decimal_value_handles_zero() {
+        assert_eq!(format_decimal_value(0.0), "0");
+    }
+
+    #[test]
+    fn format_decimal_value_handles_large_numbers() {
+        assert_eq!(format_decimal_value(1234.567), "1234.567");
+        assert_eq!(format_decimal_value(1000.0), "1000");
+    }
+
+    #[test]
+    fn format_decimal_value_handles_small_decimals() {
+        assert_eq!(format_decimal_value(0.001), "0.001");
+        assert_eq!(format_decimal_value(0.000), "0");
+    }
 }

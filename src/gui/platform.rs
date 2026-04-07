@@ -117,3 +117,31 @@ fn linux_alsa_label(basename: &str) -> Option<String> {
 fn compact_desc(desc: String) -> String {
     desc.split(',').next().unwrap_or(&desc).trim().to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_desc_extracts_first_part() {
+        assert_eq!(compact_desc("Part1, Part2, Part3".to_string()), "Part1");
+    }
+
+    #[test]
+    fn compact_desc_trims_whitespace() {
+        assert_eq!(
+            compact_desc("  Label with spaces  ".to_string()),
+            "Label with spaces"
+        );
+    }
+
+    #[test]
+    fn compact_desc_handles_single_part() {
+        assert_eq!(compact_desc("SimpleLabel".to_string()), "SimpleLabel");
+    }
+
+    #[test]
+    fn compact_desc_handles_empty_string() {
+        assert_eq!(compact_desc("".to_string()), "");
+    }
+}
