@@ -196,7 +196,7 @@ jobs:
 
       - name: Build release binary
         if: ${{ inputs.release_build }}
-        run: cargo build --release --verbose
+        run: cargo build --release --workspace
 
       - name: Package Linux binary
         if: ${{ inputs.release_build }}
