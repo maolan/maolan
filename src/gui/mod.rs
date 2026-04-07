@@ -6875,4 +6875,102 @@ mod tests {
         let _ = app.update(Message::GenerateAudioCfgScaleInput("6.1".to_string()));
         assert_eq!(app.generate_audio_cfg_scale_input, "6.1");
     }
+
+    #[test]
+    fn export_format_extension_returns_correct_extensions() {
+        // Extensions are returned without the leading dot
+        assert_eq!(Maolan::export_format_extension(ExportFormat::Wav), "wav");
+        assert_eq!(Maolan::export_format_extension(ExportFormat::Mp3), "mp3");
+        assert_eq!(Maolan::export_format_extension(ExportFormat::Ogg), "ogg");
+        assert_eq!(Maolan::export_format_extension(ExportFormat::Flac), "flac");
+    }
+
+    #[test]
+    fn sanitize_export_component_replaces_special_chars() {
+        assert_eq!(Maolan::sanitize_export_component("test/file"), "test_file");
+        assert_eq!(Maolan::sanitize_export_component("test:file"), "test_file");
+        assert_eq!(Maolan::sanitize_export_component("test file"), "test_file");
+    }
+
+    #[test]
+    fn sanitize_peak_file_component_replaces_special_chars() {
+        assert_eq!(
+            Maolan::sanitize_peak_file_component("track/name"),
+            "track_name"
+        );
+        assert_eq!(Maolan::sanitize_peak_file_component("clip.wav"), "clip_wav");
+    }
+
+    #[test]
+    fn build_peak_file_rel_creates_correct_path() {
+        let rel = Maolan::build_peak_file_rel("TestTrack", 5, "audio.wav");
+        assert!(rel.contains("TestTrack"));
+        assert!(rel.contains("5"));
+        assert!(rel.ends_with(".json"));
+    }
+
+    #[test]
+    fn audio_clip_key_is_deterministic() {
+        let key1 = Maolan::audio_clip_key("track1", "clip.wav", 100, 500, 0);
+        let key2 = Maolan::audio_clip_key("track1", "clip.wav", 100, 500, 0);
+        assert_eq!(key1, key2);
+    }
+
+    #[test]
+    fn audio_clip_key_differs_with_params() {
+        let key1 = Maolan::audio_clip_key("track1", "clip.wav", 100, 500, 0);
+        let key2 = Maolan::audio_clip_key("track1", "clip.wav", 200, 500, 0);
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn export_base_path_removes_extension() {
+        let path = PathBuf::from("/tmp/session/test.wav");
+        let base = Maolan::export_base_path(path);
+        assert_eq!(base, PathBuf::from("/tmp/session/test"));
+    }
+
+    #[test]
+    fn sanitize_generated_track_base_name_cleans_input() {
+        let sanitized = Maolan::sanitize_generated_track_base_name("My Track with spaces");
+        assert!(sanitized.contains("My"));
+        assert!(!sanitized.contains(' '));
+    }
+
+    #[test]
+    fn samples_per_beat_calculation() {
+        let app = Maolan::default();
+        let spp = app.samples_per_beat();
+        // At 120 BPM and 48kHz, samples per beat = 48000 * 60 / 120 = 24000
+        assert!(spp > 0.0);
+    }
+
+    #[test]
+    fn samples_per_bar_calculation() {
+        let app = Maolan::default();
+        let spb = app.samples_per_bar();
+        // At 120 BPM, 4/4 time, 48kHz, samples per bar = 48000 * 60 / 120 * 4 = 96000
+        assert!(spb > 0.0);
+    }
+
+    #[test]
+    fn zoom_slider_visible_bars_roundtrip() {
+        // Test that visible_bars_to_zoom_slider and zoom_slider_to_visible_bars are consistent
+        for i in 0..=20 {
+            let position = i as f32 / 20.0;
+            let visible = zoom_slider_to_visible_bars(position);
+            let back = visible_bars_to_zoom_slider(visible);
+            assert!(
+                (back - position).abs() < 0.001,
+                "Roundtrip failed at position {}",
+                position
+            );
+        }
+    }
+
+    #[test]
+    fn zoom_slider_min_max() {
+        assert_eq!(zoom_slider_to_visible_bars(0.0), MIN_ZOOM_VISIBLE_BARS);
+        assert_eq!(zoom_slider_to_visible_bars(1.0), MAX_ZOOM_VISIBLE_BARS);
+    }
 }
