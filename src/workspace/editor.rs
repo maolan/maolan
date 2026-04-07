@@ -1853,3 +1853,51 @@ impl Editor {
         .into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automation_point_color_returns_correct_colors() {
+        use crate::message::TrackAutomationTarget;
+
+        let volume_color = automation_point_color(TrackAutomationTarget::Volume);
+        let balance_color = automation_point_color(TrackAutomationTarget::Balance);
+        let mute_color = automation_point_color(TrackAutomationTarget::Mute);
+
+        // Check that colors are valid (non-zero alpha)
+        assert!(volume_color.a > 0.0);
+        assert!(balance_color.a > 0.0);
+        assert!(mute_color.a > 0.0);
+
+        // Check that different targets have different colors
+        assert_ne!(volume_color.r, balance_color.r);
+    }
+
+    #[test]
+    fn automation_point_color_plugin_targets_have_colors() {
+        use crate::message::TrackAutomationTarget;
+
+        let lv2_color = automation_point_color(TrackAutomationTarget::Lv2Parameter {
+            instance_id: 1,
+            index: 0,
+            min: 0.0,
+            max: 1.0,
+        });
+        let vst3_color = automation_point_color(TrackAutomationTarget::Vst3Parameter {
+            instance_id: 1,
+            param_id: 0,
+        });
+        let clap_color = automation_point_color(TrackAutomationTarget::ClapParameter {
+            instance_id: 1,
+            param_id: 0,
+            min: 0.0,
+            max: 1.0,
+        });
+
+        assert!(lv2_color.a > 0.0);
+        assert!(vst3_color.a > 0.0);
+        assert!(clap_color.a > 0.0);
+    }
+}

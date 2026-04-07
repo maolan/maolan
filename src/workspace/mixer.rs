@@ -564,3 +564,97 @@ impl Mixer {
         .into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fader_height_from_panel_fixed() {
+        let height = Mixer::fader_height_from_panel(Length::Fixed(400.0));
+        assert!(height >= 92.0);
+    }
+
+    #[test]
+    fn fader_height_from_panel_fill() {
+        let height = Mixer::fader_height_from_panel(Length::Fill);
+        assert_eq!(height, 160.0);
+    }
+
+    #[test]
+    fn trim_strip_name_truncates_long_names() {
+        let name = "VeryLongTrackNameThatExceedsWidth";
+        let trimmed = Mixer::trim_strip_name(name, 50.0);
+        assert!(trimmed.len() < name.len());
+    }
+
+    #[test]
+    fn trim_strip_name_keeps_short_names() {
+        let name = "Short";
+        let trimmed = Mixer::trim_strip_name(name, 200.0);
+        assert_eq!(trimmed, name);
+    }
+
+    #[test]
+    fn trim_strip_name_returns_empty_for_zero_width() {
+        let trimmed = Mixer::trim_strip_name("Name", 0.0);
+        assert!(trimmed.is_empty());
+    }
+
+    #[test]
+    fn format_level_db_inf() {
+        let label = Mixer::format_level_db(-100.0);
+        assert_eq!(label, "-inf dB");
+    }
+
+    #[test]
+    fn format_level_db_clamps_min() {
+        let label = Mixer::format_level_db(-95.0);
+        assert_eq!(label, "-inf dB");
+    }
+
+    #[test]
+    fn format_level_db_valid_range() {
+        let label = Mixer::format_level_db(0.0);
+        assert!(!label.is_empty());
+    }
+
+    #[test]
+    fn format_balance_center() {
+        let label = Mixer::format_balance(0.0);
+        assert_eq!(label, "C");
+    }
+
+    #[test]
+    fn format_balance_left() {
+        let label = Mixer::format_balance(-0.5);
+        assert!(label.starts_with('L'));
+    }
+
+    #[test]
+    fn format_balance_right() {
+        let label = Mixer::format_balance(0.5);
+        assert!(label.starts_with('R'));
+    }
+
+    #[test]
+    fn format_balance_clamps() {
+        let label_min = Mixer::format_balance(-10.0);
+        let label_max = Mixer::format_balance(10.0);
+        assert!(!label_min.is_empty());
+        assert!(!label_max.is_empty());
+    }
+
+    #[test]
+    fn mixer_new_creates_instance() {
+        let state = crate::state::State::default();
+        let mixer = Mixer::new(state);
+        let _ = &mixer;
+    }
+
+    #[test]
+    fn mixer_default_creates_instance() {
+        let mixer: Mixer = Default::default();
+        let _ = &mixer;
+    }
+}

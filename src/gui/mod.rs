@@ -6973,4 +6973,47 @@ mod tests {
         assert_eq!(zoom_slider_to_visible_bars(0.0), MIN_ZOOM_VISIBLE_BARS);
         assert_eq!(zoom_slider_to_visible_bars(1.0), MAX_ZOOM_VISIBLE_BARS);
     }
+
+    #[test]
+    fn pixels_per_sample_calculation() {
+        let app = Maolan::default();
+        let pps = app.pixels_per_sample();
+        assert!(pps > 0.0);
+    }
+
+    #[test]
+    fn editor_width_px_calculation() {
+        let app = Maolan::default();
+        let width = app.editor_width_px();
+        assert!(width >= 0.0);
+    }
+
+    #[test]
+    fn tracks_width_px_calculation() {
+        let app = Maolan::default();
+        let width = app.tracks_width_px();
+        assert!(width >= 0.0);
+    }
+
+    #[test]
+    fn snap_interval_samples_returns_positive_value() {
+        let app = Maolan::default();
+        let interval = app.snap_interval_samples();
+        // Should return a positive number
+        assert!(interval > 0);
+    }
+
+    #[test]
+    fn snap_sample_to_bar_returns_valid_sample() {
+        let app = Maolan::default();
+        let sample = app.snap_sample_to_bar(1000.0);
+        assert!(sample < 10000); // Should snap to a reasonable value
+    }
+
+    #[test]
+    fn beat_pixels_calculation() {
+        let app = Maolan::default();
+        let bp = app.beat_pixels();
+        assert!(bp > 0.0);
+    }
 }
