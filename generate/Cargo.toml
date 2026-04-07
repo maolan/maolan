@@ -1,11 +1,17 @@
 [package]
 name = "maolan-generate"
 default-run = "maolan-generate"
-version = "0.0.2"
+description = "Generate music using Maolan and HeartMuLa"
+version = "0.0.1"
 edition = "2024"
 license = "BSD-2-Clause"
+readme = "README.md"
 publish = true
 build = "build.rs"
+repository = "https://github.com/maolan/maolan"
+homepage = "https://maolan.github.io"
+keywords = ["audio", "ai", "generate"]
+categories = ["multimedia::audio"]
 
 [features]
 default = []
