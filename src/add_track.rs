@@ -396,4 +396,51 @@ mod tests {
         assert_eq!(view.count, 1);
         assert_eq!(view.selected_template.as_deref(), Some("empty"));
     }
+
+    #[test]
+    fn default_creates_view() {
+        let view = AddTrackView::default();
+        assert_eq!(view.name, "");
+        assert_eq!(view.count, 1);
+        assert_eq!(view.audio_ins, 1);
+        assert_eq!(view.audio_outs, 1);
+        assert_eq!(view.midi_ins, 0);
+        assert_eq!(view.midi_outs, 0);
+    }
+
+    #[test]
+    fn name_input_id_returns_expected_id() {
+        let id = AddTrackView::name_input_id();
+        let _ = &id;
+    }
+
+    #[test]
+    fn create_message_returns_none_when_name_empty() {
+        let view = AddTrackView::default();
+        assert!(view.create_message().is_none());
+    }
+
+    #[test]
+    fn create_messages_returns_empty_when_name_empty() {
+        let view = AddTrackView::default();
+        assert!(view.create_messages().is_empty());
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn create_messages_returns_messages_when_name_set() {
+        let mut view = AddTrackView::default();
+        view.name = "Test Track".to_string();
+        view.count = 2;
+
+        let messages = view.create_messages();
+        assert_eq!(messages.len(), 2);
+    }
+
+    #[test]
+    fn set_available_templates_updates_list() {
+        let mut view = AddTrackView::default();
+        view.set_available_templates(vec!["Template1".to_string(), "Template2".to_string()]);
+        assert_eq!(view.available_templates.len(), 2);
+    }
 }

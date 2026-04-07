@@ -624,4 +624,46 @@ mod tests {
             PitchDraggingMode::SelectingRect
         ));
     }
+
+    #[test]
+    fn zoom_x_to_slider_roundtrip() {
+        let original = 1.5;
+        let slider = PitchCorrection::zoom_x_to_slider(original);
+        let back = PitchCorrection::slider_to_zoom_x(slider);
+        assert!((back - original).abs() < 0.001);
+    }
+
+    #[test]
+    fn pitch_color_returns_color() {
+        let point = PitchCorrectionPoint {
+            start_sample: 0,
+            length_samples: 100,
+            detected_midi_pitch: 60.0,
+            target_midi_pitch: 60.0,
+            clarity: 0.8,
+        };
+        let color = PitchCorrection::pitch_color(&point);
+        assert!(color.a > 0.0);
+    }
+
+    #[test]
+    fn pitch_correction_new_creates_instance() {
+        let state = crate::state::State::default();
+        let pc = PitchCorrection::new(state);
+        let _ = &pc;
+    }
+
+    #[test]
+    fn pitch_roll_canvas_state_default() {
+        let state = PitchRollCanvasState::default();
+        assert!(state.drag_start.is_none());
+        assert!(matches!(state.dragging_mode, PitchDraggingMode::None));
+    }
+
+    #[test]
+    fn slider_to_zoom_x_clamps_to_range() {
+        let zoom = PitchCorrection::slider_to_zoom_x(0.5);
+        assert!(zoom >= H_ZOOM_MIN);
+        assert!(zoom <= H_ZOOM_MAX);
+    }
 }

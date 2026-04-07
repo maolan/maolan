@@ -14,7 +14,7 @@ use iced_fonts::lucide::{
 #[derive(Debug, Default)]
 pub struct Toolbar;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ToolbarViewState {
     pub playing: bool,
     pub paused: bool,
@@ -245,5 +245,38 @@ mod tests {
         let mut toolbar = Toolbar::new();
 
         toolbar.update(&Message::TransportPlay);
+    }
+
+    #[test]
+    fn toolbar_new_creates_instance() {
+        let toolbar = Toolbar::new();
+        // Just verify it creates without panicking
+        let _ = &toolbar;
+    }
+
+    #[test]
+    fn toolbar_default_creates_instance() {
+        let toolbar: Toolbar = Default::default();
+        let _ = &toolbar;
+    }
+
+    #[test]
+    fn toolbar_view_state_defaults() {
+        let state = ToolbarViewState::default();
+        assert!(!state.playing);
+        assert!(!state.paused);
+        assert!(!state.recording);
+        assert!(!state.metronome_enabled);
+        assert!(!state.has_session_end);
+        assert!(!state.has_loop_range);
+        assert!(!state.loop_enabled);
+        assert!(!state.has_punch_range);
+        assert!(!state.punch_enabled);
+    }
+
+    #[test]
+    fn button_style_returns_style_fn() {
+        // Just verify the function doesn't panic
+        let _style_fn = Toolbar::button_style(true, false, Color::TRANSPARENT);
     }
 }

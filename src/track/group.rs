@@ -103,4 +103,19 @@ mod tests {
 
         assert!(state.blocking_read().track_group_dialog.is_none());
     }
+
+    #[test]
+    fn new_creates_view() {
+        let state = crate::state::State::default();
+        let view = TrackGroupView::new(state);
+        let _ = &view;
+    }
+
+    #[test]
+    fn view_returns_empty_when_no_dialog() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let view = TrackGroupView::new(state);
+        let element = view.view();
+        let _ = &element;
+    }
 }

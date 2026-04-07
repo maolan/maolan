@@ -677,4 +677,46 @@ mod tests {
         assert_eq!(status, event::Status::Ignored);
         assert!(!state.dragging);
     }
+
+    #[test]
+    fn clip_kind_key_returns_expected_values() {
+        use maolan_engine::kind::Kind;
+        assert_eq!(clip_kind_key(Kind::Audio), 0);
+        assert_eq!(clip_kind_key(Kind::MIDI), 1);
+    }
+
+    #[test]
+    fn ruler_canvas_can_be_constructed() {
+        let canvas = RulerCanvas {
+            playhead_x: None,
+            beat_pixels: 16.0,
+            pixels_per_sample: 2.0,
+            loop_range_samples: None,
+            clip_snap_edges: Vec::new(),
+            snap_mode: SnapMode::NoSnap,
+            samples_per_beat: 4.0,
+            timeline_left_inset_px: 0.0,
+        };
+        assert!(canvas.beat_pixels > 0.0);
+    }
+
+    #[test]
+    fn ruler_state_default() {
+        let state = RulerState::default();
+        assert!(!state.dragging);
+        assert!(!state.drag_with_right);
+        assert!(!state.drag_adjust_loop_edge);
+    }
+
+    #[test]
+    fn ruler_new_creates_instance() {
+        let ruler = Ruler::new();
+        let _ = &ruler; // Just verify it creates without panicking
+    }
+
+    #[test]
+    fn ruler_default_creates_instance() {
+        let ruler: Ruler = Default::default();
+        let _ = &ruler;
+    }
 }

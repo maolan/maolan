@@ -777,6 +777,27 @@ mod tests {
         assert_eq!(status, event::Status::Captured);
         assert!(matches!(interaction_state.mode, ControllerDragMode::None));
     }
+
+    #[test]
+    fn controller_roll_interaction_new_creates_instance() {
+        let state = crate::state::State::default();
+        let interaction = ControllerRollInteraction::new(state, 0.1, 48000.0, 1920.0);
+        assert!(interaction.pixels_per_sample > 0.0);
+        assert!(interaction.sample_rate_hz > 0.0);
+    }
+
+    #[test]
+    fn controller_drag_mode_default_is_none() {
+        let mode = ControllerDragMode::default();
+        assert!(matches!(mode, ControllerDragMode::None));
+    }
+
+    #[test]
+    fn controller_roll_interaction_state_default() {
+        let state = ControllerRollInteractionState::default();
+        assert!(matches!(state.mode, ControllerDragMode::None));
+        assert!(state.last_sysex_click.is_none());
+    }
 }
 
 pub mod controllers_lane {

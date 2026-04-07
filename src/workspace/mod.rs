@@ -1057,4 +1057,74 @@ mod tests {
 
         workspace.update(&Message::Cancel);
     }
+
+    #[test]
+    fn timeline_sample_to_x_f64_calculates_correctly() {
+        let x = timeline_sample_to_x_f64(100.0, 0.5, 10.0);
+        assert!((x - 60.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn timeline_sample_to_x_calculates_correctly() {
+        let x = timeline_sample_to_x(100, 0.5, 10.0);
+        assert!((x - 60.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn timeline_x_to_sample_f32_calculates_correctly() {
+        let sample = timeline_x_to_sample_f32(60.0, 0.5, 10.0);
+        assert!((sample - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn timeline_x_to_sample_f32_handles_zero_pixels_per_sample() {
+        let sample = timeline_x_to_sample_f32(100.0, 0.0, 10.0);
+        assert_eq!(sample, 0.0);
+    }
+
+    #[test]
+    fn clip_kind_key_returns_expected_values() {
+        assert_eq!(clip_kind_key(maolan_engine::kind::Kind::Audio), 0);
+        assert_eq!(clip_kind_key(maolan_engine::kind::Kind::MIDI), 1);
+    }
+
+    #[test]
+    fn clip_snap_edge_creation() {
+        let edge = ClipSnapEdge {
+            clip_id: crate::state::ClipId {
+                track_idx: "track1".to_string(),
+                clip_idx: 0,
+                kind: maolan_engine::kind::Kind::Audio,
+            },
+            sample: 100,
+        };
+        assert_eq!(edge.sample, 100);
+    }
+
+    #[test]
+    fn visible_track_window_creation() {
+        let window = VisibleTrackWindow {
+            start_index: 0,
+            end_index: 5,
+            top_padding: 10.0,
+            bottom_padding: 20.0,
+        };
+        assert_eq!(window.start_index, 0);
+        assert_eq!(window.end_index, 5);
+        assert!((window.top_padding - 10.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn compute_visible_track_window_empty() {
+        let window = compute_visible_track_window(&[], 0.0, 100.0);
+        assert_eq!(window.start_index, 0);
+        assert_eq!(window.end_index, 0);
+    }
+
+    #[test]
+    fn workspace_new_creates_instance() {
+        let state = Arc::new(RwLock::new(crate::state::StateData::default()));
+        let workspace = Workspace::new(state);
+        let _ = &workspace;
+    }
 }

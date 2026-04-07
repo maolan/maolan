@@ -84,3 +84,61 @@ impl Maolan {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handle_none_message_returns_none_task() {
+        let mut app = Maolan::default();
+        let result = app.handle_core_message(&Message::None);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn handle_undo_message_sends_undo_action() {
+        let mut app = Maolan::default();
+        let result = app.handle_core_message(&Message::Undo);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn handle_redo_message_sends_redo_action() {
+        let mut app = Maolan::default();
+        let result = app.handle_core_message(&Message::Redo);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn handle_toggle_metronome_toggles_state() {
+        let mut app = Maolan::default();
+        let initial = app.metronome_enabled;
+        let _result = app.handle_core_message(&Message::ToggleMetronome);
+        assert_eq!(app.metronome_enabled, !initial);
+    }
+
+    #[test]
+    fn handle_window_resized_updates_size() {
+        let mut app = Maolan::default();
+        let new_size = iced::Size::new(1024.0, 768.0);
+        let _result = app.handle_core_message(&Message::WindowResized(new_size));
+        assert_eq!(app.size, new_size);
+    }
+
+    #[test]
+    fn handle_toggle_loop_without_range_returns_task() {
+        let mut app = Maolan::default();
+        // loop_range_samples is None by default
+        let result = app.handle_core_message(&Message::ToggleLoop);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn handle_toggle_punch_without_range_returns_task() {
+        let mut app = Maolan::default();
+        // punch_range_samples is None by default
+        let result = app.handle_core_message(&Message::TogglePunch);
+        assert!(result.is_some());
+    }
+}

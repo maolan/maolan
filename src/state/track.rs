@@ -321,3 +321,68 @@ impl Track {
         layout.header_height + (layout.audio_lanes + layout.midi_lanes + lane) as f32 * lane_span
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audio_data_new_creates_empty() {
+        let data = AudioData::new(2, 2);
+        assert!(data.clips.is_empty());
+        assert_eq!(data.ins, 2);
+        assert_eq!(data.outs, 2);
+    }
+
+    #[test]
+    fn midi_data_new_creates_empty() {
+        let data = MIDIData::new(1, 1);
+        assert!(data.clips.is_empty());
+        assert_eq!(data.ins, 1);
+        assert_eq!(data.outs, 1);
+    }
+
+    #[test]
+    fn track_automation_point_creation() {
+        let point = TrackAutomationPoint {
+            sample: 100,
+            value: 0.5,
+        };
+        assert_eq!(point.sample, 100);
+        assert!((point.value - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn track_automation_lane_default() {
+        use crate::message::TrackAutomationTarget;
+        let lane = TrackAutomationLane {
+            target: TrackAutomationTarget::Volume,
+            visible: true,
+            points: vec![],
+        };
+        assert!(lane.visible);
+        assert!(lane.points.is_empty());
+    }
+
+    #[test]
+    fn editor_marker_creation() {
+        let marker = EditorMarker {
+            sample: 48000,
+            name: "Verse".to_string(),
+        };
+        assert_eq!(marker.sample, 48000);
+        assert_eq!(marker.name, "Verse");
+    }
+
+    #[test]
+    fn track_lane_layout_creation() {
+        let layout = TrackLaneLayout {
+            header_height: 24.0,
+            lane_height: 80.0,
+            audio_lanes: 2,
+            midi_lanes: 1,
+        };
+        assert_eq!(layout.header_height, 24.0);
+        assert_eq!(layout.audio_lanes, 2);
+    }
+}
