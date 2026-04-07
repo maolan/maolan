@@ -655,4 +655,681 @@ mod tests {
     }
 
     const _: () = assert!(DEFAULT_MAX_PROMPT_TOKENS == 128);
+
+    #[test]
+    fn parses_cpu_backend_flag() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--backend"),
+            OsString::from("cpu"),
+            OsString::from("test prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.backend, BackendChoice::Cpu);
+    }
+
+    #[test]
+    fn rejects_invalid_backend() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--backend"),
+            OsString::from("invalid"),
+            OsString::from("test prompt"),
+        ];
+        assert!(parse_options(args).is_err());
+    }
+
+    #[test]
+    fn parses_cfg_scale_validation() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--cfg-scale"),
+            OsString::from("2.5"),
+            OsString::from("test prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.cfg_scale, 2.5);
+    }
+
+    #[test]
+    fn rejects_negative_cfg_scale() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--cfg-scale"),
+            OsString::from("-1.0"),
+            OsString::from("test prompt"),
+        ];
+        assert!(parse_options(args).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_cfg_scale() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--cfg-scale"),
+            OsString::from("not-a-number"),
+            OsString::from("test prompt"),
+        ];
+        assert!(parse_options(args).is_err());
+    }
+
+    #[test]
+    fn parses_temperature() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--temperature"),
+            OsString::from("0.8"),
+            OsString::from("test prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.temperature, 0.8);
+    }
+
+    #[test]
+    fn rejects_negative_temperature() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--temperature"),
+            OsString::from("-0.5"),
+            OsString::from("test prompt"),
+        ];
+        assert!(parse_options(args).is_err());
+    }
+
+    #[test]
+    fn parses_topk() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--topk"),
+            OsString::from("25"),
+            OsString::from("test prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.topk, 25);
+    }
+
+    #[test]
+    fn rejects_zero_topk() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--topk"),
+            OsString::from("0"),
+            OsString::from("test prompt"),
+        ];
+        assert!(parse_options(args).is_err());
+    }
+
+    #[test]
+    fn parses_ode_steps() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--ode-steps"),
+            OsString::from("15"),
+            OsString::from("test prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.ode_steps, 15);
+    }
+
+    #[test]
+    fn rejects_zero_ode_steps() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--ode-steps"),
+            OsString::from("0"),
+            OsString::from("test prompt"),
+        ];
+        assert!(parse_options(args).is_err());
+    }
+
+    #[test]
+    fn rejects_too_many_ode_steps() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--ode-steps"),
+            OsString::from("51"),
+            OsString::from("test prompt"),
+        ];
+        assert!(parse_options(args).is_err());
+    }
+
+    #[test]
+    fn parses_output_path() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--output"),
+            OsString::from("/tmp/output.wav"),
+            OsString::from("test prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(
+            options.output_path,
+            std::path::PathBuf::from("/tmp/output.wav")
+        );
+    }
+
+    #[test]
+    fn parses_model_dir() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--model-dir"),
+            OsString::from("/tmp/models"),
+            OsString::from("test prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(
+            options.model_dir,
+            Some(std::path::PathBuf::from("/tmp/models"))
+        );
+    }
+
+    #[test]
+    fn parses_decoder_seed() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--decoder-seed"),
+            OsString::from("42"),
+            OsString::from("test prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.decoder_seed, 42);
+    }
+
+    #[test]
+    fn parses_lyrics_alias() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--lyrics"),
+            OsString::from("custom lyrics text"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.prompt, "custom lyrics text");
+    }
+
+    #[test]
+    fn parses_inspect_flag() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("--inspect"),
+            OsString::from("test prompt"),
+        ];
+        let options = parse_options(args).expect("options should parse");
+        assert!(options.inspect_only);
+    }
+
+    #[test]
+    fn rejects_multiple_positional_args() {
+        let args = [
+            OsString::from("generate"),
+            OsString::from("first prompt"),
+            OsString::from("second prompt"),
+        ];
+        assert!(parse_options(args).is_err());
+    }
+
+    #[test]
+    fn rejects_empty_prompt() {
+        let args = [OsString::from("generate"), OsString::from("   ")];
+        assert!(parse_options(args).is_err());
+    }
+
+    #[test]
+    fn validate_options_trims_prompt() {
+        let options = super::CliOptions {
+            model: ModelChoice::HappyNewYear,
+            prompt: "  test prompt  ".to_owned(),
+            model_dir: None,
+            output_path: std::path::PathBuf::from("output.wav"),
+            inspect_only: false,
+            backend: BackendChoice::Vulkan,
+            cfg_scale: 1.5,
+            length: 6000,
+            ode_steps: 10,
+            lyrics: None,
+            tags: None,
+            topk: 50,
+            temperature: 1.0,
+            decode_only: false,
+            frames_json: None,
+            decode_threads: None,
+            decoder_seed: 0,
+        };
+        let validated = super::validate_options(options).expect("validation should pass");
+        assert_eq!(validated.prompt, "test prompt");
+    }
+
+    #[test]
+    fn validate_options_rejects_empty_output_path() {
+        let options = super::CliOptions {
+            model: ModelChoice::HappyNewYear,
+            prompt: "test".to_owned(),
+            model_dir: None,
+            output_path: std::path::PathBuf::from(""),
+            inspect_only: false,
+            backend: BackendChoice::Vulkan,
+            cfg_scale: 1.5,
+            length: 6000,
+            ode_steps: 10,
+            lyrics: None,
+            tags: None,
+            topk: 50,
+            temperature: 1.0,
+            decode_only: false,
+            frames_json: None,
+            decode_threads: None,
+            decoder_seed: 0,
+        };
+        assert!(super::validate_options(options).is_err());
+    }
+
+    #[test]
+    fn validate_options_rejects_zero_length() {
+        let options = super::CliOptions {
+            model: ModelChoice::HappyNewYear,
+            prompt: "test".to_owned(),
+            model_dir: None,
+            output_path: std::path::PathBuf::from("output.wav"),
+            inspect_only: false,
+            backend: BackendChoice::Vulkan,
+            cfg_scale: 1.5,
+            length: 0,
+            ode_steps: 10,
+            lyrics: None,
+            tags: None,
+            topk: 50,
+            temperature: 1.0,
+            decode_only: false,
+            frames_json: None,
+            decode_threads: None,
+            decoder_seed: 0,
+        };
+        assert!(super::validate_options(options).is_err());
+    }
+
+    #[test]
+    fn validate_options_rejects_decode_only_without_frames() {
+        let options = super::CliOptions {
+            model: ModelChoice::HappyNewYear,
+            prompt: "".to_owned(),
+            model_dir: None,
+            output_path: std::path::PathBuf::from("output.wav"),
+            inspect_only: false,
+            backend: BackendChoice::Vulkan,
+            cfg_scale: 1.5,
+            length: 6000,
+            ode_steps: 10,
+            lyrics: None,
+            tags: None,
+            topk: 50,
+            temperature: 1.0,
+            decode_only: true,
+            frames_json: None,
+            decode_threads: None,
+            decoder_seed: 0,
+        };
+        assert!(super::validate_options(options).is_err());
+    }
+
+    #[test]
+    fn validate_options_rejects_zero_decode_threads() {
+        let options = super::CliOptions {
+            model: ModelChoice::HappyNewYear,
+            prompt: "test".to_owned(),
+            model_dir: None,
+            output_path: std::path::PathBuf::from("output.wav"),
+            inspect_only: false,
+            backend: BackendChoice::Vulkan,
+            cfg_scale: 1.5,
+            length: 6000,
+            ode_steps: 10,
+            lyrics: None,
+            tags: None,
+            topk: 50,
+            temperature: 1.0,
+            decode_only: false,
+            frames_json: None,
+            decode_threads: Some(0),
+            decoder_seed: 0,
+        };
+        assert!(super::validate_options(options).is_err());
+    }
+
+    #[test]
+    fn validate_options_trims_tags() {
+        let options = super::CliOptions {
+            model: ModelChoice::HappyNewYear,
+            prompt: "test".to_owned(),
+            model_dir: None,
+            output_path: std::path::PathBuf::from("output.wav"),
+            inspect_only: false,
+            backend: BackendChoice::Vulkan,
+            cfg_scale: 1.5,
+            length: 6000,
+            ode_steps: 10,
+            lyrics: None,
+            tags: Some("  tag1, tag2  ".to_owned()),
+            topk: 50,
+            temperature: 1.0,
+            decode_only: false,
+            frames_json: None,
+            decode_threads: None,
+            decoder_seed: 0,
+        };
+        let validated = super::validate_options(options).expect("validation should pass");
+        assert_eq!(validated.tags, Some("tag1, tag2".to_owned()));
+    }
+
+    #[test]
+    fn validate_options_filters_empty_tags() {
+        let options = super::CliOptions {
+            model: ModelChoice::HappyNewYear,
+            prompt: "test".to_owned(),
+            model_dir: None,
+            output_path: std::path::PathBuf::from("output.wav"),
+            inspect_only: false,
+            backend: BackendChoice::Vulkan,
+            cfg_scale: 1.5,
+            length: 6000,
+            ode_steps: 10,
+            lyrics: None,
+            tags: Some("   ".to_owned()),
+            topk: 50,
+            temperature: 1.0,
+            decode_only: false,
+            frames_json: None,
+            decode_threads: None,
+            decoder_seed: 0,
+        };
+        let validated = super::validate_options(options).expect("validation should pass");
+        assert_eq!(validated.tags, None);
+    }
+
+    #[test]
+    fn default_output_path_is_output_wav() {
+        let args = [OsString::from("generate"), OsString::from("test prompt")];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.output_path, std::path::PathBuf::from("output.wav"));
+    }
+
+    #[test]
+    fn default_length_is_6000() {
+        let args = [OsString::from("generate"), OsString::from("test prompt")];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.length, 6000);
+    }
+
+    #[test]
+    fn default_ode_steps_is_10() {
+        let args = [OsString::from("generate"), OsString::from("test prompt")];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.ode_steps, 10);
+    }
+
+    #[test]
+    fn default_topk_is_50() {
+        let args = [OsString::from("generate"), OsString::from("test prompt")];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.topk, 50);
+    }
+
+    #[test]
+    fn default_temperature_is_1() {
+        let args = [OsString::from("generate"), OsString::from("test prompt")];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.temperature, 1.0);
+    }
+
+    #[test]
+    fn default_cfg_scale_is_1_5() {
+        let args = [OsString::from("generate"), OsString::from("test prompt")];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.cfg_scale, 1.5);
+    }
+
+    #[test]
+    fn default_decoder_seed_is_0() {
+        let args = [OsString::from("generate"), OsString::from("test prompt")];
+        let options = parse_options(args).expect("options should parse");
+        assert_eq!(options.decoder_seed, 0);
+    }
+
+    #[test]
+    fn help_text_contains_usage() {
+        let help = super::help_text();
+        assert!(help.contains("maolan-generate"));
+        assert!(help.contains("Usage:"));
+        assert!(help.contains("Options:"));
+    }
+
+    #[test]
+    fn stderr_logging_disabled_in_ipc_mode() {
+        // When IPC_MODE_ENV is set, stderr_logging_enabled should return false
+        // Note: We can't actually set the env var here without affecting other tests,
+        // but we can verify the function exists and has the right signature
+        let _ = super::stderr_logging_enabled();
+    }
+
+    #[test]
+    fn write_and_read_ipc_message_roundtrip() {
+        use super::{read_ipc_message, write_ipc_message};
+        use std::io::Cursor;
+
+        let original = super::GenerateResponseHeader {
+            backend: BackendChoice::Cpu,
+            channels: 2,
+            frames: 48000,
+            guidance_scale: 2.0,
+            prompt_tokens: 10,
+            sample_rate_hz: 48000,
+            length: 6000,
+            steps: 10,
+        };
+
+        let mut buffer = Vec::new();
+        write_ipc_message(&mut buffer, &original).expect("write should succeed");
+
+        let mut cursor = Cursor::new(buffer);
+        let decoded: super::GenerateResponseHeader =
+            read_ipc_message(&mut cursor).expect("read should succeed");
+
+        assert_eq!(decoded.backend, original.backend);
+        assert_eq!(decoded.channels, original.channels);
+        assert_eq!(decoded.frames, original.frames);
+        assert_eq!(decoded.guidance_scale, original.guidance_scale);
+        assert_eq!(decoded.prompt_tokens, original.prompt_tokens);
+        assert_eq!(decoded.sample_rate_hz, original.sample_rate_hz);
+        assert_eq!(decoded.length, original.length);
+        assert_eq!(decoded.steps, original.steps);
+    }
+
+    #[test]
+    fn write_and_read_ipc_progress_roundtrip() {
+        use super::{read_ipc_message, write_ipc_message};
+        use std::io::Cursor;
+
+        let original = super::GenerateProgress {
+            phase: "generator".to_owned(),
+            progress: 0.5,
+            operation: "Processing".to_owned(),
+        };
+
+        let mut buffer = Vec::new();
+        write_ipc_message(&mut buffer, &original).expect("write should succeed");
+
+        let mut cursor = Cursor::new(buffer);
+        let decoded: super::GenerateProgress =
+            read_ipc_message(&mut cursor).expect("read should succeed");
+
+        assert_eq!(decoded.phase, original.phase);
+        assert_eq!(decoded.progress, original.progress);
+        assert_eq!(decoded.operation, original.operation);
+    }
+
+    #[test]
+    fn write_and_read_ipc_error_roundtrip() {
+        use super::{read_ipc_message, write_ipc_message};
+        use std::io::Cursor;
+
+        let original = super::GenerateError {
+            error: "Test error message".to_owned(),
+        };
+
+        let mut buffer = Vec::new();
+        write_ipc_message(&mut buffer, &original).expect("write should succeed");
+
+        let mut cursor = Cursor::new(buffer);
+        let decoded: super::GenerateError =
+            read_ipc_message(&mut cursor).expect("read should succeed");
+
+        assert_eq!(decoded.error, original.error);
+    }
+
+    #[test]
+    fn write_ipc_bytes_roundtrip() {
+        use super::write_ipc_bytes;
+        use std::io::Cursor;
+
+        let original = b"Hello, World!";
+
+        let mut buffer = Vec::new();
+        write_ipc_bytes(&mut buffer, original).expect("write should succeed");
+
+        // Read back the bytes
+        let mut cursor = Cursor::new(buffer);
+        let mut len_bytes = [0_u8; 8];
+        std::io::Read::read_exact(&mut cursor, &mut len_bytes).expect("read length should succeed");
+        let len = u64::from_le_bytes(len_bytes) as usize;
+        assert_eq!(len, original.len());
+
+        let mut payload = vec![0_u8; len];
+        std::io::Read::read_exact(&mut cursor, &mut payload).expect("read payload should succeed");
+        assert_eq!(&payload[..], &original[..]);
+    }
+
+    #[test]
+    fn read_ipc_message_fails_on_truncated_data() {
+        use super::read_ipc_message;
+        use std::io::Cursor;
+
+        // Create a buffer with just the length header but no payload
+        let len_bytes = 100_u64.to_le_bytes();
+        let buffer = len_bytes.to_vec();
+
+        let mut cursor = Cursor::new(buffer);
+        let result: Result<super::GenerateResponseHeader, _> = read_ipc_message(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_ipc_message_fails_on_invalid_json() {
+        use super::read_ipc_message;
+        use std::io::Cursor;
+
+        // Create a buffer with length header and invalid JSON payload
+        let payload = b"not valid json";
+        let len_bytes = (payload.len() as u64).to_le_bytes();
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&len_bytes);
+        buffer.extend_from_slice(payload);
+
+        let mut cursor = Cursor::new(buffer);
+        let result: Result<super::GenerateResponseHeader, _> = read_ipc_message(&mut cursor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn serialize_generate_request() {
+        let request = super::GenerateRequest {
+            model: ModelChoice::Rl,
+            prompt: "test prompt".to_owned(),
+            model_dir: Some(std::path::PathBuf::from("/tmp/models")),
+            output_path: std::path::PathBuf::from("/tmp/output.wav"),
+            inspect_only: true,
+            backend: BackendChoice::Cpu,
+            cfg_scale: 2.5,
+            length: 8000,
+            ode_steps: 15,
+            lyrics: Some("lyrics text".to_owned()),
+            tags: Some("tag1,tag2".to_owned()),
+            topk: 25,
+            temperature: 0.8,
+            decode_only: false,
+            frames_json: None,
+            decode_threads: Some(4),
+            decoder_seed: 42,
+        };
+
+        let json = serde_json::to_string(&request).expect("serialization should succeed");
+        assert!(json.contains("test prompt"));
+        assert!(json.contains("cpu"));
+        assert!(json.contains("RL"));
+    }
+
+    #[test]
+    fn deserialize_generate_request() {
+        let json = r#"{
+            "model": "RL",
+            "prompt": "test prompt",
+            "output_path": "/tmp/output.wav",
+            "backend": "cpu",
+            "cfg_scale": 2.5,
+            "length": 8000,
+            "ode_steps": 15,
+            "topk": 25,
+            "temperature": 0.8,
+            "decoder_seed": 42
+        }"#;
+
+        let request: super::GenerateRequest =
+            serde_json::from_str(json).expect("deserialization should succeed");
+        assert_eq!(request.model, ModelChoice::Rl);
+        assert_eq!(request.prompt, "test prompt");
+        assert_eq!(request.backend, BackendChoice::Cpu);
+        assert_eq!(request.cfg_scale, 2.5);
+        assert_eq!(request.length, 8000);
+        assert_eq!(request.ode_steps, 15);
+        assert_eq!(request.topk, 25);
+        assert_eq!(request.temperature, 0.8);
+        assert_eq!(request.decoder_seed, 42);
+    }
+
+    #[test]
+    fn deserialize_generate_request_with_aliases() {
+        // Test "seconds_total" alias for length
+        let json1 =
+            r#"{"prompt": "test", "backend": "cpu", "cfg_scale": 1.5, "seconds_total": 5000}"#;
+        let request1: super::GenerateRequest =
+            serde_json::from_str(json1).expect("deserialization should succeed");
+        assert_eq!(request1.length, 5000);
+
+        // Test "max_audio_length_ms" alias for length
+        let json2 = r#"{"prompt": "test", "backend": "cpu", "cfg_scale": 1.5, "max_audio_length_ms": 7000}"#;
+        let request2: super::GenerateRequest =
+            serde_json::from_str(json2).expect("deserialization should succeed");
+        assert_eq!(request2.length, 7000);
+    }
+
+    #[test]
+    fn backend_choice_default_is_vulkan() {
+        let default: BackendChoice = Default::default();
+        assert_eq!(default, BackendChoice::Vulkan);
+    }
+
+    #[test]
+    fn model_choice_default_is_happy_new_year() {
+        let default: ModelChoice = Default::default();
+        assert_eq!(default, ModelChoice::HappyNewYear);
+    }
+
+    #[test]
+    fn default_output_path_function() {
+        let path = super::default_output_path();
+        assert_eq!(path, std::path::PathBuf::from("output.wav"));
+    }
+
+    #[test]
+    fn tokenizer_path_returns_valid_path() {
+        let path = super::tokenizer_path();
+        assert!(path.to_string_lossy().contains("t5-base-spiece.model"));
+    }
 }

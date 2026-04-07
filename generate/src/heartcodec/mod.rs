@@ -2999,7 +2999,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{write_wav_from_f32, write_wav_from_f32_interleaved};
+    use super::{Tensor, TensorData, write_wav_from_f32, write_wav_from_f32_interleaved};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_wav_path(name: &str) -> std::path::PathBuf {
@@ -3050,5 +3050,422 @@ mod tests {
         assert_eq!(samples, vec![0.1, -0.1, 0.2, -0.2, 0.3, -0.3]);
 
         std::fs::remove_file(&path).expect("remove stereo wav");
+    }
+
+    #[test]
+    fn heartcodec_config_default_values() {
+        let config = super::HeartCodecConfig::default();
+        assert_eq!(config.dim, 512);
+        assert_eq!(config.codebook_size, 8192);
+        assert_eq!(config.codebook_dim, 32);
+        assert_eq!(config.num_quantizers, 8);
+        assert_eq!(config.attention_head_dim, 64);
+        assert_eq!(config.in_channels, 1024);
+        assert_eq!(config.num_attention_heads, 24);
+        assert_eq!(config.num_layers, 24);
+        assert_eq!(config.num_layers_2, 6);
+        assert_eq!(config.out_channels, 256);
+        assert_eq!(config.sample_rate, 48000);
+        assert_eq!(config.latent_hidden_dim, 128);
+        assert_eq!(config.init_channel, 64);
+        assert_eq!(config.num_bands, 1);
+        assert_eq!(config.num_samples, 2);
+        assert_eq!(config.downsample_factors, [3, 4, 4, 4, 5]);
+        assert_eq!(config.downsample_kernel_sizes, [6, 8, 8, 8, 10]);
+        assert_eq!(config.upsample_factors, [5, 4, 4, 4, 3]);
+        assert_eq!(config.upsample_kernel_sizes, [10, 8, 8, 8, 6]);
+        assert_eq!(config.default_kernel_size, 7);
+        assert_eq!(config.delay_kernel_size, 5);
+        assert_eq!(config.res_kernel_size, 7);
+        assert!(config.causal);
+        assert_eq!(config.ode_steps, 10);
+    }
+
+    #[test]
+    fn frames_to_tensor_converts_correctly() {
+        use burn::backend::ndarray::NdArray;
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let frames: Vec<Vec<i64>> = vec![
+            vec![1, 2, 3, 4, 5, 6, 7, 8],
+            vec![9, 10, 11, 12, 13, 14, 15, 16],
+            vec![17, 18, 19, 20, 21, 22, 23, 24],
+        ];
+
+        let tensor = super::frames_to_tensor::<NdArray<f32>>(&frames, &device);
+        let dims = tensor.dims();
+        assert_eq!(dims[0], 1); // batch
+        assert_eq!(dims[1], 8); // num_codebooks
+        assert_eq!(dims[2], 3); // num_frames
+    }
+
+    #[test]
+    fn frames_to_tensor_empty_frames() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let frames: Vec<Vec<i64>> = vec![];
+
+        let tensor = super::frames_to_tensor::<NdArray<f32>>(&frames, &device);
+        let dims = tensor.dims();
+        assert_eq!(dims[0], 1);
+        assert_eq!(dims[1], 8); // default when no frames
+        assert_eq!(dims[2], 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "inconsistent codebook count")]
+    fn frames_to_tensor_rejects_inconsistent_codebooks() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let frames: Vec<Vec<i64>> = vec![
+            vec![1, 2, 3, 4, 5, 6, 7, 8],
+            vec![9, 10, 11], // Inconsistent codebook count
+        ];
+
+        let _tensor = super::frames_to_tensor::<NdArray<f32>>(&frames, &device);
+    }
+
+    #[test]
+    fn prelu_activation_forward() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let prelu = super::PReLU::<NdArray<f32>>::new(&device);
+
+        // Test with positive values (should pass through unchanged)
+        let input = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![1.0, 2.0, 3.0], [1, 1, 3]),
+            &device,
+        );
+        let output = prelu.forward(input);
+        let data = output.to_data().to_vec::<f32>().unwrap();
+        assert!((data[0] - 1.0).abs() < 1e-6);
+        assert!((data[1] - 2.0).abs() < 1e-6);
+        assert!((data[2] - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn prelu_activation_negative_values() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let prelu = super::PReLU::<NdArray<f32>>::new(&device);
+
+        // Test with negative values (should be scaled by alpha=0.25)
+        let input = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![-4.0, -8.0], [1, 1, 2]),
+            &device,
+        );
+        let output = prelu.forward(input);
+        let data = output.to_data().to_vec::<f32>().unwrap();
+        // PReLU with alpha=0.25: f(x) = max(0, x) + alpha * min(0, x)
+        // For x=-4: 0 + 0.25 * (-4) = -1.0
+        // For x=-8: 0 + 0.25 * (-8) = -2.0
+        assert!((data[0] - (-1.0)).abs() < 1e-6);
+        assert!((data[1] - (-2.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mlp_compute_hidden_dim() {
+        // Test the hidden dimension calculation
+        let dim_1536 = super::Mlp::<burn::backend::ndarray::NdArray<f32>>::compute_hidden_dim(1536);
+        let dim_3072 = super::Mlp::<burn::backend::ndarray::NdArray<f32>>::compute_hidden_dim(3072);
+
+        // For dim=1536: hidden_dim = (4 * 1536 * 2) / 3 = 4096
+        assert_eq!(dim_1536, 4096);
+        // For dim=3072: hidden_dim = (4 * 3072 * 2) / 3 = 8192
+        assert_eq!(dim_3072, 8192);
+    }
+
+    #[test]
+    fn rms_norm_forward_preserves_shape() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let rms_norm = super::RmsNorm::<NdArray<f32>>::new(&device, 16, 1e-6);
+
+        let input = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![1.0; 128], [2, 4, 16]),
+            &device,
+        );
+        let output = rms_norm.forward(input);
+        assert_eq!(output.dims(), [2, 4, 16]);
+    }
+
+    #[test]
+    fn heartcodec_model_new_creates_valid_model() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let config = super::HeartCodecConfig::default();
+        let model = super::HeartCodecModel::<NdArray<f32>>::new(&device);
+
+        assert_eq!(model.ode_steps, config.ode_steps);
+        assert_eq!(model.guidance_scale, 1.0);
+    }
+
+    #[test]
+    fn heartcodec_model_with_ode_steps() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let model = super::HeartCodecModel::<NdArray<f32>>::new(&device).with_ode_steps(20);
+
+        assert_eq!(model.ode_steps, 20);
+    }
+
+    #[test]
+    fn heartcodec_model_with_guidance_scale() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let model = super::HeartCodecModel::<NdArray<f32>>::new(&device).with_guidance_scale(2.5);
+
+        assert_eq!(model.guidance_scale, 2.5);
+    }
+
+    #[test]
+    fn heartcodec_model_clamps_ode_steps() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+
+        // Test upper bound
+        let model_high = super::HeartCodecModel::<NdArray<f32>>::new(&device).with_ode_steps(100);
+        assert_eq!(model_high.ode_steps, 50);
+
+        // Test lower bound
+        let model_low = super::HeartCodecModel::<NdArray<f32>>::new(&device).with_ode_steps(0);
+        assert_eq!(model_low.ode_steps, 1);
+    }
+
+    #[test]
+    fn residual_unit_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let unit = super::ResidualUnit::<NdArray<f32>>::new(&device, 128, 3);
+
+        // Check that the unit was created with correct configuration
+        assert_eq!(unit.conv1.dilation, 3);
+        assert_eq!(unit.conv2.dilation, 1);
+    }
+
+    #[test]
+    fn resdecoder_block_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let block = super::ResDecoderBlock::<NdArray<f32>>::new(&device, 2048, 1024);
+
+        // For (2048, 1024): kernel_size=10, stride=5
+        assert_eq!(block.up_conv.stride, 5);
+        assert_eq!(block.convs.len(), 5); // 5 residual units
+    }
+
+    #[test]
+    fn resdecoder_block_kernel_stride_pairs() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+
+        let test_cases = [
+            ((2048, 1024), (10, 5)),
+            ((1024, 512), (8, 4)),
+            ((512, 256), (8, 4)),
+            ((256, 128), (8, 4)),
+            ((128, 64), (6, 3)),
+            ((100, 50), (8, 4)), // Default case
+        ];
+
+        for ((in_ch, out_ch), (_expected_k, expected_s)) in test_cases {
+            let block = super::ResDecoderBlock::<NdArray<f32>>::new(&device, in_ch, out_ch);
+            assert_eq!(
+                block.up_conv.stride, expected_s,
+                "stride mismatch for ({}, {})",
+                in_ch, out_ch
+            );
+        }
+    }
+
+    #[test]
+    fn project_layer_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let proj = super::ProjectLayer::<NdArray<f32>>::new(&device, 512, 256, 3);
+
+        assert_eq!(proj.kernel_size, 3);
+        assert_eq!(proj.out_channels, 256);
+    }
+
+    #[test]
+    fn scalar_model_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let config = super::HeartCodecConfig::default();
+        let model = super::ScalarModel::<NdArray<f32>>::new(&device, &config);
+
+        // Check decoder structure
+        assert_eq!(model.decoder_0.kernel_size(), 5);
+        assert_eq!(model.decoder_7.kernel_size(), 7);
+    }
+
+    #[test]
+    fn interpolate_1d_scale_factor_1() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let input = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![1.0, 2.0, 3.0, 4.0], [1, 2, 2]),
+            &device,
+        );
+
+        // With scale_factor=1, should return the input unchanged
+        let output = super::FlowMatching::<NdArray<f32>>::interpolate_1d(&input, 1);
+        assert_eq!(output.dims(), input.dims());
+    }
+
+    #[test]
+    fn interpolate_1d_scale_factor_2() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let input = Tensor::<NdArray<f32>, 3>::from_data(
+            TensorData::new(vec![1.0, 2.0], [1, 1, 2]),
+            &device,
+        );
+
+        // With scale_factor=2, each element should be repeated twice
+        let output = super::FlowMatching::<NdArray<f32>>::interpolate_1d(&input, 2);
+        assert_eq!(output.dims(), [1, 2, 2]);
+    }
+
+    #[test]
+    fn build_latent_masks_basic() {
+        let masks = super::FlowMatching::<burn::backend::ndarray::NdArray<f32>>::build_latent_masks(
+            10, 8, 5,
+        );
+
+        assert_eq!(masks.len(), 10);
+        // First 5 should be 1 (incontext)
+        assert_eq!(masks[0], 1);
+        assert_eq!(masks[4], 1);
+        // Next 3 should be 2 (latent but not incontext)
+        assert_eq!(masks[5], 2);
+        assert_eq!(masks[7], 2);
+        // Remaining should be 0
+        assert_eq!(masks[8], 0);
+        assert_eq!(masks[9], 0);
+    }
+
+    #[test]
+    fn build_latent_masks_incontext_larger_than_seq() {
+        let masks = super::FlowMatching::<burn::backend::ndarray::NdArray<f32>>::build_latent_masks(
+            5, 10, 10,
+        );
+
+        assert_eq!(masks.len(), 5);
+        // All should be 1 (incontext) since incontext_length > seq_len
+        for mask in &masks {
+            assert_eq!(*mask, 1);
+        }
+    }
+
+    #[test]
+    fn transformer_block_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let block = super::TransformerBlock::<NdArray<f32>>::new(&device, 512, 8, 64);
+
+        assert_eq!(block.attn.num_heads, 8);
+        assert_eq!(block.attn.head_dim, 64);
+    }
+
+    #[test]
+    fn attention_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let attn = super::Attention::<NdArray<f32>>::new(&device, 512, 8, 64);
+
+        assert_eq!(attn.num_heads, 8);
+        assert_eq!(attn.head_dim, 64);
+        assert_eq!(attn.rope_dim, 64);
+    }
+
+    #[test]
+    fn llama_transformer_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let config = super::HeartCodecConfig::default();
+        let transformer = super::LlamaTransformer::<NdArray<f32>>::new(&device, &config);
+
+        assert_eq!(transformer.transformer_blocks.len(), 24);
+        assert_eq!(transformer.transformer_blocks_2.len(), 6);
+    }
+
+    #[test]
+    fn adalayer_norm_single_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let adaln = super::AdaLayerNormSingle::<NdArray<f32>>::new(&device, 512);
+
+        // Check that it was created correctly
+        let (output, embedded) = adaln.forward(0.5, burn::tensor::DType::F32);
+        assert_eq!(output.dims(), [1, 6, 512]);
+        assert_eq!(embedded.dims(), [1, 512]);
+    }
+
+    #[test]
+    fn timestep_embedding_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let emb = super::TimestepEmbedding::<NdArray<f32>>::new(&device, 128, 512);
+
+        let input = Tensor::<NdArray<f32>, 2>::zeros([1, 128], &device);
+        let output = emb.forward(input);
+        assert_eq!(output.dims(), [1, 512]);
+    }
+
+    #[test]
+    fn pixart_alpha_combined_flow_embeddings() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let emb = super::PixArtAlphaCombinedFlowEmbeddings::<NdArray<f32>>::new(&device, 512);
+
+        let output = emb.forward(0.5, burn::tensor::DType::F32);
+        assert_eq!(output.dims(), [1, 512]);
+    }
+
+    #[test]
+    fn vq_codebook_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let codebook = super::VQCodebook::<NdArray<f32>>::new(&device, 1024, 64);
+
+        // Check that it was created
+        assert_eq!(codebook._codebook.embed.val().dims()[0], 1);
+        assert_eq!(codebook._codebook.embed.val().dims()[1], 1024);
+        assert_eq!(codebook._codebook.embed.val().dims()[2], 64);
+    }
+
+    #[test]
+    fn residual_vq_new() {
+        use burn::backend::ndarray::NdArray;
+
+        let device = <NdArray<f32> as burn::prelude::Backend>::Device::default();
+        let config = super::HeartCodecConfig::default();
+        let rvq = super::ResidualVQ::<NdArray<f32>>::new(&device, &config);
+
+        assert_eq!(rvq.layers.len(), 8); // num_quantizers = 8
     }
 }
