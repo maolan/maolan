@@ -1,6 +1,6 @@
 # Maolan Operations, Storage, and Recovery
 
-Last updated: 2026-04-04
+Last updated: 2026-04-07
 
 ## Runtime and Platform Behavior
 
@@ -22,21 +22,13 @@ Current persisted keys:
 - `font_size`
 - `mixer_height`
 - `track_width`
+- `osc_enabled`
 - `default_export_sample_rate_hz`
 - `default_snap_mode`
 - `default_audio_bit_depth`
 - `default_output_device_id`
 - `default_input_device_id`
 - `recent_session_paths`
-
-Additional generation-related preferences currently persisted in the config file:
-
-- `generate_audio_model`
-- `burn_backend`
-- `burn_sampler`
-- `burn_cfg_scale`
-- `burn_steps`
-- `burn_seconds_total`
 
 If the file does not exist, Maolan creates it on startup with defaults.
 
@@ -151,8 +143,10 @@ The current HeartMuLa generation path uses the `maolan-generate` crate/binary.
 - The generate path currently expects these repo file layouts:
   - HeartMuLa repo: `heartmula.bpk`, `tokenizer.json`, `gen_config.json`
   - HeartCodec repo: `heartcodec.bpk`
+- The current CLI supports `--model <happy-new-year|RL>`.
 - The current CLI uses `--length <int>` in milliseconds for output duration.
 - `--decode-only` requires `--frames-json <path>`.
+- `--decode-threads <int>` can be used to control decode-only CPU worker count.
 - `--model-dir <path>` can be used to bypass Hugging Face cache resolution and point at a local export directly.
 
 ## Pitch Correction Caching and Rendering
