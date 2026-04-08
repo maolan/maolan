@@ -69,7 +69,18 @@ jobs:
             libsuil-dev \
             libgtk2.0-dev \
             librubberband-dev \
-            rubberband-cli
+            rubberband-cli \
+            libavcodec-dev \
+            libavdevice-dev \
+            libavfilter-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libswresample-dev \
+            llvm-dev \
+            libclang-dev
+
+      - name: Set LIBCLANG_PATH
+        run: echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
 
       - name: Check formatting
         run: cargo fmt --check
@@ -143,7 +154,18 @@ jobs:
             libsuil-dev \
             libgtk2.0-dev \
             librubberband-dev \
-            rubberband-cli
+            rubberband-cli \
+            libavcodec-dev \
+            libavdevice-dev \
+            libavfilter-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libswresample-dev \
+            llvm-dev \
+            libclang-dev
+
+      - name: Set LIBCLANG_PATH
+        run: echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
 
       - name: Install cargo-llvm-cov
         if: ${{ !inputs.release_build }}
