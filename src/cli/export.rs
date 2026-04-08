@@ -3,19 +3,20 @@ use maolan_engine::{kind::Kind, message::AudioClipData};
 use std::{
     collections::{BTreeSet, HashMap},
     fmt, fs, io,
-    num::{NonZeroU8, NonZeroU32},
     path::{Path, PathBuf},
     time::Duration,
 };
 
 use ebur128::{EbuR128, Mode as LoudnessMode};
+use ffmpeg_next::{
+    Dictionary,
+    codec::{Context as CodecContext, Id as CodecId},
+    format::output,
+    frame::Audio,
+};
 use flacenc::bitsink::ByteSink;
 use flacenc::component::BitRepr;
 use flacenc::error::Verify;
-use mp3lame_encoder::{
-    Bitrate as Mp3Bitrate, Builder as Mp3Builder, FlushNoGap, InterleavedPcm, Quality as Mp3Quality,
-};
-use vorbis_rs::{VorbisBitrateManagementStrategy, VorbisEncoderBuilder};
 use wavers::Wav;
 
 pub const STANDARD_EXPORT_SAMPLE_RATES: [u32; 12] = [
@@ -869,83 +870,144 @@ fn write_mp3(
             output_channels
         )));
     }
-    let mut builder = Mp3Builder::new()
-        .ok_or_else(|| io::Error::other("Failed to initialize MP3 encoder builder"))?;
-    builder
-        .set_num_channels(output_channels as u8)
-        .map_err(|e| io::Error::other(format!("MP3 set channels failed: {e}")))?;
-    builder
-        .set_sample_rate(sample_rate.max(1) as u32)
-        .map_err(|e| io::Error::other(format!("MP3 set sample rate failed: {e}")))?;
-    let bitrate = match codec.mp3_bitrate_kbps {
-        96 => Mp3Bitrate::Kbps96,
-        128 => Mp3Bitrate::Kbps128,
-        160 => Mp3Bitrate::Kbps160,
-        192 => Mp3Bitrate::Kbps192,
-        224 => Mp3Bitrate::Kbps224,
-        256 => Mp3Bitrate::Kbps256,
-        _ => Mp3Bitrate::Kbps320,
-    };
-    builder
-        .set_brate(bitrate)
-        .map_err(|e| io::Error::other(format!("MP3 set bitrate failed: {e}")))?;
+
+    ffmpeg_init().map_err(|e| io::Error::other(format!("FFmpeg init failed: {e}")))?;
+
+    let mut octx = output(export_path.to_str().unwrap_or("output.mp3"))
+        .map_err(|e| io::Error::other(format!("Failed to create output context: {e}")))?;
+
+    // Find MP3 encoder (libmp3lame if available, otherwise default mp3)
+    let codec_id = CodecId::MP3;
+    let encoder_codec = ffmpeg_next::codec::encoder::find(codec_id)
+        .ok_or_else(|| io::Error::other("MP3 encoder not found"))?;
+
+    let encoder_ctx = CodecContext::new_with_codec(encoder_codec);
+
+    let mut encoder = encoder_ctx
+        .encoder()
+        .audio()
+        .map_err(|e| io::Error::other(format!("Failed to create audio encoder: {e}")))?;
+
+    encoder.set_rate(sample_rate);
+
+    encoder.set_format(ffmpeg_next::format::Sample::F32(
+        ffmpeg_next::format::sample::Type::Planar,
+    ));
+    encoder.set_channel_layout(match output_channels {
+        1 => ffmpeg_next::channel_layout::ChannelLayout::MONO,
+        _ => ffmpeg_next::channel_layout::ChannelLayout::STEREO,
+    });
+
+    // Set bitrate
+    let bitrate = (codec.mp3_bitrate_kbps as usize) * 1000;
+    encoder.set_bit_rate(bitrate);
+
+    // Set VBR mode if requested
     if matches!(codec.mp3_mode, ExportMp3Mode::Vbr) {
-        builder
-            .set_vbr_mode(mp3lame_encoder::VbrMode::Mtrh)
-            .map_err(|e| io::Error::other(format!("MP3 set VBR mode failed: {e}")))?;
-        builder
-            .set_vbr_quality(Mp3Quality::NearBest)
-            .map_err(|e| io::Error::other(format!("MP3 set VBR quality failed: {e}")))?;
-    } else {
-        builder
-            .set_vbr_mode(mp3lame_encoder::VbrMode::Off)
-            .map_err(|e| io::Error::other(format!("MP3 set CBR mode failed: {e}")))?;
+        // FFmpeg VBR quality: 0-9, where 0 is best
+        encoder.set_quality(2usize); // Near-best quality for VBR
     }
-    builder
-        .set_quality(Mp3Quality::Best)
-        .map_err(|e| io::Error::other(format!("MP3 set quality failed: {e}")))?;
-    let id3_year = metadata
-        .year
-        .map(|value| value.to_string())
-        .unwrap_or_default();
-    let mut id3_comment = String::new();
+
+    // Set metadata
+    let mut metadata_dict = Dictionary::new();
+    if !metadata.author.is_empty() {
+        metadata_dict.set("artist", &metadata.author);
+    }
+    if !metadata.album.is_empty() {
+        metadata_dict.set("album", &metadata.album);
+    }
+    if let Some(year) = metadata.year {
+        metadata_dict.set("date", &year.to_string());
+    }
     if let Some(track_number) = metadata.track_number {
-        id3_comment.push_str(&format!("TRACKNUMBER={track_number};"));
+        metadata_dict.set("track", &track_number.to_string());
     }
     if !metadata.genre.is_empty() {
-        id3_comment.push_str(&format!("GENRE={};", metadata.genre));
+        metadata_dict.set("genre", &metadata.genre);
     }
-    builder
-        .set_id3_tag(mp3lame_encoder::Id3Tag {
-            title: b"",
-            artist: metadata.author.as_bytes(),
-            album: metadata.album.as_bytes(),
-            album_art: &[],
-            year: id3_year.as_bytes(),
-            comment: id3_comment.as_bytes(),
-        })
-        .map_err(|e| io::Error::other(format!("Failed to set MP3 ID3 tag: {e:?}")))?;
-    let mut encoder = builder
-        .build()
-        .map_err(|e| io::Error::other(format!("MP3 encoder build failed: {e}")))?;
-    let mut out = Vec::with_capacity(mp3lame_encoder::max_required_buffer_size(
-        mixed_buffer.len(),
-    ));
-    for chunk in mixed_buffer.chunks(4096 * output_channels.max(1)) {
-        encoder
-            .encode_to_vec(InterleavedPcm(chunk), &mut out)
-            .map_err(|e| io::Error::other(format!("MP3 encode failed: {e}")))?;
+
+    let mut output_stream = octx
+        .add_stream(encoder_codec)
+        .map_err(|e| io::Error::other(format!("Failed to add stream: {e}")))?;
+
+    // Set parameters from encoder before opening
+    output_stream.set_parameters(&encoder);
+
+    let mut encoder = encoder
+        .open_as(encoder_codec)
+        .map_err(|e| io::Error::other(format!("Failed to open encoder: {e}")))?;
+
+    octx.write_header()
+        .map_err(|e| io::Error::other(format!("Failed to write header: {e}")))?;
+
+    // Convert interleaved f32 to planar f32
+    let frame_size = 1152; // Default MP3 frame size
+
+    for chunk_start in (0..mixed_buffer.len()).step_by(frame_size * output_channels) {
+        let chunk_end = (chunk_start + frame_size * output_channels).min(mixed_buffer.len());
+        let chunk = &mixed_buffer[chunk_start..chunk_end];
+        let actual_frames = chunk.len() / output_channels;
+
+        if actual_frames == 0 {
+            continue;
+        }
+
+        let mut frame = Audio::empty();
+        frame.set_format(encoder.format());
+        frame.set_channel_layout(encoder.channel_layout());
+        frame.set_rate(encoder.rate());
+        frame.set_samples(actual_frames);
+
+        // Allocate frame data
+        unsafe {
+            ffmpeg_next::ffi::av_frame_get_buffer(frame.as_mut_ptr(), 0);
+        }
+
+        // Copy interleaved to planar
+        for ch in 0..output_channels {
+            let data_ptr = frame.data_mut(ch).as_mut_ptr() as *mut f32;
+            for frame_idx in 0..actual_frames {
+                let src_idx = frame_idx * output_channels + ch;
+                if src_idx < chunk.len() {
+                    unsafe {
+                        *data_ptr.add(frame_idx) = chunk[src_idx];
+                    }
+                }
+            }
+        }
+
+        // Encode and write
+        match encoder.send_frame(&frame) {
+            Ok(()) => {}
+            Err(e) => return Err(io::Error::other(format!("Failed to send frame: {e}"))),
+        }
+
+        let mut packet = ffmpeg_next::packet::Packet::empty();
+        while encoder.receive_packet(&mut packet).is_ok() {
+            packet.set_stream(0);
+            packet
+                .write_interleaved(&mut octx)
+                .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
+        }
     }
+
+    // Flush encoder
     encoder
-        .flush_to_vec::<FlushNoGap>(&mut out)
-        .map_err(|e| io::Error::other(format!("MP3 finalization failed: {e}")))?;
-    fs::write(export_path, out).map_err(|e| {
-        io::Error::other(format!(
-            "Failed to write '{}': {}",
-            export_path.display(),
-            e
-        ))
-    })
+        .send_eof()
+        .map_err(|e| io::Error::other(format!("Failed to send EOF: {e}")))?;
+
+    let mut packet = ffmpeg_next::packet::Packet::empty();
+    while encoder.receive_packet(&mut packet).is_ok() {
+        packet.set_stream(0);
+        packet
+            .write_interleaved(&mut octx)
+            .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
+    }
+
+    octx.write_trailer()
+        .map_err(|e| io::Error::other(format!("Failed to write trailer: {e}")))?;
+
+    Ok(())
 }
 
 fn write_ogg_vorbis(
@@ -956,72 +1018,144 @@ fn write_ogg_vorbis(
     codec: ExportCodecSettings,
     metadata: &ExportMetadata,
 ) -> io::Result<()> {
-    let mut out = Vec::new();
-    let mut builder = VorbisEncoderBuilder::new(
-        NonZeroU32::new(sample_rate.max(1) as u32)
-            .ok_or_else(|| io::Error::other("Invalid sample rate for OGG"))?,
-        NonZeroU8::new(output_channels as u8)
-            .ok_or_else(|| io::Error::other("Invalid channel count for OGG"))?,
-        &mut out,
-    )
-    .map_err(|e| io::Error::other(format!("OGG encoder init failed: {e}")))?;
-    builder.bitrate_management_strategy(VorbisBitrateManagementStrategy::QualityVbr {
-        target_quality: codec.ogg_quality.clamp(-0.1, 1.0),
+    ffmpeg_init().map_err(|e| io::Error::other(format!("FFmpeg init failed: {e}")))?;
+
+    let mut octx = output(export_path.to_str().unwrap_or("output.ogg"))
+        .map_err(|e| io::Error::other(format!("Failed to create output context: {e}")))?;
+
+    // Find Vorbis encoder
+    let codec_id = CodecId::VORBIS;
+    let encoder_codec = ffmpeg_next::codec::encoder::find(codec_id)
+        .ok_or_else(|| io::Error::other("Vorbis encoder not found"))?;
+
+    let encoder_ctx = CodecContext::new_with_codec(encoder_codec);
+
+    let mut encoder = encoder_ctx
+        .encoder()
+        .audio()
+        .map_err(|e| io::Error::other(format!("Failed to create audio encoder: {e}")))?;
+
+    encoder.set_rate(sample_rate);
+
+    encoder.set_format(ffmpeg_next::format::Sample::F32(
+        ffmpeg_next::format::sample::Type::Planar,
+    ));
+    encoder.set_channel_layout(match output_channels {
+        1 => ffmpeg_next::channel_layout::ChannelLayout::MONO,
+        _ => ffmpeg_next::channel_layout::ChannelLayout::STEREO,
     });
+
+    // Vorbis quality: -0.1 to 1.0 maps to FFmpeg qscale: 0 to 10
+    // FFmpeg qscale for Vorbis: 0 (worst) to 10 (best)
+    // Map -0.1..=1.0 to 0..=10
+    let quality = ((codec.ogg_quality + 0.1) * 10.0).clamp(0.0, 10.0) as i32;
+    encoder.set_quality(quality as usize);
+
+    // Set metadata
+    let mut metadata_dict = Dictionary::new();
     if !metadata.author.is_empty() {
-        builder
-            .comment_tag("ARTIST", metadata.author.as_str())
-            .map_err(|e| io::Error::other(format!("Failed to set OGG ARTIST tag: {e}")))?;
+        metadata_dict.set("artist", &metadata.author);
     }
     if !metadata.album.is_empty() {
-        builder
-            .comment_tag("ALBUM", metadata.album.as_str())
-            .map_err(|e| io::Error::other(format!("Failed to set OGG ALBUM tag: {e}")))?;
+        metadata_dict.set("album", &metadata.album);
     }
     if let Some(year) = metadata.year {
-        builder
-            .comment_tag("DATE", year.to_string())
-            .map_err(|e| io::Error::other(format!("Failed to set OGG DATE tag: {e}")))?;
+        metadata_dict.set("date", &year.to_string());
     }
     if let Some(track_number) = metadata.track_number {
-        builder
-            .comment_tag("TRACKNUMBER", track_number.to_string())
-            .map_err(|e| io::Error::other(format!("Failed to set OGG TRACKNUMBER tag: {e}")))?;
+        metadata_dict.set("track", &track_number.to_string());
     }
     if !metadata.genre.is_empty() {
-        builder
-            .comment_tag("GENRE", metadata.genre.as_str())
-            .map_err(|e| io::Error::other(format!("Failed to set OGG GENRE tag: {e}")))?;
+        metadata_dict.set("genre", &metadata.genre);
     }
-    let mut encoder = builder
-        .build()
-        .map_err(|e| io::Error::other(format!("OGG encoder build failed: {e}")))?;
-    for chunk in mixed_buffer.chunks(2048 * output_channels.max(1)) {
-        let frames = chunk.len() / output_channels.max(1);
-        if frames == 0 {
+
+    let mut output_stream = octx
+        .add_stream(encoder_codec)
+        .map_err(|e| io::Error::other(format!("Failed to add stream: {e}")))?;
+
+    // Set parameters from encoder before opening
+    output_stream.set_parameters(&encoder);
+
+    let mut encoder = encoder
+        .open_as(encoder_codec)
+        .map_err(|e| io::Error::other(format!("Failed to open encoder: {e}")))?;
+
+    octx.write_header()
+        .map_err(|e| io::Error::other(format!("Failed to write header: {e}")))?;
+
+    // Convert interleaved f32 to planar f32
+    let frame_size = 1024; // Default Vorbis frame size
+
+    for chunk_start in (0..mixed_buffer.len()).step_by(frame_size * output_channels) {
+        let chunk_end = (chunk_start + frame_size * output_channels).min(mixed_buffer.len());
+        let chunk = &mixed_buffer[chunk_start..chunk_end];
+        let actual_frames = chunk.len() / output_channels;
+
+        if actual_frames == 0 {
             continue;
         }
-        let mut planar = vec![vec![0.0_f32; frames]; output_channels];
-        for frame in 0..frames {
-            for ch in 0..output_channels {
-                planar[ch][frame] = chunk[frame * output_channels + ch];
+
+        let mut frame = Audio::empty();
+        frame.set_format(encoder.format());
+        frame.set_channel_layout(encoder.channel_layout());
+        frame.set_rate(encoder.rate());
+        frame.set_samples(actual_frames);
+
+        // Allocate frame data
+        unsafe {
+            ffmpeg_next::ffi::av_frame_get_buffer(frame.as_mut_ptr(), 0);
+        }
+
+        // Copy interleaved to planar
+        for ch in 0..output_channels {
+            let data_ptr = frame.data_mut(ch).as_mut_ptr() as *mut f32;
+            for frame_idx in 0..actual_frames {
+                let src_idx = frame_idx * output_channels + ch;
+                if src_idx < chunk.len() {
+                    unsafe {
+                        *data_ptr.add(frame_idx) = chunk[src_idx];
+                    }
+                }
             }
         }
-        let block = planar.iter().map(Vec::as_slice).collect::<Vec<_>>();
-        encoder
-            .encode_audio_block(&block)
-            .map_err(|e| io::Error::other(format!("OGG encode failed: {e}")))?;
+
+        // Encode and write
+        match encoder.send_frame(&frame) {
+            Ok(()) => {}
+            Err(e) => return Err(io::Error::other(format!("Failed to send frame: {e}"))),
+        }
+
+        let mut packet = ffmpeg_next::packet::Packet::empty();
+        while encoder.receive_packet(&mut packet).is_ok() {
+            packet.set_stream(0);
+            packet
+                .write_interleaved(&mut octx)
+                .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
+        }
     }
+
+    // Flush encoder
     encoder
-        .finish()
-        .map_err(|e| io::Error::other(format!("OGG finalization failed: {e}")))?;
-    fs::write(export_path, out).map_err(|e| {
-        io::Error::other(format!(
-            "Failed to write '{}': {}",
-            export_path.display(),
-            e
-        ))
-    })
+        .send_eof()
+        .map_err(|e| io::Error::other(format!("Failed to send EOF: {e}")))?;
+
+    let mut packet = ffmpeg_next::packet::Packet::empty();
+    while encoder.receive_packet(&mut packet).is_ok() {
+        packet.set_stream(0);
+        packet
+            .write_interleaved(&mut octx)
+            .map_err(|e| io::Error::other(format!("Failed to write packet: {e}")))?;
+    }
+
+    octx.write_trailer()
+        .map_err(|e| io::Error::other(format!("Failed to write trailer: {e}")))?;
+
+    Ok(())
+}
+
+fn ffmpeg_init() -> Result<(), ffmpeg_next::Error> {
+    static RESULT: std::sync::OnceLock<Result<(), ffmpeg_next::Error>> = std::sync::OnceLock::new();
+    *RESULT.get_or_init(ffmpeg_next::init)
 }
 
 fn measure_lufs_and_true_peak(
