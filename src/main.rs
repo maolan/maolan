@@ -6,6 +6,7 @@ mod connections;
 mod consts;
 mod gui;
 mod hw;
+mod icon;
 mod menu;
 mod message;
 mod platform_caps;
@@ -75,6 +76,7 @@ fn run_app() -> iced::Result {
         .settings(settings)
         .theme(Theme::Dark)
         .font(LUCIDE_FONT_BYTES)
+        .font(icon::metronome::LUCIDE_METRONOME_FONT_BYTES)
         .subscription(Maolan::subscription)
         .window(window::Settings {
             icon,

@@ -1,6 +1,7 @@
 use crate::{
     consts::message_lists::SNAP_MODE_ALL,
     consts::workspace::MIDI_CLIP_BORDER,
+    icon::metronome::metronome,
     message::{Message, SnapMode},
 };
 use iced::{
@@ -9,7 +10,7 @@ use iced::{
 };
 use iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind, square,
-    triangle, volume_x,
+    volume_x,
 };
 #[derive(Debug, Default)]
 pub struct Toolbar;
@@ -133,7 +134,7 @@ impl Toolbar {
         };
         row![
             row![
-                button(triangle())
+                button(metronome())
                     .style(Self::button_style(
                         true,
                         metronome_active,
