@@ -1,9 +1,9 @@
-![Maolan](images/maolan.svg)
-
 # Maolan
 
 [![codecov](https://codecov.io/gh/maolan/maolan/graph/badge.svg)](https://codecov.io/gh/maolan/maolan)
 [![crates.io](https://img.shields.io/crates/v/maolan.svg)](https://crates.io/crates/maolan)
+
+![Maolan](images/maolan.svg)
 
 Maolan is a Rust DAW focused on recording, editing, routing, automation, export, and plugin hosting.
 
