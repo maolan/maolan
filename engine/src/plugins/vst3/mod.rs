@@ -20,7 +20,8 @@ pub use processor::list_plugins;
     target_os = "macos",
     target_os = "linux",
     target_os = "freebsd",
-    target_os = "openbsd"
+    target_os = "openbsd",
+    target_os = "windows"
 ))]
 use crate::plugins::paths;
 use std::path::PathBuf;
@@ -36,6 +37,11 @@ pub fn default_vst3_search_roots() -> Vec<PathBuf> {
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     {
         paths::push_unix_plugin_roots(&mut roots, "vst3");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        paths::push_windows_vst3_roots(&mut roots);
     }
 
     roots

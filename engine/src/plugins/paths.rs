@@ -28,6 +28,11 @@ pub fn push_unix_plugin_roots(roots: &mut Vec<PathBuf>, plugin_dir_name: &str) {
     )));
 }
 
+pub fn push_windows_vst3_roots(roots: &mut Vec<PathBuf>) {
+    roots.push(PathBuf::from(r"C:\Program Files\Common Files\VST3"));
+    roots.push(PathBuf::from(r"C:\Program Files (x86)\Common Files\VST3"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,6 +93,21 @@ mod tests {
                 PathBuf::from("/usr/local/lib64/clap"),
                 PathBuf::from("/home/tester/.clap"),
                 PathBuf::from("/home/tester/.local/lib/clap"),
+            ]
+        );
+    }
+
+    #[test]
+    fn push_windows_vst3_roots_adds_standard_locations() {
+        let mut roots = Vec::new();
+
+        push_windows_vst3_roots(&mut roots);
+
+        assert_eq!(
+            roots,
+            vec![
+                PathBuf::from(r"C:\Program Files\Common Files\VST3"),
+                PathBuf::from(r"C:\Program Files (x86)\Common Files\VST3"),
             ]
         );
     }

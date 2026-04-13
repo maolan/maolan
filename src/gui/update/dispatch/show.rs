@@ -104,7 +104,7 @@ impl Maolan {
                 Task::none()
             }
             Show::Preferences => {
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
                 {
                     let prefs = super::super::super::load_preferences();
                     {
@@ -114,10 +114,20 @@ impl Maolan {
                     self.modal = Some(Show::Preferences);
                     Task::perform(
                         async {
-                            (
-                                crate::state::discover_alsa_output_devices(),
-                                crate::state::discover_alsa_input_devices(),
-                            )
+                            #[cfg(target_os = "linux")]
+                            {
+                                (
+                                    crate::state::discover_alsa_output_devices(),
+                                    crate::state::discover_alsa_input_devices(),
+                                )
+                            }
+                            #[cfg(target_os = "windows")]
+                            {
+                                (
+                                    crate::state::discover_windows_audio_devices(),
+                                    crate::state::discover_windows_input_devices(),
+                                )
+                            }
                         },
                         |(output_devices, input_devices)| Message::PreferencesDevicesLoaded {
                             output_devices,

@@ -811,10 +811,16 @@ pub enum Message {
         operation: Option<String>,
     },
     TrackTemplatesLoaded(Vec<String>),
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     PreferencesDevicesLoaded {
+        #[cfg(target_os = "linux")]
         output_devices: Vec<AudioDeviceOption>,
+        #[cfg(target_os = "linux")]
         input_devices: Vec<AudioDeviceOption>,
+        #[cfg(target_os = "windows")]
+        output_devices: Vec<String>,
+        #[cfg(target_os = "windows")]
+        input_devices: Vec<String>,
     },
     DrainAudioPeakUpdates,
     TransportPlay,
@@ -1065,9 +1071,11 @@ pub enum Message {
     HWSelected(String),
     #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
     HWInputSelected(AudioDeviceOption),
+    #[cfg(target_os = "windows")]
+    HWInputSelected(String),
     HWBackendSelected(AudioBackendOption),
     HWExclusiveToggled(bool),
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "windows"))]
     HWBitsChanged(usize),
     HWSampleRateChanged(i32),
     HWPeriodFramesChanged(usize),
