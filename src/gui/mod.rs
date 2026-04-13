@@ -5197,7 +5197,7 @@ impl Maolan {
                 label: hw.label.clone(),
             }));
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         {
             options.extend(
                 state
@@ -5213,7 +5213,7 @@ impl Maolan {
     }
 
     fn apply_preferred_devices_to_state(state: &mut StateData, prefs: &AppPreferences) {
-        #[cfg(unix)]
+        #[cfg(any(unix, target_os = "windows"))]
         {
             let bits = if AUDIO_BIT_DEPTH_OPTIONS.contains(&prefs.default_audio_bit_depth) {
                 prefs.default_audio_bit_depth
@@ -5256,12 +5256,23 @@ impl Maolan {
             {
                 state.selected_input_hw = Some(selected);
             }
+            #[cfg(target_os = "windows")]
+            if state.available_input_hw.iter().any(|hw| hw == device_id) {
+                state.selected_input_hw = Some(device_id.to_string());
+            }
         }
         #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
         if let Some(selected) = state.selected_hw.as_ref()
             && let Some(bits) = selected.preferred_bits()
         {
             state.oss_bits = bits;
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(selected) = state.selected_hw.as_ref() {
+            state.oss_bits = crate::state::discover_windows_output_bit_depths(selected)
+                .first()
+                .copied()
+                .unwrap_or(state.oss_bits);
         }
     }
 

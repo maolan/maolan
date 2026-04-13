@@ -20,3 +20,5 @@ pub mod prefill;
 #[cfg(target_os = "openbsd")]
 pub mod sndio;
 pub mod traits;
+#[cfg(target_os = "windows")]
+pub mod wasapi;

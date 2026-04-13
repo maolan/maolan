@@ -29,12 +29,16 @@ use crate::hw::alsa::{HwDriver, HwOptions, MidiHub};
 use crate::hw::coreaudio::{HwDriver, HwOptions, MidiHub};
 #[cfg(unix)]
 use crate::hw::jack::JackRuntime;
+#[cfg(target_os = "windows")]
+use crate::hw::options::HwOptions;
 #[cfg(target_os = "freebsd")]
 use crate::hw::oss as hw;
 #[cfg(target_os = "freebsd")]
 use crate::hw::oss::{HwDriver, HwOptions, MidiHub};
 #[cfg(target_os = "openbsd")]
 use crate::hw::sndio::{HwDriver, HwOptions, MidiHub};
+#[cfg(target_os = "windows")]
+use crate::hw::wasapi::{self, HwDriver, MidiHub};
 #[cfg(target_os = "linux")]
 use crate::workers::alsa_worker::HwWorker;
 #[cfg(target_os = "macos")]
@@ -43,6 +47,8 @@ use crate::workers::coreaudio_worker::HwWorker;
 use crate::workers::oss_worker::HwWorker;
 #[cfg(target_os = "openbsd")]
 use crate::workers::sndio_worker::HwWorker;
+#[cfg(target_os = "windows")]
+use crate::workers::wasapi_worker::HwWorker;
 use crate::{
     audio::clip::AudioClip,
     audio::io::AudioIO,
@@ -852,6 +858,12 @@ impl Engine {
         let devices = Self::discover_midi_hw_devices_from_dir("/dev/snd", &["midiC"]);
         #[cfg(target_os = "openbsd")]
         let devices = Self::discover_midi_hw_devices_from_dir("/dev", &["midi"]);
+        #[cfg(target_os = "windows")]
+        let devices = {
+            let mut devices = wasapi::list_midi_input_devices();
+            devices.extend(wasapi::list_midi_output_devices());
+            Self::finalize_midi_hw_devices(devices)
+        };
         #[cfg(target_os = "macos")]
         let devices = {
             let mut devices = Vec::new();
@@ -1052,7 +1064,7 @@ impl Engine {
         bits: i32,
         hw_opts: HwOptions,
     ) -> Result<HwDriver, String> {
-        #[cfg(any(target_os = "freebsd", target_os = "linux"))]
+        #[cfg(any(target_os = "windows", target_os = "freebsd", target_os = "linux"))]
         {
             HwDriver::new_with_options(device, _input_device, sample_rate_hz, bits, hw_opts)
                 .map_err(|e| e.to_string())
@@ -1065,6 +1077,8 @@ impl Engine {
     }
 
     fn hw_profile_backend_label(_device: &str) -> &'static str {
+        #[cfg(target_os = "windows")]
+        let label = "WASAPI";
         #[cfg(target_os = "linux")]
         let label = "ALSA";
         #[cfg(target_os = "freebsd")]

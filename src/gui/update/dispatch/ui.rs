@@ -147,7 +147,12 @@ impl Maolan {
                 self.apply_hw_selected(hw);
                 true
             }
-            #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
+            #[cfg(any(
+                target_os = "freebsd",
+                target_os = "linux",
+                target_os = "openbsd",
+                target_os = "windows"
+            ))]
             Message::HWInputSelected(hw) => {
                 self.apply_hw_input_selected(hw);
                 true
@@ -160,7 +165,7 @@ impl Maolan {
                 self.state.blocking_write().oss_exclusive = *exclusive;
                 true
             }
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "windows"))]
             Message::HWBitsChanged(bits) => {
                 self.state.blocking_write().oss_bits = *bits;
                 true

@@ -37,11 +37,21 @@ impl Maolan {
         Self::update_bits_from_selected_device(&mut state, hw);
     }
 
+    #[cfg(target_os = "windows")]
+    pub(super) fn apply_hw_input_selected(&self, hw: &String) {
+        self.state.blocking_write().selected_input_hw = Some(hw.to_string());
+    }
+
     pub(super) fn apply_hw_backend_selected(&self, backend: &crate::state::AudioBackendOption) {
         let mut state = self.state.blocking_write();
         state.selected_backend = backend.clone();
         state.selected_hw = None;
-        #[cfg(any(target_os = "freebsd", target_os = "linux", target_os = "openbsd"))]
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "linux",
+            target_os = "openbsd",
+            target_os = "windows"
+        ))]
         {
             state.selected_input_hw = None;
             state.oss_bits = 32;
@@ -168,6 +178,26 @@ impl Maolan {
             state,
             crate::state::discover_alsa_input_devices,
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(super) fn apply_backend_device_defaults(
+        state: &mut crate::state::StateData,
+        backend: &crate::state::AudioBackendOption,
+    ) {
+        if !matches!(backend, crate::state::AudioBackendOption::Wasapi) {
+            return;
+        }
+        state.available_hw = crate::state::discover_windows_audio_devices();
+        state.available_input_hw = crate::state::discover_windows_input_devices();
+        state.selected_hw = state.available_hw.first().cloned();
+        state.selected_input_hw = state.available_input_hw.first().cloned();
+        if let Some(selected) = state.selected_hw.as_ref() {
+            state.oss_bits = crate::state::discover_windows_output_bit_depths(selected)
+                .first()
+                .copied()
+                .unwrap_or(32);
+        }
     }
 }
 

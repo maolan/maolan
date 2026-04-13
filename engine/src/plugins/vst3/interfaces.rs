@@ -1463,11 +1463,44 @@ fn get_module_path(bundle_path: &Path) -> Result<std::path::PathBuf, String> {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    {
+        // Windows: .vst3/Contents/{x86_64-win|x86-win}/plugin.vst3
+        let stem = bundle_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("plugin");
+        let contents = bundle_path.join("Contents");
+        let candidates = if cfg!(target_arch = "x86_64") {
+            vec![
+                contents.join("x86_64-win").join(format!("{stem}.vst3")),
+                contents.join("x86-win").join(format!("{stem}.vst3")),
+            ]
+        } else {
+            vec![
+                contents.join("x86-win").join(format!("{stem}.vst3")),
+                contents.join("x86_64-win").join(format!("{stem}.vst3")),
+            ]
+        };
+
+        for module in candidates {
+            if module.exists() {
+                return Ok(module);
+            }
+        }
+
+        Err(format!(
+            "VST3 module not found under {:?}",
+            bundle_path.join("Contents")
+        ))
+    }
+
     #[cfg(not(any(
         target_os = "macos",
         target_os = "linux",
         target_os = "freebsd",
-        target_os = "openbsd"
+        target_os = "openbsd",
+        target_os = "windows"
     )))]
     {
         Err("Unsupported platform".to_string())
@@ -1551,6 +1584,38 @@ mod tests {
         let err = get_module_path(&bundle_path).expect_err("missing module should error");
 
         assert!(err.contains("Missing.so"));
+
+        let _ = fs::remove_dir_all(bundle_path.parent().expect("bundle parent"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn get_module_path_returns_windows_vst3_binary_path() {
+        let bundle_path = unique_temp_dir("vst3-module").join("Example.vst3");
+        let module_path = bundle_path
+            .join("Contents")
+            .join("x86_64-win")
+            .join("Example.vst3");
+        fs::create_dir_all(module_path.parent().expect("module parent"))
+            .expect("create module directory");
+        File::create(&module_path).expect("create module file");
+
+        let resolved = get_module_path(&bundle_path).expect("resolve module path");
+
+        assert_eq!(resolved, module_path);
+
+        let _ = fs::remove_dir_all(bundle_path.parent().expect("bundle parent"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn get_module_path_errors_when_windows_module_is_missing() {
+        let bundle_path = unique_temp_dir("missing-vst3").join("Missing.vst3");
+        fs::create_dir_all(&bundle_path).expect("create bundle directory");
+
+        let err = get_module_path(&bundle_path).expect_err("missing module should error");
+
+        assert!(err.contains("Contents"));
 
         let _ = fs::remove_dir_all(bundle_path.parent().expect("bundle parent"));
     }

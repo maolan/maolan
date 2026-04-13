@@ -7851,7 +7851,7 @@ impl Maolan {
             Message::TrackTemplatesLoaded(ref templates) => {
                 self.add_track.set_available_templates(templates.clone());
             }
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             Message::PreferencesDevicesLoaded {
                 ref output_devices,
                 ref input_devices,
