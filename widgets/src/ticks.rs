@@ -149,8 +149,14 @@ impl<Message> canvas::Program<Message> for TicksCanvas {
         }
 
         let static_geometry = state.cache.draw(renderer, bounds.size(), |frame| {
+            let effective_height = (bounds.height - (OUTER_PAD_Y * 2.0)).max(1.0);
+            let layout = Self {
+                range: self.range.clone(),
+                fader_height: effective_height,
+            }
+            .tick_layout();
             let tick_x = SCALE_GAP;
-            for (label_y, label) in self.tick_layout() {
+            for (label_y, label) in layout {
                 frame.fill(
                     &Path::rectangle(
                         Point::new(tick_x, OUTER_PAD_Y + label_y + 4.0),
@@ -184,7 +190,7 @@ where
         fader_height,
     })
     .width(Length::Fixed(SCALE_GAP + SCALE_WIDTH))
-    .height(Length::Fixed(fader_height + (OUTER_PAD_Y * 2.0)))
+    .height(Length::Fill)
     .into()
 }
 

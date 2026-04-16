@@ -90,7 +90,7 @@ impl<Message> canvas::Program<Message> for MetersCanvas {
             );
         });
 
-        let meter_inner_h = self.fader_height.max(1.0);
+        let meter_inner_h = (bounds.height - (OUTER_PAD_Y * 2.0)).max(1.0);
         let mut dynamic_frame = Frame::new(renderer, bounds.size());
         for channel_idx in 0..self.channels.max(1) {
             let db = qdb_to_level(self.levels_qdb.get(channel_idx));
@@ -159,7 +159,7 @@ where
         fader_height,
     })
     .width(Length::Fixed(total_width(channels)))
-    .height(Length::Fixed(fader_height + (OUTER_PAD_Y * 2.0)))
+    .height(Length::Fill)
     .into()
 }
 
