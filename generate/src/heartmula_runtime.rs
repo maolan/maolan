@@ -2608,8 +2608,8 @@ mod tests {
         assert_eq!(row[0], 100);
         assert_eq!(row[1], 200);
         // Remaining audio positions should be empty_id
-        for i in 2..HEARTMULA_AUDIO_CODEBOOKS {
-            assert_eq!(row[i], empty_id);
+        for item in row.iter().take(HEARTMULA_AUDIO_CODEBOOKS).skip(2) {
+            assert_eq!(*item, empty_id);
         }
     }
 
@@ -2946,15 +2946,15 @@ mod tests {
         // [false, true,  true ]
         // [false, false, true ]
         // [false, false, false]
-        assert_eq!(data[0], false); // [0,0]
-        assert_eq!(data[1], true); // [0,1]
-        assert_eq!(data[2], true); // [0,2]
-        assert_eq!(data[3], false); // [1,0]
-        assert_eq!(data[4], false); // [1,1]
-        assert_eq!(data[5], true); // [1,2]
-        assert_eq!(data[6], false); // [2,0]
-        assert_eq!(data[7], false); // [2,1]
-        assert_eq!(data[8], false); // [2,2]
+        assert!(!data[0]); // [0,0]
+        assert!(data[1]); // [0,1]
+        assert!(data[2]); // [0,2]
+        assert!(!data[3]); // [1,0]
+        assert!(!data[4]); // [1,1]
+        assert!(data[5]); // [1,2]
+        assert!(!data[6]); // [2,0]
+        assert!(!data[7]); // [2,1]
+        assert!(!data[8]); // [2,2]
     }
 
     #[test]

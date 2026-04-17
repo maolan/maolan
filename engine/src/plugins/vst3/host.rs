@@ -52,7 +52,7 @@ impl Vst3Host {
         }
 
         // Sort by name
-        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        out.sort_by_key(|a| a.name.to_lowercase());
 
         // Deduplicate by path
         out.dedup_by(|a, b| a.path.eq_ignore_ascii_case(&b.path));

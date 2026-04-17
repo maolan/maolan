@@ -15,6 +15,7 @@ pub struct Slider<'a, Message> {
     height: Length,
     handle_height: f32,
     step: Option<f32>,
+    double_click_reset: f32,
 }
 
 impl<'a, Message> Slider<'a, Message> {
@@ -30,6 +31,7 @@ impl<'a, Message> Slider<'a, Message> {
             height: Length::Fixed(300.0),
             handle_height: 2.0,
             step: None,
+            double_click_reset: 0.0,
         }
     }
 
@@ -45,6 +47,11 @@ impl<'a, Message> Slider<'a, Message> {
 
     pub fn step(mut self, step: f32) -> Self {
         self.step = Some(step.abs()).filter(|step| *step > 0.0);
+        self
+    }
+
+    pub fn double_click_reset(mut self, value: f32) -> Self {
+        self.double_click_reset = value;
         self
     }
 }
@@ -219,27 +226,29 @@ where
         let bounds = layout.bounds();
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if cursor.is_over(bounds) {
-                    let now = Instant::now();
-                    let is_double_click = state
-                        .last_click_at
-                        .is_some_and(|last| now.duration_since(last) <= DOUBLE_CLICK);
-                    state.last_click_at = Some(now);
-                    state.is_dragging = true;
-                    if is_double_click {
-                        let default_value = 0.0_f32.clamp(*self.range.start(), *self.range.end());
-                        shell.publish((self.on_change)(default_value));
-                    } else if let Some(cursor_position) = cursor.position() {
-                        let new_value = self.calculate_value(cursor_position, bounds);
-                        shell.publish((self.on_change)(new_value));
-                    }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if cursor.is_over(bounds) =>
+            {
+                let now = Instant::now();
+                let is_double_click = state
+                    .last_click_at
+                    .is_some_and(|last| now.duration_since(last) <= DOUBLE_CLICK);
+                state.last_click_at = Some(now);
+                state.is_dragging = true;
+                if is_double_click {
+                    let default_value = self
+                        .double_click_reset
+                        .clamp(*self.range.start(), *self.range.end());
+                    shell.publish((self.on_change)(default_value));
+                } else if let Some(cursor_position) = cursor.position() {
+                    let new_value = self.calculate_value(cursor_position, bounds);
+                    shell.publish((self.on_change)(new_value));
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if state.is_dragging {
-                    state.is_dragging = false;
-                }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.is_dragging =>
+            {
+                state.is_dragging = false;
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if state.is_dragging
@@ -392,5 +401,38 @@ mod tests {
         );
 
         assert_eq!(messages, vec![0.0]);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn update_double_click_resets_to_custom_value() {
+        let mut slider = Slider::new(0.0..=1.0, 0.2, |value| value)
+            .height(Length::Fixed(110.0))
+            .double_click_reset(0.75);
+        let mut tree = test_tree_with_state(State {
+            is_dragging: false,
+            last_click_at: Some(Instant::now()),
+        });
+        let node = layout::Node::new(Size::new(14.0, 110.0));
+        let layout = Layout::new(&node);
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        let renderer = ();
+        let mut clipboard = clipboard::Null;
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(14.0, 110.0));
+
+        <Slider<'_, f32> as Widget<f32, iced::Theme, ()>>::update(
+            &mut slider,
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            layout,
+            mouse::Cursor::Available(Point::new(7.0, 30.0)),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        assert_eq!(messages, vec![0.75]);
     }
 }

@@ -180,7 +180,7 @@ fn discover_alsa_devices(direction_marker: &str, direction: Direction) -> Vec<Au
             ));
         }
     }
-    devices.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    devices.sort_by_key(|a| a.label.to_lowercase());
     devices.dedup_by(|a, b| a.id == b.id);
     devices
 }

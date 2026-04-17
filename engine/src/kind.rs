@@ -23,7 +23,7 @@ mod tests {
     #[test]
     fn kind_clone() {
         let audio = Kind::Audio;
-        let cloned = audio.clone();
+        let cloned = audio;
         assert_eq!(audio, cloned);
     }
 

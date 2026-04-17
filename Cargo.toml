@@ -31,7 +31,7 @@ iced_fonts = { version = "0.3.0", features = ["lucide"] }
 libloading = "0.8.9"
 maolan-generate = { version = "0.0.2", path = "./generate" }
 maolan-engine = { version = "0.0.4", path = "./engine" }
-maolan-widgets = { version = "0.0.3", path = "./widgets" }
+maolan-widgets = { version = "0.0.4", path = "./widgets" }
 midly = "0.5.3"
 ffmpeg-next = "8"
 pitch-detection = "0.3.0"

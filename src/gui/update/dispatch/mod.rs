@@ -393,64 +393,62 @@ impl Maolan {
             Message::SetClipSnapTargets(ref targets) => {
                 self.clip_snap_targets = targets.clone();
             }
-            Message::RecordingPreviewTick => {
+            Message::RecordingPreviewTick
                 if self.playing
                     && !self.paused
                     && self.record_armed
-                    && self.recording_preview_start_sample.is_some()
+                    && self.recording_preview_start_sample.is_some() =>
+            {
+                let sample = self.transport_samples.max(0.0) as usize;
+                if self.punch_enabled
+                    && let Some((punch_start, punch_end)) = self.punch_range_samples
+                    && punch_end > punch_start
+                    && (sample < punch_start || sample > punch_end)
                 {
-                    let sample = self.transport_samples.max(0.0) as usize;
-                    if self.punch_enabled
-                        && let Some((punch_start, punch_end)) = self.punch_range_samples
-                        && punch_end > punch_start
-                        && (sample < punch_start || sample > punch_end)
-                    {
-                        self.recording_preview_sample = None;
-                    } else {
-                        self.recording_preview_sample = Some(sample);
-                    }
+                    self.recording_preview_sample = None;
+                } else {
+                    self.recording_preview_sample = Some(sample);
                 }
             }
-            Message::RecordingPreviewPeaksTick => {
+            Message::RecordingPreviewPeaksTick
                 if self.playing
                     && !self.paused
                     && self.record_armed
-                    && self.recording_preview_start_sample.is_some()
+                    && self.recording_preview_start_sample.is_some() =>
+            {
+                let sample = self.transport_samples.max(0.0) as usize;
+                if self.punch_enabled
+                    && let Some((punch_start, punch_end)) = self.punch_range_samples
+                    && punch_end > punch_start
+                    && (sample < punch_start || sample >= punch_end)
                 {
-                    let sample = self.transport_samples.max(0.0) as usize;
-                    if self.punch_enabled
-                        && let Some((punch_start, punch_end)) = self.punch_range_samples
-                        && punch_end > punch_start
-                        && (sample < punch_start || sample >= punch_end)
-                    {
-                        return Task::none();
+                    return Task::none();
+                }
+                let peaks = &mut self.recording_preview_peaks;
+                let state = self.state.blocking_read();
+                for track in state.tracks.iter().filter(|track| track.armed) {
+                    let channels = track.audio.outs.max(1);
+                    let entry = peaks
+                        .entry(track.name.clone())
+                        .or_insert_with(|| std::sync::Arc::new(vec![vec![]; channels]));
+                    if entry.len() != channels {
+                        *entry = std::sync::Arc::new(vec![vec![]; channels]);
                     }
-                    let peaks = &mut self.recording_preview_peaks;
-                    let state = self.state.blocking_read();
-                    for track in state.tracks.iter().filter(|track| track.armed) {
-                        let channels = track.audio.outs.max(1);
-                        let entry = peaks
-                            .entry(track.name.clone())
-                            .or_insert_with(|| std::sync::Arc::new(vec![vec![]; channels]));
-                        if entry.len() != channels {
-                            *entry = std::sync::Arc::new(vec![vec![]; channels]);
-                        }
-                        let entry_mut = std::sync::Arc::make_mut(entry);
-                        for (channel_idx, channel_entry) in
-                            entry_mut.iter_mut().enumerate().take(channels)
-                        {
-                            let db = track
-                                .meter_out_db
-                                .get(channel_idx)
-                                .copied()
-                                .unwrap_or(-90.0);
-                            let amp = if db <= -90.0 {
-                                0.0
-                            } else {
-                                10.0_f32.powf(db / 20.0).clamp(0.0, 1.0)
-                            };
-                            channel_entry.push([-amp, amp]);
-                        }
+                    let entry_mut = std::sync::Arc::make_mut(entry);
+                    for (channel_idx, channel_entry) in
+                        entry_mut.iter_mut().enumerate().take(channels)
+                    {
+                        let db = track
+                            .meter_out_db
+                            .get(channel_idx)
+                            .copied()
+                            .unwrap_or(-90.0);
+                        let amp = if db <= -90.0 {
+                            0.0
+                        } else {
+                            10.0_f32.powf(db / 20.0).clamp(0.0, 1.0)
+                        };
+                        channel_entry.push([-amp, amp]);
                     }
                 }
             }
@@ -2918,88 +2916,84 @@ impl Maolan {
                             track_name,
                             instance_id,
                             parameters,
-                        } => {
-                            if self
-                                .pending_add_clap_automation_instances
-                                .remove(&(track_name.clone(), *instance_id))
+                        } if self
+                            .pending_add_clap_automation_instances
+                            .remove(&(track_name.clone(), *instance_id)) =>
+                        {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| t.name == *track_name)
                             {
-                                let mut state = self.state.blocking_write();
-                                if let Some(track) =
-                                    state.tracks.iter_mut().find(|t| t.name == *track_name)
-                                {
-                                    for param in parameters {
-                                        let target = TrackAutomationTarget::ClapParameter {
-                                            instance_id: *instance_id,
-                                            param_id: param.id,
-                                            min: param.min_value,
-                                            max: param.max_value,
-                                        };
-                                        if let Some(existing) = track
-                                            .automation_lanes
-                                            .iter_mut()
-                                            .find(|lane| lane.target == target)
-                                        {
-                                            existing.visible = true;
-                                        } else {
-                                            track.automation_lanes.push(
-                                                crate::state::TrackAutomationLane {
-                                                    target,
-                                                    visible: true,
-                                                    points: vec![],
-                                                },
-                                            );
-                                        }
+                                for param in parameters {
+                                    let target = TrackAutomationTarget::ClapParameter {
+                                        instance_id: *instance_id,
+                                        param_id: param.id,
+                                        min: param.min_value,
+                                        max: param.max_value,
+                                    };
+                                    if let Some(existing) = track
+                                        .automation_lanes
+                                        .iter_mut()
+                                        .find(|lane| lane.target == target)
+                                    {
+                                        existing.visible = true;
+                                    } else {
+                                        track.automation_lanes.push(
+                                            crate::state::TrackAutomationLane {
+                                                target,
+                                                visible: true,
+                                                points: vec![],
+                                            },
+                                        );
                                     }
-                                    track.height = track.min_height_for_layout().max(60.0);
-                                    state.message = format!(
-                                        "Added {} CLAP automation lanes on '{}'",
-                                        parameters.len(),
-                                        track_name
-                                    );
                                 }
+                                track.height = track.min_height_for_layout().max(60.0);
+                                state.message = format!(
+                                    "Added {} CLAP automation lanes on '{}'",
+                                    parameters.len(),
+                                    track_name
+                                );
                             }
                         }
                         Action::TrackVst3Parameters {
                             track_name,
                             instance_id,
                             parameters,
-                        } => {
-                            if self
-                                .pending_add_vst3_automation_instances
-                                .remove(&(track_name.clone(), *instance_id))
+                        } if self
+                            .pending_add_vst3_automation_instances
+                            .remove(&(track_name.clone(), *instance_id)) =>
+                        {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| t.name == *track_name)
                             {
-                                let mut state = self.state.blocking_write();
-                                if let Some(track) =
-                                    state.tracks.iter_mut().find(|t| t.name == *track_name)
-                                {
-                                    for param in parameters {
-                                        let target = TrackAutomationTarget::Vst3Parameter {
-                                            instance_id: *instance_id,
-                                            param_id: param.id,
-                                        };
-                                        if let Some(existing) = track
-                                            .automation_lanes
-                                            .iter_mut()
-                                            .find(|lane| lane.target == target)
-                                        {
-                                            existing.visible = true;
-                                        } else {
-                                            track.automation_lanes.push(
-                                                crate::state::TrackAutomationLane {
-                                                    target,
-                                                    visible: true,
-                                                    points: vec![],
-                                                },
-                                            );
-                                        }
+                                for param in parameters {
+                                    let target = TrackAutomationTarget::Vst3Parameter {
+                                        instance_id: *instance_id,
+                                        param_id: param.id,
+                                    };
+                                    if let Some(existing) = track
+                                        .automation_lanes
+                                        .iter_mut()
+                                        .find(|lane| lane.target == target)
+                                    {
+                                        existing.visible = true;
+                                    } else {
+                                        track.automation_lanes.push(
+                                            crate::state::TrackAutomationLane {
+                                                target,
+                                                visible: true,
+                                                points: vec![],
+                                            },
+                                        );
                                     }
-                                    track.height = track.min_height_for_layout().max(60.0);
-                                    state.message = format!(
-                                        "Added {} VST3 automation lanes on '{}'",
-                                        parameters.len(),
-                                        track_name
-                                    );
                                 }
+                                track.height = track.min_height_for_layout().max(60.0);
+                                state.message = format!(
+                                    "Added {} VST3 automation lanes on '{}'",
+                                    parameters.len(),
+                                    track_name
+                                );
                             }
                         }
                         #[cfg(target_os = "macos")]
@@ -5013,57 +5007,56 @@ impl Maolan {
                 state.midi_clip_create_end = None;
                 state.selected_clips.clear();
             }
-            Message::MousePressed(button) => {
+            Message::MousePressed(button)
                 if self.modal.is_none()
-                    && matches!(self.state.blocking_read().view, View::Workspace)
-                {
-                    if button == mouse::Button::Middle {
-                        return self.split_clip_at_position(self.active_workspace_cursor());
+                    && matches!(self.state.blocking_read().view, View::Workspace) =>
+            {
+                if button == mouse::Button::Middle {
+                    return self.split_clip_at_position(self.active_workspace_cursor());
+                }
+                match button {
+                    mouse::Button::Left => {
+                        let mut state = self.state.blocking_write();
+                        state.mouse_left_down = true;
+                        state.clip_marquee_start = None;
+                        state.clip_marquee_end = None;
                     }
-                    match button {
-                        mouse::Button::Left => {
-                            let mut state = self.state.blocking_write();
-                            state.mouse_left_down = true;
-                            state.clip_marquee_start = None;
-                            state.clip_marquee_end = None;
-                        }
-                        mouse::Button::Right => {
-                            let cursor = self.active_workspace_cursor();
-                            let clip_hit = self.clip_at_position(cursor);
-                            let anchor_for_hit = cursor;
-                            let mut state = self.state.blocking_write();
-                            if let Some((track_idx, kind, clip_idx)) = clip_hit {
-                                let id = crate::state::ClipId {
-                                    track_idx,
-                                    clip_idx,
-                                    kind,
-                                };
-                                if state
-                                    .clip_context_menu
-                                    .as_ref()
-                                    .is_some_and(|menu| menu.clip == id)
-                                {
-                                    state.clip_context_menu = None;
-                                } else {
-                                    state.clip_context_menu =
-                                        Some(crate::state::ClipContextMenuState {
-                                            clip: id,
-                                            anchor: anchor_for_hit,
-                                        });
-                                }
-                                state.mouse_right_down = false;
-                                state.midi_clip_create_start = None;
-                                state.midi_clip_create_end = None;
-                                state.clip_click_consumed = true;
-                            } else {
-                                state.mouse_right_down = true;
-                                state.midi_clip_create_start = None;
-                                state.midi_clip_create_end = None;
+                    mouse::Button::Right => {
+                        let cursor = self.active_workspace_cursor();
+                        let clip_hit = self.clip_at_position(cursor);
+                        let anchor_for_hit = cursor;
+                        let mut state = self.state.blocking_write();
+                        if let Some((track_idx, kind, clip_idx)) = clip_hit {
+                            let id = crate::state::ClipId {
+                                track_idx,
+                                clip_idx,
+                                kind,
+                            };
+                            if state
+                                .clip_context_menu
+                                .as_ref()
+                                .is_some_and(|menu| menu.clip == id)
+                            {
                                 state.clip_context_menu = None;
+                            } else {
+                                state.clip_context_menu =
+                                    Some(crate::state::ClipContextMenuState {
+                                        clip: id,
+                                        anchor: anchor_for_hit,
+                                    });
                             }
+                            state.mouse_right_down = false;
+                            state.midi_clip_create_start = None;
+                            state.midi_clip_create_end = None;
+                            state.clip_click_consumed = true;
+                        } else {
+                            state.mouse_right_down = true;
+                            state.midi_clip_create_start = None;
+                            state.midi_clip_create_end = None;
+                            state.clip_context_menu = None;
                         }
-                        _ => {}
                     }
+                    _ => {}
                 }
             }
             Message::ConnectionViewSelectConnection(idx) => {
@@ -7955,10 +7948,8 @@ impl Maolan {
             Message::ToggleLogVisibility => {
                 self.show_log_window = !self.show_log_window;
             }
-            Message::LogViewAction(ref action) => {
-                if !action.is_edit() {
-                    self.log_viewer_content.perform(action.clone());
-                }
+            Message::LogViewAction(ref action) if !action.is_edit() => {
+                self.log_viewer_content.perform(action.clone());
             }
             Message::Connections => {
                 let mut state = self.state.blocking_write();

@@ -15,6 +15,16 @@ pub struct HorizontalSlider<'a, Message> {
     height: Length,
     handle_width: f32,
     step: Option<f32>,
+    double_click_reset: f32,
+    fill_mode: FillMode,
+    filled_color: Color,
+    handle_color: Color,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FillMode {
+    Center,
+    Start,
 }
 
 impl<'a, Message> HorizontalSlider<'a, Message> {
@@ -30,6 +40,18 @@ impl<'a, Message> HorizontalSlider<'a, Message> {
             height: Length::Fixed(12.0),
             handle_width: 2.0,
             step: None,
+            double_click_reset: 0.0,
+            fill_mode: FillMode::Center,
+            filled_color: Color::from_rgb(
+                0x29 as f32 / 255.0,
+                0x66 as f32 / 255.0,
+                0xA3 as f32 / 255.0,
+            ),
+            handle_color: Color::from_rgb(
+                0x75 as f32 / 255.0,
+                0xC2 as f32 / 255.0,
+                0xFF as f32 / 255.0,
+            ),
         }
     }
 
@@ -45,6 +67,26 @@ impl<'a, Message> HorizontalSlider<'a, Message> {
 
     pub fn step(mut self, step: f32) -> Self {
         self.step = Some(step.abs()).filter(|step| *step > 0.0);
+        self
+    }
+
+    pub fn double_click_reset(mut self, value: f32) -> Self {
+        self.double_click_reset = value;
+        self
+    }
+
+    pub fn fill_from_start(mut self) -> Self {
+        self.fill_mode = FillMode::Start;
+        self
+    }
+
+    pub fn filled_color(mut self, color: Color) -> Self {
+        self.filled_color = color;
+        self
+    }
+
+    pub fn handle_color(mut self, color: Color) -> Self {
+        self.handle_color = color;
         self
     }
 }
@@ -107,7 +149,7 @@ where
         let border_width = 1.0;
         let twice_border = border_width * 2.0;
         let value_bounds_x = bounds.x + (self.handle_width / 2.0);
-        let value_bounds_width = bounds.width - self.handle_width;
+        let value_bounds_width = (bounds.width - self.handle_width).max(0.0);
         let normalized =
             (self.value - self.range.start()) / (self.range.end() - self.range.start());
         let handle_offset =
@@ -122,16 +164,6 @@ where
             0x30 as f32 / 255.0,
             0x33 as f32 / 255.0,
             0x3C as f32 / 255.0,
-        );
-        let filled_color = Color::from_rgb(
-            0x29 as f32 / 255.0,
-            0x66 as f32 / 255.0,
-            0xA3 as f32 / 255.0,
-        );
-        let handle_color = Color::from_rgb(
-            0x75 as f32 / 255.0,
-            0xC2 as f32 / 255.0,
-            0xFF as f32 / 255.0,
         );
         let border_radius = 2.0;
 
@@ -153,52 +185,40 @@ where
             back_color,
         );
 
-        let center_x = bounds.x + bounds.width * 0.5;
         let handle_center = handle_offset + self.handle_width * 0.5;
-        if handle_center >= center_x {
-            let filled_x_start = center_x;
-            let filled_width = (handle_center - center_x).max(0.0);
-            if filled_width > 0.0 {
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x: filled_x_start,
-                            y: bounds.y,
-                            width: filled_width,
-                            height: bounds.height,
-                        },
-                        border: Border {
-                            radius: border_radius.into(),
-                            width: border_width,
-                            color: Color::TRANSPARENT,
-                        },
-                        ..Default::default()
-                    },
-                    filled_color,
-                );
+        let (filled_x_start, filled_width) = match self.fill_mode {
+            FillMode::Center => {
+                let center_x = bounds.x + bounds.width * 0.5;
+                if handle_center >= center_x {
+                    (center_x, (handle_center - center_x).max(0.0))
+                } else {
+                    (
+                        handle_center.min(center_x),
+                        (center_x - handle_center.min(center_x)).max(0.0),
+                    )
+                }
             }
-        } else {
-            let filled_x_start = handle_center.min(center_x);
-            let filled_width = (center_x - filled_x_start).max(0.0);
-            if filled_width > 0.0 {
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x: filled_x_start,
-                            y: bounds.y,
-                            width: filled_width,
-                            height: bounds.height,
-                        },
-                        border: Border {
-                            radius: border_radius.into(),
-                            width: border_width,
-                            color: Color::TRANSPARENT,
-                        },
-                        ..Default::default()
+            FillMode::Start => (bounds.x, (handle_center - bounds.x).max(0.0)),
+        };
+
+        if filled_width > 0.0 {
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: filled_x_start,
+                        y: bounds.y,
+                        width: filled_width,
+                        height: bounds.height,
                     },
-                    filled_color,
-                );
-            }
+                    border: Border {
+                        radius: border_radius.into(),
+                        width: border_width,
+                        color: Color::TRANSPARENT,
+                    },
+                    ..Default::default()
+                },
+                self.filled_color,
+            );
         }
 
         renderer.fill_quad(
@@ -216,7 +236,7 @@ where
                 },
                 ..Default::default()
             },
-            handle_color,
+            self.handle_color,
         );
     }
 
@@ -243,27 +263,29 @@ where
         let bounds = layout.bounds();
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if cursor.is_over(bounds) {
-                    let now = Instant::now();
-                    let is_double_click = state
-                        .last_click_at
-                        .is_some_and(|last| now.duration_since(last) <= DOUBLE_CLICK);
-                    state.last_click_at = Some(now);
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if cursor.is_over(bounds) =>
+            {
+                let now = Instant::now();
+                let is_double_click = state
+                    .last_click_at
+                    .is_some_and(|last| now.duration_since(last) <= DOUBLE_CLICK);
+                state.last_click_at = Some(now);
+                if is_double_click {
+                    let default_value = self
+                        .double_click_reset
+                        .clamp(*self.range.start(), *self.range.end());
+                    shell.publish((self.on_change)(default_value));
+                } else if let Some(cursor_position) = cursor.position() {
                     state.is_dragging = true;
-                    if is_double_click {
-                        let default_value = 0.0_f32.clamp(*self.range.start(), *self.range.end());
-                        shell.publish((self.on_change)(default_value));
-                    } else if let Some(cursor_position) = cursor.position() {
-                        let new_value = self.calculate_value(cursor_position, bounds);
-                        shell.publish((self.on_change)(new_value));
-                    }
+                    let new_value = self.calculate_value(cursor_position, bounds);
+                    shell.publish((self.on_change)(new_value));
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if state.is_dragging {
-                    state.is_dragging = false;
-                }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.is_dragging =>
+            {
+                state.is_dragging = false;
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if state.is_dragging
@@ -280,8 +302,13 @@ where
 
 impl<'a, Message> HorizontalSlider<'a, Message> {
     fn calculate_value(&self, cursor_position: Point, bounds: Rectangle) -> f32 {
-        let x = cursor_position.x - bounds.x;
-        let normalized = (x / bounds.width).clamp(0.0, 1.0);
+        let usable_width = (bounds.width - self.handle_width).max(0.0);
+        if usable_width <= f32::EPSILON {
+            return self.clamp_to_step(*self.range.start());
+        }
+
+        let x = (cursor_position.x - bounds.x - self.handle_width / 2.0).clamp(0.0, usable_width);
+        let normalized = (x / usable_width).clamp(0.0, 1.0);
         let value = self.range.start() + normalized * (self.range.end() - self.range.start());
         self.clamp_to_step(value)
     }
@@ -354,8 +381,8 @@ mod tests {
             height: 12.0,
         };
 
-        assert!((slider.calculate_value(Point::new(73.0, 6.0), bounds) - 0.5).abs() < 0.001);
-        assert!((slider.calculate_value(Point::new(77.0, 6.0), bounds) - 0.5).abs() < 0.001);
+        assert!((slider.calculate_value(Point::new(75.0, 6.0), bounds) - 0.5).abs() < 0.001);
+        assert!((slider.calculate_value(Point::new(76.0, 6.0), bounds) - 0.5).abs() < 0.001);
     }
 
     #[cfg(debug_assertions)]
@@ -377,7 +404,7 @@ mod tests {
             &mut tree,
             &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
             layout,
-            mouse::Cursor::Available(Point::new(75.0, 7.0)),
+            mouse::Cursor::Available(Point::new(74.5, 7.0)),
             &renderer,
             &mut clipboard,
             &mut shell,
@@ -385,7 +412,7 @@ mod tests {
         );
 
         assert_eq!(messages.len(), 1);
-        assert!((messages[0] - 0.5).abs() < 0.01);
+        assert!((messages[0] - 0.5).abs() < 0.001);
     }
 
     #[cfg(debug_assertions)]
@@ -418,5 +445,38 @@ mod tests {
         );
 
         assert_eq!(messages, vec![0.0]);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn update_double_click_resets_to_custom_value() {
+        let mut slider = HorizontalSlider::new(0.0..=1.0, 0.75, |value| value)
+            .width(Length::Fixed(100.0))
+            .double_click_reset(0.5);
+        let mut tree = test_tree_with_state(State {
+            is_dragging: false,
+            last_click_at: Some(Instant::now()),
+        });
+        let node = layout::Node::new(Size::new(100.0, 12.0));
+        let layout = Layout::new(&node);
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        let renderer = ();
+        let mut clipboard = clipboard::Null;
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(100.0, 12.0));
+
+        <HorizontalSlider<'_, f32> as Widget<f32, iced::Theme, ()>>::update(
+            &mut slider,
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            layout,
+            mouse::Cursor::Available(Point::new(90.0, 6.0)),
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        assert_eq!(messages, vec![0.5]);
     }
 }

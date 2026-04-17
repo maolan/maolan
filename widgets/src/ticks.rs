@@ -21,8 +21,20 @@ struct State {
 
 #[derive(Clone)]
 struct TicksCanvas {
-    range: std::ops::RangeInclusive<f32>,
-    fader_height: f32,
+    spec: TickSpec,
+    height: f32,
+}
+
+#[derive(Clone)]
+enum TickSpec {
+    Range(std::ops::RangeInclusive<f32>),
+    Custom(Vec<f32>, TickMapping),
+}
+
+#[derive(Clone, Copy)]
+enum TickMapping {
+    Linear { min: f32, max: f32 },
+    X32Fader,
 }
 
 impl TicksCanvas {
@@ -30,13 +42,36 @@ impl TicksCanvas {
         let mut hasher = DefaultHasher::new();
         bounds.width.to_bits().hash(&mut hasher);
         bounds.height.to_bits().hash(&mut hasher);
-        self.range.start().to_bits().hash(&mut hasher);
-        self.range.end().to_bits().hash(&mut hasher);
-        self.fader_height.to_bits().hash(&mut hasher);
+        match &self.spec {
+            TickSpec::Range(range) => {
+                range.start().to_bits().hash(&mut hasher);
+                range.end().to_bits().hash(&mut hasher);
+            }
+            TickSpec::Custom(values, mapping) => {
+                for value in values {
+                    value.to_bits().hash(&mut hasher);
+                }
+                match mapping {
+                    TickMapping::Linear { min, max } => {
+                        0_u8.hash(&mut hasher);
+                        min.to_bits().hash(&mut hasher);
+                        max.to_bits().hash(&mut hasher);
+                    }
+                    TickMapping::X32Fader => {
+                        1_u8.hash(&mut hasher);
+                    }
+                }
+            }
+        }
+        self.height.to_bits().hash(&mut hasher);
         hasher.finish()
     }
 
-    fn value_to_y(range: &std::ops::RangeInclusive<f32>, value: f32, fader_height: f32) -> f32 {
+    fn range_value_to_y(
+        range: &std::ops::RangeInclusive<f32>,
+        value: f32,
+        fader_height: f32,
+    ) -> f32 {
         let start = *range.start();
         let end = *range.end();
         let span = (end - start).abs().max(f32::EPSILON);
@@ -45,18 +80,39 @@ impl TicksCanvas {
     }
 
     fn tick_layout(&self) -> Vec<(f32, String)> {
-        Self::tick_values(&self.range)
+        self.tick_values()
             .into_iter()
             .map(|value| {
-                let y = Self::value_to_y(&self.range, value, self.fader_height)
-                    .clamp(0.0, self.fader_height - 1.0);
-                let label_y = (y - 4.0).clamp(0.0, (self.fader_height - 10.0).max(0.0));
+                let y = self.value_to_y(value).clamp(0.0, self.height - 1.0);
+                let label_y = (y - 4.0).clamp(0.0, (self.height - 10.0).max(0.0));
                 (label_y, Self::format_tick_label(value))
             })
             .collect()
     }
 
-    fn tick_values(range: &std::ops::RangeInclusive<f32>) -> Vec<f32> {
+    fn tick_values(&self) -> Vec<f32> {
+        match &self.spec {
+            TickSpec::Range(range) => Self::range_tick_values(range),
+            TickSpec::Custom(values, _) => values.clone(),
+        }
+    }
+
+    fn value_to_y(&self, value: f32) -> f32 {
+        match &self.spec {
+            TickSpec::Range(range) => Self::range_value_to_y(range, value, self.height),
+            TickSpec::Custom(_, TickMapping::Linear { min, max }) => {
+                let span = (max - min).abs().max(f32::EPSILON);
+                let normalized = ((value - min) / span).clamp(0.0, 1.0);
+                self.height * (1.0 - normalized)
+            }
+            TickSpec::Custom(_, TickMapping::X32Fader) => {
+                let normalized = x32_db_to_normalized(value);
+                self.height * (1.0 - normalized)
+            }
+        }
+    }
+
+    fn range_tick_values(range: &std::ops::RangeInclusive<f32>) -> Vec<f32> {
         let start = *range.start();
         let end = *range.end();
         let min = start.min(end);
@@ -151,8 +207,8 @@ impl<Message> canvas::Program<Message> for TicksCanvas {
         let static_geometry = state.cache.draw(renderer, bounds.size(), |frame| {
             let effective_height = (bounds.height - (OUTER_PAD_Y * 2.0)).max(1.0);
             let layout = Self {
-                range: self.range.clone(),
-                fader_height: effective_height,
+                spec: self.spec.clone(),
+                height: effective_height,
             }
             .tick_layout();
             let tick_x = SCALE_GAP;
@@ -186,12 +242,60 @@ where
     Message: 'a,
 {
     canvas(TicksCanvas {
-        range,
-        fader_height,
+        spec: TickSpec::Range(range),
+        height: fader_height,
     })
     .width(Length::Fixed(SCALE_GAP + SCALE_WIDTH))
     .height(Length::Fill)
     .into()
+}
+
+pub fn x32_ticks<'a, Message>(height: f32) -> Element<'a, Message>
+where
+    Message: 'a,
+{
+    canvas(TicksCanvas {
+        spec: TickSpec::Custom(
+            vec![-90.0, -60.0, -40.0, -20.0, -10.0, -5.0, 0.0, 5.0, 10.0],
+            TickMapping::X32Fader,
+        ),
+        height,
+    })
+    .width(Length::Fixed(SCALE_GAP + SCALE_WIDTH))
+    .height(Length::Fill)
+    .into()
+}
+
+pub fn meter_ticks<'a, Message>(height: f32) -> Element<'a, Message>
+where
+    Message: 'a,
+{
+    canvas(TicksCanvas {
+        spec: TickSpec::Custom(
+            vec![-90.0, -60.0, -40.0, -20.0, -12.0, -6.0, 0.0, 10.0, 20.0],
+            TickMapping::Linear {
+                min: -90.0,
+                max: 20.0,
+            },
+        ),
+        height,
+    })
+    .width(Length::Fixed(SCALE_GAP + SCALE_WIDTH))
+    .height(Length::Fill)
+    .into()
+}
+
+fn x32_db_to_normalized(db: f32) -> f32 {
+    let db = db.clamp(-90.0, 10.0);
+    if db >= -10.0 {
+        (db + 30.0) / 40.0
+    } else if db >= -30.0 {
+        (db + 50.0) / 80.0
+    } else if db >= -60.0 {
+        (db + 70.0) / 160.0
+    } else {
+        (db + 90.0) / 480.0
+    }
 }
 
 #[cfg(test)]
@@ -203,17 +307,17 @@ mod tests {
         let height = 110.0;
         let range = -90.0..=20.0;
 
-        assert_eq!(TicksCanvas::value_to_y(&range, 20.0, height), 0.0);
-        assert_eq!(TicksCanvas::value_to_y(&range, -90.0, height), height);
+        assert_eq!(TicksCanvas::range_value_to_y(&range, 20.0, height), 0.0);
+        assert_eq!(TicksCanvas::range_value_to_y(&range, -90.0, height), height);
 
         let midpoint = (-90.0 + 20.0) * 0.5;
-        assert!((TicksCanvas::value_to_y(&range, midpoint, height) - 55.0).abs() < 0.001);
+        assert!((TicksCanvas::range_value_to_y(&range, midpoint, height) - 55.0).abs() < 0.001);
     }
 
     #[test]
     fn tick_values_include_range_endpoints() {
         let range = -90.0..=20.0;
-        let values = TicksCanvas::tick_values(&range);
+        let values = TicksCanvas::range_tick_values(&range);
 
         assert_eq!(values.first().copied(), Some(-90.0));
         assert_eq!(values.last().copied(), Some(20.0));
@@ -222,7 +326,7 @@ mod tests {
     #[test]
     fn tick_values_are_generated_from_range() {
         let range = -90.0..=20.0;
-        let values = TicksCanvas::tick_values(&range);
+        let values = TicksCanvas::range_tick_values(&range);
 
         assert!(values.contains(&0.0));
         assert!(values.contains(&10.0));
@@ -233,8 +337,8 @@ mod tests {
     fn tick_layout_positions_stay_in_bounds() {
         let height = 110.0;
         let canvas = TicksCanvas {
-            range: -90.0..=20.0,
-            fader_height: height,
+            spec: TickSpec::Range(-90.0..=20.0),
+            height,
         };
         let layout = canvas.tick_layout();
 
@@ -262,15 +366,18 @@ mod tests {
         let range = -90.0..=20.0;
 
         // Above max should return 0 (top)
-        assert_eq!(TicksCanvas::value_to_y(&range, 100.0, height), 0.0);
+        assert_eq!(TicksCanvas::range_value_to_y(&range, 100.0, height), 0.0);
         // Below min should return height (bottom)
-        assert_eq!(TicksCanvas::value_to_y(&range, -200.0, height), height);
+        assert_eq!(
+            TicksCanvas::range_value_to_y(&range, -200.0, height),
+            height
+        );
     }
 
     #[test]
     fn tick_values_for_small_range() {
         let range = -10.0..=10.0;
-        let values = TicksCanvas::tick_values(&range);
+        let values = TicksCanvas::range_tick_values(&range);
 
         assert!(values.contains(&0.0));
         assert!(values.contains(&-10.0));
@@ -280,7 +387,7 @@ mod tests {
     #[test]
     fn tick_values_for_zero_range() {
         let range = 0.0..=0.0;
-        let values = TicksCanvas::tick_values(&range);
+        let values = TicksCanvas::range_tick_values(&range);
 
         assert_eq!(values.len(), 1);
         assert_eq!(values[0], 0.0);

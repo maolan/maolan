@@ -1640,7 +1640,7 @@ pub fn list_plugins_with_capabilities(scan_capabilities: bool) -> Vec<ClapPlugin
         collect_clap_plugins(&root, &mut out, scan_capabilities);
     }
 
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_key(|a| a.name.to_lowercase());
     out.dedup_by(|a, b| a.path.eq_ignore_ascii_case(&b.path));
     out
 }
