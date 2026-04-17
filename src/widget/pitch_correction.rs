@@ -412,35 +412,32 @@ impl Program<Message> for PitchRollCanvas {
                     }
                 }
             }
-            Event::Mouse(mouse::Event::WheelScrolled { .. }) => {
-                if state.drag_start.is_some() {
-                    state.drag_start = None;
-                    state.dragging_mode = PitchDraggingMode::None;
-                    state.selection_dragged = false;
-                }
+            Event::Mouse(mouse::Event::WheelScrolled { .. }) if state.drag_start.is_some() => {
+                state.drag_start = None;
+                state.dragging_mode = PitchDraggingMode::None;
+                state.selection_dragged = false;
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if state.drag_start.is_some() {
-                    let mode = state.dragging_mode;
-                    state.drag_start = None;
-                    state.dragging_mode = PitchDraggingMode::None;
-                    return match mode {
-                        PitchDraggingMode::DraggingPoints => Some(
-                            CanvasAction::publish(Message::PitchCorrectionPointsEndDrag)
-                                .and_capture(),
-                        ),
-                        PitchDraggingMode::SelectingRect => {
-                            let message = if state.selection_dragged {
-                                Message::PitchCorrectionSelectRectEnd
-                            } else {
-                                Message::PitchCorrectionClearSelection
-                            };
-                            state.selection_dragged = false;
-                            Some(CanvasAction::publish(message).and_capture())
-                        }
-                        PitchDraggingMode::None => None,
-                    };
-                }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.drag_start.is_some() =>
+            {
+                let mode = state.dragging_mode;
+                state.drag_start = None;
+                state.dragging_mode = PitchDraggingMode::None;
+                return match mode {
+                    PitchDraggingMode::DraggingPoints => Some(
+                        CanvasAction::publish(Message::PitchCorrectionPointsEndDrag).and_capture(),
+                    ),
+                    PitchDraggingMode::SelectingRect => {
+                        let message = if state.selection_dragged {
+                            Message::PitchCorrectionSelectRectEnd
+                        } else {
+                            Message::PitchCorrectionClearSelection
+                        };
+                        state.selection_dragged = false;
+                        Some(CanvasAction::publish(message).and_capture())
+                    }
+                    PitchDraggingMode::None => None,
+                };
             }
             _ => {}
         }

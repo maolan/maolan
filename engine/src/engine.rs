@@ -6542,7 +6542,7 @@ impl Engine {
                     .map(|evt| evt.event),
             );
         }
-        events.sort_by(|a, b| a.frame.cmp(&b.frame));
+        events.sort_by_key(|a| a.frame);
         events
     }
 

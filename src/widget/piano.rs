@@ -215,44 +215,44 @@ impl Program<Message> for PianoRollInteraction {
                     }
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if state.drag_start.is_some() {
-                    let mode = state.dragging_mode;
-                    state.drag_start = None;
-                    state.dragging_mode = DraggingMode::None;
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.drag_start.is_some() =>
+            {
+                let mode = state.dragging_mode;
+                state.drag_start = None;
+                state.dragging_mode = DraggingMode::None;
 
-                    match mode {
-                        DraggingMode::SelectingRect => {
-                            return Some(CanvasAction::publish(Message::PianoSelectRectEnd));
-                        }
-                        DraggingMode::DraggingNotes => {
-                            return Some(CanvasAction::publish(Message::PianoNotesEndDrag));
-                        }
-                        DraggingMode::ResizingNote => {
-                            return Some(CanvasAction::publish(Message::PianoNoteResizeEnd));
-                        }
-                        DraggingMode::CreatingNote => {
-                            return Some(CanvasAction::publish(Message::PianoCreateNoteEnd));
-                        }
-                        DraggingMode::None => {}
+                match mode {
+                    DraggingMode::SelectingRect => {
+                        return Some(CanvasAction::publish(Message::PianoSelectRectEnd));
                     }
+                    DraggingMode::DraggingNotes => {
+                        return Some(CanvasAction::publish(Message::PianoNotesEndDrag));
+                    }
+                    DraggingMode::ResizingNote => {
+                        return Some(CanvasAction::publish(Message::PianoNoteResizeEnd));
+                    }
+                    DraggingMode::CreatingNote => {
+                        return Some(CanvasAction::publish(Message::PianoCreateNoteEnd));
+                    }
+                    DraggingMode::None => {}
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) => {
-                if state.drag_start.is_some() {
-                    let mode = state.dragging_mode;
-                    state.drag_start = None;
-                    state.dragging_mode = DraggingMode::None;
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right))
+                if state.drag_start.is_some() =>
+            {
+                let mode = state.dragging_mode;
+                state.drag_start = None;
+                state.dragging_mode = DraggingMode::None;
 
-                    match mode {
-                        DraggingMode::CreatingNote => {
-                            return Some(CanvasAction::publish(Message::PianoCreateNoteEnd));
-                        }
-                        DraggingMode::None => {}
-                        DraggingMode::SelectingRect
-                        | DraggingMode::DraggingNotes
-                        | DraggingMode::ResizingNote => {}
+                match mode {
+                    DraggingMode::CreatingNote => {
+                        return Some(CanvasAction::publish(Message::PianoCreateNoteEnd));
                     }
+                    DraggingMode::None => {}
+                    DraggingMode::SelectingRect
+                    | DraggingMode::DraggingNotes
+                    | DraggingMode::ResizingNote => {}
                 }
             }
             _ => {}

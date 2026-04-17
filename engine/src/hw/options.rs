@@ -50,7 +50,7 @@ mod tests {
             input_latency_frames: 100,
             output_latency_frames: 200,
         };
-        let cloned = opts.clone();
+        let cloned = opts;
         assert_eq!(opts.exclusive, cloned.exclusive);
         assert_eq!(opts.period_frames, cloned.period_frames);
         assert_eq!(opts.nperiods, cloned.nperiods);
