@@ -19,6 +19,7 @@ pub struct HorizontalSlider<'a, Message> {
     fill_mode: FillMode,
     filled_color: Color,
     handle_color: Color,
+    on_release: Option<Message>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +53,7 @@ impl<'a, Message> HorizontalSlider<'a, Message> {
                 0xC2 as f32 / 255.0,
                 0xFF as f32 / 255.0,
             ),
+            on_release: None,
         }
     }
 
@@ -89,6 +91,11 @@ impl<'a, Message> HorizontalSlider<'a, Message> {
         self.handle_color = color;
         self
     }
+
+    pub fn on_release(mut self, message: Message) -> Self {
+        self.on_release = Some(message);
+        self
+    }
 }
 
 pub fn horizontal_slider<'a, Message, F>(
@@ -112,6 +119,7 @@ impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for HorizontalSlider<'a, Message>
 where
     Renderer: renderer::Renderer,
+    Message: Clone,
 {
     fn size(&self) -> Size<Length> {
         Size {
@@ -286,6 +294,9 @@ where
                 if state.is_dragging =>
             {
                 state.is_dragging = false;
+                if let Some(message) = self.on_release.as_ref() {
+                    shell.publish(message.clone());
+                }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if state.is_dragging
@@ -329,7 +340,7 @@ impl<'a, Message> HorizontalSlider<'a, Message> {
 impl<'a, Message, Theme, Renderer> From<HorizontalSlider<'a, Message>>
     for Element<'a, Message, Theme, Renderer>
 where
-    Message: 'a,
+    Message: 'a + Clone,
     Theme: 'a,
     Renderer: renderer::Renderer + 'a,
 {
@@ -478,5 +489,38 @@ mod tests {
         );
 
         assert_eq!(messages, vec![0.5]);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn update_publishes_release_message() {
+        let mut slider = HorizontalSlider::new(-1.0..=1.0, 0.0, |value| value)
+            .width(Length::Fixed(100.0))
+            .on_release(99.0);
+        let mut tree = test_tree_with_state(State {
+            is_dragging: true,
+            last_click_at: None,
+        });
+        let node = layout::Node::new(Size::new(100.0, 12.0));
+        let layout = Layout::new(&node);
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        let renderer = ();
+        let mut clipboard = clipboard::Null;
+        let viewport = Rectangle::new(Point::ORIGIN, Size::new(100.0, 12.0));
+
+        <HorizontalSlider<'_, f32> as Widget<f32, iced::Theme, ()>>::update(
+            &mut slider,
+            &mut tree,
+            &Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            layout,
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &viewport,
+        );
+
+        assert_eq!(messages, vec![99.0]);
     }
 }
