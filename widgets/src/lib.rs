@@ -1,3 +1,4 @@
+pub mod arch_slider;
 pub mod clip;
 mod consts;
 pub mod controller;

@@ -177,10 +177,10 @@ pub mod workspace_mixer {
     pub const FADER_MIN_DB: f32 = -90.0;
     pub const FADER_MAX_DB: f32 = 20.0;
     pub const STRIP_WIDTH: f32 = 96.0;
-    pub const PAN_SLIDER_WIDTH: f32 = 52.0;
     pub const READOUT_WIDTH: f32 = 72.0;
     pub const FADER_WIDTH: f32 = 14.0;
     pub const SCALE_WIDTH: f32 = 22.0;
+    pub const PAN_SLIDER_WIDTH: f32 = 52.0;
     pub const PAN_ROW_HEIGHT: f32 = 12.0;
     pub const STRIP_NAME_CHAR_PX: f32 = 6.3;
     pub const STRIP_NAME_SIDE_PADDING: f32 = 4.0;
