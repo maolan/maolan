@@ -24,7 +24,7 @@ permissions:
   id-token: write
 
 jobs:
-  lint:
+  lint-and-test:
     if: ${{ !inputs.release_build }}
     runs-on: ubuntu-latest
     steps:
@@ -80,56 +80,23 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-  test:
-    if: ${{ !inputs.release_build }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Cache apt packages
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives
-          key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/rust.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-apt-
-
-      - name: Install system packages
+      - name: Run tests with coverage
         run: |
-          sudo apt-get update
-          sudo apt-get install -y software-properties-common
-          sudo add-apt-repository -y ppa:rncbc/libs-noble
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            jackd2 \
-            libjack-jackd2-dev \
-            libasound2-dev \
-            liblilv-dev \
-            libsuil-dev \
-            libgtk2.0-dev \
-            librubberband-dev \
-            rubberband-cli \
-            libavcodec-dev \
-            libavdevice-dev \
-            libavfilter-dev \
-            libavformat-dev \
-            libavutil-dev \
-            libswresample-dev \
-            llvm-dev \
-            libclang-dev
+          mkdir -p coverage
+          cargo llvm-cov --lcov --output-path coverage/lcov.info
 
-      - name: Set LIBCLANG_PATH
-        run: echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
-
-      - name: Run tests
-        run: cargo test --workspace
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/lcov.info
+          disable_search: true
+          flags: unittests
+          name: ubuntu-llvm-cov
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
   build-release:
     if: ${{ inputs.release_build }}
@@ -182,7 +149,7 @@ jobs:
         run: echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
 
       - name: Build release binary
-        run: cargo build --release --workspace
+        run: cargo build --release
 
       - name: Package Linux binary
         run: |
