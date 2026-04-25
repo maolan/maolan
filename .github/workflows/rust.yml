@@ -80,23 +80,8 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: Run tests with coverage
-        run: |
-          mkdir -p coverage
-          cargo llvm-cov --lcov --output-path coverage/lcov.info
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage/lcov.info
-          disable_search: true
-          flags: unittests
-          name: ubuntu-llvm-cov
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+      - name: Run tests
+        run: cargo test --all-targets
 
   build-release:
     if: ${{ inputs.release_build }}

@@ -162,6 +162,7 @@ impl Menu {
         tracks_visible: bool,
         editor_visible: bool,
         mixer_visible: bool,
+        hw_mixer_visible: bool,
         log_visible: bool,
     ) -> iced::Element<'_, Message> {
         let menu_tpl = |items| IcedMenu::new(items).width(180.0).offset(15.0).spacing(5.0);
@@ -253,6 +254,10 @@ impl Menu {
                     (menu_item(
                         if mixer_visible { "Mixer [x]" } else { "Mixer [ ]" },
                         Message::ToggleMixerVisibility
+                    )),
+                    (menu_item(
+                        if hw_mixer_visible { "HW Mixer [x]" } else { "HW Mixer [ ]" },
+                        Message::ToggleHwMixerVisibility
                     )),
                     (menu_item(
                         if log_visible { "Log [x]" } else { "Log [ ]" },

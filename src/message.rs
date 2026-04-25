@@ -723,6 +723,7 @@ pub enum Message {
     },
     TracksResizeStart,
     MixerResizeStart,
+    HwMixerResizeStart,
     MixerLevelEditStart(String),
     MixerLevelEditInput(String),
     MixerLevelEditCommit,
@@ -786,6 +787,7 @@ pub enum Message {
     PianoSysExScrollYChanged(f32),
     TracksResizeHover(bool),
     MixerResizeHover(bool),
+    HwMixerResizeHover(bool),
 
     OpenFileImporter,
     DeleteUnusedSessionMediaFiles,
@@ -879,7 +881,9 @@ pub enum Message {
     ToggleMixerVisibility,
     ToggleTracksVisibility,
     ToggleEditorVisibility,
+    ToggleHwMixerVisibility,
     ToggleLogVisibility,
+    HwMixer(mixosc::app::Message),
     LogViewAction(text_editor::Action),
     OpenTrackPlugins(String),
     OpenHwPorts {

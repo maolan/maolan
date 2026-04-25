@@ -132,6 +132,10 @@ impl Maolan {
             Length::Fixed(v) => v,
             _ => 300.0,
         };
+        let hw_mixer_height = match state.hw_mixer_height {
+            Length::Fixed(v) => v,
+            _ => 320.0,
+        };
 
         // Serialize tracks but exclude clips
         let mut tracks_json = serde_json::to_value(&state.tracks).map_err(io::Error::other)?;
@@ -241,6 +245,7 @@ impl Maolan {
             "ui": {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
+                "hw_mixer_height": hw_mixer_height,
                 "zoom_visible_bars": self.zoom_visible_bars,
             },
             "export": {
@@ -593,6 +598,10 @@ impl Maolan {
             Length::Fixed(v) => v,
             _ => 300.0,
         };
+        let hw_mixer_height = match state.hw_mixer_height {
+            Length::Fixed(v) => v,
+            _ => 320.0,
+        };
         let mut tracks_json = serde_json::to_value(&state.tracks).map_err(io::Error::other)?;
         if let Some(tracks) = tracks_json.as_array_mut() {
             for (track_idx, track) in tracks.iter_mut().enumerate() {
@@ -766,6 +775,7 @@ impl Maolan {
             "ui": {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
+                "hw_mixer_height": hw_mixer_height,
                 "zoom_visible_bars": self.zoom_visible_bars,
             },
             "export": {
@@ -1257,6 +1267,8 @@ impl Maolan {
             })?;
             state.tracks_width = Length::Fixed(tracks_width as f32);
             state.mixer_height = Length::Fixed(mixer_height as f32);
+            state.hw_mixer_height =
+                Length::Fixed(session["ui"]["hw_mixer_height"].as_f64().unwrap_or(320.0) as f32);
         }
         self.zoom_visible_bars = session["ui"]["zoom_visible_bars"]
             .as_f64()

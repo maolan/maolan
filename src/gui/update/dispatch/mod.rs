@@ -2043,6 +2043,9 @@ impl Maolan {
             Message::MixerResizeHover(hovered) => {
                 self.mixer_resize_hovered = hovered;
             }
+            Message::HwMixerResizeHover(hovered) => {
+                self.hw_mixer_resize_hovered = hovered;
+            }
             Message::TransportRecordToggle => {
                 self.toolbar.update(&message);
                 if self.record_armed {
@@ -5423,6 +5426,18 @@ impl Maolan {
                 self.state.blocking_write().resizing =
                     Some(Resizing::Mixer(initial_height, initial_mouse_y));
             }
+            Message::HwMixerResizeStart => {
+                let (initial_height, initial_mouse_y) = {
+                    let state = self.state.blocking_read();
+                    let height = match state.hw_mixer_height {
+                        Length::Fixed(v) => v,
+                        _ => 320.0,
+                    };
+                    (height, state.cursor.y)
+                };
+                self.state.blocking_write().resizing =
+                    Some(Resizing::HwMixer(initial_height, initial_mouse_y));
+            }
             Message::MixerLevelEditStart(ref track_name) => {
                 let level = {
                     let state = self.state.blocking_read();
@@ -5822,6 +5837,11 @@ impl Maolan {
                     Some(Resizing::Mixer(initial_height, initial_mouse_y)) => {
                         let delta = position.y - initial_mouse_y;
                         self.state.blocking_write().mixer_height =
+                            Length::Fixed((initial_height - delta).max(60.0));
+                    }
+                    Some(Resizing::HwMixer(initial_height, initial_mouse_y)) => {
+                        let delta = position.y - initial_mouse_y;
+                        self.state.blocking_write().hw_mixer_height =
                             Length::Fixed((initial_height - delta).max(60.0));
                     }
                     Some(Resizing::Fade {
@@ -7996,6 +8016,19 @@ impl Maolan {
             }
             Message::ToggleEditorVisibility => {
                 self.editor_visible = !self.editor_visible;
+            }
+            Message::ToggleHwMixerVisibility => {
+                self.hw_mixer_visible = !self.hw_mixer_visible;
+                if !self.hw_mixer_visible {
+                    self.hw_mixer_resize_hovered = false;
+                } else {
+                    let (app, task) = mixosc::app::new();
+                    self.hw_mixer = app;
+                    return task.map(Message::HwMixer);
+                }
+            }
+            Message::HwMixer(msg) => {
+                return mixosc::app::update(&mut self.hw_mixer, msg).map(Message::HwMixer);
             }
             Message::ToggleLogVisibility => {
                 self.show_log_window = !self.show_log_window;

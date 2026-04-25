@@ -241,6 +241,11 @@ impl Maolan {
         } else {
             Subscription::none()
         };
+        let hw_mixer_sub = if self.hw_mixer_visible {
+            mixosc::app::subscription(&self.hw_mixer).map(Message::HwMixer)
+        } else {
+            Subscription::none()
+        };
         Subscription::batch(vec![
             engine_sub,
             keyboard_sub,
@@ -253,6 +258,7 @@ impl Maolan {
             clap_ui_sub,
             recording_preview_sub,
             recording_preview_peaks_sub,
+            hw_mixer_sub,
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_ui_sub,
         ])
