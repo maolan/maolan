@@ -3,27 +3,26 @@
 ## Project Structure & Module Organization
 `src/` contains the desktop DAW application, including GUI state,
 workspace views, widgets, plugin integration, and platform-specific app
-code. `engine/src/` contains the `maolan-engine` crate for audio, MIDI,
-routing, hardware backends, workers, and plugin hosting. Reference docs
-live in `docs/`, images for the README live in `images/`, and
-CI/release workflows live in `.github/workflows/`.
+code. The `maolan-engine` and `maolan-widgets` crates are maintained in
+separate repositories and pulled in as dependencies. Reference docs live
+in `docs/`, images for the README live in `images/`, and CI/release
+workflows live in `.github/workflows/`.
 
 Tests are mostly inline Rust unit tests placed beside the code they
-validate, for example in `src/gui/mod.rs` and `engine/src/history.rs`.
-Build artifacts go to `target/` and `engine/target/`; do not commit
-them.
+validate, for example in `src/gui/mod.rs`. Build artifacts go to
+`target/`; do not commit them.
 
 ## Build, Test, and Development Commands
 Use Cargo from the repository root:
 
 ```bash
 cargo build
-cargo test --workspace
+cargo test
 cargo run --release
 cargo run --release -- --debug
 ```
 
-`cargo build` checks the workspace locally. `cargo run --release`
+`cargo build` compiles the package locally. `cargo run --release`
 launches the app, and `-- --debug` enables extra runtime logging. On
 Linux and FreeBSD, install the native packages used in CI first,
 especially JACK, ALSA/X11, Lilv, Suil, and GTK2 development libraries.
@@ -33,8 +32,7 @@ Follow standard Rust formatting with 4-space indentation and run
 `cargo fmt` before submitting changes. Keep module and function names
 `snake_case`, types and enums `CamelCase`, and constants
 `SCREAMING_SNAKE_CASE`. Match the existing pattern of colocating UI
-logic under `src/gui/`, reusable widgets under `src/widget/`, and
-engine internals under the closest `engine/src/*` module.
+logic under `src/gui/` and reusable widgets under `src/widget/`.
 
 Prefer small focused modules over broad utility files. Keep
 platform-specific code explicit, using `cfg` gates in the same style as
@@ -43,11 +41,10 @@ the existing ALSA, OSS, CoreAudio, and LV2/VST3 modules.
 ## Testing Guidelines
 Add unit tests next to changed code with `#[cfg(test)]` modules and
 descriptive test names such as `restores_automation_after_undo`. Run
-both `cargo test --workspace` before opening a
-PR. During development, always run `cargo fmt` and `cargo clippy` after
-code changes. Run both test commands when the feature slice is
-complete, not on every intermediate step. Treat this as a hard
-requirement. When touching platform or
+`cargo test` before opening a PR. During development, always run
+`cargo fmt` and `cargo clippy` after code changes. Run the tests when
+the feature slice is complete, not on every intermediate step. Treat
+this as a hard requirement. When touching platform or
 plugin-hosting paths that are difficult to exercise locally, add
 coverage for the pure logic around them and call out any untested edges
 in the PR.
@@ -77,4 +74,4 @@ unless Clippy is unavailable or the user explicitly asks for
 `cargo check`. If Clippy cannot be run, state why. Format Rust code by
 running `cargo fmt` (not `cargo fmt --check`). This is mandatory after
 code changes, even for intermediate feature slices. Running
-`cargo test --workspace` whenever tests are run is also mandatory.
+`cargo test` whenever tests are run is also mandatory.

@@ -11,11 +11,6 @@ homepage = "https://github.com/maolan/maolan"
 keywords = ["audio", "midi", "daw", "vst3", "lv2"]
 categories = ["multimedia::audio"]
 
-[workspace]
-members = [
-  "engine",
-]
-
 [dependencies]
 crossterm = "0.29.0"
 ebur128 = "0.1"
@@ -28,7 +23,7 @@ iced_drop = { version = "0.2.16", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
 libloading = "0.8.9"
 maolan-generate = "0.0.3"
-maolan-engine = { version = "0.0.4", path = "./engine" }
+maolan-engine = "0.0.5"
 maolan-widgets = "0.0.6"
 midly = "0.5.3"
 ffmpeg-next = "8"
