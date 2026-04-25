@@ -43,10 +43,15 @@ For Unix plugin/audio integrations, install platform libraries as needed (for ex
 
 ### Compile and run
 
+The repository root is a single Cargo package (not a workspace).
+
 ```bash
 cargo build --release
 cargo run --release
 ```
+
+The `generate/` directory contains a separate standalone crate. To build
+it, run `cd generate && cargo build --release`.
 
 ### Debug logging
 
