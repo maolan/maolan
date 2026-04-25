@@ -224,7 +224,6 @@ pub enum Resizing {
         initial_mouse_x: f32,
     },
     Mixer(f32, f32),
-    HwMixer(f32, f32),
     Track(String, f32, f32),
     Tracks(f32, f32),
 }
@@ -266,6 +265,7 @@ pub enum ConnectionViewSelection {
 pub enum View {
     Workspace,
     Connections,
+    X32,
     HwInputPorts,
     HwOutputPorts,
     TrackPlugins,
@@ -455,7 +455,6 @@ pub struct StateData {
     pub midi_clip_create_end: Option<Point>,
     pub automation_lane_hover: Option<(String, TrackAutomationTarget, Point)>,
     pub mixer_height: Length,
-    pub hw_mixer_height: Length,
     pub tracks_width: Length,
     pub view: View,
     pub metronome_enabled: bool,
@@ -633,7 +632,6 @@ impl Default for StateData {
             midi_clip_create_end: None,
             automation_lane_hover: None,
             mixer_height: Length::Fixed(cfg.mixer_height),
-            hw_mixer_height: Length::Fixed(cfg.hw_mixer_height),
             tracks_width: Length::Fixed(cfg.track_width),
             view: View::Workspace,
             metronome_enabled: false,

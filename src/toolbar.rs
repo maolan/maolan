@@ -9,8 +9,8 @@ use iced::{
     widget::{button, container, pick_list, row, text, text_input},
 };
 use iced_fonts::lucide::{
-    audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind, square,
-    volume_x,
+    audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind,
+    sliders_vertical, square, volume_x,
 };
 #[derive(Debug, Default)]
 pub struct Toolbar;
@@ -231,6 +231,9 @@ impl Toolbar {
             button(cable())
                 .style(Self::button_style(true, false, Color::TRANSPARENT))
                 .on_press(Message::Connections),
+            button(sliders_vertical())
+                .style(Self::button_style(true, false, Color::TRANSPARENT))
+                .on_press(Message::X32),
         ]
         .align_y(Alignment::Center)
         .into()
