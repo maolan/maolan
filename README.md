@@ -24,7 +24,6 @@ Maolan currently includes:
   - LV2 on Unix
 - Per-track plugin graph routing, including sidechains and MIDI paths
 - Freeze, flatten, offline bounce, and export workflows
-- HeartMuLa generation through `maolan-generate`, including token generation and in-process HeartCodec decode
 - Session templates, track templates, autosave recovery, and diagnostics
 
 ## Platform Notes
@@ -50,9 +49,6 @@ cargo build --release
 cargo run --release
 ```
 
-The `generate/` directory contains a separate standalone crate. To build
-it, run `cd generate && cargo build --release`.
-
 ### Debug logging
 
 ```bash
@@ -66,29 +62,6 @@ cargo run --release -- --debug
 - [Shortcuts and Mouse Gestures](docs/SHORTCUTS.md)
 - [Plugin Routing and Sidechains](docs/PLUGIN_ROUTING.md)
 - [History Audit Notes](docs/HISTORY_AUDIT.md)
-
-## `maolan-generate`
-
-`maolan-generate` is the current CLI path for HeartMuLa generation in this repo.
-
-- Model downloads use Hugging Face cache resolution through `hf-hub`.
-- The current Burn repos expected by the generate path are:
-  - `maolandaw/HeartMuLa-happy-new-year-burn`
-  - `maolandaw/HeartCodec-oss-20260123-burn`
-- The HeartMuLa repo is expected to provide:
-  - `heartmula.bpk`
-  - `tokenizer.json`
-  - `gen_config.json`
-- The HeartCodec repo is expected to provide:
-  - `heartcodec.bpk`
-
-Current CLI capabilities include:
-
-- Prompt/lyrics generation with optional tags
-- Adjustable backend, sampler, CFG scale, steps, top-k, temperature, ODE steps, and decoder seed
-- `--length <int>` output length in milliseconds
-- `--decode-only` with `--frames-json`
-- `--model-dir <path>` override for using a local Burn export instead of Hugging Face cache resolution
 
 ## Project Notes
 
