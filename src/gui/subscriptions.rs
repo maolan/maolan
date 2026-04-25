@@ -241,10 +241,13 @@ impl Maolan {
         } else {
             Subscription::none()
         };
-        let hw_mixer_sub = if self.hw_mixer_visible {
-            mixosc::app::subscription(&self.hw_mixer).map(Message::HwMixer)
-        } else {
-            Subscription::none()
+        let hw_mixer_sub = {
+            let state = self.state.blocking_read();
+            if matches!(state.view, crate::state::View::X32) {
+                mixosc::app::subscription(&self.hw_mixer).map(Message::HwMixer)
+            } else {
+                Subscription::none()
+            }
         };
         Subscription::batch(vec![
             engine_sub,

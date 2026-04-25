@@ -7,10 +7,10 @@ use crate::{
     workspace::WorkspaceViewArgs,
 };
 use iced::{
-    Background, Border, Color, Length,
+    Border, Color, Length,
     widget::{
-        Stack, button, column, container, mouse_area, progress_bar, row, scrollable, text,
-        text_editor, text_input,
+        Stack, button, column, container, progress_bar, row, scrollable, text, text_editor,
+        text_input,
     },
 };
 
@@ -260,6 +260,7 @@ impl Maolan {
                             mixer_level_edit_input: &self.mixer_level_edit_input,
                         }),
                         View::Connections => self.connections.view(),
+                        View::X32 => mixosc::app::view(&self.hw_mixer).map(Message::HwMixer),
                         View::HwInputPorts => self.hw.jack_ports_view(true),
                         View::HwOutputPorts => self.hw.jack_ports_view(false),
                         #[cfg(all(unix, not(target_os = "macos")))]
@@ -364,7 +365,6 @@ impl Maolan {
                         self.tracks_visible,
                         self.editor_visible,
                         self.mixer_visible,
-                        self.hw_mixer_visible,
                         self.show_log_window
                     ),];
                     content = content.push(self.toolbar.view(ToolbarViewState {
@@ -549,44 +549,6 @@ impl Maolan {
                         .into();
                     }
                     content = content.push(view);
-                    if self.hw_mixer_visible {
-                        let hw_mixer_height = {
-                            let state = self.state.blocking_read();
-                            match state.hw_mixer_height {
-                                Length::Fixed(v) => v,
-                                _ => 320.0,
-                            }
-                        };
-                        let hw_mixer_view = mixosc::app::view(&self.hw_mixer).map(Message::HwMixer);
-                        let splitter = mouse_area(
-                            container("")
-                                .width(Length::Fill)
-                                .height(Length::Fixed(3.0))
-                                .style(move |_theme| container::Style {
-                                    background: Some(Background::Color(Color {
-                                        r: 0.7,
-                                        g: 0.7,
-                                        b: 0.7,
-                                        a: if self.hw_mixer_resize_hovered {
-                                            0.95
-                                        } else {
-                                            0.6
-                                        },
-                                    })),
-                                    ..container::Style::default()
-                                }),
-                        )
-                        .on_enter(Message::HwMixerResizeHover(true))
-                        .on_exit(Message::HwMixerResizeHover(false))
-                        .on_press(Message::HwMixerResizeStart);
-                        content = content.push(splitter);
-                        content = content.push(
-                            container(hw_mixer_view)
-                                .width(Length::Fill)
-                                .height(Length::Fixed(hw_mixer_height))
-                                .style(|_theme| crate::style::app_background()),
-                        );
-                    }
                     if self.import_in_progress {
                         let overall_progress = if self.import_total_files > 0 {
                             (self.import_current_file as f32 - 1.0 + self.import_file_progress)

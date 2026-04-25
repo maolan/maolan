@@ -71,6 +71,11 @@ jobs:
             llvm-dev \
             libclang-dev
 
+      - name: Clean apt cache metadata
+        run: |
+          sudo rm -f /var/cache/apt/archives/lock
+          sudo rm -rf /var/cache/apt/archives/partial
+
       - name: Set LIBCLANG_PATH
         run: echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
 
