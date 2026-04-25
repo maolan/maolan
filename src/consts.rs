@@ -127,6 +127,8 @@ pub mod plugins_clap {
     #[cfg(all(unix, not(target_os = "macos")))]
     pub const DESTROY_NOTIFY: c_int = 17;
     #[cfg(all(unix, not(target_os = "macos")))]
+    pub const UNMAP_NOTIFY: c_int = 18;
+    #[cfg(all(unix, not(target_os = "macos")))]
     pub const CLIENT_MESSAGE: c_int = 33;
     #[cfg(all(unix, not(target_os = "macos")))]
     pub const STRUCTURE_NOTIFY_MASK: c_long = 1 << 17;
@@ -276,12 +278,6 @@ pub mod state_platform_freebsd_lists {
         8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
         384_000,
     ];
-}
-
-pub mod plugins_clap_version {
-    pub const MAJOR: u32 = 1;
-    pub const MINOR: u32 = 2;
-    pub const REVISION: u32 = 0;
 }
 
 pub mod message_lists {

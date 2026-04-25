@@ -23,9 +23,7 @@ cargo run --release
 cargo run --release -- --debug
 ```
 
-`cargo build` checks the workspace locally. `cargo test` runs the root
-crate tests. `cargo test -p maolan-engine` runs the engine crate tests
-used by CI. Run both test commands for verification. `cargo run --release`
+`cargo build` checks the workspace locally. `cargo run --release`
 launches the app, and `-- --debug` enables extra runtime logging. On
 Linux and FreeBSD, install the native packages used in CI first,
 especially JACK, ALSA/X11, Lilv, Suil, and GTK2 development libraries.

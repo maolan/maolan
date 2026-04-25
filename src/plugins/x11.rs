@@ -135,6 +135,8 @@ pub union XEvent {
     pub type_: c_int,
     pub xclient: XClientMessageEvent,
     pub xconfigure: XConfigureEvent,
+    pub xdestroywindow: XDestroyWindowEvent,
+    pub xunmap: XUnmapEvent,
     pad: [c_long; 24],
 }
 
@@ -173,6 +175,29 @@ pub struct XConfigureEvent {
     border_width: c_int,
     above: c_ulong,
     override_redirect: c_int,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct XDestroyWindowEvent {
+    pub type_: c_int,
+    pub serial: c_ulong,
+    pub send_event: c_int,
+    pub display: *mut c_void,
+    pub event: c_ulong,
+    pub window: c_ulong,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct XUnmapEvent {
+    pub type_: c_int,
+    pub serial: c_ulong,
+    pub send_event: c_int,
+    pub display: *mut c_void,
+    pub event: c_ulong,
+    pub window: c_ulong,
+    pub from_configure: c_int,
 }
 
 #[repr(C)]

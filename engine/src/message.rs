@@ -168,18 +168,18 @@ pub struct PluginGraphPlugin {
     pub audio_outputs: usize,
     pub midi_inputs: usize,
     pub midi_outputs: usize,
-    pub state: Option<Lv2PluginState>,
+    pub state: Option<serde_json::Value>,
 }
 
 #[cfg(unix)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Lv2StatePortValue {
     pub index: u32,
     pub value: f32,
 }
 
 #[cfg(unix)]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Lv2StateProperty {
     pub key_uri: String,
     pub type_uri: String,
@@ -188,7 +188,7 @@ pub struct Lv2StateProperty {
 }
 
 #[cfg(unix)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Lv2PluginState {
     pub port_values: Vec<Lv2StatePortValue>,
     pub properties: Vec<Lv2StateProperty>,
@@ -653,6 +653,13 @@ pub enum Action {
         param_id: u32,
         value: f64,
     },
+    ClipSetClapParameter {
+        track_name: String,
+        clip_idx: usize,
+        instance_id: usize,
+        param_id: u32,
+        value: f64,
+    },
     TrackSetClapParameterAt {
         track_name: String,
         instance_id: usize,
@@ -708,7 +715,16 @@ pub enum Action {
         instance_id: usize,
         state: crate::clap::ClapPluginState,
     },
+    ClipClapRestoreState {
+        track_name: String,
+        clip_idx: usize,
+        instance_id: usize,
+        state: crate::clap::ClapPluginState,
+    },
     TrackSnapshotAllClapStates {
+        track_name: String,
+    },
+    TrackSnapshotAllClapStatesDone {
         track_name: String,
     },
     TrackLoadVst3Plugin {

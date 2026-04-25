@@ -20,6 +20,7 @@ pub trait Backend: Send + Sync + 'static {
     const WORKER_THREAD_NAME: &'static str;
     const ASSIST_THREAD_NAME: &'static str;
     const ASSIST_AUTONOMOUS_ENV: &'static str;
+    const ASSIST_STEP_REQUIRES_REQUEST_CYCLE: bool = false;
 }
 
 #[derive(Debug)]
@@ -39,6 +40,7 @@ struct AssistState {
     shutdown: bool,
     request_seq: u64,
     done_seq: u64,
+    init_complete: bool,
     last_error: Option<String>,
 }
 
@@ -370,9 +372,14 @@ impl<B: Backend> HwWorker<B> {
             };
             let (lock, cvar) = &*assist_state;
             loop {
-                let (shutdown, has_request, target) = {
+                let (shutdown, has_request, target, init_complete) = {
                     let st = lock.lock().expect("assist mutex poisoned");
-                    (st.shutdown, st.request_seq > st.done_seq, st.request_seq)
+                    (
+                        st.shutdown,
+                        st.request_seq > st.done_seq,
+                        st.request_seq,
+                        st.init_complete,
+                    )
                 };
                 if shutdown {
                     break;
@@ -397,8 +404,25 @@ impl<B: Backend> HwWorker<B> {
                     }
                     let mut st = lock.lock().expect("assist mutex poisoned");
                     st.done_seq = st.done_seq.max(target);
+                    if run_error.is_none() {
+                        st.init_complete = true;
+                    }
                     st.last_error = run_error;
                     cvar.notify_all();
+                    continue;
+                }
+
+                if B::ASSIST_STEP_REQUIRES_REQUEST_CYCLE && !init_complete {
+                    let st = lock.lock().expect("assist mutex poisoned");
+                    if st.shutdown {
+                        break;
+                    }
+                    let wait_started = Instant::now();
+                    let _guard = cvar.wait(st).expect("assist condvar failed");
+                    if let Some(p) = profiler.as_mut() {
+                        p.wait_count += 1;
+                        p.wait_time_ns += wait_started.elapsed().as_nanos();
+                    }
                     continue;
                 }
 

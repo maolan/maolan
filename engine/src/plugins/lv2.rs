@@ -600,8 +600,11 @@ impl Lv2Processor {
             control_ports,
             midnam_note_names: UnsafeMutex::new(HashMap::new()),
         };
+        processor.validate_required_runtime_callbacks()?;
         processor.connect_ports();
-        processor.query_midnam();
+        if std::env::var_os("MAOLAN_LV2_ENABLE_MIDNAM").is_some() {
+            processor.query_midnam();
+        }
         Ok(processor)
     }
 
@@ -867,6 +870,27 @@ impl Lv2Processor {
                 }
             }
         }
+    }
+
+    fn validate_required_runtime_callbacks(&self) -> Result<(), String> {
+        let Some(instance) = self.instance.as_ref() else {
+            return Err(format!("LV2 plugin '{}' has no active instance", self.uri));
+        };
+        let Some(descriptor) = instance.instance().descriptor() else {
+            return Err(format!("LV2 plugin '{}' has no descriptor", self.uri));
+        };
+        let connect_ptr = (descriptor.connect_port as *const ()) as usize;
+        if connect_ptr == 0 {
+            return Err(format!(
+                "LV2 plugin '{}' has null connect_port callback",
+                self.uri
+            ));
+        }
+        let run_ptr = (descriptor.run as *const ()) as usize;
+        if run_ptr == 0 {
+            return Err(format!("LV2 plugin '{}' has null run callback", self.uri));
+        }
+        Ok(())
     }
 
     pub fn snapshot_state(&self) -> Lv2PluginState {

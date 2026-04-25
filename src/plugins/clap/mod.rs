@@ -1,26 +1,23 @@
-use crate::consts::plugins_clap::{CLIENT_MESSAGE, DESTROY_NOTIFY, STRUCTURE_NOTIFY_MASK};
+use crate::consts::plugins_clap::{
+    CLIENT_MESSAGE, DESTROY_NOTIFY, STRUCTURE_NOTIFY_MASK, UNMAP_NOTIFY,
+};
 #[cfg(all(unix, not(target_os = "macos")))]
 use crate::plugins::x11::{
     XBlackPixel, XCloseDisplay, XCreateSimpleWindow, XDefaultScreen, XDestroyWindow, XEvent,
     XFlush, XInternAtom, XMapRaised, XNextEvent, XOpenDisplay, XPending, XResizeWindow,
     XRootWindow, XSelectInput, XSetWMProtocols, XStoreName, XSync, XWhitePixel,
 };
-use libloading::Library;
-use std::ffi::{CStr, CString, c_char, c_ulong, c_void};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Mutex, mpsc};
+use maolan_engine::clap::ClapProcessor;
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[cfg(all(unix, not(target_os = "macos")))]
-use std::ffi::{c_int, c_uint};
-
-// Platform-specific event handling for macOS
-#[cfg(target_os = "macos")]
-#[link(name = "AppKit", kind = "framework")]
-unsafe extern "C" {
-    fn NSApplicationLoad() -> bool;
-}
+use std::ffi::{CString, c_int, c_uint, c_ulong, c_void};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClapUiClosedState {
@@ -31,26 +28,102 @@ pub(crate) struct ClapUiClosedState {
     pub state: maolan_engine::clap::ClapPluginState,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ClapUiParamUpdate {
+    pub track_name: String,
+    pub clip_idx: Option<usize>,
+    pub instance_id: usize,
+    pub param_id: u32,
+    pub value: f64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ClapUiStateUpdate {
+    pub track_name: String,
+    pub clip_idx: Option<usize>,
+    pub instance_id: usize,
+    pub plugin_path: String,
+    pub state: maolan_engine::clap::ClapPluginState,
+}
+
 pub struct GuiClapUiHost {
     closed_tx: mpsc::Sender<ClapUiClosedState>,
     closed_rx: mpsc::Receiver<ClapUiClosedState>,
+    param_tx: mpsc::Sender<ClapUiParamUpdate>,
+    param_rx: mpsc::Receiver<ClapUiParamUpdate>,
+    state_tx: mpsc::Sender<ClapUiStateUpdate>,
+    state_rx: mpsc::Receiver<ClapUiStateUpdate>,
+    active_ui_sessions: Arc<AtomicUsize>,
+    pending_closed_states: Arc<AtomicUsize>,
+    pending_param_updates: Arc<AtomicUsize>,
+    pending_state_updates: Arc<AtomicUsize>,
+    active_session_keys: Arc<Mutex<HashSet<ClapUiSessionKey>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ClapUiSessionKey {
+    track_name: String,
+    clip_idx: Option<usize>,
+    instance_id: usize,
 }
 
 impl GuiClapUiHost {
     pub fn new() -> Self {
         let (closed_tx, closed_rx) = mpsc::channel();
+        let (param_tx, param_rx) = mpsc::channel();
+        let (state_tx, state_rx) = mpsc::channel();
+        let active_ui_sessions = Arc::new(AtomicUsize::new(0));
+        let pending_closed_states = Arc::new(AtomicUsize::new(0));
+        let pending_param_updates = Arc::new(AtomicUsize::new(0));
+        let pending_state_updates = Arc::new(AtomicUsize::new(0));
+        let active_session_keys = Arc::new(Mutex::new(HashSet::new()));
         Self {
             closed_tx,
             closed_rx,
+            param_tx,
+            param_rx,
+            state_tx,
+            state_rx,
+            active_ui_sessions,
+            pending_closed_states,
+            pending_param_updates,
+            pending_state_updates,
+            active_session_keys,
         }
     }
 
     pub fn drain_closed_states(&mut self) -> Vec<ClapUiClosedState> {
         let mut states = Vec::new();
         while let Ok(state) = self.closed_rx.try_recv() {
+            self.pending_closed_states.fetch_sub(1, Ordering::Relaxed);
             states.push(state);
         }
         states
+    }
+
+    pub fn pop_param_update(&mut self) -> Option<ClapUiParamUpdate> {
+        if let Ok(update) = self.param_rx.try_recv() {
+            self.pending_param_updates.fetch_sub(1, Ordering::Relaxed);
+            Some(update)
+        } else {
+            None
+        }
+    }
+
+    pub fn pop_state_update(&mut self) -> Option<ClapUiStateUpdate> {
+        if let Ok(update) = self.state_rx.try_recv() {
+            self.pending_state_updates.fetch_sub(1, Ordering::Relaxed);
+            Some(update)
+        } else {
+            None
+        }
+    }
+
+    pub fn has_pending_ui_work(&self) -> bool {
+        self.active_ui_sessions.load(Ordering::Acquire) != 0
+            || self.pending_closed_states.load(Ordering::Acquire) != 0
+            || self.pending_param_updates.load(Ordering::Acquire) != 0
+            || self.pending_state_updates.load(Ordering::Acquire) != 0
     }
 
     pub fn open_editor(
@@ -61,453 +134,183 @@ impl GuiClapUiHost {
         plugin_spec: &str,
         state: Option<maolan_engine::clap::ClapPluginState>,
     ) -> Result<(), String> {
+        let session_key = ClapUiSessionKey {
+            track_name: track_name.to_string(),
+            clip_idx,
+            instance_id,
+        };
+        if let Ok(mut active) = self.active_session_keys.lock()
+            && !active.insert(session_key.clone())
+        {
+            return Ok(());
+        }
         let track_name = track_name.to_string();
-        let plugin_spec = plugin_spec.to_string();
+        let plugin_path = plugin_spec.to_string();
         let closed_tx = self.closed_tx.clone();
+        let param_tx = self.param_tx.clone();
+        let state_tx = self.state_tx.clone();
+        let active_ui_sessions = self.active_ui_sessions.clone();
+        let active_ui_sessions_spawn = active_ui_sessions.clone();
+        let active_session_keys = self.active_session_keys.clone();
+        let session_key_for_thread = session_key.clone();
+        let pending_closed_states = self.pending_closed_states.clone();
+        let pending_param_updates = self.pending_param_updates.clone();
+        let pending_state_updates = self.pending_state_updates.clone();
+        active_ui_sessions.fetch_add(1, Ordering::AcqRel);
         thread::Builder::new()
             .name("clap-ui".to_string())
-            .spawn(move || match open_editor_blocking(&plugin_spec, state) {
-                Ok(Some(state)) => {
-                    let _ = closed_tx.send(ClapUiClosedState {
-                        track_name,
-                        clip_idx,
-                        instance_id,
-                        plugin_path: plugin_spec,
-                        state,
-                    });
+            .spawn(move || {
+                match open_editor_blocking(
+                    &plugin_path,
+                    state,
+                    |param_id, value| {
+                        let update = ClapUiParamUpdate {
+                            track_name: track_name.clone(),
+                            clip_idx,
+                            instance_id,
+                            param_id,
+                            value,
+                        };
+                        if param_tx.send(update).is_ok() {
+                            pending_param_updates.fetch_add(1, Ordering::AcqRel);
+                        }
+                    },
+                    |state| {
+                        let update = ClapUiStateUpdate {
+                            track_name: track_name.clone(),
+                            clip_idx,
+                            instance_id,
+                            plugin_path: plugin_path.clone(),
+                            state,
+                        };
+                        if state_tx.send(update).is_ok() {
+                            pending_state_updates.fetch_add(1, Ordering::AcqRel);
+                        }
+                    },
+                ) {
+                    Ok(Some(saved_state)) => {
+                        let closed = ClapUiClosedState {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            plugin_path,
+                            state: saved_state,
+                        };
+                        if closed_tx.send(closed).is_ok() {
+                            pending_closed_states.fetch_add(1, Ordering::AcqRel);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        tracing::error!("Failed to open CLAP editor: {err}");
+                    }
                 }
-                Ok(None) => {}
-                Err(err) => {
-                    tracing::error!("Failed to open CLAP editor: {err}");
+                if let Ok(mut active) = active_session_keys.lock() {
+                    active.remove(&session_key_for_thread);
                 }
+                active_ui_sessions_spawn.fetch_sub(1, Ordering::AcqRel);
             })
-            .map_err(|e| format!("Failed to spawn CLAP UI thread: {e}"))?;
+            .map_err(|e| {
+                if let Ok(mut active) = self.active_session_keys.lock() {
+                    active.remove(&session_key);
+                }
+                active_ui_sessions.fetch_sub(1, Ordering::AcqRel);
+                format!("Failed to spawn CLAP UI thread: {e}")
+            })?;
         Ok(())
     }
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct ClapVersion {
-    major: u32,
-    minor: u32,
-    revision: u32,
-}
-
-fn clap_version() -> ClapVersion {
-    ClapVersion {
-        major: crate::consts::plugins_clap_version::MAJOR,
-        minor: crate::consts::plugins_clap_version::MINOR,
-        revision: crate::consts::plugins_clap_version::REVISION,
+fn open_editor_blocking(
+    plugin_spec: &str,
+    state: Option<maolan_engine::clap::ClapPluginState>,
+    mut on_param: impl FnMut(u32, f64),
+    mut on_state: impl FnMut(maolan_engine::clap::ClapPluginState),
+) -> Result<Option<maolan_engine::clap::ClapPluginState>, String> {
+    eprintln!("[clap-ui] open_editor_blocking plugin={plugin_spec}");
+    let processor = Arc::new(ClapProcessor::new(48_000.0, 1024, plugin_spec, 2, 2)?);
+    if let Some(state) = state.as_ref() {
+        let _ = processor.restore_state(state);
     }
-}
-
-#[repr(C)]
-struct ClapHost {
-    clap_version: ClapVersion,
-    host_data: *mut c_void,
-    name: *const c_char,
-    vendor: *const c_char,
-    url: *const c_char,
-    version: *const c_char,
-    get_extension: Option<unsafe extern "C" fn(*const ClapHost, *const c_char) -> *const c_void>,
-    request_restart: Option<unsafe extern "C" fn(*const ClapHost)>,
-    request_process: Option<unsafe extern "C" fn(*const ClapHost)>,
-    request_callback: Option<unsafe extern "C" fn(*const ClapHost)>,
-}
-
-#[repr(C)]
-struct ClapPluginEntry {
-    clap_version: ClapVersion,
-    init: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
-    deinit: Option<unsafe extern "C" fn()>,
-    get_factory: Option<unsafe extern "C" fn(*const c_char) -> *const c_void>,
-}
-
-#[repr(C)]
-struct ClapPluginFactory {
-    get_plugin_count: Option<unsafe extern "C" fn(*const ClapPluginFactory) -> u32>,
-    get_plugin_descriptor:
-        Option<unsafe extern "C" fn(*const ClapPluginFactory, u32) -> *const ClapPluginDescriptor>,
-    create_plugin: Option<
-        unsafe extern "C" fn(
-            *const ClapPluginFactory,
-            *const ClapHost,
-            *const c_char,
-        ) -> *const ClapPlugin,
-    >,
-}
-
-#[repr(C)]
-struct ClapPluginDescriptor {
-    clap_version: ClapVersion,
-    id: *const c_char,
-    name: *const c_char,
-    vendor: *const c_char,
-    url: *const c_char,
-    manual_url: *const c_char,
-    support_url: *const c_char,
-    version: *const c_char,
-    description: *const c_char,
-    features: *const *const c_char,
-}
-
-#[repr(C)]
-struct ClapPlugin {
-    desc: *const ClapPluginDescriptor,
-    plugin_data: *mut c_void,
-    init: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
-    destroy: Option<unsafe extern "C" fn(*const ClapPlugin)>,
-    activate: Option<unsafe extern "C" fn(*const ClapPlugin, f64, u32, u32) -> bool>,
-    deactivate: Option<unsafe extern "C" fn(*const ClapPlugin)>,
-    start_processing: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
-    stop_processing: Option<unsafe extern "C" fn(*const ClapPlugin)>,
-    reset: Option<unsafe extern "C" fn(*const ClapPlugin)>,
-    process: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_void) -> i32>,
-    get_extension: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char) -> *const c_void>,
-    on_main_thread: Option<unsafe extern "C" fn(*const ClapPlugin)>,
-}
-
-#[repr(C)]
-struct ClapPluginGui {
-    is_api_supported: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char, bool) -> bool>,
-    get_preferred_api:
-        Option<unsafe extern "C" fn(*const ClapPlugin, *mut *const c_char, *mut bool) -> bool>,
-    create: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char, bool) -> bool>,
-    destroy: Option<unsafe extern "C" fn(*const ClapPlugin)>,
-    set_scale: Option<unsafe extern "C" fn(*const ClapPlugin, f64) -> bool>,
-    get_size: Option<unsafe extern "C" fn(*const ClapPlugin, *mut u32, *mut u32) -> bool>,
-    can_resize: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
-    get_resize_hints: Option<unsafe extern "C" fn(*const ClapPlugin, *mut c_void) -> bool>,
-    adjust_size: Option<unsafe extern "C" fn(*const ClapPlugin, *mut u32, *mut u32) -> bool>,
-    set_size: Option<unsafe extern "C" fn(*const ClapPlugin, u32, u32) -> bool>,
-    set_parent: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapWindow) -> bool>,
-    set_transient: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapWindow) -> bool>,
-    suggest_title: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char)>,
-    show: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
-    hide: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
-}
-
-#[repr(C)]
-union ClapWindowHandle {
-    x11: c_ulong,
-    native: *mut c_void,
-    cocoa: *mut c_void,
-}
-
-#[repr(C)]
-struct ClapWindow {
-    api: *const c_char,
-    handle: ClapWindowHandle,
-}
-
-#[repr(C)]
-struct ClapPluginTimerSupport {
-    on_timer: Option<unsafe extern "C" fn(*const ClapPlugin, u32)>,
-}
-
-#[repr(C)]
-struct ClapHostThreadCheck {
-    is_main_thread: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
-    is_audio_thread: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
-}
-
-#[repr(C)]
-struct ClapHostTimerSupport {
-    register_timer: Option<unsafe extern "C" fn(*const ClapHost, u32, *mut u32) -> bool>,
-    unregister_timer: Option<unsafe extern "C" fn(*const ClapHost, u32) -> bool>,
-}
-
-#[repr(C)]
-struct ClapHostGui {
-    resize_hints_changed: Option<unsafe extern "C" fn(*const ClapHost)>,
-    request_resize: Option<unsafe extern "C" fn(*const ClapHost, u32, u32) -> bool>,
-    request_show: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
-    request_hide: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
-    closed: Option<unsafe extern "C" fn(*const ClapHost, bool)>,
-}
-
-#[repr(C)]
-struct ClapPluginStateExt {
-    save: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapOStream) -> bool>,
-    load: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapIStream) -> bool>,
-}
-
-#[repr(C)]
-struct ClapOStream {
-    ctx: *mut c_void,
-    write: Option<unsafe extern "C" fn(*const ClapOStream, *const c_void, u64) -> i64>,
-}
-
-#[repr(C)]
-struct ClapIStream {
-    ctx: *mut c_void,
-    read: Option<unsafe extern "C" fn(*const ClapIStream, *mut c_void, u64) -> i64>,
-}
-
-struct ClapIStreamCtx<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-struct UiHostState {
-    should_close: AtomicBool,
-    callback_requested: AtomicBool,
-    main_thread_id: thread::ThreadId,
-    timers: Mutex<Vec<HostTimer>>,
-}
-
-struct HostTimer {
-    id: u32,
-    period: Duration,
-    next_tick: Instant,
-}
-
-static NEXT_TIMER_ID: AtomicU32 = AtomicU32::new(1);
-static HOST_THREAD_CHECK_EXT: ClapHostThreadCheck = ClapHostThreadCheck {
-    is_main_thread: Some(host_is_main_thread),
-    is_audio_thread: Some(host_is_audio_thread),
-};
-static HOST_TIMER_EXT: ClapHostTimerSupport = ClapHostTimerSupport {
-    register_timer: Some(host_timer_register),
-    unregister_timer: Some(host_timer_unregister),
-};
-static HOST_GUI_EXT: ClapHostGui = ClapHostGui {
-    resize_hints_changed: Some(host_gui_resize_hints_changed),
-    request_resize: Some(host_gui_request_resize),
-    request_show: Some(host_gui_request_show),
-    request_hide: Some(host_gui_request_hide),
-    closed: Some(host_gui_closed),
-};
-
-unsafe extern "C" fn host_get_extension(
-    _host: *const ClapHost,
-    extension_id: *const c_char,
-) -> *const c_void {
-    if extension_id.is_null() {
-        return std::ptr::null();
-    }
-    let id = unsafe { CStr::from_ptr(extension_id) }.to_string_lossy();
-    match id.as_ref() {
-        "clap.host.thread-check" => {
-            (&HOST_THREAD_CHECK_EXT as *const ClapHostThreadCheck).cast::<c_void>()
+    let gui_info = processor.gui_info()?;
+    eprintln!(
+        "[clap-ui] gui_info api={} supports_embedded={}",
+        gui_info.api, gui_info.supports_embedded
+    );
+    processor.ui_begin_session();
+    let result = if cfg!(all(unix, not(target_os = "macos"))) && gui_info.api == "x11" {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            eprintln!("[clap-ui] using run_x11_floating");
+            run_x11_floating(processor.clone(), &mut on_param, &mut on_state)
         }
-        "clap.host.timer-support" => {
-            (&HOST_TIMER_EXT as *const ClapHostTimerSupport).cast::<c_void>()
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
+            Err("X11 CLAP UI is unavailable on this platform".to_string())
         }
-        "clap.host.gui" => (&HOST_GUI_EXT as *const ClapHostGui).cast::<c_void>(),
-        _ => std::ptr::null(),
-    }
-}
-
-unsafe extern "C" fn host_request_restart(_host: *const ClapHost) {}
-
-unsafe extern "C" fn host_request_process(_host: *const ClapHost) {}
-
-unsafe extern "C" fn host_request_callback(host: *const ClapHost) {
-    if let Some(state) = host_state(host) {
-        state.callback_requested.store(true, Ordering::SeqCst);
-    }
-}
-
-unsafe extern "C" fn host_is_main_thread(host: *const ClapHost) -> bool {
-    host_state(host).is_some_and(|state| state.main_thread_id == thread::current().id())
-}
-
-unsafe extern "C" fn host_is_audio_thread(_host: *const ClapHost) -> bool {
-    false
-}
-
-unsafe extern "C" fn host_timer_register(
-    host: *const ClapHost,
-    period_ms: u32,
-    timer_id: *mut u32,
-) -> bool {
-    if timer_id.is_null() {
-        return false;
-    }
-    let id = NEXT_TIMER_ID.fetch_add(1, Ordering::Relaxed);
-    let period_ms = period_ms.max(1);
-    let period = Duration::from_millis(period_ms as u64);
-    let Some(state) = host_state(host) else {
-        return false;
-    };
-    {
-        let mut timers = state.timers.lock().unwrap();
-        timers.push(HostTimer {
-            id,
-            period,
-            next_tick: Instant::now() + period,
-        });
-    }
-    unsafe { *timer_id = id };
-    true
-}
-
-unsafe extern "C" fn host_timer_unregister(host: *const ClapHost, timer_id: u32) -> bool {
-    let Some(state) = host_state(host) else {
-        return false;
-    };
-    let mut timers = state.timers.lock().unwrap();
-    timers.retain(|timer| timer.id != timer_id);
-    true
-}
-
-unsafe extern "C" fn host_gui_resize_hints_changed(_host: *const ClapHost) {}
-
-unsafe extern "C" fn host_gui_request_resize(
-    _host: *const ClapHost,
-    _width: u32,
-    _height: u32,
-) -> bool {
-    true
-}
-
-unsafe extern "C" fn host_gui_request_show(_host: *const ClapHost) -> bool {
-    true
-}
-
-unsafe extern "C" fn host_gui_request_hide(host: *const ClapHost) -> bool {
-    if let Some(state) = host_state(host) {
-        state.should_close.store(true, Ordering::SeqCst);
-        true
     } else {
-        false
-    }
-}
-
-unsafe extern "C" fn host_gui_closed(host: *const ClapHost, _was_destroyed: bool) {
-    if let Some(state) = host_state(host) {
-        state.should_close.store(true, Ordering::SeqCst);
-    }
-}
-
-fn host_state(host: *const ClapHost) -> Option<&'static UiHostState> {
-    if host.is_null() {
-        return None;
-    }
-    let state_ptr = unsafe { (*host).host_data as *const UiHostState };
-    if state_ptr.is_null() {
-        return None;
-    }
-    Some(unsafe { &*state_ptr })
-}
-
-unsafe extern "C" fn clap_ostream_write(
-    stream: *const ClapOStream,
-    buffer: *const c_void,
-    size: u64,
-) -> i64 {
-    if stream.is_null() || buffer.is_null() {
-        return -1;
-    }
-    let stream = unsafe { &*stream };
-    let out = unsafe { &mut *(stream.ctx as *mut Vec<u8>) };
-    let bytes = unsafe { std::slice::from_raw_parts(buffer as *const u8, size as usize) };
-    out.extend_from_slice(bytes);
-    size as i64
-}
-
-unsafe extern "C" fn clap_istream_read(
-    stream: *const ClapIStream,
-    buffer: *mut c_void,
-    size: u64,
-) -> i64 {
-    if stream.is_null() || buffer.is_null() {
-        return -1;
-    }
-    let stream = unsafe { &*stream };
-    let ctx = unsafe { &mut *(stream.ctx as *mut ClapIStreamCtx<'_>) };
-    let remaining = ctx.bytes.len().saturating_sub(ctx.offset);
-    if remaining == 0 {
-        return 0;
-    }
-    let to_read = remaining.min(size as usize);
-    let src = &ctx.bytes[ctx.offset..ctx.offset + to_read];
-    let dst = unsafe { std::slice::from_raw_parts_mut(buffer as *mut u8, to_read) };
-    dst.copy_from_slice(src);
-    ctx.offset += to_read;
-    to_read as i64
-}
-
-fn clap_state_ext(plugin: *const ClapPlugin) -> Option<&'static ClapPluginStateExt> {
-    let ext_id = c"clap.state";
-    let plugin_ref = unsafe { &*plugin };
-    let get_extension = plugin_ref.get_extension?;
-    let ext_ptr = unsafe { get_extension(plugin, ext_id.as_ptr()) };
-    if ext_ptr.is_null() {
-        return None;
-    }
-    Some(unsafe { &*(ext_ptr as *const ClapPluginStateExt) })
-}
-
-fn snapshot_plugin_state(
-    plugin: *const ClapPlugin,
-) -> Result<maolan_engine::clap::ClapPluginState, String> {
-    let Some(state_ext) = clap_state_ext(plugin) else {
-        return Ok(maolan_engine::clap::ClapPluginState { bytes: Vec::new() });
+        processor.gui_create(&gui_info.api, !gui_info.supports_embedded)?;
+        let result = (|| {
+            processor.gui_show()?;
+            run_ui_loop(&processor, || false, &mut on_param, &mut on_state);
+            Ok(())
+        })();
+        processor.gui_hide();
+        processor.gui_destroy();
+        result
     };
-    let Some(save_fn) = state_ext.save else {
-        return Ok(maolan_engine::clap::ClapPluginState { bytes: Vec::new() });
-    };
-    let mut bytes = Vec::<u8>::new();
-    let mut stream = ClapOStream {
-        ctx: (&mut bytes as *mut Vec<u8>).cast::<c_void>(),
-        write: Some(clap_ostream_write),
-    };
-    if unsafe {
-        !save_fn(
-            plugin,
-            &mut stream as *mut ClapOStream as *const ClapOStream,
-        )
-    } {
-        return Err("CLAP state save failed".to_string());
-    }
-    Ok(maolan_engine::clap::ClapPluginState { bytes })
+    processor.ui_end_session();
+    result?;
+    Ok(processor.snapshot_state().ok())
 }
 
-fn restore_plugin_state(
-    plugin: *const ClapPlugin,
-    state: &maolan_engine::clap::ClapPluginState,
-) -> Result<(), String> {
-    let Some(state_ext) = clap_state_ext(plugin) else {
-        return Ok(());
-    };
-    let Some(load_fn) = state_ext.load else {
-        return Ok(());
-    };
-    let mut ctx = ClapIStreamCtx {
-        bytes: &state.bytes,
-        offset: 0,
-    };
-    let mut stream = ClapIStream {
-        ctx: (&mut ctx as *mut ClapIStreamCtx<'_>).cast::<c_void>(),
-        read: Some(clap_istream_read),
-    };
-    if unsafe {
-        !load_fn(
-            plugin,
-            &mut stream as *mut ClapIStream as *const ClapIStream,
-        )
-    } {
-        return Err("CLAP state load failed".to_string());
+fn run_ui_loop<F>(
+    processor: &Arc<ClapProcessor>,
+    mut pump_platform_close: F,
+    on_param: &mut impl FnMut(u32, f64),
+    on_state: &mut impl FnMut(maolan_engine::clap::ClapPluginState),
+) where
+    F: FnMut() -> bool,
+{
+    loop {
+        if processor.ui_should_close() || pump_platform_close() {
+            break;
+        }
+        processor.gui_on_main_thread();
+        for timer_id in processor.ui_take_due_timers() {
+            processor.gui_on_timer(timer_id);
+        }
+        emit_param_updates(processor, on_param);
+        emit_state_updates(processor, on_state);
+        thread::sleep(Duration::from_millis(16));
     }
-    Ok(())
 }
 
-fn split_plugin_spec(spec: &str) -> (&str, Option<&str>) {
-    if let Some((path, id)) = spec.split_once("::") {
-        (path, Some(id))
-    } else {
-        (spec, None)
+fn emit_param_updates(processor: &Arc<ClapProcessor>, on_param: &mut impl FnMut(u32, f64)) {
+    for update in processor.ui_take_param_updates() {
+        if update.value.is_finite() {
+            on_param(update.param_id, update.value);
+        }
+    }
+}
+
+fn emit_state_updates(
+    processor: &Arc<ClapProcessor>,
+    on_state: &mut impl FnMut(maolan_engine::clap::ClapPluginState),
+) {
+    if let Some(state) = processor.ui_take_state_update() {
+        on_state(state);
     }
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn create_x11_window_for_clap(
-    gui: &ClapPluginGui,
-    plugin: *const ClapPlugin,
-) -> Result<(*mut c_void, c_ulong, c_ulong, c_ulong, c_ulong), String> {
+#[allow(dead_code)]
+fn run_x11_embedded(
+    processor: Arc<ClapProcessor>,
+    on_param: &mut impl FnMut(u32, f64),
+    on_state: &mut impl FnMut(maolan_engine::clap::ClapPluginState),
+) -> Result<(), String> {
+    eprintln!("[clap-ui] run_x11_embedded begin");
     let display = unsafe { XOpenDisplay(std::ptr::null()) };
     if display.is_null() {
         return Err("Failed to open X display for CLAP UI".to_string());
@@ -518,11 +321,9 @@ fn create_x11_window_for_clap(
     let black = unsafe { XBlackPixel(display, screen) };
     let white = unsafe { XWhitePixel(display, screen) };
 
-    // Start with default size - we'll get actual size after creating GUI
     let mut width = 900u32;
     let mut height = 600u32;
 
-    // Create main window with default size
     let window =
         unsafe { XCreateSimpleWindow(display, root, 120, 120, width, height, 1, black, white) };
     if window == 0 {
@@ -530,7 +331,6 @@ fn create_x11_window_for_clap(
         return Err("Failed to create X11 window for CLAP UI".to_string());
     }
 
-    // Create embed window (child window for plugin)
     let embed_window =
         unsafe { XCreateSimpleWindow(display, window, 0, 0, width, height, 0, black, white) };
     if embed_window == 0 {
@@ -541,19 +341,13 @@ fn create_x11_window_for_clap(
         return Err("Failed to create X11 embed window for CLAP UI".to_string());
     }
 
-    // Set window title
-    let title = CString::new("CLAP Plugin").unwrap();
+    let title = CString::new("CLAP Plugin").map_err(|e| e.to_string())?;
     unsafe {
         XStoreName(display, window, title.as_ptr());
-    }
-
-    // Set up event masks
-    unsafe {
         XSelectInput(display, window, STRUCTURE_NOTIFY_MASK);
         XSelectInput(display, embed_window, STRUCTURE_NOTIFY_MASK);
     }
 
-    // Set up WM_DELETE_WINDOW protocol
     let wm_delete_atom_name = CString::new("WM_DELETE_WINDOW").map_err(|e| e.to_string())?;
     let wm_delete = unsafe { XInternAtom(display, wm_delete_atom_name.as_ptr(), 0) };
     let wm_protocols_atom_name = CString::new("WM_PROTOCOLS").map_err(|e| e.to_string())?;
@@ -565,88 +359,143 @@ fn create_x11_window_for_clap(
         }
     }
 
-    // Get GUI callbacks
-    let create = gui
-        .create
-        .ok_or_else(|| "CLAP gui.create is unavailable".to_string())?;
-    let set_parent = gui
-        .set_parent
-        .ok_or_else(|| "CLAP gui.set_parent is unavailable".to_string())?;
-    let show = gui
-        .show
-        .ok_or_else(|| "CLAP gui.show is unavailable".to_string())?;
-
-    // Create the GUI (must be done BEFORE get_size)
-    let api_x11 = CString::new("x11").map_err(|e| e.to_string())?;
-    if unsafe { !create(plugin, api_x11.as_ptr(), false) } {
-        unsafe {
-            XDestroyWindow(display, embed_window);
-            XDestroyWindow(display, window);
-            XCloseDisplay(display);
-        }
-        return Err("CLAP gui.create failed".to_string());
-    }
-
-    // Now get the actual size from the plugin (AFTER creating GUI)
-    if let Some(get_size) = gui.get_size {
-        unsafe {
-            if get_size(plugin, &mut width, &mut height) {
-                width = width.max(320);
-                height = height.max(240);
-
-                // Resize windows to match plugin's preferred size
+    let result = (|| {
+        eprintln!("[clap-ui] gui_create x11 floating=false");
+        processor.gui_create("x11", false)?;
+        if let Ok((new_width, new_height)) = processor.gui_get_size() {
+            width = new_width.max(320);
+            height = new_height.max(240);
+            unsafe {
                 XResizeWindow(display, window, width, height);
                 XResizeWindow(display, embed_window, width, height);
             }
         }
-    }
-
-    // Set the parent window for the plugin UI
-    // For X11, CLAP expects a ClapWindow structure with api="x11" and the Window ID
-    let clap_window = ClapWindow {
-        api: c"x11".as_ptr(),
-        handle: ClapWindowHandle { x11: embed_window },
-    };
-
-    let set_parent_result = unsafe { set_parent(plugin, &clap_window) };
-
-    if !set_parent_result {
-        if let Some(destroy_gui) = gui.destroy {
-            unsafe { destroy_gui(plugin) };
-        }
+        eprintln!("[clap-ui] gui_set_parent_x11={embed_window}");
+        processor.gui_set_parent_x11(embed_window as usize)?;
+        eprintln!("[clap-ui] gui_show");
+        processor.gui_show()?;
         unsafe {
-            XDestroyWindow(display, embed_window);
-            XDestroyWindow(display, window);
-            XCloseDisplay(display);
+            XMapRaised(display, embed_window);
+            XMapRaised(display, window);
+            XFlush(display);
         }
-        return Err("CLAP gui.set_parent failed".to_string());
-    }
+        run_ui_loop(
+            &processor,
+            || pump_platform_events_x11(display, window, wm_delete, wm_protocols),
+            on_param,
+            on_state,
+        );
+        Ok(())
+    })();
 
-    // Show the GUI
-    if unsafe { !show(plugin) } {
-        if let Some(destroy_gui) = gui.destroy {
-            unsafe { destroy_gui(plugin) };
-        }
-        unsafe {
-            XDestroyWindow(display, embed_window);
-            XDestroyWindow(display, window);
-            XCloseDisplay(display);
-        }
-        return Err("CLAP gui.show failed".to_string());
-    }
-
-    // Map windows
+    processor.gui_hide();
+    processor.gui_destroy();
     unsafe {
-        XMapRaised(display, embed_window);
-        XMapRaised(display, window);
-        XFlush(display);
+        XDestroyWindow(display, embed_window);
+        XDestroyWindow(display, window);
+        XSync(display, 0);
+        XCloseDisplay(display);
     }
-
-    Ok((display, window, embed_window, wm_delete, wm_protocols))
+    result
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn get_all_windows(display: *mut c_void, parent: c_ulong, windows: &mut Vec<c_ulong>) {
+fn run_x11_floating(
+    processor: Arc<ClapProcessor>,
+    on_param: &mut impl FnMut(u32, f64),
+    on_state: &mut impl FnMut(maolan_engine::clap::ClapPluginState),
+) -> Result<(), String> {
+    eprintln!("[clap-ui] run_x11_floating begin");
+    let display = unsafe { XOpenDisplay(std::ptr::null()) };
+    if display.is_null() {
+        return Err("Failed to open X display for CLAP UI".to_string());
+    }
+
+    let screen = unsafe { XDefaultScreen(display) };
+    let root = unsafe { XRootWindow(display, screen) };
+    let windows_before = get_top_level_windows(display, root);
+
+    let result = (|| {
+        eprintln!("[clap-ui] gui_create x11 floating=true");
+        processor.gui_create("x11", true)?;
+        eprintln!("[clap-ui] gui_show");
+        processor.gui_show()?;
+        thread::sleep(Duration::from_millis(200));
+        unsafe { XSync(display, 0) };
+
+        let windows_after = get_top_level_windows(display, root);
+        let new_top_levels: Vec<c_ulong> = windows_after
+            .into_iter()
+            .filter(|window| !windows_before.contains(window))
+            .collect();
+        eprintln!(
+            "[clap-ui] new top-level windows after gui_show: {}",
+            new_top_levels.len()
+        );
+        let tracked_windows = new_top_levels;
+        let plugin_window = tracked_windows.first().copied().unwrap_or(0);
+
+        let (wm_delete, wm_protocols) = if !tracked_windows.is_empty() {
+            for window in &tracked_windows {
+                unsafe {
+                    XSelectInput(display, *window, STRUCTURE_NOTIFY_MASK);
+                }
+            }
+            let debug_windows = tracked_windows
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            eprintln!("[clap-ui] tracking X11 windows: {debug_windows}");
+            let wm_delete_atom_name =
+                CString::new("WM_DELETE_WINDOW").map_err(|e| e.to_string())?;
+            let wm_delete = unsafe { XInternAtom(display, wm_delete_atom_name.as_ptr(), 0) };
+            let wm_protocols_atom_name = CString::new("WM_PROTOCOLS").map_err(|e| e.to_string())?;
+            let wm_protocols = unsafe { XInternAtom(display, wm_protocols_atom_name.as_ptr(), 0) };
+            (wm_delete, wm_protocols)
+        } else if plugin_window != 0 {
+            unsafe {
+                XSelectInput(display, plugin_window, STRUCTURE_NOTIFY_MASK);
+            }
+            let wm_delete_atom_name =
+                CString::new("WM_DELETE_WINDOW").map_err(|e| e.to_string())?;
+            let wm_delete = unsafe { XInternAtom(display, wm_delete_atom_name.as_ptr(), 0) };
+            let wm_protocols_atom_name = CString::new("WM_PROTOCOLS").map_err(|e| e.to_string())?;
+            let wm_protocols = unsafe { XInternAtom(display, wm_protocols_atom_name.as_ptr(), 0) };
+            (wm_delete, wm_protocols)
+        } else {
+            (0, 0)
+        };
+
+        run_ui_loop(
+            &processor,
+            || {
+                !tracked_windows.is_empty()
+                    && (pump_platform_events_x11_any(
+                        display,
+                        &tracked_windows,
+                        wm_delete,
+                        wm_protocols,
+                    ) || tracked_windows_gone(display, root, &tracked_windows))
+            },
+            on_param,
+            on_state,
+        );
+        Ok(())
+    })();
+
+    processor.gui_hide();
+    processor.gui_destroy();
+    unsafe {
+        XSync(display, 0);
+        XCloseDisplay(display);
+    }
+    result
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn get_top_level_windows(display: *mut c_void, root: c_ulong) -> Vec<c_ulong> {
+    let mut windows = Vec::new();
     #[link(name = "X11")]
     unsafe extern "C" {
         fn XQueryTree(
@@ -668,7 +517,7 @@ fn get_all_windows(display: *mut c_void, parent: c_ulong, windows: &mut Vec<c_ul
 
         if XQueryTree(
             display,
-            parent,
+            root,
             &mut root_return,
             &mut parent_return,
             &mut children,
@@ -676,92 +525,27 @@ fn get_all_windows(display: *mut c_void, parent: c_ulong, windows: &mut Vec<c_ul
         ) != 0
             && !children.is_null()
         {
+            windows.reserve(nchildren as usize);
             for i in 0..nchildren {
-                let child = *children.add(i as usize);
-                windows.push(child);
-                get_all_windows(display, child, windows);
+                windows.push(*children.add(i as usize));
             }
-            XFree(children as *mut c_void);
+            XFree(children.cast::<c_void>());
         }
     }
+    windows
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn create_x11_wrapper_for_floating_clap(
-    gui: &ClapPluginGui,
-    plugin: *const ClapPlugin,
-) -> Result<(*mut c_void, c_ulong, c_ulong, c_ulong, c_ulong), String> {
-    let display = unsafe { XOpenDisplay(std::ptr::null()) };
-    if display.is_null() {
-        return Err("Failed to open X display for CLAP UI".to_string());
+fn tracked_windows_gone(display: *mut c_void, root: c_ulong, tracked_windows: &[c_ulong]) -> bool {
+    if display.is_null() || root == 0 || tracked_windows.is_empty() {
+        return false;
     }
-
-    let screen = unsafe { XDefaultScreen(display) };
-    let root = unsafe { XRootWindow(display, screen) };
-
-    // Get list of windows before creating plugin UI
-    let mut windows_before = Vec::new();
-    get_all_windows(display, root, &mut windows_before);
-
-    // Create the plugin's floating UI
-    let create = gui
-        .create
-        .ok_or_else(|| "CLAP gui.create is unavailable".to_string())?;
-    let show = gui
-        .show
-        .ok_or_else(|| "CLAP gui.show is unavailable".to_string())?;
-
-    let api_x11 = CString::new("x11").map_err(|e| e.to_string())?;
-    if unsafe { !create(plugin, api_x11.as_ptr(), true) } {
-        unsafe { XCloseDisplay(display) };
-        return Err("CLAP gui.create failed (floating mode)".to_string());
-    }
-
-    if unsafe { !show(plugin) } {
-        if let Some(destroy_gui) = gui.destroy {
-            unsafe { destroy_gui(plugin) };
-        }
-        unsafe { XCloseDisplay(display) };
-        return Err("CLAP gui.show failed".to_string());
-    }
-
-    // Give the plugin time to create its window
-    std::thread::sleep(Duration::from_millis(100));
-    unsafe { XSync(display, 0) };
-
-    // Get list of windows after creating plugin UI
-    let mut windows_after = Vec::new();
-    get_all_windows(display, root, &mut windows_after);
-
-    // Find the new window (plugin's window)
-    let mut plugin_window = 0;
-    for &window in &windows_after {
-        if !windows_before.contains(&window) {
-            plugin_window = window;
-            break;
-        }
-    }
-
-    if plugin_window == 0 {
-        // Return display but no window to monitor
-        return Ok((display, 0, 0, 0, 0));
-    }
-
-    // Set up event monitoring on the plugin's window
-    unsafe {
-        XSelectInput(display, plugin_window, STRUCTURE_NOTIFY_MASK);
-    }
-
-    // Set up WM_DELETE_WINDOW protocol (in case we can intercept it)
-    let wm_delete_atom_name = CString::new("WM_DELETE_WINDOW").map_err(|e| e.to_string())?;
-    let wm_delete = unsafe { XInternAtom(display, wm_delete_atom_name.as_ptr(), 0) };
-    let wm_protocols_atom_name = CString::new("WM_PROTOCOLS").map_err(|e| e.to_string())?;
-    let wm_protocols = unsafe { XInternAtom(display, wm_protocols_atom_name.as_ptr(), 0) };
-
-    Ok((display, plugin_window, 0, wm_delete, wm_protocols))
+    let visible = get_top_level_windows(display, root);
+    tracked_windows
+        .iter()
+        .all(|window| !visible.contains(window))
 }
 
-// Platform-specific event pumping to detect window close
 #[cfg(all(unix, not(target_os = "macos")))]
 fn pump_platform_events_x11(
     display: *mut c_void,
@@ -779,13 +563,12 @@ fn pump_platform_events_x11(
             for _ in 0..pending {
                 XNextEvent(display, &mut event);
                 let event_type = event.type_;
-
-                // Check for window destruction
                 if event_type == DESTROY_NOTIFY {
                     return true;
                 }
-
-                // Check for WM_DELETE_WINDOW (user clicked close button)
+                if event_type == UNMAP_NOTIFY && event.xunmap.window == window {
+                    return true;
+                }
                 if event_type == CLIENT_MESSAGE {
                     let msg = event.xclient;
                     if wm_delete != 0
@@ -801,283 +584,47 @@ fn pump_platform_events_x11(
             }
         }
     }
-    false // Continue running
-}
-
-#[cfg(target_os = "macos")]
-fn pump_platform_events_cocoa() -> bool {
-    // For macOS, we would need to integrate with NSRunLoop
-    // This is a placeholder for now
     false
 }
 
-fn open_editor_blocking(
-    plugin_spec: &str,
-    initial_state: Option<maolan_engine::clap::ClapPluginState>,
-) -> Result<Option<maolan_engine::clap::ClapPluginState>, String> {
-    let (plugin_path, plugin_id) = split_plugin_spec(plugin_spec);
-    let mut host_state = Box::new(UiHostState {
-        should_close: AtomicBool::new(false),
-        callback_requested: AtomicBool::new(false),
-        main_thread_id: thread::current().id(),
-        timers: Mutex::new(Vec::new()),
-    });
-    let host = ClapHost {
-        clap_version: clap_version(),
-        host_data: (&mut *host_state as *mut UiHostState).cast::<c_void>(),
-        name: c"Maolan".as_ptr(),
-        vendor: c"Maolan".as_ptr(),
-        url: c"https://example.invalid".as_ptr(),
-        version: c"0.0.1".as_ptr(),
-        get_extension: Some(host_get_extension),
-        request_restart: Some(host_request_restart),
-        request_process: Some(host_request_process),
-        request_callback: Some(host_request_callback),
-    };
-    let factory_id = c"clap.plugin-factory";
-    let gui_ext_id = c"clap.gui";
-    let timer_ext_id = c"clap.timer-support";
-
-    let library = unsafe { Library::new(plugin_path) }.map_err(|e| e.to_string())?;
-    let entry_ptr = unsafe {
-        let sym = library
-            .get::<*const ClapPluginEntry>(b"clap_entry\0")
-            .map_err(|e| e.to_string())?;
-        *sym
-    };
-    if entry_ptr.is_null() {
-        return Err("CLAP entry symbol is null".to_string());
+#[cfg(all(unix, not(target_os = "macos")))]
+fn pump_platform_events_x11_any(
+    display: *mut c_void,
+    windows: &[c_ulong],
+    wm_delete: c_ulong,
+    wm_protocols: c_ulong,
+) -> bool {
+    if display.is_null() || windows.is_empty() {
+        return false;
     }
-    let entry = unsafe { &*entry_ptr };
-    let init = entry
-        .init
-        .ok_or_else(|| "CLAP entry missing init()".to_string())?;
-    if unsafe { !init(&host as *const ClapHost) } {
-        return Err(format!("CLAP entry init failed for {plugin_path}"));
-    }
-
-    let get_factory = entry
-        .get_factory
-        .ok_or_else(|| "CLAP entry missing get_factory()".to_string())?;
-    let factory = unsafe { get_factory(factory_id.as_ptr()) } as *const ClapPluginFactory;
-    if factory.is_null() {
-        return Err("CLAP plugin factory not found".to_string());
-    }
-    let factory_ref = unsafe { &*factory };
-    let get_count = factory_ref
-        .get_plugin_count
-        .ok_or_else(|| "CLAP factory missing get_plugin_count()".to_string())?;
-    let get_desc = factory_ref
-        .get_plugin_descriptor
-        .ok_or_else(|| "CLAP factory missing get_plugin_descriptor()".to_string())?;
-    let create = factory_ref
-        .create_plugin
-        .ok_or_else(|| "CLAP factory missing create_plugin()".to_string())?;
-
-    let count = unsafe { get_count(factory) };
-    if count == 0 {
-        return Err("CLAP factory returned zero plugins".to_string());
-    }
-    let mut selected_id = None::<CString>;
-    for i in 0..count {
-        let desc = unsafe { get_desc(factory, i) };
-        if desc.is_null() {
-            continue;
+    unsafe {
+        let pending = XPending(display);
+        if pending <= 0 {
+            return false;
         }
-        let desc = unsafe { &*desc };
-        if desc.id.is_null() {
-            continue;
-        }
-        let id = unsafe { CStr::from_ptr(desc.id) };
-        let id_str = id.to_string_lossy();
-        if plugin_id.is_none() || plugin_id == Some(id_str.as_ref()) {
-            selected_id = Some(CString::new(id_str.as_ref()).map_err(|e| e.to_string())?);
-            break;
-        }
-    }
-    let selected_id = selected_id.ok_or_else(|| {
-        if let Some(id) = plugin_id {
-            format!("CLAP descriptor id not found in bundle: {id}")
-        } else {
-            "CLAP descriptor not found".to_string()
-        }
-    })?;
-
-    let plugin = unsafe { create(factory, &host, selected_id.as_ptr()) };
-    if plugin.is_null() {
-        return Err("CLAP factory create_plugin failed".to_string());
-    }
-    let plugin_ref = unsafe { &*plugin };
-    let plugin_init = plugin_ref
-        .init
-        .ok_or_else(|| "CLAP plugin missing init()".to_string())?;
-    if unsafe { !plugin_init(plugin) } {
-        return Err("CLAP plugin init() failed".to_string());
-    }
-    if let Some(activate) = plugin_ref.activate {
-        let _ = unsafe { activate(plugin, 48_000.0, 256, 256) };
-    }
-    if let Some(start_processing) = plugin_ref.start_processing {
-        let _ = unsafe { start_processing(plugin) };
-    }
-    if let Some(state) = initial_state.as_ref() {
-        restore_plugin_state(plugin, state)?;
-    }
-
-    let get_extension = plugin_ref
-        .get_extension
-        .ok_or_else(|| "CLAP plugin missing get_extension()".to_string())?;
-    let gui_ptr = unsafe { get_extension(plugin, gui_ext_id.as_ptr()) };
-    if gui_ptr.is_null() {
-        return Err("CLAP plugin does not expose clap.gui".to_string());
-    }
-    let gui = unsafe { &*(gui_ptr as *const ClapPluginGui) };
-    let timer_ext_ptr = unsafe { get_extension(plugin, timer_ext_id.as_ptr()) };
-    let timer_ext = if timer_ext_ptr.is_null() {
-        None
-    } else {
-        Some(unsafe { &*(timer_ext_ptr as *const ClapPluginTimerSupport) })
-    };
-    let on_timer = timer_ext.and_then(|ext| ext.on_timer);
-
-    // Determine which GUI API to use and whether embedded mode is supported
-    let mut chosen: Option<CString> = None;
-    let mut supports_embedded = false;
-
-    if let Some(is_api_supported) = gui.is_api_supported {
-        // Try embedded (non-floating) mode first
-        for candidate in ["x11", "cocoa"] {
-            let c = CString::new(candidate).map_err(|e| e.to_string())?;
-            if unsafe { is_api_supported(plugin, c.as_ptr(), false) } {
-                chosen = Some(c);
-                supports_embedded = true;
-                break;
+        let mut event: XEvent = std::mem::zeroed();
+        for _ in 0..pending {
+            XNextEvent(display, &mut event);
+            let event_type = event.type_;
+            if event_type == DESTROY_NOTIFY && windows.contains(&event.xdestroywindow.window) {
+                return true;
             }
-        }
-
-        // Fall back to floating mode if embedded not supported
-        if chosen.is_none() {
-            for candidate in ["x11", "cocoa"] {
-                let c = CString::new(candidate).map_err(|e| e.to_string())?;
-                if unsafe { is_api_supported(plugin, c.as_ptr(), true) } {
-                    chosen = Some(c);
-                    supports_embedded = false;
-                    break;
+            if event_type == UNMAP_NOTIFY && windows.contains(&event.xunmap.window) {
+                return true;
+            }
+            if event_type == CLIENT_MESSAGE {
+                let msg = event.xclient;
+                if wm_delete != 0
+                    && wm_protocols != 0
+                    && windows.contains(&msg.window)
+                    && msg.message_type == wm_protocols
+                    && msg.format == 32
+                    && (msg.data.longs[0] as c_ulong) == wm_delete
+                {
+                    return true;
                 }
             }
         }
     }
-
-    let Some(api) = chosen else {
-        return Err("No supported CLAP GUI API found".to_string());
-    };
-
-    // Platform-specific window creation
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let (x11_display, x11_window, x11_embed_window, wm_delete, wm_protocols) =
-        if api.to_str().map(|s| s == "x11").unwrap_or(false) && supports_embedded {
-            create_x11_window_for_clap(gui, plugin)?
-        } else if api.to_str().map(|s| s == "x11").unwrap_or(false) {
-            create_x11_wrapper_for_floating_clap(gui, plugin)?
-        } else {
-            (std::ptr::null_mut(), 0, 0, 0, 0)
-        };
-
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
-    {
-        let create = gui
-            .create
-            .ok_or_else(|| "CLAP gui.create is unavailable".to_string())?;
-        let show = gui
-            .show
-            .ok_or_else(|| "CLAP gui.show is unavailable".to_string())?;
-
-        let floating = !supports_embedded;
-        if unsafe { !create(plugin, api.as_ptr(), floating) } {
-            return Err("CLAP gui.create failed".to_string());
-        }
-        if unsafe { !show(plugin) } {
-            return Err("CLAP gui.show failed".to_string());
-        }
-    }
-
-    while !host_state.should_close.load(Ordering::SeqCst) {
-        // Pump platform-specific events to detect window close
-        #[cfg(all(unix, not(target_os = "macos")))]
-        if !x11_display.is_null()
-            && x11_window != 0
-            && pump_platform_events_x11(x11_display, x11_window, wm_delete, wm_protocols)
-        {
-            host_state.should_close.store(true, Ordering::SeqCst);
-            break;
-        }
-
-        #[cfg(target_os = "macos")]
-        if pump_platform_events_cocoa() {
-            host_state.should_close.store(true, Ordering::SeqCst);
-            break;
-        }
-        if host_state.callback_requested.swap(false, Ordering::SeqCst)
-            && let Some(on_main_thread) = plugin_ref.on_main_thread
-        {
-            unsafe { on_main_thread(plugin) };
-        }
-        if let Some(on_timer) = on_timer {
-            let now = Instant::now();
-            let mut due_ids = Vec::new();
-            {
-                let mut timers = host_state.timers.lock().unwrap();
-                for timer in timers.iter_mut() {
-                    if now >= timer.next_tick {
-                        due_ids.push(timer.id);
-                        timer.next_tick = now + timer.period;
-                    }
-                }
-            }
-            for timer_id in due_ids {
-                unsafe { on_timer(plugin, timer_id) };
-            }
-        }
-
-        thread::sleep(Duration::from_millis(16));
-    }
-
-    let final_state = snapshot_plugin_state(plugin)?;
-
-    // Clean up GUI
-    if let Some(hide) = gui.hide {
-        let _ = unsafe { hide(plugin) };
-    }
-    if let Some(destroy_gui) = gui.destroy {
-        unsafe { destroy_gui(plugin) };
-    }
-    if let Some(stop_processing) = plugin_ref.stop_processing {
-        unsafe { stop_processing(plugin) };
-    }
-    if let Some(deactivate) = plugin_ref.deactivate {
-        unsafe { deactivate(plugin) };
-    }
-    if let Some(destroy_plugin) = plugin_ref.destroy {
-        unsafe { destroy_plugin(plugin) };
-    }
-    if let Some(deinit) = entry.deinit {
-        unsafe { deinit() };
-    }
-
-    // Clean up platform-specific resources
-    #[cfg(all(unix, not(target_os = "macos")))]
-    if !x11_display.is_null() {
-        unsafe {
-            if x11_embed_window != 0 {
-                XDestroyWindow(x11_display, x11_embed_window);
-            }
-            if x11_window != 0 {
-                XDestroyWindow(x11_display, x11_window);
-            }
-            XSync(x11_display, 0);
-            XCloseDisplay(x11_display);
-        }
-    }
-
-    Ok(Some(final_state))
+    false
 }

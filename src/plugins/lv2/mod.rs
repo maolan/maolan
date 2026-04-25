@@ -1023,6 +1023,10 @@ fn resolve_preferred_ui(plugin_uri: &str) -> Result<NativeUiSpec, String> {
         (&qt5_uri, LV2_UI_QT5),
         (&qt4_uri, LV2_UI_QT4),
     ];
+    let allow_x11_host_container = matches!(
+        std::env::var("MAOLAN_LV2_ALLOW_X11_UI").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("True")
+    );
 
     let mut best: Option<(usize, usize, u32, NativeUiSpec)> = None;
     for ui in uis.iter() {
@@ -1049,12 +1053,11 @@ fn resolve_preferred_ui(plugin_uri: &str) -> Result<NativeUiSpec, String> {
                 continue;
             }
             let class_c = CString::new(*class_uri).map_err(|e| e.to_string())?;
-            let host_containers: &[&str] = if *class_uri == LV2_UI_X11 {
-                &[LV2_UI_X11]
-            } else {
-                &[LV2_UI_GTK, LV2_UI_X11]
-            };
-            for container_uri in host_containers.iter().copied() {
+            let mut host_containers: Vec<&str> = vec![LV2_UI_GTK];
+            if allow_x11_host_container {
+                host_containers.push(LV2_UI_X11);
+            }
+            for container_uri in host_containers {
                 let host_type = CString::new(container_uri).map_err(|e| e.to_string())?;
                 let quality = unsafe { suil_ui_supported(host_type.as_ptr(), class_c.as_ptr()) };
                 if quality == 0 {

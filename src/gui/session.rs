@@ -166,11 +166,7 @@ impl Maolan {
                 let plugins_json: Vec<Value> = plugins
                     .iter()
                     .map(|p| {
-                        let state_json = p
-                            .state
-                            .as_ref()
-                            .map(Self::lv2_state_to_json)
-                            .unwrap_or(Value::Null);
+                        let state_json = p.state.clone().unwrap_or(Value::Null);
                         json!({"format": p.format, "uri": p.uri, "state": state_json})
                     })
                     .collect();
@@ -201,29 +197,6 @@ impl Maolan {
         #[cfg(target_os = "macos")]
         let graphs = Value::Object(serde_json::Map::new());
 
-        let clap = Value::Object(
-            state
-                .tracks
-                .iter()
-                .filter_map(|track| {
-                    state
-                        .clap_plugins_by_track
-                        .get(&track.name)
-                        .map(|plugins| (track.name.clone(), json!(plugins)))
-                })
-                .collect(),
-        );
-        let clap_state = Value::Object(
-            state
-                .clap_states_by_track
-                .iter()
-                .map(|(track, states)| {
-                    let v = serde_json::to_value(states)
-                        .unwrap_or_else(|_| Value::Object(Default::default()));
-                    (track.clone(), v)
-                })
-                .collect(),
-        );
         let metadata_year = state.session_year.trim().parse::<u64>().ok();
         let metadata_track_number = state.session_track_number.trim().parse::<u64>().ok();
         let export_hw_out_ports: Vec<usize> = self.export_hw_out_ports.iter().copied().collect();
@@ -232,8 +205,6 @@ impl Maolan {
             "tracks": tracks_json,
             "connections": &state.connections,
             "graphs": graphs,
-            "clap": clap,
-            "clap_state": clap_state,
             "metadata": {
                 "author": state.session_author.clone(),
                 "album": state.session_album.clone(),
@@ -314,6 +285,7 @@ impl Maolan {
         {
             self.pending_save_path = Some(path.clone());
             self.pending_save_tracks = std::iter::once(track_name.clone()).collect();
+            self.pending_save_clap_tracks = std::iter::once(track_name.clone()).collect();
             self.pending_save_is_template = false; // We'll handle this differently
 
             let tasks = vec![
@@ -384,26 +356,6 @@ impl Maolan {
         // Load LV2 plugin graph
         #[cfg(all(unix, not(target_os = "macos")))]
         if let Some(graph) = json.get("graph").and_then(|g| g.as_object()) {
-            let clap_paths = json
-                .get("clap")
-                .and_then(|c| c.as_array())
-                .map(|paths| {
-                    paths
-                        .iter()
-                        .filter_map(|path| path.as_str().map(str::to_string))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let clap_states = json
-                .get("clap_state")
-                .cloned()
-                .and_then(|v| {
-                    serde_json::from_value::<
-                        std::collections::HashMap<String, maolan_engine::clap::ClapPluginState>,
-                    >(v)
-                    .ok()
-                })
-                .unwrap_or_default();
             let mut runtime_nodes = Vec::new();
             let mut next_lv2_instance_id = 0usize;
             let mut next_clap_instance_id = 0usize;
@@ -411,7 +363,7 @@ impl Maolan {
             if let Some(plugins) = graph.get("plugins").and_then(|p| p.as_array()) {
                 for plugin in plugins {
                     if let Some(uri) = plugin.get("uri").and_then(|u| u.as_str()) {
-                        match Self::saved_unix_plugin_format(plugin, &clap_paths) {
+                        match plugin.get("format").and_then(Value::as_str) {
                             Some("LV2") => {
                                 let instance_id = next_lv2_instance_id;
                                 next_lv2_instance_id += 1;
@@ -446,11 +398,13 @@ impl Maolan {
                                     track_name: track_name.clone(),
                                     plugin_path: uri.to_string(),
                                 });
-                                if let Some(state) = clap_states.get(uri) {
+                                if let Some(state) =
+                                    plugin.get("state").and_then(Self::clap_state_from_json)
+                                {
                                     restore_actions.push(Action::TrackClapRestoreState {
                                         track_name: track_name.clone(),
                                         instance_id,
-                                        state: state.clone(),
+                                        state,
                                     });
                                 }
                             }
@@ -497,19 +451,6 @@ impl Maolan {
                             to_node,
                             to_port,
                         },
-                    });
-                }
-            }
-        }
-
-        // Load CLAP plugins
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
-        if let Some(clap) = json.get("clap").and_then(|c| c.as_array()) {
-            for plugin_path in clap {
-                if let Some(path) = plugin_path.as_str() {
-                    restore_actions.push(Action::TrackLoadClapPlugin {
-                        track_name: track_name.clone(),
-                        plugin_path: path.to_string(),
                     });
                 }
             }
@@ -570,11 +511,7 @@ impl Maolan {
                         let plugins_json: Vec<Value> = plugins
                             .iter()
                             .map(|p| {
-                                let state_json = p
-                                    .state
-                                    .as_ref()
-                                    .map(Self::lv2_state_to_json)
-                                    .unwrap_or(Value::Null);
+                                let state_json = p.state.clone().unwrap_or(Value::Null);
                                 json!({"format": p.format, "uri": p.uri, "state": state_json})
                             })
                             .collect();
@@ -607,19 +544,6 @@ impl Maolan {
                 }
             };
 
-            // Get CLAP plugins for this track
-            let clap = state
-                .clap_plugins_by_track
-                .get(track_name)
-                .map(|plugins| json!(plugins))
-                .unwrap_or(Value::Null);
-
-            let clap_state = state
-                .clap_states_by_track
-                .get(track_name)
-                .and_then(|states| serde_json::to_value(states).ok())
-                .unwrap_or(Value::Null);
-
             // Get connections involving this track
             let track_connections: Vec<&crate::state::Connection> = state
                 .connections
@@ -630,8 +554,6 @@ impl Maolan {
             let result = json!({
                 "track": track_json,
                 "graph": graph,
-                "clap": clap,
-                "clap_state": clap_state,
                 "connections": track_connections,
             });
 
@@ -771,11 +693,7 @@ impl Maolan {
                 let plugins_json: Vec<Value> = plugins
                     .iter()
                     .map(|p| {
-                        let state_json = p
-                            .state
-                            .as_ref()
-                            .map(Self::lv2_state_to_json)
-                            .unwrap_or(Value::Null);
+                        let state_json = p.state.clone().unwrap_or(Value::Null);
                         json!({"format": p.format, "uri": p.uri, "state": state_json})
                     })
                     .collect();
@@ -805,29 +723,6 @@ impl Maolan {
         };
         #[cfg(target_os = "macos")]
         let graphs = Value::Object(serde_json::Map::new());
-        let clap = Value::Object(
-            state
-                .tracks
-                .iter()
-                .filter_map(|track| {
-                    state
-                        .clap_plugins_by_track
-                        .get(&track.name)
-                        .map(|plugins| (track.name.clone(), json!(plugins)))
-                })
-                .collect(),
-        );
-        let clap_state = Value::Object(
-            state
-                .clap_states_by_track
-                .iter()
-                .map(|(track, states)| {
-                    let v = serde_json::to_value(states)
-                        .unwrap_or_else(|_| Value::Object(Default::default()));
-                    (track.clone(), v)
-                })
-                .collect(),
-        );
         let metadata_year = state.session_year.trim().parse::<u64>().ok();
         let metadata_track_number = state.session_track_number.trim().parse::<u64>().ok();
         let export_hw_out_ports: Vec<usize> = self.export_hw_out_ports.iter().copied().collect();
@@ -835,8 +730,6 @@ impl Maolan {
             "tracks": tracks_json,
             "connections": &state.connections,
             "graphs": graphs,
-            "clap": clap,
-            "clap_state": clap_state,
             "metadata": {
                 "author": state.session_author.clone(),
                 "album": state.session_album.clone(),
@@ -1891,75 +1784,12 @@ impl Maolan {
                 }
             }
         }
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
-        if let Some(clap_tracks) = session.get("clap").and_then(Value::as_object) {
-            for (track_name, plugins_v) in clap_tracks {
-                let Some(paths) = plugins_v.as_array() else {
-                    continue;
-                };
-                for (instance_id, path_v) in paths.iter().enumerate() {
-                    let Some(path) = path_v.as_str() else {
-                        continue;
-                    };
-                    restore_actions.push(Action::TrackLoadClapPlugin {
-                        track_name: track_name.clone(),
-                        plugin_path: path.to_string(),
-                    });
-                    if let Some(track_states) = session
-                        .get("clap_state")
-                        .and_then(Value::as_object)
-                        .and_then(|o| o.get(track_name))
-                        .cloned()
-                        .and_then(|v| {
-                            serde_json::from_value::<
-                                std::collections::HashMap<
-                                    String,
-                                    maolan_engine::clap::ClapPluginState,
-                                >,
-                            >(v)
-                            .ok()
-                        })
-                        && let Some(state) = track_states.get(path)
-                    {
-                        restore_actions.push(Action::TrackClapRestoreState {
-                            track_name: track_name.clone(),
-                            instance_id,
-                            state: state.clone(),
-                        });
-                    }
-                }
-            }
-        }
         #[cfg(all(unix, not(target_os = "macos")))]
         if let Some(graphs) = session["graphs"].as_object() {
             for (track_name, graph_v) in graphs {
                 restore_actions.push(Action::TrackClearDefaultPassthrough {
                     track_name: track_name.clone(),
                 });
-                let clap_paths = session
-                    .get("clap")
-                    .and_then(Value::as_object)
-                    .and_then(|tracks| tracks.get(track_name))
-                    .and_then(Value::as_array)
-                    .map(|paths| {
-                        paths
-                            .iter()
-                            .filter_map(|path| path.as_str().map(str::to_string))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let clap_states = session
-                    .get("clap_state")
-                    .and_then(Value::as_object)
-                    .and_then(|o| o.get(track_name))
-                    .cloned()
-                    .and_then(|v| {
-                        serde_json::from_value::<
-                            std::collections::HashMap<String, maolan_engine::clap::ClapPluginState>,
-                        >(v)
-                        .ok()
-                    })
-                    .unwrap_or_default();
                 let Some(plugins_arr) = graph_v["plugins"].as_array() else {
                     continue;
                 };
@@ -1970,7 +1800,7 @@ impl Maolan {
                     let Some(uri) = p["uri"].as_str() else {
                         continue;
                     };
-                    match Self::saved_unix_plugin_format(p, &clap_paths) {
+                    match p.get("format").and_then(Value::as_str) {
                         Some("LV2") => {
                             let instance_id = next_lv2_instance_id;
                             next_lv2_instance_id += 1;
@@ -2003,11 +1833,11 @@ impl Maolan {
                                 track_name: track_name.clone(),
                                 plugin_path: uri.to_string(),
                             });
-                            if let Some(state) = clap_states.get(uri) {
+                            if let Some(state) = Self::clap_state_from_json(&p["state"]) {
                                 restore_actions.push(Action::TrackClapRestoreState {
                                     track_name: track_name.clone(),
                                     instance_id,
-                                    state: state.clone(),
+                                    state,
                                 });
                             }
                         }
@@ -2096,6 +1926,7 @@ impl Maolan {
                 .collect();
             self.pending_save_path = Some(path);
             self.pending_save_tracks = track_names.iter().cloned().collect();
+            self.pending_save_clap_tracks = track_names.iter().cloned().collect();
             self.pending_save_is_template = true;
             if self.pending_save_tracks.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {
@@ -2133,6 +1964,7 @@ impl Maolan {
                 .collect();
             self.pending_save_path = Some(path);
             self.pending_save_tracks = track_names.iter().cloned().collect();
+            self.pending_save_clap_tracks = track_names.iter().cloned().collect();
             self.pending_save_is_template = true;
             self.pending_save_vst3_states.clear();
             {
@@ -2205,6 +2037,7 @@ impl Maolan {
                 .collect();
             self.pending_save_path = Some(path);
             self.pending_save_tracks = track_names.iter().cloned().collect();
+            self.pending_save_clap_tracks = track_names.iter().cloned().collect();
             self.pending_save_is_template = false;
             if self.pending_save_tracks.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {
@@ -2242,6 +2075,7 @@ impl Maolan {
                 .collect();
             self.pending_save_path = Some(path);
             self.pending_save_tracks = track_names.iter().cloned().collect();
+            self.pending_save_clap_tracks = track_names.iter().cloned().collect();
             self.pending_save_is_template = false;
             self.pending_save_vst3_states.clear();
             {

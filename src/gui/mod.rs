@@ -384,6 +384,7 @@ pub struct Maolan {
     session_dir: Option<PathBuf>,
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
+    pending_save_clap_tracks: std::collections::HashSet<String>,
     #[cfg(target_os = "macos")]
     pending_save_vst3_states: HashSet<(String, usize)>,
     pending_save_is_template: bool,
@@ -641,6 +642,7 @@ impl Default for Maolan {
             session_dir: None,
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
+            pending_save_clap_tracks: std::collections::HashSet::new(),
             #[cfg(target_os = "macos")]
             pending_save_vst3_states: HashSet::new(),
             pending_save_is_template: false,
@@ -4020,27 +4022,6 @@ impl Maolan {
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    fn saved_unix_plugin_format(plugin: &Value, clap_paths: &[String]) -> Option<&'static str> {
-        if let Some(format) = plugin.get("format").and_then(Value::as_str) {
-            if format.eq_ignore_ascii_case("LV2") {
-                return Some("LV2");
-            }
-            if format.eq_ignore_ascii_case("VST3") {
-                return Some("VST3");
-            }
-            if format.eq_ignore_ascii_case("CLAP") {
-                return Some("CLAP");
-            }
-        }
-        let uri = plugin.get("uri").and_then(Value::as_str)?;
-        if clap_paths.iter().any(|path| path.eq_ignore_ascii_case(uri)) {
-            Some("CLAP")
-        } else {
-            Some("LV2")
-        }
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
     fn plugin_node_from_json_with_runtime_nodes(
         v: &Value,
         runtime_nodes: &[maolan_engine::message::PluginGraphNode],
@@ -4109,16 +4090,12 @@ impl Maolan {
         let plugins_json = plugins
             .iter()
             .map(|plugin| {
-                let state_json = plugin
-                    .state
-                    .as_ref()
-                    .map(Self::lv2_state_to_json)
-                    .unwrap_or_else(|| {
-                        previous_plugin_states
-                            .get(&(plugin.format.clone(), plugin.uri.clone()))
-                            .cloned()
-                            .unwrap_or(Value::Null)
-                    });
+                let state_json = plugin.state.clone().unwrap_or_else(|| {
+                    previous_plugin_states
+                        .get(&(plugin.format.clone(), plugin.uri.clone()))
+                        .cloned()
+                        .unwrap_or(Value::Null)
+                });
                 json!({
                     "format": plugin.format,
                     "uri": plugin.uri,
@@ -4203,7 +4180,7 @@ impl Maolan {
                     audio_outputs: info.map(|info| info.audio_outputs).unwrap_or(0),
                     midi_inputs: info.map(|info| info.midi_inputs).unwrap_or(0),
                     midi_outputs: info.map(|info| info.midi_outputs).unwrap_or(0),
-                    state: plugin.get("state").and_then(Self::lv2_state_from_json),
+                    state: plugin.get("state").cloned(),
                 })
             }
             Some(format) if format.eq_ignore_ascii_case("VST3") => {
@@ -4260,7 +4237,7 @@ impl Maolan {
                     midi_outputs: caps
                         .map(|caps| usize::from(caps.has_note_ports))
                         .unwrap_or(0),
-                    state: None,
+                    state: plugin.get("state").cloned(),
                 })
             }
             _ => None,
@@ -4406,6 +4383,11 @@ impl Maolan {
             port_values,
             properties,
         })
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn clap_state_from_json(v: &Value) -> Option<maolan_engine::clap::ClapPluginState> {
+        serde_json::from_value(v.clone()).ok()
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -5691,35 +5673,6 @@ mod tests {
         assert_eq!(
             Maolan::kind_from_json(&Value::String("MIDI".to_string())),
             Some(Kind::MIDI)
-        );
-    }
-
-    #[test]
-    #[cfg(all(unix, not(target_os = "macos")))]
-    fn saved_unix_plugin_format_prefers_explicit_format_and_falls_back_to_clap_paths() {
-        let clap_paths = vec!["/plugins/a.clap".to_string()];
-
-        assert_eq!(
-            Maolan::saved_unix_plugin_format(
-                &json!({"format": "CLAP", "uri": "ignored"}),
-                &clap_paths
-            ),
-            Some("CLAP")
-        );
-        assert_eq!(
-            Maolan::saved_unix_plugin_format(
-                &json!({"format": "LV2", "uri": "/plugins/a.clap"}),
-                &clap_paths
-            ),
-            Some("LV2")
-        );
-        assert_eq!(
-            Maolan::saved_unix_plugin_format(&json!({"uri": "/plugins/a.clap"}), &clap_paths),
-            Some("CLAP")
-        );
-        assert_eq!(
-            Maolan::saved_unix_plugin_format(&json!({"uri": "urn:lv2:test"}), &clap_paths),
-            Some("LV2")
         );
     }
 

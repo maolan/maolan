@@ -4,6 +4,7 @@ use crate::message::{
 };
 #[cfg(unix)]
 use nix::libc;
+use std::time::Instant;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tracing::error;
 use wavers::write as write_wav;
@@ -331,7 +332,16 @@ impl Worker {
                     let (track_name, output_linear, process_epoch) = {
                         let track = t.lock();
                         let process_epoch = track.process_epoch;
+                        let started = Instant::now();
                         track.process();
+                        let elapsed = started.elapsed();
+                        if elapsed.as_millis() > 20 {
+                            tracing::warn!(
+                                "Slow track process '{}' took {:.3} ms",
+                                track.name,
+                                elapsed.as_secs_f64() * 1000.0
+                            );
+                        }
                         track.audio.processing = false;
                         (
                             track.name.clone(),

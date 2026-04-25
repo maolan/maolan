@@ -230,6 +230,11 @@ impl Maolan {
         } else {
             Subscription::none()
         };
+        let clap_ui_sub = if self.clap_ui_host.has_pending_ui_work() {
+            iced::time::every(Duration::from_millis(16)).map(|_| Message::PumpClapUi)
+        } else {
+            Subscription::none()
+        };
         #[cfg(all(unix, not(target_os = "macos")))]
         let lv2_ui_sub = if self.lv2_ui_host.has_open_windows() {
             iced::time::every(Duration::from_millis(16)).map(|_| Message::PumpLv2Ui)
@@ -245,6 +250,7 @@ impl Maolan {
             meter_poll_sub,
             autosave_sub,
             peak_rebuild_sub,
+            clap_ui_sub,
             recording_preview_sub,
             recording_preview_peaks_sub,
             #[cfg(all(unix, not(target_os = "macos")))]

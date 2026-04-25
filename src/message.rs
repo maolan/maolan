@@ -1039,6 +1039,7 @@ pub enum Message {
     },
     #[cfg(all(unix, not(target_os = "macos")))]
     PumpLv2Ui,
+    PumpClapUi,
     RefreshVst3Plugins,
     FilterVst3Plugins(String),
     SelectVst3Plugin(String),

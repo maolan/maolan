@@ -2842,6 +2842,8 @@ impl Maolan {
                             state: clap_state,
                             ..
                         } => {
+                            let state_json =
+                                serde_json::to_value(clap_state).unwrap_or(serde_json::Value::Null);
                             {
                                 let mut state = self.state.blocking_write();
                                 state
@@ -2849,6 +2851,24 @@ impl Maolan {
                                     .entry(track_name.clone())
                                     .or_default()
                                     .insert(plugin_path.clone(), clap_state.clone());
+                                if let Some((plugins, _)) =
+                                    state.plugin_graphs_by_track.get_mut(track_name)
+                                    && let Some(plugin) = plugins
+                                        .iter_mut()
+                                        .find(|plugin| plugin.instance_id == *instance_id)
+                                {
+                                    plugin.state = Some(state_json.clone());
+                                }
+                                if state.plugin_graph_clip.is_none()
+                                    && state.plugin_graph_track.as_deref()
+                                        == Some(track_name.as_str())
+                                    && let Some(plugin) = state
+                                        .plugin_graph_plugins
+                                        .iter_mut()
+                                        .find(|plugin| plugin.instance_id == *instance_id)
+                                {
+                                    plugin.state = Some(state_json);
+                                }
                             }
                             if let Some(pending) = self.pending_clap_ui_open.clone()
                                 && pending.clip_idx.is_none()
@@ -2996,8 +3016,40 @@ impl Maolan {
                                 );
                             }
                         }
-                        #[cfg(target_os = "macos")]
                         Action::TrackSnapshotAllClapStates { track_name: _ } => {}
+                        Action::TrackSnapshotAllClapStatesDone { track_name }
+                            if self.pending_save_path.is_some() =>
+                        {
+                            self.pending_save_clap_tracks.remove(track_name);
+                            if self.pending_save_ready() {
+                                let path = self.pending_save_path.take().unwrap_or_default();
+                                let is_template = self.pending_save_is_template;
+                                self.pending_save_is_template = false;
+                                if !path.is_empty() {
+                                    if is_template {
+                                        if let Err(e) = self.save_template(path.clone()) {
+                                            error!("{}", e);
+                                            self.state.blocking_write().message =
+                                                format!("Failed to save template: {}", e);
+                                        } else {
+                                            self.state.blocking_write().message =
+                                                "Template saved".to_string();
+                                            let templates = crate::gui::scan_templates();
+                                            self.state.blocking_write().available_templates =
+                                                templates.clone();
+                                            self.menu.update_templates(templates);
+                                        }
+                                    } else if let Err(e) = self.save(path.clone()) {
+                                        error!("{}", e);
+                                        self.pending_exit_after_save = false;
+                                        self.state.blocking_write().message =
+                                            format!("Failed to save session: {}", e);
+                                    } else {
+                                        return self.send(Action::SetSessionPath(path));
+                                    }
+                                }
+                            }
+                        }
                         Action::TrackClearDefaultPassthrough { track_name } => {
                             if let Some(task) =
                                 self.maybe_refresh_plugin_graph_for_track(track_name)
@@ -3298,7 +3350,7 @@ impl Maolan {
                                 .iter_mut()
                                 .find(|plugin| plugin.instance_id == *instance_id)
                             {
-                                plugin.state = Some(lv2_state.clone());
+                                plugin.state = Some(Self::lv2_state_to_json(lv2_state));
                             }
                         }
                         #[cfg(all(unix, not(target_os = "macos")))]

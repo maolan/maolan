@@ -228,6 +228,7 @@ pub struct Engine {
     hw_out_meter_publish_phase: bool,
     last_track_meter_publish: Option<Instant>,
     track_meter_linear_by_track: HashMap<String, Vec<f32>>,
+    track_processing_started_at: HashMap<String, Instant>,
     latest_hw_out_meter_db: Arc<Vec<f32>>,
     latest_track_meter_snapshot: Arc<Vec<(String, Vec<f32>)>>,
     history: History,
@@ -803,6 +804,7 @@ impl Engine {
     }
 
     const METER_PUBLISH_INTERVAL: Duration = Duration::from_millis(50);
+    const TRACK_PROCESS_TIMEOUT: Duration = Duration::from_millis(250);
     const HW_OUT_METER_LINEAR_EPSILON: f32 = 0.0025;
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -939,6 +941,7 @@ impl Engine {
             hw_out_meter_publish_phase: false,
             last_track_meter_publish: None,
             track_meter_linear_by_track: HashMap::new(),
+            track_processing_started_at: HashMap::new(),
             latest_hw_out_meter_db: Arc::new(Vec::new()),
             latest_track_meter_snapshot: Arc::new(Vec::new()),
             history: History::default(),
@@ -3042,11 +3045,44 @@ impl Engine {
 
     fn invalidate_track_cycle_state(&mut self) {
         self.track_process_epoch = self.track_process_epoch.saturating_add(1);
+        self.track_processing_started_at.clear();
         let state = self.state.lock();
         for track in state.tracks.values() {
             let t = track.lock();
             t.audio.finished = false;
             t.audio.processing = false;
+        }
+    }
+
+    fn force_stalled_track_completions(&mut self) {
+        let now = Instant::now();
+        let state = self.state.lock();
+        for (track_name, track) in state.tracks.iter() {
+            let started = self.track_processing_started_at.get(track_name).copied();
+            let Some(started) = started else {
+                continue;
+            };
+            if now.duration_since(started) < Self::TRACK_PROCESS_TIMEOUT {
+                continue;
+            }
+            let t = track.lock();
+            if t.audio.finished || !t.audio.processing {
+                self.track_processing_started_at.remove(track_name);
+                continue;
+            }
+            for out in &t.audio.outs {
+                let out_buf = out.buffer.lock();
+                out_buf.fill(0.0);
+                *out.finished.lock() = true;
+            }
+            t.audio.processing = false;
+            t.audio.finished = true;
+            self.track_processing_started_at.remove(track_name);
+            tracing::warn!(
+                "Track '{}' exceeded process timeout ({} ms); forcing silent completion for cycle",
+                track_name,
+                Self::TRACK_PROCESS_TIMEOUT.as_millis()
+            );
         }
     }
 
@@ -3193,6 +3229,7 @@ impl Engine {
     }
 
     async fn send_tracks(&mut self) -> bool {
+        self.force_stalled_track_completions();
         let mut finished = true;
         loop {
             let next_track = {
@@ -3215,6 +3252,7 @@ impl Engine {
                 return finished;
             };
             let Some(worker_index) = self.take_ready_worker_index() else {
+                self.force_stalled_track_completions();
                 return false;
             };
 
@@ -3231,13 +3269,55 @@ impl Engine {
             // Tap buffers are only needed while actively recording.
             t.set_record_tap_enabled(self.playing && self.record_enabled);
             t.audio.processing = true;
+            self.track_processing_started_at
+                .insert(t.name.clone(), Instant::now());
             let worker = &self.workers[worker_index];
             if let Err(e) = worker.tx.send(Message::ProcessTrack(track.clone())).await {
                 t.audio.processing = false;
+                self.track_processing_started_at.remove(&t.name);
                 self.notify_clients(Err(format!("Failed to send track to worker: {}", e)))
                     .await;
             }
         }
+    }
+
+    async fn on_all_tracks_finished(&mut self) {
+        if self.transport_restart_pending {
+            let state = self.state.lock();
+            for track in state.tracks.values() {
+                track.lock().take_hw_midi_out_events();
+            }
+        } else if self.hw_worker.is_some() {
+            self.active_hw_notes_cycle_start = self.active_hw_notes_by_track.clone();
+            let mut out_events = self.collect_hw_midi_output_events_by_device();
+            if self.loop_enabled
+                && let Some((_, loop_end)) = self.loop_range_samples
+            {
+                let cycle_end = self
+                    .transport_sample
+                    .saturating_add(self.current_cycle_samples());
+                if self.transport_sample < loop_end && cycle_end > loop_end {
+                    let wrap_frame = loop_end
+                        .saturating_sub(self.transport_sample)
+                        .min(self.current_cycle_samples())
+                        as u32;
+                    out_events.extend(self.note_off_events_for_active_snapshot(
+                        &self.active_hw_notes_cycle_start,
+                        wrap_frame,
+                    ));
+                    out_events.sort_by(|a, b| {
+                        a.event
+                            .frame
+                            .cmp(&b.event.frame)
+                            .then_with(|| a.device.cmp(&b.device))
+                    });
+                }
+            }
+            self.pending_hw_midi_out_events_by_device.extend(out_events);
+        } else {
+            self.pending_hw_midi_out_events = self.collect_hw_midi_output_events();
+        }
+        self.request_hw_cycle().await;
     }
 
     fn take_ready_worker_index(&mut self) -> Option<usize> {
@@ -3576,6 +3656,7 @@ impl Engine {
                 self.playing = false;
                 self.transport_panic_flush_pending = false;
                 self.transport_restart_pending = false;
+                self.invalidate_track_cycle_state();
                 if let Some(driver) = self.hw_driver.as_mut() {
                     driver.lock().set_playing(false);
                 }
@@ -4843,7 +4924,16 @@ impl Engine {
                         return;
                     }
                 };
-                if let Err(e) = track.lock().load_clap_plugin(plugin_path) {
+                let track = track.lock();
+                if track.audio.processing {
+                    self.notify_clients(Err(format!(
+                        "Track '{}' is currently processing audio; stop playback before loading CLAP plugins",
+                        track_name
+                    )))
+                    .await;
+                    return;
+                }
+                if let Err(e) = track.load_clap_plugin(plugin_path) {
                     self.notify_clients(Err(e)).await;
                     return;
                 }
@@ -4865,7 +4955,16 @@ impl Engine {
                         return;
                     }
                 };
-                if let Err(e) = track.lock().unload_clap_plugin(plugin_path) {
+                let track = track.lock();
+                if track.audio.processing {
+                    self.notify_clients(Err(format!(
+                        "Track '{}' is currently processing audio; stop playback before unloading CLAP plugins",
+                        track_name
+                    )))
+                    .await;
+                    return;
+                }
+                if let Err(e) = track.unload_clap_plugin(plugin_path) {
                     self.notify_clients(Err(e)).await;
                     return;
                 }
@@ -4889,6 +4988,37 @@ impl Engine {
                                 .lock()
                                 .set_clap_parameter(instance_id, param_id, value)
                         {
+                            self.notify_clients(Err(e)).await;
+                            return;
+                        }
+                        self.notify_clients(Ok(a.clone())).await;
+                    }
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                    }
+                }
+            }
+            Action::ClipSetClapParameter {
+                ref track_name,
+                clip_idx,
+                instance_id,
+                param_id,
+                value,
+            } => {
+                if self
+                    .reject_if_track_frozen(track_name, "CLAP parameter changes")
+                    .await
+                {
+                    return;
+                }
+                match self.track_handle_or_err(track_name) {
+                    Ok(track) => {
+                        if let Err(e) = track.lock().clip_set_clap_parameter(
+                            clip_idx,
+                            instance_id,
+                            param_id,
+                            value,
+                        ) {
                             self.notify_clients(Err(e)).await;
                             return;
                         }
@@ -5084,7 +5214,49 @@ impl Engine {
                         return;
                     }
                 };
-                if let Err(e) = track.lock().clap_restore_state(instance_id, state) {
+                let track = track.lock();
+                if track.audio.processing {
+                    self.notify_clients(Err(format!(
+                        "Track '{}' is currently processing audio; stop playback before restoring CLAP state",
+                        track_name
+                    )))
+                    .await;
+                    return;
+                }
+                if let Err(e) = track.clap_restore_state(instance_id, state) {
+                    self.notify_clients(Err(e)).await;
+                    return;
+                }
+            }
+            Action::ClipClapRestoreState {
+                ref track_name,
+                clip_idx,
+                instance_id,
+                ref state,
+            } => {
+                if self
+                    .reject_if_track_frozen(track_name, "CLAP state restore")
+                    .await
+                {
+                    return;
+                }
+                let track = match self.track_handle_or_err(track_name) {
+                    Ok(track) => track,
+                    Err(e) => {
+                        self.notify_clients(Err(e)).await;
+                        return;
+                    }
+                };
+                let track = track.lock();
+                if track.audio.processing {
+                    self.notify_clients(Err(format!(
+                        "Track '{}' is currently processing audio; stop playback before restoring CLAP state",
+                        track_name
+                    )))
+                    .await;
+                    return;
+                }
+                if let Err(e) = track.clip_clap_restore_state(clip_idx, instance_id, state) {
                     self.notify_clients(Err(e)).await;
                     return;
                 }
@@ -5106,7 +5278,12 @@ impl Engine {
                     }))
                     .await;
                 }
+                self.notify_clients(Ok(Action::TrackSnapshotAllClapStatesDone {
+                    track_name: track_name.clone(),
+                }))
+                .await;
             }
+            Action::TrackSnapshotAllClapStatesDone { .. } => {}
             Action::TrackLoadVst3Plugin {
                 ref track_name,
                 ref plugin_path,
@@ -6282,6 +6459,7 @@ impl Engine {
                     process_epoch,
                 } => {
                     self.ready_workers.push(worker_id);
+                    self.track_processing_started_at.remove(&track_name);
                     if process_epoch != self.track_process_epoch {
                         if let Some(track) = self.state.lock().tracks.get(&track_name).cloned() {
                             let t = track.lock();
@@ -6292,45 +6470,10 @@ impl Engine {
                     }
                     self.track_meter_linear_by_track
                         .insert(track_name, output_linear);
+                    self.force_stalled_track_completions();
                     let all_finished = self.send_tracks().await;
                     if all_finished {
-                        if self.transport_restart_pending {
-                            let state = self.state.lock();
-                            for track in state.tracks.values() {
-                                track.lock().take_hw_midi_out_events();
-                            }
-                        } else if self.hw_worker.is_some() {
-                            self.active_hw_notes_cycle_start =
-                                self.active_hw_notes_by_track.clone();
-                            let mut out_events = self.collect_hw_midi_output_events_by_device();
-                            if self.loop_enabled
-                                && let Some((_, loop_end)) = self.loop_range_samples
-                            {
-                                let cycle_end = self
-                                    .transport_sample
-                                    .saturating_add(self.current_cycle_samples());
-                                if self.transport_sample < loop_end && cycle_end > loop_end {
-                                    let wrap_frame = loop_end
-                                        .saturating_sub(self.transport_sample)
-                                        .min(self.current_cycle_samples())
-                                        as u32;
-                                    out_events.extend(self.note_off_events_for_active_snapshot(
-                                        &self.active_hw_notes_cycle_start,
-                                        wrap_frame,
-                                    ));
-                                    out_events.sort_by(|a, b| {
-                                        a.event
-                                            .frame
-                                            .cmp(&b.event.frame)
-                                            .then_with(|| a.device.cmp(&b.device))
-                                    });
-                                }
-                            }
-                            self.pending_hw_midi_out_events_by_device.extend(out_events);
-                        } else {
-                            self.pending_hw_midi_out_events = self.collect_hw_midi_output_events();
-                        }
-                        self.request_hw_cycle().await;
+                        self.on_all_tracks_finished().await;
                     }
                 }
                 Message::Channel(s) => {
