@@ -25,34 +25,26 @@ permissions:
 
 jobs:
   lint:
+    if: ${{ !inputs.release_build }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Calculate cache key
-        id: cache-key
-        run: |
-          echo "key=ubuntu-lint-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
-          echo "hash=${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
-
-      - name: Restore lint caches
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ steps.cache-key.outputs.key }}
-          restore-keys: |
-            ubuntu-lint-${{ steps.cache-key.outputs.hash }}-
-            ubuntu-lint-
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/rust.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
 
       - name: Install system packages
         run: |
@@ -88,56 +80,25 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: Save lint caches
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ steps.cache-key.outputs.key }}
-
-  build-ubuntu:
-    needs: lint
+  test:
+    if: ${{ !inputs.release_build }}
     runs-on: ubuntu-latest
-    env:
-      ASSET_BASENAME: maolan-${{ inputs.release_tag }}-linux-x86_64
-      CACHE_MODE: ${{ inputs.release_build && 'release' || 'debug' }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Calculate cache key
-        id: cache-key
-        run: |
-          echo "key=ubuntu-cargo-${{ env.CACHE_MODE }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
-          echo "hash=${{ hashFiles('Cargo.lock', '**/Cargo.toml') }}" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
 
-      - name: Restore Cargo and target caches
-        id: cache-restore
-        uses: actions/cache/restore@v5
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            engine/target
-            widgets/target
-          key: ${{ steps.cache-key.outputs.key }}
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/rust.yml') }}
           restore-keys: |
-            ubuntu-cargo-${{ env.CACHE_MODE }}-${{ steps.cache-key.outputs.hash }}-
-            ubuntu-cargo-${{ env.CACHE_MODE }}-
-            ubuntu-cargo-
-
-      - name: Show cache status
-        run: echo "cache-hit=${{ steps.cache-restore.outputs.cache-hit }}"
+            ${{ runner.os }}-apt-
 
       - name: Install system packages
         run: |
@@ -167,86 +128,74 @@ jobs:
       - name: Set LIBCLANG_PATH
         run: echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
 
-      - name: Install cargo-llvm-cov
-        if: ${{ !inputs.release_build }}
-        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Run tests
+        run: cargo test --workspace
 
-      - name: Run tests and generate coverage
-        if: ${{ !inputs.release_build }}
+  build-release:
+    if: ${{ inputs.release_build }}
+    runs-on: ubuntu-latest
+    env:
+      ASSET_BASENAME: maolan-${{ inputs.release_tag }}-linux-x86_64
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: ${{ runner.os }}-apt-${{ hashFiles('.github/workflows/rust.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-apt-
+
+      - name: Install system packages
         run: |
-          mkdir -p coverage
-          cargo llvm-cov --workspace --lcov --output-path coverage/lcov.info
+          sudo apt-get update
+          sudo apt-get install -y software-properties-common
+          sudo add-apt-repository -y ppa:rncbc/libs-noble
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            jackd2 \
+            libjack-jackd2-dev \
+            libasound2-dev \
+            liblilv-dev \
+            libsuil-dev \
+            libgtk2.0-dev \
+            librubberband-dev \
+            rubberband-cli \
+            libavcodec-dev \
+            libavdevice-dev \
+            libavfilter-dev \
+            libavformat-dev \
+            libavutil-dev \
+            libswresample-dev \
+            llvm-dev \
+            libclang-dev
 
-      - name: Generate HTML coverage report
-        if: ${{ !inputs.release_build }}
-        run: cargo llvm-cov report --html --output-dir coverage/html
-
-      - name: Publish coverage summary
-        if: ${{ !inputs.release_build }}
-        run: |
-          {
-            echo "## Coverage Summary"
-            echo
-            cargo llvm-cov report --summary-only
-          } >> "$GITHUB_STEP_SUMMARY"
-          cargo llvm-cov report --summary-only
-
-      - name: Upload coverage artifact
-        if: ${{ !inputs.release_build }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-lcov
-          path: coverage/lcov.info
-
-      - name: Upload HTML coverage artifact
-        if: ${{ !inputs.release_build }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-html
-          path: coverage/html
-
-      - name: Upload coverage to Codecov
-        if: ${{ !inputs.release_build }}
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage/lcov.info
-          disable_search: true
-          flags: unittests
-          name: ubuntu-llvm-cov
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
+      - name: Set LIBCLANG_PATH
+        run: echo "LIBCLANG_PATH=$(llvm-config --libdir)" >> "$GITHUB_ENV"
 
       - name: Build release binary
-        if: ${{ inputs.release_build }}
         run: cargo build --release --workspace
 
       - name: Package Linux binary
-        if: ${{ inputs.release_build }}
         run: |
           mkdir -p dist
           mkdir -p "dist/${ASSET_BASENAME}"
           cp target/release/maolan "dist/${ASSET_BASENAME}/maolan"
           cp target/release/maolan-cli "dist/${ASSET_BASENAME}/maolan-cli"
           cp target/release/maolan-osc "dist/${ASSET_BASENAME}/maolan-osc"
-          cp target/release/maolan-generate "dist/${ASSET_BASENAME}/maolan-generate"
           cp images/maolan.svg "dist/${ASSET_BASENAME}/maolan.svg"
           cp desktop/maolan-linux.desktop "dist/${ASSET_BASENAME}/maolan.desktop"
           tar -C dist -czf "dist/${ASSET_BASENAME}.tar.gz" "${ASSET_BASENAME}"
 
-      - name: Save Cargo and target caches
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-        uses: actions/cache/save@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-            engine/target
-            widgets/target
-          key: ${{ steps.cache-key.outputs.key }}
-
       - name: Upload Linux artifact
-        if: ${{ inputs.release_build }}
         uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ASSET_BASENAME }}
@@ -256,7 +205,7 @@ jobs:
     if: ${{ inputs.release_build }}
     runs-on: ubuntu-latest
     needs:
-      - build-ubuntu
+      - build-release
     steps:
       - uses: actions/checkout@v6
 
