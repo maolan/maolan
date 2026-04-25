@@ -12,6 +12,11 @@ pub struct AudioIO {
 }
 
 impl AudioIO {
+    #[inline]
+    fn sanitize_sample(sample: f32) -> f32 {
+        if sample.is_finite() { sample } else { 0.0 }
+    }
+
     pub fn new(size: usize) -> Self {
         Self {
             connections: Arc::new(UnsafeMutex::new(vec![])),
@@ -67,13 +72,9 @@ impl AudioIO {
             }
             1 => {
                 let source_buf = connections[0].buffer.lock();
-                if local_buf.len() == source_buf.len() {
-                    local_buf.copy_from_slice(source_buf.as_ref());
-                } else {
-                    local_buf.fill(0.0);
-                    for (out_sample, in_sample) in local_buf.iter_mut().zip(source_buf.iter()) {
-                        *out_sample = *in_sample;
-                    }
+                local_buf.fill(0.0);
+                for (out_sample, in_sample) in local_buf.iter_mut().zip(source_buf.iter()) {
+                    *out_sample = Self::sanitize_sample(*in_sample);
                 }
             }
             _ => {
@@ -81,7 +82,7 @@ impl AudioIO {
                 for source in connections.iter() {
                     let source_buf = source.buffer.lock();
                     for (out_sample, in_sample) in local_buf.iter_mut().zip(source_buf.iter()) {
-                        *out_sample += *in_sample;
+                        *out_sample += Self::sanitize_sample(*in_sample);
                     }
                 }
             }
@@ -175,6 +176,27 @@ mod tests {
         dest.process();
 
         assert_eq!(dest.buffer.lock().as_ref(), &[1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn process_sanitizes_non_finite_samples() {
+        let a = Arc::new(AudioIO::new(3));
+        let b = Arc::new(AudioIO::new(3));
+        a.buffer
+            .lock()
+            .copy_from_slice(&[0.25, f32::NAN, f32::INFINITY]);
+        b.buffer
+            .lock()
+            .copy_from_slice(&[0.75, f32::NEG_INFINITY, 0.25]);
+        *a.finished.lock() = true;
+        *b.finished.lock() = true;
+        let dest = Arc::new(AudioIO::new(3));
+        AudioIO::connect(&a, &dest);
+        AudioIO::connect(&b, &dest);
+
+        dest.process();
+
+        assert_eq!(dest.buffer.lock().as_ref(), &[1.0, 0.0, 0.25]);
     }
 
     #[test]

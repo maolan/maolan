@@ -739,7 +739,9 @@ impl Maolan {
     }
 
     fn pending_save_ready(&self) -> bool {
-        self.pending_save_tracks.is_empty() && self.pending_vst3_save_ready()
+        self.pending_save_tracks.is_empty()
+            && self.pending_save_clap_tracks.is_empty()
+            && self.pending_vst3_save_ready()
     }
 
     #[cfg(target_os = "macos")]

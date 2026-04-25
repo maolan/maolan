@@ -46,7 +46,13 @@ pub struct Vst3Instance {
 #[derive(Debug, Clone)]
 pub struct ClapInstance {
     pub id: usize,
-    pub processor: ClapProcessor,
+    pub processor: Arc<ClapProcessor>,
+}
+
+impl ClapInstance {
+    fn new(id: usize, processor: Arc<ClapProcessor>) -> Self {
+        Self { id, processor }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -598,7 +604,13 @@ impl Track {
             instance.processor.setup_audio_ports();
         }
         for instance in &self.clap_plugins {
+            instance.processor.run_host_callbacks_main_thread();
             instance.processor.setup_audio_ports();
+        }
+        for runtime in self.clip_plugin_tracks.values() {
+            for instance in &runtime.clap_plugins {
+                instance.processor.run_host_callbacks_main_thread();
+            }
         }
     }
 
@@ -1810,17 +1822,16 @@ impl Track {
                 } else if format.eq_ignore_ascii_case("CLAP") {
                     let instance_id = next_plugin_instance_id;
                     next_plugin_instance_id = next_plugin_instance_id.saturating_add(1);
-                    let processor = ClapProcessor::new(
+                    let processor = Arc::new(ClapProcessor::new(
                         self.sample_rate,
                         buffer_size.max(1),
                         uri,
                         channels.max(1),
                         channels.max(1),
-                    )?;
-                    runtime.clap_plugins.push(ClapInstance {
-                        id: instance_id,
-                        processor,
-                    });
+                    )?);
+                    runtime
+                        .clap_plugins
+                        .push(ClapInstance::new(instance_id, processor));
                     runtime_nodes.push(PluginGraphNode::ClapPluginInstance(instance_id));
                     if let Some(state) = plugin.get("state").cloned().and_then(|value| {
                         serde_json::from_value::<crate::clap::ClapPluginState>(value).ok()
@@ -2251,9 +2262,11 @@ impl Track {
                 self.build_clip_plugin_runtime(&clip, channels, self.process_block_size)?;
             self.clip_plugin_tracks.insert(runtime_key.clone(), runtime);
         }
-        self.clip_plugin_tracks
+        let runtime = self
+            .clip_plugin_tracks
             .get_mut(&runtime_key)
-            .ok_or_else(|| "Missing clip plugin runtime".to_string())
+            .ok_or_else(|| "Missing clip plugin runtime".to_string())?;
+        Ok(runtime)
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -2756,7 +2769,7 @@ impl Track {
                     audio_outputs: instance.processor.audio_output_count(),
                     midi_inputs: instance.processor.midi_input_count(),
                     midi_outputs: instance.processor.midi_output_count(),
-                    state: Some(instance.processor.snapshot_state()),
+                    state: serde_json::to_value(instance.processor.snapshot_state()).ok(),
                 },
             );
         }
@@ -2796,7 +2809,11 @@ impl Track {
                     audio_outputs: instance.processor.audio_outputs().len(),
                     midi_inputs: instance.processor.midi_input_count(),
                     midi_outputs: instance.processor.midi_output_count(),
-                    state: None,
+                    state: instance
+                        .processor
+                        .snapshot_state()
+                        .ok()
+                        .and_then(|state| serde_json::to_value(state).ok()),
                 },
             );
         }
@@ -2959,14 +2976,14 @@ impl Track {
             .unwrap_or(0);
         let input_count = self.audio.ins.len().max(1);
         let output_count = self.audio.outs.len().max(1);
-        let processor = ClapProcessor::new(
+        let processor = Arc::new(ClapProcessor::new(
             self.sample_rate,
             buffer_size,
             plugin_path,
             input_count,
             output_count,
-        )?;
-        self.clap_plugins.push(ClapInstance { id, processor });
+        )?);
+        self.clap_plugins.push(ClapInstance::new(id, processor));
         self.invalidate_audio_route_cache();
         Ok(())
     }
@@ -3037,6 +3054,23 @@ impl Track {
                     self.name, instance_id
                 )
             })?;
+        instance.processor.set_parameter(param_id, value)
+    }
+
+    pub fn clip_set_clap_parameter(
+        &mut self,
+        clip_idx: usize,
+        instance_id: usize,
+        param_id: u32,
+        value: f64,
+    ) -> Result<(), String> {
+        let channels = self.audio.ins.len().max(1);
+        let runtime = self.ensure_clip_plugin_runtime(clip_idx, channels)?;
+        let instance = runtime
+            .clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| format!("Clip CLAP instance {} not found", instance_id))?;
         instance.processor.set_parameter(param_id, value)
     }
 
@@ -3163,6 +3197,22 @@ impl Track {
                     self.name, instance_id
                 )
             })?;
+        instance.processor.restore_state(state)
+    }
+
+    pub fn clip_clap_restore_state(
+        &mut self,
+        clip_idx: usize,
+        instance_id: usize,
+        state: &crate::clap::ClapPluginState,
+    ) -> Result<(), String> {
+        let channels = self.audio.ins.len().max(1);
+        let runtime = self.ensure_clip_plugin_runtime(clip_idx, channels)?;
+        let instance = runtime
+            .clap_plugins
+            .iter()
+            .find(|instance| instance.id == instance_id)
+            .ok_or_else(|| format!("Clip CLAP instance {} not found", instance_id))?;
         instance.processor.restore_state(state)
     }
 
@@ -3295,10 +3345,7 @@ impl Track {
 
         // Check if it's a track input
         for (idx, input) in self.audio.ins.iter().enumerate() {
-            if Arc::ptr_eq(
-                input,
-                &Arc::new(unsafe { std::ptr::read(audio_io as *const _) }),
-            ) {
+            if std::ptr::eq(input.as_ref(), audio_io) {
                 return Some((Vst3GraphNode::TrackInput, idx));
             }
         }
@@ -3306,10 +3353,7 @@ impl Track {
         // Check if it's a VST3 output
         for instance in &self.vst3_processors {
             for (port_idx, output) in instance.processor.audio_outputs().iter().enumerate() {
-                if Arc::ptr_eq(
-                    output,
-                    &Arc::new(unsafe { std::ptr::read(audio_io as *const _) }),
-                ) {
+                if std::ptr::eq(output.as_ref(), audio_io) {
                     return Some((Vst3GraphNode::PluginInstance(instance.id), port_idx));
                 }
             }

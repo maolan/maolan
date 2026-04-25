@@ -2,6 +2,113 @@ use super::*;
 use crate::gui::{PendingClapUiOpen, PendingVst3UiOpen};
 
 impl Maolan {
+    fn pump_clap_ui(&mut self) -> Option<Task<Message>> {
+        if let Some(update) = self.clap_ui_host.pop_param_update() {
+            let action = if let Some(clip_idx) = update.clip_idx {
+                Action::ClipSetClapParameter {
+                    track_name: update.track_name,
+                    clip_idx,
+                    instance_id: update.instance_id,
+                    param_id: update.param_id,
+                    value: update.value,
+                }
+            } else {
+                Action::TrackSetClapParameter {
+                    track_name: update.track_name,
+                    instance_id: update.instance_id,
+                    param_id: update.param_id,
+                    value: update.value,
+                }
+            };
+            return Some(self.send(action));
+        }
+        if let Some(update) = self.clap_ui_host.pop_state_update() {
+            let restore_action = if let Some(clip_idx) = update.clip_idx {
+                Action::ClipClapRestoreState {
+                    track_name: update.track_name.clone(),
+                    clip_idx,
+                    instance_id: update.instance_id,
+                    state: update.state.clone(),
+                }
+            } else {
+                Action::TrackClapRestoreState {
+                    track_name: update.track_name.clone(),
+                    instance_id: update.instance_id,
+                    state: update.state.clone(),
+                }
+            };
+            let mut state = self.state.blocking_write();
+            if let Some(clip_idx) = update.clip_idx {
+                if let Some(track) = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.name == update.track_name)
+                    && let Some(clip) = track.audio.clips.get_mut(clip_idx)
+                    && let Some(graph_json) = Self::plugin_graph_json_with_saved_plugin_state(
+                        clip.plugin_graph_json.as_ref(),
+                        update.instance_id,
+                        serde_json::to_value(&update.state).unwrap_or(serde_json::Value::Null),
+                    )
+                {
+                    clip.plugin_graph_json = Some(graph_json);
+                }
+                drop(state);
+                return Some(self.send(restore_action));
+            } else {
+                state
+                    .clap_states_by_track
+                    .entry(update.track_name)
+                    .or_default()
+                    .insert(update.plugin_path, update.state);
+                drop(state);
+                return Some(self.send(restore_action));
+            }
+        }
+        if let Some(closed) = self.clap_ui_host.drain_closed_states().into_iter().next() {
+            let restore_action = if let Some(clip_idx) = closed.clip_idx {
+                Action::ClipClapRestoreState {
+                    track_name: closed.track_name.clone(),
+                    clip_idx,
+                    instance_id: closed.instance_id,
+                    state: closed.state.clone(),
+                }
+            } else {
+                Action::TrackClapRestoreState {
+                    track_name: closed.track_name.clone(),
+                    instance_id: closed.instance_id,
+                    state: closed.state.clone(),
+                }
+            };
+            let mut state = self.state.blocking_write();
+            if let Some(clip_idx) = closed.clip_idx {
+                if let Some(track) = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.name == closed.track_name)
+                    && let Some(clip) = track.audio.clips.get_mut(clip_idx)
+                    && let Some(graph_json) = Self::plugin_graph_json_with_saved_plugin_state(
+                        clip.plugin_graph_json.as_ref(),
+                        closed.instance_id,
+                        serde_json::to_value(&closed.state).unwrap_or(serde_json::Value::Null),
+                    )
+                {
+                    clip.plugin_graph_json = Some(graph_json);
+                }
+                drop(state);
+                return Some(self.send(restore_action));
+            } else {
+                state
+                    .clap_states_by_track
+                    .entry(closed.track_name)
+                    .or_default()
+                    .insert(closed.plugin_path, closed.state);
+                drop(state);
+                return Some(self.send(restore_action));
+            }
+        }
+        None
+    }
+
     pub(super) fn handle_plugin_message(&mut self, message: Message) -> Option<Task<Message>> {
         match message {
             #[cfg(all(unix, not(target_os = "macos")))]
@@ -377,35 +484,10 @@ impl Maolan {
                 }
                 None
             }
+            Message::PumpClapUi => self.pump_clap_ui(),
             #[cfg(all(unix, not(target_os = "macos")))]
             Message::PumpLv2Ui => {
                 self.pump_lv2_ui();
-                for closed in self.clap_ui_host.drain_closed_states() {
-                    let mut state = self.state.blocking_write();
-                    if let Some(clip_idx) = closed.clip_idx {
-                        if let Some(track) = state
-                            .tracks
-                            .iter_mut()
-                            .find(|track| track.name == closed.track_name)
-                            && let Some(clip) = track.audio.clips.get_mut(clip_idx)
-                            && let Some(graph_json) =
-                                Self::plugin_graph_json_with_saved_plugin_state(
-                                    clip.plugin_graph_json.as_ref(),
-                                    closed.instance_id,
-                                    serde_json::to_value(&closed.state)
-                                        .unwrap_or(serde_json::Value::Null),
-                                )
-                        {
-                            clip.plugin_graph_json = Some(graph_json);
-                        }
-                    } else {
-                        state
-                            .clap_states_by_track
-                            .entry(closed.track_name)
-                            .or_default()
-                            .insert(closed.plugin_path, closed.state);
-                    }
-                }
                 for closed in self.vst3_ui_host.drain_closed_states() {
                     let mut state = self.state.blocking_write();
                     if let Some(clip_idx) = closed.clip_idx {

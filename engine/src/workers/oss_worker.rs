@@ -13,6 +13,7 @@ impl Backend for OssBackend {
     const WORKER_THREAD_NAME: &'static str = "oss-worker";
     const ASSIST_THREAD_NAME: &'static str = "oss-assist";
     const ASSIST_AUTONOMOUS_ENV: &'static str = config::OSS_ASSIST_AUTONOMOUS_ENV;
+    const ASSIST_STEP_REQUIRES_REQUEST_CYCLE: bool = true;
 }
 
 pub type HwWorker = super::hw_worker::HwWorker<OssBackend>;

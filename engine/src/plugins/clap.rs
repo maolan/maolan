@@ -10,12 +10,14 @@ use crate::mutex::UnsafeMutex;
 use crate::plugins::paths;
 use libloading::Library;
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClapParameterInfo {
@@ -49,10 +51,22 @@ pub struct ClapTransportInfo {
     pub tsig_denom: u16,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClapGuiInfo {
+    pub api: String,
+    pub supports_embedded: bool,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct PendingParamValue {
     param_id: u32,
     value: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ClapParamUpdate {
+    pub param_id: u32,
+    pub value: f64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -98,6 +112,8 @@ pub struct ClapProcessor {
     sample_rate: f64,
     audio_inputs: Vec<Arc<AudioIO>>,
     audio_outputs: Vec<Arc<AudioIO>>,
+    input_port_channels: Vec<usize>,
+    output_port_channels: Vec<usize>,
     midi_input_ports: usize,
     midi_output_ports: usize,
     main_audio_inputs: usize,
@@ -107,6 +123,8 @@ pub struct ClapProcessor {
     param_infos: Arc<Vec<ClapParameterInfo>>,
     param_values: Arc<UnsafeMutex<HashMap<u32, f64>>>,
     pending_param_events: Arc<UnsafeMutex<Vec<PendingParamEvent>>>,
+    pending_param_events_ui: Arc<UnsafeMutex<Vec<PendingParamEvent>>>,
+    process_lock: Arc<UnsafeMutex<()>>,
 }
 
 impl fmt::Debug for ClapProcessor {
@@ -116,6 +134,8 @@ impl fmt::Debug for ClapProcessor {
             .field("name", &self.name)
             .field("audio_inputs", &self.audio_inputs.len())
             .field("audio_outputs", &self.audio_outputs.len())
+            .field("input_port_channels", &self.input_port_channels)
+            .field("output_port_channels", &self.output_port_channels)
             .field("midi_input_ports", &self.midi_input_ports)
             .field("midi_output_ports", &self.midi_output_ports)
             .field("main_audio_inputs", &self.main_audio_inputs)
@@ -132,6 +152,7 @@ impl ClapProcessor {
         input_count: usize,
         output_count: usize,
     ) -> Result<Self, String> {
+        let _thread_scope = HostThreadScope::enter_main();
         let (plugin_path, plugin_id) = split_plugin_spec(plugin_spec);
         let name = Path::new(plugin_path)
             .file_stem()
@@ -145,7 +166,11 @@ impl ClapProcessor {
             sample_rate,
             buffer_size as u32,
         )?);
-        let (discovered_inputs, discovered_outputs) = plugin_handle.audio_port_layout();
+        let (input_port_channels, output_port_channels) = plugin_handle.audio_port_channels();
+        let discovered_inputs =
+            (!input_port_channels.is_empty()).then_some(input_port_channels.len());
+        let discovered_outputs =
+            (!output_port_channels.is_empty()).then_some(output_port_channels.len());
         let (discovered_midi_inputs, discovered_midi_outputs) = plugin_handle.note_port_layout();
         let resolved_inputs = discovered_inputs.unwrap_or(input_count).max(1);
         let resolved_outputs = discovered_outputs.unwrap_or(output_count).max(1);
@@ -175,6 +200,16 @@ impl ClapProcessor {
             sample_rate,
             audio_inputs,
             audio_outputs,
+            input_port_channels: if input_port_channels.is_empty() {
+                vec![1; resolved_inputs]
+            } else {
+                input_port_channels
+            },
+            output_port_channels: if output_port_channels.is_empty() {
+                vec![1; resolved_outputs]
+            } else {
+                output_port_channels
+            },
             midi_input_ports: discovered_midi_inputs.unwrap_or(1).max(1),
             midi_output_ports: discovered_midi_outputs.unwrap_or(1).max(1),
             main_audio_inputs,
@@ -184,6 +219,8 @@ impl ClapProcessor {
             param_infos,
             param_values,
             pending_param_events: Arc::new(UnsafeMutex::new(Vec::new())),
+            pending_param_events_ui: Arc::new(UnsafeMutex::new(Vec::new())),
+            process_lock: Arc::new(UnsafeMutex::new(())),
         })
     }
 
@@ -206,14 +243,37 @@ impl ClapProcessor {
         midi_in: &[MidiEvent],
         transport: ClapTransportInfo,
     ) -> Vec<ClapMidiOutputEvent> {
+        // CLAP processors are not guaranteed to be re-entrant. Serialize
+        // processing per instance to avoid concurrent mutation of plugin state.
+        let _process_guard = self.process_lock.lock();
+        let started = Instant::now();
         for port in &self.audio_inputs {
             if port.ready() {
                 port.process();
             }
         }
-        let (processed, processed_midi) = self
-            .process_native(frames, midi_in, transport)
-            .unwrap_or_default();
+        let (processed, processed_midi) = match self.process_native(frames, midi_in, transport) {
+            Ok(ok) => ok,
+            Err(err) => {
+                tracing::warn!(
+                    "CLAP process failed for '{}' ({}): {}",
+                    self.name,
+                    self.path,
+                    err
+                );
+                (false, Vec::new())
+            }
+        };
+        let elapsed = started.elapsed();
+        if elapsed > Duration::from_millis(20) {
+            tracing::warn!(
+                "Slow CLAP process '{}' ({}) took {:.3} ms for {} frames",
+                self.name,
+                self.path,
+                elapsed.as_secs_f64() * 1000.0,
+                frames
+            );
+        }
         if !processed {
             for out in &self.audio_outputs {
                 let out_buf = out.buffer.lock();
@@ -237,11 +297,19 @@ impl ClapProcessor {
     }
 
     pub fn set_parameter_at(&self, param_id: u32, value: f64, frame: u32) -> Result<(), String> {
+        let _thread_scope = HostThreadScope::enter_main();
         let Some(info) = self.param_infos.iter().find(|p| p.id == param_id) else {
             return Err(format!("Unknown CLAP parameter id: {param_id}"));
         };
         let clamped = value.clamp(info.min_value, info.max_value);
         self.pending_param_events
+            .lock()
+            .push(PendingParamEvent::Value {
+                param_id,
+                value: clamped,
+                frame,
+            });
+        self.pending_param_events_ui
             .lock()
             .push(PendingParamEvent::Value {
                 param_id,
@@ -257,10 +325,14 @@ impl ClapProcessor {
     }
 
     pub fn begin_parameter_edit_at(&self, param_id: u32, frame: u32) -> Result<(), String> {
+        let _thread_scope = HostThreadScope::enter_main();
         if !self.param_infos.iter().any(|p| p.id == param_id) {
             return Err(format!("Unknown CLAP parameter id: {param_id}"));
         }
         self.pending_param_events
+            .lock()
+            .push(PendingParamEvent::GestureBegin { param_id, frame });
+        self.pending_param_events_ui
             .lock()
             .push(PendingParamEvent::GestureBegin { param_id, frame });
         Ok(())
@@ -271,20 +343,26 @@ impl ClapProcessor {
     }
 
     pub fn end_parameter_edit_at(&self, param_id: u32, frame: u32) -> Result<(), String> {
+        let _thread_scope = HostThreadScope::enter_main();
         if !self.param_infos.iter().any(|p| p.id == param_id) {
             return Err(format!("Unknown CLAP parameter id: {param_id}"));
         }
         self.pending_param_events
             .lock()
             .push(PendingParamEvent::GestureEnd { param_id, frame });
+        self.pending_param_events_ui
+            .lock()
+            .push(PendingParamEvent::GestureEnd { param_id, frame });
         Ok(())
     }
 
     pub fn snapshot_state(&self) -> Result<ClapPluginState, String> {
+        let _thread_scope = HostThreadScope::enter_main();
         self.plugin_handle.snapshot_state()
     }
 
     pub fn restore_state(&self, state: &ClapPluginState) -> Result<(), String> {
+        let _thread_scope = HostThreadScope::enter_main();
         self.plugin_handle.restore_state(state)
     }
 
@@ -320,6 +398,112 @@ impl ClapProcessor {
         &self.name
     }
 
+    pub fn ui_begin_session(&self) {
+        self.host_runtime.begin_ui_session();
+    }
+
+    pub fn ui_end_session(&self) {
+        self.host_runtime.end_ui_session();
+    }
+
+    pub fn ui_should_close(&self) -> bool {
+        self.host_runtime.ui_should_close()
+    }
+
+    pub fn ui_take_due_timers(&self) -> Vec<u32> {
+        self.host_runtime.ui_take_due_timers()
+    }
+
+    pub fn ui_take_param_updates(&self) -> Vec<ClapParamUpdate> {
+        let pending_ui_events = std::mem::take(self.pending_param_events_ui.lock());
+        if pending_ui_events.is_empty() && !self.host_runtime.ui_take_param_flush_requested() {
+            return Vec::new();
+        }
+        let _thread_scope = HostThreadScope::enter_main();
+        let updates = self.plugin_handle.flush_params(&pending_ui_events);
+        if updates.is_empty() {
+            return Vec::new();
+        }
+        let values = &mut *self.param_values.lock();
+        let mut out = Vec::with_capacity(updates.len());
+        for update in updates {
+            values.insert(update.param_id, update.value);
+            out.push(ClapParamUpdate {
+                param_id: update.param_id,
+                value: update.value,
+            });
+        }
+        out
+    }
+
+    pub fn ui_take_state_update(&self) -> Option<ClapPluginState> {
+        if !self.host_runtime.ui_take_state_dirty_requested() {
+            return None;
+        }
+        let _thread_scope = HostThreadScope::enter_main();
+        self.plugin_handle.snapshot_state().ok()
+    }
+
+    pub fn gui_info(&self) -> Result<ClapGuiInfo, String> {
+        let _thread_scope = HostThreadScope::enter_main();
+        self.plugin_handle.gui_info()
+    }
+
+    pub fn gui_create(&self, api: &str, is_floating: bool) -> Result<(), String> {
+        let _thread_scope = HostThreadScope::enter_main();
+        self.plugin_handle.gui_create(api, is_floating)
+    }
+
+    pub fn gui_get_size(&self) -> Result<(u32, u32), String> {
+        let _thread_scope = HostThreadScope::enter_main();
+        self.plugin_handle.gui_get_size()
+    }
+
+    pub fn gui_set_parent_x11(&self, window: usize) -> Result<(), String> {
+        let _thread_scope = HostThreadScope::enter_main();
+        self.plugin_handle.gui_set_parent_x11(window)
+    }
+
+    pub fn gui_show(&self) -> Result<(), String> {
+        let _thread_scope = HostThreadScope::enter_main();
+        self.plugin_handle.gui_show()
+    }
+
+    pub fn gui_hide(&self) {
+        let _thread_scope = HostThreadScope::enter_main();
+        self.plugin_handle.gui_hide();
+    }
+
+    pub fn gui_destroy(&self) {
+        let _thread_scope = HostThreadScope::enter_main();
+        self.plugin_handle.gui_destroy();
+    }
+
+    pub fn gui_on_main_thread(&self) {
+        let _thread_scope = HostThreadScope::enter_main();
+        self.plugin_handle.on_main_thread();
+    }
+
+    pub fn gui_on_timer(&self, timer_id: u32) {
+        let _thread_scope = HostThreadScope::enter_main();
+        self.plugin_handle.gui_on_timer(timer_id);
+    }
+
+    pub fn run_host_callbacks_main_thread(&self) {
+        let host_flags = self.host_runtime.take_callback_flags();
+        if host_flags.restart {
+            let _thread_scope = HostThreadScope::enter_main();
+            self.plugin_handle.reset();
+        }
+        if host_flags.callback {
+            let _thread_scope = HostThreadScope::enter_main();
+            self.plugin_handle.on_main_thread();
+        }
+        if host_flags.process {
+            // Host already continuously schedules process blocks.
+        }
+    }
+
     fn process_native(
         &self,
         frames: usize,
@@ -332,17 +516,50 @@ impl ClapProcessor {
 
         let mut in_channel_ptrs: Vec<Vec<*mut f32>> = Vec::with_capacity(self.audio_inputs.len());
         let mut out_channel_ptrs: Vec<Vec<*mut f32>> = Vec::with_capacity(self.audio_outputs.len());
+        let mut in_channel_scratch: Vec<Vec<f32>> = Vec::new();
+        let mut out_channel_scratch: Vec<Vec<f32>> = Vec::new();
+        let mut out_channel_scratch_ranges: Vec<(usize, usize)> =
+            Vec::with_capacity(self.audio_outputs.len());
         let mut in_buffers = Vec::with_capacity(self.audio_inputs.len());
         let mut out_buffers = Vec::with_capacity(self.audio_outputs.len());
 
-        for input in &self.audio_inputs {
+        for (port_idx, input) in self.audio_inputs.iter().enumerate() {
             let buf = input.buffer.lock();
-            in_channel_ptrs.push(vec![buf.as_ptr() as *mut f32]);
+            let channel_count = self
+                .input_port_channels
+                .get(port_idx)
+                .copied()
+                .unwrap_or(1)
+                .max(1);
+            let mut ptrs = Vec::with_capacity(channel_count);
+            ptrs.push(buf.as_ptr() as *mut f32);
+            for _ in 1..channel_count {
+                in_channel_scratch.push(buf.to_vec());
+                let idx = in_channel_scratch.len().saturating_sub(1);
+                ptrs.push(in_channel_scratch[idx].as_mut_ptr());
+            }
+            in_channel_ptrs.push(ptrs);
             in_buffers.push(buf);
         }
-        for output in &self.audio_outputs {
+        for (port_idx, output) in self.audio_outputs.iter().enumerate() {
             let buf = output.buffer.lock();
-            out_channel_ptrs.push(vec![buf.as_ptr() as *mut f32]);
+            let channel_count = self
+                .output_port_channels
+                .get(port_idx)
+                .copied()
+                .unwrap_or(1)
+                .max(1);
+            let mut ptrs = Vec::with_capacity(channel_count);
+            ptrs.push(buf.as_mut_ptr());
+            let scratch_start = out_channel_scratch.len();
+            for _ in 1..channel_count {
+                out_channel_scratch.push(vec![0.0; frames]);
+                let idx = out_channel_scratch.len().saturating_sub(1);
+                ptrs.push(out_channel_scratch[idx].as_mut_ptr());
+            }
+            let scratch_end = out_channel_scratch.len();
+            out_channel_scratch_ranges.push((scratch_start, scratch_end));
+            out_channel_ptrs.push(ptrs);
             out_buffers.push(buf);
         }
 
@@ -353,7 +570,7 @@ impl ClapProcessor {
             in_audio.push(ClapAudioBuffer {
                 data32: ptrs.as_mut_ptr(),
                 data64: std::ptr::null_mut(),
-                channel_count: 1,
+                channel_count: ptrs.len() as u32,
                 latency: 0,
                 constant_mask: 0,
             });
@@ -362,7 +579,7 @@ impl ClapProcessor {
             out_audio.push(ClapAudioBuffer {
                 data32: ptrs.as_mut_ptr(),
                 data64: std::ptr::null_mut(),
-                channel_count: 1,
+                channel_count: ptrs.len() as u32,
                 latency: 0,
                 constant_mask: 0,
             });
@@ -388,23 +605,35 @@ impl ClapProcessor {
             out_events: &mut out_events,
         };
 
+        let _thread_scope = HostThreadScope::enter_audio();
         let result = self.plugin_handle.process(&mut process);
         drop(in_ctx);
         for output in &self.audio_outputs {
             *output.finished.lock() = true;
         }
         let processed = result?;
-        let host_flags = self.host_runtime.take_callback_flags();
-        if host_flags.restart {
-            self.plugin_handle.reset();
-        }
-        if host_flags.callback {
-            self.plugin_handle.on_main_thread();
-        }
-        if host_flags.process {
-            // Host already continuously schedules process blocks.
-        }
         if processed {
+            // Downmix multi-channel CLAP output ports into track output buffers.
+            for (port_idx, out_buf) in out_buffers.iter_mut().enumerate() {
+                let Some((scratch_start, scratch_end)) = out_channel_scratch_ranges.get(port_idx)
+                else {
+                    continue;
+                };
+                let scratch_count = scratch_end.saturating_sub(*scratch_start);
+                if scratch_count == 0 {
+                    continue;
+                }
+                let ch_count = scratch_count + 1;
+                for scratch in &out_channel_scratch[*scratch_start..*scratch_end] {
+                    for (dst, src) in out_buf.iter_mut().zip(scratch.iter().take(frames)) {
+                        *dst += *src;
+                    }
+                }
+                let inv = 1.0_f32 / ch_count as f32;
+                for sample in out_buf.iter_mut().take(frames) {
+                    *sample *= inv;
+                }
+            }
             for update in &out_ctx.param_values {
                 self.param_values
                     .lock()
@@ -656,11 +885,29 @@ struct ClapPluginGui {
     get_resize_hints: Option<unsafe extern "C" fn(*const ClapPlugin, *mut c_void) -> bool>,
     adjust_size: Option<unsafe extern "C" fn(*const ClapPlugin, *mut u32, *mut u32) -> bool>,
     set_size: Option<unsafe extern "C" fn(*const ClapPlugin, u32, u32) -> bool>,
-    set_parent: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_void) -> bool>,
-    set_transient: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_void) -> bool>,
+    set_parent: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapWindow) -> bool>,
+    set_transient: Option<unsafe extern "C" fn(*const ClapPlugin, *const ClapWindow) -> bool>,
     suggest_title: Option<unsafe extern "C" fn(*const ClapPlugin, *const c_char)>,
     show: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
     hide: Option<unsafe extern "C" fn(*const ClapPlugin) -> bool>,
+}
+
+#[repr(C)]
+union ClapWindowHandle {
+    x11: usize,
+    native: *mut c_void,
+    cocoa: *mut c_void,
+}
+
+#[repr(C)]
+struct ClapWindow {
+    api: *const c_char,
+    handle: ClapWindowHandle,
+}
+
+#[repr(C)]
+struct ClapPluginTimerSupport {
+    on_timer: Option<unsafe extern "C" fn(*const ClapPlugin, u32)>,
 }
 
 #[repr(C)]
@@ -683,6 +930,27 @@ struct ClapHostTail {
 struct ClapHostTimerSupport {
     register_timer: Option<unsafe extern "C" fn(*const ClapHost, u32, *mut u32) -> bool>,
     unregister_timer: Option<unsafe extern "C" fn(*const ClapHost, u32) -> bool>,
+}
+
+#[repr(C)]
+struct ClapHostGui {
+    resize_hints_changed: Option<unsafe extern "C" fn(*const ClapHost)>,
+    request_resize: Option<unsafe extern "C" fn(*const ClapHost, u32, u32) -> bool>,
+    request_show: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
+    request_hide: Option<unsafe extern "C" fn(*const ClapHost) -> bool>,
+    closed: Option<unsafe extern "C" fn(*const ClapHost, bool)>,
+}
+
+#[repr(C)]
+struct ClapHostParams {
+    rescan: Option<unsafe extern "C" fn(*const ClapHost, u32)>,
+    clear: Option<unsafe extern "C" fn(*const ClapHost, u32, u32)>,
+    request_flush: Option<unsafe extern "C" fn(*const ClapHost)>,
+}
+
+#[repr(C)]
+struct ClapHostState {
+    mark_dirty: Option<unsafe extern "C" fn(*const ClapHost)>,
 }
 
 #[repr(C)]
@@ -751,11 +1019,6 @@ struct ClapIStreamCtx<'a> {
     offset: usize,
 }
 
-struct HostRuntime {
-    callback_flags: Box<UnsafeMutex<HostCallbackFlags>>,
-    host: ClapHost,
-}
-
 #[derive(Default, Clone, Copy)]
 struct HostCallbackFlags {
     restart: bool,
@@ -763,13 +1026,80 @@ struct HostCallbackFlags {
     callback: bool,
 }
 
+#[derive(Clone, Copy)]
+struct HostTimer {
+    id: u32,
+    period: Duration,
+    next_tick: Instant,
+}
+
+struct HostRuntimeState {
+    callback_flags: UnsafeMutex<HostCallbackFlags>,
+    timers: UnsafeMutex<Vec<HostTimer>>,
+    ui_should_close: AtomicU32,
+    ui_active: AtomicU32,
+    param_flush_requested: AtomicU32,
+    state_dirty_requested: AtomicU32,
+}
+
+thread_local! {
+    static CLAP_HOST_MAIN_THREAD: Cell<bool> = const { Cell::new(true) };
+    static CLAP_HOST_AUDIO_THREAD: Cell<bool> = const { Cell::new(false) };
+}
+
+struct HostThreadScope {
+    main: bool,
+    prev: bool,
+}
+
+impl HostThreadScope {
+    fn enter_main() -> Self {
+        let prev = CLAP_HOST_MAIN_THREAD.with(|flag| {
+            let prev = flag.get();
+            flag.set(true);
+            prev
+        });
+        Self { main: true, prev }
+    }
+
+    fn enter_audio() -> Self {
+        let prev = CLAP_HOST_AUDIO_THREAD.with(|flag| {
+            let prev = flag.get();
+            flag.set(true);
+            prev
+        });
+        Self { main: false, prev }
+    }
+}
+
+impl Drop for HostThreadScope {
+    fn drop(&mut self) {
+        if self.main {
+            CLAP_HOST_MAIN_THREAD.with(|flag| flag.set(self.prev));
+        } else {
+            CLAP_HOST_AUDIO_THREAD.with(|flag| flag.set(self.prev));
+        }
+    }
+}
+
+struct HostRuntime {
+    state: Box<HostRuntimeState>,
+    host: ClapHost,
+}
+
 impl HostRuntime {
     fn new() -> Result<Self, String> {
-        let mut callback_flags = Box::new(UnsafeMutex::new(HostCallbackFlags::default()));
+        let mut state = Box::new(HostRuntimeState {
+            callback_flags: UnsafeMutex::new(HostCallbackFlags::default()),
+            timers: UnsafeMutex::new(Vec::new()),
+            ui_should_close: AtomicU32::new(0),
+            ui_active: AtomicU32::new(0),
+            param_flush_requested: AtomicU32::new(0),
+            state_dirty_requested: AtomicU32::new(0),
+        });
         let host = ClapHost {
             clap_version: CLAP_VERSION,
-            host_data: (&mut *callback_flags as *mut UnsafeMutex<HostCallbackFlags>)
-                .cast::<c_void>(),
+            host_data: (&mut *state as *mut HostRuntimeState).cast::<c_void>(),
             name: c"Maolan".as_ptr(),
             vendor: c"Maolan".as_ptr(),
             url: c"https://example.invalid".as_ptr(),
@@ -779,17 +1109,55 @@ impl HostRuntime {
             request_process: Some(host_request_process),
             request_callback: Some(host_request_callback),
         };
-        Ok(Self {
-            callback_flags,
-            host,
-        })
+        Ok(Self { state, host })
     }
 
     fn take_callback_flags(&self) -> HostCallbackFlags {
-        let flags = self.callback_flags.lock();
+        let flags = self.state.callback_flags.lock();
         let out = *flags;
         *flags = HostCallbackFlags::default();
         out
+    }
+
+    fn begin_ui_session(&self) {
+        self.state.ui_should_close.store(0, Ordering::Release);
+        self.state.ui_active.store(1, Ordering::Release);
+        self.state.param_flush_requested.store(0, Ordering::Release);
+        self.state.state_dirty_requested.store(0, Ordering::Release);
+        self.state.timers.lock().clear();
+    }
+
+    fn end_ui_session(&self) {
+        self.state.ui_active.store(0, Ordering::Release);
+        self.state.ui_should_close.store(0, Ordering::Release);
+        self.state.param_flush_requested.store(0, Ordering::Release);
+        self.state.state_dirty_requested.store(0, Ordering::Release);
+        self.state.timers.lock().clear();
+    }
+
+    fn ui_should_close(&self) -> bool {
+        self.state.ui_should_close.load(Ordering::Acquire) != 0
+    }
+
+    fn ui_take_due_timers(&self) -> Vec<u32> {
+        let now = Instant::now();
+        let timers = &mut *self.state.timers.lock();
+        let mut due = Vec::new();
+        for timer in timers.iter_mut() {
+            if now >= timer.next_tick {
+                due.push(timer.id);
+                timer.next_tick = now + timer.period;
+            }
+        }
+        due
+    }
+
+    fn ui_take_param_flush_requested(&self) -> bool {
+        self.state.param_flush_requested.swap(0, Ordering::AcqRel) != 0
+    }
+
+    fn ui_take_state_dirty_requested(&self) -> bool {
+        self.state.state_dirty_requested.swap(0, Ordering::AcqRel) != 0
     }
 }
 
@@ -1081,6 +1449,23 @@ impl PluginHandle {
         out
     }
 
+    fn flush_params(&self, param_events: &[PendingParamEvent]) -> Vec<PendingParamValue> {
+        let Some(params) = self.params_ext() else {
+            return Vec::new();
+        };
+        let Some(flush_fn) = params.flush else {
+            return Vec::new();
+        };
+        let (in_events, _in_ctx) = param_input_events_from(param_events);
+        let out_cap = param_events.len().max(32);
+        let (out_events, mut out_ctx) = output_events_ctx(out_cap);
+        // SAFETY: input/output event wrappers stay valid for duration of flush callback.
+        unsafe {
+            flush_fn(self.plugin, &in_events, &out_events);
+        }
+        std::mem::take(&mut out_ctx.param_values)
+    }
+
     fn snapshot_state(&self) -> Result<ClapPluginState, String> {
         let Some(state_ext) = self.state_ext() else {
             return Ok(ClapPluginState { bytes: Vec::new() });
@@ -1132,18 +1517,37 @@ impl PluginHandle {
         Ok(())
     }
 
-    fn audio_port_layout(&self) -> (Option<usize>, Option<usize>) {
+    fn audio_port_channels(&self) -> (Vec<usize>, Vec<usize>) {
         let Some(ext) = self.audio_ports_ext() else {
-            return (None, None);
+            return (Vec::new(), Vec::new());
         };
         let Some(count_fn) = ext.count else {
-            return (None, None);
+            return (Vec::new(), Vec::new());
         };
-        // SAFETY: function pointer comes from plugin extension table.
-        let in_count = unsafe { count_fn(self.plugin, true) } as usize;
-        // SAFETY: function pointer comes from plugin extension table.
-        let out_count = unsafe { count_fn(self.plugin, false) } as usize;
-        (Some(in_count.max(1)), Some(out_count.max(1)))
+        let Some(get_fn) = ext.get else {
+            return (Vec::new(), Vec::new());
+        };
+
+        let read_channels = |is_input: bool| -> Vec<usize> {
+            let mut out = Vec::new();
+            let count = unsafe { count_fn(self.plugin, is_input) } as usize;
+            out.reserve(count);
+            for idx in 0..count {
+                let mut info = ClapAudioPortInfoRaw {
+                    id: 0,
+                    name: [0; 256],
+                    flags: 0,
+                    channel_count: 1,
+                    port_type: std::ptr::null(),
+                    in_place_pair: u32::MAX,
+                };
+                if unsafe { get_fn(self.plugin, idx as u32, is_input, &mut info as *mut _) } {
+                    out.push((info.channel_count as usize).max(1));
+                }
+            }
+            out
+        };
+        (read_channels(true), read_channels(false))
     }
 
     fn note_port_layout(&self) -> (Option<usize>, Option<usize>) {
@@ -1158,6 +1562,135 @@ impl PluginHandle {
         // SAFETY: function pointer comes from plugin extension table.
         let out_count = unsafe { count_fn(self.plugin, false) } as usize;
         (Some(in_count.max(1)), Some(out_count.max(1)))
+    }
+
+    fn gui_ext(&self) -> Option<&ClapPluginGui> {
+        let ext_id = c"clap.gui";
+        let plugin = unsafe { &*self.plugin };
+        let get_extension = plugin.get_extension?;
+        let ext_ptr = unsafe { get_extension(self.plugin, ext_id.as_ptr()) };
+        if ext_ptr.is_null() {
+            return None;
+        }
+        Some(unsafe { &*(ext_ptr as *const ClapPluginGui) })
+    }
+
+    fn gui_timer_support_ext(&self) -> Option<&ClapPluginTimerSupport> {
+        let ext_id = c"clap.timer-support";
+        let plugin = unsafe { &*self.plugin };
+        let get_extension = plugin.get_extension?;
+        let ext_ptr = unsafe { get_extension(self.plugin, ext_id.as_ptr()) };
+        if ext_ptr.is_null() {
+            return None;
+        }
+        Some(unsafe { &*(ext_ptr as *const ClapPluginTimerSupport) })
+    }
+
+    fn gui_info(&self) -> Result<ClapGuiInfo, String> {
+        let gui = self
+            .gui_ext()
+            .ok_or_else(|| "CLAP plugin does not expose clap.gui".to_string())?;
+        let is_api_supported = gui
+            .is_api_supported
+            .ok_or_else(|| "CLAP gui.is_api_supported is unavailable".to_string())?;
+        for (api, supports_embedded) in [
+            ("x11", true),
+            ("cocoa", true),
+            ("x11", false),
+            ("cocoa", false),
+        ] {
+            let api_c = CString::new(api).map_err(|e| e.to_string())?;
+            if unsafe { is_api_supported(self.plugin, api_c.as_ptr(), !supports_embedded) } {
+                return Ok(ClapGuiInfo {
+                    api: api.to_string(),
+                    supports_embedded,
+                });
+            }
+        }
+        Err("No supported CLAP GUI API found".to_string())
+    }
+
+    fn gui_create(&self, api: &str, is_floating: bool) -> Result<(), String> {
+        let gui = self
+            .gui_ext()
+            .ok_or_else(|| "CLAP plugin does not expose clap.gui".to_string())?;
+        let create = gui
+            .create
+            .ok_or_else(|| "CLAP gui.create is unavailable".to_string())?;
+        let api_c = CString::new(api).map_err(|e| e.to_string())?;
+        if unsafe { !create(self.plugin, api_c.as_ptr(), is_floating) } {
+            return Err("CLAP gui.create failed".to_string());
+        }
+        Ok(())
+    }
+
+    fn gui_get_size(&self) -> Result<(u32, u32), String> {
+        let gui = self
+            .gui_ext()
+            .ok_or_else(|| "CLAP plugin does not expose clap.gui".to_string())?;
+        let get_size = gui
+            .get_size
+            .ok_or_else(|| "CLAP gui.get_size is unavailable".to_string())?;
+        let mut width = 0;
+        let mut height = 0;
+        if unsafe { !get_size(self.plugin, &mut width, &mut height) } {
+            return Err("CLAP gui.get_size failed".to_string());
+        }
+        Ok((width, height))
+    }
+
+    fn gui_set_parent_x11(&self, window: usize) -> Result<(), String> {
+        let gui = self
+            .gui_ext()
+            .ok_or_else(|| "CLAP plugin does not expose clap.gui".to_string())?;
+        let set_parent = gui
+            .set_parent
+            .ok_or_else(|| "CLAP gui.set_parent is unavailable".to_string())?;
+        let clap_window = ClapWindow {
+            api: c"x11".as_ptr(),
+            handle: ClapWindowHandle { x11: window },
+        };
+        if unsafe { !set_parent(self.plugin, &clap_window) } {
+            return Err("CLAP gui.set_parent failed".to_string());
+        }
+        Ok(())
+    }
+
+    fn gui_show(&self) -> Result<(), String> {
+        let gui = self
+            .gui_ext()
+            .ok_or_else(|| "CLAP plugin does not expose clap.gui".to_string())?;
+        let show = gui
+            .show
+            .ok_or_else(|| "CLAP gui.show is unavailable".to_string())?;
+        if unsafe { !show(self.plugin) } {
+            return Err("CLAP gui.show failed".to_string());
+        }
+        Ok(())
+    }
+
+    fn gui_hide(&self) {
+        if let Some(gui) = self.gui_ext()
+            && let Some(hide) = gui.hide
+        {
+            unsafe { hide(self.plugin) };
+        }
+    }
+
+    fn gui_destroy(&self) {
+        if let Some(gui) = self.gui_ext()
+            && let Some(destroy) = gui.destroy
+        {
+            unsafe { destroy(self.plugin) };
+        }
+    }
+
+    fn gui_on_timer(&self, timer_id: u32) {
+        if let Some(timer_ext) = self.gui_timer_support_ext()
+            && let Some(on_timer) = timer_ext.on_timer
+        {
+            unsafe { on_timer(self.plugin, timer_id) };
+        }
     }
 }
 
@@ -1201,7 +1734,33 @@ static HOST_TIMER_EXT: ClapHostTimerSupport = ClapHostTimerSupport {
     register_timer: Some(host_timer_register),
     unregister_timer: Some(host_timer_unregister),
 };
+static HOST_GUI_EXT: ClapHostGui = ClapHostGui {
+    resize_hints_changed: Some(host_gui_resize_hints_changed),
+    request_resize: Some(host_gui_request_resize),
+    request_show: Some(host_gui_request_show),
+    request_hide: Some(host_gui_request_hide),
+    closed: Some(host_gui_closed),
+};
+static HOST_PARAMS_EXT: ClapHostParams = ClapHostParams {
+    rescan: Some(host_params_rescan),
+    clear: Some(host_params_clear),
+    request_flush: Some(host_params_request_flush),
+};
+static HOST_STATE_EXT: ClapHostState = ClapHostState {
+    mark_dirty: Some(host_state_mark_dirty),
+};
 static NEXT_TIMER_ID: AtomicU32 = AtomicU32::new(1);
+
+fn host_runtime_state(host: *const ClapHost) -> Option<&'static HostRuntimeState> {
+    if host.is_null() {
+        return None;
+    }
+    let state_ptr = unsafe { (*host).host_data as *const HostRuntimeState };
+    if state_ptr.is_null() {
+        return None;
+    }
+    Some(unsafe { &*state_ptr })
+}
 
 unsafe extern "C" fn host_get_extension(
     _host: *const ClapHost,
@@ -1221,61 +1780,46 @@ unsafe extern "C" fn host_get_extension(
         "clap.host.timer-support" => {
             (&HOST_TIMER_EXT as *const ClapHostTimerSupport).cast::<c_void>()
         }
+        "clap.host.gui" => host_runtime_state(_host)
+            .filter(|state| state.ui_active.load(Ordering::Acquire) != 0)
+            .map(|_| (&HOST_GUI_EXT as *const ClapHostGui).cast::<c_void>())
+            .unwrap_or(std::ptr::null()),
+        "clap.host.params" => host_runtime_state(_host)
+            .filter(|state| state.ui_active.load(Ordering::Acquire) != 0)
+            .map(|_| (&HOST_PARAMS_EXT as *const ClapHostParams).cast::<c_void>())
+            .unwrap_or(std::ptr::null()),
+        "clap.host.state" => host_runtime_state(_host)
+            .filter(|state| state.ui_active.load(Ordering::Acquire) != 0)
+            .map(|_| (&HOST_STATE_EXT as *const ClapHostState).cast::<c_void>())
+            .unwrap_or(std::ptr::null()),
         _ => std::ptr::null(),
     }
 }
 
 unsafe extern "C" fn host_request_process(_host: *const ClapHost) {
-    if _host.is_null() {
-        return;
-    }
-    // SAFETY: host_data was initialized to point to HostCallbackFlags storage.
-    let flags_ptr = unsafe { (*_host).host_data as *mut UnsafeMutex<HostCallbackFlags> };
-    if flags_ptr.is_null() {
-        return;
-    }
-    // SAFETY: flags_ptr is valid for plugin lifetime.
-    unsafe {
-        (*flags_ptr).lock().process = true;
+    if let Some(state) = host_runtime_state(_host) {
+        state.callback_flags.lock().process = true;
     }
 }
 
 unsafe extern "C" fn host_request_callback(_host: *const ClapHost) {
-    if _host.is_null() {
-        return;
-    }
-    // SAFETY: host_data was initialized to point to HostCallbackFlags storage.
-    let flags_ptr = unsafe { (*_host).host_data as *mut UnsafeMutex<HostCallbackFlags> };
-    if flags_ptr.is_null() {
-        return;
-    }
-    // SAFETY: flags_ptr is valid for plugin lifetime.
-    unsafe {
-        (*flags_ptr).lock().callback = true;
+    if let Some(state) = host_runtime_state(_host) {
+        state.callback_flags.lock().callback = true;
     }
 }
 
 unsafe extern "C" fn host_request_restart(_host: *const ClapHost) {
-    if _host.is_null() {
-        return;
-    }
-    // SAFETY: host_data was initialized to point to HostCallbackFlags storage.
-    let flags_ptr = unsafe { (*_host).host_data as *mut UnsafeMutex<HostCallbackFlags> };
-    if flags_ptr.is_null() {
-        return;
-    }
-    // SAFETY: flags_ptr is valid for plugin lifetime.
-    unsafe {
-        (*flags_ptr).lock().restart = true;
+    if let Some(state) = host_runtime_state(_host) {
+        state.callback_flags.lock().restart = true;
     }
 }
 
 unsafe extern "C" fn host_is_main_thread(_host: *const ClapHost) -> bool {
-    true
+    CLAP_HOST_MAIN_THREAD.with(Cell::get)
 }
 
 unsafe extern "C" fn host_is_audio_thread(_host: *const ClapHost) -> bool {
-    true
+    CLAP_HOST_AUDIO_THREAD.with(Cell::get)
 }
 
 unsafe extern "C" fn host_latency_changed(_host: *const ClapHost) {}
@@ -1291,6 +1835,14 @@ unsafe extern "C" fn host_timer_register(
         return false;
     }
     let id = NEXT_TIMER_ID.fetch_add(1, Ordering::Relaxed);
+    if let Some(state) = host_runtime_state(_host) {
+        let period_ms = _period_ms.max(1);
+        state.timers.lock().push(HostTimer {
+            id,
+            period: Duration::from_millis(period_ms as u64),
+            next_tick: Instant::now() + Duration::from_millis(period_ms as u64),
+        });
+    }
     // SAFETY: timer_id points to writable u32 provided by plugin.
     unsafe {
         *timer_id = id;
@@ -1299,7 +1851,61 @@ unsafe extern "C" fn host_timer_register(
 }
 
 unsafe extern "C" fn host_timer_unregister(_host: *const ClapHost, _timer_id: u32) -> bool {
+    if let Some(state) = host_runtime_state(_host) {
+        state.timers.lock().retain(|timer| timer.id != _timer_id);
+    }
     true
+}
+
+unsafe extern "C" fn host_gui_resize_hints_changed(_host: *const ClapHost) {}
+
+unsafe extern "C" fn host_gui_request_resize(
+    _host: *const ClapHost,
+    _width: u32,
+    _height: u32,
+) -> bool {
+    true
+}
+
+unsafe extern "C" fn host_gui_request_show(_host: *const ClapHost) -> bool {
+    true
+}
+
+unsafe extern "C" fn host_gui_request_hide(_host: *const ClapHost) -> bool {
+    if let Some(state) = host_runtime_state(_host) {
+        if state.ui_active.load(Ordering::Acquire) != 0 {
+            state.ui_should_close.store(1, Ordering::Release);
+        }
+        true
+    } else {
+        false
+    }
+}
+
+unsafe extern "C" fn host_gui_closed(_host: *const ClapHost, _was_destroyed: bool) {
+    if let Some(state) = host_runtime_state(_host)
+        && state.ui_active.load(Ordering::Acquire) != 0
+    {
+        state.ui_should_close.store(1, Ordering::Release);
+    }
+}
+
+unsafe extern "C" fn host_params_rescan(_host: *const ClapHost, _flags: u32) {}
+
+unsafe extern "C" fn host_params_clear(_host: *const ClapHost, _param_id: u32, _flags: u32) {}
+
+unsafe extern "C" fn host_params_request_flush(_host: *const ClapHost) {
+    if let Some(state) = host_runtime_state(_host) {
+        state.param_flush_requested.store(1, Ordering::Release);
+        state.callback_flags.lock().callback = true;
+    }
+}
+
+unsafe extern "C" fn host_state_mark_dirty(_host: *const ClapHost) {
+    if let Some(state) = host_runtime_state(_host) {
+        state.state_dirty_requested.store(1, Ordering::Release);
+        state.callback_flags.lock().callback = true;
+    }
 }
 
 unsafe extern "C" fn input_events_size(_list: *const ClapInputEvents) -> u32 {
@@ -1540,6 +2146,73 @@ fn input_events_from(
     (list, ctx)
 }
 
+fn param_input_events_from(
+    param_events: &[PendingParamEvent],
+) -> (ClapInputEvents, Box<ClapInputEventsCtx>) {
+    let mut events = Vec::with_capacity(param_events.len());
+    for param in param_events {
+        match *param {
+            PendingParamEvent::Value {
+                param_id,
+                value,
+                frame,
+            } => events.push(ClapInputEvent::ParamValue(ClapEventParamValue {
+                header: ClapEventHeader {
+                    size: std::mem::size_of::<ClapEventParamValue>() as u32,
+                    time: frame,
+                    space_id: CLAP_CORE_EVENT_SPACE_ID,
+                    type_: CLAP_EVENT_PARAM_VALUE,
+                    flags: 0,
+                },
+                param_id,
+                cookie: std::ptr::null_mut(),
+                note_id: -1,
+                port_index: -1,
+                channel: -1,
+                key: -1,
+                value,
+            })),
+            PendingParamEvent::GestureBegin { param_id, frame } => {
+                events.push(ClapInputEvent::ParamGesture(ClapEventParamGesture {
+                    header: ClapEventHeader {
+                        size: std::mem::size_of::<ClapEventParamGesture>() as u32,
+                        time: frame,
+                        space_id: CLAP_CORE_EVENT_SPACE_ID,
+                        type_: CLAP_EVENT_PARAM_GESTURE_BEGIN,
+                        flags: 0,
+                    },
+                    param_id,
+                }))
+            }
+            PendingParamEvent::GestureEnd { param_id, frame } => {
+                events.push(ClapInputEvent::ParamGesture(ClapEventParamGesture {
+                    header: ClapEventHeader {
+                        size: std::mem::size_of::<ClapEventParamGesture>() as u32,
+                        time: frame,
+                        space_id: CLAP_CORE_EVENT_SPACE_ID,
+                        type_: CLAP_EVENT_PARAM_GESTURE_END,
+                        flags: 0,
+                    },
+                    param_id,
+                }))
+            }
+        }
+    }
+    events.sort_by_key(|event| match event {
+        ClapInputEvent::Midi(e) => e.header.time,
+        ClapInputEvent::ParamValue(e) => e.header.time,
+        ClapInputEvent::ParamGesture(e) => e.header.time,
+        ClapInputEvent::Transport(e) => e.header.time,
+    });
+    let mut ctx = Box::new(ClapInputEventsCtx { events });
+    let list = ClapInputEvents {
+        ctx: (&mut *ctx as *mut ClapInputEventsCtx).cast::<c_void>(),
+        size: Some(input_events_size),
+        get: Some(input_events_get),
+    };
+    (list, ctx)
+}
+
 fn output_events_ctx(capacity: usize) -> (ClapOutputEvents, Box<ClapOutputEventsCtx>) {
     let mut ctx = Box::new(ClapOutputEventsCtx {
         midi_events: Vec::with_capacity(capacity),
@@ -1654,10 +2327,6 @@ fn collect_clap_plugins(root: &Path, out: &mut Vec<ClapPluginInfo>, scan_capabil
         let Ok(ft) = entry.file_type() else {
             continue;
         };
-        if ft.is_symlink() {
-            continue;
-        }
-
         if ft.is_dir() {
             collect_clap_plugins(&path, out, scan_capabilities);
             continue;
@@ -1889,4 +2558,47 @@ fn default_clap_search_roots() -> Vec<PathBuf> {
     }
 
     roots
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_clap_plugins;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[cfg(unix)]
+    fn make_symlink(src: &PathBuf, dst: &PathBuf) {
+        std::os::unix::fs::symlink(src, dst).expect("should create symlink");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn collect_clap_plugins_includes_symlinked_clap_files() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be valid")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "maolan-clap-symlink-test-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("should create temp dir");
+
+        let target_file = root.join("librural_modeler.so");
+        fs::write(&target_file, b"not a real clap binary").expect("should create target file");
+        let clap_link = root.join("RuralModeler.clap");
+        make_symlink(&PathBuf::from("librural_modeler.so"), &clap_link);
+
+        let mut out = Vec::new();
+        collect_clap_plugins(&root, &mut out, false);
+
+        assert!(
+            out.iter()
+                .any(|info| info.path == clap_link.to_string_lossy()),
+            "scanner should include symlinked .clap files"
+        );
+
+        fs::remove_dir_all(&root).expect("should remove temp dir");
+    }
 }
