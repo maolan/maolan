@@ -1,6 +1,5 @@
 # Maolan
 
-[![codecov](https://codecov.io/gh/maolan/maolan/graph/badge.svg)](https://codecov.io/gh/maolan/maolan)
 [![crates.io](https://img.shields.io/crates/v/maolan.svg)](https://crates.io/crates/maolan)
 
 ![Maolan](images/maolan.svg)

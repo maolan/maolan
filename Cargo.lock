@@ -4752,6 +4752,7 @@ dependencies = [
  "maolan-generate",
  "maolan-widgets",
  "midly",
+ "mixosc",
  "nix 0.31.2",
  "nvtree",
  "pitch-detection",
@@ -4991,6 +4992,18 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mixosc"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5517aedf5fc6c72911af0410f3bf4f665e8fbf04ae7bd420f8c9ccb70aa5fe81"
+dependencies = [
+ "iced",
+ "iced_fonts",
+ "maolan-widgets",
+ "tokio",
 ]
 
 [[package]]
