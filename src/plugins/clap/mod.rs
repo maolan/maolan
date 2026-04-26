@@ -6,6 +6,7 @@ use crate::plugins::x11::{
     XBlackPixel, XCloseDisplay, XCreateSimpleWindow, XDefaultScreen, XDestroyWindow, XEvent,
     XFlush, XInternAtom, XMapRaised, XNextEvent, XOpenDisplay, XPending, XResizeWindow,
     XRootWindow, XSelectInput, XSetWMProtocols, XStoreName, XSync, XWhitePixel,
+    set_dialog_window_type,
 };
 use maolan_engine::clap::ClapProcessor;
 use std::collections::HashSet;
@@ -227,22 +228,20 @@ fn open_editor_blocking(
     mut on_param: impl FnMut(u32, f64),
     mut on_state: impl FnMut(maolan_engine::clap::ClapPluginState),
 ) -> Result<Option<maolan_engine::clap::ClapPluginState>, String> {
-    eprintln!("[clap-ui] open_editor_blocking plugin={plugin_spec}");
     let processor = Arc::new(ClapProcessor::new(48_000.0, 1024, plugin_spec, 2, 2)?);
     if let Some(state) = state.as_ref() {
         let _ = processor.restore_state(state);
     }
     let gui_info = processor.gui_info()?;
-    eprintln!(
-        "[clap-ui] gui_info api={} supports_embedded={}",
-        gui_info.api, gui_info.supports_embedded
-    );
     processor.ui_begin_session();
     let result = if cfg!(all(unix, not(target_os = "macos"))) && gui_info.api == "x11" {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            eprintln!("[clap-ui] using run_x11_floating");
-            run_x11_floating(processor.clone(), &mut on_param, &mut on_state)
+            if gui_info.supports_embedded {
+                run_x11_embedded(processor.clone(), &mut on_param, &mut on_state)
+            } else {
+                run_x11_floating(processor.clone(), &mut on_param, &mut on_state)
+            }
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         {
@@ -310,7 +309,6 @@ fn run_x11_embedded(
     on_param: &mut impl FnMut(u32, f64),
     on_state: &mut impl FnMut(maolan_engine::clap::ClapPluginState),
 ) -> Result<(), String> {
-    eprintln!("[clap-ui] run_x11_embedded begin");
     let display = unsafe { XOpenDisplay(std::ptr::null()) };
     if display.is_null() {
         return Err("Failed to open X display for CLAP UI".to_string());
@@ -358,9 +356,10 @@ fn run_x11_embedded(
             XSetWMProtocols(display, window, protocols.as_mut_ptr(), 1);
         }
     }
+    set_dialog_window_type(display, window);
 
     let result = (|| {
-        eprintln!("[clap-ui] gui_create x11 floating=false");
+        processor.gui_create("x11", false)?;
         processor.gui_create("x11", false)?;
         if let Ok((new_width, new_height)) = processor.gui_get_size() {
             width = new_width.max(320);
@@ -370,9 +369,8 @@ fn run_x11_embedded(
                 XResizeWindow(display, embed_window, width, height);
             }
         }
-        eprintln!("[clap-ui] gui_set_parent_x11={embed_window}");
         processor.gui_set_parent_x11(embed_window as usize)?;
-        eprintln!("[clap-ui] gui_show");
+
         processor.gui_show()?;
         unsafe {
             XMapRaised(display, embed_window);
@@ -405,7 +403,6 @@ fn run_x11_floating(
     on_param: &mut impl FnMut(u32, f64),
     on_state: &mut impl FnMut(maolan_engine::clap::ClapPluginState),
 ) -> Result<(), String> {
-    eprintln!("[clap-ui] run_x11_floating begin");
     let display = unsafe { XOpenDisplay(std::ptr::null()) };
     if display.is_null() {
         return Err("Failed to open X display for CLAP UI".to_string());
@@ -416,9 +413,7 @@ fn run_x11_floating(
     let windows_before = get_top_level_windows(display, root);
 
     let result = (|| {
-        eprintln!("[clap-ui] gui_create x11 floating=true");
         processor.gui_create("x11", true)?;
-        eprintln!("[clap-ui] gui_show");
         processor.gui_show()?;
         thread::sleep(Duration::from_millis(200));
         unsafe { XSync(display, 0) };
@@ -432,51 +427,45 @@ fn run_x11_floating(
             "[clap-ui] new top-level windows after gui_show: {}",
             new_top_levels.len()
         );
-        let tracked_windows = new_top_levels;
-        let plugin_window = tracked_windows.first().copied().unwrap_or(0);
+        let mut tracked_windows = new_top_levels;
 
-        let (wm_delete, wm_protocols) = if !tracked_windows.is_empty() {
+        let wm_delete_atom_name = CString::new("WM_DELETE_WINDOW").map_err(|e| e.to_string())?;
+        let wm_delete = unsafe { XInternAtom(display, wm_delete_atom_name.as_ptr(), 0) };
+        let wm_protocols_atom_name = CString::new("WM_PROTOCOLS").map_err(|e| e.to_string())?;
+        let wm_protocols = unsafe { XInternAtom(display, wm_protocols_atom_name.as_ptr(), 0) };
+
+        if !tracked_windows.is_empty() {
             for window in &tracked_windows {
                 unsafe {
                     XSelectInput(display, *window, STRUCTURE_NOTIFY_MASK);
                 }
+                set_dialog_window_type(display, *window);
             }
-            let debug_windows = tracked_windows
-                .iter()
-                .map(|w| w.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            eprintln!("[clap-ui] tracking X11 windows: {debug_windows}");
-            let wm_delete_atom_name =
-                CString::new("WM_DELETE_WINDOW").map_err(|e| e.to_string())?;
-            let wm_delete = unsafe { XInternAtom(display, wm_delete_atom_name.as_ptr(), 0) };
-            let wm_protocols_atom_name = CString::new("WM_PROTOCOLS").map_err(|e| e.to_string())?;
-            let wm_protocols = unsafe { XInternAtom(display, wm_protocols_atom_name.as_ptr(), 0) };
-            (wm_delete, wm_protocols)
-        } else if plugin_window != 0 {
-            unsafe {
-                XSelectInput(display, plugin_window, STRUCTURE_NOTIFY_MASK);
-            }
-            let wm_delete_atom_name =
-                CString::new("WM_DELETE_WINDOW").map_err(|e| e.to_string())?;
-            let wm_delete = unsafe { XInternAtom(display, wm_delete_atom_name.as_ptr(), 0) };
-            let wm_protocols_atom_name = CString::new("WM_PROTOCOLS").map_err(|e| e.to_string())?;
-            let wm_protocols = unsafe { XInternAtom(display, wm_protocols_atom_name.as_ptr(), 0) };
-            (wm_delete, wm_protocols)
-        } else {
-            (0, 0)
-        };
+        }
 
         run_ui_loop(
             &processor,
             || {
-                !tracked_windows.is_empty()
-                    && (pump_platform_events_x11_any(
-                        display,
-                        &tracked_windows,
-                        wm_delete,
-                        wm_protocols,
-                    ) || tracked_windows_gone(display, root, &tracked_windows))
+                if tracked_windows.is_empty() {
+                    let windows_after = get_top_level_windows(display, root);
+                    let new_top_levels: Vec<c_ulong> = windows_after
+                        .into_iter()
+                        .filter(|window| !windows_before.contains(window))
+                        .collect();
+                    if !new_top_levels.is_empty() {
+                        for window in &new_top_levels {
+                            unsafe {
+                                XSelectInput(display, *window, STRUCTURE_NOTIFY_MASK);
+                            }
+                            set_dialog_window_type(display, *window);
+                        }
+                        tracked_windows.extend(new_top_levels);
+                    }
+                    false
+                } else {
+                    pump_platform_events_x11_any(display, &tracked_windows, wm_delete, wm_protocols)
+                        || tracked_windows_gone(display, root, &tracked_windows)
+                }
             },
             on_param,
             on_state,
