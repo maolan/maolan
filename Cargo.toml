@@ -7,7 +7,7 @@ description = "Rust DAW application for recording, editing, routing, automation,
 license = "BSD-2-Clause"
 readme = "README.md"
 repository = "https://github.com/maolan/maolan"
-homepage = "https://github.com/maolan/maolan"
+homepage = "https://maolan.github.io"
 keywords = ["audio", "midi", "daw", "vst3", "lv2"]
 categories = ["multimedia::audio"]
 

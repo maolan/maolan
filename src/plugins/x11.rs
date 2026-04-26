@@ -279,6 +279,16 @@ unsafe extern "C" {
         protocols: *mut c_ulong,
         count: c_int,
     ) -> c_int;
+    pub fn XChangeProperty(
+        display: *mut c_void,
+        window: c_ulong,
+        property: c_ulong,
+        type_: c_ulong,
+        format: c_int,
+        mode: c_int,
+        data: *const c_uchar,
+        nelements: c_int,
+    ) -> c_int;
     pub fn XMapRaised(display: *mut c_void, window: c_ulong) -> c_int;
     pub fn XMapSubwindows(display: *mut c_void, window: c_ulong) -> c_int;
     pub fn XResizeWindow(
@@ -346,6 +356,34 @@ fn first_child(display: *mut c_void, window: c_ulong) -> Option<c_ulong> {
         let _ = XFree(children_ptr.cast::<c_void>());
     }
     Some(child)
+}
+
+pub fn set_dialog_window_type(display: *mut c_void, window: c_ulong) {
+    if display.is_null() || window == 0 {
+        return;
+    }
+    let wm_type_name = CString::new("_NET_WM_WINDOW_TYPE").unwrap_or_default();
+    let dialog_name = CString::new("_NET_WM_WINDOW_TYPE_DIALOG").unwrap_or_default();
+    if wm_type_name.as_bytes().is_empty() || dialog_name.as_bytes().is_empty() {
+        return;
+    }
+    unsafe {
+        let wm_type = XInternAtom(display, wm_type_name.as_ptr(), 0);
+        let dialog = XInternAtom(display, dialog_name.as_ptr(), 0);
+        if wm_type == 0 || dialog == 0 {
+            return;
+        }
+        XChangeProperty(
+            display,
+            window,
+            wm_type,
+            4,
+            32,
+            0,
+            &dialog as *const c_ulong as *const c_uchar,
+            1,
+        );
+    }
 }
 
 fn map_and_resize_children(display: *mut c_void, parent: c_ulong, width: i32, height: i32) {
@@ -545,6 +583,8 @@ fn run_vst3_x11_editor(
         }
         return Err("Failed to create X11 embed window for VST3 editor".to_string());
     }
+
+    set_dialog_window_type(display, window);
 
     let view_ptr = unsafe { controller.createView(ViewType::kEditor) };
     if view_ptr.is_null() {

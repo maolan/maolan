@@ -641,6 +641,7 @@ fn create_native_ui_window(
     unsafe {
         gtk_window_set_title(window, title.as_ptr());
         gtk_window_set_default_size(window, 780, 520);
+        gtk_window_set_type_hint(window, 1);
     }
 
     let use_x11_parent = ui_spec.container_type_uri == LV2_UI_X11;
@@ -879,6 +880,7 @@ fn create_generic_ui_window(
     unsafe {
         gtk_window_set_title(window, title.as_ptr());
         gtk_window_set_default_size(window, 720, 480);
+        gtk_window_set_type_hint(window, 1);
         g_signal_connect_data(
             window,
             c"delete-event".as_ptr(),
@@ -1144,6 +1146,7 @@ unsafe extern "C" {
     fn gtk_window_new(window_type: i32) -> *mut c_void;
     fn gtk_window_set_title(window: *mut c_void, title: *const c_char);
     fn gtk_window_set_default_size(window: *mut c_void, width: i32, height: i32);
+    fn gtk_window_set_type_hint(window: *mut c_void, hint: i32);
     fn gtk_window_present(window: *mut c_void);
     fn gtk_window_resize(window: *mut c_void, width: i32, height: i32);
     fn gtk_alignment_new(xalign: f32, yalign: f32, xscale: f32, yscale: f32) -> *mut c_void;
