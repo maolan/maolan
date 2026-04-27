@@ -303,7 +303,6 @@ fn emit_state_updates(
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-#[allow(dead_code)]
 fn run_x11_embedded(
     processor: Arc<ClapProcessor>,
     on_param: &mut impl FnMut(u32, f64),

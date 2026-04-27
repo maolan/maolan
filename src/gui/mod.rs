@@ -4221,24 +4221,12 @@ impl Maolan {
                     name: info
                         .map(|info| info.name.clone())
                         .unwrap_or_else(|| uri.clone()),
-                    main_audio_inputs: caps
-                        .map(|caps| usize::from(caps.has_audio_ports))
-                        .unwrap_or(0),
-                    main_audio_outputs: caps
-                        .map(|caps| usize::from(caps.has_audio_ports))
-                        .unwrap_or(0),
-                    audio_inputs: caps
-                        .map(|caps| usize::from(caps.has_audio_ports))
-                        .unwrap_or(0),
-                    audio_outputs: caps
-                        .map(|caps| usize::from(caps.has_audio_ports))
-                        .unwrap_or(0),
-                    midi_inputs: caps
-                        .map(|caps| usize::from(caps.has_note_ports))
-                        .unwrap_or(0),
-                    midi_outputs: caps
-                        .map(|caps| usize::from(caps.has_note_ports))
-                        .unwrap_or(0),
+                    main_audio_inputs: caps.map(|caps| caps.audio_inputs).unwrap_or(0),
+                    main_audio_outputs: caps.map(|caps| caps.audio_outputs).unwrap_or(0),
+                    audio_inputs: caps.map(|caps| caps.audio_inputs).unwrap_or(0),
+                    audio_outputs: caps.map(|caps| caps.audio_outputs).unwrap_or(0),
+                    midi_inputs: caps.map(|caps| caps.midi_inputs).unwrap_or(0),
+                    midi_outputs: caps.map(|caps| caps.midi_outputs).unwrap_or(0),
                     state: plugin.get("state").cloned(),
                 })
             }

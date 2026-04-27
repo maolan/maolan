@@ -374,7 +374,6 @@ pub struct PitchCorrectionPoint {
     pub clarity: f32,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PitchCorrectionData {
     pub track_idx: String,
