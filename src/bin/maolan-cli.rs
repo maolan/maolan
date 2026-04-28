@@ -1524,7 +1524,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = match parse_cli_options(std::env::args()) {
         Ok(options) => options,
         Err(message) if message.starts_with("Usage: ") => {
-            println!("{message}");
             return Ok(());
         }
         Err(message) => return Err(message.into()),

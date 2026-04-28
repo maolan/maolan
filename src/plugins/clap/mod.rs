@@ -418,10 +418,6 @@ fn run_x11_floating(
             .into_iter()
             .filter(|window| !windows_before.contains(window))
             .collect();
-        eprintln!(
-            "[clap-ui] new top-level windows after gui_show: {}",
-            new_top_levels.len()
-        );
         let mut tracked_windows = new_top_levels;
 
         let wm_delete_atom_name = CString::new("WM_DELETE_WINDOW").map_err(|e| e.to_string())?;
