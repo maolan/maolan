@@ -188,6 +188,13 @@ impl Workspace {
 
     pub fn update(&mut self, _message: &Message) {}
 
+    pub fn set_midi_edit_midnam_note_names(
+        &mut self,
+        names: &std::collections::HashMap<u8, String>,
+    ) {
+        self.midi_edit.set_midnam_note_names(names);
+    }
+
     fn collect_clip_snap_edges(&self) -> Vec<ClipSnapEdge> {
         let state = self.state.blocking_read();
         let mut edges = Vec::new();

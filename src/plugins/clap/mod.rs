@@ -133,7 +133,7 @@ impl GuiClapUiHost {
         clip_idx: Option<usize>,
         instance_id: usize,
         plugin_spec: &str,
-        state: Option<maolan_engine::clap::ClapPluginState>,
+        processor: Arc<ClapProcessor>,
     ) -> Result<(), String> {
         let session_key = ClapUiSessionKey {
             track_name: track_name.to_string(),
@@ -163,7 +163,7 @@ impl GuiClapUiHost {
             .spawn(move || {
                 match open_editor_blocking(
                     &plugin_path,
-                    state,
+                    processor,
                     |param_id, value| {
                         let update = ClapUiParamUpdate {
                             track_name: track_name.clone(),
@@ -223,15 +223,11 @@ impl GuiClapUiHost {
 }
 
 fn open_editor_blocking(
-    plugin_spec: &str,
-    state: Option<maolan_engine::clap::ClapPluginState>,
+    _plugin_spec: &str,
+    processor: Arc<ClapProcessor>,
     mut on_param: impl FnMut(u32, f64),
     mut on_state: impl FnMut(maolan_engine::clap::ClapPluginState),
 ) -> Result<Option<maolan_engine::clap::ClapPluginState>, String> {
-    let processor = Arc::new(ClapProcessor::new(48_000.0, 1024, plugin_spec, 2, 2)?);
-    if let Some(state) = state.as_ref() {
-        let _ = processor.restore_state(state);
-    }
     let gui_info = processor.gui_info()?;
     processor.ui_begin_session();
     let result = if cfg!(all(unix, not(target_os = "macos"))) && gui_info.api == "x11" {

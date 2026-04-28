@@ -23,9 +23,9 @@ iced_drop = { version = "0.2.16", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
 libloading = "0.8.9"
 maolan-generate = "0.0.3"
-maolan-engine = "0.0.6"
-maolan-widgets = "0.0.6"
-mixosc = "0.0.1"
+maolan-engine = "0.0.7"
+maolan-widgets = "0.0.7"
+mixosc = "0.0.2"
 midly = "0.5.3"
 ffmpeg-next = "8"
 pitch-detection = "0.3.0"
