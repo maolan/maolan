@@ -35,10 +35,12 @@ use maolan_widgets::{
     piano_roll::PianoRoll,
     vertical_scrollbar::VerticalScrollbar,
 };
+use std::collections::HashMap;
 
 #[derive(Debug)]
 pub struct MIDIEdit {
     state: State,
+    midnam_note_names: HashMap<u8, String>,
 }
 
 pub use crate::consts::widget_piano::{
@@ -47,7 +49,14 @@ pub use crate::consts::widget_piano::{
 
 impl MIDIEdit {
     pub fn new(state: State) -> Self {
-        Self { state }
+        Self {
+            state,
+            midnam_note_names: HashMap::new(),
+        }
+    }
+
+    pub fn set_midnam_note_names(&mut self, names: &HashMap<u8, String>) {
+        self.midnam_note_names = names.clone();
     }
 
     fn zoom_x_to_slider(zoom_x: f32) -> f32 {
@@ -458,22 +467,30 @@ impl MIDIEdit {
             * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
                 * zoom_y)
                 .max(1.0);
-        let midnam_note_names = roll.midnam_note_names.clone();
+        let midnam_note_names = self.midnam_note_names.clone();
+        // Wrap each canvas in a container with a unique id derived from the
+        // note-name count. When the count changes, Iced sees a different id
+        // and recreates the widget instead of reusing the stale one.
         let keyboard = (0..OCTAVES).fold(column![], |col, octave_idx| {
             let octave = (OCTAVES - 1 - octave_idx) as u8;
             let octave_h = piano::octave_note_count(octave) as f32
                 * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
                     * zoom_y)
                     .max(1.0);
+            let names = midnam_note_names.clone();
             col.push(
-                iced::widget::canvas(OctaveKeyboard::new(
-                    octave,
-                    midnam_note_names.clone(),
-                    Message::PianoKeyPressed,
-                    Message::PianoKeyReleased,
-                ))
-                .width(Length::Fixed(KEYBOARD_WIDTH))
-                .height(Length::Fixed(octave_h)),
+                container(
+                    iced::widget::canvas(OctaveKeyboard::new(
+                        octave,
+                        names,
+                        Message::PianoKeyPressed,
+                        Message::PianoKeyReleased,
+                    ))
+                    .width(Length::Fixed(KEYBOARD_WIDTH))
+                    .height(Length::Fixed(octave_h)),
+                )
+                .id(Id::from(format!("kb_{octave}_{}", midnam_note_names.len())))
+                .padding(0),
             )
         });
         let piano_note_keys = keyboard

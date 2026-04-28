@@ -65,20 +65,6 @@ impl Maolan {
             }
         }
         if let Some(closed) = self.clap_ui_host.drain_closed_states().into_iter().next() {
-            let restore_action = if let Some(clip_idx) = closed.clip_idx {
-                Action::ClipClapRestoreState {
-                    track_name: closed.track_name.clone(),
-                    clip_idx,
-                    instance_id: closed.instance_id,
-                    state: closed.state.clone(),
-                }
-            } else {
-                Action::TrackClapRestoreState {
-                    track_name: closed.track_name.clone(),
-                    instance_id: closed.instance_id,
-                    state: closed.state.clone(),
-                }
-            };
             let mut state = self.state.blocking_write();
             if let Some(clip_idx) = closed.clip_idx {
                 if let Some(track) = state
@@ -94,16 +80,12 @@ impl Maolan {
                 {
                     clip.plugin_graph_json = Some(graph_json);
                 }
-                drop(state);
-                return Some(self.send(restore_action));
             } else {
                 state
                     .clap_states_by_track
                     .entry(closed.track_name)
                     .or_default()
                     .insert(closed.plugin_path, closed.state);
-                drop(state);
-                return Some(self.send(restore_action));
             }
         }
         None
@@ -418,13 +400,13 @@ impl Maolan {
                     plugin_path: plugin_path.clone(),
                 });
                 Some(if let Some(clip_idx) = clip_idx {
-                    self.send(Action::ClipClapSnapshotState {
+                    self.send(Action::ClipGetClapProcessor {
                         track_name: track_name.clone(),
                         clip_idx,
                         instance_id,
                     })
                 } else {
-                    self.send(Action::TrackClapSnapshotState {
+                    self.send(Action::TrackGetClapProcessor {
                         track_name: track_name.clone(),
                         instance_id,
                     })

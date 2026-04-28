@@ -1,6 +1,7 @@
 use super::*;
 use crate::consts::widget_piano::PITCH_MAX;
 use maolan_engine::message::PluginGraphNode;
+use std::sync::Arc;
 mod core;
 mod plugins;
 mod response_freeze_meter;
@@ -2844,55 +2845,35 @@ impl Maolan {
                         } => {
                             let state_json =
                                 serde_json::to_value(clap_state).unwrap_or(serde_json::Value::Null);
+                            let mut state = self.state.blocking_write();
+                            state
+                                .clap_states_by_track
+                                .entry(track_name.clone())
+                                .or_default()
+                                .insert(plugin_path.clone(), clap_state.clone());
+                            if let Some((plugins, _)) =
+                                state.plugin_graphs_by_track.get_mut(track_name)
+                                && let Some(plugin) = plugins
+                                    .iter_mut()
+                                    .find(|plugin| plugin.instance_id == *instance_id)
                             {
-                                let mut state = self.state.blocking_write();
-                                state
-                                    .clap_states_by_track
-                                    .entry(track_name.clone())
-                                    .or_default()
-                                    .insert(plugin_path.clone(), clap_state.clone());
-                                if let Some((plugins, _)) =
-                                    state.plugin_graphs_by_track.get_mut(track_name)
-                                    && let Some(plugin) = plugins
-                                        .iter_mut()
-                                        .find(|plugin| plugin.instance_id == *instance_id)
-                                {
-                                    plugin.state = Some(state_json.clone());
-                                }
-                                if state.plugin_graph_clip.is_none()
-                                    && state.plugin_graph_track.as_deref()
-                                        == Some(track_name.as_str())
-                                    && let Some(plugin) = state
-                                        .plugin_graph_plugins
-                                        .iter_mut()
-                                        .find(|plugin| plugin.instance_id == *instance_id)
-                                {
-                                    plugin.state = Some(state_json);
-                                }
+                                plugin.state = Some(state_json.clone());
                             }
-                            if let Some(pending) = self.pending_clap_ui_open.clone()
-                                && pending.clip_idx.is_none()
-                                && pending.track_name == *track_name
-                                && pending.instance_id == *instance_id
-                                && pending.plugin_path == *plugin_path
+                            if state.plugin_graph_clip.is_none()
+                                && state.plugin_graph_track.as_deref() == Some(track_name.as_str())
+                                && let Some(plugin) = state
+                                    .plugin_graph_plugins
+                                    .iter_mut()
+                                    .find(|plugin| plugin.instance_id == *instance_id)
                             {
-                                if let Err(e) = self.clap_ui_host.open_editor(
-                                    track_name,
-                                    None,
-                                    *instance_id,
-                                    &pending.plugin_path,
-                                    Some(clap_state.clone()),
-                                ) {
-                                    self.state.blocking_write().message = e;
-                                }
-                                self.pending_clap_ui_open = None;
+                                plugin.state = Some(state_json);
                             }
                         }
                         Action::ClipClapStateSnapshot {
                             track_name,
                             clip_idx,
                             instance_id,
-                            plugin_path,
+                            plugin_path: _,
                             state: clap_state,
                             ..
                         } => {
@@ -2913,19 +2894,46 @@ impl Maolan {
                             {
                                 clip.plugin_graph_json = Some(graph_json);
                             }
-                            drop(state);
+                        }
+                        Action::TrackClapProcessor {
+                            track_name,
+                            instance_id,
+                            processor,
+                        } => {
+                            if let Some(pending) = self.pending_clap_ui_open.clone()
+                                && pending.clip_idx.is_none()
+                                && pending.track_name == *track_name
+                                && pending.instance_id == *instance_id
+                            {
+                                if let Err(e) = self.clap_ui_host.open_editor(
+                                    track_name,
+                                    None,
+                                    *instance_id,
+                                    &pending.plugin_path,
+                                    processor.clone(),
+                                ) {
+                                    self.state.blocking_write().message = e;
+                                }
+                                self.pending_clap_ui_open = None;
+                            }
+                        }
+                        Action::ClipClapProcessor {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            processor,
+                        } => {
                             if let Some(pending) = self.pending_clap_ui_open.clone()
                                 && pending.clip_idx == Some(*clip_idx)
                                 && pending.track_name == *track_name
                                 && pending.instance_id == *instance_id
-                                && pending.plugin_path == *plugin_path
                             {
                                 if let Err(e) = self.clap_ui_host.open_editor(
                                     track_name,
                                     Some(*clip_idx),
                                     *instance_id,
                                     &pending.plugin_path,
-                                    Some(clap_state.clone()),
+                                    processor.clone(),
                                 ) {
                                     self.state.blocking_write().message = e;
                                 }
@@ -3209,6 +3217,36 @@ impl Maolan {
                             {
                                 piano.midnam_note_names = note_names.clone();
                             }
+                        }
+                        Action::TrackClapNoteNames {
+                            track_name,
+                            note_names,
+                        } => {
+                            eprintln!(
+                                "[daw] TrackClapNoteNames {track_name} n={}",
+                                note_names.len()
+                            );
+                            eprintln!("[daw]   state_ptr={:?}", Arc::as_ptr(&self.state));
+                            let mut state = self.state.blocking_write();
+                            if let Some(piano) = &mut state.piano {
+                                eprintln!(
+                                    "[daw]   piano track_idx={} match={}",
+                                    piano.track_idx,
+                                    piano.track_idx == *track_name
+                                );
+                                if piano.track_idx == *track_name {
+                                    for (note, name) in note_names.iter() {
+                                        piano.midnam_note_names.insert(*note, name.clone());
+                                    }
+                                    eprintln!(
+                                        "[daw]   inserted, new len={}",
+                                        piano.midnam_note_names.len()
+                                    );
+                                }
+                            } else {
+                                eprintln!("[daw]   state.piano is None");
+                            }
+                            self.workspace.set_midi_edit_midnam_note_names(note_names);
                         }
                         #[cfg(all(unix, not(target_os = "macos")))]
                         Action::TrackLv2PluginControls {
@@ -8045,12 +8083,34 @@ impl Maolan {
                 ref track_idx,
                 clip_idx,
             } => {
+                eprintln!("[daw] OpenMidiPiano {track_idx} clip={clip_idx}");
+                {
+                    let state = self.state.blocking_read();
+                    eprintln!(
+                        "[daw]   read lock acquired, piano={}",
+                        state.piano.is_some()
+                    );
+                    if let Some(piano) = &state.piano
+                        && piano.track_idx == *track_idx
+                        && piano.clip_index == clip_idx
+                    {
+                        eprintln!("[daw]   already open, switching view");
+                        drop(state);
+                        {
+                            let mut state = self.state.blocking_write();
+                            state.view = View::Piano;
+                        }
+                        return Task::batch(vec![self.sync_piano_scrollbars()]);
+                    }
+                }
                 let (clip_name, clip_length) = {
                     let state = self.state.blocking_read();
                     let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) else {
+                        eprintln!("[daw]   track not found");
                         return Task::none();
                     };
                     let Some(clip) = track.midi.clips.get(clip_idx) else {
+                        eprintln!("[daw]   clip not found");
                         return Task::none();
                     };
                     (clip.name.clone(), clip.length.max(1))
@@ -8065,8 +8125,10 @@ impl Maolan {
                         clip_path
                     }
                 };
+                eprintln!("[daw]   parsing MIDI: {}", path.display());
                 match Self::parse_midi_clip_for_piano(&path, self.playback_rate_hz) {
                     Ok((notes, controllers, sysexes, parsed_len)) => {
+                        eprintln!("[daw]   parsed OK, notes={}", notes.len());
                         self.midi_clip_previews.insert(
                             (track_idx.clone(), clip_idx),
                             std::sync::Arc::new(notes.clone()),
@@ -8076,8 +8138,10 @@ impl Maolan {
                             clip_idx,
                             clip_name.clone(),
                         ));
+                        eprintln!("[daw]   acquiring write lock...");
                         {
                             let mut state = self.state.blocking_write();
+                            eprintln!("[daw]   write lock acquired, setting piano");
                             state.piano = Some(PianoData {
                                 track_idx: track_idx.clone(),
                                 clip_index: clip_idx,
@@ -8099,17 +8163,19 @@ impl Maolan {
                             state.piano_scroll_y = 0.0;
                             state.view = View::Piano;
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
                         {
-                            return Task::batch(vec![
-                                self.send(Action::TrackGetLv2Midnam {
+                            let mut tasks = vec![
+                                self.send(Action::TrackGetClapNoteNames {
                                     track_name: track_idx.clone(),
                                 }),
                                 self.sync_piano_scrollbars(),
-                            ]);
+                            ];
+                            #[cfg(all(unix, not(target_os = "macos")))]
+                            tasks.push(self.send(Action::TrackGetLv2Midnam {
+                                track_name: track_idx.clone(),
+                            }));
+                            return Task::batch(tasks);
                         }
-                        #[cfg(not(all(unix, not(target_os = "macos"))))]
-                        return self.sync_piano_scrollbars();
                     }
                     Err(e) => {
                         self.state.blocking_write().message =
