@@ -1,7 +1,6 @@
 use super::*;
 use crate::consts::widget_piano::PITCH_MAX;
 use maolan_engine::message::PluginGraphNode;
-use std::sync::Arc;
 mod core;
 mod plugins;
 mod response_freeze_meter;
@@ -3222,29 +3221,13 @@ impl Maolan {
                             track_name,
                             note_names,
                         } => {
-                            eprintln!(
-                                "[daw] TrackClapNoteNames {track_name} n={}",
-                                note_names.len()
-                            );
-                            eprintln!("[daw]   state_ptr={:?}", Arc::as_ptr(&self.state));
                             let mut state = self.state.blocking_write();
-                            if let Some(piano) = &mut state.piano {
-                                eprintln!(
-                                    "[daw]   piano track_idx={} match={}",
-                                    piano.track_idx,
-                                    piano.track_idx == *track_name
-                                );
-                                if piano.track_idx == *track_name {
-                                    for (note, name) in note_names.iter() {
-                                        piano.midnam_note_names.insert(*note, name.clone());
-                                    }
-                                    eprintln!(
-                                        "[daw]   inserted, new len={}",
-                                        piano.midnam_note_names.len()
-                                    );
+                            if let Some(piano) = &mut state.piano
+                                && piano.track_idx == *track_name
+                            {
+                                for (note, name) in note_names.iter() {
+                                    piano.midnam_note_names.insert(*note, name.clone());
                                 }
-                            } else {
-                                eprintln!("[daw]   state.piano is None");
                             }
                             self.workspace.set_midi_edit_midnam_note_names(note_names);
                         }
@@ -8083,18 +8066,12 @@ impl Maolan {
                 ref track_idx,
                 clip_idx,
             } => {
-                eprintln!("[daw] OpenMidiPiano {track_idx} clip={clip_idx}");
                 {
                     let state = self.state.blocking_read();
-                    eprintln!(
-                        "[daw]   read lock acquired, piano={}",
-                        state.piano.is_some()
-                    );
                     if let Some(piano) = &state.piano
                         && piano.track_idx == *track_idx
                         && piano.clip_index == clip_idx
                     {
-                        eprintln!("[daw]   already open, switching view");
                         drop(state);
                         {
                             let mut state = self.state.blocking_write();
@@ -8106,11 +8083,9 @@ impl Maolan {
                 let (clip_name, clip_length) = {
                     let state = self.state.blocking_read();
                     let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) else {
-                        eprintln!("[daw]   track not found");
                         return Task::none();
                     };
                     let Some(clip) = track.midi.clips.get(clip_idx) else {
-                        eprintln!("[daw]   clip not found");
                         return Task::none();
                     };
                     (clip.name.clone(), clip.length.max(1))
@@ -8125,10 +8100,8 @@ impl Maolan {
                         clip_path
                     }
                 };
-                eprintln!("[daw]   parsing MIDI: {}", path.display());
                 match Self::parse_midi_clip_for_piano(&path, self.playback_rate_hz) {
                     Ok((notes, controllers, sysexes, parsed_len)) => {
-                        eprintln!("[daw]   parsed OK, notes={}", notes.len());
                         self.midi_clip_previews.insert(
                             (track_idx.clone(), clip_idx),
                             std::sync::Arc::new(notes.clone()),
@@ -8138,10 +8111,8 @@ impl Maolan {
                             clip_idx,
                             clip_name.clone(),
                         ));
-                        eprintln!("[daw]   acquiring write lock...");
                         {
                             let mut state = self.state.blocking_write();
-                            eprintln!("[daw]   write lock acquired, setting piano");
                             state.piano = Some(PianoData {
                                 track_idx: track_idx.clone(),
                                 clip_index: clip_idx,
