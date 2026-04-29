@@ -66,6 +66,18 @@ impl Maolan {
                 }
                 true
             }
+            Action::TrackTogglePhase(name) => {
+                if let Some(track) = self
+                    .state
+                    .blocking_write()
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.name == *name)
+                {
+                    track.phase_inverted = !track.phase_inverted;
+                }
+                true
+            }
             Action::TrackToggleSolo(name) => {
                 if let Some(track) = self
                     .state

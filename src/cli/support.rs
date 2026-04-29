@@ -335,6 +335,9 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
     push_optional_toggle(actions, track, "muted", || {
         Action::TrackToggleMute(name.clone())
     });
+    push_optional_toggle(actions, track, "phase_inverted", || {
+        Action::TrackTogglePhase(name.clone())
+    });
     push_optional_toggle(actions, track, "soloed", || {
         Action::TrackToggleSolo(name.clone())
     });
@@ -1014,6 +1017,7 @@ mod tests {
                     "balance": -0.25,
                     "armed": true,
                     "muted": false,
+                    "phase_inverted": false,
                     "soloed": true,
                     "input_monitor": true,
                     "disk_monitor": false,
