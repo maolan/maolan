@@ -13,6 +13,7 @@ pub struct Config {
     pub osc_enabled: bool,
     pub default_export_sample_rate_hz: u32,
     pub default_snap_mode: SnapMode,
+    pub default_midi_snap_mode: SnapMode,
     pub default_audio_bit_depth: usize,
 
     pub default_output_device_id: Option<String>,
@@ -29,6 +30,7 @@ impl Default for Config {
             osc_enabled: false,
             default_export_sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ as u32,
             default_snap_mode: SnapMode::Bar,
+            default_midi_snap_mode: SnapMode::Bar,
             default_audio_bit_depth: audio_defaults::BIT_DEPTH,
 
             default_output_device_id: None,

@@ -999,12 +999,15 @@ impl Maolan {
         let Some(session_dir) = self.session_dir.clone() else {
             return Task::none();
         };
-        let mut live = HashMap::<(String, usize), String>::new();
+        let mut live = HashMap::<(String, usize), (String, usize)>::new();
         {
             let state = self.state.blocking_read();
             for track in &state.tracks {
                 for (clip_idx, clip) in track.midi.clips.iter().enumerate() {
-                    live.insert((track.name.clone(), clip_idx), clip.name.clone());
+                    live.insert(
+                        (track.name.clone(), clip_idx),
+                        (clip.name.clone(), clip.start),
+                    );
                 }
             }
         }
@@ -1014,11 +1017,11 @@ impl Maolan {
         self.pending_midi_clip_previews
             .retain(|(track_name, clip_idx, clip_name)| {
                 live.get(&(track_name.clone(), *clip_idx))
-                    .is_some_and(|name| name == clip_name)
+                    .is_some_and(|(name, _)| name == clip_name)
             });
 
         let mut tasks = Vec::new();
-        for ((track_name, clip_idx), clip_name) in live {
+        for ((track_name, clip_idx), (clip_name, clip_start)) in live {
             self.midi_clip_previews
                 .remove(&(track_name.clone(), clip_idx));
             let pending_key = (track_name.clone(), clip_idx, clip_name.clone());
@@ -1038,7 +1041,7 @@ impl Maolan {
                     } else {
                         session_dir.join(&task_clip)
                     };
-                    match Self::parse_midi_clip_for_piano(&path, playback_rate_hz) {
+                    match Self::parse_midi_clip_for_piano(&path, playback_rate_hz, clip_start) {
                         Ok((notes, _, _, _)) => notes,
                         Err(_) => Vec::new(),
                     }

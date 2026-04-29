@@ -232,6 +232,7 @@ struct AppPreferences {
     osc_enabled: bool,
     default_export_sample_rate_hz: u32,
     default_snap_mode: SnapMode,
+    default_midi_snap_mode: SnapMode,
     default_audio_bit_depth: usize,
     default_output_device_id: Option<String>,
     default_input_device_id: Option<String>,
@@ -244,6 +245,7 @@ impl Default for AppPreferences {
             osc_enabled: false,
             default_export_sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ as u32,
             default_snap_mode: SnapMode::Bar,
+            default_midi_snap_mode: SnapMode::Bar,
             default_audio_bit_depth: audio_defaults::BIT_DEPTH,
             default_output_device_id: None,
             default_input_device_id: None,
@@ -425,6 +427,7 @@ pub struct Maolan {
     punch_enabled: bool,
     punch_range_samples: Option<(usize, usize)>,
     snap_mode: SnapMode,
+    midi_snap_mode: SnapMode,
     zoom_visible_bars: f32,
     editor_scroll_origin_samples: f64,
     editor_scroll_x: f32,
@@ -522,6 +525,7 @@ pub struct Maolan {
     prefs_osc_enabled: bool,
     prefs_export_sample_rate_hz: u32,
     prefs_snap_mode: SnapMode,
+    prefs_midi_snap_mode: SnapMode,
     prefs_audio_bit_depth: usize,
     prefs_default_output_device_id: Option<String>,
     prefs_default_input_device_id: Option<String>,
@@ -533,6 +537,7 @@ fn load_preferences() -> AppPreferences {
         osc_enabled: cfg.osc_enabled,
         default_export_sample_rate_hz: cfg.default_export_sample_rate_hz,
         default_snap_mode: cfg.default_snap_mode,
+        default_midi_snap_mode: cfg.default_midi_snap_mode,
         default_audio_bit_depth: cfg.default_audio_bit_depth,
         default_output_device_id: cfg.default_output_device_id,
         default_input_device_id: cfg.default_input_device_id,
@@ -683,6 +688,7 @@ impl Default for Maolan {
             punch_enabled: false,
             punch_range_samples: None,
             snap_mode: prefs.default_snap_mode,
+            midi_snap_mode: prefs.default_midi_snap_mode,
             zoom_visible_bars: 127.0,
             editor_scroll_origin_samples: 0.0,
             editor_scroll_x: 0.0,
@@ -782,6 +788,7 @@ impl Default for Maolan {
             prefs_osc_enabled: prefs.osc_enabled,
             prefs_export_sample_rate_hz: prefs.default_export_sample_rate_hz,
             prefs_snap_mode: prefs.default_snap_mode,
+            prefs_midi_snap_mode: prefs.default_midi_snap_mode,
             prefs_audio_bit_depth: prefs.default_audio_bit_depth,
             prefs_default_output_device_id: prefs.default_output_device_id,
             prefs_default_input_device_id: prefs.default_input_device_id,
@@ -3841,6 +3848,7 @@ impl Maolan {
     fn parse_midi_clip_for_piano(
         path: &Path,
         sample_rate: f64,
+        clip_start: usize,
     ) -> std::io::Result<PianoParseResult> {
         let bytes = fs::read(path)?;
         let smf = Smf::parse(&bytes).map_err(|e| {
@@ -3964,7 +3972,7 @@ impl Maolan {
         notes.sort_by_key(|n| (n.start_sample, n.pitch));
         controllers.sort_by_key(|c| (c.sample, c.controller));
         sysexes.sort_by_key(|s| s.sample);
-        let clip_len = notes
+        let mut clip_len = notes
             .iter()
             .map(|n| n.start_sample.saturating_add(n.length_samples))
             .chain(controllers.iter().map(|c| c.sample))
@@ -3972,6 +3980,31 @@ impl Maolan {
             .max()
             .unwrap_or_else(|| ticks_to_samples(max_tick))
             .max(1);
+
+        // Normalize absolute timeline timestamps to clip-relative coordinates.
+        // Recorded clips used to write absolute samples; imported files are
+        // already relative (start at 0).  We detect absolute files by checking
+        // whether every event is at or after clip_start.
+        let min_sample = notes
+            .iter()
+            .map(|n| n.start_sample)
+            .chain(controllers.iter().map(|c| c.sample))
+            .chain(sysexes.iter().map(|s| s.sample))
+            .min()
+            .unwrap_or(0);
+        if min_sample >= clip_start && clip_start > 0 {
+            for note in &mut notes {
+                note.start_sample = note.start_sample.saturating_sub(clip_start);
+            }
+            for ctrl in &mut controllers {
+                ctrl.sample = ctrl.sample.saturating_sub(clip_start);
+            }
+            for sysex in &mut sysexes {
+                sysex.sample = sysex.sample.saturating_sub(clip_start);
+            }
+            clip_len = clip_len.saturating_sub(clip_start).max(1);
+        }
+
         Ok((notes, controllers, sysexes, clip_len))
     }
 
@@ -5282,11 +5315,23 @@ impl Maolan {
                 .spacing(10)
                 .align_y(iced::Alignment::Center),
                 row![
-                    text("Default snap mode:"),
+                    text("Default clip snap mode:"),
                     pick_list(
                         SNAP_MODE_ALL.to_vec(),
                         Some(self.prefs_snap_mode),
                         Message::PreferencesSnapModeSelected
+                    )
+                    .placeholder("Choose snap mode")
+                    .width(Length::Fixed(220.0)),
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center),
+                row![
+                    text("Default MIDI snap mode:"),
+                    pick_list(
+                        SNAP_MODE_ALL.to_vec(),
+                        Some(self.prefs_midi_snap_mode),
+                        Message::PreferencesMidiSnapModeSelected
                     )
                     .placeholder("Choose snap mode")
                     .width(Length::Fixed(220.0)),
