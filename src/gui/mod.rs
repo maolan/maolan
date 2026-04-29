@@ -396,6 +396,7 @@ pub struct Maolan {
     pitch_correction_undo: Vec<PitchCorrectionHistoryEntry>,
     pitch_correction_redo: Vec<PitchCorrectionHistoryEntry>,
     pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
+    pending_track_midi_editor_view_mode: HashMap<String, crate::message::MidiEditorViewMode>,
     pending_track_freeze_bounce: HashMap<String, PendingTrackFreezeBounce>,
     track_automation_runtime: HashMap<String, TrackAutomationRuntime>,
     touch_automation_overrides:
@@ -658,6 +659,7 @@ impl Default for Maolan {
             pitch_correction_undo: Vec::new(),
             pitch_correction_redo: Vec::new(),
             pending_track_freeze_restore: HashMap::new(),
+            pending_track_midi_editor_view_mode: HashMap::new(),
             pending_track_freeze_bounce: HashMap::new(),
             track_automation_runtime: HashMap::new(),
             touch_automation_overrides: HashMap::new(),
@@ -5873,6 +5875,147 @@ mod tests {
     }
 
     #[test]
+    fn session_save_includes_per_track_midi_editor_view_mode() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root =
+            std::env::temp_dir().join(format!("maolan_midi_view_mode_save_{unique}"));
+
+        let app = Maolan {
+            ..Maolan::default()
+        };
+        {
+            let mut state = app.state.blocking_write();
+            let mut track = crate::state::Track::new("Drums".to_string(), 0.0, 2, 2, 1, 1);
+            track.midi.editor_view_mode = crate::message::MidiEditorViewMode::DrumGrid;
+            state.tracks.push(track);
+        }
+        app.save(session_root.to_string_lossy().to_string())
+            .expect("save session");
+
+        let session_path = session_root.join("session.json");
+        let session: serde_json::Value =
+            serde_json::from_reader(File::open(&session_path).expect("open saved session"))
+                .expect("parse saved session");
+        let tracks = session["tracks"].as_array().expect("tracks array");
+        let drum_track = tracks
+            .iter()
+            .find(|t| t["name"] == "Drums")
+            .expect("drums track");
+        assert_eq!(
+            drum_track["midi"]["editor_view_mode"],
+            serde_json::json!("drumgrid")
+        );
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
+    fn session_load_populates_pending_track_midi_editor_view_mode() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let session_root =
+            std::env::temp_dir().join(format!("maolan_midi_view_mode_load_{unique}"));
+
+        let session = serde_json::json!({
+            "tracks": [{
+                "name": "Drums",
+                "level": 0.0,
+                "balance": 0.0,
+                "armed": false,
+                "muted": false,
+                "phase_inverted": false,
+                "soloed": false,
+                "input_monitor": false,
+                "disk_monitor": true,
+                "frozen": false,
+                "height": 100.0,
+                "audio": { "clips": [], "ins": 2, "outs": 2 },
+                "midi": { "clips": [], "ins": 1, "outs": 1, "editor_view_mode": "drumgrid" },
+                "position": { "x": 0.0, "y": 0.0 },
+                "automation_mode": "read"
+            }],
+            "connections": [],
+            "transport": {
+                "loop_range_samples": null,
+                "loop_enabled": false,
+                "punch_range_samples": null,
+                "punch_enabled": false,
+                "sample_rate_hz": 48000,
+                "tempo": 120.0,
+                "time_signature_num": 4,
+                "time_signature_denom": 4,
+                "tempo_points": [{"sample": 0, "bpm": 120.0}],
+                "time_signature_points": [{"sample": 0, "numerator": 4, "denominator": 4}]
+            },
+            "ui": {
+                "tracks_width": 200.0,
+                "mixer_height": 300.0,
+                "zoom_visible_bars": 8.0,
+                "snap_mode": "bar",
+                "midi_snap_mode": "bar"
+            },
+            "export": {
+                "sample_rate_hz": 48000,
+                "format_wav": true,
+                "format_mp3": false,
+                "format_ogg": false,
+                "format_flac": false,
+                "bit_depth": "int24",
+                "mp3_mode": "cbr",
+                "mp3_bitrate_kbps": 320,
+                "ogg_quality_input": "5",
+                "render_mode": "mixdown",
+                "hw_out_ports": [],
+                "realtime_fallback": false,
+                "normalize": false,
+                "normalize_mode": "peak",
+                "normalize_dbfs_input": "-1.0",
+                "normalize_lufs_input": "-14.0",
+                "normalize_dbtp_input": "-1.0",
+                "normalize_tp_limiter": false,
+                "master_limiter": false,
+                "master_limiter_ceiling_input": "-1.0"
+            },
+            "midi_learn_global": {
+                "play_pause": null,
+                "stop": null,
+                "record_toggle": null
+            }
+        });
+
+        fs::create_dir_all(&session_root).expect("create session dir");
+        let session_path = session_root.join("session.json");
+        serde_json::to_writer_pretty(
+            File::create(&session_path).expect("create session file"),
+            &session,
+        )
+        .expect("write session");
+
+        let mut restored = Maolan {
+            ..Maolan::default()
+        };
+        let _ = restored
+            .load(session_root.to_string_lossy().to_string())
+            .expect("load session");
+
+        assert!(
+            matches!(
+                restored.pending_track_midi_editor_view_mode.get("Drums"),
+                Some(crate::message::MidiEditorViewMode::DrumGrid)
+            ),
+            "expected DrumGrid in pending map, got {:?}",
+            restored.pending_track_midi_editor_view_mode.get("Drums")
+        );
+
+        fs::remove_dir_all(&session_root).expect("cleanup temp session");
+    }
+
+    #[test]
     fn cleanup_targets_include_pitchmap_sidecars_only() {
         assert!(Maolan::is_cleanup_target_rel("audio/clip_pitchmap.txt"));
         assert!(Maolan::is_cleanup_target_rel("audio/clip_pitchmap_001.txt"));
@@ -6745,6 +6888,15 @@ mod tests {
         let _ = app.update(Message::SetSnapMode(SnapMode::Sixteenth));
 
         assert_eq!(app.snap_mode, SnapMode::Sixteenth);
+    }
+
+    #[test]
+    fn set_midi_snap_mode_updates_state() {
+        let mut app = Maolan::default();
+
+        let _ = app.update(Message::SetMidiSnapMode(SnapMode::Beat));
+
+        assert_eq!(app.midi_snap_mode, SnapMode::Beat);
     }
 
     #[test]

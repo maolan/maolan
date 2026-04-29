@@ -545,6 +545,23 @@ pub struct PreparedFreezeClip {
     pub preview_name: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MidiEditorViewMode {
+    #[default]
+    PianoRoll,
+    DrumGrid,
+}
+
+impl fmt::Display for MidiEditorViewMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PianoRoll => write!(f, "Piano"),
+            Self::DrumGrid => write!(f, "Drum"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     None,
@@ -996,7 +1013,18 @@ pub enum Message {
         index: usize,
         sample: usize,
     },
+    DrumNoteSelected(usize),
+    DrumNoteCreate {
+        start_sample: usize,
+        pitch: u8,
+    },
+    DrumNoteDelete(usize),
+    DrumNoteMove {
+        note_index: usize,
+        delta_samples: i64,
+    },
     PianoControllerLaneSelected(PianoControllerLane),
+    MidiEditorViewModeSelected(MidiEditorViewMode),
     PianoControllerKindSelected(u8),
     TrackMidiLaneChannelSelected {
         track_name: String,
@@ -1226,6 +1254,24 @@ mod tests {
     fn snap_sample_drag_negative_delta() {
         let result = SnapMode::Beat.snap_sample_drag(740.0, -10.0, 480.0, 1920.0);
         assert_eq!(result, 960.0);
+    }
+
+    #[test]
+    fn snap_sample_bar_vs_beat_produces_different_results() {
+        // At 120 BPM 4/4, 48kHz: beat = 24000 samples, bar = 96000 samples
+        let beat_snapped = SnapMode::Beat.snap_sample(30_000.0, 24_000.0, 96_000.0);
+        let bar_snapped = SnapMode::Bar.snap_sample(30_000.0, 24_000.0, 96_000.0);
+        // 30000 is closer to beat 1 (24000) than beat 2 (48000)
+        assert_eq!(beat_snapped, 24_000.0);
+        // 30000 is closer to bar 0 (0) than bar 1 (96000)
+        assert_eq!(bar_snapped, 0.0);
+    }
+
+    #[test]
+    fn snap_sample_sixteenth_snaps_to_grid() {
+        let snapped = SnapMode::Sixteenth.snap_sample(7_000.0, 24_000.0, 96_000.0);
+        // 6000 is the nearest sixteenth boundary (24000/4 = 6000)
+        assert_eq!(snapped, 6_000.0);
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::{ffi::c_void, fs::File, os::fd::AsRawFd};
 
 pub(crate) fn discover_freebsd_audio_devices() -> Vec<AudioDeviceOption> {
     let mut devices = discover_sndstat_dsp_devices().unwrap_or_default();
-    devices.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    devices.sort_by_key(|a| a.label.to_lowercase());
     devices.dedup_by(|a, b| a.id == b.id);
     devices
 }
