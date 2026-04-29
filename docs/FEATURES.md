@@ -1,12 +1,13 @@
 # Maolan Features
 
-Last updated: 2026-04-07
+Last updated: 2026-04-30
 
 ## Core DAW Workflow
 - Multi-track audio + MIDI session editing
 - Track selection, reordering, resizing, and rename
 - Session template save/load
 - Track template save/load
+- Group template save/load (save/load an entire track group as a single template)
 - Session save/open/save-as
 - Recent session tracking
 - Session metadata editing:
@@ -101,6 +102,7 @@ Last updated: 2026-04-07
 - Chord generation
 - Legato
 - Velocity shaping
+- MIDI note snapping
 - Configurable scale root / major-minor mode
 - Configurable chord type
 - Configurable groove, humanize, and velocity-shape amounts
@@ -113,7 +115,7 @@ Last updated: 2026-04-07
 - GUI transport shortcuts for rewind-to-start/end, session record arm toggle, and panic
 - CLI transport shortcuts for rewind-to-start/end and panic
 - Toolbar panic button for hardware MIDI outputs (`CC64=0`, `CC120=0`, `CC123=0`)
-- Metronome enable/disable
+- Metronome enable/disable with visual icon
 - Clip playback enable/disable at transport level
 
 ## Freeze / Commit / Flatten
@@ -130,6 +132,7 @@ Last updated: 2026-04-07
   - Solo
   - Input monitor
   - Disk monitor
+  - Phase invert
 - Aux return creation from selected tracks
 - Aux send controls:
   - Level adjust
@@ -141,6 +144,7 @@ Last updated: 2026-04-07
   - Audio
   - MIDI
   - Sidechain / auxiliary plugin ports
+- Plugin window lifecycle and focus management
 
 ## Plugins and Integration
 - CLAP plugin scan/load/unload/state restore/UI
@@ -163,8 +167,8 @@ Last updated: 2026-04-07
   - Loudness
 - Multi-format export in one run:
   - WAV
-  - MP3
-  - OGG (Vorbis)
+  - MP3 (via ffmpeg)
+  - OGG (Vorbis, via ffmpeg)
   - FLAC
 - Codec settings:
   - MP3 mode (CBR/VBR) + bitrate
@@ -172,6 +176,10 @@ Last updated: 2026-04-07
 - Metadata tagging on supported formats:
   - MP3 (ID3 fields used by current encoder path)
   - OGG Vorbis comments
+
+## Control Surface and OSC
+- mixosc integration for OSC-based mixing control
+- Behringer X32 dedicated view
 
 ## AI Audio Generation
 - HeartMuLa text-to-audio generation through `maolan-generate`
@@ -231,8 +239,14 @@ Last updated: 2026-04-07
 - Mapping persistence in session
 - Collision/conflict protection
 
+## Widgets and UI Components
+- `arch_slider` with adjustable arc shape
+- Slider `on_release` option for both horizontal and vertical variants
+- Stretchable ticks and meters that fill available space
+
 ## Platform Notes
 - Linux and FreeBSD builds support CLAP, VST3, and LV2.
+- Windows builds support WSAPI backend, CLAP, and VST3.
 - macOS builds refresh CLAP and VST3 plugin support paths; LV2 is Unix-only in the current codebase.
 - Linux and FreeBSD builds currently force the X11 window backend at startup.
 - FreeBSD roadmap notes still mark MIDI 2.0 as N/A.
