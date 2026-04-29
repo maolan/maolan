@@ -700,6 +700,7 @@ pub enum Message {
     },
     PreferencesSampleRateSelected(u32),
     PreferencesSnapModeSelected(SnapMode),
+    PreferencesMidiSnapModeSelected(SnapMode),
     PreferencesBitDepthSelected(usize),
     PreferencesOscEnabledToggled(bool),
     PreferencesOutputDeviceSelected(PreferencesDeviceOption),
@@ -870,6 +871,7 @@ pub enum Message {
     TimeSignatureDenominatorInputChanged(String),
     TimeSignatureInputCommit,
     SetSnapMode(SnapMode),
+    SetMidiSnapMode(SnapMode),
     RecordFolderSelected(Option<PathBuf>),
 
     SendMessageFinished(Result<(), String>),

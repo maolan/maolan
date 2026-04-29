@@ -144,6 +144,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub loop_range_samples: Option<(usize, usize)>,
     pub punch_range_samples: Option<(usize, usize)>,
     pub snap_mode: SnapMode,
+    pub midi_snap_mode: SnapMode,
     pub samples_per_beat: f64,
     pub zoom_visible_bars: f32,
     pub editor_scroll_x: f32,
@@ -268,6 +269,7 @@ impl Workspace {
             loop_range_samples,
             punch_range_samples,
             snap_mode,
+            midi_snap_mode: _,
             samples_per_beat,
             zoom_visible_bars,
             editor_scroll_x,
@@ -543,6 +545,7 @@ impl Workspace {
             selected_tempo_points,
             selected_time_signature_points,
             timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
+            clip_start_samples: 0,
         }))
         .id(Id::new(WORKSPACE_TEMPO_SCROLL_ID))
         .direction(scrollable::Direction::Horizontal(
@@ -561,6 +564,7 @@ impl Workspace {
             samples_per_beat,
             content_width: editor_content_width,
             timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
+            clip_start_samples: 0,
         }))
         .id(Id::new(WORKSPACE_RULER_SCROLL_ID))
         .direction(scrollable::Direction::Horizontal(
@@ -784,6 +788,7 @@ impl Workspace {
             time_signature,
             tempo_points,
             time_signature_points,
+            clip_start_samples,
             clip_length_samples,
             zoom_x,
         ) = {
@@ -804,6 +809,11 @@ impl Workspace {
                 state
                     .piano
                     .as_ref()
+                    .map(|roll| roll.clip_start_samples)
+                    .unwrap_or(0),
+                state
+                    .piano
+                    .as_ref()
                     .map(|roll| roll.clip_length_samples)
                     .unwrap_or(samples_per_bar.max(1.0) as usize),
                 state.piano_zoom_x,
@@ -814,12 +824,16 @@ impl Workspace {
         let horizontal_beat_pixels = (beat_pixels * horizontal_zoom).max(0.0001);
         let timeline_content_width =
             (clip_length_samples.max(1) as f32 * horizontal_pixels_per_sample).max(1.0);
-        let playhead_x =
-            playhead_samples.map(|sample| (sample as f32 * horizontal_pixels_per_sample).max(0.0));
+        let playhead_x = playhead_samples.map(|sample| {
+            ((sample as f32 - clip_start_samples as f32) * horizontal_pixels_per_sample).max(0.0)
+        });
 
-        let piano_content = self
-            .midi_edit
-            .view(pixels_per_sample, samples_per_bar, playhead_x);
+        let piano_content = self.midi_edit.view(
+            pixels_per_sample,
+            samples_per_bar,
+            playhead_x,
+            args.midi_snap_mode,
+        );
 
         container(
             column![
@@ -847,6 +861,7 @@ impl Workspace {
                         selected_tempo_points,
                         selected_time_signature_points,
                         timeline_left_inset_px: 0.0,
+                        clip_start_samples: 0,
                     })))
                     .id(Id::new(PIANO_TEMPO_SCROLL_ID))
                     .direction(scrollable::Direction::Horizontal(
@@ -880,6 +895,7 @@ impl Workspace {
                         samples_per_beat,
                         content_width: timeline_content_width,
                         timeline_left_inset_px: 0.0,
+                        clip_start_samples,
                     })))
                     .id(Id::new(PIANO_RULER_SCROLL_ID))
                     .direction(scrollable::Direction::Horizontal(
@@ -990,6 +1006,7 @@ impl Workspace {
                         selected_tempo_points,
                         selected_time_signature_points,
                         timeline_left_inset_px: 0.0,
+                        clip_start_samples: 0,
                     })))
                     .id(Id::new(PIANO_TEMPO_SCROLL_ID))
                     .direction(scrollable::Direction::Horizontal(
@@ -1023,6 +1040,7 @@ impl Workspace {
                         samples_per_beat,
                         content_width: timeline_content_width,
                         timeline_left_inset_px: 0.0,
+                        clip_start_samples: 0,
                     })))
                     .id(Id::new(PIANO_RULER_SCROLL_ID))
                     .direction(scrollable::Direction::Horizontal(

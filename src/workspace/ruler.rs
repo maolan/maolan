@@ -63,6 +63,7 @@ struct RulerCanvas {
     snap_mode: SnapMode,
     samples_per_beat: f64,
     timeline_left_inset_px: f32,
+    clip_start_samples: usize,
 }
 
 pub struct RulerViewArgs {
@@ -75,6 +76,7 @@ pub struct RulerViewArgs {
     pub samples_per_beat: f64,
     pub content_width: f32,
     pub timeline_left_inset_px: f32,
+    pub clip_start_samples: usize,
 }
 
 impl Ruler {
@@ -123,6 +125,7 @@ impl Ruler {
             samples_per_beat,
             content_width,
             timeline_left_inset_px,
+            clip_start_samples,
         } = args;
         canvas(RulerCanvas {
             playhead_x,
@@ -133,6 +136,7 @@ impl Ruler {
             snap_mode,
             samples_per_beat,
             timeline_left_inset_px,
+            clip_start_samples,
         })
         .width(Length::Fixed(content_width.max(1.0)))
         .height(Length::Fill)
@@ -586,11 +590,14 @@ impl canvas::Program<Message> for RulerCanvas {
                     );
                 }
 
+                let clip_start_bar = (self.clip_start_samples as f64
+                    / (self.samples_per_beat * BEATS_PER_BAR as f64))
+                    .floor() as usize;
                 for bar in (0..=total_bars).step_by(label_step_bars) {
                     let x = self.timeline_left_inset_px
                         + bar as f32 * BEATS_PER_BAR as f32 * self.beat_pixels;
                     frame.fill_text(Text {
-                        content: bar.to_string(),
+                        content: (bar + clip_start_bar).to_string(),
                         position: Point::new(x + 4.0, 2.0),
                         color: Color::from_rgba(0.86, 0.86, 0.86, 1.0),
                         size: 12.0.into(),
@@ -641,6 +648,7 @@ mod tests {
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
             timeline_left_inset_px: 0.0,
+            clip_start_samples: 0,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 40.0));
         let mut state = RulerState::default();
@@ -694,6 +702,7 @@ mod tests {
             snap_mode: SnapMode::NoSnap,
             samples_per_beat: 4.0,
             timeline_left_inset_px: 0.0,
+            clip_start_samples: 0,
         };
         assert!(canvas.beat_pixels > 0.0);
     }

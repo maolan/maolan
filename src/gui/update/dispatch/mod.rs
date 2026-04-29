@@ -390,6 +390,9 @@ impl Maolan {
             Message::SetSnapMode(mode) => {
                 self.snap_mode = mode;
             }
+            Message::SetMidiSnapMode(mode) => {
+                self.midi_snap_mode = mode;
+            }
             Message::SetClipSnapTargets(ref targets) => {
                 self.clip_snap_targets = targets.clone();
             }
@@ -690,6 +693,23 @@ impl Maolan {
                     let delta_samples = (delta_x / pps) as i64;
                     let delta_pitch = -(delta_y / row_h).round() as i8;
 
+                    let snap_sample = |sample: f64| -> usize {
+                        if matches!(
+                            self.midi_snap_mode,
+                            crate::message::SnapMode::NoSnap | crate::message::SnapMode::Clips
+                        ) {
+                            return sample.max(0.0) as usize;
+                        }
+                        self.midi_snap_mode
+                            .snap_sample_drag(
+                                sample,
+                                delta_samples as f64,
+                                samples_per_beat,
+                                samples_per_bar,
+                            )
+                            .max(0.0) as usize
+                    };
+
                     if copy && let Some(piano) = state.piano.as_ref() {
                         let track_name = piano.track_idx.clone();
                         let clip_idx = piano.clip_index;
@@ -701,7 +721,7 @@ impl Maolan {
                             .enumerate()
                             .map(|(offset, note)| {
                                 let new_start =
-                                    (note.start_sample as i64 + delta_samples).max(0) as usize;
+                                    snap_sample(note.start_sample as f64 + delta_samples as f64);
                                 let new_pitch =
                                     (note.pitch as i16 + delta_pitch as i16).clamp(0, 127) as u8;
                                 (
@@ -734,7 +754,7 @@ impl Maolan {
                         for &note_idx in &dragging.note_indices {
                             if let Some(note) = piano.notes.get_mut(note_idx) {
                                 let new_start =
-                                    (note.start_sample as i64 + delta_samples).max(0) as usize;
+                                    snap_sample(note.start_sample as f64 + delta_samples as f64);
                                 let new_pitch =
                                     (note.pitch as i16 + delta_pitch as i16).clamp(0, 127) as u8;
                                 note.start_sample = new_start;
@@ -1024,6 +1044,23 @@ impl Maolan {
                     let delta_x = resizing.current_point.x - resizing.start_point.x;
                     let delta_samples = (delta_x / pps) as i64;
 
+                    let snap_sample = |sample: f64| -> usize {
+                        if matches!(
+                            self.midi_snap_mode,
+                            crate::message::SnapMode::NoSnap | crate::message::SnapMode::Clips
+                        ) {
+                            return sample.max(0.0) as usize;
+                        }
+                        self.midi_snap_mode
+                            .snap_sample_drag(
+                                sample,
+                                delta_samples as f64,
+                                samples_per_beat,
+                                samples_per_bar,
+                            )
+                            .max(0.0) as usize
+                    };
+
                     let original = &resizing.original_note;
                     let original_end = original
                         .start_sample
@@ -1032,12 +1069,13 @@ impl Maolan {
                     let (new_start, new_len) = if resizing.resize_start {
                         let max_start = original_end.saturating_sub(1) as i64;
                         let start =
-                            (original.start_sample as i64 + delta_samples).clamp(0, max_start);
-                        let start = start as usize;
+                            snap_sample(original.start_sample as f64 + delta_samples as f64)
+                                .min(max_start as usize);
                         (start, original_end.saturating_sub(start).max(1))
                     } else {
                         let min_end = original.start_sample.saturating_add(1) as i64;
-                        let end = (original_end as i64 + delta_samples).max(min_end) as usize;
+                        let end = snap_sample(original_end as f64 + delta_samples as f64)
+                            .max(min_end as usize);
                         (
                             original.start_sample,
                             end.saturating_sub(original.start_sample).max(1),
@@ -1625,7 +1663,7 @@ impl Maolan {
                 let x1 = start.x.max(end.x).max(0.0);
                 let raw_start = (x0 / pps).floor().max(0.0) as usize;
                 let raw_end = (x1 / pps).ceil().max(raw_start as f32 + 1.0) as usize;
-                let snap_interval = match self.snap_mode {
+                let snap_interval = match self.midi_snap_mode {
                     crate::message::SnapMode::NoSnap => 1.0,
                     crate::message::SnapMode::Clips => 1.0,
                     crate::message::SnapMode::Bar => samples_per_bar.max(1.0),
@@ -1637,7 +1675,7 @@ impl Maolan {
                 };
                 let snap_sample = |sample: f32| -> usize {
                     if matches!(
-                        self.snap_mode,
+                        self.midi_snap_mode,
                         crate::message::SnapMode::NoSnap | crate::message::SnapMode::Clips
                     ) {
                         return sample.max(0.0) as usize;
@@ -7784,6 +7822,9 @@ impl Maolan {
             Message::PreferencesSnapModeSelected(mode) => {
                 self.prefs_snap_mode = mode;
             }
+            Message::PreferencesMidiSnapModeSelected(mode) => {
+                self.prefs_midi_snap_mode = mode;
+            }
             Message::PreferencesBitDepthSelected(bits) => {
                 self.prefs_audio_bit_depth = bits;
             }
@@ -7803,6 +7844,7 @@ impl Maolan {
                 cfg.osc_enabled = self.prefs_osc_enabled;
                 cfg.default_export_sample_rate_hz = self.prefs_export_sample_rate_hz;
                 cfg.default_snap_mode = self.prefs_snap_mode;
+                cfg.default_midi_snap_mode = self.prefs_midi_snap_mode;
                 cfg.default_audio_bit_depth = self.prefs_audio_bit_depth;
                 cfg.default_output_device_id = self.prefs_default_output_device_id.clone();
                 cfg.default_input_device_id = self.prefs_default_input_device_id.clone();
@@ -7810,6 +7852,7 @@ impl Maolan {
                     osc_enabled: cfg.osc_enabled,
                     default_export_sample_rate_hz: cfg.default_export_sample_rate_hz,
                     default_snap_mode: cfg.default_snap_mode,
+                    default_midi_snap_mode: cfg.default_midi_snap_mode,
                     default_audio_bit_depth: cfg.default_audio_bit_depth,
                     default_output_device_id: cfg.default_output_device_id.clone(),
                     default_input_device_id: cfg.default_input_device_id.clone(),
@@ -7819,6 +7862,7 @@ impl Maolan {
                     Ok(()) => {
                         self.export_sample_rate_hz = self.prefs_export_sample_rate_hz;
                         self.snap_mode = self.prefs_snap_mode;
+                        self.midi_snap_mode = self.prefs_midi_snap_mode;
                         let task = self.send(Action::SetOscEnabled(self.prefs_osc_enabled));
                         {
                             let mut state = self.state.blocking_write();
@@ -8080,7 +8124,7 @@ impl Maolan {
                         return Task::batch(vec![self.sync_piano_scrollbars()]);
                     }
                 }
-                let (clip_name, clip_length) = {
+                let (clip_name, clip_length, clip_start) = {
                     let state = self.state.blocking_read();
                     let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) else {
                         return Task::none();
@@ -8088,7 +8132,7 @@ impl Maolan {
                     let Some(clip) = track.midi.clips.get(clip_idx) else {
                         return Task::none();
                     };
-                    (clip.name.clone(), clip.length.max(1))
+                    (clip.name.clone(), clip.length.max(1), clip.start)
                 };
                 let path = {
                     let clip_path = std::path::PathBuf::from(&clip_name);
@@ -8100,7 +8144,7 @@ impl Maolan {
                         clip_path
                     }
                 };
-                match Self::parse_midi_clip_for_piano(&path, self.playback_rate_hz) {
+                match Self::parse_midi_clip_for_piano(&path, self.playback_rate_hz, clip_start) {
                     Ok((notes, controllers, sysexes, parsed_len)) => {
                         self.midi_clip_previews.insert(
                             (track_idx.clone(), clip_idx),
@@ -8116,6 +8160,7 @@ impl Maolan {
                             state.piano = Some(PianoData {
                                 track_idx: track_idx.clone(),
                                 clip_index: clip_idx,
+                                clip_start_samples: clip_start,
                                 clip_length_samples: parsed_len.max(clip_length),
                                 notes,
                                 controllers,

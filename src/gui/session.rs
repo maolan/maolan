@@ -242,6 +242,8 @@ impl Maolan {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
                 "zoom_visible_bars": self.zoom_visible_bars,
+                "snap_mode": self.snap_mode,
+                "midi_snap_mode": self.midi_snap_mode,
             },
             "export": {
                 "sample_rate_hz": self.export_sample_rate_hz,
@@ -767,6 +769,8 @@ impl Maolan {
                 "tracks_width": tracks_width,
                 "mixer_height": mixer_height,
                 "zoom_visible_bars": self.zoom_visible_bars,
+                "snap_mode": self.snap_mode,
+                "midi_snap_mode": self.midi_snap_mode,
             },
             "export": {
                 "sample_rate_hz": self.export_sample_rate_hz,
@@ -1267,6 +1271,20 @@ impl Maolan {
                 )
             })
             .unwrap_or(self.zoom_visible_bars);
+        if let Some(_mode) = session["ui"]["snap_mode"].as_str()
+            && let Ok(mode) = serde_json::from_value::<crate::message::SnapMode>(
+                session["ui"]["snap_mode"].clone(),
+            )
+        {
+            self.snap_mode = mode;
+        }
+        if let Some(_mode) = session["ui"]["midi_snap_mode"].as_str()
+            && let Ok(mode) = serde_json::from_value::<crate::message::SnapMode>(
+                session["ui"]["midi_snap_mode"].clone(),
+            )
+        {
+            self.midi_snap_mode = mode;
+        }
 
         if let Some(arr) = session["tracks"].as_array() {
             for track in arr {

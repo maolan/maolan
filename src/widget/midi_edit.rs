@@ -134,6 +134,7 @@ impl MIDIEdit {
         pixels_per_sample: f32,
         samples_per_bar: f32,
         playhead_x: Option<f32>,
+        midi_snap_mode: crate::message::SnapMode,
     ) -> Element<'_, Message> {
         let state = self.state.blocking_read();
         let zoom_x = state.piano_zoom_x;
@@ -782,6 +783,16 @@ impl MIDIEdit {
         let edit_tools_strip = container(
             column![
                 text("MIDI Tools").size(12),
+                row![
+                    text("Snap").size(10),
+                    pick_list(
+                        crate::consts::message_lists::SNAP_MODE_ALL.to_vec(),
+                        Some(midi_snap_mode),
+                        Message::SetMidiSnapMode
+                    )
+                    .width(Length::Fixed(80.0)),
+                ]
+                .spacing(4),
                 row![
                     button(text("Scale").size(11)).on_press(Message::PianoScaleSelectedNotes),
                     pick_list(

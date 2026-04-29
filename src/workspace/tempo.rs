@@ -95,6 +95,7 @@ struct TempoCanvas {
     selected_tempo_points: Vec<usize>,
     selected_time_signature_points: Vec<usize>,
     timeline_left_inset_px: f32,
+    clip_start_samples: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +116,7 @@ pub struct TempoViewArgs {
     pub selected_tempo_points: Vec<usize>,
     pub selected_time_signature_points: Vec<usize>,
     pub timeline_left_inset_px: f32,
+    pub clip_start_samples: usize,
 }
 
 impl Tempo {
@@ -165,6 +167,7 @@ impl Tempo {
             selected_tempo_points: args.selected_tempo_points,
             selected_time_signature_points: args.selected_time_signature_points,
             timeline_left_inset_px: args.timeline_left_inset_px,
+            clip_start_samples: args.clip_start_samples,
         })
         .width(Length::Fixed(args.content_width.max(1.0)))
         .height(Length::Fill)
@@ -890,7 +893,7 @@ impl canvas::Program<Message> for TempoCanvas {
             .draw(renderer, bounds.size(), |frame: &mut Frame| {
                 let sample_to_x = |sample: usize| {
                     timeline_sample_to_x(
-                        sample,
+                        sample.saturating_sub(self.clip_start_samples),
                         self.pixels_per_sample,
                         self.timeline_left_inset_px,
                     )
@@ -1283,6 +1286,7 @@ mod tests {
             selected_tempo_points: Vec::new(),
             selected_time_signature_points: Vec::new(),
             timeline_left_inset_px: 0.0,
+            clip_start_samples: 0,
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
         let mut state = TempoState::default();

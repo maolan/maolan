@@ -490,6 +490,7 @@ mod tests {
             data.piano = Some(crate::state::PianoData {
                 track_idx: "Track".to_string(),
                 clip_index: 0,
+                clip_start_samples: 0,
                 clip_length_samples: 256,
                 notes: vec![note],
                 controllers: Vec::new(),

@@ -358,6 +358,7 @@ pub struct TimeSignaturePoint {
 pub struct PianoData {
     pub track_idx: String,
     pub clip_index: usize,
+    pub clip_start_samples: usize,
     pub clip_length_samples: usize,
     pub notes: Vec<PianoNote>,
     pub controllers: Vec<PianoControllerPoint>,
