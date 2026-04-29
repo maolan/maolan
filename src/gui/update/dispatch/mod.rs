@@ -316,6 +316,7 @@ impl Maolan {
                 | Message::TrackAutomationToggle { .. }
                 | Message::TrackAutomationCycleMode { .. }
                 | Message::TrackTemplateSaveShow(_)
+                | Message::TrackGroupTemplateSaveShow(_)
                 | Message::TrackFreezeToggle { .. }
                 | Message::TrackFreezeFlatten { .. }
                 | Message::TrackSetVcaMaster { .. }
@@ -328,6 +329,7 @@ impl Maolan {
             Message::Show(ref show) => return self.handle_show_message(show),
             Message::AddTrack(crate::message::AddTrack::Submit)
             | Message::AddTrackFromTemplate { .. }
+            | Message::AddGroupFromTemplate { .. }
             | Message::NewFromTemplate(_)
             | Message::NewSession
             | Message::Request(_)
@@ -5195,6 +5197,54 @@ impl Maolan {
                 self.state.blocking_write().track_template_save_dialog = None;
                 self.modal = None;
             }
+            Message::TrackGroupTemplateSaveShow(ref track_name) => {
+                let state = self.state.blocking_read();
+                let group_name = state
+                    .tracks
+                    .iter()
+                    .find(|t| t.name == *track_name)
+                    .and_then(|t| t.vca_master.clone())
+                    .unwrap_or_default();
+                drop(state);
+                let mut state = self.state.blocking_write();
+                state.track_group_template_save_dialog =
+                    Some(crate::state::TrackGroupTemplateSaveDialog {
+                        group_name,
+                        name: String::new(),
+                    });
+                drop(state);
+                self.modal = Some(Show::SaveTemplateAs);
+            }
+            Message::TrackGroupTemplateSaveInput(_) => {
+                self.track_group_template_save.update(&message);
+            }
+            Message::TrackGroupTemplateSaveConfirm => {
+                let dialog = self
+                    .state
+                    .blocking_read()
+                    .track_group_template_save_dialog
+                    .clone();
+                let Some(dialog) = dialog else {
+                    return Task::none();
+                };
+
+                let name = dialog.name.trim().to_string();
+                if name.is_empty() {
+                    return Task::none();
+                }
+
+                self.state.blocking_write().track_group_template_save_dialog = None;
+                self.modal = None;
+
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                let template_path = format!("{}/.config/maolan/group_templates/{}", home, name);
+
+                return self.save_group_as_template(&dialog.group_name, template_path);
+            }
+            Message::TrackGroupTemplateSaveCancel => {
+                self.state.blocking_write().track_group_template_save_dialog = None;
+                self.modal = None;
+            }
             Message::TrackContextMenuHover {
                 ref track_name,
                 position,
@@ -8117,6 +8167,10 @@ impl Maolan {
             }
             Message::TrackTemplatesLoaded(ref templates) => {
                 self.add_track.set_available_templates(templates.clone());
+            }
+            Message::GroupTemplatesLoaded(ref templates) => {
+                self.add_track
+                    .set_available_group_templates(templates.clone());
             }
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             Message::PreferencesDevicesLoaded {

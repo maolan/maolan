@@ -1168,6 +1168,10 @@ pub enum Message {
     TrackTemplateSaveInput(String),
     TrackTemplateSaveConfirm,
     TrackTemplateSaveCancel,
+    TrackGroupTemplateSaveShow(String),
+    TrackGroupTemplateSaveInput(String),
+    TrackGroupTemplateSaveConfirm,
+    TrackGroupTemplateSaveCancel,
     TrackContextMenuToggle(String),
 
     TemplateSaveInput(String),
@@ -1185,6 +1189,12 @@ pub enum Message {
         audio_outs: usize,
         midi_outs: usize,
     },
+    AddGroupFromTemplate {
+        base_name: String,
+        template: String,
+    },
+
+    GroupTemplatesLoaded(Vec<String>),
 
     Undo,
     Redo,

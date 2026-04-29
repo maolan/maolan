@@ -37,6 +37,10 @@ impl Maolan {
                     .push((name.clone(), template.clone()));
                 task
             }
+            Message::AddGroupFromTemplate {
+                ref base_name,
+                ref template,
+            } => self.load_group_template(base_name.clone(), template.clone()),
             Message::NewFromTemplate(ref template_name) => {
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
                 let template_path = format!(

@@ -328,6 +328,12 @@ pub struct TrackTemplateSaveDialog {
 }
 
 #[derive(Debug, Clone)]
+pub struct TrackGroupTemplateSaveDialog {
+    pub group_name: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct PluginGraphClipTarget {
     pub track_name: String,
     pub clip_idx: usize,
@@ -529,6 +535,7 @@ pub struct StateData {
     pub track_rename_dialog: Option<TrackRenameDialog>,
     pub track_group_dialog: Option<TrackGroupDialog>,
     pub track_template_save_dialog: Option<TrackTemplateSaveDialog>,
+    pub track_group_template_save_dialog: Option<TrackGroupTemplateSaveDialog>,
     pub track_marker_dialog: Option<TrackMarkerDialog>,
     pub template_save_dialog: Option<TemplateSaveDialog>,
     pub pending_track_template_loads: Vec<(String, String)>, // [(track_name, template_name)]
@@ -576,6 +583,7 @@ pub struct StateData {
     pub session_track_number: String,
     pub session_genre: String,
     pub available_templates: Vec<String>,
+    pub available_group_templates: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -706,6 +714,7 @@ impl Default for StateData {
             track_rename_dialog: None,
             track_group_dialog: None,
             track_template_save_dialog: None,
+            track_group_template_save_dialog: None,
             track_marker_dialog: None,
             template_save_dialog: None,
             pending_track_template_loads: Vec::new(),
@@ -760,6 +769,7 @@ impl Default for StateData {
             session_track_number: String::new(),
             session_genre: String::new(),
             available_templates: vec![],
+            available_group_templates: vec![],
         }
     }
 }

@@ -21,6 +21,7 @@ mod widget;
 mod workspace;
 
 pub use track::group as track_group;
+pub use track::group_template_save as track_group_template_save;
 pub use track::marker as track_marker;
 pub use track::rename as track_rename;
 pub use track::template_save as track_template_save;

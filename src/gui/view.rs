@@ -167,6 +167,9 @@ impl Maolan {
             if state.track_template_save_dialog.is_some() {
                 return self.wrap_with_log_window(self.track_template_save.view());
             }
+            if state.track_group_template_save_dialog.is_some() {
+                return self.wrap_with_log_window(self.track_group_template_save.view());
+            }
             if state.template_save_dialog.is_some() {
                 return self.wrap_with_log_window(self.template_save.view());
             }

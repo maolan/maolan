@@ -15,7 +15,9 @@ pub struct AddTrackView {
     midi_ins: usize,
     midi_outs: usize,
     available_templates: Vec<String>,
+    available_group_templates: Vec<String>,
     selected_template: Option<String>,
+    selected_template_is_group: bool,
 }
 
 impl AddTrackView {
@@ -40,6 +42,14 @@ impl AddTrackView {
             .selected_template
             .clone()
             .unwrap_or_else(|| "empty".to_string());
+
+        if self.selected_template_is_group {
+            return vec![Message::AddGroupFromTemplate {
+                base_name: base_name.to_string(),
+                template: template_name,
+            }];
+        }
+
         let count = self.count.max(1);
 
         (0..count)
@@ -75,6 +85,10 @@ impl AddTrackView {
         self.available_templates = templates;
     }
 
+    pub fn set_available_group_templates(&mut self, templates: Vec<String>) {
+        self.available_group_templates = templates;
+    }
+
     fn load_template_config(template_name: &str) -> Option<(usize, usize, usize, usize)> {
         use std::fs::File;
         use std::io::BufReader;
@@ -101,6 +115,24 @@ impl AddTrackView {
         Some((audio_ins, audio_outs, midi_ins, midi_outs))
     }
 
+    fn load_group_template_config(template_name: &str) -> Option<usize> {
+        use std::fs::File;
+        use std::io::BufReader;
+
+        let home = std::env::var("HOME").ok()?;
+        let template_path = format!(
+            "{}/.config/maolan/group_templates/{}/group.json",
+            home, template_name
+        );
+
+        let file = File::open(template_path).ok()?;
+        let reader = BufReader::new(file);
+        let json: serde_json::Value = serde_json::from_reader(reader).ok()?;
+
+        let tracks = json.get("tracks")?.as_array()?;
+        Some(tracks.len())
+    }
+
     pub fn update(&mut self, message: &Message) {
         if let Message::AddTrack(a) = message {
             match a {
@@ -125,6 +157,7 @@ impl AddTrackView {
                 AddTrack::TemplateSelected(template) => {
                     if template == "empty" {
                         self.selected_template = Some(template.clone());
+                        self.selected_template_is_group = false;
                         // Reset to defaults when empty is selected
                         self.audio_ins = 1;
                         self.audio_outs = 1;
@@ -132,14 +165,17 @@ impl AddTrackView {
                         self.midi_outs = 0;
                     } else {
                         self.selected_template = Some(template.clone());
-                        // Load template to get ins/outs
+                        // Try track template first
                         if let Some((audio_ins, audio_outs, midi_ins, midi_outs)) =
                             Self::load_template_config(template)
                         {
+                            self.selected_template_is_group = false;
                             self.audio_ins = audio_ins;
                             self.audio_outs = audio_outs;
                             self.midi_ins = midi_ins;
                             self.midi_outs = midi_outs;
+                        } else if Self::load_group_template_config(template).is_some() {
+                            self.selected_template_is_group = true;
                         }
                     }
                 }
@@ -159,17 +195,31 @@ impl AddTrackView {
         // Build template options with "empty" as first option
         let mut template_options = vec!["empty".to_string()];
         template_options.extend(self.available_templates.clone());
+        for group in &self.available_group_templates {
+            template_options.push(format!("{} (group)", group));
+        }
 
         let selected_display = self.selected_template.as_deref().unwrap_or("empty");
         let is_empty_template = selected_display == "empty";
+        let is_group_template = self.selected_template_is_group;
 
         let mut col = column![
             row![
                 text("Template:"),
                 pick_list(
                     template_options,
-                    Some(selected_display.to_string()),
-                    |template| Message::AddTrack(AddTrack::TemplateSelected(template))
+                    Some(if is_group_template {
+                        format!("{} (group)", selected_display)
+                    } else {
+                        selected_display.to_string()
+                    }),
+                    |template| {
+                        let stripped = template
+                            .strip_suffix(" (group)")
+                            .map(|s| s.to_string())
+                            .unwrap_or(template);
+                        Message::AddTrack(AddTrack::TemplateSelected(stripped))
+                    }
                 )
                 .width(Length::Fixed(200.0)),
             ]
@@ -183,14 +233,19 @@ impl AddTrackView {
                     .width(Length::Fixed(200.0)),
             ]
             .spacing(10),
-            row![
-                text("Tracks:"),
-                number_input(&self.count, 1..=128, |count: usize| {
-                    Message::AddTrack(AddTrack::Count(count))
-                })
-            ]
-            .spacing(10),
         ];
+
+        if !is_group_template {
+            col = col.push(
+                row![
+                    text("Tracks:"),
+                    number_input(&self.count, 1..=128, |count: usize| {
+                        Message::AddTrack(AddTrack::Count(count))
+                    })
+                ]
+                .spacing(10),
+            );
+        }
 
         // Only show ins/outs inputs if "empty" template is selected
         if is_empty_template {
@@ -230,8 +285,12 @@ impl AddTrackView {
                 ]
                 .spacing(10),
             );
+        } else if is_group_template {
+            let track_count = Self::load_group_template_config(selected_display).unwrap_or(0);
+            col = col
+                .push(row![text(format!("Group template: {} tracks", track_count)),].spacing(10));
         } else {
-            // Show read-only information when a template is selected
+            // Show read-only information when a track template is selected
             col = col.push(
                 row![text(format!(
                     "Audio: {} in / {} out, MIDI: {} in / {} out",
@@ -277,7 +336,9 @@ impl Default for AddTrackView {
             midi_outs: 0,
             name: "".to_string(),
             available_templates: vec![],
+            available_group_templates: vec![],
             selected_template: Some("empty".to_string()),
+            selected_template_is_group: false,
         }
     }
 }
@@ -340,6 +401,7 @@ mod tests {
         assert_eq!(view.audio_outs, 1);
         assert_eq!(view.midi_ins, 0);
         assert_eq!(view.midi_outs, 0);
+        assert!(!view.selected_template_is_group);
     }
 
     #[test]
@@ -384,6 +446,64 @@ mod tests {
         assert_eq!(view.audio_outs, 3);
         assert_eq!(view.midi_ins, 4);
         assert_eq!(view.midi_outs, 5);
+        assert!(!view.selected_template_is_group);
+    }
+
+    #[test]
+    fn update_selecting_group_template_sets_flag() {
+        let _guard = ENV_GUARD.lock().expect("lock env guard");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_home = std::env::temp_dir().join(format!("maolan_add_track_test_{unique}"));
+        let template_dir = temp_home.join(".config/maolan/group_templates/Drums");
+        fs::create_dir_all(&template_dir).expect("create template dir");
+        fs::write(
+            template_dir.join("group.json"),
+            r#"{"tracks":[{"track":{"name":"Kick","audio":{"ins":1,"outs":1},"midi":{"ins":0,"outs":0}}}]}"#,
+        )
+        .expect("write group template file");
+
+        let old_home = std::env::var("HOME").ok();
+        unsafe {
+            std::env::set_var("HOME", &temp_home);
+        }
+
+        let mut view = AddTrackView::default();
+        view.update(&Message::AddTrack(AddTrack::TemplateSelected(
+            "Drums".to_string(),
+        )));
+
+        if let Some(home) = old_home {
+            unsafe {
+                std::env::set_var("HOME", home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+        let _ = fs::remove_dir_all(&temp_home);
+
+        assert_eq!(view.selected_template.as_deref(), Some("Drums"));
+        assert!(view.selected_template_is_group);
+    }
+
+    #[test]
+    fn create_messages_returns_group_message_for_group_template() {
+        let view = AddTrackView {
+            name: "MyDrums".to_string(),
+            selected_template: Some("Drums".to_string()),
+            selected_template_is_group: true,
+            ..Default::default()
+        };
+
+        let messages = view.create_messages();
+        assert_eq!(messages.len(), 1);
+        assert!(
+            matches!(&messages[0], Message::AddGroupFromTemplate { base_name, template } if base_name == "MyDrums" && template == "Drums")
+        );
     }
 
     #[test]
@@ -395,6 +515,7 @@ mod tests {
         assert_eq!(view.name, "");
         assert_eq!(view.count, 1);
         assert_eq!(view.selected_template.as_deref(), Some("empty"));
+        assert!(!view.selected_template_is_group);
     }
 
     #[test]
@@ -406,6 +527,7 @@ mod tests {
         assert_eq!(view.audio_outs, 1);
         assert_eq!(view.midi_ins, 0);
         assert_eq!(view.midi_outs, 0);
+        assert!(!view.selected_template_is_group);
     }
 
     #[test]
@@ -441,6 +563,8 @@ mod tests {
     fn set_available_templates_updates_list() {
         let mut view = AddTrackView::default();
         view.set_available_templates(vec!["Template1".to_string(), "Template2".to_string()]);
+        view.set_available_group_templates(vec!["Group1".to_string()]);
         assert_eq!(view.available_templates.len(), 2);
+        assert_eq!(view.available_group_templates.len(), 1);
     }
 }
