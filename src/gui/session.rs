@@ -1419,6 +1419,13 @@ impl Maolan {
                         "'soloed' is not boolean",
                     ));
                 }
+                if track
+                    .get("phase_inverted")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    restore_actions.push(Action::TrackTogglePhase(name.clone()));
+                }
                 if let Some(value) = track["input_monitor"].as_bool() {
                     if value {
                         restore_actions.push(Action::TrackToggleInputMonitor(name.clone()));

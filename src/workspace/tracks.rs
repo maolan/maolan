@@ -38,6 +38,7 @@ struct TrackViewData {
     armed: bool,
     frozen: bool,
     muted: bool,
+    phase_inverted: bool,
     soloed: bool,
     input_monitor: bool,
     disk_monitor: bool,
@@ -378,6 +379,7 @@ impl Tracks {
         track.armed.hash(&mut hasher);
         track.frozen.hash(&mut hasher);
         track.muted.hash(&mut hasher);
+        track.phase_inverted.hash(&mut hasher);
         track.soloed.hash(&mut hasher);
         track.input_monitor.hash(&mut hasher);
         track.disk_monitor.hash(&mut hasher);
@@ -590,6 +592,20 @@ impl Tracks {
             .padding(0)
             .style(move |theme, _state| style::mute::style(theme, track.muted))
             .on_press(Message::Request(Action::TrackToggleMute(
+                track.name.clone()
+            ))),
+            button(
+                container(text("Ø").size(13))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill)
+            )
+            .width(Length::Fixed(22.0))
+            .height(Length::Fixed(22.0))
+            .padding(0)
+            .style(move |theme, _state| style::phase_invert::style(theme, track.phase_inverted))
+            .on_press(Message::Request(Action::TrackTogglePhase(
                 track.name.clone()
             ))),
             button(
@@ -918,6 +934,7 @@ impl Tracks {
                             armed: track.armed,
                             frozen: track.frozen,
                             muted: track.muted,
+                            phase_inverted: track.phase_inverted,
                             soloed: track.soloed,
                             input_monitor: track.input_monitor,
                             disk_monitor: track.disk_monitor,

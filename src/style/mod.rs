@@ -3,6 +3,7 @@ pub mod disk;
 pub mod input;
 pub mod mixer;
 pub mod mute;
+pub mod phase_invert;
 pub mod solo;
 
 use crate::consts::APP_BACKGROUND_COLOR;
