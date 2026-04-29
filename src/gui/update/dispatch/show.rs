@@ -66,10 +66,15 @@ impl Maolan {
             Show::AddTrack => {
                 self.modal = Some(Show::AddTrack);
                 self.add_track.set_available_templates(Vec::new());
+                self.add_track.set_available_group_templates(Vec::new());
                 Task::batch(vec![
                     Task::perform(
                         async { crate::gui::scan_track_templates() },
                         Message::TrackTemplatesLoaded,
+                    ),
+                    Task::perform(
+                        async { crate::gui::scan_group_templates() },
+                        Message::GroupTemplatesLoaded,
                     ),
                     iced::widget::operation::focus(crate::add_track::AddTrackView::name_input_id()),
                 ])

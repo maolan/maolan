@@ -33,8 +33,8 @@ use crate::{
         PianoControllerPoint, PianoNote, PianoSysExPoint, PitchCorrectionData,
         PitchCorrectionPoint, State, StateData,
     },
-    template_save, toolbar, track_group, track_marker, track_rename, track_template_save,
-    workspace,
+    template_save, toolbar, track_group, track_group_template_save, track_marker, track_rename,
+    track_template_save, workspace,
 };
 use ebur128::{EbuR128, Mode as LoudnessMode};
 use ffmpeg_next::{
@@ -373,6 +373,7 @@ pub struct Maolan {
     track_group: track_group::TrackGroupView,
     track_marker: track_marker::TrackMarkerView,
     track_template_save: track_template_save::TrackTemplateSaveView,
+    track_group_template_save: track_group_template_save::TrackGroupTemplateSaveView,
     template_save: template_save::TemplateSaveView,
     #[cfg(all(unix, not(target_os = "macos")))]
     plugin_filter: String,
@@ -588,6 +589,27 @@ fn scan_track_templates() -> Vec<String> {
         .collect()
 }
 
+fn scan_group_templates() -> Vec<String> {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let templates_dir = format!("{}/.config/maolan/group_templates", home);
+
+    let Ok(entries) = std::fs::read_dir(&templates_dir) else {
+        return vec![];
+    };
+
+    entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.is_dir() {
+                path.file_name()?.to_str().map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 impl Default for Maolan {
     fn default() -> Self {
         let prefs = load_preferences();
@@ -636,6 +658,9 @@ impl Default for Maolan {
             track_group: track_group::TrackGroupView::new(state.clone()),
             track_marker: track_marker::TrackMarkerView::new(state.clone()),
             track_template_save: track_template_save::TrackTemplateSaveView::new(state.clone()),
+            track_group_template_save: track_group_template_save::TrackGroupTemplateSaveView::new(
+                state.clone(),
+            ),
             template_save: template_save::TemplateSaveView::new(state.clone()),
             #[cfg(all(unix, not(target_os = "macos")))]
             plugin_filter: String::new(),

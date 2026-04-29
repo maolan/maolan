@@ -584,6 +584,409 @@ impl Maolan {
         }
     }
 
+    pub(super) fn save_group_as_template(&self, group_name: &str, path: String) -> Task<Message> {
+        use tracing::info;
+
+        let result = (|| -> std::io::Result<()> {
+            info!("Saving group template to: {}", path);
+            let template_root = PathBuf::from(&path);
+            fs::create_dir_all(&path)?;
+            fs::create_dir_all(template_root.join("plugins"))?;
+            info!("Created group template directories in: {}", path);
+
+            let mut p = template_root.clone();
+            p.push("group.json");
+            let file = File::create(&p)?;
+
+            let state = self.state.blocking_read();
+
+            let group_tracks: Vec<_> = state
+                .tracks
+                .iter()
+                .filter(|t| t.vca_master.as_deref() == Some(group_name))
+                .collect();
+
+            if group_tracks.is_empty() {
+                return Err(io::Error::new(io::ErrorKind::NotFound, "Group is empty"));
+            }
+
+            let group_track_names: std::collections::HashSet<&str> =
+                group_tracks.iter().map(|t| t.name.as_str()).collect();
+
+            let mut tracks_json = Vec::new();
+            for track in group_tracks {
+                let mut track_json = serde_json::to_value(track).map_err(io::Error::other)?;
+                if let Some(audio) = track_json.get_mut("audio").and_then(Value::as_object_mut) {
+                    audio.insert("clips".to_string(), Value::Array(vec![]));
+                }
+                if let Some(midi) = track_json.get_mut("midi").and_then(Value::as_object_mut) {
+                    midi.insert("clips".to_string(), Value::Array(vec![]));
+                }
+                if let Some(obj) = track_json.as_object_mut() {
+                    obj.insert("vca_master".to_string(), Value::Null);
+                    obj.insert("frozen".to_string(), Value::Bool(false));
+                    obj.insert("frozen_audio_backup".to_string(), Value::Array(vec![]));
+                    obj.insert("frozen_midi_backup".to_string(), Value::Array(vec![]));
+                    obj.insert("frozen_render_clip".to_string(), Value::Null);
+                }
+
+                let graph = {
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        if let Some((plugins, connections)) =
+                            state.plugin_graphs_by_track.get(&track.name)
+                        {
+                            let id_to_index: std::collections::HashMap<usize, usize> = plugins
+                                .iter()
+                                .enumerate()
+                                .map(|(idx, p)| (p.instance_id, idx))
+                                .collect();
+                            let plugins_json: Vec<Value> = plugins
+                                .iter()
+                                .map(|p| {
+                                    let state_json = p.state.clone().unwrap_or(Value::Null);
+                                    json!({"format": p.format, "uri": p.uri, "state": state_json})
+                                })
+                                .collect();
+                            let conns_json: Vec<Value> = connections
+                                .iter()
+                                .filter_map(|c| {
+                                    let from_node =
+                                        Self::plugin_node_to_json(&c.from_node, &id_to_index)?;
+                                    let to_node =
+                                        Self::plugin_node_to_json(&c.to_node, &id_to_index)?;
+                                    Some(json!({
+                                        "from_node": from_node,
+                                        "from_port": c.from_port,
+                                        "to_node": to_node,
+                                        "to_port": c.to_port,
+                                        "kind": Self::kind_to_json(c.kind),
+                                    }))
+                                })
+                                .collect();
+                            json!({
+                                "plugins": plugins_json,
+                                "connections": conns_json,
+                            })
+                        } else {
+                            Value::Null
+                        }
+                    }
+                    #[cfg(target_os = "macos")]
+                    {
+                        Value::Null
+                    }
+                };
+
+                tracks_json.push(json!({
+                    "track": track_json,
+                    "graph": graph,
+                }));
+            }
+
+            let connections: Vec<&crate::state::Connection> = state
+                .connections
+                .iter()
+                .filter(|c| {
+                    group_track_names.contains(c.from_track.as_str())
+                        && group_track_names.contains(c.to_track.as_str())
+                })
+                .collect();
+
+            let result = json!({
+                "group_name": group_name,
+                "tracks": tracks_json,
+                "connections": connections,
+            });
+
+            serde_json::to_writer_pretty(file, &result)?;
+            info!("Group template saved successfully to: {}", path);
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            Task::done(Message::Response(Err(format!(
+                "Failed to save group template: {}",
+                e
+            ))))
+        } else {
+            Task::done(Message::None)
+        }
+    }
+
+    fn track_template_actions_from_json(
+        track_name: &str,
+        _track_json: &Value,
+        graph_json: Option<&Value>,
+    ) -> Vec<Action> {
+        let mut actions = vec![];
+
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if let Some(graph) = graph_json.and_then(|g| g.as_object()) {
+            let mut runtime_nodes = Vec::new();
+            let mut next_lv2_instance_id = 0usize;
+            let mut next_clap_instance_id = 0usize;
+
+            if let Some(plugins) = graph.get("plugins").and_then(|p| p.as_array()) {
+                for plugin in plugins {
+                    if let Some(uri) = plugin.get("uri").and_then(|u| u.as_str()) {
+                        match plugin.get("format").and_then(Value::as_str) {
+                            Some("LV2") => {
+                                let instance_id = next_lv2_instance_id;
+                                next_lv2_instance_id += 1;
+                                runtime_nodes.push(
+                                    maolan_engine::message::PluginGraphNode::Lv2PluginInstance(
+                                        instance_id,
+                                    ),
+                                );
+                                actions.push(Action::TrackLoadLv2Plugin {
+                                    track_name: track_name.to_string(),
+                                    plugin_uri: uri.to_string(),
+                                });
+                                if let Some(state) =
+                                    plugin.get("state").and_then(Self::lv2_state_from_json)
+                                {
+                                    actions.push(Action::TrackSetLv2PluginState {
+                                        track_name: track_name.to_string(),
+                                        instance_id,
+                                        state,
+                                    });
+                                }
+                            }
+                            Some("CLAP") => {
+                                let instance_id = next_clap_instance_id;
+                                next_clap_instance_id += 1;
+                                runtime_nodes.push(
+                                    maolan_engine::message::PluginGraphNode::ClapPluginInstance(
+                                        instance_id,
+                                    ),
+                                );
+                                actions.push(Action::TrackLoadClapPlugin {
+                                    track_name: track_name.to_string(),
+                                    plugin_path: uri.to_string(),
+                                });
+                                if let Some(state) =
+                                    plugin.get("state").and_then(Self::clap_state_from_json)
+                                {
+                                    actions.push(Action::TrackClapRestoreState {
+                                        track_name: track_name.to_string(),
+                                        instance_id,
+                                        state,
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            if let Some(connections) = graph.get("connections").and_then(|c| c.as_array()) {
+                for conn in connections {
+                    let Some(from_node) = Self::plugin_node_from_json_with_runtime_nodes(
+                        &conn["from_node"],
+                        &runtime_nodes,
+                    ) else {
+                        continue;
+                    };
+                    let Some(to_node) = Self::plugin_node_from_json_with_runtime_nodes(
+                        &conn["to_node"],
+                        &runtime_nodes,
+                    ) else {
+                        continue;
+                    };
+                    let Some(kind) = Self::kind_from_json(&conn["kind"]) else {
+                        continue;
+                    };
+
+                    let from_port = conn["from_port"].as_u64().unwrap_or(0) as usize;
+                    let to_port = conn["to_port"].as_u64().unwrap_or(0) as usize;
+
+                    actions.push(match kind {
+                        Kind::Audio => Action::TrackConnectPluginAudio {
+                            track_name: track_name.to_string(),
+                            from_node,
+                            from_port,
+                            to_node,
+                            to_port,
+                        },
+                        Kind::MIDI => Action::TrackConnectPluginMidi {
+                            track_name: track_name.to_string(),
+                            from_node,
+                            from_port,
+                            to_node,
+                            to_port,
+                        },
+                    });
+                }
+            }
+        }
+
+        actions
+    }
+
+    pub(super) fn load_group_template(
+        &mut self,
+        base_name: String,
+        template_name: String,
+    ) -> Task<Message> {
+        use std::fs::File;
+        use std::io::BufReader;
+        use tracing::info;
+
+        info!(
+            "Loading group template '{}' with base name '{}'",
+            template_name, base_name
+        );
+
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+        let template_path = format!(
+            "{}/.config/maolan/group_templates/{}/group.json",
+            home, template_name
+        );
+
+        let file = match File::open(&template_path) {
+            Ok(f) => f,
+            Err(e) => {
+                return Task::done(Message::Response(Err(format!(
+                    "Failed to open group template: {}",
+                    e
+                ))));
+            }
+        };
+
+        let reader = BufReader::new(file);
+        let json: serde_json::Value = match serde_json::from_reader(reader) {
+            Ok(j) => j,
+            Err(e) => {
+                return Task::done(Message::Response(Err(format!(
+                    "Failed to parse group template: {}",
+                    e
+                ))));
+            }
+        };
+
+        let Some(tracks) = json.get("tracks").and_then(|t| t.as_array()) else {
+            return Task::done(Message::Response(Err(
+                "Invalid group template: missing tracks".to_string(),
+            )));
+        };
+
+        let mut name_map = std::collections::HashMap::new();
+        let mut restore_actions = vec![];
+        restore_actions.push(Action::BeginSessionRestore);
+
+        for track_entry in tracks {
+            let Some(track_json) = track_entry.get("track") else {
+                continue;
+            };
+            let original_name = track_json
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("Track");
+            let new_name = if tracks.len() == 1 {
+                base_name.clone()
+            } else {
+                format!("{} {}", base_name, original_name)
+            };
+            name_map.insert(original_name.to_string(), new_name.clone());
+
+            let audio_ins = track_json
+                .get("audio")
+                .and_then(|a| a.get("ins"))
+                .and_then(Value::as_u64)
+                .unwrap_or(1) as usize;
+            let audio_outs = track_json
+                .get("audio")
+                .and_then(|a| a.get("outs"))
+                .and_then(Value::as_u64)
+                .unwrap_or(1) as usize;
+            let midi_ins = track_json
+                .get("midi")
+                .and_then(|m| m.get("ins"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+            let midi_outs = track_json
+                .get("midi")
+                .and_then(|m| m.get("outs"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
+
+            restore_actions.push(Action::AddTrack {
+                name: new_name.clone(),
+                audio_ins,
+                midi_ins,
+                audio_outs,
+                midi_outs,
+            });
+
+            if let Some(value) = track_json
+                .get("midi")
+                .and_then(|m| m.get("editor_view_mode"))
+                && let Ok(mode) =
+                    serde_json::from_value::<crate::message::MidiEditorViewMode>(value.clone())
+            {
+                self.pending_track_midi_editor_view_mode
+                    .insert(new_name.clone(), mode);
+            }
+
+            let graph = track_entry.get("graph");
+            let mut plugin_actions =
+                Self::track_template_actions_from_json(&new_name, track_json, graph);
+            restore_actions.append(&mut plugin_actions);
+
+            restore_actions.push(Action::TrackSetVcaMaster {
+                track_name: new_name,
+                master_track: Some(base_name.clone()),
+            });
+        }
+
+        if let Some(connections) = json.get("connections").and_then(|c| c.as_array()) {
+            for conn in connections {
+                let Some(from_track_orig) = conn.get("from_track").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(to_track_orig) = conn.get("to_track").and_then(Value::as_str) else {
+                    continue;
+                };
+                let from_track = name_map
+                    .get(from_track_orig)
+                    .cloned()
+                    .unwrap_or_else(|| from_track_orig.to_string());
+                let to_track = name_map
+                    .get(to_track_orig)
+                    .cloned()
+                    .unwrap_or_else(|| to_track_orig.to_string());
+                let from_port = conn.get("from_port").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let to_port = conn.get("to_port").and_then(Value::as_u64).unwrap_or(0) as usize;
+                let Some(kind_str) = conn.get("kind").and_then(Value::as_str) else {
+                    continue;
+                };
+                let kind = match kind_str {
+                    "audio" => Kind::Audio,
+                    "midi" => Kind::MIDI,
+                    _ => continue,
+                };
+
+                restore_actions.push(Action::Connect {
+                    from_track,
+                    from_port,
+                    to_track,
+                    to_port,
+                    kind,
+                });
+            }
+        }
+
+        restore_actions.push(Action::EndSessionRestore);
+
+        if restore_actions.len() <= 2 {
+            Task::done(Message::None)
+        } else {
+            Self::restore_actions_task(restore_actions)
+        }
+    }
+
     pub(super) fn save(&self, path: String) -> std::io::Result<()> {
         let filename = "session.json";
         let session_root = PathBuf::from(path.clone());

@@ -232,6 +232,10 @@ pub(super) fn track_context_menu_overlay(
                 master_track: None,
             },
         ));
+        items.push(menu::menu_item(
+            "Save group as template",
+            Message::TrackGroupTemplateSaveShow(track_name.clone()),
+        ));
     }
 
     if track.midi_learn_volume.is_some() {
