@@ -1,5 +1,5 @@
 use super::{AudioClip, MIDIClip};
-use crate::message::{TrackAutomationMode, TrackAutomationTarget};
+use crate::message::{MidiEditorViewMode, TrackAutomationMode, TrackAutomationTarget};
 use iced::Point;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -37,6 +37,8 @@ pub struct MIDIData {
     pub clips: Vec<MIDIClip>,
     pub ins: usize,
     pub outs: usize,
+    #[serde(default)]
+    pub editor_view_mode: MidiEditorViewMode,
 }
 
 impl MIDIData {
@@ -45,6 +47,7 @@ impl MIDIData {
             clips: vec![],
             ins,
             outs,
+            editor_view_mode: MidiEditorViewMode::PianoRoll,
         }
     }
 }

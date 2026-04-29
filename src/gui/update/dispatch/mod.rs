@@ -388,9 +388,19 @@ impl Maolan {
                 return self.handle_timing_message(message);
             }
             Message::SetSnapMode(mode) => {
+                tracing::info!(
+                    "[SetSnapMode] changing from {:?} to {:?}",
+                    self.snap_mode,
+                    mode
+                );
                 self.snap_mode = mode;
             }
             Message::SetMidiSnapMode(mode) => {
+                tracing::info!(
+                    "[SetMidiSnapMode] changing from {:?} to {:?}",
+                    self.midi_snap_mode,
+                    mode
+                );
                 self.midi_snap_mode = mode;
             }
             Message::SetClipSnapTargets(ref targets) => {
@@ -562,6 +572,17 @@ impl Maolan {
                 state.piano_controller_lane = lane;
                 state.piano_sysex_panel_open =
                     matches!(lane, crate::message::PianoControllerLane::SysEx);
+            }
+            Message::MidiEditorViewModeSelected(mode) => {
+                let state = self.state.blocking_read();
+                if let Some(piano) = state.piano.as_ref() {
+                    let track_name = piano.track_idx.clone();
+                    drop(state);
+                    let mut state = self.state.blocking_write();
+                    if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name) {
+                        track.midi.editor_view_mode = mode;
+                    }
+                }
             }
             Message::PianoControllerKindSelected(kind) => {
                 let mut state = self.state.blocking_write();
@@ -1797,6 +1818,135 @@ impl Maolan {
                     });
                 }
             }
+            Message::DrumNoteSelected(note_index) => {
+                let mut state = self.state.blocking_write();
+                if note_index == usize::MAX {
+                    state.piano_selected_notes.clear();
+                } else if state.shift {
+                    if state.piano_selected_notes.contains(&note_index) {
+                        state.piano_selected_notes.remove(&note_index);
+                    } else {
+                        state.piano_selected_notes.insert(note_index);
+                    }
+                } else {
+                    state.piano_selected_notes.clear();
+                    state.piano_selected_notes.insert(note_index);
+                }
+            }
+            Message::DrumNoteCreate {
+                start_sample,
+                pitch,
+            } => {
+                let state = self.state.blocking_read();
+                if let Some(piano) = state.piano.as_ref() {
+                    let track_name = piano.track_idx.clone();
+                    let clip_idx = piano.clip_index;
+                    let tempo = state.tempo.max(1.0) as f64;
+                    let tsig_num = state.time_signature_num.max(1) as f64;
+                    let tsig_denom = state.time_signature_denom.max(1) as f64;
+                    let samples_per_beat =
+                        (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+                    let samples_per_bar = samples_per_beat * tsig_num;
+                    let snapped_start = self.midi_snap_mode.snap_sample(
+                        start_sample as f64,
+                        samples_per_beat,
+                        samples_per_bar,
+                    ) as usize;
+                    let length_samples = (samples_per_beat / 4.0).max(1.0) as usize;
+                    drop(state);
+                    return self.send(Action::InsertMidiNotes {
+                        track_name,
+                        clip_index: clip_idx,
+                        notes: vec![(
+                            0,
+                            maolan_engine::message::MidiNoteData {
+                                start_sample: snapped_start,
+                                length_samples,
+                                pitch,
+                                velocity: 100,
+                                channel: 0,
+                            },
+                        )],
+                    });
+                }
+            }
+            Message::DrumNoteDelete(note_index) => {
+                let mut state = self.state.blocking_write();
+                if let Some(piano) = state.piano.as_mut() {
+                    let track_name = piano.track_idx.clone();
+                    let clip_idx = piano.clip_index;
+                    if let Some(note) = piano.notes.get(note_index) {
+                        let deleted_note = maolan_engine::message::MidiNoteData {
+                            start_sample: note.start_sample,
+                            length_samples: note.length_samples,
+                            pitch: note.pitch,
+                            velocity: note.velocity,
+                            channel: note.channel,
+                        };
+                        state.piano_selected_notes.clear();
+                        drop(state);
+                        return self.send(Action::DeleteMidiNotes {
+                            track_name,
+                            clip_index: clip_idx,
+                            note_indices: vec![note_index],
+                            deleted_notes: vec![(note_index, deleted_note)],
+                        });
+                    }
+                }
+            }
+            Message::DrumNoteMove {
+                note_index,
+                delta_samples,
+            } => {
+                let state = self.state.blocking_read();
+                if let Some(piano) = state.piano.as_ref()
+                    && let Some(note) = piano.notes.get(note_index)
+                {
+                    let track_name = piano.track_idx.clone();
+                    let clip_idx = piano.clip_index;
+                    let old_note = maolan_engine::message::MidiNoteData {
+                        start_sample: note.start_sample,
+                        length_samples: note.length_samples,
+                        pitch: note.pitch,
+                        velocity: note.velocity,
+                        channel: note.channel,
+                    };
+                    let tempo = state.tempo.max(1.0) as f64;
+                    let tsig_num = state.time_signature_num.max(1) as f64;
+                    let tsig_denom = state.time_signature_denom.max(1) as f64;
+                    let samples_per_beat =
+                        (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+                    let samples_per_bar = samples_per_beat * tsig_num;
+                    let raw_start = if delta_samples < 0 {
+                        old_note
+                            .start_sample
+                            .saturating_sub((-delta_samples) as usize)
+                    } else {
+                        old_note.start_sample.saturating_add(delta_samples as usize)
+                    };
+                    let new_start = self.midi_snap_mode.snap_sample_drag(
+                        raw_start as f64,
+                        delta_samples as f64,
+                        samples_per_beat,
+                        samples_per_bar,
+                    ) as usize;
+                    let new_note = maolan_engine::message::MidiNoteData {
+                        start_sample: new_start,
+                        length_samples: old_note.length_samples,
+                        pitch: old_note.pitch,
+                        velocity: old_note.velocity,
+                        channel: old_note.channel,
+                    };
+                    drop(state);
+                    return self.send(Action::ModifyMidiNotes {
+                        track_name,
+                        clip_index: clip_idx,
+                        note_indices: vec![note_index],
+                        new_notes: vec![new_note],
+                        old_notes: vec![old_note],
+                    });
+                }
+            }
             Message::PianoDeleteControllers {
                 ref controller_indices,
             } => {
@@ -2181,6 +2331,13 @@ impl Maolan {
                                 track.frozen_audio_backup = audio_backup;
                                 track.frozen_midi_backup = midi_backup;
                                 track.frozen_render_clip = render_clip;
+                            }
+                            if let Some(mode) =
+                                self.pending_track_midi_editor_view_mode.remove(name)
+                                && let Some(track) =
+                                    state.tracks.iter_mut().find(|t| &t.name == name)
+                            {
+                                track.midi.editor_view_mode = mode;
                             }
 
                             // Check if we need to load a template for this track

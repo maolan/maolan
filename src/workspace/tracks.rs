@@ -595,20 +595,6 @@ impl Tracks {
                 track.name.clone()
             ))),
             button(
-                container(text("Ø").size(13))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-            )
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0))
-            .padding(0)
-            .style(move |theme, _state| style::phase_invert::style(theme, track.phase_inverted))
-            .on_press(Message::Request(Action::TrackTogglePhase(
-                track.name.clone()
-            ))),
-            button(
                 container(text("S").size(13))
                     .width(Length::Fill)
                     .height(Length::Fill)
@@ -620,6 +606,20 @@ impl Tracks {
             .padding(0)
             .style(move |theme, _state| style::solo::style(theme, track.soloed))
             .on_press(Message::Request(Action::TrackToggleSolo(
+                track.name.clone()
+            ))),
+            button(
+                container(text("Ø").size(13))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill)
+            )
+            .width(Length::Fixed(22.0))
+            .height(Length::Fixed(22.0))
+            .padding(0)
+            .style(move |theme, _state| style::phase_invert::style(theme, track.phase_inverted))
+            .on_press(Message::Request(Action::TrackTogglePhase(
                 track.name.clone()
             ))),
             button(

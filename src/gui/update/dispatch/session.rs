@@ -138,6 +138,7 @@ impl Maolan {
                     state.piano = None;
                 }
                 self.pending_track_freeze_restore.clear();
+                self.pending_track_midi_editor_view_mode.clear();
                 self.pending_track_freeze_bounce.clear();
                 self.freeze_in_progress = false;
                 self.freeze_progress = 0.0;

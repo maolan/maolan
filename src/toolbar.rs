@@ -27,6 +27,8 @@ pub struct ToolbarViewState {
     pub has_punch_range: bool,
     pub punch_enabled: bool,
     pub snap_mode: SnapMode,
+    pub midi_editor_active: bool,
+    pub midi_snap_mode: SnapMode,
     pub tempo_input: String,
     pub tsig_num_input: String,
     pub tsig_denom_input: String,
@@ -180,11 +182,19 @@ impl Toolbar {
                         Color::TRANSPARENT,
                     ))
                 },
-                pick_list(
-                    &SNAP_MODE_ALL[..],
-                    Some(view_state.snap_mode),
-                    Message::SetSnapMode
-                ),
+                if view_state.midi_editor_active {
+                    pick_list(
+                        &SNAP_MODE_ALL[..],
+                        Some(view_state.midi_snap_mode),
+                        Message::SetMidiSnapMode,
+                    )
+                } else {
+                    pick_list(
+                        &SNAP_MODE_ALL[..],
+                        Some(view_state.snap_mode),
+                        Message::SetSnapMode,
+                    )
+                },
                 text_input("BPM", &view_state.tempo_input)
                     .on_input(Message::TempoInputChanged)
                     .on_submit(Message::TempoInputCommit)

@@ -134,7 +134,6 @@ impl MIDIEdit {
         pixels_per_sample: f32,
         samples_per_bar: f32,
         playhead_x: Option<f32>,
-        midi_snap_mode: crate::message::SnapMode,
     ) -> Element<'_, Message> {
         let state = self.state.blocking_read();
         let zoom_x = state.piano_zoom_x;
@@ -156,35 +155,307 @@ impl MIDIEdit {
         };
         let roll = roll.clone();
 
-        let notes_content = NoteArea {
-            zoom_x,
-            zoom_y,
-            pixels_per_sample,
-            samples_per_bar: Some(samples_per_bar),
-            playhead_x,
-            playhead_width: PLAYHEAD_WIDTH_PX,
-            clip_length_samples: roll.clip_length_samples,
-        }
-        .view(vec![
-            PianoRoll::new(
+        let notes_content: Element<'_, Message>;
+        let notes_h: f32;
+        let keyboard_scroll: Element<'_, Message>;
+
+        let midnam_note_names = self.midnam_note_names.clone();
+
+        let editor_view_mode = state
+            .piano
+            .as_ref()
+            .and_then(|p| state.tracks.iter().find(|t| t.name == p.track_idx))
+            .map(|t| t.midi.editor_view_mode)
+            .unwrap_or_default();
+
+        if matches!(
+            editor_view_mode,
+            crate::message::MidiEditorViewMode::DrumGrid
+        ) {
+            let mut drum_rows: Vec<u8> = roll
+                .notes
+                .iter()
+                .map(|n| n.pitch)
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            for (pitch, _) in crate::consts::gm_drum_map::GM_DRUM_MAP {
+                if !drum_rows.contains(pitch) {
+                    drum_rows.push(*pitch);
+                }
+            }
+            for pitch in midnam_note_names.keys() {
+                if !drum_rows.contains(pitch) {
+                    drum_rows.push(*pitch);
+                }
+            }
+            drum_rows.sort();
+
+            let drum_row_h = (24.0 * zoom_y).max(1.0);
+            notes_h = drum_rows.len() as f32 * drum_row_h;
+            let pps = (pixels_per_sample * zoom_x).max(0.0001);
+            let notes_w = (roll.clip_length_samples as f32 * pps).max(1.0);
+
+            let mut drum_layers: Vec<Element<'_, Message>> = vec![];
+
+            for (idx, _pitch) in drum_rows.iter().enumerate() {
+                let is_even = idx % 2 == 0;
+                drum_layers.push(
+                    pin(container("")
+                        .width(Length::Fixed(notes_w))
+                        .height(Length::Fixed(drum_row_h))
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(if is_even {
+                                Color::from_rgba(0.10, 0.10, 0.12, 0.85)
+                            } else {
+                                Color::from_rgba(0.13, 0.13, 0.15, 0.85)
+                            })),
+                            ..container::Style::default()
+                        }))
+                    .position(Point::new(0.0, idx as f32 * drum_row_h))
+                    .into(),
+                );
+            }
+
+            if let Some(samples_per_bar) = Some(samples_per_bar) {
+                let beat_samples = (samples_per_bar / 4.0).max(1.0);
+                let mut beat = 0usize;
+                loop {
+                    let x = beat as f32 * beat_samples * pps;
+                    if x > notes_w {
+                        break;
+                    }
+                    let bar_line = beat.is_multiple_of(4);
+                    drum_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(if bar_line { 2.0 } else { 1.0 }))
+                            .height(Length::Fixed(notes_h))
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(Color {
+                                    r: if bar_line { 0.5 } else { 0.35 },
+                                    g: if bar_line { 0.5 } else { 0.35 },
+                                    b: if bar_line { 0.55 } else { 0.35 },
+                                    a: 0.45,
+                                })),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new(x, 0.0))
+                        .into(),
+                    );
+                    beat += 1;
+                }
+            }
+
+            for note in &roll.notes {
+                if let Some(row_idx) = drum_rows.iter().position(|&p| p == note.pitch) {
+                    let color = maolan_widgets::piano::note_color(note.velocity, note.channel);
+                    let x = note.start_sample as f32 * pps;
+                    let y = row_idx as f32 * drum_row_h + (drum_row_h - 10.0) / 2.0;
+                    drum_layers.push(
+                        pin(container("")
+                            .width(Length::Fixed(10.0))
+                            .height(Length::Fixed(10.0))
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(color)),
+                                border: Border::default().rounded(5.0),
+                                ..container::Style::default()
+                            }))
+                        .position(Point::new(x, y))
+                        .into(),
+                    );
+                }
+            }
+
+            if let Some(x) = playhead_x {
+                drum_layers.push(
+                    pin(container("")
+                        .width(Length::Fixed(PLAYHEAD_WIDTH_PX))
+                        .height(Length::Fixed(notes_h))
+                        .style(|_theme| container::Style {
+                            background: Some(Background::Color(Color::from_rgba(
+                                0.95, 0.18, 0.14, 0.95,
+                            ))),
+                            ..container::Style::default()
+                        }))
+                    .position(Point::new(x.max(0.0), 0.0))
+                    .into(),
+                );
+            }
+
+            let drum_interaction = maolan_widgets::drum::DrumRollInteraction::new(
                 roll.notes.clone(),
-                roll.clip_length_samples,
-                zoom_y,
                 pixels_per_sample,
                 zoom_x,
-                iced::widget::canvas(PianoRollInteraction::new(
-                    self.state.clone(),
+                drum_rows.clone(),
+                drum_row_h,
+            );
+            let drum_canvas: Element<'_, maolan_widgets::drum::DrumMessage> =
+                iced::widget::canvas(drum_interaction)
+                    .width(Length::Fixed(notes_w))
+                    .height(Length::Fixed(notes_h))
+                    .into();
+            let mapped_drum_canvas: Element<'_, Message> = drum_canvas.map(|msg| match msg {
+                maolan_widgets::drum::DrumMessage::NoteSelected(idx) => {
+                    Message::DrumNoteSelected(idx)
+                }
+                maolan_widgets::drum::DrumMessage::ClearSelection => {
+                    Message::DrumNoteSelected(usize::MAX)
+                }
+                maolan_widgets::drum::DrumMessage::NoteCreate {
+                    start_sample,
+                    pitch,
+                } => Message::DrumNoteCreate {
+                    start_sample,
+                    pitch,
+                },
+                maolan_widgets::drum::DrumMessage::NoteDelete(idx) => Message::DrumNoteDelete(idx),
+                maolan_widgets::drum::DrumMessage::NoteMove {
+                    note_index,
+                    delta_samples,
+                } => Message::DrumNoteMove {
+                    note_index,
+                    delta_samples,
+                },
+                maolan_widgets::drum::DrumMessage::AdjustVelocity { note_index, delta } => {
+                    Message::PianoAdjustVelocity { note_index, delta }
+                }
+            });
+            drum_layers.push(
+                pin(mapped_drum_canvas)
+                    .position(Point::new(0.0, 0.0))
+                    .into(),
+            );
+
+            notes_content = Stack::from_vec(drum_layers)
+                .width(Length::Fixed(notes_w))
+                .height(Length::Fixed(notes_h))
+                .into();
+
+            let sidebar_rows = drum_rows
+                .iter()
+                .enumerate()
+                .fold(column![], |col, (idx, pitch)| {
+                    let name = midnam_note_names.get(pitch).cloned().unwrap_or_else(|| {
+                        crate::consts::gm_drum_map::GM_DRUM_MAP
+                            .iter()
+                            .find(|(p, _)| *p == *pitch)
+                            .map(|&(_, name): &(u8, &str)| name.to_string())
+                            .unwrap_or_else(|| format!("Note {}", pitch))
+                    });
+                    col.push(
+                        container(
+                            row![
+                                text(format!("{}", pitch))
+                                    .size(9)
+                                    .width(Length::Fixed(28.0)),
+                                text(name).size(10).width(Length::Fill),
+                            ]
+                            .spacing(2),
+                        )
+                        .width(Length::Fill)
+                        .height(Length::Fixed(drum_row_h))
+                        .padding([2, 4])
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(if idx % 2 == 0 {
+                                Color::from_rgba(0.10, 0.10, 0.12, 1.0)
+                            } else {
+                                Color::from_rgba(0.13, 0.13, 0.15, 1.0)
+                            })),
+                            ..container::Style::default()
+                        }),
+                    )
+                });
+
+            keyboard_scroll = container(sidebar_rows)
+                .width(Length::Fixed(KEYBOARD_WIDTH))
+                .height(Length::Fill)
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color {
+                        r: 0.12,
+                        g: 0.12,
+                        b: 0.12,
+                        a: 1.0,
+                    })),
+                    ..container::Style::default()
+                })
+                .into();
+        } else {
+            notes_content = NoteArea {
+                zoom_x,
+                zoom_y,
+                pixels_per_sample,
+                samples_per_bar: Some(samples_per_bar),
+                playhead_x,
+                playhead_width: PLAYHEAD_WIDTH_PX,
+                clip_length_samples: roll.clip_length_samples,
+            }
+            .view(vec![
+                PianoRoll::new(
+                    roll.notes.clone(),
+                    roll.clip_length_samples,
+                    zoom_y,
                     pixels_per_sample,
-                ))
-                .width(Length::Fixed(
-                    (roll.clip_length_samples as f32 * (pixels_per_sample * zoom_x).max(0.0001))
+                    zoom_x,
+                    iced::widget::canvas(PianoRollInteraction::new(
+                        self.state.clone(),
+                        pixels_per_sample,
+                    ))
+                    .width(Length::Fixed(
+                        (roll.clip_length_samples as f32
+                            * (pixels_per_sample * zoom_x).max(0.0001))
                         .max(1.0),
-                ))
-                .height(Length::Fixed(MIDI_NOTE_COUNT as f32 * row_height(zoom_y)))
-                .into(),
+                    ))
+                    .height(Length::Fixed(MIDI_NOTE_COUNT as f32 * row_height(zoom_y)))
+                    .into(),
+                )
+                .into_element(),
+            ]);
+
+            notes_h = MIDI_NOTE_COUNT as f32
+                * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
+                    * zoom_y)
+                    .max(1.0);
+
+            let keyboard = (0..OCTAVES).fold(column![], |col, octave_idx| {
+                let octave = (OCTAVES - 1 - octave_idx) as u8;
+                let octave_h = piano::octave_note_count(octave) as f32
+                    * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
+                        * zoom_y)
+                        .max(1.0);
+                let names = midnam_note_names.clone();
+                col.push(
+                    container(
+                        iced::widget::canvas(OctaveKeyboard::new(
+                            octave,
+                            names,
+                            Message::PianoKeyPressed,
+                            Message::PianoKeyReleased,
+                        ))
+                        .width(Length::Fixed(KEYBOARD_WIDTH))
+                        .height(Length::Fixed(octave_h)),
+                    )
+                    .id(Id::from(format!("kb_{octave}_{}", midnam_note_names.len())))
+                    .padding(0),
+                )
+            });
+            keyboard_scroll = container(
+                keyboard
+                    .width(Length::Fixed(KEYBOARD_WIDTH))
+                    .height(Length::Fill),
             )
-            .into_element(),
-        ]);
+            .width(Length::Fixed(KEYBOARD_WIDTH))
+            .height(Length::Fill)
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(Color {
+                    r: 0.12,
+                    g: 0.12,
+                    b: 0.12,
+                    a: 1.0,
+                })),
+                ..container::Style::default()
+            })
+            .into();
+        }
 
         let ctrl_line_count = controller::controller_lane_line_count(controller_lane).max(1);
         let ctrl_h = (ctrl_line_count as f32).max(140.0);
@@ -464,39 +735,6 @@ impl MIDIEdit {
             .width(Length::Fixed(ctrl_w))
             .height(Length::Fixed(ctrl_h));
 
-        let notes_h = MIDI_NOTE_COUNT as f32
-            * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
-                * zoom_y)
-                .max(1.0);
-        let midnam_note_names = self.midnam_note_names.clone();
-        // Wrap each canvas in a container with a unique id derived from the
-        // note-name count. When the count changes, Iced sees a different id
-        // and recreates the widget instead of reusing the stale one.
-        let keyboard = (0..OCTAVES).fold(column![], |col, octave_idx| {
-            let octave = (OCTAVES - 1 - octave_idx) as u8;
-            let octave_h = piano::octave_note_count(octave) as f32
-                * ((WHITE_KEY_HEIGHT * WHITE_KEYS_PER_OCTAVE as f32 / NOTES_PER_OCTAVE as f32)
-                    * zoom_y)
-                    .max(1.0);
-            let names = midnam_note_names.clone();
-            col.push(
-                container(
-                    iced::widget::canvas(OctaveKeyboard::new(
-                        octave,
-                        names,
-                        Message::PianoKeyPressed,
-                        Message::PianoKeyReleased,
-                    ))
-                    .width(Length::Fixed(KEYBOARD_WIDTH))
-                    .height(Length::Fixed(octave_h)),
-                )
-                .id(Id::from(format!("kb_{octave}_{}", midnam_note_names.len())))
-                .padding(0),
-            )
-        });
-        let piano_note_keys = keyboard
-            .width(Length::Fixed(KEYBOARD_WIDTH))
-            .height(Length::Fill);
         let populated_ccs = controller::populated_controller_ccs(&roll.controllers);
         let populated_rpn_rows =
             controller::populated_controller_rows(PianoControllerLane::Rpn, &roll.controllers);
@@ -652,26 +890,13 @@ impl MIDIEdit {
                 ..container::Style::default()
             });
 
-        let keyboard_scroll = container(piano_note_keys)
-            .width(Length::Fixed(KEYBOARD_WIDTH))
-            .height(Length::Fill)
-            .style(|_theme| container::Style {
-                background: Some(Background::Color(Color {
-                    r: 0.12,
-                    g: 0.12,
-                    b: 0.12,
-                    a: 1.0,
-                })),
-                ..container::Style::default()
-            });
-
         let PianoGridScrolls {
             keyboard_scroll,
             note_scroll,
             h_scroll,
             v_scroll,
         } = piano_grid_scrollers(
-            keyboard_scroll.into(),
+            keyboard_scroll,
             notes_content,
             PianoGridScrollLayout {
                 notes_h,
@@ -783,16 +1008,15 @@ impl MIDIEdit {
         let edit_tools_strip = container(
             column![
                 text("MIDI Tools").size(12),
-                row![
-                    text("Snap").size(10),
-                    pick_list(
-                        crate::consts::message_lists::SNAP_MODE_ALL.to_vec(),
-                        Some(midi_snap_mode),
-                        Message::SetMidiSnapMode
-                    )
-                    .width(Length::Fixed(80.0)),
-                ]
-                .spacing(4),
+                pick_list(
+                    vec![
+                        crate::message::MidiEditorViewMode::PianoRoll,
+                        crate::message::MidiEditorViewMode::DrumGrid,
+                    ],
+                    Some(editor_view_mode),
+                    Message::MidiEditorViewModeSelected,
+                )
+                .width(Length::Fill),
                 row![
                     button(text("Scale").size(11)).on_press(Message::PianoScaleSelectedNotes),
                     pick_list(

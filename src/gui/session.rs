@@ -313,7 +313,7 @@ impl Maolan {
     }
 
     pub(super) fn load_track_template(
-        &self,
+        &mut self,
         track_name: String,
         template_name: String,
     ) -> Task<Message> {
@@ -352,6 +352,16 @@ impl Maolan {
                 ))));
             }
         };
+
+        if let Some(value) = json["track"]["midi"].get("editor_view_mode")
+            && let Ok(mode) =
+                serde_json::from_value::<crate::message::MidiEditorViewMode>(value.clone())
+        {
+            let mut state = self.state.blocking_write();
+            if let Some(track) = state.tracks.iter_mut().find(|t| t.name == track_name) {
+                track.midi.editor_view_mode = mode;
+            }
+        }
 
         let mut restore_actions = vec![];
 
@@ -830,6 +840,7 @@ impl Maolan {
         self.midi_clip_previews.clear();
         self.pending_midi_clip_previews.clear();
         self.pending_track_freeze_restore.clear();
+        self.pending_track_midi_editor_view_mode.clear();
         self.pending_track_freeze_bounce.clear();
         let existing_tracks: Vec<String> = self
             .state
@@ -1285,7 +1296,6 @@ impl Maolan {
         {
             self.midi_snap_mode = mode;
         }
-
         if let Some(arr) = session["tracks"].as_array() {
             for track in arr {
                 let name = {
@@ -1456,6 +1466,13 @@ impl Maolan {
                             channel,
                         });
                     }
+                }
+                if let Some(value) = track["midi"].get("editor_view_mode")
+                    && let Ok(mode) =
+                        serde_json::from_value::<crate::message::MidiEditorViewMode>(value.clone())
+                {
+                    self.pending_track_midi_editor_view_mode
+                        .insert(name.clone(), mode);
                 }
                 if track["frozen"].as_bool().unwrap_or(false) {
                     frozen_tracks.push(name.clone());
@@ -2365,4 +2382,13 @@ mod tests {
         let result = Maolan::kind_from_json(&json!("unknown"));
         assert_eq!(result, None);
     }
+}
+
+#[test]
+fn midi_editor_view_mode_roundtrips() {
+    let mode = crate::message::MidiEditorViewMode::DrumGrid;
+    let json = serde_json::to_value(mode).unwrap();
+    assert_eq!(json, serde_json::json!("drumgrid"));
+    let back: crate::message::MidiEditorViewMode = serde_json::from_value(json).unwrap();
+    assert!(matches!(back, crate::message::MidiEditorViewMode::DrumGrid));
 }

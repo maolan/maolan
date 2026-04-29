@@ -144,7 +144,6 @@ pub struct WorkspaceViewArgs<'a> {
     pub loop_range_samples: Option<(usize, usize)>,
     pub punch_range_samples: Option<(usize, usize)>,
     pub snap_mode: SnapMode,
-    pub midi_snap_mode: SnapMode,
     pub samples_per_beat: f64,
     pub zoom_visible_bars: f32,
     pub editor_scroll_x: f32,
@@ -269,7 +268,6 @@ impl Workspace {
             loop_range_samples,
             punch_range_samples,
             snap_mode,
-            midi_snap_mode: _,
             samples_per_beat,
             zoom_visible_bars,
             editor_scroll_x,
@@ -828,12 +826,9 @@ impl Workspace {
             ((sample as f32 - clip_start_samples as f32) * horizontal_pixels_per_sample).max(0.0)
         });
 
-        let piano_content = self.midi_edit.view(
-            pixels_per_sample,
-            samples_per_bar,
-            playhead_x,
-            args.midi_snap_mode,
-        );
+        let piano_content = self
+            .midi_edit
+            .view(pixels_per_sample, samples_per_bar, playhead_x);
 
         container(
             column![
