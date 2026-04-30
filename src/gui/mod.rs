@@ -4232,7 +4232,7 @@ impl Maolan {
                     instance_id,
                     format: "LV2".to_string(),
                     uri: uri.clone(),
-                    plugin_id: String::new(),
+                    plugin_id: uri.clone(),
                     name: info
                         .map(|info| info.name.clone())
                         .unwrap_or_else(|| uri.clone()),
@@ -4277,7 +4277,10 @@ impl Maolan {
                     instance_id,
                     format: "CLAP".to_string(),
                     uri: uri.clone(),
-                    plugin_id: String::new(),
+                    plugin_id: uri
+                        .split_once("::")
+                        .map(|(_, id)| id.to_string())
+                        .unwrap_or_default(),
                     name: info
                         .map(|info| info.name.clone())
                         .unwrap_or_else(|| uri.clone()),

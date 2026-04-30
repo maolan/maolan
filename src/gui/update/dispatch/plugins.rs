@@ -170,7 +170,7 @@ impl Maolan {
                                     instance_id: next_id,
                                     format: "LV2".to_string(),
                                     uri: info.uri.clone(),
-                                    plugin_id: String::new(),
+                                    plugin_id: info.uri.clone(),
                                     name: info.name.clone(),
                                     main_audio_inputs: info.audio_inputs,
                                     main_audio_outputs: info.audio_outputs,
@@ -329,7 +329,11 @@ impl Maolan {
                                     instance_id: next_id,
                                     format: "CLAP".to_string(),
                                     uri: info.path.clone(),
-                                    plugin_id: String::new(),
+                                    plugin_id: info
+                                        .path
+                                        .split_once("::")
+                                        .map(|(_, id)| id.to_string())
+                                        .unwrap_or_default(),
                                     name: info.name.clone(),
                                     main_audio_inputs: caps
                                         .map(|caps| caps.audio_inputs)

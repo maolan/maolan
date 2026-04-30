@@ -1,7 +1,7 @@
 [package]
 name = "maolan"
 default-run = "maolan"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 description = "Rust DAW application for recording, editing, routing, automation, export, and plugin hosting"
 license = "BSD-2-Clause"
