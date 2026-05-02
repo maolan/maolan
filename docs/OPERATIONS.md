@@ -1,6 +1,6 @@
 # Maolan Operations, Storage, and Recovery
 
-Last updated: 2026-04-30
+Last updated: 2026-05-01
 
 ## Runtime and Platform Behavior
 
@@ -9,6 +9,17 @@ Last updated: 2026-04-30
 - Plugin discovery runs automatically on startup:
   - Linux / FreeBSD: LV2, VST3, CLAP
   - macOS: VST3, CLAP
+- Plugin discovery path overrides:
+  - `CLAP_PATH`: additional CLAP scan roots (path-list format, platform separator)
+  - `VST3_PATH`: additional VST3 scan roots (path-list format, platform separator)
+- CLAP discovery currently scans recursively and recognizes plugin binaries by extension:
+  - `.clap`
+  - `.so`
+  - `.dylib`
+  - `.dll`
+- When using `CLAP_PATH`, point it at a dedicated plugin directory that only contains plugin binaries.
+  - Example (Linux/FreeBSD): `CLAP_PATH=/home/user/plugins`
+  - Avoid broad build output roots when possible (for example full Cargo target trees) to reduce unrelated binary probing.
 - Passing `--debug` enables tracing output to stdout.
 
 ## Configuration File

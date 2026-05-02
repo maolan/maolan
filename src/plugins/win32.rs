@@ -481,3 +481,93 @@ fn run_vst3_win32_editor(
     drop(window_state);
     Ok(())
 }
+
+pub fn open_editor_with_processor(
+    processor: std::sync::Arc<maolan_engine::vst3::Vst3Processor>,
+    title: String,
+) -> Result<Option<maolan_engine::vst3::Vst3PluginState>, String> {
+    let result = run_vst3_win32_editor_with_processor(processor, title);
+    result.map(|_| None)
+}
+
+fn run_vst3_win32_editor_with_processor(
+    processor: std::sync::Arc<maolan_engine::vst3::Vst3Processor>,
+    title: String,
+) -> Result<(), String> {
+    processor.ui_begin_session();
+
+    let platform_type = "HWND";
+    if let Err(e) = processor.gui_create(platform_type) {
+        processor.ui_end_session();
+        return Err(e);
+    }
+
+    let (width, height) = match processor.gui_get_size() {
+        Ok((w, h)) => (w.max(320), h.max(240)),
+        Err(_) => (900, 600),
+    };
+
+    let mut window_state = Box::new(WindowState {
+        view: std::ptr::null_mut(),
+        embed_window: 0,
+    });
+    let state_ptr = &mut *window_state as *mut WindowState;
+    let (window, embed_window) = unsafe { create_host_windows(&title, width, height, state_ptr)? };
+    window_state.embed_window = embed_window;
+
+    if let Err(e) = processor.gui_set_parent(embed_window as usize, platform_type) {
+        unsafe {
+            let _ = DestroyWindow(window);
+        }
+        processor.gui_destroy();
+        processor.ui_end_session();
+        return Err(e);
+    }
+
+    let _ = processor.gui_on_size(width, height);
+
+    if let Err(e) = processor.gui_show() {
+        unsafe {
+            let _ = DestroyWindow(window);
+        }
+        processor.gui_destroy();
+        processor.ui_end_session();
+        return Err(e);
+    }
+
+    unsafe {
+        resize_host_windows(window, embed_window, width, height);
+        ShowWindow(window, SW_SHOW);
+        UpdateWindow(window);
+    }
+
+    let mut msg = MSG::default();
+    loop {
+        processor.gui_on_main_thread();
+        if processor.ui_should_close() {
+            break;
+        }
+        let has_message = unsafe { PeekMessageW(&mut msg, 0, 0, 0, PM_REMOVE) };
+        if has_message == 0 {
+            std::thread::sleep(std::time::Duration::from_millis(16));
+            continue;
+        }
+        if msg.message == windows_sys::Win32::UI::WindowsAndMessaging::WM_QUIT {
+            break;
+        }
+        unsafe {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    processor.gui_hide();
+    processor.gui_destroy();
+    unsafe {
+        let _ = SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+        let _ = DestroyWindow(window);
+    }
+    drop(window_state);
+    processor.ui_end_session();
+    Ok(())
+}

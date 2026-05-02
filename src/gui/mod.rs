@@ -311,10 +311,6 @@ pub(super) struct PendingVst3UiOpen {
     clip_idx: Option<usize>,
     instance_id: usize,
     plugin_path: String,
-    plugin_name: String,
-    plugin_id: String,
-    audio_inputs: usize,
-    audio_outputs: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
