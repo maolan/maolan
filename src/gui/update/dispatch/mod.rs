@@ -3136,6 +3136,51 @@ impl Maolan {
                                 self.pending_clap_ui_open = None;
                             }
                         }
+                        Action::TrackVst3Processor {
+                            track_name,
+                            instance_id,
+                            processor,
+                        } => {
+                            if let Some(pending) = self.pending_vst3_ui_open.clone()
+                                && pending.clip_idx.is_none()
+                                && pending.track_name == *track_name
+                                && pending.instance_id == *instance_id
+                            {
+                                if let Err(e) = self.vst3_ui_host.open_editor(
+                                    track_name,
+                                    None,
+                                    *instance_id,
+                                    &pending.plugin_path,
+                                    processor.clone(),
+                                ) {
+                                    self.state.blocking_write().message = e;
+                                }
+                                self.pending_vst3_ui_open = None;
+                            }
+                        }
+                        Action::ClipVst3Processor {
+                            track_name,
+                            clip_idx,
+                            instance_id,
+                            processor,
+                        } => {
+                            if let Some(pending) = self.pending_vst3_ui_open.clone()
+                                && pending.clip_idx == Some(*clip_idx)
+                                && pending.track_name == *track_name
+                                && pending.instance_id == *instance_id
+                            {
+                                if let Err(e) = self.vst3_ui_host.open_editor(
+                                    track_name,
+                                    Some(*clip_idx),
+                                    *instance_id,
+                                    &pending.plugin_path,
+                                    processor.clone(),
+                                ) {
+                                    self.state.blocking_write().message = e;
+                                }
+                                self.pending_vst3_ui_open = None;
+                            }
+                        }
                         Action::TrackClapParameters {
                             track_name,
                             instance_id,
@@ -3324,32 +3369,6 @@ impl Maolan {
                                     }
                                 }
                             }
-                            if let Some(pending) = self.pending_vst3_ui_open.clone()
-                                && &pending.track_name == track_name
-                                && pending.clip_idx.is_none()
-                                && pending.instance_id == *instance_id
-                            {
-                                let (sample_rate_hz, block_size) = {
-                                    let st = self.state.blocking_read();
-                                    (self.playback_rate_hz.max(1.0), st.oss_period_frames.max(1))
-                                };
-                                if let Err(e) = self.vst3_ui_host.open_editor(
-                                    track_name,
-                                    None,
-                                    *instance_id,
-                                    &pending.plugin_path,
-                                    &pending.plugin_name,
-                                    &pending.plugin_id,
-                                    sample_rate_hz,
-                                    block_size,
-                                    pending.audio_inputs,
-                                    pending.audio_outputs,
-                                    Some(state.clone()),
-                                ) {
-                                    self.state.blocking_write().message = e;
-                                }
-                                self.pending_vst3_ui_open = None;
-                            }
                         }
                         Action::ClipVst3StateSnapshot {
                             track_name,
@@ -3373,33 +3392,6 @@ impl Maolan {
                                     )
                             {
                                 clip.plugin_graph_json = Some(graph_json);
-                            }
-                            drop(gui_state);
-                            if let Some(pending) = self.pending_vst3_ui_open.clone()
-                                && &pending.track_name == track_name
-                                && pending.clip_idx == Some(*clip_idx)
-                                && pending.instance_id == *instance_id
-                            {
-                                let (sample_rate_hz, block_size) = {
-                                    let st = self.state.blocking_read();
-                                    (self.playback_rate_hz.max(1.0), st.oss_period_frames.max(1))
-                                };
-                                if let Err(e) = self.vst3_ui_host.open_editor(
-                                    track_name,
-                                    Some(*clip_idx),
-                                    *instance_id,
-                                    &pending.plugin_path,
-                                    &pending.plugin_name,
-                                    &pending.plugin_id,
-                                    sample_rate_hz,
-                                    block_size,
-                                    pending.audio_inputs,
-                                    pending.audio_outputs,
-                                    Some(state.clone()),
-                                ) {
-                                    self.state.blocking_write().message = e;
-                                }
-                                self.pending_vst3_ui_open = None;
                             }
                         }
                         #[cfg(all(unix, not(target_os = "macos")))]

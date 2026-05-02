@@ -1092,10 +1092,6 @@ pub enum Message {
         clip_idx: Option<usize>,
         instance_id: usize,
         plugin_path: String,
-        plugin_name: String,
-        plugin_id: String,
-        audio_inputs: usize,
-        audio_outputs: usize,
     },
 
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]

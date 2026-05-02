@@ -566,10 +566,6 @@ impl canvas::Program<Message> for Graph {
                                                 .map(|target| target.clip_idx),
                                             instance_id,
                                             plugin_path: plugin.uri.clone(),
-                                            plugin_name: plugin.name.clone(),
-                                            plugin_id: plugin.plugin_id.clone(),
-                                            audio_inputs: plugin.audio_inputs,
-                                            audio_outputs: plugin.audio_outputs,
                                         }))
                                     }
                                     PluginGraphNode::TrackInput | PluginGraphNode::TrackOutput => {

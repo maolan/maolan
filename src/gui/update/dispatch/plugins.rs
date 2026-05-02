@@ -499,29 +499,21 @@ impl Maolan {
                 clip_idx,
                 instance_id,
                 ref plugin_path,
-                ref plugin_name,
-                ref plugin_id,
-                audio_inputs,
-                audio_outputs,
             } => {
                 self.pending_vst3_ui_open = Some(PendingVst3UiOpen {
                     track_name: track_name.clone(),
                     clip_idx,
                     instance_id,
                     plugin_path: plugin_path.clone(),
-                    plugin_name: plugin_name.clone(),
-                    plugin_id: plugin_id.clone(),
-                    audio_inputs,
-                    audio_outputs,
                 });
                 Some(if let Some(clip_idx) = clip_idx {
-                    self.send(Action::ClipVst3SnapshotState {
+                    self.send(Action::ClipGetVst3Processor {
                         track_name: track_name.clone(),
                         clip_idx,
                         instance_id,
                     })
                 } else {
-                    self.send(Action::TrackVst3SnapshotState {
+                    self.send(Action::TrackGetVst3Processor {
                         track_name: track_name.clone(),
                         instance_id,
                     })
