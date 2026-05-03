@@ -140,7 +140,7 @@ impl Maolan {
                         },
                     )
                 }
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "windows")))]
                 {
                     self.modal = Some(Show::Preferences);
                     Task::none()

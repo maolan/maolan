@@ -360,7 +360,7 @@ impl Maolan {
                                 mixer_level_edit_input: "",
                             })
                         }
-                        #[cfg(target_os = "macos")]
+                        #[cfg(not(all(unix, not(target_os = "macos"))))]
                         View::TrackPlugins => self.connections.view(),
                     };
 

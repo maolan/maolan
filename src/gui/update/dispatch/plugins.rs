@@ -227,21 +227,24 @@ impl Maolan {
                         .collect::<Vec<_>>();
                     self.selected_vst3_plugins.clear();
                     self.modal = None;
-                    let mut state = self.state.blocking_write();
-                    let mut next_id = state
-                        .plugin_graph_plugins
-                        .iter()
-                        .map(|plugin| plugin.instance_id)
-                        .max()
-                        .map(|id| id.saturating_add(1))
-                        .unwrap_or(0);
-                    let plugin_infos = state.vst3_plugins.clone();
-                    for plugin_path in selected {
-                        if let Some(info) =
-                            plugin_infos.iter().find(|info| info.path == plugin_path)
-                        {
-                            state.plugin_graph_plugins.push(
-                                maolan_engine::message::PluginGraphPlugin {
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        let mut state = self.state.blocking_write();
+                        let mut next_id = state
+                            .plugin_graph_plugins
+                            .iter()
+                            .map(|plugin| plugin.instance_id)
+                            .max()
+                            .map(|id| id.saturating_add(1))
+                            .unwrap_or(0);
+                        let plugin_infos = state.vst3_plugins.clone();
+                        for plugin_path in selected {
+                            if let Some(info) =
+                                plugin_infos.iter().find(|info| info.path == plugin_path)
+                            {
+                                state
+                                    .plugin_graph_plugins
+                                    .push(maolan_engine::message::PluginGraphPlugin {
                                     node:
                                         maolan_engine::message::PluginGraphNode::Vst3PluginInstance(
                                             next_id,
@@ -258,13 +261,17 @@ impl Maolan {
                                     midi_inputs: usize::from(info.has_midi_input),
                                     midi_outputs: usize::from(info.has_midi_output),
                                     state: None,
-                                },
-                            );
-                            next_id = next_id.saturating_add(1);
+                                });
+                                next_id = next_id.saturating_add(1);
+                            }
                         }
+                        let sync = Self::save_open_clip_plugin_graph(&mut state);
+                        return Some(sync.map_or_else(Task::none, |action| self.send(action)));
                     }
-                    let sync = Self::save_open_clip_plugin_graph(&mut state);
-                    return Some(sync.map_or_else(Task::none, |action| self.send(action)));
+                    #[cfg(not(all(unix, not(target_os = "macos"))))]
+                    {
+                        let _ = selected;
+                    }
                 }
                 let track_name = {
                     let state = self.state.blocking_read();
@@ -306,22 +313,25 @@ impl Maolan {
                         .collect::<Vec<_>>();
                     self.selected_clap_plugins.clear();
                     self.modal = None;
-                    let mut state = self.state.blocking_write();
-                    let mut next_id = state
-                        .plugin_graph_plugins
-                        .iter()
-                        .map(|plugin| plugin.instance_id)
-                        .max()
-                        .map(|id| id.saturating_add(1))
-                        .unwrap_or(0);
-                    let plugin_infos = state.clap_plugins.clone();
-                    for plugin_path in selected {
-                        if let Some(info) =
-                            plugin_infos.iter().find(|info| info.path == plugin_path)
-                        {
-                            let caps = info.capabilities.as_ref();
-                            state.plugin_graph_plugins.push(
-                                maolan_engine::message::PluginGraphPlugin {
+                    #[cfg(all(unix, not(target_os = "macos")))]
+                    {
+                        let mut state = self.state.blocking_write();
+                        let mut next_id = state
+                            .plugin_graph_plugins
+                            .iter()
+                            .map(|plugin| plugin.instance_id)
+                            .max()
+                            .map(|id| id.saturating_add(1))
+                            .unwrap_or(0);
+                        let plugin_infos = state.clap_plugins.clone();
+                        for plugin_path in selected {
+                            if let Some(info) =
+                                plugin_infos.iter().find(|info| info.path == plugin_path)
+                            {
+                                let caps = info.capabilities.as_ref();
+                                state
+                                    .plugin_graph_plugins
+                                    .push(maolan_engine::message::PluginGraphPlugin {
                                     node:
                                         maolan_engine::message::PluginGraphNode::ClapPluginInstance(
                                             next_id,
@@ -346,13 +356,17 @@ impl Maolan {
                                     midi_inputs: caps.map(|caps| caps.midi_inputs).unwrap_or(0),
                                     midi_outputs: caps.map(|caps| caps.midi_outputs).unwrap_or(0),
                                     state: None,
-                                },
-                            );
-                            next_id = next_id.saturating_add(1);
+                                });
+                                next_id = next_id.saturating_add(1);
+                            }
                         }
+                        let sync = Self::save_open_clip_plugin_graph(&mut state);
+                        return Some(sync.map_or_else(Task::none, |action| self.send(action)));
                     }
-                    let sync = Self::save_open_clip_plugin_graph(&mut state);
-                    return Some(sync.map_or_else(Task::none, |action| self.send(action)));
+                    #[cfg(not(all(unix, not(target_os = "macos"))))]
+                    {
+                        let _ = selected;
+                    }
                 }
                 let track_name = {
                     let state = self.state.blocking_read();

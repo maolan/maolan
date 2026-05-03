@@ -38,7 +38,6 @@ use crate::{
 };
 use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
-#[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::message::PluginGraphPlugin;
 use maolan_engine::{
     history,
@@ -337,9 +336,12 @@ impl Maolan {
     }
 
     fn open_track_plugins_followup(&self, track_name: String) -> Task<Message> {
-        if platform_caps::SUPPORTS_PLUGIN_GRAPH {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
             self.send(Action::TrackGetPluginGraph { track_name })
-        } else {
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
             Task::perform(async {}, |_| {
                 Message::Show(crate::message::Show::TrackPluginList)
             })
@@ -347,11 +349,19 @@ impl Maolan {
     }
 
     fn maybe_refresh_plugin_graph_for_track(&self, track_name: &str) -> Option<Task<Message>> {
-        if self.track_has_open_plugin_graph(track_name) {
-            Some(self.send(Action::TrackGetPluginGraph {
-                track_name: track_name.to_string(),
-            }))
-        } else {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            if self.track_has_open_plugin_graph(track_name) {
+                Some(self.send(Action::TrackGetPluginGraph {
+                    track_name: track_name.to_string(),
+                }))
+            } else {
+                None
+            }
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
+            let _ = track_name;
             None
         }
     }
@@ -390,7 +400,6 @@ impl Maolan {
         None
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     pub(super) fn default_clip_plugin_graph_json(
         audio_ins: usize,
         audio_outs: usize,
@@ -412,7 +421,6 @@ impl Maolan {
         })
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     fn clip_plugin_graph_json_or_default(
         graph_json: Option<serde_json::Value>,
         audio_ins: usize,

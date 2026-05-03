@@ -21,10 +21,13 @@ pub use connection::Connection;
 use iced::{Length, Point};
 #[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::lv2::Lv2PluginInfo;
+#[cfg(unix)]
+use maolan_engine::message::{
+    PluginGraphConnection, PluginGraphNode, PluginGraphPlugin, PluginGraphSnapshot,
+};
 use maolan_engine::{
     clap::{ClapPluginInfo, ClapPluginState},
     kind::Kind,
-    message::{PluginGraphConnection, PluginGraphNode, PluginGraphPlugin, PluginGraphSnapshot},
     vst3::{Vst3PluginInfo, Vst3PluginState},
 };
 pub use maolan_widgets::midi::{PianoControllerPoint, PianoNote, PianoSysExPoint};

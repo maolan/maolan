@@ -49,7 +49,7 @@ use iced::{
     Length, Size, Task,
     widget::{
         button, checkbox, column, container, pick_list, progress_bar, row, scrollable, text,
-        text_editor, text_input,
+        text_editor, text_input, Column,
     },
 };
 use maolan_engine::kind::Kind;
@@ -87,7 +87,6 @@ type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
 type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
 
 const MAOLAN_BURN_SOCKETPAIR_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
-#[cfg(unix)]
 #[derive(Debug, Clone, Serialize)]
 struct BurnGenerateRequest {
     model: GenerateAudioModelOption,
@@ -951,7 +950,6 @@ impl Maolan {
     }
 
     #[cfg(unix)]
-    #[cfg(unix)]
     fn spawn_generate_process(
         request: &BurnGenerateRequest,
     ) -> Result<(u32, BurnGenerateProcessHandle), String> {
@@ -1095,6 +1093,18 @@ impl Maolan {
     fn spawn_generate_process(_request: &BurnGenerateRequest) -> Result<(u32, ()), String> {
         Err("Generated audio via generate is only available on Unix platforms".to_string())
     }
+
+    #[cfg(not(unix))]
+    fn communicate_with_generate_process<F>(
+        _socket: (),
+        _progress_callback: F,
+    ) -> Result<(), String>
+    where
+        F: FnMut(&str, f32, &str),
+    {
+        Err("Generated audio via generate is only available on Unix platforms".to_string())
+    }
+
     fn plugin_graph_title(state: &StateData) -> String {
         if let Some(target) = state.plugin_graph_clip.as_ref() {
             if let Some(track) = state
@@ -4208,6 +4218,14 @@ impl Maolan {
         plugin_object.insert("state".to_string(), state);
         Some(graph)
     }
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    fn plugin_graph_json_with_saved_plugin_state(
+        _graph: Option<&Value>,
+        _plugin_index: usize,
+        _state: Value,
+    ) -> Option<Value> {
+        None
+    }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     fn plugin_graph_plugin_from_saved_json(
@@ -5228,7 +5246,7 @@ impl Maolan {
                 label: hw.label.clone(),
             }));
         }
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(target_os = "linux")]
         {
             options.extend(
                 state
@@ -5237,6 +5255,18 @@ impl Maolan {
                     .map(|hw| PreferencesDeviceOption {
                         id: hw.id.clone(),
                         label: hw.label.clone(),
+                    }),
+            );
+        }
+        #[cfg(target_os = "windows")]
+        {
+            options.extend(
+                state
+                    .available_input_hw
+                    .iter()
+                    .map(|hw| PreferencesDeviceOption {
+                        id: hw.clone(),
+                        label: hw.clone(),
                     }),
             );
         }
@@ -5318,53 +5348,64 @@ impl Maolan {
             &input_options,
             self.prefs_default_input_device_id.as_deref(),
         );
-        container(
-            column![
-                text("Preferences").size(16),
-                row![
-                    checkbox(self.prefs_osc_enabled)
-                        .label("Enable OSC")
-                        .on_toggle(Message::PreferencesOscEnabledToggled),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-                row![
-                    text("Default export sample rate (Hz):"),
-                    pick_list(
-                        STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
-                        Some(self.prefs_export_sample_rate_hz),
-                        Message::PreferencesSampleRateSelected
-                    )
-                    .placeholder("Choose sample rate")
-                    .width(Length::Fixed(220.0)),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-                row![
-                    text("Default clip snap mode:"),
-                    pick_list(
-                        SNAP_MODE_ALL.to_vec(),
-                        Some(self.prefs_snap_mode),
-                        Message::PreferencesSnapModeSelected
-                    )
-                    .placeholder("Choose snap mode")
-                    .width(Length::Fixed(220.0)),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-                row![
-                    text("Default MIDI snap mode:"),
-                    pick_list(
-                        SNAP_MODE_ALL.to_vec(),
-                        Some(self.prefs_midi_snap_mode),
-                        Message::PreferencesMidiSnapModeSelected
-                    )
-                    .placeholder("Choose snap mode")
-                    .width(Length::Fixed(220.0)),
-                ]
-                .spacing(10)
-                .align_y(iced::Alignment::Center),
-                #[cfg(unix)]
+        let mut preferences_column = Column::new()
+            .align_x(iced::Alignment::Start)
+            .spacing(12);
+        preferences_column = preferences_column.push(text("Preferences").size(16));
+        preferences_column = preferences_column.push(
+            row![
+                checkbox(self.prefs_osc_enabled)
+                    .label("Enable OSC")
+                    .on_toggle(Message::PreferencesOscEnabledToggled),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
+        );
+        preferences_column = preferences_column.push(
+            row![
+                text("Default export sample rate (Hz):"),
+                pick_list(
+                    STANDARD_EXPORT_SAMPLE_RATES.to_vec(),
+                    Some(self.prefs_export_sample_rate_hz),
+                    Message::PreferencesSampleRateSelected
+                )
+                .placeholder("Choose sample rate")
+                .width(Length::Fixed(220.0)),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
+        );
+        preferences_column = preferences_column.push(
+            row![
+                text("Default clip snap mode:"),
+                pick_list(
+                    SNAP_MODE_ALL.to_vec(),
+                    Some(self.prefs_snap_mode),
+                    Message::PreferencesSnapModeSelected
+                )
+                .placeholder("Choose snap mode")
+                .width(Length::Fixed(220.0)),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
+        );
+        preferences_column = preferences_column.push(
+            row![
+                text("Default MIDI snap mode:"),
+                pick_list(
+                    SNAP_MODE_ALL.to_vec(),
+                    Some(self.prefs_midi_snap_mode),
+                    Message::PreferencesMidiSnapModeSelected
+                )
+                .placeholder("Choose snap mode")
+                .width(Length::Fixed(220.0)),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
+        );
+        #[cfg(unix)]
+        {
+            preferences_column = preferences_column.push(
                 row![
                     text("Default bit depth:"),
                     pick_list(
@@ -5377,45 +5418,54 @@ impl Maolan {
                 ]
                 .spacing(10)
                 .align_y(iced::Alignment::Center),
+            );
+        }
+        preferences_column = preferences_column.push(
+            row![
+                text("Default output device:"),
+                pick_list(
+                    output_options,
+                    selected_output,
+                    Message::PreferencesOutputDeviceSelected
+                )
+                .placeholder("Choose output device")
+                .width(Length::Fixed(320.0)),
+            ]
+            .spacing(10)
+            .align_y(iced::Alignment::Center),
+        );
+        if platform_caps::HAS_SEPARATE_AUDIO_INPUT_DEVICE {
+            preferences_column = preferences_column.push(
                 row![
-                    text("Default output device:"),
+                    text("Default input device:"),
                     pick_list(
-                        output_options,
-                        selected_output,
-                        Message::PreferencesOutputDeviceSelected
+                        input_options,
+                        selected_input,
+                        Message::PreferencesInputDeviceSelected
                     )
-                    .placeholder("Choose output device")
+                    .placeholder("Choose input device")
                     .width(Length::Fixed(320.0)),
                 ]
                 .spacing(10)
                 .align_y(iced::Alignment::Center),
-                if platform_caps::HAS_SEPARATE_AUDIO_INPUT_DEVICE {
-                    row![
-                        text("Default input device:"),
-                        pick_list(
-                            input_options,
-                            selected_input,
-                            Message::PreferencesInputDeviceSelected
-                        )
-                        .placeholder("Choose input device")
-                        .width(Length::Fixed(320.0)),
-                    ]
+            );
+        } else {
+            preferences_column = preferences_column.push(
+                row![text("")]
                     .spacing(10)
-                    .align_y(iced::Alignment::Center)
-                } else {
-                    row![text("")].spacing(10).align_y(iced::Alignment::Center)
-                },
-                row![
-                    button("Save").on_press(Message::PreferencesSave),
-                    button("Cancel")
-                        .on_press(Message::Cancel)
-                        .style(button::secondary),
-                ]
-                .spacing(10),
+                    .align_y(iced::Alignment::Center),
+            );
+        }
+        preferences_column = preferences_column.push(
+            row![
+                button("Save").on_press(Message::PreferencesSave),
+                button("Cancel")
+                    .on_press(Message::Cancel)
+                    .style(button::secondary),
             ]
-            .align_x(iced::Alignment::Start)
-            .spacing(12),
-        )
+            .spacing(10),
+        );
+        container(preferences_column)
         .style(|_theme| crate::style::app_background())
         .padding(20)
         .width(Length::Fill)
