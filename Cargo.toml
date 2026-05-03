@@ -4,8 +4,12 @@ default-run = "maolan"
 version = "0.0.8"
 edition = "2024"
 description = "Rust DAW application for recording, editing, routing, automation, export, and plugin hosting"
+authors = ["Maolan Team"]
 license = "BSD-2-Clause"
 readme = "README.md"
+
+[package.metadata.wix]
+eula = false
 repository = "https://github.com/maolan/maolan"
 homepage = "https://maolan.github.io"
 keywords = ["audio", "midi", "daw", "vst3", "lv2"]

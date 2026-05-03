@@ -39,7 +39,86 @@ Maolan currently includes:
 
 For Unix plugin/audio integrations, install platform libraries as needed (for example `jack`, `lilv`, `suil`, `gtk2`, `rust`, `cargo`, `rubberband` where applicable).
 
-### Compile and run
+### Windows
+
+Building on Windows requires MSVC, vcpkg, and a few environment variables.
+
+#### 1. Install dependencies
+
+1. **Rust** — Install via [rustup](https://rustup.rs/):
+   ```powershell
+   winget install Rustlang.Rustup
+   rustup target add x86_64-pc-windows-msvc
+   ```
+
+2. **Visual Studio 2022** — Install the *Desktop development with C++* workload. This provides:
+   - MSVC compiler (`cl.exe`)
+   - Windows SDK
+   - `link.exe`
+
+3. **vcpkg** — Install and bootstrap:
+   ```powershell
+   git clone https://github.com/microsoft/vcpkg C:\vcpkg
+   C:\vcpkg\bootstrap-vcpkg.bat
+   ```
+
+4. **FFmpeg** — Install via vcpkg:
+   ```powershell
+   C:\vcpkg\vcpkg install ffmpeg:x64-windows
+   ```
+
+5. **LLVM** — Required by `ffmpeg-sys-next` (bindgen). Install from [llvm.org](https://releases.llvm.org/) or winget:
+   ```powershell
+   winget install LLVM.LLVM
+   ```
+
+6. **NSIS** — Required to build the installer. Download and extract:
+   ```powershell
+   # Download https://prdownloads.sourceforge.net/nsis/nsis-3.10.zip
+   # Extract to C:\nsis-3.10 (or anywhere local)
+   ```
+
+#### 2. Set environment variables
+
+```powershell
+$env:FFMPEG_DIR     = 'C:\vcpkg\installed\x64-windows'
+$env:VCPKG_ROOT     = 'C:\vcpkg'
+$env:LIBCLANG_PATH  = 'C:\Program Files\LLVM\bin'
+$env:LIB            = 'C:\vcpkg\installed\x64-windows\lib'
+$env:INCLUDE        = 'C:\vcpkg\installed\x64-windows\include;C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207\include;C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\ucrt;C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\shared;C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0\um'
+```
+
+> **Note:** Adjust `LIB` and `INCLUDE` paths to match your Visual Studio and Windows SDK versions.
+
+#### 3. Build the binary
+
+```powershell
+cargo build --release --target x86_64-pc-windows-msvc
+```
+
+For a debug build (faster compilation, larger binary):
+
+```powershell
+cargo build --target x86_64-pc-windows-msvc
+```
+
+#### 4. Build the installer
+
+The installer bundles the executables, FFmpeg DLLs, and the VC++ Redistributable.
+
+1. Download the VC++ Redistributable to the repo root:
+   ```powershell
+   Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile '..\vc_redist.x64.exe'
+   ```
+
+2. Compile the installer:
+   ```powershell
+   C:\nsis-3.10\makensis.exe installer.nsi
+   ```
+
+The output is `maolan-setup.exe` in the `daw/` directory.
+
+### Compile and run (Unix)
 
 The repository root is a single Cargo package (not a workspace).
 
