@@ -117,7 +117,17 @@ The installer bundles the executables, FFmpeg DLLs, and the VC++ Redistributable
    Invoke-WebRequest -Uri 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile '..\vc_redist.x64.exe'
    ```
 
-2. Compile the installer:
+2. Stage the binaries and DLLs to a local directory:
+   ```powershell
+   New-Item -ItemType Directory -Force 'C:\maolan-staging\daw'
+   Copy-Item 'C:\cargo-target\x86_64-pc-windows-msvc\release\maolan.exe' 'C:\maolan-staging\daw\'
+   Copy-Item 'C:\cargo-target\x86_64-pc-windows-msvc\release\maolan-cli.exe' 'C:\maolan-staging\daw\'
+   Copy-Item 'C:\vcpkg\installed\x64-windows\bin\av*.dll' 'C:\maolan-staging\daw\'
+   Copy-Item 'C:\vcpkg\installed\x64-windows\bin\sw*.dll' 'C:\maolan-staging\daw\'
+   Copy-Item '..\vc_redist.x64.exe' 'C:\maolan-staging\daw\'
+   ```
+
+3. Compile the installer:
    ```powershell
    C:\nsis-3.10\makensis.exe installer.nsi
    ```

@@ -1,5 +1,6 @@
 ; Maolan DAW Installer
 ; Run with: makensis.exe installer.nsi
+; Requires all binaries and DLLs to be staged in C:\maolan-staging\daw\
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
@@ -55,20 +56,10 @@ VIAddVersionKey "LegalCopyright" "BSD-2-Clause"
 Section "Install"
     SetOutPath "$INSTDIR"
 
-    ; Main binaries
-    File "C:\cargo-target\x86_64-pc-windows-msvc\release\maolan.exe"
-    File "C:\cargo-target\x86_64-pc-windows-msvc\release\maolan-cli.exe"
+    ; Copy all staged binaries and DLLs
+    File "C:\maolan-staging\daw\*.*"
 
-    ; FFmpeg DLLs from vcpkg
-    File "C:\vcpkg\installed\x64-windows\bin\avcodec-62.dll"
-    File "C:\vcpkg\installed\x64-windows\bin\avdevice-62.dll"
-    File "C:\vcpkg\installed\x64-windows\bin\avfilter-11.dll"
-    File "C:\vcpkg\installed\x64-windows\bin\avformat-62.dll"
-    File "C:\vcpkg\installed\x64-windows\bin\avutil-60.dll"
-    File "C:\vcpkg\installed\x64-windows\bin\swresample-6.dll"
-
-    ; VC++ Redistributable installer (bundled)
-    File "..\vc_redist.x64.exe"
+    ; Run VC++ Redistributable installer
     ExecWait '"$INSTDIR\vc_redist.x64.exe" /install /quiet /norestart' $0
     Delete "$INSTDIR\vc_redist.x64.exe"
 
@@ -108,16 +99,12 @@ SectionEnd
 Section "Uninstall"
     Delete "$INSTDIR\maolan.exe"
     Delete "$INSTDIR\maolan-cli.exe"
-
     Delete "$INSTDIR\avcodec-62.dll"
     Delete "$INSTDIR\avdevice-62.dll"
     Delete "$INSTDIR\avfilter-11.dll"
     Delete "$INSTDIR\avformat-62.dll"
     Delete "$INSTDIR\avutil-60.dll"
     Delete "$INSTDIR\swresample-6.dll"
-
-    ; VC++ Redistributable is uninstalled separately via Windows Add/Remove Programs
-
     Delete "$INSTDIR\Uninstall.exe"
 
     Delete "$SMPROGRAMS\Maolan\Maolan.lnk"
