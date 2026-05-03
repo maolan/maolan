@@ -11,15 +11,16 @@ use vst3::Steinberg::Vst::IComponentTrait;
 use vst3::Steinberg::Vst::{IEditControllerTrait, ViewType};
 use vst3::Steinberg::kResultTrue;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::UpdateWindow;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AdjustWindowRectEx, CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW,
-    DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect, GetMessageW,
+    DefWindowProcW, DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetClientRect,
     GetWindowLongPtrW, IDC_ARROW, LoadCursorW, MSG, MoveWindow, PM_REMOVE, PeekMessageW,
     PostQuitMessage, RegisterClassW, SW_SHOW, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos,
-    ShowWindow, TranslateMessage, UpdateWindow, WINDOW_EX_STYLE, WM_CLOSE, WM_DESTROY, WM_NCCREATE,
-    WM_SETFOCUS, WM_SIZE, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
-    WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+    ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WM_CLOSE, WM_DESTROY, WM_NCCREATE, WM_SETFOCUS,
+    WM_SIZE, WNDCLASSW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW,
+    WS_VISIBLE,
 };
 
 const HOST_WINDOW_CLASS: &str = "MaolanVst3HostWindow";
@@ -142,7 +143,17 @@ unsafe fn resize_host_windows(window: HWND, embed_window: HWND, width: i32, heig
     let _ = unsafe { AdjustWindowRectEx(&mut rect, WS_OVERLAPPEDWINDOW, 0, 0) };
     let outer_width = rect.right - rect.left;
     let outer_height = rect.bottom - rect.top;
-    let _ = unsafe { SetWindowPos(window, 0, 0, 0, outer_width, outer_height, SWP_NOZORDER) };
+    let _ = unsafe {
+        SetWindowPos(
+            window,
+            null_mut(),
+            0,
+            0,
+            outer_width,
+            outer_height,
+            SWP_NOZORDER,
+        )
+    };
     let _ = unsafe { MoveWindow(embed_window, 0, 0, width, height, 1) };
 }
 
@@ -257,13 +268,13 @@ unsafe fn create_host_windows(
             CW_USEDEFAULT,
             rect.right - rect.left,
             rect.bottom - rect.top,
-            0,
-            0,
+            null_mut(),
+            null_mut(),
             hinstance,
             state.cast::<c_void>(),
         )
     };
-    if window == 0 {
+    if window.is_null() {
         return Err("Failed to create Win32 host window for VST3 editor".to_string());
     }
 
@@ -278,12 +289,12 @@ unsafe fn create_host_windows(
             width,
             height,
             window,
-            0,
+            null_mut(),
             hinstance,
             null_mut(),
         )
     };
-    if embed_window == 0 {
+    if embed_window.is_null() {
         unsafe {
             let _ = DestroyWindow(window);
         }
@@ -418,7 +429,7 @@ fn run_vst3_win32_editor(
 
     let mut window_state = Box::new(WindowState {
         view: view.as_ptr(),
-        embed_window: 0,
+        embed_window: null_mut(),
     });
     let state_ptr = &mut *window_state as *mut WindowState;
     let (window, embed_window) = unsafe { create_host_windows(&title, width, height, state_ptr)? };
@@ -456,7 +467,7 @@ fn run_vst3_win32_editor(
     let mut msg = MSG::default();
     loop {
         pump_host_run_loop();
-        let has_message = unsafe { PeekMessageW(&mut msg, 0, 0, 0, PM_REMOVE) };
+        let has_message = unsafe { PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) };
         if has_message == 0 {
             std::thread::sleep(std::time::Duration::from_millis(16));
             continue;
@@ -474,7 +485,7 @@ fn run_vst3_win32_editor(
     let _ = unsafe { view.setFrame(std::ptr::null_mut()) };
     let _ = unsafe { view.removed() };
     unsafe {
-        let _ = SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+        let _ = SetWindowLongPtrW(window, GWLP_USERDATA, 0isize);
         let _ = DestroyWindow(window);
     }
     drop(frame);
@@ -509,7 +520,7 @@ fn run_vst3_win32_editor_with_processor(
 
     let mut window_state = Box::new(WindowState {
         view: std::ptr::null_mut(),
-        embed_window: 0,
+        embed_window: null_mut(),
     });
     let state_ptr = &mut *window_state as *mut WindowState;
     let (window, embed_window) = unsafe { create_host_windows(&title, width, height, state_ptr)? };
@@ -547,7 +558,7 @@ fn run_vst3_win32_editor_with_processor(
         if processor.ui_should_close() {
             break;
         }
-        let has_message = unsafe { PeekMessageW(&mut msg, 0, 0, 0, PM_REMOVE) };
+        let has_message = unsafe { PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) };
         if has_message == 0 {
             std::thread::sleep(std::time::Duration::from_millis(16));
             continue;
@@ -564,7 +575,7 @@ fn run_vst3_win32_editor_with_processor(
     processor.gui_hide();
     processor.gui_destroy();
     unsafe {
-        let _ = SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+        let _ = SetWindowLongPtrW(window, GWLP_USERDATA, 0isize);
         let _ = DestroyWindow(window);
     }
     drop(window_state);

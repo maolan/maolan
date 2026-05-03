@@ -1,4 +1,3 @@
-#[cfg(unix)]
 use maolan_engine::message::PluginGraphNode;
 use maolan_engine::{
     kind::Kind,
@@ -961,7 +960,6 @@ fn push_track_graph_restore_actions(
     Ok(())
 }
 
-#[cfg(unix)]
 fn parse_kind(value: Option<&Value>) -> Option<Kind> {
     match value.and_then(Value::as_str) {
         Some("audio") | Some("Audio") => Some(Kind::Audio),
@@ -970,7 +968,6 @@ fn parse_kind(value: Option<&Value>) -> Option<Kind> {
     }
 }
 
-#[cfg(unix)]
 fn parse_plugin_node(value: Option<&Value>) -> Option<PluginGraphNode> {
     let value = value?;
     if let Some(text) = value.as_str() {

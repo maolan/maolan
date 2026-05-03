@@ -1,5 +1,6 @@
 use super::*;
 use crate::consts::widget_piano::PITCH_MAX;
+#[cfg(unix)]
 use maolan_engine::message::PluginGraphNode;
 mod core;
 mod plugins;
@@ -3047,22 +3048,26 @@ impl Maolan {
                                 .entry(track_name.clone())
                                 .or_default()
                                 .insert(plugin_path.clone(), clap_state.clone());
-                            if let Some((plugins, _)) =
-                                state.plugin_graphs_by_track.get_mut(track_name)
-                                && let Some(plugin) = plugins
-                                    .iter_mut()
-                                    .find(|plugin| plugin.instance_id == *instance_id)
+                            #[cfg(all(unix, not(target_os = "macos")))]
                             {
-                                plugin.state = Some(state_json.clone());
-                            }
-                            if state.plugin_graph_clip.is_none()
-                                && state.plugin_graph_track.as_deref() == Some(track_name.as_str())
-                                && let Some(plugin) = state
-                                    .plugin_graph_plugins
-                                    .iter_mut()
-                                    .find(|plugin| plugin.instance_id == *instance_id)
-                            {
-                                plugin.state = Some(state_json);
+                                if let Some((plugins, _)) =
+                                    state.plugin_graphs_by_track.get_mut(track_name)
+                                    && let Some(plugin) = plugins
+                                        .iter_mut()
+                                        .find(|plugin| plugin.instance_id == *instance_id)
+                                {
+                                    plugin.state = Some(state_json.clone());
+                                }
+                                if state.plugin_graph_clip.is_none()
+                                    && state.plugin_graph_track.as_deref()
+                                        == Some(track_name.as_str())
+                                    && let Some(plugin) = state
+                                        .plugin_graph_plugins
+                                        .iter_mut()
+                                        .find(|plugin| plugin.instance_id == *instance_id)
+                                {
+                                    plugin.state = Some(state_json);
+                                }
                             }
                         }
                         Action::ClipClapStateSnapshot {
@@ -7410,7 +7415,6 @@ impl Maolan {
                 self.generate_audio_operation = Some("Launching generate".to_string());
 
                 // Spawn the subprocess and get its PID
-                #[cfg(unix)]
                 let (pid, socket) = match super::super::Maolan::spawn_generate_process(&request) {
                     Ok((pid, socket)) => (pid, socket),
                     Err(err) => {
@@ -7435,7 +7439,6 @@ impl Maolan {
                         operation: Some("Generating audio".to_string()),
                     });
 
-                    #[cfg(unix)]
                     let tx_progress = tx.clone();
                     match tokio::task::spawn_blocking(move || {
                         super::super::Maolan::communicate_with_generate_process(
@@ -8424,7 +8427,14 @@ impl Maolan {
                 ref track_idx,
                 clip_idx,
             } => {
-                return self.open_clip_plugin_view(track_idx.clone(), clip_idx);
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    return self.open_clip_plugin_view(track_idx.clone(), clip_idx);
+                }
+                #[cfg(not(all(unix, not(target_os = "macos"))))]
+                {
+                    return Task::none();
+                }
             }
             _ => {}
         }

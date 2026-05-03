@@ -236,7 +236,7 @@ impl Maolan {
             }
             Value::Object(graphs)
         };
-        #[cfg(target_os = "macos")]
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
         let graphs = Value::Object(serde_json::Map::new());
 
         let metadata_year = state.session_year.trim().parse::<u64>().ok();
@@ -348,7 +348,7 @@ impl Maolan {
             Task::batch(tasks)
         }
 
-        #[cfg(target_os = "macos")]
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
         {
             self.save_track_as_template(&track_name, path)
         }
@@ -599,7 +599,7 @@ impl Maolan {
                         Value::Null
                     }
                 }
-                #[cfg(target_os = "macos")]
+                #[cfg(not(all(unix, not(target_os = "macos"))))]
                 {
                     Value::Null
                 }
@@ -721,7 +721,7 @@ impl Maolan {
                             Value::Null
                         }
                     }
-                    #[cfg(target_os = "macos")]
+                    #[cfg(not(all(unix, not(target_os = "macos"))))]
                     {
                         Value::Null
                     }
@@ -1191,7 +1191,7 @@ impl Maolan {
             }
             Value::Object(graphs)
         };
-        #[cfg(target_os = "macos")]
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
         let graphs = Value::Object(serde_json::Map::new());
         let metadata_year = state.session_year.trim().parse::<u64>().ok();
         let metadata_track_number = state.session_track_number.trim().parse::<u64>().ok();
@@ -2468,7 +2468,7 @@ impl Maolan {
                 .collect::<Vec<_>>();
             Task::batch(tasks)
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
         {
             let track_names: Vec<String> = self
                 .state
@@ -2481,21 +2481,6 @@ impl Maolan {
             self.pending_save_tracks = track_names.iter().cloned().collect();
             self.pending_save_clap_tracks = track_names.iter().cloned().collect();
             self.pending_save_is_template = true;
-            self.pending_save_vst3_states.clear();
-            {
-                let state = self.state.blocking_read();
-                for track_name in &track_names {
-                    if let Some((plugins, _)) = state.plugin_graphs_by_track.get(track_name) {
-                        for plugin in plugins
-                            .iter()
-                            .filter(|plugin| plugin.format.eq_ignore_ascii_case("VST3"))
-                        {
-                            self.pending_save_vst3_states
-                                .insert((track_name.clone(), plugin.instance_id));
-                        }
-                    }
-                }
-            }
             if self.pending_save_tracks.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {
                     return Task::none();
@@ -2510,31 +2495,7 @@ impl Maolan {
             }
             let tasks = track_names
                 .into_iter()
-                .flat_map(|track_name| {
-                    let mut actions = vec![
-                        self.send(Action::TrackGetPluginGraph {
-                            track_name: track_name.clone(),
-                        }),
-                        self.send(Action::TrackSnapshotAllClapStates {
-                            track_name: track_name.clone(),
-                        }),
-                    ];
-                    {
-                        let state = self.state.blocking_read();
-                        if let Some((plugins, _)) = state.plugin_graphs_by_track.get(&track_name) {
-                            for plugin in plugins
-                                .iter()
-                                .filter(|plugin| plugin.format.eq_ignore_ascii_case("VST3"))
-                            {
-                                actions.push(self.send(Action::TrackVst3SnapshotState {
-                                    track_name: track_name.clone(),
-                                    instance_id: plugin.instance_id,
-                                }));
-                            }
-                        }
-                    }
-                    actions
-                })
+                .map(|track_name| self.send(Action::TrackSnapshotAllClapStates { track_name }))
                 .collect::<Vec<_>>();
             Task::batch(tasks)
         }
@@ -2579,7 +2540,7 @@ impl Maolan {
                 .collect::<Vec<_>>();
             Task::batch(tasks)
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
         {
             let track_names: Vec<String> = self
                 .state
@@ -2592,21 +2553,6 @@ impl Maolan {
             self.pending_save_tracks = track_names.iter().cloned().collect();
             self.pending_save_clap_tracks = track_names.iter().cloned().collect();
             self.pending_save_is_template = false;
-            self.pending_save_vst3_states.clear();
-            {
-                let state = self.state.blocking_read();
-                for track_name in &track_names {
-                    if let Some((plugins, _)) = state.plugin_graphs_by_track.get(track_name) {
-                        for plugin in plugins
-                            .iter()
-                            .filter(|plugin| plugin.format.eq_ignore_ascii_case("VST3"))
-                        {
-                            self.pending_save_vst3_states
-                                .insert((track_name.clone(), plugin.instance_id));
-                        }
-                    }
-                }
-            }
             if self.pending_save_tracks.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {
                     return Task::none();
@@ -2621,31 +2567,7 @@ impl Maolan {
             }
             let tasks = track_names
                 .into_iter()
-                .flat_map(|track_name| {
-                    let mut actions = vec![
-                        self.send(Action::TrackGetPluginGraph {
-                            track_name: track_name.clone(),
-                        }),
-                        self.send(Action::TrackSnapshotAllClapStates {
-                            track_name: track_name.clone(),
-                        }),
-                    ];
-                    {
-                        let state = self.state.blocking_read();
-                        if let Some((plugins, _)) = state.plugin_graphs_by_track.get(&track_name) {
-                            for plugin in plugins
-                                .iter()
-                                .filter(|plugin| plugin.format.eq_ignore_ascii_case("VST3"))
-                            {
-                                actions.push(self.send(Action::TrackVst3SnapshotState {
-                                    track_name: track_name.clone(),
-                                    instance_id: plugin.instance_id,
-                                }));
-                            }
-                        }
-                    }
-                    actions
-                })
+                .map(|track_name| self.send(Action::TrackSnapshotAllClapStates { track_name }))
                 .collect::<Vec<_>>();
             Task::batch(tasks)
         }

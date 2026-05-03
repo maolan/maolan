@@ -1,3 +1,4 @@
+#[cfg(all(unix, not(target_os = "macos")))]
 use crate::consts::plugins_clap::{
     CLIENT_MESSAGE, DESTROY_NOTIFY, STRUCTURE_NOTIFY_MASK, UNMAP_NOTIFY,
 };
