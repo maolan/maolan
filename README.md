@@ -96,6 +96,12 @@ $env:INCLUDE        = 'C:\vcpkg\installed\x64-windows\include;C:\Program Files\M
 cargo build --release --target x86_64-pc-windows-msvc
 ```
 
+If building from a network share (e.g. Samba), use a local target directory to avoid "Access is denied" errors from build scripts:
+
+```powershell
+cargo build --release --target x86_64-pc-windows-msvc --target-dir C:\cargo-target
+```
+
 For a debug build (faster compilation, larger binary):
 
 ```powershell
