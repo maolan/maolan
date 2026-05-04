@@ -1,4 +1,3 @@
-use maolan_engine::message::PluginGraphNode;
 use maolan_engine::{
     kind::Kind,
     message::{
@@ -968,7 +967,9 @@ fn parse_kind(value: Option<&Value>) -> Option<Kind> {
     }
 }
 
-fn parse_plugin_node(value: Option<&Value>) -> Option<PluginGraphNode> {
+#[cfg(unix)]
+fn parse_plugin_node(value: Option<&Value>) -> Option<maolan_engine::message::PluginGraphNode> {
+    use maolan_engine::message::PluginGraphNode;
     let value = value?;
     if let Some(text) = value.as_str() {
         return match text {

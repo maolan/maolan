@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod add_track;
 mod audio_defaults;
 mod clip_rename;

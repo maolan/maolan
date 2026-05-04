@@ -4,9 +4,11 @@ use crate::plugins::win32::open_editor_with_processor as open_vst3_editor_platfo
 use crate::plugins::x11::open_editor_with_processor as open_vst3_editor_platform;
 use maolan_engine::vst3::Vst3Processor;
 use std::sync::Arc;
+#[cfg(unix)]
 use std::sync::mpsc;
 
 #[derive(Debug, Clone)]
+#[cfg(unix)]
 pub(crate) struct Vst3UiClosedState {
     pub track_name: String,
     pub clip_idx: Option<usize>,
@@ -15,19 +17,29 @@ pub(crate) struct Vst3UiClosedState {
 }
 
 pub struct GuiVst3UiHost {
+    #[cfg(unix)]
     closed_tx: mpsc::Sender<Vst3UiClosedState>,
+    #[cfg(unix)]
     closed_rx: mpsc::Receiver<Vst3UiClosedState>,
 }
 
 impl GuiVst3UiHost {
     pub fn new() -> Self {
-        let (closed_tx, closed_rx) = mpsc::channel();
-        Self {
-            closed_tx,
-            closed_rx,
+        #[cfg(unix)]
+        {
+            let (closed_tx, closed_rx) = mpsc::channel();
+            Self {
+                closed_tx,
+                closed_rx,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            Self {}
         }
     }
 
+    #[cfg(unix)]
     pub fn drain_closed_states(&mut self) -> Vec<Vst3UiClosedState> {
         let mut states = Vec::new();
         while let Ok(state) = self.closed_rx.try_recv() {
@@ -51,34 +63,36 @@ impl GuiVst3UiHost {
     #[cfg(any(all(unix, not(target_os = "macos")), target_os = "windows"))]
     pub fn open_editor(
         &mut self,
-        track_name: &str,
-        clip_idx: Option<usize>,
-        instance_id: usize,
-        plugin_path: &str,
+        _track_name: &str,
+        _clip_idx: Option<usize>,
+        _instance_id: usize,
+        _plugin_path: &str,
         processor: Arc<Vst3Processor>,
     ) -> Result<(), String> {
-        let track_name = track_name.to_string();
-        let _plugin_path = plugin_path.to_string();
+        let _track_name = _track_name.to_string();
+        #[cfg(unix)]
         let closed_tx = self.closed_tx.clone();
         std::thread::Builder::new()
             .name("vst3-ui".to_string())
             .spawn(move || {
                 match open_vst3_editor_platform(processor.clone(), processor.name().to_string()) {
-                    Ok(Some(state)) => {
+                    Ok(Some(_state)) => {
+                        #[cfg(unix)]
                         let _ = closed_tx.send(Vst3UiClosedState {
-                            track_name,
-                            clip_idx,
-                            instance_id,
-                            state,
+                            track_name: _track_name,
+                            clip_idx: _clip_idx,
+                            instance_id: _instance_id,
+                            state: _state,
                         });
                     }
                     Ok(None) => {
-                        if let Ok(state) = processor.snapshot_state() {
+                        if let Ok(_state) = processor.snapshot_state() {
+                            #[cfg(unix)]
                             let _ = closed_tx.send(Vst3UiClosedState {
-                                track_name,
-                                clip_idx,
-                                instance_id,
-                                state,
+                                track_name: _track_name,
+                                clip_idx: _clip_idx,
+                                instance_id: _instance_id,
+                                state: _state,
                             });
                         }
                     }

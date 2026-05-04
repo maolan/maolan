@@ -679,17 +679,19 @@ impl HW {
     }
 
     pub fn jack_ports_view(&self, input: bool) -> iced::Element<'_, Message> {
-        let (selected_backend, hw_in_channels, hw_out_channels) = {
+        let (hw_in_channels, hw_out_channels) = {
             let state = self.state.blocking_read();
             (
-                state.selected_backend.clone(),
                 state.hw_in.as_ref().map(|hw| hw.channels).unwrap_or(0),
                 state.hw_out.as_ref().map(|hw| hw.channels).unwrap_or(0),
             )
         };
 
         #[cfg(unix)]
-        let jack_selected = matches!(selected_backend, crate::state::AudioBackendOption::Jack);
+        let jack_selected = {
+            let state = self.state.blocking_read();
+            matches!(state.selected_backend, crate::state::AudioBackendOption::Jack)
+        };
         #[cfg(not(unix))]
         let jack_selected = false;
 

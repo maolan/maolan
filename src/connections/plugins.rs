@@ -588,6 +588,31 @@ impl canvas::Program<Message> for Graph {
                     data.plugin_graph_selected_plugin = None;
                     return Some(Action::request_redraw());
                 }
+                Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. })
+                    if *key == iced::keyboard::Key::Character("b".into()) =>
+                {
+                    if data.plugin_graph_clip.is_some() {
+                        return None;
+                    }
+                    if let Some(instance_id) = data.plugin_graph_selected_plugin {
+                        if let Some(plugin) = data
+                            .plugin_graph_plugins
+                            .iter()
+                            .find(|p| p.instance_id == instance_id)
+                        {
+                            let track_name = data.plugin_graph_track.clone().unwrap_or_default();
+                            let new_bypass = !plugin.bypassed;
+                            return Some(Action::publish(Message::Request(
+                                EngineAction::TrackSetPluginBypassed {
+                                    track_name,
+                                    instance_id,
+                                    format: plugin.format.clone(),
+                                    bypassed: new_bypass,
+                                },
+                            )));
+                        }
+                    }
+                }
                 Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                     let mut redraw = true;
                     if let Some(connecting) = data.plugin_graph_connecting.as_mut() {
@@ -967,12 +992,27 @@ impl canvas::Program<Message> for Graph {
                 frame.fill_text(Text {
                     content: plugin.name.clone(),
                     position: Point::new(pos.x + PLUGIN_W / 2.0, pos.y + 16.0),
-                    color: Color::WHITE,
+                    color: if plugin.bypassed {
+                        Color::from_rgb(0.6, 0.6, 0.6)
+                    } else {
+                        Color::WHITE
+                    },
                     size: 14.0.into(),
                     align_x: Horizontal::Center.into(),
                     align_y: Vertical::Center,
                     ..Default::default()
                 });
+                if plugin.bypassed {
+                    frame.fill_text(Text {
+                        content: "BYP".into(),
+                        position: Point::new(pos.x + PLUGIN_W / 2.0, pos.y + plugin_h - 10.0),
+                        color: Color::from_rgb(0.85, 0.5, 0.3),
+                        size: 10.0.into(),
+                        align_x: Horizontal::Center.into(),
+                        align_y: Vertical::Center,
+                        ..Default::default()
+                    });
+                }
                 for port in 0..plugin.audio_inputs {
                     let Some(py) =
                         Self::plugin_input_port_y(plugin, plugin_h, pos.y, Kind::Audio, port)
@@ -1306,6 +1346,7 @@ mod tests {
             midi_inputs: 0,
             midi_outputs: 0,
             state: None,
+            bypassed: false,
         };
         {
             let mut data = state.blocking_write();
