@@ -38,6 +38,7 @@ use crate::{
 };
 use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
+#[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::message::PluginGraphPlugin;
 use maolan_engine::{
     history,
@@ -335,10 +336,10 @@ impl Maolan {
         state.plugin_graph_selected_plugin = None;
     }
 
-    fn open_track_plugins_followup(&self, track_name: String) -> Task<Message> {
+    fn open_track_plugins_followup(&self, _track_name: String) -> Task<Message> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            self.send(Action::TrackGetPluginGraph { track_name })
+            self.send(Action::TrackGetPluginGraph { track_name: _track_name })
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         {
@@ -366,6 +367,7 @@ impl Maolan {
         }
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn track_has_open_plugin_graph(&self, track_name: &str) -> bool {
         platform_caps::SUPPORTS_PLUGIN_GRAPH && {
             let state = self.state.blocking_read();
@@ -421,6 +423,7 @@ impl Maolan {
         })
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn clip_plugin_graph_json_or_default(
         graph_json: Option<serde_json::Value>,
         audio_ins: usize,
@@ -735,15 +738,6 @@ impl Maolan {
                 }));
             }
         }
-    }
-
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
-    fn queue_pending_lv2_automation_queries(
-        &mut self,
-        _track_name: &str,
-        _plugins: &[PluginGraphPlugin],
-        _pending_queries: &mut Vec<Task<Message>>,
-    ) {
     }
 
     fn pending_save_ready(&self) -> bool {

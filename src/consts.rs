@@ -64,7 +64,8 @@ pub mod platform_caps {
     ));
     pub const REQUIRE_VST3_STATE_FOR_SAVE: bool = cfg!(target_os = "macos");
     pub const SUPPORTS_LV2: bool = cfg!(all(unix, not(target_os = "macos")));
-    pub const SUPPORTS_PLUGIN_GRAPH: bool = cfg!(all(unix, not(target_os = "macos")));
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub const SUPPORTS_PLUGIN_GRAPH: bool = true;
 }
 
 pub mod main {
@@ -95,6 +96,7 @@ pub mod state_track {
     pub const TRACK_SUBTRACK_MIN_HEIGHT: f32 = 40.0;
 }
 
+#[cfg(all(unix, not(target_os = "macos")))]
 pub mod connections_plugins {
     pub const PLUGIN_W: f32 = 170.0;
     pub const MIN_PLUGIN_H: f32 = 96.0;
@@ -108,6 +110,7 @@ pub mod connections_plugins {
     pub const TRACK_IO_MARGIN_X: f32 = 24.0;
 }
 
+#[cfg(all(unix, not(target_os = "macos")))]
 pub mod plugins_x11 {
     use std::ffi::c_long;
 
@@ -121,19 +124,17 @@ pub mod plugins_x11 {
     pub const XEMBED_FOCUS_CURRENT: c_long = 0;
 }
 
+#[cfg(all(unix, not(target_os = "macos")))]
 pub mod plugins_clap {
     use std::ffi::{c_int, c_long};
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     pub const DESTROY_NOTIFY: c_int = 17;
-    #[cfg(all(unix, not(target_os = "macos")))]
     pub const UNMAP_NOTIFY: c_int = 18;
-    #[cfg(all(unix, not(target_os = "macos")))]
     pub const CLIENT_MESSAGE: c_int = 33;
-    #[cfg(all(unix, not(target_os = "macos")))]
     pub const STRUCTURE_NOTIFY_MASK: c_long = 1 << 17;
 }
 
+#[cfg(all(unix, not(target_os = "macos")))]
 pub mod plugins_lv2 {
     pub const GTK_WINDOW_TOPLEVEL: i32 = 0;
     pub const LV2_URID_MAP: &str = "http://lv2plug.in/ns/ext/urid#map";
@@ -414,6 +415,7 @@ mod tests {
         assert_eq!(state_track::TRACK_SUBTRACK_MIN_HEIGHT, 40.0);
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn connections_plugins_constants_are_expected_values() {
         assert_eq!(connections_plugins::PLUGIN_W, 170.0);
@@ -422,6 +424,7 @@ mod tests {
         assert_eq!(connections_plugins::MIDI_PORT_RADIUS, 3.5);
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn plugins_x11_constants_exist() {
         let _ = plugins_x11::CLIENT_MESSAGE;
@@ -430,6 +433,7 @@ mod tests {
         let _ = plugins_x11::EXPOSURE_MASK;
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn plugins_lv2_constants_exist() {
         assert!(!plugins_lv2::LV2_URID_MAP.is_empty());

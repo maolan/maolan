@@ -3035,13 +3035,11 @@ impl Maolan {
                         }
                         Action::TrackClapStateSnapshot {
                             track_name,
-                            instance_id,
+                            instance_id: _instance_id,
                             plugin_path,
                             state: clap_state,
                             ..
                         } => {
-                            let state_json =
-                                serde_json::to_value(clap_state).unwrap_or(serde_json::Value::Null);
                             let mut state = self.state.blocking_write();
                             state
                                 .clap_states_by_track
@@ -3050,11 +3048,13 @@ impl Maolan {
                                 .insert(plugin_path.clone(), clap_state.clone());
                             #[cfg(all(unix, not(target_os = "macos")))]
                             {
+                                let state_json =
+                                    serde_json::to_value(clap_state).unwrap_or(serde_json::Value::Null);
                                 if let Some((plugins, _)) =
                                     state.plugin_graphs_by_track.get_mut(track_name)
                                     && let Some(plugin) = plugins
                                         .iter_mut()
-                                        .find(|plugin| plugin.instance_id == *instance_id)
+                                        .find(|plugin| plugin.instance_id == *_instance_id)
                                 {
                                     plugin.state = Some(state_json.clone());
                                 }
@@ -3064,7 +3064,7 @@ impl Maolan {
                                     && let Some(plugin) = state
                                         .plugin_graph_plugins
                                         .iter_mut()
-                                        .find(|plugin| plugin.instance_id == *instance_id)
+                                        .find(|plugin| plugin.instance_id == *_instance_id)
                                 {
                                     plugin.state = Some(state_json);
                                 }
@@ -7038,7 +7038,7 @@ impl Maolan {
                     return Task::none();
                 };
 
-                let used_track_names: HashSet<String> = self
+                let _used_track_names: HashSet<String> = self
                     .state
                     .blocking_read()
                     .tracks
@@ -7061,7 +7061,7 @@ impl Maolan {
                         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
                         tokio::spawn(async move {
-                            let mut used_names = used_track_names;
+                            let mut used_names = _used_track_names;
                             let mut failures = Vec::new();
 
                             for (idx, path) in paths.iter().enumerate() {
@@ -7402,7 +7402,7 @@ impl Maolan {
                     length: self.generate_audio_seconds_total_input.saturating_mul(1000),
                 };
 
-                let used_track_names: HashSet<String> = self
+                let _used_track_names: HashSet<String> = self
                     .state
                     .blocking_read()
                     .tracks
@@ -7415,8 +7415,8 @@ impl Maolan {
                 self.generate_audio_operation = Some("Launching generate".to_string());
 
                 // Spawn the subprocess and get its PID
-                let (pid, socket) = match super::super::Maolan::spawn_generate_process(&request) {
-                    Ok((pid, socket)) => (pid, socket),
+                let (_pid, socket) = match super::super::Maolan::spawn_generate_process(&request) {
+                    Ok((_pid, socket)) => (_pid, socket),
                     Err(err) => {
                         self.generate_audio_in_progress = false;
                         self.error(err);
@@ -7425,15 +7425,11 @@ impl Maolan {
                 };
                 #[cfg(unix)]
                 {
-                    self.generate_audio_process_id = Some(pid);
+                    self.generate_audio_process_id = Some(_pid);
                 }
 
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                 let task_handle = tokio::spawn(async move {
-                    let mut used_names = used_track_names;
-                    let base_name =
-                        super::super::Maolan::sanitize_generated_track_base_name(&request.prompt);
-                    let output_path = request.output_path.clone();
                     let _ = tx.send(Message::GenerateAudioProgress {
                         progress: 0.05,
                         operation: Some("Generating audio".to_string()),
@@ -7465,14 +7461,12 @@ impl Maolan {
                             return;
                         }
                     };
-                    #[cfg(not(unix))]
+                    #[cfg(unix)]
                     {
-                        let _ = tx.send(Message::GenerateAudioFinished(Err(
-                            "Generated audio is only available on Unix platforms".to_string(),
-                        )));
-                        return;
-                    };
-
+                    let mut used_names = _used_track_names;
+                    let base_name =
+                        super::super::Maolan::sanitize_generated_track_base_name(&request.prompt);
+                    let output_path = request.output_path.clone();
                     let tx_clone = tx.clone();
                     let mut last_progress_bucket: Option<u16> = None;
                     let mut last_operation: Option<String> = None;
@@ -7623,6 +7617,13 @@ impl Maolan {
                         operation: Some("Complete".to_string()),
                     });
                     let _ = tx.send(Message::GenerateAudioFinished(Ok(track_name)));
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = tx.send(Message::GenerateAudioFinished(Err(
+                            "Generated audio is only available on Unix platforms".to_string(),
+                        )));
+                    }
                 });
 
                 self.generate_audio_abort_handle = Some(task_handle.abort_handle());
@@ -8386,16 +8387,21 @@ impl Maolan {
                             state.view = View::Piano;
                         }
                         {
-                            let mut tasks = vec![
+                            let tasks = vec![
                                 self.send(Action::TrackGetClapNoteNames {
                                     track_name: track_idx.clone(),
                                 }),
                                 self.sync_piano_scrollbars(),
                             ];
                             #[cfg(all(unix, not(target_os = "macos")))]
-                            tasks.push(self.send(Action::TrackGetLv2Midnam {
-                                track_name: track_idx.clone(),
-                            }));
+                            {
+                                let mut tasks = tasks;
+                                tasks.push(self.send(Action::TrackGetLv2Midnam {
+                                    track_name: track_idx.clone(),
+                                }));
+                                return Task::batch(tasks);
+                            }
+                            #[cfg(not(all(unix, not(target_os = "macos"))))]
                             return Task::batch(tasks);
                         }
                     }
@@ -8424,12 +8430,12 @@ impl Maolan {
                 };
             }
             Message::OpenClipPlugins {
-                ref track_idx,
-                clip_idx,
+                track_idx: _track_idx,
+                clip_idx: _clip_idx,
             } => {
                 #[cfg(all(unix, not(target_os = "macos")))]
                 {
-                    return self.open_clip_plugin_view(track_idx.clone(), clip_idx);
+                    return self.open_clip_plugin_view(_track_idx.clone(), _clip_idx);
                 }
                 #[cfg(not(all(unix, not(target_os = "macos"))))]
                 {

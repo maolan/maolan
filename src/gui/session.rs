@@ -113,6 +113,7 @@ impl Maolan {
     /// portable across machines. LV2 URIs are already portable.
     /// Falls back to the full URI as a defensive measure if plugin_id
     /// happens to be empty.
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn plugin_save_uri(p: &maolan_engine::message::PluginGraphPlugin) -> String {
         match p.format.as_str() {
             "CLAP" | "VST3" => {
@@ -133,6 +134,7 @@ impl Maolan {
     /// were captured from the CLAP descriptor).
     /// Otherwise it is treated as a plugin ID and looked up in the current CLAP
     /// plugin registry.
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn resolve_clap_plugin_path(
         stored: &str,
         clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
@@ -405,7 +407,10 @@ impl Maolan {
             }
         }
 
+        #[cfg(all(unix, not(target_os = "macos")))]
         let mut restore_actions = vec![];
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        let restore_actions = vec![];
 
         // Load LV2 plugin graph
         #[cfg(all(unix, not(target_os = "macos")))]
@@ -764,14 +769,17 @@ impl Maolan {
     }
 
     fn track_template_actions_from_json(
-        track_name: &str,
+        _track_name: &str,
         _track_json: &Value,
-        graph_json: Option<&Value>,
-        clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
+        _graph_json: Option<&Value>,
+        _clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
     ) -> Vec<Action> {
-        let mut actions = vec![];
-
         #[cfg(all(unix, not(target_os = "macos")))]
+        {
+        let track_name = _track_name;
+        let graph_json = _graph_json;
+        let clap_plugins = _clap_plugins;
+        let mut actions = vec![];
         if let Some(graph) = graph_json.and_then(|g| g.as_object()) {
             let mut runtime_nodes = Vec::new();
             let mut next_lv2_instance_id = 0usize;
@@ -875,8 +883,12 @@ impl Maolan {
                 }
             }
         }
-
         actions
+        }
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
+        {
+            vec![]
+        }
     }
 
     pub(super) fn load_group_template(

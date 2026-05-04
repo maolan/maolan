@@ -62,7 +62,9 @@ use midly::{
 use pitch_detection::detector::{PitchDetector, mcleod::McLeodDetector};
 use serde::Serialize;
 use serde_json::Value;
+#[allow(unused_imports)]
 use serde_json::json;
+
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
@@ -86,6 +88,7 @@ pub(crate) use gui_consts::{MIN_CLIP_WIDTH_PX, PREF_DEVICE_AUTO_ID};
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
 type MidiTickMap = (Box<TickToSampleFn>, u64, u64);
 
+#[cfg(unix)]
 const MAOLAN_BURN_SOCKETPAIR_ENV: &str = "MAOLAN_BURN_SOCKETPAIR";
 #[derive(Debug, Clone, Serialize)]
 struct BurnGenerateRequest {
@@ -403,8 +406,10 @@ pub struct Maolan {
     pending_add_lv2_automation_uris: HashSet<(String, String)>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pending_add_lv2_automation_instances: HashSet<(String, usize)>,
+    #[cfg(all(unix, not(target_os = "macos")))]
     pending_add_vst3_automation_paths: HashSet<(String, String)>,
     pending_add_vst3_automation_instances: HashSet<(String, usize)>,
+    #[cfg(all(unix, not(target_os = "macos")))]
     pending_add_clap_automation_paths: HashSet<(String, String)>,
     pending_add_clap_automation_instances: HashSet<(String, usize)>,
     midi_clip_previews: MidiClipPreviewMap,
@@ -689,8 +694,10 @@ impl Default for Maolan {
             pending_add_lv2_automation_uris: HashSet::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
             pending_add_lv2_automation_instances: HashSet::new(),
+            #[cfg(all(unix, not(target_os = "macos")))]
             pending_add_vst3_automation_paths: HashSet::new(),
             pending_add_vst3_automation_instances: HashSet::new(),
+            #[cfg(all(unix, not(target_os = "macos")))]
             pending_add_clap_automation_paths: HashSet::new(),
             pending_add_clap_automation_instances: HashSet::new(),
             midi_clip_previews: HashMap::new(),
@@ -1105,6 +1112,7 @@ impl Maolan {
         Err("Generated audio via generate is only available on Unix platforms".to_string())
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn plugin_graph_title(state: &StateData) -> String {
         if let Some(target) = state.plugin_graph_clip.as_ref() {
             if let Some(track) = state
@@ -1175,6 +1183,7 @@ impl Maolan {
         }
     }
 
+    #[cfg(all(unix, not(target_os = "macos")))]
     fn supported_plugin_formats() -> Vec<PluginFormat> {
         let mut formats = Vec::new();
         if platform_caps::SUPPORTS_LV2 {
@@ -4168,6 +4177,7 @@ impl Maolan {
                     "format": plugin.format,
                     "uri": plugin.uri,
                     "state": state_json,
+                    "bypassed": plugin.bypassed,
                 })
             })
             .collect::<Vec<_>>();
@@ -4257,6 +4267,7 @@ impl Maolan {
                     midi_inputs: info.map(|info| info.midi_inputs).unwrap_or(0),
                     midi_outputs: info.map(|info| info.midi_outputs).unwrap_or(0),
                     state: plugin.get("state").cloned(),
+                    bypassed: plugin.get("bypassed").and_then(|v| v.as_bool()).unwrap_or(false),
                 })
             }
             Some(format) if format.eq_ignore_ascii_case("VST3") => {
@@ -4281,6 +4292,7 @@ impl Maolan {
                         .map(|info| usize::from(info.has_midi_output))
                         .unwrap_or(0),
                     state: None,
+                    bypassed: plugin.get("bypassed").and_then(|v| v.as_bool()).unwrap_or(false),
                 })
             }
             Some(format) if format.eq_ignore_ascii_case("CLAP") => {
@@ -4305,6 +4317,7 @@ impl Maolan {
                     midi_inputs: caps.map(|caps| caps.midi_inputs).unwrap_or(0),
                     midi_outputs: caps.map(|caps| caps.midi_outputs).unwrap_or(0),
                     state: plugin.get("state").cloned(),
+                    bypassed: plugin.get("bypassed").and_then(|v| v.as_bool()).unwrap_or(false),
                 })
             }
             _ => None,
@@ -6558,6 +6571,7 @@ mod tests {
             midi_inputs: 0,
             midi_outputs: 0,
             state: None,
+            bypassed: false,
         }];
 
         let snapshot = Maolan::plugin_graph_snapshot_to_json(Some(&previous), &plugins, &[]);

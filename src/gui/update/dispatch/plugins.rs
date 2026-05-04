@@ -179,6 +179,7 @@ impl Maolan {
                                     midi_inputs: info.midi_inputs,
                                     midi_outputs: info.midi_outputs,
                                     state: None,
+                                    bypassed: false,
                                 },
                             );
                             next_id = next_id.saturating_add(1);
@@ -261,6 +262,7 @@ impl Maolan {
                                     midi_inputs: usize::from(info.has_midi_input),
                                     midi_outputs: usize::from(info.has_midi_output),
                                     state: None,
+                                    bypassed: false,
                                 });
                                 next_id = next_id.saturating_add(1);
                             }
@@ -356,6 +358,7 @@ impl Maolan {
                                     midi_inputs: caps.map(|caps| caps.midi_inputs).unwrap_or(0),
                                     midi_outputs: caps.map(|caps| caps.midi_outputs).unwrap_or(0),
                                     state: None,
+                                    bypassed: false,
                                 });
                                 next_id = next_id.saturating_add(1);
                             }
