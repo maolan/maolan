@@ -288,6 +288,7 @@ impl MIDIEdit {
                 zoom_x,
                 drum_rows.clone(),
                 drum_row_h,
+                state.piano_selecting_rect,
             );
             let drum_canvas: Element<'_, maolan_widgets::drum::DrumMessage> =
                 iced::widget::canvas(drum_interaction)
@@ -319,6 +320,13 @@ impl MIDIEdit {
                 maolan_widgets::drum::DrumMessage::AdjustVelocity { note_index, delta } => {
                     Message::PianoAdjustVelocity { note_index, delta }
                 }
+                maolan_widgets::drum::DrumMessage::SelectRectStart { position } => {
+                    Message::DrumSelectRectStart { position }
+                }
+                maolan_widgets::drum::DrumMessage::SelectRectDrag { position } => {
+                    Message::DrumSelectRectDrag { position }
+                }
+                maolan_widgets::drum::DrumMessage::SelectRectEnd => Message::DrumSelectRectEnd,
             });
             drum_layers.push(
                 pin(mapped_drum_canvas)

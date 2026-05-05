@@ -333,13 +333,15 @@ impl Maolan {
             state.plugin_graph_moving_plugin = None;
         }
         state.plugin_graph_last_plugin_click = None;
-        state.plugin_graph_selected_plugin = None;
+        state.plugin_graph_selected_plugins.clear();
     }
 
     fn open_track_plugins_followup(&self, _track_name: String) -> Task<Message> {
         #[cfg(all(unix, not(target_os = "macos")))]
         {
-            self.send(Action::TrackGetPluginGraph { track_name: _track_name })
+            self.send(Action::TrackGetPluginGraph {
+                track_name: _track_name,
+            })
         }
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         {

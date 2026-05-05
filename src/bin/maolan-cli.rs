@@ -3,16 +3,14 @@ mod audio_defaults;
 #[path = "../cli/mod.rs"]
 mod cli;
 
+use cli::config::{CliConfig, load_session_end_sample};
 use cli::export::{
     EXPORT_MP3_BITRATES_KBPS, EXPORT_MP3_MODE_ALL, EXPORT_NORMALIZE_MODE_ALL,
     EXPORT_RENDER_MODE_ALL, ExportBitDepth, ExportFormat, ExportNormalizeMode, ExportRenderMode,
     ExportSettings, STANDARD_EXPORT_SAMPLE_RATES, default_export_base_path,
     export_bit_depth_options, export_session, validate_export_settings,
 };
-use cli::support::{
-    CliConfig, ExportSessionData, load_export_session_data, load_session_end_sample,
-    load_session_restore_actions,
-};
+use cli::support::{ExportSessionData, load_export_session_data, load_session_restore_actions};
 use crossterm::{
     cursor,
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},

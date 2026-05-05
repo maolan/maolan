@@ -96,6 +96,17 @@ impl Maolan {
                 output_path,
                 ..
             } => {
+                // If this bounce belongs to an active export, track it and signal
+                // completion when the last pending bounce finishes.
+                if self.export_in_progress
+                    && self.export_pending_bounces.remove(track_name)
+                    && self.export_pending_bounces.is_empty()
+                {
+                    if let Some(notify) = self.export_bounce_notify.take() {
+                        notify.notify_one();
+                    }
+                    return Some(Task::none());
+                }
                 self.freeze_in_progress = false;
                 self.freeze_track_name = None;
                 if let Some(pending) = self.pending_track_freeze_bounce.remove(track_name) {
@@ -174,6 +185,15 @@ impl Maolan {
                 progress,
                 operation,
             } => {
+                // If this progress belongs to an active export, update the GUI directly
+                // instead of treating it as a freeze.
+                if self.export_in_progress && self.export_pending_bounces.contains(track_name) {
+                    self.export_progress = 0.05 + progress * 0.15;
+                    self.export_operation = operation
+                        .clone()
+                        .or_else(|| Some("Bouncing tracks...".to_string()));
+                    return Some(Task::none());
+                }
                 self.freeze_in_progress = true;
                 self.freeze_track_name = Some(track_name.clone());
                 self.freeze_progress = *progress;

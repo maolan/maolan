@@ -334,6 +334,7 @@ impl Maolan {
             | Message::NewFromTemplate(_)
             | Message::NewSession
             | Message::Request(_)
+            | Message::RequestBatch(_)
             | Message::MeterPollTick => return self.handle_session_message(message),
             Message::EscapePressed => {
                 if matches!(self.modal, Some(Show::AddTrack)) {
@@ -342,7 +343,15 @@ impl Maolan {
                     self.state.blocking_write().track_marker_dialog = None;
                 }
             }
-            Message::Cancel => self.modal = None,
+            Message::Cancel => {
+                if self.export_in_progress {
+                    self.export_cancel
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    self.state.blocking_write().message = "Cancelling export...".to_string();
+                    return self.send(Action::TrackOfflineBounceCancelAll);
+                }
+                self.modal = None;
+            }
             Message::ConfirmCloseSave => {
                 self.pending_exit_after_save = true;
                 self.modal = None;
@@ -1950,6 +1959,82 @@ impl Maolan {
                     });
                 }
             }
+            Message::DrumSelectRectStart { position } => {
+                let mut state = self.state.blocking_write();
+                if !state.shift {
+                    state.piano_selected_notes.clear();
+                }
+                state.piano_selecting_rect = Some((position, position));
+            }
+            Message::DrumSelectRectDrag { position } => {
+                let mut state = self.state.blocking_write();
+                if let Some((start, _)) = state.piano_selecting_rect {
+                    state.piano_selecting_rect = Some((start, position));
+
+                    let (zoom_x, zoom_y) = if state.piano.is_some() {
+                        (state.piano_zoom_x, state.piano_zoom_y)
+                    } else {
+                        return Task::none();
+                    };
+
+                    let row_h = (24.0 * zoom_y).max(1.0);
+                    let tempo = state.tempo.max(1.0) as f64;
+                    let tsig_num = state.time_signature_num.max(1) as f64;
+                    let tsig_denom = state.time_signature_denom.max(1) as f64;
+                    let samples_per_beat =
+                        (self.playback_rate_hz * 60.0 / tempo) * (4.0 / tsig_denom);
+                    let samples_per_bar = samples_per_beat * tsig_num;
+                    let total_samples = (samples_per_bar * self.zoom_visible_bars as f64).max(1.0);
+                    let tracks_width = match state.tracks_width {
+                        Length::Fixed(v) => v,
+                        _ => 200.0,
+                    };
+                    let editor_width = (self.size.width - tracks_width - 3.0).max(1.0);
+                    let pps = ((editor_width as f64 / total_samples) as f32 * zoom_x).max(1.0e-6);
+
+                    let min_x = start.x.min(position.x);
+                    let max_x = start.x.max(position.x);
+                    let min_y = start.y.min(position.y);
+                    let max_y = start.y.max(position.y);
+
+                    let mut selected = std::collections::HashSet::new();
+                    if let Some(piano) = state.piano.as_ref() {
+                        let mut drum_rows: Vec<u8> = piano
+                            .notes
+                            .iter()
+                            .map(|n| n.pitch)
+                            .collect::<std::collections::HashSet<_>>()
+                            .into_iter()
+                            .collect();
+                        for (pitch, _) in crate::consts::gm_drum_map::GM_DRUM_MAP {
+                            if !drum_rows.contains(pitch) {
+                                drum_rows.push(*pitch);
+                            }
+                        }
+                        drum_rows.sort();
+
+                        for (idx, note) in piano.notes.iter().enumerate() {
+                            let Some(row_idx) = drum_rows.iter().position(|&p| p == note.pitch)
+                            else {
+                                continue;
+                            };
+                            let y = row_idx as f32 * row_h + 1.0;
+                            let h = (row_h - 2.0).max(2.0);
+                            let x = note.start_sample as f32 * pps;
+                            let w = (note.length_samples as f32 * pps).max(2.0);
+
+                            if x + w >= min_x && x <= max_x && y + h >= min_y && y <= max_y {
+                                selected.insert(idx);
+                            }
+                        }
+                    }
+                    state.piano_selected_notes = selected;
+                }
+            }
+            Message::DrumSelectRectEnd => {
+                let mut state = self.state.blocking_write();
+                state.piano_selecting_rect = None;
+            }
             Message::PianoDeleteControllers {
                 ref controller_indices,
             } => {
@@ -3048,8 +3133,8 @@ impl Maolan {
                                 .insert(plugin_path.clone(), clap_state.clone());
                             #[cfg(all(unix, not(target_os = "macos")))]
                             {
-                                let state_json =
-                                    serde_json::to_value(clap_state).unwrap_or(serde_json::Value::Null);
+                                let state_json = serde_json::to_value(clap_state)
+                                    .unwrap_or(serde_json::Value::Null);
                                 if let Some((plugins, _)) =
                                     state.plugin_graphs_by_track.get_mut(track_name)
                                     && let Some(plugin) = plugins
@@ -3585,9 +3670,9 @@ impl Maolan {
                                 state.plugin_graph_plugins = plugins.clone();
                                 state.plugin_graph_connections = connections.clone();
                                 state.plugin_graph_selected_connections.clear();
-                                state.plugin_graph_selected_plugin = state
-                                    .plugin_graph_selected_plugin
-                                    .filter(|id| plugins.iter().any(|p| p.instance_id == *id));
+                                state
+                                    .plugin_graph_selected_plugins
+                                    .retain(|id| plugins.iter().any(|p| p.instance_id == *id));
                                 let mut new_positions = std::collections::HashMap::new();
                                 for (idx, plugin) in plugins.iter().enumerate() {
                                     let fallback = Point::new(200.0 + idx as f32 * 180.0, 220.0);
@@ -4119,6 +4204,7 @@ impl Maolan {
                     start_sample: 0,
                     length_samples: render_length.max(1),
                     automation_lanes,
+                    apply_fader: false,
                 });
             }
             Message::TrackFreezePrepared {
@@ -4279,6 +4365,7 @@ impl Maolan {
                     start_sample: 0,
                     length_samples: render_length.max(1),
                     automation_lanes,
+                    apply_fader: false,
                 }));
                 return Task::batch(tasks);
             }
@@ -5496,11 +5583,11 @@ impl Maolan {
                     crate::state::View::TrackPlugins => {
                         #[cfg(all(unix, not(target_os = "macos")))]
                         {
-                            let (track_name, selected_plugin, selected_indices, connections) = {
+                            let (track_name, selected_plugins, selected_indices, connections) = {
                                 let state = self.state.blocking_read();
                                 (
                                     state.plugin_graph_track.clone(),
-                                    state.plugin_graph_selected_plugin,
+                                    state.plugin_graph_selected_plugins.clone(),
                                     state.plugin_graph_selected_connections.clone(),
                                     state.plugin_graph_connections.clone(),
                                 )
@@ -5510,7 +5597,7 @@ impl Maolan {
                                     self.state.blocking_read().plugin_graph_clip.clone();
                                 if clip_target.is_some() {
                                     let mut state = self.state.blocking_write();
-                                    if let Some(instance_id) = selected_plugin {
+                                    if let Some(&instance_id) = selected_plugins.iter().next() {
                                         let Some(selected_node) = state
                                             .plugin_graph_plugins
                                             .iter()
@@ -5526,7 +5613,7 @@ impl Maolan {
                                             connection.from_node != selected_node
                                                 && connection.to_node != selected_node
                                         });
-                                        state.plugin_graph_selected_plugin = None;
+                                        state.plugin_graph_selected_plugins.clear();
                                         state.plugin_graph_selected_connections.clear();
                                         let sync = Self::save_open_clip_plugin_graph(&mut state);
                                         return sync
@@ -5542,58 +5629,57 @@ impl Maolan {
                                         })
                                         .collect();
                                     state.plugin_graph_selected_connections.clear();
-                                    state.plugin_graph_selected_plugin = None;
+                                    state.plugin_graph_selected_plugins.clear();
                                     let sync = Self::save_open_clip_plugin_graph(&mut state);
                                     return sync
                                         .map_or_else(Task::none, |action| self.send(action));
                                 }
-                                if let Some(instance_id) = selected_plugin {
-                                    self.state.blocking_write().plugin_graph_selected_plugin = None;
-                                    self.state
-                                        .blocking_write()
-                                        .plugin_graph_selected_connections
-                                        .clear();
-                                    let selected_node = self
-                                        .state
-                                        .blocking_read()
-                                        .plugin_graph_plugins
-                                        .iter()
-                                        .find(|p| p.instance_id == instance_id)
-                                        .map(|p| p.node.clone());
-                                    if let Some(node) = selected_node {
-                                        return match node {
-                                            #[cfg(all(unix, not(target_os = "macos")))]
-                                            PluginGraphNode::Lv2PluginInstance(_) => {
-                                                self.send(Action::TrackUnloadLv2PluginInstance {
-                                                    track_name,
-                                                    instance_id,
-                                                })
-                                            }
-                                            PluginGraphNode::Vst3PluginInstance(_) => {
-                                                self.send(Action::TrackUnloadVst3PluginInstance {
-                                                    track_name,
-                                                    instance_id,
-                                                })
-                                            }
-                                            PluginGraphNode::ClapPluginInstance(_) => {
-                                                let plugin_path = self
-                                                    .state
-                                                    .blocking_read()
-                                                    .plugin_graph_plugins
-                                                    .iter()
-                                                    .find(|p| p.instance_id == instance_id)
-                                                    .map(|p| p.uri.clone())
-                                                    .unwrap_or_default();
-                                                self.send(Action::TrackUnloadClapPlugin {
-                                                    track_name,
-                                                    plugin_path,
-                                                })
-                                            }
-                                            PluginGraphNode::TrackInput
-                                            | PluginGraphNode::TrackOutput => Task::none(),
-                                        };
+                                if !selected_plugins.is_empty() {
+                                    let mut tasks = Vec::new();
+                                    let mut state = self.state.blocking_write();
+                                    let plugins_to_remove: Vec<usize> =
+                                        selected_plugins.iter().copied().collect();
+                                    for instance_id in plugins_to_remove {
+                                        let selected_node = state
+                                            .plugin_graph_plugins
+                                            .iter()
+                                            .find(|p| p.instance_id == instance_id)
+                                            .map(|p| p.node.clone());
+                                        if let Some(node) = selected_node {
+                                            let task = match node {
+                                                #[cfg(all(unix, not(target_os = "macos")))]
+                                                PluginGraphNode::Lv2PluginInstance(_) => self.send(
+                                                    Action::TrackUnloadLv2PluginInstance {
+                                                        track_name: track_name.clone(),
+                                                        instance_id,
+                                                    },
+                                                ),
+                                                PluginGraphNode::Vst3PluginInstance(_) => self
+                                                    .send(Action::TrackUnloadVst3PluginInstance {
+                                                        track_name: track_name.clone(),
+                                                        instance_id,
+                                                    }),
+                                                PluginGraphNode::ClapPluginInstance(_) => {
+                                                    let plugin_path = state
+                                                        .plugin_graph_plugins
+                                                        .iter()
+                                                        .find(|p| p.instance_id == instance_id)
+                                                        .map(|p| p.uri.clone())
+                                                        .unwrap_or_default();
+                                                    self.send(Action::TrackUnloadClapPlugin {
+                                                        track_name: track_name.clone(),
+                                                        plugin_path,
+                                                    })
+                                                }
+                                                PluginGraphNode::TrackInput
+                                                | PluginGraphNode::TrackOutput => Task::none(),
+                                            };
+                                            tasks.push(task);
+                                        }
                                     }
-                                    return Task::none();
+                                    state.plugin_graph_selected_plugins.clear();
+                                    state.plugin_graph_selected_connections.clear();
+                                    return Task::batch(tasks);
                                 }
                                 let actions = connections::selection::plugin_disconnect_actions(
                                     &track_name,
@@ -5608,7 +5694,10 @@ impl Maolan {
                                     .blocking_write()
                                     .plugin_graph_selected_connections
                                     .clear();
-                                self.state.blocking_write().plugin_graph_selected_plugin = None;
+                                self.state
+                                    .blocking_write()
+                                    .plugin_graph_selected_plugins
+                                    .clear();
                                 return Task::batch(tasks);
                             }
                         }
@@ -7463,30 +7552,31 @@ impl Maolan {
                     };
                     #[cfg(unix)]
                     {
-                    let mut used_names = _used_track_names;
-                    let base_name =
-                        super::super::Maolan::sanitize_generated_track_base_name(&request.prompt);
-                    let output_path = request.output_path.clone();
-                    let tx_clone = tx.clone();
-                    let mut last_progress_bucket: Option<u16> = None;
-                    let mut last_operation: Option<String> = None;
-                    let mut progress_fn = move |progress: f32, operation: Option<String>| {
-                        let adjusted = 0.55 + progress.clamp(0.0, 1.0) * 0.45;
-                        let bucket = (adjusted * 100.0).round() as u16;
-                        if last_progress_bucket == Some(bucket) && last_operation == operation {
-                            return;
-                        }
-                        last_progress_bucket = Some(bucket);
-                        last_operation = operation.clone();
-                        let _ = tx_clone.send(Message::GenerateAudioProgress {
-                            progress: adjusted,
-                            operation,
-                        });
-                    };
+                        let mut used_names = _used_track_names;
+                        let base_name = super::super::Maolan::sanitize_generated_track_base_name(
+                            &request.prompt,
+                        );
+                        let output_path = request.output_path.clone();
+                        let tx_clone = tx.clone();
+                        let mut last_progress_bucket: Option<u16> = None;
+                        let mut last_operation: Option<String> = None;
+                        let mut progress_fn = move |progress: f32, operation: Option<String>| {
+                            let adjusted = 0.55 + progress.clamp(0.0, 1.0) * 0.45;
+                            let bucket = (adjusted * 100.0).round() as u16;
+                            if last_progress_bucket == Some(bucket) && last_operation == operation {
+                                return;
+                            }
+                            last_progress_bucket = Some(bucket);
+                            last_operation = operation.clone();
+                            let _ = tx_clone.send(Message::GenerateAudioProgress {
+                                progress: adjusted,
+                                operation,
+                            });
+                        };
 
-                    progress_fn(0.95, Some("Calculating peaks".to_string()));
-                    let generated_file_result = tokio::task::spawn_blocking(move || {
-                        let clip_rel = output_path
+                        progress_fn(0.95, Some("Calculating peaks".to_string()));
+                        let generated_file_result = tokio::task::spawn_blocking(move || {
+                            let clip_rel = output_path
                             .strip_prefix(&session_root)
                             .ok()
                             .and_then(|path| path.to_str())
@@ -7497,126 +7587,128 @@ impl Maolan {
                                     output_path.display()
                                 )
                             })?;
-                        let wav = wavers::Wav::<f32>::from_path(&output_path).map_err(|e| {
-                            format!(
-                                "Failed to open generated WAV '{}': {e}",
-                                output_path.display()
-                            )
-                        })?;
-                        let channels = wav.n_channels().max(1) as usize;
-                        drop(wav);
-                        let length = super::super::Maolan::audio_clip_source_length(&output_path)
-                            .map_err(|e| {
-                            format!(
-                                "Failed to read generated audio length '{}': {e}",
-                                output_path.display()
-                            )
-                        })?;
-                        let peaks = super::super::Maolan::compute_audio_clip_peaks(&output_path)
-                            .map_err(|e| {
+                            let reader = hound::WavReader::open(&output_path).map_err(|e| {
                                 format!(
-                                    "Failed to compute generated audio peaks '{}': {e}",
+                                    "Failed to open generated WAV '{}': {e}",
                                     output_path.display()
                                 )
                             })?;
-                        Ok::<_, String>((clip_rel, channels, length.max(1), peaks))
-                    })
-                    .await;
+                            let channels = reader.spec().channels.max(1) as usize;
+                            drop(reader);
+                            let length =
+                                super::super::Maolan::audio_clip_source_length(&output_path)
+                                    .map_err(|e| {
+                                        format!(
+                                            "Failed to read generated audio length '{}': {e}",
+                                            output_path.display()
+                                        )
+                                    })?;
+                            let peaks =
+                                super::super::Maolan::compute_audio_clip_peaks(&output_path)
+                                    .map_err(|e| {
+                                        format!(
+                                            "Failed to compute generated audio peaks '{}': {e}",
+                                            output_path.display()
+                                        )
+                                    })?;
+                            Ok::<_, String>((clip_rel, channels, length.max(1), peaks))
+                        })
+                        .await;
 
-                    progress_fn(1.0, Some("Complete".to_string()));
+                        progress_fn(1.0, Some("Complete".to_string()));
 
-                    let (clip_rel, channels, length, peaks): (
-                        String,
-                        usize,
-                        usize,
-                        crate::state::ClipPeaks,
-                    ) = match generated_file_result {
-                        Ok(Ok(result)) => result,
-                        Ok(Err(err)) => {
-                            let _ = tx.send(Message::GenerateAudioFinished(Err(err)));
+                        let (clip_rel, channels, length, peaks): (
+                            String,
+                            usize,
+                            usize,
+                            crate::state::ClipPeaks,
+                        ) = match generated_file_result {
+                            Ok(Ok(result)) => result,
+                            Ok(Err(err)) => {
+                                let _ = tx.send(Message::GenerateAudioFinished(Err(err)));
+                                return;
+                            }
+                            Err(err) => {
+                                let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
+                                    "Failed to inspect generated audio: {err}"
+                                ))));
+                                return;
+                            }
+                        };
+
+                        let track_name =
+                            super::super::Maolan::unique_track_name(&base_name, &mut used_names);
+                        if tx
+                            .send(Message::ImportPreparedAudioPeaks {
+                                track_name: track_name.clone(),
+                                clip_name: clip_rel.clone(),
+                                start: 0,
+                                length,
+                                offset: 0,
+                                peaks,
+                            })
+                            .is_err()
+                        {
                             return;
                         }
-                        Err(err) => {
+
+                        if let Err(err) = CLIENT
+                            .send(EngineMessage::Request(Action::AddTrack {
+                                name: track_name.clone(),
+                                audio_ins: channels,
+                                midi_ins: 0,
+                                audio_outs: channels,
+                                midi_outs: 0,
+                            }))
+                            .await
+                        {
                             let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
-                                "Failed to inspect generated audio: {err}"
+                                "Failed to add generated track: {err}"
                             ))));
                             return;
                         }
-                    };
 
-                    let track_name =
-                        super::super::Maolan::unique_track_name(&base_name, &mut used_names);
-                    if tx
-                        .send(Message::ImportPreparedAudioPeaks {
-                            track_name: track_name.clone(),
-                            clip_name: clip_rel.clone(),
-                            start: 0,
-                            length,
-                            offset: 0,
-                            peaks,
-                        })
-                        .is_err()
-                    {
-                        return;
-                    }
-
-                    if let Err(err) = CLIENT
-                        .send(EngineMessage::Request(Action::AddTrack {
-                            name: track_name.clone(),
-                            audio_ins: channels,
-                            midi_ins: 0,
-                            audio_outs: channels,
-                            midi_outs: 0,
-                        }))
-                        .await
-                    {
-                        let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
-                            "Failed to add generated track: {err}"
-                        ))));
-                        return;
-                    }
-
-                    if let Err(err) = CLIENT
-                        .send(EngineMessage::Request(Action::AddClip {
-                            name: clip_rel,
-                            track_name: track_name.clone(),
-                            start: 0,
-                            length,
-                            offset: 0,
-                            input_channel: 0,
-                            muted: false,
-                            peaks_file: None,
-                            kind: Kind::Audio,
-                            fade_enabled: true,
-                            fade_in_samples: 240,
-                            fade_out_samples: 240,
-                            source_name: None,
-                            source_offset: None,
-                            source_length: None,
-                            preview_name: None,
-                            pitch_correction_points: vec![],
-                            pitch_correction_frame_likeness: None,
-                            pitch_correction_inertia_ms: None,
-                            pitch_correction_formant_compensation: None,
-                            plugin_graph_json: Some(
-                                super::super::Maolan::default_clip_plugin_graph_json(
-                                    channels, channels,
+                        if let Err(err) = CLIENT
+                            .send(EngineMessage::Request(Action::AddClip {
+                                name: clip_rel,
+                                track_name: track_name.clone(),
+                                start: 0,
+                                length,
+                                offset: 0,
+                                input_channel: 0,
+                                muted: false,
+                                peaks_file: None,
+                                kind: Kind::Audio,
+                                fade_enabled: true,
+                                fade_in_samples: 240,
+                                fade_out_samples: 240,
+                                source_name: None,
+                                source_offset: None,
+                                source_length: None,
+                                preview_name: None,
+                                pitch_correction_points: vec![],
+                                pitch_correction_frame_likeness: None,
+                                pitch_correction_inertia_ms: None,
+                                pitch_correction_formant_compensation: None,
+                                plugin_graph_json: Some(
+                                    super::super::Maolan::default_clip_plugin_graph_json(
+                                        channels, channels,
+                                    ),
                                 ),
-                            ),
-                        }))
-                        .await
-                    {
-                        let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
-                            "Failed to add generated clip: {err}"
-                        ))));
-                        return;
-                    }
+                            }))
+                            .await
+                        {
+                            let _ = tx.send(Message::GenerateAudioFinished(Err(format!(
+                                "Failed to add generated clip: {err}"
+                            ))));
+                            return;
+                        }
 
-                    let _ = tx.send(Message::GenerateAudioProgress {
-                        progress: 1.0,
-                        operation: Some("Complete".to_string()),
-                    });
-                    let _ = tx.send(Message::GenerateAudioFinished(Ok(track_name)));
+                        let _ = tx.send(Message::GenerateAudioProgress {
+                            progress: 1.0,
+                            operation: Some("Complete".to_string()),
+                        });
+                        let _ = tx.send(Message::GenerateAudioFinished(Ok(track_name)));
                     }
                     #[cfg(not(unix))]
                     {
@@ -7902,6 +7994,31 @@ impl Maolan {
                 self.export_in_progress = true;
                 self.export_progress = 0.0;
                 self.export_operation = Some("Preparing".to_string());
+                self.export_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let export_cancel = self.export_cancel.clone();
+
+                // Compute pending bounces for StemsPostFader so the GUI can track them
+                // through the main subscription instead of a temporary one.
+                self.export_pending_bounces.clear();
+                if matches!(
+                    render_mode,
+                    crate::message::ExportRenderMode::StemsPostFader
+                ) {
+                    let state_guard = self.state.blocking_read();
+                    let has_solo = state_guard.tracks.iter().any(|t| t.soloed);
+                    let selected_set: std::collections::HashSet<String> =
+                        state_guard.selected.iter().cloned().collect();
+                    for track in &state_guard.tracks {
+                        if selected_set.contains(&track.name)
+                            && !track.muted
+                            && (!has_solo || track.soloed)
+                        {
+                            self.export_pending_bounces.insert(track.name.clone());
+                        }
+                    }
+                }
+                let bounce_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+                self.export_bounce_notify = Some(bounce_notify.clone());
 
                 return Task::run(
                     {
@@ -7957,7 +8074,13 @@ impl Maolan {
                                 state: state_clone,
                                 session_root: session_root.clone(),
                             };
-                            let result = Self::export_session(&options, progress_fn).await;
+                            let result = Self::export_session(
+                                &options,
+                                &export_cancel,
+                                Some(bounce_notify),
+                                progress_fn,
+                            )
+                            .await;
 
                             if let Err(e) = result {
                                 if tx

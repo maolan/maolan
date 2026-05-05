@@ -24,7 +24,7 @@ use crate::{
     message::{
         BurnBackendOption, DraggedClip, ExportBitDepth, ExportFormat, ExportMp3Mode,
         ExportNormalizeMode, ExportRenderMode, GenerateAudioModelOption, Message, PluginFormat,
-        PreferencesDeviceOption, Show, SnapMode,
+        PreferencesDeviceOption, Show, SnapMode, TrackAutomationTarget,
     },
     platform_caps,
     plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
@@ -48,12 +48,15 @@ use flacenc::error::Verify;
 use iced::{
     Length, Size, Task,
     widget::{
-        button, checkbox, column, container, pick_list, progress_bar, row, scrollable, text,
-        text_editor, text_input, Column,
+        Column, button, checkbox, column, container, pick_list, progress_bar, row, scrollable,
+        text, text_editor, text_input,
     },
 };
 use maolan_engine::kind::Kind;
-use maolan_engine::message::{Action, Message as EngineMessage};
+use maolan_engine::message::{
+    Action, Message as EngineMessage, OfflineAutomationLane, OfflineAutomationPoint,
+    OfflineAutomationTarget,
+};
 use maolan_widgets::numeric_input::{number_input, number_input_f32};
 use midly::{
     Format, Header, MetaMessage, Smf, Timing, TrackEvent, TrackEventKind,
@@ -72,6 +75,7 @@ use std::{
     io::{self, BufReader},
     path::{Path, PathBuf},
     process::Command,
+    sync::atomic::AtomicBool,
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
 };
@@ -82,7 +86,7 @@ use symphonia::core::{
 use tokio::sync::RwLock;
 use tracing::error;
 
-use wavers::Wav;
+use hound::{SampleFormat, WavReader, WavSpec};
 
 pub(crate) use gui_consts::{MIN_CLIP_WIDTH_PX, PREF_DEVICE_AUTO_ID};
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
@@ -227,6 +231,61 @@ struct ExportTrackData {
     soloed: bool,
     output_ports: usize,
     clips: Vec<crate::state::AudioClip>,
+}
+
+fn build_offline_automation_lanes(
+    lanes: &[crate::state::TrackAutomationLane],
+) -> Vec<OfflineAutomationLane> {
+    let mut automation_lanes = Vec::new();
+    for lane in lanes.iter().filter(|lane| !lane.points.is_empty()) {
+        let target = match lane.target {
+            TrackAutomationTarget::Volume => OfflineAutomationTarget::Volume,
+            TrackAutomationTarget::Balance => OfflineAutomationTarget::Balance,
+            TrackAutomationTarget::Mute => OfflineAutomationTarget::Mute,
+            #[cfg(all(unix, not(target_os = "macos")))]
+            TrackAutomationTarget::Lv2Parameter {
+                instance_id,
+                index,
+                min,
+                max,
+            } => OfflineAutomationTarget::Lv2Parameter {
+                instance_id,
+                index,
+                min,
+                max,
+            },
+            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            TrackAutomationTarget::Lv2Parameter { .. } => continue,
+            TrackAutomationTarget::Vst3Parameter {
+                instance_id,
+                param_id,
+            } => OfflineAutomationTarget::Vst3Parameter {
+                instance_id,
+                param_id,
+            },
+            TrackAutomationTarget::ClapParameter {
+                instance_id,
+                param_id,
+                min,
+                max,
+            } => OfflineAutomationTarget::ClapParameter {
+                instance_id,
+                param_id,
+                min,
+                max,
+            },
+        };
+        let points = lane
+            .points
+            .iter()
+            .map(|p| OfflineAutomationPoint {
+                sample: p.sample,
+                value: p.value,
+            })
+            .collect::<Vec<_>>();
+        automation_lanes.push(OfflineAutomationLane { target, points });
+    }
+    automation_lanes
 }
 
 #[derive(Debug, Clone)]
@@ -476,6 +535,9 @@ pub struct Maolan {
     clip_pitch_correction_clip_name: String,
     clip_pitch_correction_operation: Option<String>,
     export_in_progress: bool,
+    export_cancel: Arc<AtomicBool>,
+    export_pending_bounces: HashSet<String>,
+    export_bounce_notify: Option<Arc<tokio::sync::Notify>>,
     export_progress: f32,
     export_operation: Option<String>,
     export_sample_rate_hz: u32,
@@ -766,6 +828,9 @@ impl Default for Maolan {
             clip_pitch_correction_clip_name: String::new(),
             clip_pitch_correction_operation: None,
             export_in_progress: false,
+            export_cancel: Arc::new(AtomicBool::new(false)),
+            export_pending_bounces: HashSet::new(),
+            export_bounce_notify: None,
             export_progress: 0.0,
             export_operation: None,
             export_sample_rate_hz: prefs.default_export_sample_rate_hz,
@@ -1440,13 +1505,32 @@ impl Maolan {
     }
 
     fn compute_audio_clip_peaks(path: &Path) -> std::io::Result<ClipPeaks> {
-        let mut wav = Wav::<f32>::from_path(path).map_err(|e| {
+        let mut reader = WavReader::open(path).map_err(|e| {
             io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
         })?;
-        let channels = wav.n_channels().max(1) as usize;
-        let samples: wavers::Samples<f32> = wav
-            .read()
-            .map_err(|e| io::Error::other(format!("WAV read error '{}': {e}", path.display())))?;
+        let spec = reader.spec();
+        let channels = spec.channels.max(1) as usize;
+        let samples: Vec<f32> = match spec.sample_format {
+            SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
+            SampleFormat::Int => match spec.bits_per_sample {
+                16 => reader
+                    .samples::<i16>()
+                    .filter_map(|s| s.ok())
+                    .map(|s| (s as f32 / i16::MAX as f32).clamp(-1.0, 1.0))
+                    .collect(),
+                24 => reader
+                    .samples::<i32>()
+                    .filter_map(|s| s.ok())
+                    .map(|s| (s as f32 / 8_388_608.0).clamp(-1.0, 1.0))
+                    .collect(),
+                32 => reader
+                    .samples::<i32>()
+                    .filter_map(|s| s.ok())
+                    .map(|s| (s as f32 / i32::MAX as f32).clamp(-1.0, 1.0))
+                    .collect(),
+                _ => return Ok(Arc::new(Vec::new())),
+            },
+        };
         let mut per_channel = vec![Vec::with_capacity(samples.len() / channels + 1); channels];
         for frame in samples.chunks(channels) {
             for (channel_idx, sample) in frame.iter().enumerate() {
@@ -1660,11 +1744,13 @@ impl Maolan {
         length: usize,
         offset: usize,
     ) -> std::io::Result<()> {
-        let mut wav = Wav::<f32>::from_path(path).map_err(|e| {
+        let mut reader = WavReader::open(path).map_err(|e| {
             io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
         })?;
-        let channels = wav.n_channels().max(1) as usize;
-        let total_frames = wav.n_samples() / channels.max(1);
+        let spec = reader.spec();
+        let channels = spec.channels.max(1) as usize;
+        let total_samples = reader.duration() as usize;
+        let total_frames = total_samples / channels.max(1);
         if total_frames == 0 {
             if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
                 queue.push(AudioPeakChunkUpdate {
@@ -1689,12 +1775,35 @@ impl Maolan {
         let mut processed_frames = 0usize;
         let mut last_emitted_bin = 0usize;
 
+        let mut sample_iter: Box<dyn Iterator<Item = f32>> = match spec.sample_format {
+            SampleFormat::Float => Box::new(reader.samples::<f32>().filter_map(|s| s.ok())),
+            SampleFormat::Int => match spec.bits_per_sample {
+                16 => Box::new(
+                    reader
+                        .samples::<i16>()
+                        .filter_map(|s| s.ok())
+                        .map(|s| (s as f32 / i16::MAX as f32).clamp(-1.0, 1.0)),
+                ),
+                24 => Box::new(
+                    reader
+                        .samples::<i32>()
+                        .filter_map(|s| s.ok())
+                        .map(|s| (s as f32 / 8_388_608.0).clamp(-1.0, 1.0)),
+                ),
+                32 => Box::new(
+                    reader
+                        .samples::<i32>()
+                        .filter_map(|s| s.ok())
+                        .map(|s| (s as f32 / i32::MAX as f32).clamp(-1.0, 1.0)),
+                ),
+                _ => return Ok(()),
+            },
+        };
+
         while processed_frames < total_frames {
             let frames_to_read = (total_frames - processed_frames).min(CHUNK_FRAMES);
             let samples_to_read = frames_to_read.saturating_mul(channels);
-            let chunk: wavers::Samples<f32> = wav.read_samples(samples_to_read).map_err(|e| {
-                io::Error::other(format!("WAV read error '{}': {e}", path.display()))
-            })?;
+            let chunk: Vec<f32> = sample_iter.by_ref().take(samples_to_read).collect();
             if chunk.is_empty() {
                 break;
             }
@@ -1769,10 +1878,12 @@ impl Maolan {
     }
 
     fn audio_clip_source_length(path: &Path) -> std::io::Result<usize> {
-        let wav = Wav::<f32>::from_path(path).map_err(|e| {
+        let reader = WavReader::open(path).map_err(|e| {
             io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
         })?;
-        Ok(wav.n_samples() / wav.n_channels().max(1) as usize)
+        let spec = reader.spec();
+        let total_samples = reader.duration() as usize;
+        Ok(total_samples / spec.channels.max(1) as usize)
     }
 
     fn file_extension_lower(path: &Path) -> Option<String> {
@@ -2324,13 +2435,31 @@ impl Maolan {
         progress_callback(0.85, Some("Writing".to_string()));
         tokio::task::yield_now().await;
 
-        wavers::write::<f32, _>(
-            &dst,
-            &final_samples,
-            target_sample_rate as i32,
-            channels as u16,
-        )
-        .map_err(|e| io::Error::other(format!("Failed to write '{}': {e}", dst.display())))?;
+        {
+            let spec = WavSpec {
+                channels: channels as u16,
+                sample_rate: target_sample_rate,
+                bits_per_sample: 32,
+                sample_format: SampleFormat::Float,
+            };
+            let mut writer = hound::WavWriter::create(&dst, spec).map_err(|e| {
+                io::Error::other(format!(
+                    "Failed to create WAV writer for '{}': {e}",
+                    dst.display()
+                ))
+            })?;
+            for sample in &final_samples {
+                writer.write_sample(*sample).map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to write sample to '{}': {e}",
+                        dst.display()
+                    ))
+                })?;
+            }
+            writer.finalize().map_err(|e| {
+                io::Error::other(format!("Failed to finalize WAV '{}': {e}", dst.display()))
+            })?;
+        }
 
         progress_callback(0.95, Some("Calculating peaks".to_string()));
         tokio::task::yield_now().await;
@@ -2376,18 +2505,34 @@ impl Maolan {
             Self::unique_import_rel_path(session_root, "audio", &format!("{stem}_stretch"), "wav")?;
         let output_path = session_root.join(&output_rel);
 
-        wavers::write::<f32, _>(
-            &temp_path,
-            segment_samples,
-            sample_rate as i32,
-            channels as u16,
-        )
-        .map_err(|e| {
-            io::Error::other(format!(
-                "Failed to write stretch source '{}': {e}",
-                temp_path.display()
-            ))
-        })?;
+        {
+            let spec = WavSpec {
+                channels: channels as u16,
+                sample_rate,
+                bits_per_sample: 32,
+                sample_format: SampleFormat::Float,
+            };
+            let mut writer = hound::WavWriter::create(&temp_path, spec).map_err(|e| {
+                io::Error::other(format!(
+                    "Failed to create WAV writer for '{}': {e}",
+                    temp_path.display()
+                ))
+            })?;
+            for sample in segment_samples {
+                writer.write_sample(*sample).map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to write sample to '{}': {e}",
+                        temp_path.display()
+                    ))
+                })?;
+            }
+            writer.finalize().map_err(|e| {
+                io::Error::other(format!(
+                    "Failed to finalize WAV '{}': {e}",
+                    temp_path.display()
+                ))
+            })?;
+        }
 
         let command_result = tokio::process::Command::new("rubberband")
             .arg("--quiet")
@@ -2655,18 +2800,34 @@ impl Maolan {
         )?;
         let output_path = session_root.join(&output_rel);
 
-        wavers::write::<f32, _>(
-            &temp_path,
-            segment_samples,
-            sample_rate as i32,
-            channels as u16,
-        )
-        .map_err(|e| {
-            io::Error::other(format!(
-                "Failed to write pitch-correction source '{}': {e}",
-                temp_path.display()
-            ))
-        })?;
+        {
+            let spec = WavSpec {
+                channels: channels as u16,
+                sample_rate,
+                bits_per_sample: 32,
+                sample_format: SampleFormat::Float,
+            };
+            let mut writer = hound::WavWriter::create(&temp_path, spec).map_err(|e| {
+                io::Error::other(format!(
+                    "Failed to create WAV writer for '{}': {e}",
+                    temp_path.display()
+                ))
+            })?;
+            for sample in segment_samples {
+                writer.write_sample(*sample).map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to write sample to '{}': {e}",
+                        temp_path.display()
+                    ))
+                })?;
+            }
+            writer.finalize().map_err(|e| {
+                io::Error::other(format!(
+                    "Failed to finalize WAV '{}': {e}",
+                    temp_path.display()
+                ))
+            })?;
+        }
 
         let mut pitchmap = String::new();
         if points.is_empty() {
@@ -2759,63 +2920,64 @@ impl Maolan {
         output_channels: usize,
         bit_depth: ExportBitDepth,
     ) -> io::Result<()> {
+        let spec = WavSpec {
+            channels: output_channels as u16,
+            sample_rate: sample_rate as u32,
+            bits_per_sample: match bit_depth {
+                ExportBitDepth::Int16 => 16,
+                ExportBitDepth::Int24 => 24,
+                ExportBitDepth::Int32 => 32,
+                ExportBitDepth::Float32 => 32,
+            },
+            sample_format: match bit_depth {
+                ExportBitDepth::Float32 => SampleFormat::Float,
+                _ => SampleFormat::Int,
+            },
+        };
+        let mut writer = hound::WavWriter::create(export_path, spec)
+            .map_err(|e| io::Error::other(format!("Failed to create WAV writer: {e}")))?;
         match bit_depth {
             ExportBitDepth::Int16 => {
-                let quantized: Vec<i16> = mixed_buffer
-                    .iter()
-                    .map(|s| {
-                        (s.clamp(-1.0, 1.0) * i16::MAX as f32)
-                            .round()
-                            .clamp(i16::MIN as f32, i16::MAX as f32) as i16
-                    })
-                    .collect();
-                wavers::write::<i16, _>(
-                    export_path,
-                    &quantized,
-                    sample_rate,
-                    output_channels as u16,
-                )
+                for sample in mixed_buffer {
+                    let q = (sample.clamp(-1.0, 1.0) * i16::MAX as f32)
+                        .round()
+                        .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+                    writer
+                        .write_sample(q)
+                        .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+                }
             }
-            ExportBitDepth::Int24 => wavers::write::<i24::i24, _>(
-                export_path,
-                &mixed_buffer
-                    .iter()
-                    .map(|s| {
-                        i24::i24::from_i32(
-                            (s.clamp(-1.0, 1.0) * 8_388_607.0)
-                                .round()
-                                .clamp(-8_388_608.0, 8_388_607.0)
-                                as i32,
-                        )
-                    })
-                    .collect::<Vec<i24::i24>>(),
-                sample_rate,
-                output_channels as u16,
-            ),
+            ExportBitDepth::Int24 => {
+                for sample in mixed_buffer {
+                    let q = i24::i24::from_i32(
+                        (sample.clamp(-1.0, 1.0) * 8_388_607.0)
+                            .round()
+                            .clamp(-8_388_608.0, 8_388_607.0) as i32,
+                    );
+                    writer
+                        .write_sample(q.to_i32())
+                        .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+                }
+            }
             ExportBitDepth::Int32 => {
-                let quantized: Vec<i32> = mixed_buffer
-                    .iter()
-                    .map(|s| {
-                        (s.clamp(-1.0, 1.0) * i32::MAX as f32)
-                            .round()
-                            .clamp(i32::MIN as f32, i32::MAX as f32) as i32
-                    })
-                    .collect();
-                wavers::write::<i32, _>(
-                    export_path,
-                    &quantized,
-                    sample_rate,
-                    output_channels as u16,
-                )
+                for sample in mixed_buffer {
+                    let q = (sample.clamp(-1.0, 1.0) * i32::MAX as f32)
+                        .round()
+                        .clamp(i32::MIN as f32, i32::MAX as f32) as i32;
+                    writer
+                        .write_sample(q)
+                        .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+                }
             }
-            ExportBitDepth::Float32 => wavers::write::<f32, _>(
-                export_path,
-                mixed_buffer,
-                sample_rate,
-                output_channels as u16,
-            ),
+            ExportBitDepth::Float32 => {
+                for sample in mixed_buffer {
+                    writer
+                        .write_sample(*sample)
+                        .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+                }
+            }
         }
-        .map_err(|e| {
+        writer.finalize().map_err(|e| {
             io::Error::other(format!(
                 "Failed to write '{}': {}",
                 export_path.display(),
@@ -3152,23 +3314,31 @@ impl Maolan {
     }
 
     fn write_export_audio(req: ExportWriteRequest<'_>) -> io::Result<()> {
-        match req.format {
+        let export_path = req.export_path;
+        let tmp_path = export_path.with_extension(format!(
+            "{}.tmp",
+            export_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("export")
+        ));
+        let result = match req.format {
             ExportFormat::Wav => Self::write_wav_with_bit_depth(
-                req.export_path,
+                &tmp_path,
                 req.mixed_buffer,
                 req.sample_rate,
                 req.output_channels,
                 req.bit_depth,
             ),
             ExportFormat::Flac => Self::write_flac_with_bit_depth(
-                req.export_path,
+                &tmp_path,
                 req.mixed_buffer,
                 req.sample_rate,
                 req.output_channels,
                 req.bit_depth,
             ),
             ExportFormat::Mp3 => Self::write_mp3(
-                req.export_path,
+                &tmp_path,
                 req.mixed_buffer,
                 req.sample_rate,
                 req.output_channels,
@@ -3176,14 +3346,18 @@ impl Maolan {
                 req.metadata,
             ),
             ExportFormat::Ogg => Self::write_ogg_vorbis(
-                req.export_path,
+                &tmp_path,
                 req.mixed_buffer,
                 req.sample_rate,
                 req.output_channels,
                 req.codec,
                 req.metadata,
             ),
+        };
+        if result.is_ok() {
+            fs::rename(&tmp_path, export_path)?;
         }
+        result
     }
 
     fn measure_lufs_and_true_peak(
@@ -3360,17 +3534,36 @@ impl Maolan {
             } else {
                 session_root.join(&clip.name)
             };
-            let mut wav = Wav::<f32>::from_path(&clip_path).map_err(|e| {
+            let mut reader = WavReader::open(&clip_path).map_err(|e| {
                 io::Error::other(format!(
                     "Failed to open WAV '{}': {}",
                     clip_path.display(),
                     e
                 ))
             })?;
-            let clip_channels = wav.n_channels().max(1) as usize;
-            let samples: wavers::Samples<f32> = wav.read().map_err(|e| {
-                io::Error::other(format!("WAV read error '{}': {}", clip_path.display(), e))
-            })?;
+            let spec = reader.spec();
+            let clip_channels = spec.channels.max(1) as usize;
+            let samples: Vec<f32> = match spec.sample_format {
+                SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
+                SampleFormat::Int => match spec.bits_per_sample {
+                    16 => reader
+                        .samples::<i16>()
+                        .filter_map(|s| s.ok())
+                        .map(|s| (s as f32 / i16::MAX as f32).clamp(-1.0, 1.0))
+                        .collect(),
+                    24 => reader
+                        .samples::<i32>()
+                        .filter_map(|s| s.ok())
+                        .map(|s| (s as f32 / 8_388_608.0).clamp(-1.0, 1.0))
+                        .collect(),
+                    32 => reader
+                        .samples::<i32>()
+                        .filter_map(|s| s.ok())
+                        .map(|s| (s as f32 / i32::MAX as f32).clamp(-1.0, 1.0))
+                        .collect(),
+                    _ => continue,
+                },
+            };
             if samples.is_empty() {
                 continue;
             }
@@ -3407,6 +3600,8 @@ impl Maolan {
 
     async fn export_session<F>(
         options: &ExportSessionOptions,
+        cancel: &Arc<AtomicBool>,
+        bounce_notify: Option<Arc<tokio::sync::Notify>>,
         mut progress_callback: F,
     ) -> std::io::Result<()>
     where
@@ -3485,15 +3680,12 @@ impl Maolan {
             )
         };
 
-        let corrected_clip_count = tracks
-            .iter()
-            .flat_map(|track| track.clips.iter())
-            .filter(|clip| !clip.pitch_correction_points.is_empty())
-            .count();
-        if corrected_clip_count > 0 {
-            let mut corrected_done = 0usize;
-            for track in &mut tracks {
-                for clip in &mut track.clips {
+        // Render pitch-corrected clips in parallel so tracks don't block
+        // each other waiting for rubberband to finish.
+        {
+            let mut handles = Vec::new();
+            for (track_idx, track) in tracks.iter().enumerate() {
+                for (clip_idx, clip) in track.clips.iter().enumerate() {
                     if clip.pitch_correction_points.is_empty() {
                         continue;
                     }
@@ -3501,42 +3693,203 @@ impl Maolan {
                         .pitch_correction_source_name
                         .clone()
                         .unwrap_or_else(|| clip.name.clone());
-                    let source_path = if Path::new(&source_name).is_absolute() {
-                        PathBuf::from(&source_name)
+                    let source_path = if std::path::PathBuf::from(&source_name).is_absolute() {
+                        std::path::PathBuf::from(&source_name)
                     } else {
                         session_root.join(&source_name)
                     };
-                    let progress =
-                        0.1 + (corrected_done as f32 / corrected_clip_count.max(1) as f32) * 0.15;
-                    progress_callback(
-                        progress,
-                        Some(format!("Preparing offline pitch correction: {}", clip.name)),
-                    );
-                    tokio::task::yield_now().await;
-                    let (rendered_name, rendered_length, _) =
-                        Self::render_audio_clip_pitch_correction_with_rubberband(
+                    let clip_name = clip.name.clone();
+                    let offset = clip.pitch_correction_source_offset.unwrap_or(clip.offset);
+                    let length = clip.pitch_correction_source_length.unwrap_or(clip.length);
+                    let points = clip.pitch_correction_points.clone();
+                    let inertia_ms = clip.pitch_correction_inertia_ms.unwrap_or(100);
+                    let formant = clip.pitch_correction_formant_compensation.unwrap_or(true);
+                    let session_root = session_root.to_path_buf();
+                    handles.push(tokio::spawn(async move {
+                        let result = Maolan::render_audio_clip_pitch_correction_with_rubberband(
                             &source_path,
-                            session_root,
-                            &clip.name,
-                            clip.pitch_correction_source_offset.unwrap_or(clip.offset),
-                            clip.pitch_correction_source_length.unwrap_or(clip.length),
-                            &clip.pitch_correction_points,
-                            clip.pitch_correction_inertia_ms.unwrap_or(100),
-                            clip.pitch_correction_formant_compensation.unwrap_or(true),
+                            &session_root,
+                            &clip_name,
+                            offset,
+                            length,
+                            &points,
+                            inertia_ms,
+                            formant,
                             |_, _| {},
                         )
-                        .await?;
-                    clip.name = rendered_name;
-                    clip.offset = 0;
-                    clip.length = rendered_length.max(1);
-                    clip.pitch_correction_preview_name = None;
-                    clip.pitch_correction_points.clear();
-                    corrected_done = corrected_done.saturating_add(1);
+                        .await;
+                        (track_idx, clip_idx, result)
+                    }));
+                }
+            }
+            if !handles.is_empty() {
+                progress_callback(0.02, Some("Rendering pitch correction...".to_string()));
+                tokio::task::yield_now().await;
+                for handle in handles {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Err(io::Error::other("Export cancelled".to_string()));
+                    }
+                    let (track_idx, clip_idx, result) = handle.await.map_err(|e| {
+                        io::Error::other(format!("Pitch correction task panicked: {e}"))
+                    })?;
+                    let (rendered_name, rendered_length, _) = result
+                        .map_err(|e| io::Error::other(format!("Pitch correction failed: {e}")))?;
+                    tracks[track_idx].clips[clip_idx].name = rendered_name;
+                    tracks[track_idx].clips[clip_idx].offset = 0;
+                    tracks[track_idx].clips[clip_idx].length = rendered_length.max(1);
+                    tracks[track_idx].clips[clip_idx]
+                        .pitch_correction_points
+                        .clear();
+                }
+            }
+        }
+
+        let stem_mode_label = if matches!(render_mode, ExportRenderMode::StemsPreFader) {
+            "pre"
+        } else {
+            "post"
+        };
+        let export_parent = export_path.parent().unwrap_or_else(|| Path::new("."));
+        let export_stem = export_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("export");
+        let stem_dir = export_parent.join(format!("{export_stem}_stems"));
+
+        // For post-fader stems, bounce each track through the engine so that
+        // plugin processing (CLAP/LV2/VST3) is included in the export.
+        let mut temp_bounce_files: Vec<PathBuf> = Vec::new();
+        if matches!(render_mode, ExportRenderMode::StemsPostFader) {
+            let has_solo = tracks.iter().any(|track| track.soloed);
+            let tracks_to_bounce: Vec<usize> = tracks
+                .iter()
+                .enumerate()
+                .filter(|(_, track)| {
+                    selected_tracks.contains(&track.name)
+                        && !track.muted
+                        && (!has_solo || track.soloed)
+                })
+                .map(|(idx, _)| idx)
+                .collect();
+
+            if !tracks_to_bounce.is_empty() {
+                // Place bounce temp files inside the stem directory so
+                // they stay on the same filesystem as the final output.
+                fs::create_dir_all(&stem_dir).map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to create stem directory '{}': {}",
+                        stem_dir.display(),
+                        e
+                    ))
+                })?;
+
+                // Collect bounce parameters for all tracks before dispatching.
+                struct BounceInfo {
+                    track_idx: usize,
+                    temp_path: PathBuf,
+                    render_length: usize,
+                    automation_lanes: Vec<OfflineAutomationLane>,
+                }
+
+                let mut bounce_infos: Vec<BounceInfo> = Vec::new();
+                for track_idx in &tracks_to_bounce {
+                    let track = &tracks[*track_idx];
+                    let render_length = track
+                        .clips
+                        .iter()
+                        .map(|clip| clip.start.saturating_add(clip.length))
+                        .max()
+                        .unwrap_or(0)
+                        .max(1);
+                    let automation_lanes = {
+                        let state_guard = state.read().await;
+                        if let Some(t) = state_guard.tracks.iter().find(|t| t.name == track.name) {
+                            build_offline_automation_lanes(&t.automation_lanes)
+                        } else {
+                            Vec::new()
+                        }
+                    };
+                    let temp_path = stem_dir.join(format!(
+                        ".maolan_bounce_{}_{}.wav",
+                        std::process::id(),
+                        Self::sanitize_export_component(&track.name)
+                    ));
+                    temp_bounce_files.push(temp_path.clone());
+                    bounce_infos.push(BounceInfo {
+                        track_idx: *track_idx,
+                        temp_path,
+                        render_length,
+                        automation_lanes,
+                    });
+                }
+
+                // Dispatch all bounce requests concurrently.
+                progress_callback(0.05, Some("Bouncing tracks...".to_string()));
+                tokio::task::yield_now().await;
+                for info in &bounce_infos {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Err(io::Error::other("Export cancelled".to_string()));
+                    }
+                    if let Err(e) = CLIENT
+                        .send(EngineMessage::Request(Action::TrackOfflineBounce {
+                            track_name: tracks[info.track_idx].name.clone(),
+                            output_path: info.temp_path.to_string_lossy().to_string(),
+                            start_sample: 0,
+                            length_samples: info.render_length,
+                            automation_lanes: info.automation_lanes.clone(),
+                            apply_fader: true,
+                        }))
+                        .await
+                    {
+                        return Err(io::Error::other(format!(
+                            "Failed to request bounce for '{}': {e}",
+                            tracks[info.track_idx].name
+                        )));
+                    }
+                }
+
+                // Wait for bounces to complete via the GUI's main subscription.
+                if let Some(notify) = bounce_notify {
+                    notify.notified().await;
+                    progress_callback(0.20, Some("Bounces complete".to_string()));
+                    tokio::task::yield_now().await;
+                }
+
+                // Replace each track's clips with a synthetic clip pointing to the bounce file.
+                for info in &bounce_infos {
+                    let bounced_clip = AudioClip {
+                        name: info.temp_path.to_string_lossy().to_string(),
+                        start: 0,
+                        length: info.render_length,
+                        offset: 0,
+                        input_channel: 0,
+                        muted: false,
+                        max_length_samples: info.render_length,
+                        peaks_file: None,
+                        peaks: ClipPeaks::default(),
+                        fade_enabled: false,
+                        fade_in_samples: 0,
+                        fade_out_samples: 0,
+                        pitch_correction_preview_name: None,
+                        pitch_correction_source_name: None,
+                        pitch_correction_source_offset: None,
+                        pitch_correction_source_length: None,
+                        pitch_correction_points: vec![],
+                        pitch_correction_frame_likeness: None,
+                        pitch_correction_inertia_ms: None,
+                        pitch_correction_formant_compensation: None,
+                        ..Default::default()
+                    };
+                    tracks[info.track_idx].clips = vec![bounced_clip];
                 }
             }
         }
 
         if total_length == 0 {
+            // Clean up temp files on early exit.
+            for path in &temp_bounce_files {
+                let _ = fs::remove_file(path);
+            }
             return Err(io::Error::other(
                 "No audio clips found. Nothing to export.".to_string(),
             ));
@@ -3679,21 +4032,12 @@ impl Maolan {
                 })?;
             }
             progress_callback(1.0, Some("Complete".to_string()));
+            // Clean up any temp bounce files (should be empty for mixdown).
+            for path in &temp_bounce_files {
+                let _ = fs::remove_file(path);
+            }
             return Ok(());
         }
-
-        let stem_mode_label = if matches!(render_mode, ExportRenderMode::StemsPreFader) {
-            "pre"
-        } else {
-            "post"
-        };
-        let export_parent = export_path.parent().unwrap_or_else(|| Path::new("."));
-        let export_stem = export_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("export");
-        let stem_dir = export_parent.join(format!("{export_stem}_stems"));
-        fs::create_dir_all(&stem_dir)?;
 
         let selected_tracks: Vec<_> = tracks
             .iter()
@@ -3708,11 +4052,50 @@ impl Maolan {
         }
 
         for (idx, track) in selected_tracks.iter().enumerate() {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(io::Error::other("Export cancelled".to_string()));
+            }
             let start = 0.1 + (idx as f32 / selected_tracks.len() as f32) * 0.75;
             progress_callback(start, Some(format!("Rendering stem: {}", track.name)));
             tokio::task::yield_now().await;
             let output_channels = track.output_ports.max(1);
-            let normalize_params = ExportNormalizeParams {
+
+            let is_post_fader = matches!(render_mode, ExportRenderMode::StemsPostFader);
+            let can_zero_copy = is_post_fader
+                && export_formats.len() == 1
+                && export_formats[0] == ExportFormat::Wav
+                && bit_depth == ExportBitDepth::Float32
+                && !normalize
+                && !master_limiter;
+
+            if can_zero_copy {
+                let temp_path = track
+                    .clips
+                    .first()
+                    .map(|c| {
+                        let p = PathBuf::from(&c.name);
+                        if p.is_absolute() {
+                            p
+                        } else {
+                            session_root.join(&c.name)
+                        }
+                    })
+                    .ok_or_else(|| {
+                        io::Error::other(format!("No bounced clip for track '{}'", track.name))
+                    })?;
+                for format in &export_formats {
+                    let stem_file = stem_dir.join(format!(
+                        "{}_{}.{}",
+                        Self::sanitize_export_component(&track.name),
+                        stem_mode_label,
+                        Self::export_format_extension(*format)
+                    ));
+                    fs::rename(&temp_path, &stem_file)?;
+                }
+                continue;
+            }
+
+            let _normalize_params = ExportNormalizeParams {
                 mode: normalize_mode,
                 target_dbfs: normalize_target_dbfs,
                 target_lufs: normalize_target_lufs,
@@ -3721,26 +4104,75 @@ impl Maolan {
                 sample_rate,
                 output_channels,
             };
-            let mut stem_buffer = Self::mix_track_clips_to_channels(
-                &track.clips,
-                session_root,
-                total_length,
-                output_channels,
-                track.level,
-                track.balance,
-                matches!(render_mode, ExportRenderMode::StemsPostFader),
-            )?;
-            if normalize {
-                Self::apply_export_normalization(&mut stem_buffer, normalize_params)?;
-            }
-            if master_limiter {
-                let ceiling_amp = 10.0_f32
-                    .powf(master_limiter_ceiling_dbtp / 20.0)
-                    .clamp(0.0, 1.0);
-                for sample in &mut stem_buffer {
-                    *sample = sample.clamp(-ceiling_amp, ceiling_amp);
+
+            let stem_buffer = if is_post_fader {
+                let temp_path = track
+                    .clips
+                    .first()
+                    .map(|c| {
+                        let p = PathBuf::from(&c.name);
+                        if p.is_absolute() {
+                            p
+                        } else {
+                            session_root.join(&c.name)
+                        }
+                    })
+                    .ok_or_else(|| {
+                        io::Error::other(format!("No bounced clip for track '{}'", track.name))
+                    })?;
+                let mut reader = WavReader::open(&temp_path).map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to open bounced WAV '{}': {}",
+                        temp_path.display(),
+                        e
+                    ))
+                })?;
+                let spec = reader.spec();
+                let wav_channels = spec.channels.max(1) as usize;
+                let samples: Vec<f32> = match spec.sample_format {
+                    SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
+                    SampleFormat::Int => match spec.bits_per_sample {
+                        16 => reader
+                            .samples::<i16>()
+                            .filter_map(|s| s.ok())
+                            .map(|s| (s as f32 / i16::MAX as f32).clamp(-1.0, 1.0))
+                            .collect(),
+                        24 => reader
+                            .samples::<i32>()
+                            .filter_map(|s| s.ok())
+                            .map(|s| (s as f32 / 8_388_608.0).clamp(-1.0, 1.0))
+                            .collect(),
+                        32 => reader
+                            .samples::<i32>()
+                            .filter_map(|s| s.ok())
+                            .map(|s| (s as f32 / i32::MAX as f32).clamp(-1.0, 1.0))
+                            .collect(),
+                        _ => Vec::new(),
+                    },
+                };
+                let wav_frames = samples.len() / wav_channels;
+                let mut buf = vec![0.0_f32; total_length * output_channels];
+                let copy_frames = wav_frames.min(total_length);
+                for frame in 0..copy_frames {
+                    for ch in 0..output_channels {
+                        let src_ch = ch.min(wav_channels.saturating_sub(1));
+                        buf[frame * output_channels + ch] = samples[frame * wav_channels + src_ch];
+                    }
                 }
-            }
+                buf
+            } else {
+                Self::mix_track_clips_to_channels(
+                    &track.clips,
+                    session_root,
+                    total_length,
+                    output_channels,
+                    track.level,
+                    track.balance,
+                    false,
+                )?
+            };
+            // Normalization and master limiter apply only to mixdown, not stems,
+            // because stems must preserve relative levels.
             for format in &export_formats {
                 let stem_file = stem_dir.join(format!(
                     "{}_{}.{}",
@@ -3771,6 +4203,10 @@ impl Maolan {
                 stem_dir.display()
             )),
         );
+        // Clean up temp bounce files.
+        for path in &temp_bounce_files {
+            let _ = fs::remove_file(path);
+        }
         Ok(())
     }
 
@@ -4267,7 +4703,10 @@ impl Maolan {
                     midi_inputs: info.map(|info| info.midi_inputs).unwrap_or(0),
                     midi_outputs: info.map(|info| info.midi_outputs).unwrap_or(0),
                     state: plugin.get("state").cloned(),
-                    bypassed: plugin.get("bypassed").and_then(|v| v.as_bool()).unwrap_or(false),
+                    bypassed: plugin
+                        .get("bypassed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
                 })
             }
             Some(format) if format.eq_ignore_ascii_case("VST3") => {
@@ -4292,7 +4731,10 @@ impl Maolan {
                         .map(|info| usize::from(info.has_midi_output))
                         .unwrap_or(0),
                     state: None,
-                    bypassed: plugin.get("bypassed").and_then(|v| v.as_bool()).unwrap_or(false),
+                    bypassed: plugin
+                        .get("bypassed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
                 })
             }
             Some(format) if format.eq_ignore_ascii_case("CLAP") => {
@@ -4317,7 +4759,10 @@ impl Maolan {
                     midi_inputs: caps.map(|caps| caps.midi_inputs).unwrap_or(0),
                     midi_outputs: caps.map(|caps| caps.midi_outputs).unwrap_or(0),
                     state: plugin.get("state").cloned(),
-                    bypassed: plugin.get("bypassed").and_then(|v| v.as_bool()).unwrap_or(false),
+                    bypassed: plugin
+                        .get("bypassed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
                 })
             }
             _ => None,
@@ -5361,9 +5806,7 @@ impl Maolan {
             &input_options,
             self.prefs_default_input_device_id.as_deref(),
         );
-        let mut preferences_column = Column::new()
-            .align_x(iced::Alignment::Start)
-            .spacing(12);
+        let mut preferences_column = Column::new().align_x(iced::Alignment::Start).spacing(12);
         preferences_column = preferences_column.push(text("Preferences").size(16));
         preferences_column = preferences_column.push(
             row![
@@ -5463,11 +5906,8 @@ impl Maolan {
                 .align_y(iced::Alignment::Center),
             );
         } else {
-            preferences_column = preferences_column.push(
-                row![text("")]
-                    .spacing(10)
-                    .align_y(iced::Alignment::Center),
-            );
+            preferences_column = preferences_column
+                .push(row![text("")].spacing(10).align_y(iced::Alignment::Center));
         }
         preferences_column = preferences_column.push(
             row![
@@ -5479,13 +5919,13 @@ impl Maolan {
             .spacing(10),
         );
         container(preferences_column)
-        .style(|_theme| crate::style::app_background())
-        .padding(20)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(iced::Alignment::Center)
-        .align_y(iced::Alignment::Center)
-        .into()
+            .style(|_theme| crate::style::app_background())
+            .padding(20)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::Alignment::Center)
+            .align_y(iced::Alignment::Center)
+            .into()
     }
 
     fn generate_audio_view(&self) -> iced::Element<'_, Message> {

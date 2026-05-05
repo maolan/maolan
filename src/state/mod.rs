@@ -526,7 +526,7 @@ pub struct StateData {
     #[cfg(all(unix, not(target_os = "macos")))]
     pub plugin_graphs_by_track: HashMap<String, PluginGraphSnapshot>,
     pub plugin_graph_selected_connections: std::collections::HashSet<usize>,
-    pub plugin_graph_selected_plugin: Option<usize>,
+    pub plugin_graph_selected_plugins: std::collections::HashSet<usize>,
     pub plugin_graph_plugin_positions: HashMap<usize, Point>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pub plugin_graph_connecting: Option<PluginConnecting>,
@@ -705,7 +705,7 @@ impl Default for StateData {
             #[cfg(all(unix, not(target_os = "macos")))]
             plugin_graphs_by_track: HashMap::new(),
             plugin_graph_selected_connections: HashSet::new(),
-            plugin_graph_selected_plugin: None,
+            plugin_graph_selected_plugins: std::collections::HashSet::new(),
             plugin_graph_plugin_positions: HashMap::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
             plugin_graph_connecting: None,

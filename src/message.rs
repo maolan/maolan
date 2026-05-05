@@ -1023,6 +1023,13 @@ pub enum Message {
         note_index: usize,
         delta_samples: i64,
     },
+    DrumSelectRectStart {
+        position: iced::Point,
+    },
+    DrumSelectRectDrag {
+        position: iced::Point,
+    },
+    DrumSelectRectEnd,
     PianoControllerLaneSelected(PianoControllerLane),
     MidiEditorViewModeSelected(MidiEditorViewMode),
     PianoControllerKindSelected(u8),
@@ -1081,6 +1088,7 @@ pub enum Message {
     SelectClapPlugin(String),
     LoadSelectedClapPlugins,
     PluginFormatSelected(PluginFormat),
+    RequestBatch(Vec<maolan_engine::message::Action>),
     ShowClapPluginUi {
         track_name: String,
         clip_idx: Option<usize>,
