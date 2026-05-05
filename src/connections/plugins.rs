@@ -23,7 +23,21 @@ use iced::{
 };
 use maolan_engine::kind::Kind;
 use maolan_engine::message::{Action as EngineAction, PluginGraphNode, PluginGraphPlugin};
+use std::collections::HashSet;
 use std::time::Instant;
+
+pub fn select_plugin_indices(selected: &mut HashSet<usize>, instance_id: usize, ctrl: bool) {
+    if ctrl {
+        if selected.contains(&instance_id) {
+            selected.remove(&instance_id);
+        } else {
+            selected.insert(instance_id);
+        }
+    } else {
+        selected.clear();
+        selected.insert(instance_id);
+    }
+}
 
 pub struct Graph {
     state: State,
@@ -499,7 +513,7 @@ impl canvas::Program<Message> for Graph {
                             idx,
                             ctrl,
                         );
-                        data.plugin_graph_selected_plugin = None;
+                        data.plugin_graph_selected_plugins.clear();
                         return Some(Action::request_redraw());
                     }
 
@@ -516,7 +530,12 @@ impl canvas::Program<Message> for Graph {
                         }
                     }
                     if let Some((plugin_idx, instance_id, pos)) = clicked_plugin {
-                        data.plugin_graph_selected_plugin = Some(instance_id);
+                        let ctrl = data.ctrl;
+                        select_plugin_indices(
+                            &mut data.plugin_graph_selected_plugins,
+                            instance_id,
+                            ctrl,
+                        );
                         data.plugin_graph_selected_connections.clear();
                         let now = Instant::now();
                         let is_double_click = if let Some((last_instance, last_time)) =
@@ -585,7 +604,7 @@ impl canvas::Program<Message> for Graph {
                     }
 
                     data.plugin_graph_selected_connections.clear();
-                    data.plugin_graph_selected_plugin = None;
+                    data.plugin_graph_selected_plugins.clear();
                     return Some(Action::request_redraw());
                 }
                 Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. })
@@ -594,23 +613,33 @@ impl canvas::Program<Message> for Graph {
                     if data.plugin_graph_clip.is_some() {
                         return None;
                     }
-                    if let Some(instance_id) = data.plugin_graph_selected_plugin {
+                    let track_name = data.plugin_graph_track.clone().unwrap_or_default();
+                    let mut actions = Vec::new();
+                    for instance_id in data.plugin_graph_selected_plugins.iter().copied() {
                         if let Some(plugin) = data
                             .plugin_graph_plugins
                             .iter()
                             .find(|p| p.instance_id == instance_id)
                         {
-                            let track_name = data.plugin_graph_track.clone().unwrap_or_default();
                             let new_bypass = !plugin.bypassed;
-                            return Some(Action::publish(Message::Request(
-                                EngineAction::TrackSetPluginBypassed {
-                                    track_name,
-                                    instance_id,
-                                    format: plugin.format.clone(),
-                                    bypassed: new_bypass,
-                                },
-                            )));
+                            actions.push(Message::Request(EngineAction::TrackSetPluginBypassed {
+                                track_name: track_name.clone(),
+                                instance_id,
+                                format: plugin.format.clone(),
+                                bypassed: new_bypass,
+                            }));
                         }
+                    }
+                    if !actions.is_empty() {
+                        return Some(Action::publish(Message::RequestBatch(
+                            actions
+                                .into_iter()
+                                .map(|m| match m {
+                                    Message::Request(a) => a,
+                                    _ => unreachable!(),
+                                })
+                                .collect(),
+                        )));
                     }
                 }
                 Event::Mouse(mouse::Event::CursorMoved { .. }) => {
@@ -977,8 +1006,9 @@ impl canvas::Program<Message> for Graph {
                     iced::Size::new(PLUGIN_W, plugin_h),
                     node_fill,
                 );
-                let is_selected_plugin =
-                    data.plugin_graph_selected_plugin == Some(plugin.instance_id);
+                let is_selected_plugin = data
+                    .plugin_graph_selected_plugins
+                    .contains(&plugin.instance_id);
                 frame.stroke(
                     &rect,
                     canvas::Stroke::default()
@@ -1381,7 +1411,7 @@ mod tests {
         assert!(message.is_none());
         assert_eq!(status, event::Status::Captured);
         let data = state.blocking_read();
-        assert_eq!(data.plugin_graph_selected_plugin, Some(7));
+        assert!(data.plugin_graph_selected_plugins.contains(&7));
         assert_eq!(
             data.plugin_graph_moving_plugin
                 .as_ref()

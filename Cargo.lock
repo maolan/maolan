@@ -4740,6 +4740,7 @@ dependencies = [
  "ffmpeg-next",
  "flacenc",
  "hf-hub",
+ "hound",
  "i24",
  "iced",
  "iced_aw",
@@ -4749,7 +4750,7 @@ dependencies = [
  "lilv",
  "maolan-engine",
  "maolan-generate",
- "maolan-widgets 0.0.10",
+ "maolan-widgets 0.0.11",
  "midly",
  "mixosc",
  "nix 0.31.2",
@@ -4766,22 +4767,22 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vst3",
- "wavers",
  "windows-sys 0.61.2",
  "x11-dl",
 ]
 
 [[package]]
 name = "maolan-engine"
-version = "0.0.16"
+version = "0.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9178b410ffdf0eca8c1f29b2c0445bd99e6f616c83dd9f05fe999de5fd317071"
+checksum = "18eee12f50e19ef9e4e62c5f80937c50d03fcec2fdc8817d431b62f04e2c7aa0"
 dependencies = [
  "alsa",
  "byteorder",
  "coreaudio-sys",
  "coremidi 0.7.0",
  "cpal",
+ "hound",
  "jack",
  "libloading 0.8.9",
  "lilv",
@@ -4796,7 +4797,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vst3",
- "wavers",
  "windows-sys 0.61.2",
 ]
 
@@ -4835,9 +4835,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-widgets"
-version = "0.0.10"
+version = "0.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51d8c6be67a155c380f3f39d6953dc9eeeb23af5256c6293011ea85ae6b14280"
+checksum = "2568a7e9dd1914dc1c2b0a90ddd1d488a88fd27a60f3869c5717acfcf37d09a6"
 dependencies = [
  "iced",
  "iced_fonts",

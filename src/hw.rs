@@ -690,7 +690,10 @@ impl HW {
         #[cfg(unix)]
         let jack_selected = {
             let state = self.state.blocking_read();
-            matches!(state.selected_backend, crate::state::AudioBackendOption::Jack)
+            matches!(
+                state.selected_backend,
+                crate::state::AudioBackendOption::Jack
+            )
         };
         #[cfg(not(unix))]
         let jack_selected = false;

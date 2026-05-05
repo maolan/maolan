@@ -30,8 +30,8 @@ iced_drop = { version = "0.2.16", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
 libloading = "0.8.9"
 maolan-generate = "0.0.5"
-maolan-engine = "0.0.16"
-maolan-widgets = "0.0.10"
+maolan-engine = "0.0.18"
+maolan-widgets = "0.0.11"
 mixosc = "0.0.3"
 midly = "0.5.3"
 ffmpeg-next = "8"
@@ -46,9 +46,8 @@ tokio = { version = "1.50.0", features = ["full"] }
 toml = "0.8.23"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
-
 vst3 = "0.3"
-wavers = "1.5.1"
+hound = "3.5.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 alsa = "0.9.1"

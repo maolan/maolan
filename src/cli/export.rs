@@ -17,7 +17,7 @@ use ffmpeg_next::{
 use flacenc::bitsink::ByteSink;
 use flacenc::component::BitRepr;
 use flacenc::error::Verify;
-use wavers::Wav;
+use hound::{SampleFormat, WavReader, WavSpec};
 
 pub const STANDARD_EXPORT_SAMPLE_RATES: [u32; 12] = [
     8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000, 384000,
@@ -594,17 +594,36 @@ fn mix_clip_into_buffer(
         return Ok(());
     }
     let clip_path = resolve_audio_clip_path(clip, session_root);
-    let mut wav = Wav::<f32>::from_path(&clip_path).map_err(|e| {
+    let mut reader = WavReader::open(&clip_path).map_err(|e| {
         io::Error::other(format!(
             "Failed to open WAV '{}': {}",
             clip_path.display(),
             e
         ))
     })?;
-    let clip_channels = wav.n_channels().max(1) as usize;
-    let samples: wavers::Samples<f32> = wav.read().map_err(|e| {
-        io::Error::other(format!("WAV read error '{}': {}", clip_path.display(), e))
-    })?;
+    let spec = reader.spec();
+    let clip_channels = spec.channels.max(1) as usize;
+    let samples: Vec<f32> = match spec.sample_format {
+        SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
+        SampleFormat::Int => match spec.bits_per_sample {
+            16 => reader
+                .samples::<i16>()
+                .filter_map(|s| s.ok())
+                .map(|s| (s as f32 / i16::MAX as f32).clamp(-1.0, 1.0))
+                .collect(),
+            24 => reader
+                .samples::<i32>()
+                .filter_map(|s| s.ok())
+                .map(|s| (s as f32 / 8_388_608.0).clamp(-1.0, 1.0))
+                .collect(),
+            32 => reader
+                .samples::<i32>()
+                .filter_map(|s| s.ok())
+                .map(|s| (s as f32 / i32::MAX as f32).clamp(-1.0, 1.0))
+                .collect(),
+            _ => return Ok(()),
+        },
+    };
     if samples.is_empty() {
         return Ok(());
     }
@@ -710,23 +729,31 @@ struct ExportNormalizeParams {
 }
 
 fn write_export_audio(req: ExportWriteRequest<'_>) -> io::Result<()> {
-    match req.format {
+    let export_path = req.export_path;
+    let tmp_path = export_path.with_extension(format!(
+        "{}.tmp",
+        export_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("export")
+    ));
+    let result = match req.format {
         ExportFormat::Wav => write_wav_with_bit_depth(
-            req.export_path,
+            &tmp_path,
             req.mixed_buffer,
             req.sample_rate,
             req.output_channels,
             req.bit_depth,
         ),
         ExportFormat::Flac => write_flac_with_bit_depth(
-            req.export_path,
+            &tmp_path,
             req.mixed_buffer,
             req.sample_rate,
             req.output_channels,
             req.bit_depth,
         ),
         ExportFormat::Mp3 => write_mp3(
-            req.export_path,
+            &tmp_path,
             req.mixed_buffer,
             req.sample_rate,
             req.output_channels,
@@ -734,14 +761,18 @@ fn write_export_audio(req: ExportWriteRequest<'_>) -> io::Result<()> {
             req.metadata,
         ),
         ExportFormat::Ogg => write_ogg_vorbis(
-            req.export_path,
+            &tmp_path,
             req.mixed_buffer,
             req.sample_rate,
             req.output_channels,
             req.codec,
             req.metadata,
         ),
+    };
+    if result.is_ok() {
+        fs::rename(&tmp_path, export_path)?;
     }
+    result
 }
 
 fn write_wav_with_bit_depth(
@@ -751,52 +782,64 @@ fn write_wav_with_bit_depth(
     output_channels: usize,
     bit_depth: ExportBitDepth,
 ) -> io::Result<()> {
+    let spec = WavSpec {
+        channels: output_channels as u16,
+        sample_rate: sample_rate as u32,
+        bits_per_sample: match bit_depth {
+            ExportBitDepth::Int16 => 16,
+            ExportBitDepth::Int24 => 24,
+            ExportBitDepth::Int32 => 32,
+            ExportBitDepth::Float32 => 32,
+        },
+        sample_format: match bit_depth {
+            ExportBitDepth::Float32 => SampleFormat::Float,
+            _ => SampleFormat::Int,
+        },
+    };
+    let mut writer = hound::WavWriter::create(export_path, spec)
+        .map_err(|e| io::Error::other(format!("Failed to create WAV writer: {e}")))?;
     match bit_depth {
         ExportBitDepth::Int16 => {
-            let quantized: Vec<i16> = mixed_buffer
-                .iter()
-                .map(|s| {
-                    (s.clamp(-1.0, 1.0) * i16::MAX as f32)
-                        .round()
-                        .clamp(i16::MIN as f32, i16::MAX as f32) as i16
-                })
-                .collect();
-            wavers::write::<i16, _>(export_path, &quantized, sample_rate, output_channels as u16)
+            for sample in mixed_buffer {
+                let q = (sample.clamp(-1.0, 1.0) * i16::MAX as f32)
+                    .round()
+                    .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+                writer
+                    .write_sample(q)
+                    .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+            }
         }
-        ExportBitDepth::Int24 => wavers::write::<i24::i24, _>(
-            export_path,
-            &mixed_buffer
-                .iter()
-                .map(|s| {
-                    i24::i24::from_i32(
-                        (s.clamp(-1.0, 1.0) * 8_388_607.0)
-                            .round()
-                            .clamp(-8_388_608.0, 8_388_607.0) as i32,
-                    )
-                })
-                .collect::<Vec<i24::i24>>(),
-            sample_rate,
-            output_channels as u16,
-        ),
+        ExportBitDepth::Int24 => {
+            for sample in mixed_buffer {
+                let q = i24::i24::from_i32(
+                    (sample.clamp(-1.0, 1.0) * 8_388_607.0)
+                        .round()
+                        .clamp(-8_388_608.0, 8_388_607.0) as i32,
+                );
+                writer
+                    .write_sample(q.to_i32())
+                    .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+            }
+        }
         ExportBitDepth::Int32 => {
-            let quantized: Vec<i32> = mixed_buffer
-                .iter()
-                .map(|s| {
-                    (s.clamp(-1.0, 1.0) * i32::MAX as f32)
-                        .round()
-                        .clamp(i32::MIN as f32, i32::MAX as f32) as i32
-                })
-                .collect();
-            wavers::write::<i32, _>(export_path, &quantized, sample_rate, output_channels as u16)
+            for sample in mixed_buffer {
+                let q = (sample.clamp(-1.0, 1.0) * i32::MAX as f32)
+                    .round()
+                    .clamp(i32::MIN as f32, i32::MAX as f32) as i32;
+                writer
+                    .write_sample(q)
+                    .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+            }
         }
-        ExportBitDepth::Float32 => wavers::write::<f32, _>(
-            export_path,
-            mixed_buffer,
-            sample_rate,
-            output_channels as u16,
-        ),
+        ExportBitDepth::Float32 => {
+            for sample in mixed_buffer {
+                writer
+                    .write_sample(*sample)
+                    .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+            }
+        }
     }
-    .map_err(|e| {
+    writer.finalize().map_err(|e| {
         io::Error::other(format!(
             "Failed to write '{}': {}",
             export_path.display(),

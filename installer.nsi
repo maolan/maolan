@@ -1,6 +1,6 @@
 ; Maolan DAW Installer
 ; Run with: makensis.exe installer.nsi
-; Requires all binaries and DLLs to be staged in C:\maolan-staging\daw\
+; Requires all binaries and DLLs to be staged in C:\maolan-staging\daw
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"

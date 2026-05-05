@@ -333,19 +333,18 @@ impl Maolan {
                 ..
             } => {
                 let mut state = self.state.blocking_write();
-                if state.plugin_graph_track.as_deref() == Some(track_name) {
-                    if let Some(plugin) = state
+                if state.plugin_graph_track.as_deref() == Some(track_name)
+                    && let Some(plugin) = state
                         .plugin_graph_plugins
                         .iter_mut()
                         .find(|p| p.instance_id == *instance_id)
-                    {
-                        plugin.bypassed = *bypassed;
-                    }
+                {
+                    plugin.bypassed = *bypassed;
                 }
-                if let Some((plugins, _)) = state.plugin_graphs_by_track.get_mut(track_name) {
-                    if let Some(plugin) = plugins.iter_mut().find(|p| p.instance_id == *instance_id) {
-                        plugin.bypassed = *bypassed;
-                    }
+                if let Some((plugins, _)) = state.plugin_graphs_by_track.get_mut(track_name)
+                    && let Some(plugin) = plugins.iter_mut().find(|p| p.instance_id == *instance_id)
+                {
+                    plugin.bypassed = *bypassed;
                 }
                 true
             }

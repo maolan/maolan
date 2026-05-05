@@ -175,6 +175,24 @@ impl Maolan {
                 self.maybe_record_automation_from_request(a);
                 self.send(a.clone())
             }
+            Message::RequestBatch(ref actions) => {
+                let mut tasks = Vec::with_capacity(actions.len());
+                for action in actions {
+                    if let Action::TransportPosition(sample) = action {
+                        self.transport_samples = *sample as f64;
+                    }
+                    if let Some(expanded) = self.expand_request_to_vca_group(action) {
+                        for expanded_action in expanded {
+                            self.maybe_record_automation_from_request(&expanded_action);
+                            tasks.push(self.send(expanded_action));
+                        }
+                    } else {
+                        self.maybe_record_automation_from_request(action);
+                        tasks.push(self.send(action.clone()));
+                    }
+                }
+                Task::batch(tasks)
+            }
             Message::MeterPollTick => {
                 if let Err(err) = CLIENT
                     .sender
