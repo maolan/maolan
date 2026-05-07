@@ -335,7 +335,7 @@ fn run_x11_embedded(
         return Err("Failed to create X11 embed window for CLAP UI".to_string());
     }
 
-    let title = CString::new("CLAP Plugin").map_err(|e| e.to_string())?;
+    let title = CString::new(processor.name()).map_err(|e| e.to_string())?;
     unsafe {
         XStoreName(display, window, title.as_ptr());
         XSelectInput(display, window, STRUCTURE_NOTIFY_MASK);
