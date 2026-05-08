@@ -29,7 +29,6 @@ impl Maolan {
             }
             Action::BeginSessionRestore => {
                 self.session_restore_in_progress = true;
-                self.has_unsaved_changes = false;
                 self.last_autosave_snapshot = None;
                 self.pending_autosave_recovery = None;
                 self.pending_open_session_dir = None;
@@ -37,7 +36,6 @@ impl Maolan {
             }
             Action::EndSessionRestore => {
                 self.session_restore_in_progress = false;
-                self.has_unsaved_changes = false;
                 self.last_autosave_snapshot = None;
                 self.pending_autosave_recovery = None;
                 self.pending_open_session_dir = None;
