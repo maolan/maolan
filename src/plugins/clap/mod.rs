@@ -9,7 +9,6 @@ use crate::plugins::x11::{
     XRootWindow, XSelectInput, XSetWMProtocols, XStoreName, XSync, XWhitePixel,
     set_dialog_window_type,
 };
-use maolan_engine::clap::ClapProcessor;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -17,6 +16,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+
+type SharedClapProcessor =
+    Arc<maolan_engine::mutex::UnsafeMutex<maolan_engine::clap::ClapProcessor>>;
 
 #[cfg(all(unix, not(target_os = "macos")))]
 use std::ffi::{CString, c_int, c_uint, c_ulong, c_void};
@@ -134,7 +136,7 @@ impl GuiClapUiHost {
         clip_idx: Option<usize>,
         instance_id: usize,
         plugin_spec: &str,
-        processor: Arc<ClapProcessor>,
+        processor: SharedClapProcessor,
     ) -> Result<(), String> {
         let session_key = ClapUiSessionKey {
             track_name: track_name.to_string(),
@@ -225,7 +227,7 @@ impl GuiClapUiHost {
 
 fn open_editor_blocking(
     _plugin_spec: &str,
-    processor: Arc<ClapProcessor>,
+    processor: SharedClapProcessor,
     mut on_param: impl FnMut(u32, f64),
     mut on_state: impl FnMut(maolan_engine::clap::ClapPluginState),
 ) -> Result<Option<maolan_engine::clap::ClapPluginState>, String> {
@@ -261,7 +263,7 @@ fn open_editor_blocking(
 }
 
 fn run_ui_loop<F>(
-    processor: &Arc<ClapProcessor>,
+    processor: &SharedClapProcessor,
     mut pump_platform_close: F,
     on_param: &mut impl FnMut(u32, f64),
     on_state: &mut impl FnMut(maolan_engine::clap::ClapPluginState),
@@ -282,7 +284,7 @@ fn run_ui_loop<F>(
     }
 }
 
-fn emit_param_updates(processor: &Arc<ClapProcessor>, on_param: &mut impl FnMut(u32, f64)) {
+fn emit_param_updates(processor: &SharedClapProcessor, on_param: &mut impl FnMut(u32, f64)) {
     for update in processor.ui_take_param_updates() {
         if update.value.is_finite() {
             on_param(update.param_id, update.value);
@@ -291,7 +293,7 @@ fn emit_param_updates(processor: &Arc<ClapProcessor>, on_param: &mut impl FnMut(
 }
 
 fn emit_state_updates(
-    processor: &Arc<ClapProcessor>,
+    processor: &SharedClapProcessor,
     on_state: &mut impl FnMut(maolan_engine::clap::ClapPluginState),
 ) {
     if let Some(state) = processor.ui_take_state_update() {
@@ -301,7 +303,7 @@ fn emit_state_updates(
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn run_x11_embedded(
-    processor: Arc<ClapProcessor>,
+    processor: SharedClapProcessor,
     on_param: &mut impl FnMut(u32, f64),
     on_state: &mut impl FnMut(maolan_engine::clap::ClapPluginState),
 ) -> Result<(), String> {
@@ -395,7 +397,7 @@ fn run_x11_embedded(
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn run_x11_floating(
-    processor: Arc<ClapProcessor>,
+    processor: SharedClapProcessor,
     on_param: &mut impl FnMut(u32, f64),
     on_state: &mut impl FnMut(maolan_engine::clap::ClapPluginState),
 ) -> Result<(), String> {

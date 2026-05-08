@@ -4,6 +4,9 @@ use crate::gui::{PendingClapUiOpen, PendingVst3UiOpen};
 impl Maolan {
     fn pump_clap_ui(&mut self) -> Option<Task<Message>> {
         if let Some(update) = self.clap_ui_host.pop_param_update() {
+            // CLAP UI edits may be gesture-gated and not echoed back as immediate value responses.
+            // Mark dirty at the UI event source.
+            self.has_unsaved_changes = true;
             let action = if let Some(clip_idx) = update.clip_idx {
                 Action::ClipSetClapParameter {
                     track_name: update.track_name,
@@ -23,6 +26,8 @@ impl Maolan {
             return Some(self.send(action));
         }
         if let Some(update) = self.clap_ui_host.pop_state_update() {
+            // State snapshots from CLAP UI are user-visible edits and must mark session dirty.
+            self.has_unsaved_changes = true;
             let restore_action = if let Some(clip_idx) = update.clip_idx {
                 Action::ClipClapRestoreState {
                     track_name: update.track_name.clone(),
@@ -65,6 +70,8 @@ impl Maolan {
             }
         }
         if let Some(closed) = self.clap_ui_host.drain_closed_states().into_iter().next() {
+            // Persisted close-state is also an edit source.
+            self.has_unsaved_changes = true;
             let mut state = self.state.blocking_write();
             if let Some(clip_idx) = closed.clip_idx {
                 if let Some(track) = state

@@ -1549,6 +1549,7 @@ impl Maolan {
                 if self.is_track_frozen(track_name) {
                     return;
                 }
+                self.has_unsaved_changes = true;
                 if let Some(TrackAutomationTarget::ClapParameter { min, max, .. }) =
                     self.find_clap_target(track_name, *instance_id, *param_id)
                 {
@@ -1589,6 +1590,7 @@ impl Maolan {
                 if self.is_track_frozen(track_name) {
                     return;
                 }
+                self.has_unsaved_changes = true;
                 self.begin_touch_gesture(
                     track_name,
                     AutomationWriteKey::Clap {
