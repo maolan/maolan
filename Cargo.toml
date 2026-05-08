@@ -1,7 +1,7 @@
 [package]
 name = "maolan"
 default-run = "maolan"
-version = "0.0.8"
+version = "0.1.0"
 edition = "2024"
 description = "Rust DAW application for recording, editing, routing, automation, export, and plugin hosting"
 authors = ["Maolan Team"]
@@ -30,7 +30,7 @@ iced_drop = { version = "0.2.16", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
 libloading = "0.8.9"
 maolan-generate = "0.0.5"
-maolan-engine = "0.0.19"
+maolan-engine = "0.0.20"
 maolan-widgets = "0.0.13"
 mixosc = "0.0.3"
 midly = "0.5.3"

@@ -326,6 +326,7 @@ impl Maolan {
                 };
                 true
             }
+            #[cfg(all(unix, not(target_os = "macos")))]
             Action::TrackSetPluginBypassed {
                 track_name,
                 instance_id,
@@ -348,6 +349,8 @@ impl Maolan {
                 }
                 true
             }
+            #[cfg(not(all(unix, not(target_os = "macos"))))]
+            Action::TrackSetPluginBypassed { .. } => true,
             _ => false,
         }
     }
