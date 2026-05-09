@@ -1516,17 +1516,17 @@ impl Maolan {
                 16 => reader
                     .samples::<i16>()
                     .filter_map(|s| s.ok())
-                    .map(|s| (s as f32 / i16::MAX as f32).clamp(-1.0, 1.0))
+                    .map(|s| s as f32 * (1.0 / 32768.0))
                     .collect(),
                 24 => reader
                     .samples::<i32>()
                     .filter_map(|s| s.ok())
-                    .map(|s| (s as f32 / 8_388_608.0).clamp(-1.0, 1.0))
+                    .map(|s| s as f32 * (1.0 / 8_388_608.0))
                     .collect(),
                 32 => reader
                     .samples::<i32>()
                     .filter_map(|s| s.ok())
-                    .map(|s| (s as f32 / i32::MAX as f32).clamp(-1.0, 1.0))
+                    .map(|s| s as f32 * (1.0 / 2_147_483_648.0))
                     .collect(),
                 _ => return Ok(Arc::new(Vec::new())),
             },
@@ -1782,19 +1782,19 @@ impl Maolan {
                     reader
                         .samples::<i16>()
                         .filter_map(|s| s.ok())
-                        .map(|s| (s as f32 / i16::MAX as f32).clamp(-1.0, 1.0)),
+                        .map(|s| s as f32 * (1.0 / 32768.0)),
                 ),
                 24 => Box::new(
                     reader
                         .samples::<i32>()
                         .filter_map(|s| s.ok())
-                        .map(|s| (s as f32 / 8_388_608.0).clamp(-1.0, 1.0)),
+                        .map(|s| s as f32 * (1.0 / 8_388_608.0)),
                 ),
                 32 => Box::new(
                     reader
                         .samples::<i32>()
                         .filter_map(|s| s.ok())
-                        .map(|s| (s as f32 / i32::MAX as f32).clamp(-1.0, 1.0)),
+                        .map(|s| s as f32 * (1.0 / 2_147_483_648.0)),
                 ),
                 _ => return Ok(()),
             },
@@ -2365,8 +2365,41 @@ impl Maolan {
 
         let frames = samples.len() / channels.max(1);
         let mut channel_buffers: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); channels];
-        for (i, &sample) in samples.iter().enumerate() {
-            channel_buffers[i % channels].push(sample);
+
+        // Stereo SSE deinterleave fast path.
+        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+        unsafe {
+            if channels == 2 && std::arch::is_x86_feature_detected!("sse") {
+                channel_buffers[0].resize(frames, 0.0);
+                channel_buffers[1].resize(frames, 0.0);
+                let n = frames / 4;
+                for i in 0..n {
+                    let src = std::arch::x86_64::_mm_loadu_ps(samples.as_ptr().add(i * 8));
+                    let src2 = std::arch::x86_64::_mm_loadu_ps(samples.as_ptr().add(i * 8 + 4));
+                    let left = std::arch::x86_64::_mm_shuffle_ps(src, src2, 0b10_00_10_00);
+                    let right = std::arch::x86_64::_mm_shuffle_ps(src, src2, 0b11_01_11_01);
+                    std::arch::x86_64::_mm_storeu_ps(
+                        channel_buffers[0].as_mut_ptr().add(i * 4), left,
+                    );
+                    std::arch::x86_64::_mm_storeu_ps(
+                        channel_buffers[1].as_mut_ptr().add(i * 4), right,
+                    );
+                }
+                for i in n * 4..frames {
+                    channel_buffers[0][i] = samples[i * 2];
+                    channel_buffers[1][i] = samples[i * 2 + 1];
+                }
+            } else {
+                for (i, &sample) in samples.iter().enumerate() {
+                    channel_buffers[i % channels].push(sample);
+                }
+            }
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+        {
+            for (i, &sample) in samples.iter().enumerate() {
+                channel_buffers[i % channels].push(sample);
+            }
         }
 
         progress_callback(0.5);
@@ -2380,10 +2413,42 @@ impl Maolan {
         tokio::task::yield_now().await;
 
         let out_frames = resampled[0].len();
-        let mut output = Vec::with_capacity(out_frames * channels);
-        for frame_idx in 0..out_frames {
-            for channel in resampled.iter().take(channels) {
-                output.push(channel[frame_idx]);
+        let mut output: Vec<f32> = Vec::with_capacity(out_frames * channels);
+
+        // Stereo SSE reinterleave fast path.
+        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+        unsafe {
+            if channels == 2 && std::arch::is_x86_feature_detected!("sse") {
+                output.set_len(out_frames * 2);
+                let left = &resampled[0];
+                let right = &resampled[1];
+                let n = out_frames / 4;
+                for i in 0..n {
+                    let l = std::arch::x86_64::_mm_loadu_ps(left.as_ptr().add(i * 4));
+                    let r = std::arch::x86_64::_mm_loadu_ps(right.as_ptr().add(i * 4));
+                    let lr0 = std::arch::x86_64::_mm_unpacklo_ps(l, r);
+                    let lr1 = std::arch::x86_64::_mm_unpackhi_ps(l, r);
+                    std::arch::x86_64::_mm_storeu_ps(output.as_mut_ptr().add(i * 8), lr0);
+                    std::arch::x86_64::_mm_storeu_ps(output.as_mut_ptr().add(i * 8 + 4), lr1);
+                }
+                for i in n * 4..out_frames {
+                    output[i * 2] = left[i];
+                    output[i * 2 + 1] = right[i];
+                }
+            } else {
+                for frame_idx in 0..out_frames {
+                    for channel in resampled.iter().take(channels) {
+                        output.push(channel[frame_idx]);
+                    }
+                }
+            }
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+        {
+            for frame_idx in 0..out_frames {
+                for channel in resampled.iter().take(channels) {
+                    output.push(channel[frame_idx]);
+                }
             }
         }
 
@@ -2937,42 +3002,20 @@ impl Maolan {
         let mut writer = hound::WavWriter::create(export_path, spec)
             .map_err(|e| io::Error::other(format!("Failed to create WAV writer: {e}")))?;
         match bit_depth {
-            ExportBitDepth::Int16 => {
-                for sample in mixed_buffer {
-                    let q = (sample.clamp(-1.0, 1.0) * i16::MAX as f32)
-                        .round()
-                        .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
-                    writer
-                        .write_sample(q)
-                        .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
-                }
-            }
-            ExportBitDepth::Int24 => {
-                for sample in mixed_buffer {
-                    let q = i24::i24::from_i32(
-                        (sample.clamp(-1.0, 1.0) * 8_388_607.0)
-                            .round()
-                            .clamp(-8_388_608.0, 8_388_607.0) as i32,
-                    );
-                    writer
-                        .write_sample(q.to_i32())
-                        .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
-                }
-            }
-            ExportBitDepth::Int32 => {
-                for sample in mixed_buffer {
-                    let q = (sample.clamp(-1.0, 1.0) * i32::MAX as f32)
-                        .round()
-                        .clamp(i32::MIN as f32, i32::MAX as f32) as i32;
-                    writer
-                        .write_sample(q)
-                        .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+            ExportBitDepth::Int16 | ExportBitDepth::Int24 | ExportBitDepth::Int32 => {
+                let (quantized, _) = Self::quantize_samples_for_bit_depth(mixed_buffer, bit_depth);
+                for &q in &quantized {
+                    match bit_depth {
+                        ExportBitDepth::Int16 => writer.write_sample(q as i16),
+                        _ => writer.write_sample(q),
+                    }
+                    .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
                 }
             }
             ExportBitDepth::Float32 => {
-                for sample in mixed_buffer {
+                for &sample in mixed_buffer {
                     writer
-                        .write_sample(*sample)
+                        .write_sample(sample)
                         .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
                 }
             }
@@ -2996,11 +3039,45 @@ impl Maolan {
             ExportBitDepth::Int32 => (i32::MAX as f32, i32::MIN as f32, i32::MAX as f32, 32),
             ExportBitDepth::Float32 => (8_388_607.0_f32, -8_388_608.0_f32, 8_388_607.0_f32, 24),
         };
-        let samples = mixed_buffer
-            .iter()
-            .map(|s| (s.clamp(-1.0, 1.0) * scale).round().clamp(min, max) as i32)
-            .collect();
-        (samples, bps)
+
+        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+        {
+            use wide::{f32x4, i32x4};
+            let mut quantized = Vec::with_capacity(mixed_buffer.len());
+            let n = mixed_buffer.len() / 4;
+            let vmin_f = f32x4::splat(min);
+            let vmax_f = f32x4::splat(max);
+            let scale_f = f32x4::splat(scale);
+            let vmin_i = i32x4::splat(min as i32);
+            let vmax_i = i32x4::splat(max as i32);
+            for i in 0..n {
+                let chunk = &mixed_buffer[i * 4..(i + 1) * 4];
+                let v: f32x4 = [chunk[0], chunk[1], chunk[2], chunk[3]].into();
+                let clamped = v.clamp(vmin_f, vmax_f);
+                let scaled = clamped * scale_f;
+                let rounded = scaled.round_int();
+                let clamped_i = rounded.max(vmin_i).min(vmax_i);
+                quantized.extend_from_slice(&clamped_i.to_array());
+            }
+            for s in &mixed_buffer[n * 4..] {
+                quantized.push(
+                    (*s as f32)
+                        .clamp(-1.0, 1.0)
+                        .mul_add(scale, 0.0)
+                        .round()
+                        .clamp(min, max) as i32,
+                );
+            }
+            (quantized, bps)
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+        {
+            let samples = mixed_buffer
+                .iter()
+                .map(|s| (s.clamp(-1.0, 1.0) * scale).round().clamp(min, max) as i32)
+                .collect();
+            (samples, bps)
+        }
     }
 
     fn write_flac_with_bit_depth(
@@ -3399,15 +3476,11 @@ impl Maolan {
     ) -> io::Result<()> {
         match params.mode {
             ExportNormalizeMode::Peak => {
-                let peak = mixed_buffer
-                    .iter()
-                    .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
+                let peak = maolan_engine::simd::peak_abs(mixed_buffer);
                 if peak > 0.0 {
                     let target_amp = 10.0_f32.powf(params.target_dbfs / 20.0).clamp(0.0, 1.0);
                     let gain = target_amp / peak;
-                    for sample in mixed_buffer {
-                        *sample *= gain;
-                    }
+                    maolan_engine::simd::mul_inplace(mixed_buffer, gain);
                 }
             }
             ExportNormalizeMode::Loudness => {
@@ -3432,16 +3505,12 @@ impl Maolan {
                     gain_loudness.min(gain_tp)
                 };
 
-                for sample in mixed_buffer.iter_mut() {
-                    *sample *= applied_gain;
-                }
+                maolan_engine::simd::mul_inplace(mixed_buffer, applied_gain);
 
                 if params.tp_limiter {
                     let predicted_tp = measured_tp_amp * applied_gain;
                     if predicted_tp > ceiling_amp && ceiling_amp > 0.0 {
-                        for sample in mixed_buffer.iter_mut() {
-                            *sample = sample.clamp(-ceiling_amp, ceiling_amp);
-                        }
+                        maolan_engine::simd::clamp_inplace(mixed_buffer, -ceiling_amp, ceiling_amp);
                     }
                 }
             }
@@ -3549,17 +3618,17 @@ impl Maolan {
                     16 => reader
                         .samples::<i16>()
                         .filter_map(|s| s.ok())
-                        .map(|s| (s as f32 / i16::MAX as f32).clamp(-1.0, 1.0))
+                        .map(|s| s as f32 * (1.0 / 32768.0))
                         .collect(),
                     24 => reader
                         .samples::<i32>()
                         .filter_map(|s| s.ok())
-                        .map(|s| (s as f32 / 8_388_608.0).clamp(-1.0, 1.0))
+                        .map(|s| s as f32 * (1.0 / 8_388_608.0))
                         .collect(),
                     32 => reader
                         .samples::<i32>()
                         .filter_map(|s| s.ok())
-                        .map(|s| (s as f32 / i32::MAX as f32).clamp(-1.0, 1.0))
+                        .map(|s| s as f32 * (1.0 / 2_147_483_648.0))
                         .collect(),
                     _ => continue,
                 },
@@ -3976,15 +4045,31 @@ impl Maolan {
                     track.balance,
                     true,
                 )?;
-                for frame in 0..total_length {
-                    let track_base = frame * track.output_ports;
-                    let mixed_base = frame * output_channels;
-                    for (source_port, dest_channel) in &routed_ports {
-                        if *source_port >= track.output_ports {
-                            continue;
+                let valid_ports: Vec<(usize, usize)> = routed_ports
+                    .into_iter()
+                    .filter(|(s, _)| *s < track.output_ports)
+                    .collect();
+                let is_identity = output_channels == track.output_ports
+                    && valid_ports.len() == output_channels
+                    && valid_ports.iter().all(|(s, d)| s == d)
+                    && valid_ports.iter().map(|(s, _)| *s).max()
+                        == Some(output_channels.saturating_sub(1));
+                if is_identity {
+                    maolan_engine::simd::add_inplace(&mut mixed_buffer, &track_buffer);
+                } else if valid_ports.len() == 1 {
+                    let (source_port, dest_channel) = valid_ports[0];
+                    for frame in 0..total_length {
+                        mixed_buffer[frame * output_channels + dest_channel] +=
+                            track_buffer[frame * track.output_ports + source_port];
+                    }
+                } else {
+                    for frame in 0..total_length {
+                        let track_base = frame * track.output_ports;
+                        let mixed_base = frame * output_channels;
+                        for (source_port, dest_channel) in &valid_ports {
+                            mixed_buffer[mixed_base + dest_channel] +=
+                                track_buffer[track_base + source_port];
                         }
-                        mixed_buffer[mixed_base + *dest_channel] +=
-                            track_buffer[track_base + *source_port];
                     }
                 }
                 progress_callback(
@@ -4006,9 +4091,7 @@ impl Maolan {
                 let ceiling_amp = 10.0_f32
                     .powf(master_limiter_ceiling_dbtp / 20.0)
                     .clamp(0.0, 1.0);
-                for sample in &mut mixed_buffer {
-                    *sample = sample.clamp(-ceiling_amp, ceiling_amp);
-                }
+                maolan_engine::simd::clamp_inplace(&mut mixed_buffer, -ceiling_amp, ceiling_amp);
             }
             let base_path = Self::export_base_path(export_path.to_path_buf());
             let write_span = 0.1 / export_formats.len().max(1) as f32;
@@ -4135,17 +4218,17 @@ impl Maolan {
                         16 => reader
                             .samples::<i16>()
                             .filter_map(|s| s.ok())
-                            .map(|s| (s as f32 / i16::MAX as f32).clamp(-1.0, 1.0))
+                            .map(|s| s as f32 * (1.0 / 32768.0))
                             .collect(),
                         24 => reader
                             .samples::<i32>()
                             .filter_map(|s| s.ok())
-                            .map(|s| (s as f32 / 8_388_608.0).clamp(-1.0, 1.0))
+                            .map(|s| s as f32 * (1.0 / 8_388_608.0))
                             .collect(),
                         32 => reader
                             .samples::<i32>()
                             .filter_map(|s| s.ok())
-                            .map(|s| (s as f32 / i32::MAX as f32).clamp(-1.0, 1.0))
+                            .map(|s| s as f32 * (1.0 / 2_147_483_648.0))
                             .collect(),
                         _ => Vec::new(),
                     },
@@ -4153,10 +4236,23 @@ impl Maolan {
                 let wav_frames = samples.len() / wav_channels;
                 let mut buf = vec![0.0_f32; total_length * output_channels];
                 let copy_frames = wav_frames.min(total_length);
-                for frame in 0..copy_frames {
+                if wav_channels == output_channels {
+                    let copy_samples = copy_frames * output_channels;
+                    buf[..copy_samples].copy_from_slice(&samples[..copy_samples]);
+                } else if wav_channels == 1 {
+                    // Mono source: duplicate to all output channels.
                     for ch in 0..output_channels {
-                        let src_ch = ch.min(wav_channels.saturating_sub(1));
-                        buf[frame * output_channels + ch] = samples[frame * wav_channels + src_ch];
+                        let dst_offset = ch;
+                        for frame in 0..copy_frames {
+                            buf[frame * output_channels + dst_offset] = samples[frame];
+                        }
+                    }
+                } else {
+                    for frame in 0..copy_frames {
+                        for ch in 0..output_channels {
+                            let src_ch = ch.min(wav_channels.saturating_sub(1));
+                            buf[frame * output_channels + ch] = samples[frame * wav_channels + src_ch];
+                        }
                     }
                 }
                 buf

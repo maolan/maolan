@@ -609,17 +609,17 @@ fn mix_clip_into_buffer(
             16 => reader
                 .samples::<i16>()
                 .filter_map(|s| s.ok())
-                .map(|s| (s as f32 / i16::MAX as f32).clamp(-1.0, 1.0))
+                .map(|s| s as f32 * (1.0 / 32768.0))
                 .collect(),
             24 => reader
                 .samples::<i32>()
                 .filter_map(|s| s.ok())
-                .map(|s| (s as f32 / 8_388_608.0).clamp(-1.0, 1.0))
+                .map(|s| s as f32 * (1.0 / 8_388_608.0))
                 .collect(),
             32 => reader
                 .samples::<i32>()
                 .filter_map(|s| s.ok())
-                .map(|s| (s as f32 / i32::MAX as f32).clamp(-1.0, 1.0))
+                .map(|s| s as f32 * (1.0 / 2_147_483_648.0))
                 .collect(),
             _ => return Ok(()),
         },
@@ -669,9 +669,7 @@ fn apply_master_limiter(samples: &mut [f32], enabled: bool, ceiling_dbtp: f32) {
         return;
     }
     let ceiling_amp = 10.0_f32.powf(ceiling_dbtp / 20.0).clamp(0.0, 1.0);
-    for sample in samples {
-        *sample = sample.clamp(-ceiling_amp, ceiling_amp);
-    }
+    maolan_engine::simd::clamp_inplace(samples, -ceiling_amp, ceiling_amp);
 }
 
 fn export_format_extension(format: ExportFormat) -> &'static str {
@@ -799,42 +797,20 @@ fn write_wav_with_bit_depth(
     let mut writer = hound::WavWriter::create(export_path, spec)
         .map_err(|e| io::Error::other(format!("Failed to create WAV writer: {e}")))?;
     match bit_depth {
-        ExportBitDepth::Int16 => {
-            for sample in mixed_buffer {
-                let q = (sample.clamp(-1.0, 1.0) * i16::MAX as f32)
-                    .round()
-                    .clamp(i16::MIN as f32, i16::MAX as f32) as i16;
-                writer
-                    .write_sample(q)
-                    .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
-            }
-        }
-        ExportBitDepth::Int24 => {
-            for sample in mixed_buffer {
-                let q = i24::i24::from_i32(
-                    (sample.clamp(-1.0, 1.0) * 8_388_607.0)
-                        .round()
-                        .clamp(-8_388_608.0, 8_388_607.0) as i32,
-                );
-                writer
-                    .write_sample(q.to_i32())
-                    .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
-            }
-        }
-        ExportBitDepth::Int32 => {
-            for sample in mixed_buffer {
-                let q = (sample.clamp(-1.0, 1.0) * i32::MAX as f32)
-                    .round()
-                    .clamp(i32::MIN as f32, i32::MAX as f32) as i32;
-                writer
-                    .write_sample(q)
-                    .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+        ExportBitDepth::Int16 | ExportBitDepth::Int24 | ExportBitDepth::Int32 => {
+            let (quantized, _) = quantize_samples_for_bit_depth(mixed_buffer, bit_depth);
+            for &q in &quantized {
+                match bit_depth {
+                    ExportBitDepth::Int16 => writer.write_sample(q as i16),
+                    _ => writer.write_sample(q),
+                }
+                .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
             }
         }
         ExportBitDepth::Float32 => {
-            for sample in mixed_buffer {
+            for &sample in mixed_buffer {
                 writer
-                    .write_sample(*sample)
+                    .write_sample(sample)
                     .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
             }
         }
@@ -858,13 +834,41 @@ fn quantize_samples_for_bit_depth(
         ExportBitDepth::Int32 => (i32::MAX as f32, i32::MIN as f32, i32::MAX as f32, 32),
         ExportBitDepth::Float32 => (8_388_607.0, -8_388_608.0, 8_388_607.0, 24),
     };
-    (
-        mixed_buffer
-            .iter()
-            .map(|s| (s.clamp(-1.0, 1.0) * scale).round().clamp(min, max) as i32)
-            .collect(),
-        bits_per_sample,
-    )
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+    {
+        use wide::{f32x4, i32x4};
+        let mut quantized = Vec::with_capacity(mixed_buffer.len());
+        let n = mixed_buffer.len() / 4;
+        let vmin_f = f32x4::splat(min);
+        let vmax_f = f32x4::splat(max);
+        let scale_f = f32x4::splat(scale);
+        let vmin_i = i32x4::splat(min as i32);
+        let vmax_i = i32x4::splat(max as i32);
+        for i in 0..n {
+            let chunk = &mixed_buffer[i * 4..(i + 1) * 4];
+            let v: f32x4 = [chunk[0], chunk[1], chunk[2], chunk[3]].into();
+            let clamped = v.clamp(vmin_f, vmax_f);
+            let scaled = clamped * scale_f;
+            let rounded = scaled.round_int();
+            let clamped_i = rounded.max(vmin_i).min(vmax_i);
+            quantized.extend_from_slice(&clamped_i.to_array());
+        }
+        for s in &mixed_buffer[n * 4..] {
+            quantized.push((*s as f32).clamp(-1.0, 1.0).mul_add(scale, 0.0).round().clamp(min, max) as i32);
+        }
+        (quantized, bits_per_sample)
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+    {
+        (
+            mixed_buffer
+                .iter()
+                .map(|s| (s.clamp(-1.0, 1.0) * scale).round().clamp(min, max) as i32)
+                .collect(),
+            bits_per_sample,
+        )
+    }
 }
 
 fn write_flac_with_bit_depth(
@@ -1240,15 +1244,11 @@ fn apply_export_normalization(
 ) -> io::Result<()> {
     match params.mode {
         ExportNormalizeMode::Peak => {
-            let peak = samples
-                .iter()
-                .fold(0.0_f32, |acc, sample| acc.max(sample.abs()));
+            let peak = maolan_engine::simd::peak_abs(samples);
             if peak > 0.0 {
                 let target_amp = 10.0_f32.powf(params.target_dbfs / 20.0).clamp(0.0, 1.0);
                 let gain = target_amp / peak;
-                for sample in samples {
-                    *sample *= gain;
-                }
+                maolan_engine::simd::mul_inplace(samples, gain);
             }
         }
         ExportNormalizeMode::Loudness => {
@@ -1267,15 +1267,11 @@ fn apply_export_normalization(
             } else {
                 gain_loudness.min(gain_tp)
             };
-            for sample in samples.iter_mut() {
-                *sample *= applied_gain;
-            }
+            maolan_engine::simd::mul_inplace(samples, applied_gain);
             if params.tp_limiter {
                 let predicted_tp = measured_tp_amp * applied_gain;
                 if predicted_tp > ceiling_amp && ceiling_amp > 0.0 {
-                    for sample in samples.iter_mut() {
-                        *sample = sample.clamp(-ceiling_amp, ceiling_amp);
-                    }
+                    maolan_engine::simd::clamp_inplace(samples, -ceiling_amp, ceiling_amp);
                 }
             }
         }
