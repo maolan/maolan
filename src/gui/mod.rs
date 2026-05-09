@@ -4059,17 +4059,67 @@ impl Maolan {
                     maolan_engine::simd::add_inplace(&mut mixed_buffer, &track_buffer);
                 } else if valid_ports.len() == 1 {
                     let (source_port, dest_channel) = valid_ports[0];
-                    for frame in 0..total_length {
-                        mixed_buffer[frame * output_channels + dest_channel] +=
-                            track_buffer[frame * track.output_ports + source_port];
+                    let mut mixed_idx = dest_channel;
+                    let mut track_idx = source_port;
+                    for _ in 0..total_length {
+                        mixed_buffer[mixed_idx] += track_buffer[track_idx];
+                        mixed_idx += output_channels;
+                        track_idx += track.output_ports;
                     }
                 } else {
-                    for frame in 0..total_length {
-                        let track_base = frame * track.output_ports;
-                        let mixed_base = frame * output_channels;
+                    let is_stereo_swap = output_channels == 2
+                        && track.output_ports == 2
+                        && valid_ports.len() == 2
+                        && valid_ports[0] == (0, 1)
+                        && valid_ports[1] == (1, 0);
+                    if is_stereo_swap {
+                        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+                        unsafe {
+                            use std::arch::x86_64::*;
+                            let mut frame = 0;
+                            let end = total_length.saturating_sub(3);
+                            while frame < end {
+                                let t1 = _mm_loadu_ps(track_buffer.as_ptr().add(frame * 2));
+                                let t2 = _mm_loadu_ps(track_buffer.as_ptr().add(frame * 2 + 4));
+                                let shuffled1 = _mm_shuffle_ps(t1, t1, 0xB1);
+                                let shuffled2 = _mm_shuffle_ps(t2, t2, 0xB1);
+                                let m1 = _mm_loadu_ps(mixed_buffer.as_ptr().add(frame * 2));
+                                let m2 = _mm_loadu_ps(mixed_buffer.as_ptr().add(frame * 2 + 4));
+                                _mm_storeu_ps(
+                                    mixed_buffer.as_mut_ptr().add(frame * 2),
+                                    _mm_add_ps(m1, shuffled1),
+                                );
+                                _mm_storeu_ps(
+                                    mixed_buffer.as_mut_ptr().add(frame * 2 + 4),
+                                    _mm_add_ps(m2, shuffled2),
+                                );
+                                frame += 4;
+                            }
+                            for frame in frame..total_length {
+                                let track_base = frame * 2;
+                                let mixed_base = frame * 2;
+                                mixed_buffer[mixed_base + 1] += track_buffer[track_base];
+                                mixed_buffer[mixed_base] += track_buffer[track_base + 1];
+                            }
+                        }
+                        #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
+                        {
+                            for frame in 0..total_length {
+                                let track_base = frame * 2;
+                                let mixed_base = frame * 2;
+                                mixed_buffer[mixed_base + 1] += track_buffer[track_base];
+                                mixed_buffer[mixed_base] += track_buffer[track_base + 1];
+                            }
+                        }
+                    } else {
                         for (source_port, dest_channel) in &valid_ports {
-                            mixed_buffer[mixed_base + dest_channel] +=
-                                track_buffer[track_base + source_port];
+                            let mut mixed_idx = *dest_channel;
+                            let mut track_idx = *source_port;
+                            for _ in 0..total_length {
+                                mixed_buffer[mixed_idx] += track_buffer[track_idx];
+                                mixed_idx += output_channels;
+                                track_idx += track.output_ports;
+                            }
                         }
                     }
                 }

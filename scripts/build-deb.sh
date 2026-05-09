@@ -155,11 +155,6 @@ if [[ -n "$TARGET_DIR" ]]; then
 fi
 
 # Limit parallel jobs on low-memory systems to avoid OOM
-AVAILABLE_MB="$(awk '/MemAvailable:/ {print int($2/1024)}' /proc/meminfo)"
-if [[ "$AVAILABLE_MB" -lt 4096 ]]; then
-    export CARGO_BUILD_JOBS=1
-    echo "Low memory detected (${AVAILABLE_MB}MB available). Limiting to 1 build job."
-fi
 
 cargo build "${CARGO_ARGS[@]}"
 
