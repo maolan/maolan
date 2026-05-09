@@ -11,6 +11,19 @@ $staging   = "C:\maolan-staging\daw"
 $vcpkgRoot = "C:\vcpkg"
 
 # ---------------------------------------------------------------------------
+# Version from Cargo.toml
+# ---------------------------------------------------------------------------
+$cargoToml = Join-Path (Split-Path $PSScriptRoot -Parent) "Cargo.toml"
+$pkgVersion = "0.0.0"
+if (Test-Path $cargoToml) {
+    $versionLine = Select-String -Path $cargoToml -Pattern '^version\s*=\s*"(.+)"' | Select-Object -First 1
+    if ($versionLine) {
+        $pkgVersion = $versionLine.Matches.Groups[1].Value
+    }
+}
+Write-Host "Package version: $pkgVersion"
+
+# ---------------------------------------------------------------------------
 # Elevation check
 # ---------------------------------------------------------------------------
 $currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -379,9 +392,12 @@ Copy-Item "$PSScriptRoot\LICENSE" "$nsiTemp\LICENSE" -Force -ErrorAction Silentl
 Push-Location $nsiTemp
 & $nsisPath "$nsiTemp\installer.nsi"
 Pop-Location
-Copy-Item "$nsiTemp\maolan-setup.exe" "$PSScriptRoot\maolan-setup.exe" -Force -ErrorAction SilentlyContinue
-if (Test-Path "$PSScriptRoot\maolan-setup.exe") {
-    Write-Host "Done: $(Resolve-Path "$PSScriptRoot\maolan-setup.exe")"
+$distDir = Join-Path (Split-Path $PSScriptRoot -Parent) "dist"
+New-Item -ItemType Directory -Force $distDir | Out-Null
+$outFile = "maolan-$pkgVersion.exe"
+Copy-Item "$nsiTemp\maolan-setup.exe" "$distDir\$outFile" -Force -ErrorAction SilentlyContinue
+if (Test-Path "$distDir\$outFile") {
+    Write-Host "Done: $(Resolve-Path "$distDir\$outFile")"
 } else {
-    Write-Error "Installer build failed. maolan-setup.exe was not created."
+    Write-Error "Installer build failed. $outFile was not created."
 }
