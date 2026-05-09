@@ -2379,10 +2379,12 @@ impl Maolan {
                     let left = std::arch::x86_64::_mm_shuffle_ps(src, src2, 0b10_00_10_00);
                     let right = std::arch::x86_64::_mm_shuffle_ps(src, src2, 0b11_01_11_01);
                     std::arch::x86_64::_mm_storeu_ps(
-                        channel_buffers[0].as_mut_ptr().add(i * 4), left,
+                        channel_buffers[0].as_mut_ptr().add(i * 4),
+                        left,
                     );
                     std::arch::x86_64::_mm_storeu_ps(
-                        channel_buffers[1].as_mut_ptr().add(i * 4), right,
+                        channel_buffers[1].as_mut_ptr().add(i * 4),
+                        right,
                     );
                 }
                 for i in n * 4..frames {
@@ -3061,8 +3063,7 @@ impl Maolan {
             }
             for s in &mixed_buffer[n * 4..] {
                 quantized.push(
-                    (*s as f32)
-                        .clamp(-1.0, 1.0)
+                    (*s).clamp(-1.0, 1.0)
                         .mul_add(scale, 0.0)
                         .round()
                         .clamp(min, max) as i32,
@@ -4251,7 +4252,8 @@ impl Maolan {
                     for frame in 0..copy_frames {
                         for ch in 0..output_channels {
                             let src_ch = ch.min(wav_channels.saturating_sub(1));
-                            buf[frame * output_channels + ch] = samples[frame * wav_channels + src_ch];
+                            buf[frame * output_channels + ch] =
+                                samples[frame * wav_channels + src_ch];
                         }
                     }
                 }

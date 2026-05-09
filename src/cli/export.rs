@@ -855,7 +855,12 @@ fn quantize_samples_for_bit_depth(
             quantized.extend_from_slice(&clamped_i.to_array());
         }
         for s in &mixed_buffer[n * 4..] {
-            quantized.push((*s as f32).clamp(-1.0, 1.0).mul_add(scale, 0.0).round().clamp(min, max) as i32);
+            quantized.push(
+                (*s).clamp(-1.0, 1.0)
+                    .mul_add(scale, 0.0)
+                    .round()
+                    .clamp(min, max) as i32,
+            );
         }
         (quantized, bits_per_sample)
     }
