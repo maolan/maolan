@@ -2490,10 +2490,9 @@ impl Maolan {
                 .map(|t| t.name.clone())
                 .collect();
             self.pending_save_path = Some(path);
-            self.pending_save_tracks = track_names.iter().cloned().collect();
             self.pending_save_clap_tracks = track_names.iter().cloned().collect();
             self.pending_save_is_template = true;
-            if self.pending_save_tracks.is_empty() {
+            if track_names.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {
                     return Task::none();
                 };
@@ -2562,10 +2561,9 @@ impl Maolan {
                 .map(|t| t.name.clone())
                 .collect();
             self.pending_save_path = Some(path);
-            self.pending_save_tracks = track_names.iter().cloned().collect();
             self.pending_save_clap_tracks = track_names.iter().cloned().collect();
             self.pending_save_is_template = false;
-            if self.pending_save_tracks.is_empty() {
+            if track_names.is_empty() {
                 let Some(path) = self.pending_save_path.take() else {
                     return Task::none();
                 };

@@ -801,7 +801,7 @@ fn initial_hw_config() -> InitialHwConfig {
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     let available_input_hw = initial_input_hw_devices();
     #[cfg(any(target_os = "linux", target_os = "windows"))]
-    let selected_input_hw = initial_selected_input_hw();
+    let selected_input_hw = initial_selected_input_hw(&available_input_hw);
     #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
     let selected_input_hw = initial_selected_input_hw(&selected_hw);
     InitialHwConfig {
@@ -855,12 +855,24 @@ fn initial_output_hw_devices() -> Vec<OutputAudioDevice> {
     devices
 }
 
-#[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "linux",
+    target_os = "windows",
+    target_os = "macos"
+))]
 fn initial_selected_output_hw(hw: &[OutputAudioDevice]) -> Option<OutputAudioDevice> {
     hw.first().cloned()
 }
 
-#[cfg(not(any(target_os = "freebsd", target_os = "openbsd")))]
+#[cfg(not(any(
+    target_os = "freebsd",
+    target_os = "openbsd",
+    target_os = "linux",
+    target_os = "windows",
+    target_os = "macos"
+)))]
 fn initial_selected_output_hw(_hw: &[OutputAudioDevice]) -> Option<OutputAudioDevice> {
     None
 }
@@ -875,8 +887,8 @@ fn initial_input_hw_devices() -> Vec<InputAudioDevice> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-fn initial_selected_input_hw() -> Option<InputAudioDevice> {
-    None
+fn initial_selected_input_hw(hw: &[InputAudioDevice]) -> Option<InputAudioDevice> {
+    hw.first().cloned()
 }
 
 #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
