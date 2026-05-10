@@ -2758,6 +2758,31 @@ impl Maolan {
                                 }
                             }
                         }
+                        Action::SetClipSourceName {
+                            track_name,
+                            clip_index,
+                            kind,
+                            name,
+                        } => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| &t.name == track_name)
+                            {
+                                match kind {
+                                    Kind::Audio => {
+                                        if let Some(clip) = track.audio.clips.get_mut(*clip_index) {
+                                            clip.name = name.clone();
+                                        }
+                                    }
+                                    Kind::MIDI => {
+                                        if let Some(clip) = track.midi.clips.get_mut(*clip_index) {
+                                            clip.name = name.clone();
+                                        }
+                                        refresh_midi_clip_previews = true;
+                                    }
+                                }
+                            }
+                        }
                         Action::SetClipPitchCorrection {
                             track_name,
                             clip_index,
@@ -2809,6 +2834,45 @@ impl Maolan {
                             }
                         }
                         Action::SetClipBounds {
+                            track_name,
+                            clip_index,
+                            kind,
+                            start,
+                            length,
+                            offset,
+                        } => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| &t.name == track_name)
+                            {
+                                match kind {
+                                    Kind::Audio => {
+                                        if let Some(clip) = track.audio.clips.get_mut(*clip_index) {
+                                            clip.start = *start;
+                                            clip.length = (*length).max(1);
+                                            clip.offset = *offset;
+                                            clip.pitch_correction_preview_name = None;
+                                            clip.pitch_correction_source_name = None;
+                                            clip.pitch_correction_source_offset = None;
+                                            clip.pitch_correction_source_length = None;
+                                            clip.pitch_correction_points.clear();
+                                            clip.pitch_correction_frame_likeness = None;
+                                            clip.pitch_correction_inertia_ms = None;
+                                            clip.pitch_correction_formant_compensation = None;
+                                        }
+                                    }
+                                    Kind::MIDI => {
+                                        if let Some(clip) = track.midi.clips.get_mut(*clip_index) {
+                                            clip.start = *start;
+                                            clip.length = (*length).max(1);
+                                            clip.offset = *offset;
+                                        }
+                                        refresh_midi_clip_previews = true;
+                                    }
+                                }
+                            }
+                        }
+                        Action::SyncClipBounds {
                             track_name,
                             clip_index,
                             kind,
@@ -5040,38 +5104,30 @@ impl Maolan {
                         "Stretched audio clip '{}' to {:.2}x",
                         request.clip_name, request.stretch_ratio
                     );
-                    return Task::batch(vec![
-                        self.send(Action::BeginHistoryGroup),
-                        self.send(Action::RemoveClip {
+                    return self.send(Action::ApplyGroupedActions(vec![
+                        Action::SetClipBounds {
                             track_name: request.track_idx.clone(),
+                            clip_index: request.clip_idx,
                             kind: Kind::Audio,
-                            clip_indices: vec![request.clip_idx],
-                        }),
-                        self.send(Action::AddClip {
-                            name: new_name,
-                            track_name: request.track_idx,
                             start: request.start,
                             length: new_length,
                             offset: 0,
-                            input_channel: request.input_channel,
-                            muted: request.muted,
-                            peaks_file: None,
+                        },
+                        Action::SetClipSourceName {
+                            track_name: request.track_idx.clone(),
+                            kind: Kind::Audio,
+                            clip_index: request.clip_idx,
+                            name: new_name,
+                        },
+                        Action::SetClipFade {
+                            track_name: request.track_idx,
+                            clip_index: request.clip_idx,
                             kind: Kind::Audio,
                             fade_enabled: request.fade_enabled,
                             fade_in_samples: fade_in,
                             fade_out_samples: fade_out,
-                            source_name: None,
-                            source_offset: None,
-                            source_length: None,
-                            preview_name: None,
-                            pitch_correction_points: vec![],
-                            pitch_correction_frame_likeness: None,
-                            pitch_correction_inertia_ms: None,
-                            pitch_correction_formant_compensation: None,
-                            plugin_graph_json: None,
-                        }),
-                        self.send(Action::EndHistoryGroup),
-                    ]);
+                        },
+                    ]));
                 }
                 Err(e) => {
                     let mut state = self.state.blocking_write();
@@ -5837,10 +5893,13 @@ impl Maolan {
                                 return Task::none();
                             }
                             let stretch_mode = state.shift && *super::RUBBERBAND_AVAILABLE;
+                            let clip_start = clip.start;
+                            let clip_length = clip.length.max(1);
+                            let clip_offset = clip.offset;
                             let initial_value = if is_right_side {
-                                clip.length
+                                clip_length
                             } else {
-                                clip.start
+                                clip_start
                             };
                             state.resizing = Some(Resizing::Clip {
                                 kind: *kind,
@@ -5850,10 +5909,20 @@ impl Maolan {
                                 stretch_mode,
                                 initial_value: initial_value as f32,
                                 initial_mouse_x: state.cursor.x,
-                                initial_length: clip.length as f32,
-                                initial_start: clip.start,
-                                initial_offset: clip.offset,
+                                initial_length: clip_length as f32,
+                                initial_start: clip_start,
+                                initial_offset: clip_offset,
                             });
+                            if stretch_mode {
+                                return self.send(Action::SyncClipBounds {
+                                    track_name: track_name.clone(),
+                                    clip_index,
+                                    kind: *kind,
+                                    start: clip_start,
+                                    length: clip_length,
+                                    offset: clip_offset,
+                                });
+                            }
                         }
                         Kind::MIDI => {
                             let Some(clip) = track.midi.clips.get(clip_index) else {
@@ -6367,7 +6436,8 @@ impl Maolan {
                     }
                 }
                 drop(state);
-                if cut_preview_active && matches!(self.state.blocking_read().view, View::Workspace) {
+                if cut_preview_active && matches!(self.state.blocking_read().view, View::Workspace)
+                {
                     self.update_cut_indicator(position);
                 }
             }
