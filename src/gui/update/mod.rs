@@ -2273,6 +2273,42 @@ impl Maolan {
         None
     }
 
+    fn update_cut_indicator(&mut self, position: Point) {
+        if let Some((track_name, kind, _clip_idx)) = self.clip_at_position(position) {
+            let mut y_offset = 0.0f32;
+            let mut indicator = None;
+            {
+                let state = self.state.blocking_read();
+                for track in state.tracks.iter().filter(|t| t.name != METRONOME_TRACK_ID) {
+                    if track.name == track_name {
+                        let layout = track.lane_layout();
+                        let lane_clip_h = (layout.lane_height - 6.0).max(12.0);
+                        let lane_top = match kind {
+                            maolan_engine::kind::Kind::Audio => {
+                                track.lane_top(maolan_engine::kind::Kind::Audio, 0) + 3.0
+                            }
+                            maolan_engine::kind::Kind::MIDI => {
+                                let local_y = (position.y - y_offset).max(0.0);
+                                let midi_lane = track
+                                    .lane_index_at_y(maolan_engine::kind::Kind::MIDI, local_y)
+                                    .min(track.midi.ins.saturating_sub(1));
+                                track.lane_top(maolan_engine::kind::Kind::MIDI, midi_lane) + 3.0
+                            }
+                        };
+                        indicator = Some((position.x, y_offset + lane_top, lane_clip_h));
+                        break;
+                    }
+                    y_offset += track.height;
+                }
+            }
+            let mut state = self.state.blocking_write();
+            state.cut_indicator = indicator;
+        } else {
+            let mut state = self.state.blocking_write();
+            state.cut_indicator = None;
+        }
+    }
+
     fn selected_group_candidate(&self) -> Option<(String, Kind, Vec<usize>)> {
         let state = self.state.blocking_read();
         let mut selected: Vec<_> = state.selected_clips.iter().cloned().collect();
