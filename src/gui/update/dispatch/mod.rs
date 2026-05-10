@@ -8402,6 +8402,9 @@ impl Maolan {
             Message::ToggleLogVisibility => {
                 self.show_log_window = !self.show_log_window;
             }
+            Message::ToggleShortcutsPane => {
+                self.shortcuts_pane_visible = !self.shortcuts_pane_visible;
+            }
             Message::LogViewAction(ref action) if !action.is_edit() => {
                 self.log_viewer_content.perform(action.clone());
             }

@@ -323,6 +323,8 @@ impl Maolan {
                             Message::PianoHumanizeSelectedNotes
                         } else if s == "g" {
                             Message::PianoGrooveSelectedNotes
+                        } else if s == "n" {
+                            Message::ToggleShortcutsPane
                         } else {
                             Message::None
                         }
