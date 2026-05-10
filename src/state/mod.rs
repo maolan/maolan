@@ -456,6 +456,8 @@ pub struct StateData {
     pub connection_view_selection: ConnectionViewSelection,
     pub cursor: Point,
     pub editor_cursor: Option<Point>,
+    pub cut_preview_active: bool,
+    pub cut_indicator: Option<(f32, f32, f32)>, // (x, y_top, height)
     pub mouse_left_down: bool,
     pub mouse_right_down: bool,
     pub clip_marquee_start: Option<Point>,
@@ -635,6 +637,8 @@ impl Default for StateData {
             connection_view_selection: ConnectionViewSelection::None,
             cursor: Point::new(0.0, 0.0),
             editor_cursor: None,
+            cut_preview_active: false,
+            cut_indicator: None,
             mouse_left_down: false,
             mouse_right_down: false,
             clip_marquee_start: None,

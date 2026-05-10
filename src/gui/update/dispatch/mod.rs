@@ -6314,6 +6314,7 @@ impl Maolan {
             Message::EditorMouseMoved(position) => {
                 let resizing = self.state.blocking_read().resizing.clone();
                 let can_start_midi_drag = self.midi_lane_at_position(position).is_some();
+                let cut_preview_active = self.state.blocking_read().cut_preview_active;
                 let marker_drag_update = if let Some(Resizing::TrackMarker {
                     ref track_name,
                     marker_index,
@@ -6364,6 +6365,10 @@ impl Maolan {
                     } else if state.midi_clip_create_start.is_some() {
                         state.midi_clip_create_end = Some(position);
                     }
+                }
+                drop(state);
+                if cut_preview_active && matches!(self.state.blocking_read().view, View::Workspace) {
+                    self.update_cut_indicator(position);
                 }
             }
             Message::MouseReleased => {
@@ -8404,6 +8409,20 @@ impl Maolan {
             }
             Message::ToggleShortcutsPane => {
                 self.shortcuts_pane_visible = !self.shortcuts_pane_visible;
+            }
+            Message::ToggleCutIndicator => {
+                let cursor = self.active_workspace_cursor();
+                let mut state = self.state.blocking_write();
+                state.cut_preview_active = !state.cut_preview_active;
+                let now_active = state.cut_preview_active;
+                drop(state);
+
+                if now_active && matches!(self.state.blocking_read().view, View::Workspace) {
+                    self.update_cut_indicator(cursor);
+                } else {
+                    let mut state = self.state.blocking_write();
+                    state.cut_indicator = None;
+                }
             }
             Message::LogViewAction(ref action) if !action.is_edit() => {
                 self.log_viewer_content.perform(action.clone());

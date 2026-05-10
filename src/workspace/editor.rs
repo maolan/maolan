@@ -1569,6 +1569,10 @@ impl Editor {
             .midi_clip_create_end
             .map(|p| (p.x.to_bits(), p.y.to_bits()))
             .hash(&mut hasher);
+        state
+            .cut_indicator
+            .map(|(x, y, h)| (x.to_bits(), y.to_bits(), h.to_bits()))
+            .hash(&mut hasher);
 
         if let Some(menu) = state.clip_context_menu.as_ref() {
             menu.clip.track_idx.hash(&mut hasher);
@@ -1835,6 +1839,24 @@ impl Editor {
                         ..container::Style::default()
                     }))
                 .position(Point::new(x, y))
+                .into(),
+            );
+        }
+        if let Some((x, y, h)) = state.cut_indicator {
+            layers.push(
+                pin(container("")
+                    .width(Length::Fixed(1.0))
+                    .height(Length::Fixed(h))
+                    .style(|_theme| container::Style {
+                        background: Some(Background::Color(Color {
+                            r: 1.0,
+                            g: 1.0,
+                            b: 1.0,
+                            a: 0.3,
+                        })),
+                        ..container::Style::default()
+                    }))
+                .position(Point::new(x.max(0.0), y))
                 .into(),
             );
         }

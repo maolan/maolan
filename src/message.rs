@@ -901,6 +901,7 @@ pub enum Message {
     ToggleEditorVisibility,
     ToggleLogVisibility,
     ToggleShortcutsPane,
+    ToggleCutIndicator,
     HwMixer(mixosc::app::Message),
     LogViewAction(text_editor::Action),
     OpenTrackPlugins(String),
