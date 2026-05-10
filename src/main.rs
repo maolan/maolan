@@ -13,6 +13,7 @@ mod menu;
 mod message;
 mod platform_caps;
 mod plugins;
+mod shortcuts_pane;
 mod state;
 mod style;
 mod template_save;

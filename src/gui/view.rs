@@ -368,7 +368,8 @@ impl Maolan {
                         self.tracks_visible,
                         self.editor_visible,
                         self.mixer_visible,
-                        self.show_log_window
+                        self.show_log_window,
+                        self.shortcuts_pane_visible,
                     ),];
                     content = content.push(self.toolbar.view(ToolbarViewState {
                         playing: self.playing,
@@ -551,6 +552,15 @@ impl Maolan {
                         view = row![
                             container(view).width(Length::Fill),
                             self.track_marker.view()
+                        ]
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into();
+                    }
+                    if self.shortcuts_pane_visible {
+                        view = row![
+                            container(view).width(Length::Fill),
+                            crate::shortcuts_pane::ShortcutsPane::view(view_kind)
                         ]
                         .width(Length::Fill)
                         .height(Length::Fill)

@@ -7,7 +7,7 @@ use iced_aw::{
     menu::{DrawPath, Item, Menu as IcedMenu},
     menu_bar, menu_items,
 };
-use iced_fonts::lucide::chevron_right;
+use iced_fonts::lucide::{chevron_right, square, square_check_big};
 use maolan_engine::message::GlobalMidiLearnTarget;
 use std::path::{Path, PathBuf};
 
@@ -70,6 +70,33 @@ pub(crate) fn menu_item(
     message: Message,
 ) -> Element<'static, Message, iced::Theme, iced::Renderer> {
     menu_button(label, Some(Length::Fill), Some(Length::Shrink), message)
+}
+
+pub(crate) fn menu_checkbox_item(
+    label: impl Into<String>,
+    checked: bool,
+    message: Message,
+) -> Element<'static, Message, iced::Theme, iced::Renderer> {
+    let label = label.into();
+    let icon = if checked {
+        square_check_big()
+    } else {
+        square()
+    };
+    base_button(
+        row![
+            icon.width(20).align_y(alignment::Vertical::Center),
+            text(label)
+                .height(Length::Shrink)
+                .align_y(alignment::Vertical::Center),
+        ]
+        .spacing(6)
+        .align_y(iced::Alignment::Center),
+        message,
+    )
+    .width(Length::Fill)
+    .height(Length::Shrink)
+    .into()
 }
 
 pub(crate) fn menu_item_maybe(
@@ -163,6 +190,7 @@ impl Menu {
         editor_visible: bool,
         mixer_visible: bool,
         log_visible: bool,
+        shortcuts_pane_visible: bool,
     ) -> iced::Element<'_, Message> {
         let menu_tpl = |items| IcedMenu::new(items).width(180.0).offset(15.0).spacing(5.0);
 
@@ -215,8 +243,8 @@ impl Menu {
             }),
             (menu_dropdown("Edit", Message::None), {
                 menu_tpl(menu_items!(
-                    (menu_item("Undo (Ctrl+Z)", Message::Undo)),
-                    (menu_item("Redo (Ctrl+Shift+Z)", Message::Redo)),
+                    (menu_item("Undo", Message::Undo)),
+                    (menu_item("Redo", Message::Redo)),
                     (menu_item("Preferences", Message::Show(Show::Preferences))),
                     (menu_item("Session Diagnostics", Message::SessionDiagnosticsRequest)),
                     (menu_item("Export Diagnostics Bundle", Message::ExportDiagnosticsBundleRequest)),
@@ -242,21 +270,30 @@ impl Menu {
             }),
             (menu_dropdown("View", Message::None), {
                 menu_tpl(menu_items!(
-                    (menu_item(
-                        if tracks_visible { "Tracks [x]" } else { "Tracks [ ]" },
+                    (menu_checkbox_item(
+                        "Tracks",
+                        tracks_visible,
                         Message::ToggleTracksVisibility
                     )),
-                    (menu_item(
-                        if editor_visible { "Editor [x]" } else { "Editor [ ]" },
+                    (menu_checkbox_item(
+                        "Editor",
+                        editor_visible,
                         Message::ToggleEditorVisibility
                     )),
-                    (menu_item(
-                        if mixer_visible { "Mixer [x]" } else { "Mixer [ ]" },
+                    (menu_checkbox_item(
+                        "Mixer",
+                        mixer_visible,
                         Message::ToggleMixerVisibility
                     )),
-                    (menu_item(
-                        if log_visible { "Log [x]" } else { "Log [ ]" },
+                    (menu_checkbox_item(
+                        "Log",
+                        log_visible,
                         Message::ToggleLogVisibility
+                    )),
+                    (menu_checkbox_item(
+                        "Shortcuts",
+                        shortcuts_pane_visible,
+                        Message::ToggleShortcutsPane
                     )),
                 ))
             }),
