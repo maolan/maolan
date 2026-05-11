@@ -94,7 +94,7 @@ pub mod state_track {
     pub const TRACK_FOLDER_HEADER_HEIGHT: f32 = 24.0;
     pub const TRACK_SUBTRACK_GAP: f32 = 2.0;
     pub const TRACK_SUBTRACK_MIN_HEIGHT: f32 = 40.0;
-    pub const TRACK_MIN_HEIGHT: f32 = 28.0;
+    pub const TRACK_MIN_HEIGHT: f32 = 54.0;
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]

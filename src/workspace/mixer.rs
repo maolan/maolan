@@ -356,6 +356,7 @@ impl Mixer {
     fn strip_shell<'a>(
         name: String,
         selected: bool,
+        color: Option<iced::Color>,
         width: f32,
         pan_section: Option<Element<'static, Message>>,
         bay: Element<'static, Message>,
@@ -375,7 +376,7 @@ impl Mixer {
             .width(Length::Fixed(width))
             .height(Length::Fill)
             .padding([8, 6])
-            .style(move |_theme| style::mixer::strip(selected))
+            .style(move |_theme| style::mixer::strip(selected, color))
             .into()
     }
 
@@ -442,6 +443,7 @@ impl Mixer {
                 mouse_area(Self::strip_shell(
                     track.name.clone(),
                     state.selected.contains(track.name.as_str()),
+                    track.color,
                     strip_width,
                     pan,
                     bay,
@@ -480,6 +482,7 @@ impl Mixer {
             let strip: Element<'a, Message> = mouse_area(Self::strip_shell(
                 strip_name,
                 state.selected.contains(track.name.as_str()),
+                track.color,
                 strip_width,
                 pan,
                 bay,
@@ -508,6 +511,7 @@ impl Mixer {
         let master_strip: Element<'a, Message> = mouse_area(Self::strip_shell(
             "Master".to_string(),
             master_selected,
+            None,
             master_strip_width,
             if hw_out_channels == 2 {
                 Some(Self::pan_section_cached(

@@ -187,6 +187,10 @@ impl Maolan {
                 Some(Show::UnsavedChanges) => {
                     self.wrap_with_log_window(self.unsaved_changes_view())
                 }
+                Some(Show::About) => self.wrap_with_log_window(self.about_view()),
+                Some(Show::TrackColor { ref track_name }) => {
+                    self.wrap_with_log_window(self.track_color_view(track_name.clone()))
+                }
                 #[cfg(all(unix, not(target_os = "macos")))]
                 Some(Show::TrackPluginList) => {
                     self.wrap_with_log_window(self.track_plugin_list_view())
@@ -413,18 +417,15 @@ impl Maolan {
                         playhead_beat,
                     }));
                     if matches!(view_kind, View::TrackPlugins) {
-                        let track_selector: iced::Element<'_, Message> =
-                            if let Some(ref header) = clip_header {
-                                text(header.clone()).into()
-                            } else {
-                                pick_list(
-                                    track_names,
-                                    plugin_graph_track,
-                                    Message::OpenTrackPlugins,
-                                )
+                        let track_selector: iced::Element<'_, Message> = if let Some(ref header) =
+                            clip_header
+                        {
+                            text(header.clone()).into()
+                        } else {
+                            pick_list(track_names, plugin_graph_track, Message::OpenTrackPlugins)
                                 .placeholder("Select track...")
                                 .into()
-                            };
+                        };
                         content = content.push(
                             container(
                                 row![

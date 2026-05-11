@@ -1,11 +1,10 @@
 use super::{AudioClip, MIDIClip};
 use crate::message::{MidiEditorViewMode, TrackAutomationMode, TrackAutomationTarget};
-use iced::Point;
+use iced::{Color, Point};
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub use crate::consts::state_track::{
-    TRACK_FOLDER_HEADER_HEIGHT, TRACK_MIN_HEIGHT, TRACK_SUBTRACK_GAP,
-    TRACK_SUBTRACK_MIN_HEIGHT,
+    TRACK_FOLDER_HEADER_HEIGHT, TRACK_MIN_HEIGHT, TRACK_SUBTRACK_GAP, TRACK_SUBTRACK_MIN_HEIGHT,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -106,6 +105,49 @@ struct PointDef {
     y: f32,
 }
 
+mod color_option_def {
+    use iced::Color;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(value: &Option<Color>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        #[derive(Serialize)]
+        struct ColorProxy {
+            r: f32,
+            g: f32,
+            b: f32,
+            a: f32,
+        }
+        match value {
+            Some(c) => ColorProxy {
+                r: c.r,
+                g: c.g,
+                b: c.b,
+                a: c.a,
+            }
+            .serialize(serializer),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Color>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct ColorProxy {
+            r: f32,
+            g: f32,
+            b: f32,
+            a: f32,
+        }
+        let proxy = Option::<ColorProxy>::deserialize(deserializer)?;
+        Ok(proxy.map(|p| Color::from_rgba(p.r, p.g, p.b, p.a)))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
     id: usize,
@@ -162,6 +204,12 @@ pub struct Track {
     pub automation_mode: TrackAutomationMode,
     #[serde(with = "PointDef")]
     pub position: Point,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "color_option_def"
+    )]
+    pub color: Option<Color>,
 }
 
 fn default_automation_mode() -> TrackAutomationMode {
@@ -212,6 +260,7 @@ impl Track {
             automation_mode: TrackAutomationMode::Read,
             height: 60.0,
             position: Point::new(100.0, 100.0),
+            color: None,
         };
         track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
         track

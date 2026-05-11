@@ -42,13 +42,7 @@ fn track_toggle_button_style(
         a: 1.0,
     };
     Style {
-        background: Some(Background::Color(if active {
-            active_bg
-        } else if border_only {
-            idle_bg
-        } else {
-            idle_bg
-        })),
+        background: Some(Background::Color(if active { active_bg } else { idle_bg })),
         text_color: if active {
             Color::from_rgb(0.08, 0.10, 0.14)
         } else if border_only {

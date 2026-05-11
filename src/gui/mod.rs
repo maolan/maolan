@@ -46,12 +46,13 @@ use ffmpeg_next::{
 use flacenc::component::BitRepr;
 use flacenc::error::Verify;
 use iced::{
-    Length, Size, Task,
+    Color, Length, Size, Task,
     widget::{
         Column, button, checkbox, column, container, pick_list, progress_bar, row, scrollable,
         text, text_editor, text_input,
     },
 };
+use iced_aw::helpers::color_picker_with_change;
 use maolan_engine::kind::Kind;
 use maolan_engine::message::{
     Action, Message as EngineMessage, OfflineAutomationLane, OfflineAutomationPoint,
@@ -165,6 +166,12 @@ struct PendingAutosaveRecovery {
 struct PitchCorrectionHistoryEntry {
     points: Vec<PitchCorrectionPoint>,
     selected_points: HashSet<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct TrackColorHistoryEntry {
+    track_name: String,
+    color: Option<Color>,
 }
 
 struct ExportSessionOptions {
@@ -453,6 +460,8 @@ pub struct Maolan {
     pending_precomputed_peaks: HashMap<AudioClipKey, crate::state::ClipPeaks>,
     pitch_correction_undo: Vec<PitchCorrectionHistoryEntry>,
     pitch_correction_redo: Vec<PitchCorrectionHistoryEntry>,
+    track_color_undo: Vec<TrackColorHistoryEntry>,
+    track_color_redo: Vec<TrackColorHistoryEntry>,
     pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
     pending_track_midi_editor_view_mode: HashMap<String, crate::message::MidiEditorViewMode>,
     pending_track_freeze_bounce: HashMap<String, PendingTrackFreezeBounce>,
@@ -578,6 +587,7 @@ pub struct Maolan {
     midi_mappings_panel_open: bool,
     midi_mappings_report_lines: Vec<String>,
     has_unsaved_changes: bool,
+    track_color_dirty: bool,
     pending_exit_after_save: bool,
     session_restore_in_progress: bool,
     last_autosave_snapshot: Option<Instant>,
@@ -746,6 +756,8 @@ impl Default for Maolan {
             pending_precomputed_peaks: HashMap::new(),
             pitch_correction_undo: Vec::new(),
             pitch_correction_redo: Vec::new(),
+            track_color_undo: Vec::new(),
+            track_color_redo: Vec::new(),
             pending_track_freeze_restore: HashMap::new(),
             pending_track_midi_editor_view_mode: HashMap::new(),
             pending_track_freeze_bounce: HashMap::new(),
@@ -872,6 +884,7 @@ impl Default for Maolan {
             midi_mappings_panel_open: false,
             midi_mappings_report_lines: Vec::new(),
             has_unsaved_changes: false,
+            track_color_dirty: false,
             pending_exit_after_save: false,
             session_restore_in_progress: false,
             last_autosave_snapshot: None,
@@ -893,6 +906,10 @@ impl Default for Maolan {
 }
 
 impl Maolan {
+    fn is_dirty(&self) -> bool {
+        self.has_unsaved_changes || self.track_color_dirty
+    }
+
     fn push_log_entry(state: &mut StateData, level: LogLevel, message: String) {
         state.message = message.clone();
         state.log_entries.push(LogEntry { level, message });
@@ -1304,7 +1321,7 @@ impl Maolan {
             .as_ref()
             .and_then(|path| Self::session_display_name_from_path(path))
             .unwrap_or_else(|| "<New>".to_string());
-        let dirty_suffix = if self.has_unsaved_changes { " *" } else { "" };
+        let dirty_suffix = if self.is_dirty() { " *" } else { "" };
         format!("Maolan: {session}{dirty_suffix}")
     }
 
@@ -6269,6 +6286,66 @@ impl Maolan {
                     button("Ignore").on_press(Message::RecoverAutosaveIgnore),
                 ]
                 .spacing(10),
+            ]
+            .align_x(iced::Alignment::Start)
+            .spacing(12),
+        )
+        .style(|_theme| crate::style::app_background())
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
+    fn about_view(&self) -> iced::Element<'_, Message> {
+        container(
+            column![
+                text("Maolan DAW").size(20),
+                text(format!("Version {}", env!("CARGO_PKG_VERSION"))).size(12),
+                text("License: BSD 2-Clause License").size(12),
+                button(text("https://maolan.rs").color(Color::from_rgb(0.36, 0.66, 0.98)))
+                    .on_press(Message::OpenUrl("https://maolan.rs".to_string()))
+                    .style(button::text),
+                button("Close")
+                    .on_press(Message::Cancel)
+                    .style(button::secondary),
+            ]
+            .align_x(iced::Alignment::Start)
+            .spacing(12),
+        )
+        .style(|_theme| crate::style::app_background())
+        .padding(20)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(iced::Alignment::Center)
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
+    fn track_color_view(&self, track_name: String) -> iced::Element<'_, Message> {
+        let state = self.state.blocking_read();
+        let track = state.tracks.iter().find(|t| t.name == track_name);
+        let current_color = track
+            .and_then(|t| t.color)
+            .unwrap_or(Color::from_rgb(0.5, 0.5, 0.5));
+        drop(state);
+        let color_track_name = track_name.clone();
+        container(
+            column![
+                text(format!("Color for {}", track_name)).size(16),
+                color_picker_with_change(
+                    true,
+                    current_color,
+                    container("").width(Length::Fill).height(Length::Fill),
+                    Message::TrackColorClear(track_name),
+                    move |_color| Message::Cancel,
+                    move |color| Message::TrackColorChanged {
+                        track_name: color_track_name.clone(),
+                        color: Some(color),
+                    },
+                ),
             ]
             .align_x(iced::Alignment::Start)
             .spacing(12),

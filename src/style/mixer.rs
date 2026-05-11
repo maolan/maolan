@@ -4,7 +4,7 @@ fn rgb(r: u8, g: u8, b: u8) -> Color {
     Color::from_rgb(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0)
 }
 
-fn brighten(color: Color, amount: f32) -> Color {
+pub fn brighten(color: Color, amount: f32) -> Color {
     Color {
         r: (color.r + amount).min(1.0),
         g: (color.g + amount).min(1.0),
@@ -13,7 +13,7 @@ fn brighten(color: Color, amount: f32) -> Color {
     }
 }
 
-fn darken(color: Color, amount: f32) -> Color {
+pub fn darken(color: Color, amount: f32) -> Color {
     Color {
         r: (color.r - amount).max(0.0),
         g: (color.g - amount).max(0.0),
@@ -22,13 +22,13 @@ fn darken(color: Color, amount: f32) -> Color {
     }
 }
 
-pub fn strip(selected: bool) -> container::Style {
+pub fn strip(selected: bool, color: Option<iced::Color>) -> container::Style {
     let border_color = if selected {
         rgb(114, 170, 240)
     } else {
         rgb(39, 47, 63)
     };
-    let base = rgb(26, 32, 46);
+    let base = color.unwrap_or_else(|| rgb(26, 32, 46));
     let side = darken(base, 0.040);
     let center = brighten(base, 0.045);
 
@@ -123,15 +123,15 @@ mod tests {
 
     #[test]
     fn strip_returns_style() {
-        let style = strip(false);
+        let style = strip(false, None);
         assert!(style.background.is_some());
         assert_eq!(style.border.width, 1.0);
     }
 
     #[test]
     fn strip_selected_has_thicker_border() {
-        let unselected = strip(false);
-        let selected = strip(true);
+        let unselected = strip(false, None);
+        let selected = strip(true, None);
         assert!(selected.border.width > unselected.border.width);
     }
 

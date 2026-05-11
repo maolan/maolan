@@ -3,7 +3,7 @@ use crate::{
     consts::state_ids::METRONOME_TRACK_ID,
     consts::state_track::{TRACK_FOLDER_HEADER_HEIGHT, TRACK_SUBTRACK_GAP},
     menu,
-    message::{Message, MidiLaneChannelSelection, TrackAutomationTarget},
+    message::{Message, MidiLaneChannelSelection, Show, TrackAutomationTarget},
     state::{State, StateData, TrackLaneLayout},
     style,
 };
@@ -64,6 +64,7 @@ struct TrackViewData {
     midi_learn_input_monitor: bool,
     midi_learn_disk_monitor: bool,
     vca_master: Option<String>,
+    color: Option<iced::Color>,
 }
 
 #[derive(Clone)]
@@ -210,6 +211,13 @@ pub(super) fn track_context_menu_overlay(
         ));
     }
 
+    items.push(menu::menu_item(
+        "Color",
+        Message::Show(Show::TrackColor {
+            track_name: track_name.clone(),
+        }),
+    ));
+
     if freeze_supported {
         items.push(menu::menu_item(
             if track.frozen { "Unfreeze" } else { "Freeze" },
@@ -348,13 +356,7 @@ pub(super) fn track_context_menu_overlay(
         y = (max_y - menu_height).max(0.0);
     }
 
-    Some((
-        Point::new(
-            menu_state.anchor.x.max(0.0),
-            y,
-        ),
-        panel,
-    ))
+    Some((Point::new(menu_state.anchor.x.max(0.0), y), panel))
 }
 
 impl Tracks {
@@ -477,6 +479,14 @@ impl Tracks {
             vca.prev_same.hash(&mut hasher);
             vca.next_same.hash(&mut hasher);
         }
+        if let Some(color) = track.color {
+            color.r.to_bits().hash(&mut hasher);
+            color.g.to_bits().hash(&mut hasher);
+            color.b.to_bits().hash(&mut hasher);
+            color.a.to_bits().hash(&mut hasher);
+        } else {
+            0u8.hash(&mut hasher);
+        }
         hasher.finish()
     }
 
@@ -512,6 +522,36 @@ impl Tracks {
     ) -> Element<'static, Message> {
         let selected = track.selected;
         let height = track.height;
+        let (outer_body_bg, header_bg, inner_body_bg) = if let Some(color) = track.color {
+            let with_alpha = |c: Color, a: f32| Color::from_rgba(c.r, c.g, c.b, a);
+            if selected {
+                (
+                    with_alpha(style::mixer::brighten(color, 0.02), 0.98),
+                    with_alpha(style::mixer::brighten(color, 0.12), 0.98),
+                    with_alpha(style::mixer::brighten(color, 0.05), 0.98),
+                )
+            } else {
+                (
+                    with_alpha(style::mixer::darken(color, 0.06), 0.96),
+                    with_alpha(style::mixer::brighten(color, 0.04), 0.96),
+                    with_alpha(color, 0.96),
+                )
+            }
+        } else {
+            if selected {
+                (
+                    Color::from_rgba(0.10, 0.14, 0.22, 0.98),
+                    Color::from_rgba(0.28, 0.39, 0.56, 0.98),
+                    Color::from_rgba(0.13, 0.18, 0.27, 0.98),
+                )
+            } else {
+                (
+                    Color::from_rgba(0.08, 0.10, 0.16, 0.96),
+                    Color::from_rgba(0.18, 0.22, 0.30, 0.96),
+                    Color::from_rgba(0.11, 0.14, 0.20, 0.96),
+                )
+            }
+        };
         let is_resize_hovered = track.resize_hovered;
         let midi_learn_vol = track.midi_learn_vol;
         let midi_learn_bal = track.midi_learn_bal;
@@ -555,12 +595,16 @@ impl Tracks {
         } else {
             0.0
         };
+        let header_vertical_padding = 4.0;
+        let body_vertical_padding = 6.0;
         let inner_available_height = (height - inner_vertical_padding).max(16.0);
         let body_height = (inner_available_height
             - TRACK_FOLDER_HEADER_HEIGHT
+            - header_vertical_padding
             - resize_handle_height
             - outer_spacing
-            - lane_rows_height)
+            - lane_rows_height
+            - body_vertical_padding)
             .max(0.0);
         let mut title_badges = row![].spacing(4).align_y(Alignment::Center);
         if track.frozen {
@@ -588,11 +632,7 @@ impl Tracks {
             .height(Length::Fixed(TRACK_FOLDER_HEADER_HEIGHT))
             .padding([2, 6])
             .style(move |_theme| container::Style {
-                background: Some(Background::Color(if selected {
-                    Color::from_rgba(0.28, 0.39, 0.56, 0.98)
-                } else {
-                    Color::from_rgba(0.18, 0.22, 0.30, 0.96)
-                })),
+                background: Some(Background::Color(header_bg)),
                 border: Border {
                     color: Color::from_rgba(0.78, 0.87, 0.99, if selected { 0.5 } else { 0.16 }),
                     width: 1.0,
@@ -870,11 +910,7 @@ impl Tracks {
                 .height(Length::Fixed(body_height))
                 .padding([3, 6])
                 .style(move |_theme| container::Style {
-                    background: Some(Background::Color(if selected {
-                        Color::from_rgba(0.13, 0.18, 0.27, 0.98)
-                    } else {
-                        Color::from_rgba(0.11, 0.14, 0.20, 0.96)
-                    })),
+                    background: Some(Background::Color(inner_body_bg)),
                     border: Border {
                         color: Color::from_rgba(
                             0.71,
@@ -952,11 +988,7 @@ impl Tracks {
             .height(Length::Fixed(height))
             .padding([4, 6])
             .style(move |_theme| container::Style {
-                background: Some(Background::Color(if selected {
-                    Color::from_rgba(0.10, 0.14, 0.22, 0.98)
-                } else {
-                    Color::from_rgba(0.08, 0.10, 0.16, 0.96)
-                })),
+                background: Some(Background::Color(outer_body_bg)),
                 border: Border {
                     color: Color::from_rgba(0.74, 0.84, 0.98, if selected { 0.32 } else { 0.08 }),
                     width: 1.0,
@@ -1065,6 +1097,7 @@ impl Tracks {
                             midi_learn_input_monitor: track.midi_learn_input_monitor.is_some(),
                             midi_learn_disk_monitor: track.midi_learn_disk_monitor.is_some(),
                             vca_master: track.vca_master.clone(),
+                            color: track.color,
                         },
                     )
                 })
