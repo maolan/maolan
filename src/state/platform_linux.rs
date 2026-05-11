@@ -199,35 +199,30 @@ mod tests {
 
     #[test]
     fn read_alsa_card_labels_returns_empty_on_missing_file() {
-        // This will fail to read /proc/asound/cards in test environment
         let labels = read_alsa_card_labels();
-        // Should return empty map, not panic
+
         assert!(labels.is_empty() || !labels.is_empty());
     }
 
     #[test]
     fn probe_alsa_supported_bits_returns_empty_on_error() {
-        // Invalid device should return empty vec
         let bits = probe_alsa_supported_bits("invalid_device", Direction::Playback);
         assert!(bits.is_empty());
     }
 
     #[test]
     fn probe_alsa_supported_sample_rates_returns_empty_on_error() {
-        // Invalid device should return empty vec
         let rates = probe_alsa_supported_sample_rates("invalid_device", Direction::Playback);
         assert!(rates.is_empty());
     }
 
     #[test]
     fn discover_alsa_output_devices_does_not_panic() {
-        // Should not panic even if /proc/asound/pcm doesn't exist
         let _devices = discover_alsa_output_devices();
     }
 
     #[test]
     fn discover_alsa_input_devices_does_not_panic() {
-        // Should not panic even if /proc/asound/pcm doesn't exist
         let _devices = discover_alsa_input_devices();
     }
 

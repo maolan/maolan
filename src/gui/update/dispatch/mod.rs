@@ -660,21 +660,18 @@ impl Maolan {
                 let shift = state.shift;
 
                 if shift {
-                    // Toggle selection with shift
                     if state.piano_selected_notes.contains(&note_index) {
                         state.piano_selected_notes.remove(&note_index);
                     } else {
                         state.piano_selected_notes.insert(note_index);
                     }
                 } else {
-                    // Keep current multi-selection if clicking inside it, otherwise replace selection.
                     if !state.piano_selected_notes.contains(&note_index) {
                         state.piano_selected_notes.clear();
                         state.piano_selected_notes.insert(note_index);
                     }
                 }
 
-                // Start dragging if notes are selected
                 if !state.piano_selected_notes.is_empty()
                     && let Some(piano) = state.piano.as_ref()
                 {
@@ -783,7 +780,6 @@ impl Maolan {
                         let track_name = piano.track_idx.clone();
                         let clip_idx = piano.clip_index;
 
-                        // Modify the notes in place
                         for &note_idx in &dragging.note_indices {
                             if let Some(note) = piano.notes.get_mut(note_idx) {
                                 let new_start =
@@ -795,7 +791,6 @@ impl Maolan {
                             }
                         }
 
-                        // Build new notes for engine action
                         let new_notes: Vec<maolan_engine::message::MidiNoteData> = dragging
                             .note_indices
                             .iter()
@@ -1608,7 +1603,6 @@ impl Maolan {
                 if let Some((start, _)) = state.piano_selecting_rect {
                     state.piano_selecting_rect = Some((start, position));
 
-                    // Update selection based on rectangle
                     let (zoom_x, zoom_y) = if state.piano.is_some() {
                         (state.piano_zoom_x, state.piano_zoom_y)
                     } else {
@@ -2428,7 +2422,6 @@ impl Maolan {
                                 track.midi.editor_view_mode = mode;
                             }
 
-                            // Check if we need to load a template for this track
                             let pending_template = state
                                 .pending_track_template_loads
                                 .iter()
@@ -3772,15 +3765,13 @@ impl Maolan {
                                             } else {
                                                 self.state.blocking_write().message =
                                                     "Template saved".to_string();
-                                                // Rescan templates and update menu
+
                                                 let templates = crate::gui::scan_templates();
                                                 self.state.blocking_write().available_templates =
                                                     templates.clone();
                                                 self.menu.update_templates(templates);
                                             }
                                         } else {
-                                            // Check if this is a single-track template save
-                                            // (path contains /track_templates/)
                                             if path.contains("/track_templates/") {
                                                 return self
                                                     .save_track_as_template(track_name, path);
@@ -3799,24 +3790,24 @@ impl Maolan {
                         }
                         Action::RenameTrack { old_name, new_name } => {
                             let mut state = self.state.blocking_write();
-                            // Update track name in GUI state
+
                             if let Some(track) =
                                 state.tracks.iter_mut().find(|t| t.name == *old_name)
                             {
                                 track.name = new_name.clone();
                             }
-                            // Update selected tracks
+
                             if state.selected.remove(old_name) {
                                 state.selected.insert(new_name.clone());
                             }
-                            // Update connection view selection
+
                             if let crate::state::ConnectionViewSelection::Tracks(tracks) =
                                 &mut state.connection_view_selection
                                 && tracks.remove(old_name)
                             {
                                 tracks.insert(new_name.clone());
                             }
-                            // Update connections
+
                             for conn in &mut state.connections {
                                 if conn.from_track == *old_name {
                                     conn.from_track = new_name.clone();
@@ -3825,7 +3816,7 @@ impl Maolan {
                                     conn.to_track = new_name.clone();
                                 }
                             }
-                            // Update LV2 graph track reference
+
                             if state.plugin_graph_track.as_deref() == Some(old_name) {
                                 state.plugin_graph_track = Some(new_name.clone());
                             }
@@ -3834,7 +3825,7 @@ impl Maolan {
                             {
                                 target.track_name = new_name.clone();
                             }
-                            // Update LV2 graphs by track
+
                             #[cfg(all(unix, not(target_os = "macos")))]
                             Self::rename_track_map_entry(
                                 &mut state.plugin_graphs_by_track,
@@ -4834,7 +4825,7 @@ impl Maolan {
                 kind,
             } => {
                 let mut state = self.state.blocking_write();
-                // Get current clip name
+
                 let current_name = state
                     .tracks
                     .iter()
@@ -4845,7 +4836,6 @@ impl Maolan {
                     })
                     .unwrap_or_default();
 
-                // Clean the name for editing (remove audio/ prefix and .wav suffix)
                 let clean_name = {
                     let mut cleaned = current_name.clone();
                     if let Some(stripped) = cleaned.strip_prefix("audio/") {
@@ -4864,9 +4854,7 @@ impl Maolan {
                     new_name: clean_name,
                 });
             }
-            Message::ClipRenameInput(_) => {
-                // Handled by ClipRenameView
-            }
+            Message::ClipRenameInput(_) => {}
             Message::ClipRenameConfirm => {
                 let dialog = self.state.blocking_read().clip_rename_dialog.clone();
                 let Some(dialog) = dialog else {
@@ -4878,7 +4866,6 @@ impl Maolan {
                     return Task::none();
                 }
 
-                // Get session directory and old clip name
                 let Some(session_dir) = &self.session_dir else {
                     self.state.blocking_write().message = "No session loaded".to_string();
                     self.state.blocking_write().clip_rename_dialog = None;
@@ -4911,8 +4898,6 @@ impl Maolan {
                     }
                 };
 
-                // Build new file name.
-                // MIDI clip files are intentionally NOT renamed on disk here; they are persisted on save.
                 let midi_ext = std::path::Path::new(&old_name)
                     .extension()
                     .and_then(|ext| ext.to_str())
@@ -4925,7 +4910,6 @@ impl Maolan {
                 };
 
                 if dialog.kind == Kind::Audio {
-                    // Audio clip files are renamed immediately.
                     let new_path = session_dir.join(&new_file_name);
                     if new_path.exists() {
                         state.message = format!("File '{}' already exists", new_file_name);
@@ -4943,7 +4927,6 @@ impl Maolan {
                     }
                 }
 
-                // Update all clip instances in the GUI state
                 for track in &mut state.tracks {
                     match dialog.kind {
                         Kind::Audio => {
@@ -4972,7 +4955,6 @@ impl Maolan {
                 state.clip_rename_dialog = None;
                 drop(state);
 
-                // Now update the engine by sending a RenameClip action
                 return self.send(Action::RenameClip {
                     track_name: dialog.track_idx,
                     kind: dialog.kind,
@@ -5006,7 +4988,6 @@ impl Maolan {
                 };
 
                 if let Some(fade_enabled) = new_fade_enabled {
-                    // Get the fade samples from the clip
                     let (fade_in_samples, fade_out_samples) = {
                         let state = self.state.blocking_read();
                         if let Some(track) = state.tracks.iter().find(|t| t.name == *track_idx) {
@@ -5210,9 +5191,7 @@ impl Maolan {
                     new_name: track_name.clone(),
                 });
             }
-            Message::TrackRenameInput(_) => {
-                // Handled by TrackRenameView
-            }
+            Message::TrackRenameInput(_) => {}
             Message::TemplateSaveInput(_) => {
                 self.template_save.update(&message);
             }
@@ -5229,7 +5208,6 @@ impl Maolan {
 
                 self.state.blocking_write().track_rename_dialog = None;
 
-                // Send rename action to engine
                 return self.send(Action::RenameTrack {
                     old_name: dialog.old_name,
                     new_name,
@@ -5243,7 +5221,9 @@ impl Maolan {
                 let selected_tracks = state
                     .tracks
                     .iter()
-                    .filter(|track| state.selected.contains(track.name.as_str()))
+                    .filter(|track| {
+                        state.selected.contains(track.name.as_str()) && !track.is_master
+                    })
                     .map(|track| track.name.clone())
                     .collect::<Vec<_>>();
                 if selected_tracks.len() <= 1
@@ -5256,9 +5236,7 @@ impl Maolan {
                     name: String::new(),
                 });
             }
-            Message::TrackGroupInput(_) => {
-                // Handled by TrackGroupView
-            }
+            Message::TrackGroupInput(_) => {}
             Message::TrackGroupConfirm => {
                 let dialog = self.state.blocking_read().track_group_dialog.clone();
                 let Some(dialog) = dialog else {
@@ -5326,7 +5304,6 @@ impl Maolan {
                 self.state.blocking_write().track_template_save_dialog = None;
                 self.modal = None;
 
-                // Construct path: ~/.config/maolan/track_templates/<name>
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
                 let template_path = format!("{}/.config/maolan/track_templates/{}", home, name);
 
@@ -5429,7 +5406,6 @@ impl Maolan {
                 self.state.blocking_write().template_save_dialog = None;
                 self.modal = None;
 
-                // Construct path: ~/.config/maolan/session_templates/<name>
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
                 let template_path = format!("{}/.config/maolan/session_templates/{}", home, name);
 
@@ -5561,7 +5537,7 @@ impl Maolan {
                 if !self.selected_time_signature_points.is_empty() {
                     return self.update(Message::TimeSignatureSelectionDelete);
                 }
-                // Check if we're in piano view with selected notes
+
                 let state = self.state.blocking_read();
                 let view = state.view.clone();
                 let has_piano_notes =
@@ -6258,20 +6234,18 @@ impl Maolan {
                         if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
                         {
                             let delta_samples = if is_fade_out {
-                                // For fade-out, dragging left (negative) increases fade length
                                 (initial_mouse_x - position.x) / pixels_per_sample
                             } else {
-                                // For fade-in, dragging right (positive) increases fade length
                                 (position.x - initial_mouse_x) / pixels_per_sample
                             };
                             let new_fade_samples =
                                 ((initial_samples as f32 + delta_samples).max(0.0) as usize)
-                                    .min(96000); // Max 2 seconds at 48kHz
+                                    .min(96000);
 
                             match kind {
                                 Kind::Audio => {
                                     if let Some(clip) = track.audio.clips.get_mut(index) {
-                                        let max_fade = clip.length / 2; // Can't fade more than half the clip
+                                        let max_fade = clip.length / 2;
                                         if is_fade_out {
                                             clip.fade_out_samples = new_fade_samples.min(max_fade);
                                         } else {
@@ -6618,7 +6592,7 @@ impl Maolan {
                     if kind == Kind::MIDI {
                         return Task::none();
                     }
-                    // Send updated fade values to engine
+
                     let state = self.state.blocking_read();
                     if let Some(track) = state.tracks.iter().find(|t| t.name == track_name) {
                         let (fade_enabled, fade_in_samples, fade_out_samples) =
@@ -7242,7 +7216,6 @@ impl Maolan {
                                 let mut last_operation: Option<String> = None;
                                 let progress_fn =
                                     move |progress: f32, operation: Option<String>| {
-                                        // Reduce UI/queue churn from high-frequency decode callbacks.
                                         let clamped = progress.clamp(0.0, 1.0);
                                         let bucket = (clamped * 100.0).round() as u16;
                                         if last_progress_bucket == Some(bucket)
@@ -7578,7 +7551,6 @@ impl Maolan {
                 self.generate_audio_progress = 0.0;
                 self.generate_audio_operation = Some("Launching generate".to_string());
 
-                // Spawn the subprocess and get its PID
                 let (_pid, socket) = match super::super::Maolan::spawn_generate_process(&request) {
                     Ok((_pid, socket)) => (_pid, socket),
                     Err(err) => {
@@ -8072,8 +8044,6 @@ impl Maolan {
                 self.export_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let export_cancel = self.export_cancel.clone();
 
-                // Compute pending bounces for StemsPostFader so the GUI can track them
-                // through the main subscription instead of a temporary one.
                 self.export_pending_bounces.clear();
                 if matches!(
                     render_mode,
@@ -8103,7 +8073,6 @@ impl Maolan {
                             let mut last_progress_bucket: Option<u16> = None;
                             let mut last_operation: Option<String> = None;
                             let progress_fn = move |progress: f32, operation: Option<String>| {
-                                // Reduce UI/queue churn from high-frequency callbacks
                                 let clamped = progress.clamp(0.0, 1.0);
                                 let bucket = (clamped * 100.0).round() as u16;
                                 if last_progress_bucket == Some(bucket)

@@ -1708,6 +1708,9 @@ impl Maolan {
             Action::TrackToggleSolo(track_name) => {
                 (track_name.as_str(), |name, _| Action::TrackToggleSolo(name))
             }
+            Action::TrackToggleMaster(track_name) => (track_name.as_str(), |name, _| {
+                Action::TrackToggleMaster(name)
+            }),
             Action::TrackToggleInputMonitor(track_name) => (track_name.as_str(), |name, _| {
                 Action::TrackToggleInputMonitor(name)
             }),
@@ -3429,7 +3432,7 @@ mod tests {
     fn quantize_meter_db_clamps_and_steps() {
         assert_eq!(Maolan::quantize_meter_db(-100.0), -90.0);
         assert_eq!(Maolan::quantize_meter_db(25.0), 20.0);
-        // Steps of 1.0 dB
+
         assert_eq!(Maolan::quantize_meter_db(5.3), 5.0);
         assert_eq!(Maolan::quantize_meter_db(5.7), 6.0);
     }
@@ -3449,18 +3452,16 @@ mod tests {
 
     #[test]
     fn nearest_scale_pitch_major() {
-        // C major scale: C=0, D=2, E=4, F=5, G=7, A=9, B=11
-        assert_eq!(Maolan::nearest_scale_pitch(0, 0, false), 0); // C
-        assert_eq!(Maolan::nearest_scale_pitch(1, 0, false), 0); // C# -> C
-        assert_eq!(Maolan::nearest_scale_pitch(6, 0, false), 5); // F# -> F
+        assert_eq!(Maolan::nearest_scale_pitch(0, 0, false), 0);
+        assert_eq!(Maolan::nearest_scale_pitch(1, 0, false), 0);
+        assert_eq!(Maolan::nearest_scale_pitch(6, 0, false), 5);
     }
 
     #[test]
     fn nearest_scale_pitch_minor() {
-        // C minor scale: C=0, D=2, D#=3, F=5, G=7, G#=8, A#=10
-        assert_eq!(Maolan::nearest_scale_pitch(0, 0, true), 0); // C
-        assert_eq!(Maolan::nearest_scale_pitch(1, 0, true), 0); // C# -> C
-        assert_eq!(Maolan::nearest_scale_pitch(4, 0, true), 3); // E -> D#
+        assert_eq!(Maolan::nearest_scale_pitch(0, 0, true), 0);
+        assert_eq!(Maolan::nearest_scale_pitch(1, 0, true), 0);
+        assert_eq!(Maolan::nearest_scale_pitch(4, 0, true), 3);
     }
 
     #[test]
@@ -3471,7 +3472,6 @@ mod tests {
 
     #[test]
     fn parse_sysex_hex_parses_valid_hex() {
-        // Parser adds 0xF0 at start and 0xF7 at end if not present
         assert_eq!(
             Maolan::parse_sysex_hex("01 02").unwrap(),
             vec![0xF0, 0x01, 0x02, 0xF7]
@@ -3520,7 +3520,6 @@ mod tests {
     fn key_has_explicit_gesture_lifecycle() {
         use super::AutomationWriteKey;
 
-        // Only CLAP keys have explicit gesture lifecycle
         assert!(!Maolan::key_has_explicit_gesture_lifecycle(
             AutomationWriteKey::Mute
         ));

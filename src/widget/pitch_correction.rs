@@ -117,7 +117,7 @@ impl PitchCorrection {
                 selecting_rect,
                 pps,
                 row_h,
-                None, // note_area handles playhead
+                None,
             ))
             .width(Length::Fixed(notes_w))
             .height(Length::Fixed(notes_h)))

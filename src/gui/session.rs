@@ -177,15 +177,13 @@ impl Maolan {
             _ => 300.0,
         };
 
-        // Serialize tracks but exclude clips
         let mut tracks_json = serde_json::to_value(&state.tracks).map_err(io::Error::other)?;
         if let Some(tracks) = tracks_json.as_array_mut() {
             for track in tracks.iter_mut() {
-                // Clear audio clips
                 if let Some(audio) = track.get_mut("audio").and_then(Value::as_object_mut) {
                     audio.insert("clips".to_string(), Value::Array(vec![]));
                 }
-                // Clear MIDI clips
+
                 if let Some(midi) = track.get_mut("midi").and_then(Value::as_object_mut) {
                     midi.insert("clips".to_string(), Value::Array(vec![]));
                 }
@@ -332,7 +330,7 @@ impl Maolan {
             self.pending_save_path = Some(path.clone());
             self.pending_save_tracks = std::iter::once(track_name.clone()).collect();
             self.pending_save_clap_tracks = std::iter::once(track_name.clone()).collect();
-            self.pending_save_is_template = false; // We'll handle this differently
+            self.pending_save_is_template = false;
 
             let tasks = vec![
                 self.send(Action::TrackGetPluginGraph {
@@ -343,7 +341,6 @@ impl Maolan {
                 }),
             ];
 
-            // Store the track name for later use
             self.state.blocking_write().message =
                 format!("Saving track template for {}", track_name);
 
@@ -412,7 +409,6 @@ impl Maolan {
         #[cfg(not(all(unix, not(target_os = "macos"))))]
         let restore_actions = vec![];
 
-        // Load LV2 plugin graph
         #[cfg(all(unix, not(target_os = "macos")))]
         {
             let clap_plugins = self.state.blocking_read().clap_plugins.clone();
@@ -479,7 +475,6 @@ impl Maolan {
                     }
                 }
 
-                // Load plugin graph connections
                 if let Some(connections) = graph.get("connections").and_then(|c| c.as_array()) {
                     for conn in connections {
                         let Some(from_node) = Self::plugin_node_from_json_with_runtime_nodes(
@@ -532,7 +527,6 @@ impl Maolan {
     pub(super) fn save_track_as_template(&self, track_name: &str, path: String) -> Task<Message> {
         use tracing::info;
 
-        // Do all the work synchronously before spawning the task
         let result = (|| -> std::io::Result<()> {
             info!("Saving track template to: {}", path);
             let template_root = PathBuf::from(&path);
@@ -546,14 +540,12 @@ impl Maolan {
 
             let state = self.state.blocking_read();
 
-            // Find the specific track
             let track = state
                 .tracks
                 .iter()
                 .find(|t| t.name == track_name)
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "Track not found"))?;
 
-            // Serialize the track but exclude clips
             let mut track_json = serde_json::to_value(track).map_err(io::Error::other)?;
             if let Some(audio) = track_json.get_mut("audio").and_then(Value::as_object_mut) {
                 audio.insert("clips".to_string(), Value::Array(vec![]));
@@ -562,7 +554,6 @@ impl Maolan {
                 midi.insert("clips".to_string(), Value::Array(vec![]));
             }
 
-            // Get plugin graph for this track
             let graph = {
                 #[cfg(all(unix, not(target_os = "macos")))]
                 {
@@ -610,7 +601,6 @@ impl Maolan {
                 }
             };
 
-            // Get connections involving this track
             let track_connections: Vec<&crate::state::Connection> = state
                 .connections
                 .iter()
@@ -1603,7 +1593,6 @@ impl Maolan {
             }
         }
 
-        // Load transport timing fields if present, with sensible defaults.
         let loaded_tempo = transport
             .get("tempo")
             .and_then(Value::as_f64)

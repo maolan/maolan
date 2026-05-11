@@ -354,10 +354,9 @@ mod tests {
 
     #[test]
     fn app_background_color_has_expected_values() {
-        // Verify the RGB components
-        assert!((APP_BACKGROUND_COLOR.r - 0.09).abs() < 0.01); // 23/255
-        assert!((APP_BACKGROUND_COLOR.g - 0.12).abs() < 0.01); // 31/255
-        assert!((APP_BACKGROUND_COLOR.b - 0.19).abs() < 0.01); // 48/255
+        assert!((APP_BACKGROUND_COLOR.r - 0.09).abs() < 0.01);
+        assert!((APP_BACKGROUND_COLOR.g - 0.12).abs() < 0.01);
+        assert!((APP_BACKGROUND_COLOR.b - 0.19).abs() < 0.01);
     }
 
     #[test]
@@ -450,7 +449,7 @@ mod tests {
     #[test]
     fn workspace_mixer_balance_labels_is_populated() {
         assert!(!workspace_mixer::BALANCE_LABELS.is_empty());
-        assert_eq!(workspace_mixer::BALANCE_LABELS.len(), 201); // -100 to 100
+        assert_eq!(workspace_mixer::BALANCE_LABELS.len(), 201);
     }
 
     #[test]

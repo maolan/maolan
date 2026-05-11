@@ -158,14 +158,14 @@ impl AddTrackView {
                     if template == "empty" {
                         self.selected_template = Some(template.clone());
                         self.selected_template_is_group = false;
-                        // Reset to defaults when empty is selected
+
                         self.audio_ins = 1;
                         self.audio_outs = 1;
                         self.midi_ins = 0;
                         self.midi_outs = 0;
                     } else {
                         self.selected_template = Some(template.clone());
-                        // Try track template first
+
                         if let Some((audio_ins, audio_outs, midi_ins, midi_outs)) =
                             Self::load_template_config(template)
                         {
@@ -192,7 +192,6 @@ impl AddTrackView {
             button("Create")
         };
 
-        // Build template options with "empty" as first option
         let mut template_options = vec!["empty".to_string()];
         template_options.extend(self.available_templates.clone());
         for group in &self.available_group_templates {
@@ -247,7 +246,6 @@ impl AddTrackView {
             );
         }
 
-        // Only show ins/outs inputs if "empty" template is selected
         if is_empty_template {
             col = col.push(
                 row![
@@ -290,7 +288,6 @@ impl AddTrackView {
             col = col
                 .push(row![text(format!("Group template: {} tracks", track_count)),].spacing(10));
         } else {
-            // Show read-only information when a track template is selected
             col = col.push(
                 row![text(format!(
                     "Audio: {} in / {} out, MIDI: {} in / {} out",

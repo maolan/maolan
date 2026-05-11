@@ -718,7 +718,7 @@ mod tests {
     #[test]
     fn ruler_new_creates_instance() {
         let ruler = Ruler::new();
-        let _ = &ruler; // Just verify it creates without panicking
+        let _ = &ruler;
     }
 
     #[test]

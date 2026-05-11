@@ -60,7 +60,6 @@ fn default_fade_enabled() -> bool {
 }
 
 fn default_fade_samples() -> usize {
-    // Default to 5ms at 48kHz = 240 samples
     240
 }
 

@@ -129,7 +129,7 @@ mod tests {
     #[test]
     fn handle_toggle_loop_without_range_returns_task() {
         let mut app = Maolan::default();
-        // loop_range_samples is None by default
+
         let result = app.handle_core_message(&Message::ToggleLoop);
         assert!(result.is_some());
     }
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn handle_toggle_punch_without_range_returns_task() {
         let mut app = Maolan::default();
-        // punch_range_samples is None by default
+
         let result = app.handle_core_message(&Message::TogglePunch);
         assert!(result.is_some());
     }

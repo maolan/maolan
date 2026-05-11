@@ -96,8 +96,6 @@ impl Maolan {
                 output_path,
                 ..
             } => {
-                // If this bounce belongs to an active export, track it and signal
-                // completion when the last pending bounce finishes.
                 if self.export_in_progress
                     && self.export_pending_bounces.remove(track_name)
                     && self.export_pending_bounces.is_empty()
@@ -185,8 +183,6 @@ impl Maolan {
                 progress,
                 operation,
             } => {
-                // If this progress belongs to an active export, update the GUI directly
-                // instead of treating it as a freeze.
                 if self.export_in_progress && self.export_pending_bounces.contains(track_name) {
                     self.export_progress = 0.05 + progress * 0.15;
                     self.export_operation = operation

@@ -1,7 +1,12 @@
 use iced::{Color, Theme, widget::button::Style};
 
 pub fn style(theme: &Theme, phase_inverted: bool) -> Style {
-    super::track_toggle_button_style(theme, phase_inverted, Color::from_rgb(0.20, 0.82, 0.92))
+    super::track_toggle_button_style(
+        theme,
+        phase_inverted,
+        false,
+        Color::from_rgb(0.20, 0.82, 0.92),
+    )
 }
 
 #[cfg(test)]

@@ -90,6 +90,18 @@ impl Maolan {
                 }
                 true
             }
+            Action::TrackToggleMaster(name) => {
+                if let Some(track) = self
+                    .state
+                    .blocking_write()
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.name == *name)
+                {
+                    track.is_master = !track.is_master;
+                }
+                true
+            }
             Action::TrackToggleArm(name) => {
                 if let Some(track) = self
                     .state
