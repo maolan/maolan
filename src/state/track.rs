@@ -4,7 +4,8 @@ use iced::Point;
 use serde::{Deserialize, Deserializer, Serialize};
 
 pub use crate::consts::state_track::{
-    TRACK_FOLDER_HEADER_HEIGHT, TRACK_SUBTRACK_GAP, TRACK_SUBTRACK_MIN_HEIGHT,
+    TRACK_FOLDER_HEADER_HEIGHT, TRACK_MIN_HEIGHT, TRACK_SUBTRACK_GAP,
+    TRACK_SUBTRACK_MIN_HEIGHT,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -212,7 +213,7 @@ impl Track {
             height: 60.0,
             position: Point::new(100.0, 100.0),
         };
-        track.height = track.min_height_for_layout().max(60.0);
+        track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
         track
     }
 
@@ -274,20 +275,37 @@ impl Track {
             + ((lanes.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP)
     }
 
+    pub fn collapsed(&self) -> bool {
+        self.height < self.min_height_for_layout()
+    }
+
     pub fn lane_layout(&self) -> TrackLaneLayout {
-        let total_lanes = self.total_lane_count().max(1);
-        let available = (self.height - TRACK_FOLDER_HEADER_HEIGHT).max(0.0);
-        let gaps = (total_lanes.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP;
-        let lane_height = ((available - gaps) / total_lanes as f32).max(TRACK_SUBTRACK_MIN_HEIGHT);
-        TrackLaneLayout {
-            header_height: TRACK_FOLDER_HEADER_HEIGHT,
-            lane_height,
-            audio_lanes: self.audio_lane_count(),
-            midi_lanes: self.midi_lane_count(),
+        if self.collapsed() {
+            TrackLaneLayout {
+                header_height: 0.0,
+                lane_height: self.height.max(1.0),
+                audio_lanes: self.audio_lane_count(),
+                midi_lanes: self.midi_lane_count(),
+            }
+        } else {
+            let total_lanes = self.total_lane_count().max(1);
+            let available = (self.height - TRACK_FOLDER_HEADER_HEIGHT).max(0.0);
+            let gaps = (total_lanes.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP;
+            let lane_height =
+                ((available - gaps) / total_lanes as f32).max(TRACK_SUBTRACK_MIN_HEIGHT);
+            TrackLaneLayout {
+                header_height: TRACK_FOLDER_HEADER_HEIGHT,
+                lane_height,
+                audio_lanes: self.audio_lane_count(),
+                midi_lanes: self.midi_lane_count(),
+            }
         }
     }
 
     pub fn lane_top(&self, kind: maolan_engine::kind::Kind, lane: usize) -> f32 {
+        if self.collapsed() {
+            return 0.0;
+        }
         let layout = self.lane_layout();
         let mut y = layout.header_height;
         match kind {
@@ -304,6 +322,9 @@ impl Track {
     }
 
     pub fn lane_index_at_y(&self, kind: maolan_engine::kind::Kind, y: f32) -> usize {
+        if self.collapsed() {
+            return 0;
+        }
         let layout = self.lane_layout();
         let lane_span = layout.lane_height + TRACK_SUBTRACK_GAP;
         let local = (y - layout.header_height).max(0.0);
@@ -327,6 +348,9 @@ impl Track {
     }
 
     pub fn automation_lane_top(&self, lane: usize) -> f32 {
+        if self.collapsed() {
+            return 0.0;
+        }
         let layout = self.lane_layout();
         let lane_span = layout.lane_height + TRACK_SUBTRACK_GAP;
         layout.header_height + (layout.audio_lanes + layout.midi_lanes + lane) as f32 * lane_span

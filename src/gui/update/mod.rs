@@ -18,6 +18,7 @@ use crate::{
     consts::gui::{AUTOSAVE_SNAPSHOT_INTERVAL, METER_QUANTIZE_STEP_DB},
     consts::gui_update_mod::{ATTACK_ALPHA, RELEASE_ALPHA},
     consts::state_ids::METRONOME_TRACK_ID,
+    consts::state_track::TRACK_MIN_HEIGHT,
     consts::widget_piano::PITCH_MAX,
     message::{
         ClipPitchCorrectionRequest, ClipStretchRequest, ExportNormalizeMode, ExportRenderMode,
@@ -1179,7 +1180,7 @@ impl Maolan {
                     }],
                 });
         }
-        track.height = track.min_height_for_layout().max(60.0);
+        track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
     }
 
     fn record_manual_override(

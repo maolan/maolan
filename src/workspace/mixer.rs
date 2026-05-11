@@ -45,7 +45,10 @@ impl Mixer {
     }
 
     fn trim_strip_name(name: &str, width: f32) -> String {
-        let usable_width = (width - (STRIP_NAME_SIDE_PADDING * 2.0)).max(0.0);
+        const STRIP_SHELL_H_PAD: f32 = 6.0;
+        const STRIP_NAME_H_PAD: f32 = 2.0;
+        let total_pad = (STRIP_SHELL_H_PAD + STRIP_NAME_H_PAD) * 2.0;
+        let usable_width = (width - total_pad).max(0.0);
         let max_chars = (usable_width / STRIP_NAME_CHAR_PX).floor() as usize;
         if max_chars == 0 {
             String::new()
