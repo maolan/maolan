@@ -28,7 +28,6 @@ impl ClipRenameView {
             return container("").into();
         };
 
-        // Get current clip name and clean it for display
         let current_name_raw = state
             .tracks
             .iter()
@@ -43,7 +42,6 @@ impl ClipRenameView {
             })
             .unwrap_or("");
 
-        // Clean the current name for display
         let current_name = clean_clip_name(current_name_raw);
 
         let new_name = &dialog.new_name;

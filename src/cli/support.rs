@@ -265,6 +265,9 @@ fn push_track_restore_actions(actions: &mut Vec<Action>, track: &Value) -> Resul
     push_optional_toggle(actions, track, "soloed", || {
         Action::TrackToggleSolo(name.clone())
     });
+    push_optional_toggle(actions, track, "is_master", || {
+        Action::TrackToggleMaster(name.clone())
+    });
     push_optional_toggle(actions, track, "input_monitor", || {
         Action::TrackToggleInputMonitor(name.clone())
     });

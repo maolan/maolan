@@ -928,7 +928,6 @@ fn write_mp3(
     let mut octx = output(export_path.to_str().unwrap_or("output.mp3"))
         .map_err(|e| io::Error::other(format!("Failed to create output context: {e}")))?;
 
-    // Find MP3 encoder (libmp3lame if available, otherwise default mp3)
     let codec_id = CodecId::MP3;
     let encoder_codec = ffmpeg_next::codec::encoder::find(codec_id)
         .ok_or_else(|| io::Error::other("MP3 encoder not found"))?;
@@ -950,17 +949,13 @@ fn write_mp3(
         _ => ffmpeg_next::channel_layout::ChannelLayout::STEREO,
     });
 
-    // Set bitrate
     let bitrate = (codec.mp3_bitrate_kbps as usize) * 1000;
     encoder.set_bit_rate(bitrate);
 
-    // Set VBR mode if requested
     if matches!(codec.mp3_mode, ExportMp3Mode::Vbr) {
-        // FFmpeg VBR quality: 0-9, where 0 is best
-        encoder.set_quality(2usize); // Near-best quality for VBR
+        encoder.set_quality(2usize);
     }
 
-    // Set metadata
     let mut metadata_dict = Dictionary::new();
     if !metadata.author.is_empty() {
         metadata_dict.set("artist", &metadata.author);
@@ -982,7 +977,6 @@ fn write_mp3(
         .add_stream(encoder_codec)
         .map_err(|e| io::Error::other(format!("Failed to add stream: {e}")))?;
 
-    // Set parameters from encoder before opening
     output_stream.set_parameters(&encoder);
 
     let mut encoder = encoder
@@ -992,8 +986,7 @@ fn write_mp3(
     octx.write_header()
         .map_err(|e| io::Error::other(format!("Failed to write header: {e}")))?;
 
-    // Convert interleaved f32 to planar f32
-    let frame_size = 1152; // Default MP3 frame size
+    let frame_size = 1152;
 
     for chunk_start in (0..mixed_buffer.len()).step_by(frame_size * output_channels) {
         let chunk_end = (chunk_start + frame_size * output_channels).min(mixed_buffer.len());
@@ -1010,12 +1003,10 @@ fn write_mp3(
         frame.set_rate(encoder.rate());
         frame.set_samples(actual_frames);
 
-        // Allocate frame data
         unsafe {
             ffmpeg_next::ffi::av_frame_get_buffer(frame.as_mut_ptr(), 0);
         }
 
-        // Copy interleaved to planar
         for ch in 0..output_channels {
             let data_ptr = frame.data_mut(ch).as_mut_ptr() as *mut f32;
             for frame_idx in 0..actual_frames {
@@ -1028,7 +1019,6 @@ fn write_mp3(
             }
         }
 
-        // Encode and write
         match encoder.send_frame(&frame) {
             Ok(()) => {}
             Err(e) => return Err(io::Error::other(format!("Failed to send frame: {e}"))),
@@ -1043,7 +1033,6 @@ fn write_mp3(
         }
     }
 
-    // Flush encoder
     encoder
         .send_eof()
         .map_err(|e| io::Error::other(format!("Failed to send EOF: {e}")))?;
@@ -1075,7 +1064,6 @@ fn write_ogg_vorbis(
     let mut octx = output(export_path.to_str().unwrap_or("output.ogg"))
         .map_err(|e| io::Error::other(format!("Failed to create output context: {e}")))?;
 
-    // Find Vorbis encoder
     let codec_id = CodecId::VORBIS;
     let encoder_codec = ffmpeg_next::codec::encoder::find(codec_id)
         .ok_or_else(|| io::Error::other("Vorbis encoder not found"))?;
@@ -1097,13 +1085,9 @@ fn write_ogg_vorbis(
         _ => ffmpeg_next::channel_layout::ChannelLayout::STEREO,
     });
 
-    // Vorbis quality: -0.1 to 1.0 maps to FFmpeg qscale: 0 to 10
-    // FFmpeg qscale for Vorbis: 0 (worst) to 10 (best)
-    // Map -0.1..=1.0 to 0..=10
     let quality = ((codec.ogg_quality + 0.1) * 10.0).clamp(0.0, 10.0) as i32;
     encoder.set_quality(quality as usize);
 
-    // Set metadata
     let mut metadata_dict = Dictionary::new();
     if !metadata.author.is_empty() {
         metadata_dict.set("artist", &metadata.author);
@@ -1125,7 +1109,6 @@ fn write_ogg_vorbis(
         .add_stream(encoder_codec)
         .map_err(|e| io::Error::other(format!("Failed to add stream: {e}")))?;
 
-    // Set parameters from encoder before opening
     output_stream.set_parameters(&encoder);
 
     let mut encoder = encoder
@@ -1135,8 +1118,7 @@ fn write_ogg_vorbis(
     octx.write_header()
         .map_err(|e| io::Error::other(format!("Failed to write header: {e}")))?;
 
-    // Convert interleaved f32 to planar f32
-    let frame_size = 1024; // Default Vorbis frame size
+    let frame_size = 1024;
 
     for chunk_start in (0..mixed_buffer.len()).step_by(frame_size * output_channels) {
         let chunk_end = (chunk_start + frame_size * output_channels).min(mixed_buffer.len());
@@ -1153,12 +1135,10 @@ fn write_ogg_vorbis(
         frame.set_rate(encoder.rate());
         frame.set_samples(actual_frames);
 
-        // Allocate frame data
         unsafe {
             ffmpeg_next::ffi::av_frame_get_buffer(frame.as_mut_ptr(), 0);
         }
 
-        // Copy interleaved to planar
         for ch in 0..output_channels {
             let data_ptr = frame.data_mut(ch).as_mut_ptr() as *mut f32;
             for frame_idx in 0..actual_frames {
@@ -1171,7 +1151,6 @@ fn write_ogg_vorbis(
             }
         }
 
-        // Encode and write
         match encoder.send_frame(&frame) {
             Ok(()) => {}
             Err(e) => return Err(io::Error::other(format!("Failed to send frame: {e}"))),
@@ -1186,7 +1165,6 @@ fn write_ogg_vorbis(
         }
     }
 
-    // Flush encoder
     encoder
         .send_eof()
         .map_err(|e| io::Error::other(format!("Failed to send EOF: {e}")))?;

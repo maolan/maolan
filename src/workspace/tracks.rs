@@ -10,7 +10,9 @@ use crate::{
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Point, Theme,
     alignment::Horizontal,
-    widget::{Column, Space, button, column, container, lazy, mouse_area, pick_list, row, text},
+    widget::{
+        Column, Row, Space, button, column, container, lazy, mouse_area, pick_list, row, text,
+    },
 };
 use iced_drop::droppable;
 use iced_fonts::lucide::{audio_waveform, disc};
@@ -40,6 +42,8 @@ struct TrackViewData {
     muted: bool,
     phase_inverted: bool,
     soloed: bool,
+    solo_upstream: bool,
+    is_master: bool,
     input_monitor: bool,
     disk_monitor: bool,
     audio_ins: usize,
@@ -189,6 +193,22 @@ pub(super) fn track_context_menu_overlay(
         ),
     ];
 
+    let is_in_group = track.vca_master.is_some()
+        || state
+            .tracks
+            .iter()
+            .any(|t| t.vca_master.as_deref() == Some(&track_name));
+    if track.primary_audio_outs() == 2 && !is_in_group {
+        items.push(menu::menu_item(
+            if track.is_master {
+                "Unmaster"
+            } else {
+                "Master"
+            },
+            Message::Request(Action::TrackToggleMaster(track_name.clone())),
+        ));
+    }
+
     if freeze_supported {
         items.push(menu::menu_item(
             if track.frozen { "Unfreeze" } else { "Freeze" },
@@ -215,7 +235,7 @@ pub(super) fn track_context_menu_overlay(
     let can_group_selected =
         selected_tracks.len() > 1 && selected_tracks.iter().any(|name| name == &track.name);
 
-    if can_group_selected {
+    if can_group_selected && !track.is_master {
         items.push(menu::menu_item(
             "Group",
             Message::TrackGroupShow {
@@ -225,13 +245,15 @@ pub(super) fn track_context_menu_overlay(
     }
 
     if let Some(master) = track.vca_master.as_ref() {
-        items.push(menu::menu_item(
-            format!("Group: Ungroup ({master})"),
-            Message::TrackSetVcaMaster {
-                track_name: track_name.clone(),
-                master_track: None,
-            },
-        ));
+        if !track.is_master {
+            items.push(menu::menu_item(
+                format!("Group: Ungroup ({master})"),
+                Message::TrackSetVcaMaster {
+                    track_name: track_name.clone(),
+                    master_track: None,
+                },
+            ));
+        }
         items.push(menu::menu_item(
             "Save group as template",
             Message::TrackGroupTemplateSaveShow(track_name.clone()),
@@ -385,6 +407,7 @@ impl Tracks {
         track.muted.hash(&mut hasher);
         track.phase_inverted.hash(&mut hasher);
         track.soloed.hash(&mut hasher);
+        track.solo_upstream.hash(&mut hasher);
         track.input_monitor.hash(&mut hasher);
         track.disk_monitor.hash(&mut hasher);
         track.audio_ins.hash(&mut hasher);
@@ -493,7 +516,8 @@ impl Tracks {
         let layout = track.layout;
         let lane_h = layout.lane_height.max(12.0);
         let has_visible_automation = !track.visible_automation_lanes.is_empty();
-        let inline_midi_lane_selector = track.audio_ins == 0 && track.midi_ins > 0;
+        let inline_midi_lane_selector =
+            !track.is_master && track.audio_ins == 0 && track.midi_ins > 0;
         let max_name_chars = (((track_width_px - 98.0) / 7.0).floor() as i32).clamp(10, 64);
         let learn_count = [
             midi_learn_vol,
@@ -510,10 +534,14 @@ impl Tracks {
         let resize_handle_height = 6.0;
         let outer_spacing = 6.0;
         let inner_vertical_padding = 8.0;
-        let lane_row_count = track
-            .midi_ins
-            .saturating_sub(usize::from(inline_midi_lane_selector))
-            + track.visible_automation_lanes.len();
+        let lane_row_count = if track.is_master {
+            track.visible_automation_lanes.len()
+        } else {
+            track
+                .midi_ins
+                .saturating_sub(usize::from(inline_midi_lane_selector))
+                + track.visible_automation_lanes.len()
+        };
         let lane_rows_height = if lane_row_count > 0 {
             lane_row_count as f32 * lane_h
                 + lane_row_count.saturating_sub(1) as f32 * TRACK_SUBTRACK_GAP
@@ -571,92 +599,118 @@ impl Tracks {
         .on_double_click(Message::OpenTrackPlugins(track.name.clone()));
 
         let track_name = track.name.clone();
-        let controls = row![
-            button(
-                container(text("R").size(13))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-            )
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0))
-            .padding(0)
-            .style(move |theme, _state| style::arm::style(theme, track.armed))
-            .on_press(Message::Request(Action::TrackToggleArm(track_name.clone()))),
+        let mut controls: Vec<Element<'static, Message>> = vec![];
+        if !track.is_master {
+            controls.push(
+                button(
+                    container(text("R").size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::arm::style(theme, track.armed))
+                .on_press(Message::Request(Action::TrackToggleArm(track_name.clone())))
+                .into(),
+            );
+        }
+        controls.push(
             button(
                 container(text("M").size(13))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center_x(Length::Fill)
-                    .center_y(Length::Fill)
+                    .center_y(Length::Fill),
             )
             .width(Length::Fixed(22.0))
             .height(Length::Fixed(22.0))
             .padding(0)
             .style(move |theme, _state| style::mute::style(theme, track.muted))
             .on_press(Message::Request(Action::TrackToggleMute(
-                track.name.clone()
-            ))),
+                track.name.clone(),
+            )))
+            .into(),
+        );
+        controls.push(
             button(
                 container(text("S").size(13))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center_x(Length::Fill)
-                    .center_y(Length::Fill)
+                    .center_y(Length::Fill),
             )
             .width(Length::Fixed(22.0))
             .height(Length::Fixed(22.0))
             .padding(0)
-            .style(move |theme, _state| style::solo::style(theme, track.soloed))
+            .style(move |theme, _state| {
+                style::solo::style(theme, track.soloed, track.solo_upstream)
+            })
             .on_press(Message::Request(Action::TrackToggleSolo(
-                track.name.clone()
-            ))),
-            button(
-                container(text("Ø").size(13))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-            )
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0))
-            .padding(0)
-            .style(move |theme, _state| style::phase_invert::style(theme, track.phase_inverted))
-            .on_press(Message::Request(Action::TrackTogglePhase(
-                track.name.clone()
-            ))),
-            button(
-                container(audio_waveform().size(13))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-            )
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0))
-            .padding(0)
-            .style(move |theme, _state| style::input::style(theme, track.input_monitor))
-            .on_press(Message::Request(Action::TrackToggleInputMonitor(
                 track.name.clone(),
-            ))),
-            button(
-                container(disc().size(13))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-            )
-            .width(Length::Fixed(22.0))
-            .height(Length::Fixed(22.0))
-            .padding(0)
-            .style(move |theme, _state| style::disk::style(theme, track.disk_monitor))
-            .on_press(Message::Request(Action::TrackToggleDiskMonitor(
-                track.name.clone(),
-            ))),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center);
+            )))
+            .into(),
+        );
+        if !track.is_master {
+            controls.push(
+                button(
+                    container(text("Ø").size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::phase_invert::style(theme, track.phase_inverted))
+                .on_press(Message::Request(Action::TrackTogglePhase(
+                    track.name.clone(),
+                )))
+                .into(),
+            );
+        }
+        if !track.is_master {
+            controls.push(
+                button(
+                    container(audio_waveform().size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::input::style(theme, track.input_monitor))
+                .on_press(Message::Request(Action::TrackToggleInputMonitor(
+                    track.name.clone(),
+                )))
+                .into(),
+            );
+            controls.push(
+                button(
+                    container(disc().size(13))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill),
+                )
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(move |theme, _state| style::disk::style(theme, track.disk_monitor))
+                .on_press(Message::Request(Action::TrackToggleDiskMonitor(
+                    track.name.clone(),
+                )))
+                .into(),
+            );
+        }
+        let controls = Row::with_children(controls)
+            .spacing(4)
+            .align_y(Alignment::Center);
 
         let inline_midi_channel: Element<'static, Message> = if inline_midi_lane_selector {
             let track_name = track.name.clone();
@@ -682,47 +736,51 @@ impl Tracks {
         };
 
         let mut lane_rows: Column<'static, Message> = column![];
-        for lane_index in 0..track.midi_ins {
-            if inline_midi_lane_selector && lane_index == 0 {
-                continue;
+        if !track.is_master {
+            for lane_index in 0..track.midi_ins {
+                if inline_midi_lane_selector && lane_index == 0 {
+                    continue;
+                }
+                let track_name = track.name.clone();
+                let selected_channel = MidiLaneChannelSelection::from_engine(
+                    track.midi_lane_channels.get(lane_index).copied().flatten(),
+                );
+                lane_rows = lane_rows.push(
+                    container(
+                        row![
+                            Self::info_badge(format!("MIDI {}", lane_index + 1), true),
+                            Space::new().width(Length::Fill),
+                            pick_list(
+                                MidiLaneChannelSelection::ALL,
+                                Some(selected_channel),
+                                move |channel| Message::TrackMidiLaneChannelSelected {
+                                    track_name: track_name.clone(),
+                                    lane: lane_index,
+                                    channel,
+                                },
+                            )
+                            .placeholder("Channel"),
+                        ]
+                        .align_y(Alignment::Center)
+                        .spacing(6),
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fixed(lane_h))
+                    .padding([4, 6])
+                    .style(move |_theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(
+                            0.08, 0.18, 0.14, 0.9,
+                        ))),
+                        border: Border {
+                            color: Color::from_rgba(0.34, 0.63, 0.48, 0.26),
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        text_color: Some(Color::from_rgb(0.83, 0.93, 0.88)),
+                        ..container::Style::default()
+                    }),
+                );
             }
-            let track_name = track.name.clone();
-            let selected_channel = MidiLaneChannelSelection::from_engine(
-                track.midi_lane_channels.get(lane_index).copied().flatten(),
-            );
-            lane_rows = lane_rows.push(
-                container(
-                    row![
-                        Self::info_badge(format!("MIDI {}", lane_index + 1), true),
-                        Space::new().width(Length::Fill),
-                        pick_list(
-                            MidiLaneChannelSelection::ALL,
-                            Some(selected_channel),
-                            move |channel| Message::TrackMidiLaneChannelSelected {
-                                track_name: track_name.clone(),
-                                lane: lane_index,
-                                channel,
-                            },
-                        )
-                        .placeholder("Channel"),
-                    ]
-                    .align_y(Alignment::Center)
-                    .spacing(6),
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(lane_h))
-                .padding([4, 6])
-                .style(move |_theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgba(0.08, 0.18, 0.14, 0.9))),
-                    border: Border {
-                        color: Color::from_rgba(0.34, 0.63, 0.48, 0.26),
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    text_color: Some(Color::from_rgb(0.83, 0.93, 0.88)),
-                    ..container::Style::default()
-                }),
-            );
         }
         for lane in &track.visible_automation_lanes {
             lane_rows = lane_rows.push(
@@ -768,28 +826,33 @@ impl Tracks {
 
         let body = row![
             controls,
-            column![
-                row![
-                    inline_midi_channel,
-                    Self::info_badge(audio_io, false),
-                    Self::info_badge(return_io, false),
-                    Self::info_badge(midi_io, false),
-                    Self::info_badge(send_io, false),
-                    Self::info_badge(mode_label, false),
-                    Self::info_badge(balance_label, false),
-                    container(text(automation_hint).size(9))
-                        .padding([1, 0])
-                        .style(|_theme: &Theme| container::Style {
-                            text_color: Some(Color::from_rgba(0.77, 0.67, 0.52, 0.96)),
-                            ..container::Style::default()
-                        }),
+            if !track.is_master {
+                column![
+                    row![
+                        inline_midi_channel,
+                        Self::info_badge(audio_io, false),
+                        Self::info_badge(return_io, false),
+                        Self::info_badge(midi_io, false),
+                        Self::info_badge(send_io, false),
+                        Self::info_badge(mode_label, false),
+                        Self::info_badge(balance_label, false),
+                        container(text(automation_hint).size(9))
+                            .padding([1, 0])
+                            .style(|_theme: &Theme| container::Style {
+                                text_color: Some(Color::from_rgba(0.77, 0.67, 0.52, 0.96)),
+                                ..container::Style::default()
+                            }),
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center),
                 ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            ]
-            .spacing(3)
-            .width(Length::Fill)
-            .align_x(Horizontal::Left),
+                .spacing(3)
+                .width(Length::Fill)
+                .align_x(Horizontal::Left)
+                .into()
+            } else {
+                Element::from(Space::new().width(Length::Fill))
+            },
         ]
         .spacing(8)
         .align_y(Alignment::Start);
@@ -918,6 +981,31 @@ impl Tracks {
         let (tracks, width) = {
             let state = self.state.blocking_read();
             let hovered_resize_track = state.hovered_track_resize_handle.as_deref();
+            let soloed_track_names: std::collections::HashSet<String> = state
+                .tracks
+                .iter()
+                .filter(|t| t.soloed)
+                .map(|t| t.name.clone())
+                .collect();
+            let mut upstream_track_names = std::collections::HashSet::new();
+            if !soloed_track_names.is_empty() {
+                let mut to_process: Vec<String> = soloed_track_names.iter().cloned().collect();
+                let mut processed = std::collections::HashSet::new();
+                while let Some(target_name) = to_process.pop() {
+                    if !processed.insert(target_name.clone()) {
+                        continue;
+                    }
+                    for conn in &state.connections {
+                        if conn.kind == maolan_engine::kind::Kind::Audio
+                            && conn.to_track == target_name
+                            && !soloed_track_names.contains(&conn.from_track)
+                        {
+                            upstream_track_names.insert(conn.from_track.clone());
+                            to_process.push(conn.from_track.clone());
+                        }
+                    }
+                }
+            }
             let tracks = state
                 .tracks
                 .iter()
@@ -940,6 +1028,8 @@ impl Tracks {
                             muted: track.muted,
                             phase_inverted: track.phase_inverted,
                             soloed: track.soloed,
+                            solo_upstream: upstream_track_names.contains(&track.name),
+                            is_master: track.is_master,
                             input_monitor: track.input_monitor,
                             disk_monitor: track.disk_monitor,
                             audio_ins: track.audio.ins,

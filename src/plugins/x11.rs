@@ -330,7 +330,6 @@ fn send_xembed_message(
     }
 }
 
-// Processor-based GUI entry point
 pub fn open_editor_with_processor(
     processor: std::sync::Arc<maolan_engine::vst3::Vst3Processor>,
     title: String,

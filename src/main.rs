@@ -58,7 +58,6 @@ pub fn main() -> iced::Result {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 fn prefer_x11_backend() {
-    // winit picks Wayland whenever WAYLAND_DISPLAY exists and does not fallback to X11.
     unsafe {
         std::env::remove_var("WAYLAND_DISPLAY");
         std::env::remove_var("WAYLAND_SOCKET");

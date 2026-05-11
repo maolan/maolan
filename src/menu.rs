@@ -194,7 +194,6 @@ impl Menu {
     ) -> iced::Element<'_, Message> {
         let menu_tpl = |items| IcedMenu::new(items).width(180.0).offset(15.0).spacing(5.0);
 
-        // Build the "New" submenu dynamically from stored templates
         let mut new_menu_items: Vec<Item<'_, Message, _, _>> =
             vec![Item::new(menu_item("Empty", Message::NewSession))];
         for template in &self.available_templates {

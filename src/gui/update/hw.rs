@@ -265,7 +265,6 @@ mod tests {
 
         Maolan::update_bits_from_selected_device(&mut state, &device);
 
-        // oss_bits should be set to preferred bits (highest supported due to sorting)
         assert_eq!(state.oss_bits, 24);
     }
 }

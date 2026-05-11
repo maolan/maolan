@@ -44,6 +44,12 @@ impl Maolan {
                     state.ctrl = false;
                     state.shift = false;
                 }
+                if !path.exists() {
+                    self.forget_recent_session_path(&path);
+                    self.state.blocking_write().message =
+                        format!("Session no longer exists: {}", path.display());
+                    return Some(Task::none());
+                }
                 if Self::has_newer_autosave_snapshot(&path) {
                     self.pending_recovery_session_dir = Some(path.clone());
                     self.pending_autosave_recovery = None;

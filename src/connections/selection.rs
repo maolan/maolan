@@ -159,12 +159,10 @@ mod tests {
         let mut selected = HashSet::new();
         selected.insert(1);
 
-        // Adding new index
         select_connection_indices(&mut selected, 5, true);
         assert!(selected.contains(&5));
         assert!(selected.contains(&1));
 
-        // Removing existing index
         select_connection_indices(&mut selected, 5, true);
         assert!(!selected.contains(&5));
         assert!(selected.contains(&1));

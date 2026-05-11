@@ -137,7 +137,7 @@ impl Graph {
         let side_outs = track.primary_audio_outs() + track.midi.outs;
         let max_ports = side_ins.max(side_outs).max(1);
         let port_pitch = 8.0_f32;
-        // +1 keeps a small top/bottom margin with the existing (n+1) spacing formula.
+
         let adaptive_h = (max_ports as f32 + 1.0) * port_pitch;
         iced::Size::new(140.0, adaptive_h.max(80.0))
     }
@@ -1080,7 +1080,6 @@ impl canvas::Program<Message> for Graph {
         let draw_gradient_box = |frame: &mut Frame, pos: Point, size: iced::Size, base: Color| {
             frame.fill(&Path::rectangle(pos, size), base);
 
-            // Subtle faux gradient: soft top highlight + bottom shadow.
             let top_h = (size.height * 0.45).max(4.0).min(size.height);
             let bottom_h = (size.height * 0.28).max(3.0).min(size.height);
             frame.fill(
@@ -1752,31 +1751,28 @@ mod tests {
 
     #[test]
     fn midi_box_width_clamps_to_range() {
-        // Short label should be at minimum
         assert_eq!(Graph::midi_box_width("A"), 90.0_f32.min(360.0));
-        // Long label should be clamped to max
+
         let long_label = "a".repeat(100);
         assert_eq!(Graph::midi_box_width(&long_label), 360.0);
     }
 
     #[test]
     fn midi_box_width_calculates_correctly() {
-        // Width is clamped to min 90, so short labels return 90
         let w1 = Graph::midi_box_width("Hello");
         assert!((90.0..=360.0).contains(&w1));
-        // Longer label grows proportionally but is clamped
+
         let w2 = Graph::midi_box_width("012345678901234567890123456789");
         assert!(w2 >= w1);
     }
 
     #[test]
     fn trim_label_to_width_truncates_correctly() {
-        // Width 100px allows about (100-10)/7.2 = 12.5 chars
         let trimmed = Graph::trim_label_to_width("Hello World Test", 100.0);
         assert!(trimmed.len() <= 13);
-        // Wide width keeps full string
+
         assert_eq!(Graph::trim_label_to_width("Short", 500.0), "Short");
-        // Narrow width returns empty
+
         assert_eq!(Graph::trim_label_to_width("Test", 5.0), "");
     }
 
@@ -1790,11 +1786,11 @@ mod tests {
     fn track_port_kind_for_inputs() {
         let track = crate::state::Track::new("test".to_string(), 0.0, 2, 1, 2, 1);
         let primary = track.primary_audio_ins();
-        // First N ports are primary audio inputs
+
         if primary > 0 {
             assert_eq!(Graph::track_port_kind(&track, 0, true), Kind::Audio);
         }
-        // MIDI comes after primary audio
+
         if track.midi.ins > 0 && primary < usize::MAX {
             let midi_port = primary;
             assert_eq!(Graph::track_port_kind(&track, midi_port, true), Kind::MIDI);
@@ -1805,7 +1801,7 @@ mod tests {
     fn track_port_kind_for_outputs() {
         let track = crate::state::Track::new("test".to_string(), 0.0, 2, 1, 2, 1);
         let primary = track.primary_audio_outs();
-        // First N ports are primary audio outputs
+
         if primary > 0 {
             assert_eq!(Graph::track_port_kind(&track, 0, false), Kind::Audio);
         }
@@ -1814,10 +1810,10 @@ mod tests {
     #[test]
     fn connection_port_index_for_midi() {
         let track = crate::state::Track::new("test".to_string(), 0.0, 2, 1, 2, 1);
-        // MIDI input port 0 maps after primary audio inputs
+
         let midi_in_flat = Graph::connection_port_index(&track, Kind::MIDI, 0, true);
         assert!(midi_in_flat >= track.primary_audio_ins());
-        // MIDI output port 0 maps after primary audio outputs
+
         let midi_out_flat = Graph::connection_port_index(&track, Kind::MIDI, 0, false);
         assert!(midi_out_flat >= track.primary_audio_outs());
     }
@@ -1825,7 +1821,7 @@ mod tests {
     #[test]
     fn connection_port_index_for_audio() {
         let track = crate::state::Track::new("test".to_string(), 0.0, 2, 0, 2, 0);
-        // Primary audio ports map directly
+
         assert_eq!(
             Graph::connection_port_index(&track, Kind::Audio, 0, true),
             0

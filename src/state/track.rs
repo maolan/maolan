@@ -117,6 +117,7 @@ pub struct Track {
     pub muted: bool,
     pub phase_inverted: bool,
     pub soloed: bool,
+    pub is_master: bool,
     pub input_monitor: bool,
     pub disk_monitor: bool,
     #[serde(default)]
@@ -185,6 +186,7 @@ impl Track {
             muted: false,
             phase_inverted: false,
             soloed: false,
+            is_master: false,
             input_monitor: false,
             disk_monitor: true,
             midi_learn_volume: None,
@@ -215,8 +217,13 @@ impl Track {
     }
 
     pub fn audio_lane_count(&self) -> usize {
-        // Always return 1 audio lane if we have any audio inputs
-        if self.audio.ins > 0 { 1 } else { 0 }
+        if self.is_master {
+            0
+        } else if self.audio.ins > 0 {
+            1
+        } else {
+            0
+        }
     }
 
     pub fn primary_audio_ins(&self) -> usize {
@@ -244,7 +251,7 @@ impl Track {
     }
 
     pub fn midi_lane_count(&self) -> usize {
-        self.midi.ins
+        if self.is_master { 0 } else { self.midi.ins }
     }
 
     pub fn automation_lane_count(&self) -> usize {

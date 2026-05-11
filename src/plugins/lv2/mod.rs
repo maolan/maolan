@@ -826,7 +826,6 @@ fn create_native_ui_window(
         let _ = show(ui_handle);
     }
 
-    // Set initial port values
     for port in controls {
         let value = port.value;
         unsafe {

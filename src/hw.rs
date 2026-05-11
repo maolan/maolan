@@ -794,7 +794,6 @@ mod tests {
 
     #[test]
     fn open_audio_selection_has_expected_defaults() {
-        // This is a struct used internally - verify it can be constructed
         let selection = OpenAudioSelection {
             input_device: Some("hw:0".to_string()),
             chosen_bits: 24,
@@ -813,7 +812,7 @@ mod tests {
     fn hw_new_creates_instance() {
         let state = crate::state::State::default();
         let hw = HW::new(state);
-        // Just verify it creates without panicking
+
         let _ = hw.plugins_loaded();
     }
 
@@ -821,7 +820,6 @@ mod tests {
     fn selected_bits_for_non_jack() {
         #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
         {
-            // On non-Linux platforms, should return 32
             assert_eq!(HW::selected_bits(false, 24), 32);
         }
     }

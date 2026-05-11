@@ -1081,7 +1081,6 @@ impl Maolan {
             }
         });
 
-        // Send the request
         Self::write_ipc_message(&mut parent, request)?;
 
         Ok((
@@ -1106,8 +1105,6 @@ impl Maolan {
         use maolan_generate::GenerateProgress;
         use maolan_generate::GenerateResponseHeader;
 
-        // Read messages until we get the header
-        // Progress messages come before the header
         let header: GenerateResponseHeader;
         loop {
             let payload = match Self::read_ipc_payload(&mut process.socket) {
@@ -1157,7 +1154,6 @@ impl Maolan {
             }
         }
 
-        // Drop the socket to signal EOF
         drop(process.socket);
         let _ = header;
         Ok(())
@@ -1234,6 +1230,25 @@ impl Maolan {
                 .into_iter()
                 .filter(|p| p != &current),
         );
+        let recent = Self::normalize_recent_session_paths(recent);
+        cfg.recent_session_paths = recent.clone();
+        if let Err(err) = cfg.save() {
+            error!("Failed to save recent session paths: {err}");
+        }
+        self.menu.update_recent_sessions(recent);
+    }
+
+    fn forget_recent_session_path(&mut self, path: &Path) {
+        let target = path.to_string_lossy().to_string();
+        if target.trim().is_empty() {
+            return;
+        }
+        let mut cfg = config::Config::load().unwrap_or_default();
+        let recent: Vec<String> = cfg
+            .recent_session_paths
+            .into_iter()
+            .filter(|p| p != &target)
+            .collect();
         let recent = Self::normalize_recent_session_paths(recent);
         cfg.recent_session_paths = recent.clone();
         if let Err(err) = cfg.save() {
@@ -1544,7 +1559,6 @@ impl Maolan {
             return Ok(Arc::new(Vec::new()));
         }
 
-        // High-resolution, but bounded to avoid huge startup stalls and massive peak files.
         let target_bins = per_channel
             .iter()
             .map(Vec::len)
@@ -2368,7 +2382,6 @@ impl Maolan {
         let frames = samples.len() / channels.max(1);
         let mut channel_buffers: Vec<Vec<f32>> = vec![Vec::with_capacity(frames); channels];
 
-        // Stereo SSE deinterleave fast path.
         #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
         unsafe {
             if channels == 2 && std::arch::is_x86_feature_detected!("sse") {
@@ -2419,7 +2432,6 @@ impl Maolan {
         let out_frames = resampled[0].len();
         let mut output: Vec<f32> = Vec::with_capacity(out_frames * channels);
 
-        // Stereo SSE reinterleave fast path.
         #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
         unsafe {
             if channels == 2 && std::arch::is_x86_feature_detected!("sse") {
@@ -3189,7 +3201,6 @@ impl Maolan {
             .add_stream(encoder_codec)
             .map_err(|e| io::Error::other(format!("Failed to add stream: {e}")))?;
 
-        // Set parameters from encoder before opening
         output_stream.set_parameters(&encoder);
 
         let mut encoder = encoder
@@ -3319,7 +3330,6 @@ impl Maolan {
             .add_stream(encoder_codec)
             .map_err(|e| io::Error::other(format!("Failed to add stream: {e}")))?;
 
-        // Set parameters from encoder before opening
         output_stream.set_parameters(&encoder);
 
         let mut encoder = encoder
@@ -3752,8 +3762,6 @@ impl Maolan {
             )
         };
 
-        // Render pitch-corrected clips in parallel so tracks don't block
-        // each other waiting for rubberband to finish.
         {
             let mut handles = Vec::new();
             for (track_idx, track) in tracks.iter().enumerate() {
@@ -3828,8 +3836,6 @@ impl Maolan {
             .unwrap_or("export");
         let stem_dir = export_parent.join(format!("{export_stem}_stems"));
 
-        // For post-fader stems, bounce each track through the engine so that
-        // plugin processing (CLAP/LV2/VST3) is included in the export.
         let mut temp_bounce_files: Vec<PathBuf> = Vec::new();
         if matches!(render_mode, ExportRenderMode::StemsPostFader) {
             let has_solo = tracks.iter().any(|track| track.soloed);
@@ -3845,8 +3851,6 @@ impl Maolan {
                 .collect();
 
             if !tracks_to_bounce.is_empty() {
-                // Place bounce temp files inside the stem directory so
-                // they stay on the same filesystem as the final output.
                 fs::create_dir_all(&stem_dir).map_err(|e| {
                     io::Error::other(format!(
                         "Failed to create stem directory '{}': {}",
@@ -3855,7 +3859,6 @@ impl Maolan {
                     ))
                 })?;
 
-                // Collect bounce parameters for all tracks before dispatching.
                 struct BounceInfo {
                     track_idx: usize,
                     temp_path: PathBuf,
@@ -3895,7 +3898,6 @@ impl Maolan {
                     });
                 }
 
-                // Dispatch all bounce requests concurrently.
                 progress_callback(0.05, Some("Bouncing tracks...".to_string()));
                 tokio::task::yield_now().await;
                 for info in &bounce_infos {
@@ -3920,14 +3922,12 @@ impl Maolan {
                     }
                 }
 
-                // Wait for bounces to complete via the GUI's main subscription.
                 if let Some(notify) = bounce_notify {
                     notify.notified().await;
                     progress_callback(0.20, Some("Bounces complete".to_string()));
                     tokio::task::yield_now().await;
                 }
 
-                // Replace each track's clips with a synthetic clip pointing to the bounce file.
                 for info in &bounce_infos {
                     let bounced_clip = AudioClip {
                         name: info.temp_path.to_string_lossy().to_string(),
@@ -3958,7 +3958,6 @@ impl Maolan {
         }
 
         if total_length == 0 {
-            // Clean up temp files on early exit.
             for path in &temp_bounce_files {
                 let _ = fs::remove_file(path);
             }
@@ -4168,7 +4167,7 @@ impl Maolan {
                 })?;
             }
             progress_callback(1.0, Some("Complete".to_string()));
-            // Clean up any temp bounce files (should be empty for mixdown).
+
             for path in &temp_bounce_files {
                 let _ = fs::remove_file(path);
             }
@@ -4293,7 +4292,6 @@ impl Maolan {
                     let copy_samples = copy_frames * output_channels;
                     buf[..copy_samples].copy_from_slice(&samples[..copy_samples]);
                 } else if wav_channels == 1 {
-                    // Mono source: duplicate to all output channels.
                     for ch in 0..output_channels {
                         let dst_offset = ch;
                         for frame in 0..copy_frames {
@@ -4321,8 +4319,7 @@ impl Maolan {
                     false,
                 )?
             };
-            // Normalization and master limiter apply only to mixdown, not stems,
-            // because stems must preserve relative levels.
+
             for format in &export_formats {
                 let stem_file = stem_dir.join(format!(
                     "{}_{}.{}",
@@ -4353,7 +4350,7 @@ impl Maolan {
                 stem_dir.display()
             )),
         );
-        // Clean up temp bounce files.
+
         for path in &temp_bounce_files {
             let _ = fs::remove_file(path);
         }
@@ -4609,10 +4606,6 @@ impl Maolan {
             .unwrap_or_else(|| ticks_to_samples(max_tick))
             .max(1);
 
-        // Normalize absolute timeline timestamps to clip-relative coordinates.
-        // Recorded clips used to write absolute samples; imported files are
-        // already relative (start at 0).  We detect absolute files by checking
-        // whether every event is at or after clip_start.
         let min_sample = notes
             .iter()
             .map(|n| n.start_sample)
@@ -5123,17 +5116,16 @@ impl Maolan {
             }
             let is_selected = self.selected_clap_plugins.contains(&plugin.path);
 
-            // Build capability indicators
             let mut capability_icons = String::new();
             if let Some(caps) = &plugin.capabilities {
                 if caps.has_gui {
-                    capability_icons.push_str("\u{1F5BC} "); // 🖼 Frame with Picture
+                    capability_icons.push_str("\u{1F5BC} ");
                 }
                 if caps.has_params {
-                    capability_icons.push_str("\u{2699} "); // ⚙ Gear
+                    capability_icons.push_str("\u{2699} ");
                 }
                 if caps.has_state {
-                    capability_icons.push_str("\u{1F4BE} "); // 💾 Floppy Disk
+                    capability_icons.push_str("\u{1F4BE} ");
                 }
             }
 
@@ -5334,17 +5326,16 @@ impl Maolan {
             }
             let is_selected = self.selected_clap_plugins.contains(&plugin.path);
 
-            // Build capability indicators
             let mut capability_icons = String::new();
             if let Some(caps) = &plugin.capabilities {
                 if caps.has_gui {
-                    capability_icons.push_str("\u{1F5BC} "); // 🖼 Frame with Picture
+                    capability_icons.push_str("\u{1F5BC} ");
                 }
                 if caps.has_params {
-                    capability_icons.push_str("\u{2699} "); // ⚙ Gear
+                    capability_icons.push_str("\u{2699} ");
                 }
                 if caps.has_state {
-                    capability_icons.push_str("\u{1F4BE} "); // 💾 Floppy Disk
+                    capability_icons.push_str("\u{1F4BE} ");
                 }
             }
 
@@ -7488,6 +7479,44 @@ mod tests {
     }
 
     #[test]
+    fn session_io_open_folder_selected_missing_removes_from_recent() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("maolan_missing_session_{unique}"));
+        // Ensure the path does not exist
+        let _ = fs::remove_dir_all(&path);
+        let mut app = Maolan {
+            ..Maolan::default()
+        };
+        // Pre-populate the recent list with the missing path
+        app.remember_recent_session_path(&path);
+        assert!(
+            app.menu
+                .recent_session_paths()
+                .contains(&path.to_string_lossy().to_string())
+        );
+
+        let _ = app.update(Message::OpenFolderSelected(Some(path.clone())));
+
+        assert!(
+            !app.menu
+                .recent_session_paths()
+                .contains(&path.to_string_lossy().to_string()),
+            "missing session should be removed from recent"
+        );
+        assert!(
+            app.state
+                .blocking_read()
+                .message
+                .contains("no longer exists"),
+            "message should indicate session is missing"
+        );
+        assert!(app.session_dir.is_none());
+    }
+
+    #[test]
     fn transport_set_loop_and_punch_range_normalize_invalid_ranges() {
         let mut app = Maolan::default();
 
@@ -7808,7 +7837,6 @@ mod tests {
 
     #[test]
     fn export_format_extension_returns_correct_extensions() {
-        // Extensions are returned without the leading dot
         assert_eq!(Maolan::export_format_extension(ExportFormat::Wav), "wav");
         assert_eq!(Maolan::export_format_extension(ExportFormat::Mp3), "mp3");
         assert_eq!(Maolan::export_format_extension(ExportFormat::Ogg), "ogg");
@@ -7871,7 +7899,7 @@ mod tests {
     fn samples_per_beat_calculation() {
         let app = Maolan::default();
         let spp = app.samples_per_beat();
-        // At 120 BPM and 48kHz, samples per beat = 48000 * 60 / 120 = 24000
+
         assert!(spp > 0.0);
     }
 
@@ -7879,13 +7907,12 @@ mod tests {
     fn samples_per_bar_calculation() {
         let app = Maolan::default();
         let spb = app.samples_per_bar();
-        // At 120 BPM, 4/4 time, 48kHz, samples per bar = 48000 * 60 / 120 * 4 = 96000
+
         assert!(spb > 0.0);
     }
 
     #[test]
     fn zoom_slider_visible_bars_roundtrip() {
-        // Test that visible_bars_to_zoom_slider and zoom_slider_to_visible_bars are consistent
         for i in 0..=20 {
             let position = i as f32 / 20.0;
             let visible = zoom_slider_to_visible_bars(position);
@@ -7929,7 +7956,7 @@ mod tests {
     fn snap_interval_samples_returns_positive_value() {
         let app = Maolan::default();
         let interval = app.snap_interval_samples();
-        // Should return a positive number
+
         assert!(interval > 0);
     }
 
@@ -7937,7 +7964,7 @@ mod tests {
     fn snap_sample_to_bar_returns_valid_sample() {
         let app = Maolan::default();
         let sample = app.snap_sample_to_bar(1000.0);
-        assert!(sample < 10000); // Should snap to a reasonable value
+        assert!(sample < 10000);
     }
 
     #[test]

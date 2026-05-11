@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn toolbar_new_creates_instance() {
         let toolbar = Toolbar::new();
-        // Just verify it creates without panicking
+
         let _ = &toolbar;
     }
 
@@ -290,7 +290,6 @@ mod tests {
 
     #[test]
     fn button_style_returns_style_fn() {
-        // Just verify the function doesn't panic
         let _style_fn = Toolbar::button_style(true, false, Color::TRANSPARENT);
     }
 }

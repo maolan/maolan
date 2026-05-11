@@ -457,7 +457,7 @@ pub struct StateData {
     pub cursor: Point,
     pub editor_cursor: Option<Point>,
     pub cut_preview_active: bool,
-    pub cut_indicator: Option<(f32, f32, f32)>, // (x, y_top, height)
+    pub cut_indicator: Option<(f32, f32, f32)>,
     pub mouse_left_down: bool,
     pub mouse_right_down: bool,
     pub clip_marquee_start: Option<Point>,
@@ -543,7 +543,7 @@ pub struct StateData {
     pub track_group_template_save_dialog: Option<TrackGroupTemplateSaveDialog>,
     pub track_marker_dialog: Option<TrackMarkerDialog>,
     pub template_save_dialog: Option<TemplateSaveDialog>,
-    pub pending_track_template_loads: Vec<(String, String)>, // [(track_name, template_name)]
+    pub pending_track_template_loads: Vec<(String, String)>,
     pub piano: Option<PianoData>,
     pub pitch_correction: Option<PitchCorrectionData>,
     pub pitch_correction_selected_points: HashSet<usize>,
@@ -958,7 +958,7 @@ mod tests {
             vec![24, 16, 32],
             vec![48000],
         );
-        assert_eq!(device.preferred_bits(), Some(32)); // Sorted descending
+        assert_eq!(device.preferred_bits(), Some(32));
     }
 
     #[test]
@@ -1015,7 +1015,7 @@ mod tests {
     #[test]
     fn state_data_default_creates_instance() {
         let data: StateData = Default::default();
-        assert!(!data.tracks.is_empty() || data.tracks.is_empty()); // Just verify it creates
+        assert!(!data.tracks.is_empty() || data.tracks.is_empty());
     }
 
     #[test]
@@ -1027,7 +1027,7 @@ mod tests {
     #[test]
     fn default_audio_backend_returns_valid() {
         let backend = default_audio_backend();
-        // Just verify it doesn't panic and returns a valid backend
+
         let _ = backend;
     }
 }

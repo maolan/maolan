@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn kernel_midi_label_extracts_basename() {
         let label = kernel_midi_label("/dev/umidi0.0");
-        // Should extract basename without path
+
         assert!(!label.contains('/'));
     }
 
@@ -167,8 +167,7 @@ mod tests {
     #[test]
     fn linux_alsa_label_returns_none_on_non_linux() {
         let result = linux_alsa_label("midiC0D0");
-        // On Linux this would try to read /proc/asound, on other platforms returns None
-        // Test that function doesn't panic
+
         let _ = result;
     }
 
