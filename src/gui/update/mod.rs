@@ -2164,10 +2164,10 @@ impl Maolan {
             let local_y = (position.y - y_offset).max(0.0);
             let local_x = position.x.max(0.0);
             let layout = track.lane_layout();
-            let lane_clip_h = (layout.lane_height - 6.0).max(12.0);
+            let lane_clip_h = layout.lane_height.max(12.0);
 
             if track.audio.ins > 0 {
-                let audio_top = track.lane_top(Kind::Audio, 0) + 3.0;
+                let audio_top = track.lane_top(Kind::Audio, 0);
                 let audio_bottom = audio_top + lane_clip_h;
                 if local_y >= audio_top && local_y <= audio_bottom {
                     let (take_idx, take_count) = Self::assign_take_lanes(
@@ -2219,7 +2219,7 @@ impl Maolan {
                 let midi_lane = track
                     .lane_index_at_y(Kind::MIDI, local_y)
                     .min(track.midi.ins.saturating_sub(1));
-                let midi_top = track.lane_top(Kind::MIDI, midi_lane) + 3.0;
+                let midi_top = track.lane_top(Kind::MIDI, midi_lane);
                 let midi_bottom = midi_top + lane_clip_h;
                 if local_y >= midi_top && local_y <= midi_bottom {
                     let (take_idx, take_count) = Self::assign_take_lanes(
@@ -2285,17 +2285,17 @@ impl Maolan {
                 for track in state.tracks.iter().filter(|t| t.name != METRONOME_TRACK_ID) {
                     if track.name == track_name {
                         let layout = track.lane_layout();
-                        let lane_clip_h = (layout.lane_height - 6.0).max(12.0);
+                        let lane_clip_h = layout.lane_height.max(12.0);
                         let lane_top = match kind {
                             maolan_engine::kind::Kind::Audio => {
-                                track.lane_top(maolan_engine::kind::Kind::Audio, 0) + 3.0
+                                track.lane_top(maolan_engine::kind::Kind::Audio, 0)
                             }
                             maolan_engine::kind::Kind::MIDI => {
                                 let local_y = (position.y - y_offset).max(0.0);
                                 let midi_lane = track
                                     .lane_index_at_y(maolan_engine::kind::Kind::MIDI, local_y)
                                     .min(track.midi.ins.saturating_sub(1));
-                                track.lane_top(maolan_engine::kind::Kind::MIDI, midi_lane) + 3.0
+                                track.lane_top(maolan_engine::kind::Kind::MIDI, midi_lane)
                             }
                         };
                         indicator = Some((position.x, y_offset + lane_top, lane_clip_h));

@@ -615,10 +615,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 .unwrap_or(clip.start as f32);
 
             let lane = 0;
-            let lane_top_base = track.lane_top(Kind::Audio, lane) + 3.0;
-            let lane_top = lane_top_base + 1.0;
+            let lane_top = track.lane_top(Kind::Audio, lane) + 4.0;
             let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
-            let clip_height = (lane_clip_height - 2.0).max(8.0);
+            let clip_height = (lane_height - 4.0).max(8.0);
             let display_clip_label =
                 AudioClipWidget::<Message>::label_for_width(&clip_label, clip_width);
             let audio_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
@@ -826,10 +825,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 })
                 .unwrap_or(clip.start as f32);
             let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
-            let lane_top_base = track.lane_top(Kind::MIDI, lane) + 3.0;
-            let lane_top = lane_top_base + 1.0;
+            let lane_top = track.lane_top(Kind::MIDI, lane) + 4.0;
             let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
-            let clip_height = (lane_clip_height - 2.0).max(8.0);
+            let clip_height = (lane_height - 4.0).max(8.0);
             let display_clip_label =
                 MIDIClipWidget::<Message>::label_for_width(&clip_label, clip_width);
             let midi_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
@@ -1059,7 +1057,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             }
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
-                        let clip_height = lane_clip_height;
+                        let clip_height = (lane_height - 3.0).max(12.0);
                         let lane_top = if active_target_valid || track.audio.ins > 0 {
                             track.lane_top(Kind::Audio, 0) + 3.0
                         } else if track.midi.ins > 0 {
@@ -1170,7 +1168,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         );
                         clips.push(
                             pin(MIDIClipWidget::new(widget_midi_clip_data(source_clip))
-                                .with_size(clip_width, lane_clip_height)
+                                .with_size(clip_width, (lane_height - 3.0).max(12.0))
                                 .with_label(display_clip_label)
                                 .preview(
                                     if active_target_valid {

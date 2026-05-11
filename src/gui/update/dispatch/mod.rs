@@ -6643,13 +6643,13 @@ impl Maolan {
                             .filter(|track| track.name != METRONOME_TRACK_ID)
                         {
                             let layout = track.lane_layout();
-                            let lane_clip_h = (layout.lane_height - 6.0).max(12.0);
+                            let lane_clip_h = layout.lane_height.max(12.0);
                             for (clip_idx, clip) in track.audio.clips.iter().enumerate() {
                                 let cx = clip.start as f32 * pps;
                                 let cw = (clip.length as f32 * pps).max(12.0);
                                 let lane =
                                     clip.input_channel.min(track.audio.ins.saturating_sub(1));
-                                let cy = y_offset + track.lane_top(Kind::Audio, lane) + 3.0;
+                                let cy = y_offset + track.lane_top(Kind::Audio, lane);
                                 let ch = lane_clip_h.max(1.0);
                                 let intersects =
                                     cx < x + w && cx + cw > x && cy < y + h && cy + ch > y;
@@ -6665,7 +6665,7 @@ impl Maolan {
                                 let cx = clip.start as f32 * pps;
                                 let cw = (clip.length as f32 * pps).max(12.0);
                                 let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
-                                let cy = y_offset + track.lane_top(Kind::MIDI, lane) + 3.0;
+                                let cy = y_offset + track.lane_top(Kind::MIDI, lane);
                                 let ch = lane_clip_h.max(1.0);
                                 let intersects =
                                     cx < x + w && cx + cw > x && cy < y + h && cy + ch > y;

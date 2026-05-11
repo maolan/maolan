@@ -75,6 +75,7 @@ struct VcaStripViewData {
 
 pub(super) fn track_context_menu_overlay(
     state: &StateData,
+    max_y: f32,
 ) -> Option<(Point, Element<'static, Message>)> {
     let menu_state = state.track_context_menu.as_ref()?;
     let track = state
@@ -324,6 +325,8 @@ pub(super) fn track_context_menu_overlay(
         ));
     }
 
+    let menu_height = items.len() as f32 * 32.0 + 10.0;
+
     let panel = container(Column::with_children(items).spacing(2))
         .width(Length::Fill)
         .padding(6)
@@ -340,11 +343,15 @@ pub(super) fn track_context_menu_overlay(
             }
         })
         .into();
+    let mut y = (top + menu_state.anchor.y).max(0.0);
+    if y + menu_height > max_y {
+        y = (max_y - menu_height).max(0.0);
+    }
 
     Some((
         Point::new(
             menu_state.anchor.x.max(0.0),
-            (top + menu_state.anchor.y).max(0.0),
+            y,
         ),
         panel,
     ))
