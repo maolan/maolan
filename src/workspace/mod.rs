@@ -405,7 +405,7 @@ impl Workspace {
             self.tempo.height() + self.ruler.height() + tracks_total_height;
         let track_context_menu_overlay = {
             let state = self.state.blocking_read();
-            tracks::track_context_menu_overlay(&state)
+            tracks::track_context_menu_overlay(&state, track_viewport_height - 36.0)
         };
         let clip_context_menu_overlay = {
             let state = self.state.blocking_read();

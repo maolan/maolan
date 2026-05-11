@@ -272,12 +272,11 @@ impl Track {
         TRACK_FOLDER_HEADER_HEIGHT
             + (lanes as f32 * TRACK_SUBTRACK_MIN_HEIGHT)
             + ((lanes.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP)
-            + 8.0
     }
 
     pub fn lane_layout(&self) -> TrackLaneLayout {
         let total_lanes = self.total_lane_count().max(1);
-        let available = (self.height - TRACK_FOLDER_HEADER_HEIGHT - 8.0).max(0.0);
+        let available = (self.height - TRACK_FOLDER_HEADER_HEIGHT).max(0.0);
         let gaps = (total_lanes.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP;
         let lane_height = ((available - gaps) / total_lanes as f32).max(TRACK_SUBTRACK_MIN_HEIGHT);
         TrackLaneLayout {
