@@ -94,6 +94,7 @@ pub mod state_track {
     pub const TRACK_FOLDER_HEADER_HEIGHT: f32 = 24.0;
     pub const TRACK_SUBTRACK_GAP: f32 = 2.0;
     pub const TRACK_SUBTRACK_MIN_HEIGHT: f32 = 40.0;
+    pub const TRACK_MIN_HEIGHT: f32 = 28.0;
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -186,7 +187,6 @@ pub mod workspace_mixer {
     pub const PAN_SLIDER_WIDTH: f32 = 52.0;
     pub const PAN_ROW_HEIGHT: f32 = 12.0;
     pub const STRIP_NAME_CHAR_PX: f32 = 6.3;
-    pub const STRIP_NAME_SIDE_PADDING: f32 = 4.0;
     pub const METER_BAR_WIDTH: f32 = 3.0;
     pub const METER_BAR_GAP: f32 = 2.0;
     pub const METER_PAD_X: f32 = 3.0;

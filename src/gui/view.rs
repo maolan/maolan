@@ -9,8 +9,8 @@ use crate::{
 use iced::{
     Border, Color, Length,
     widget::{
-        Stack, button, column, container, progress_bar, row, scrollable, text, text_editor,
-        text_input,
+        Stack, button, column, container, pick_list, progress_bar, row, scrollable, text,
+        text_editor, text_input,
     },
 };
 
@@ -214,6 +214,24 @@ impl Maolan {
                     let show_track_marker_dialog = state.track_marker_dialog.is_some();
                     let diagnostics_report = state.diagnostics_report.clone();
                     let status_message = state.message.clone();
+                    let plugin_graph_track = state.plugin_graph_track.clone();
+                    let plugin_graph_clip = state.plugin_graph_clip.clone();
+                    let track_names: Vec<String> = state
+                        .tracks
+                        .iter()
+                        .filter(|t| t.name != METRONOME_TRACK_ID)
+                        .map(|t| t.name.clone())
+                        .collect();
+                    let clip_header = plugin_graph_clip.as_ref().map(|target| {
+                        let clip_label = state
+                            .tracks
+                            .iter()
+                            .find(|t| t.name == target.track_name)
+                            .and_then(|t| t.audio.clips.get(target.clip_idx))
+                            .map(|c| c.name.clone())
+                            .unwrap_or_else(|| format!("clip {}", target.clip_idx));
+                        format!("Clip: {} / {}", target.track_name, clip_label)
+                    });
                     drop(state);
 
                     let view = match view_kind {
@@ -395,9 +413,22 @@ impl Maolan {
                         playhead_beat,
                     }));
                     if matches!(view_kind, View::TrackPlugins) {
+                        let track_selector: iced::Element<'_, Message> =
+                            if let Some(ref header) = clip_header {
+                                text(header.clone()).into()
+                            } else {
+                                pick_list(
+                                    track_names,
+                                    plugin_graph_track,
+                                    Message::OpenTrackPlugins,
+                                )
+                                .placeholder("Select track...")
+                                .into()
+                            };
                         content = content.push(
                             container(
                                 row![
+                                    track_selector,
                                     button("Plugin List")
                                         .on_press(Message::Show(Show::TrackPluginList))
                                 ]

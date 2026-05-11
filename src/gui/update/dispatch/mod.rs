@@ -1,4 +1,5 @@
 use super::*;
+use crate::consts::state_track::TRACK_MIN_HEIGHT;
 use crate::consts::widget_piano::PITCH_MAX;
 #[cfg(unix)]
 use maolan_engine::message::PluginGraphNode;
@@ -2402,8 +2403,7 @@ impl Maolan {
                                 && let Some(track) =
                                     state.tracks.iter_mut().find(|t| &t.name == name)
                             {
-                                let min_h = track.min_height_for_layout().max(60.0);
-                                track.height = height.max(min_h);
+                                track.height = height.max(TRACK_MIN_HEIGHT);
                             }
                             if let Some((audio_backup, midi_backup, render_clip)) =
                                 self.pending_track_freeze_restore.remove(name)
@@ -3363,7 +3363,7 @@ impl Maolan {
                                         );
                                     }
                                 }
-                                track.height = track.min_height_for_layout().max(60.0);
+                                track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
                                 state.message = format!(
                                     "Added {} CLAP automation lanes on '{}'",
                                     parameters.len(),
@@ -3404,7 +3404,7 @@ impl Maolan {
                                         );
                                     }
                                 }
-                                track.height = track.min_height_for_layout().max(60.0);
+                                track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
                                 state.message = format!(
                                     "Added {} VST3 automation lanes on '{}'",
                                     parameters.len(),
@@ -3605,7 +3605,7 @@ impl Maolan {
                                             );
                                         }
                                     }
-                                    track.height = track.min_height_for_layout().max(60.0);
+                                    track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
                                     state.message = format!(
                                         "Added {} LV2 automation lanes on '{}'",
                                         controls.len(),
@@ -4477,7 +4477,7 @@ impl Maolan {
                             lane.visible = true;
                         }
                     }
-                    track.height = track.min_height_for_layout().max(60.0);
+                    track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
                 }
             }
             Message::TrackAutomationCycleMode { ref track_name } => {
@@ -4549,7 +4549,7 @@ impl Maolan {
                                 points: vec![],
                             });
                     }
-                    track.height = track.min_height_for_layout().max(60.0);
+                    track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
                 }
             }
             Message::TrackAutomationLaneHover {
@@ -6000,8 +6000,7 @@ impl Maolan {
                         let delta = position.y - initial_mouse_y;
                         if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
                         {
-                            let min_h = track.min_height_for_layout();
-                            track.height = (initial_height + delta).clamp(min_h, 600.0);
+                            track.height = (initial_height + delta).clamp(TRACK_MIN_HEIGHT, 600.0);
                         }
                     }
                     Some(Resizing::TrackMarker {

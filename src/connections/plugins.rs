@@ -111,14 +111,6 @@ impl Graph {
         )
     }
 
-    fn trim_label_to_width(label: &str, width_px: f32) -> String {
-        let max_chars = ((width_px - 12.0) / 7.2).floor() as i32;
-        if max_chars <= 0 {
-            return String::new();
-        }
-        label.chars().take(max_chars as usize).collect()
-    }
-
     fn edge_port_y(
         y: f32,
         h: f32,
@@ -836,27 +828,6 @@ impl canvas::Program<Message> for Graph {
             };
             let active_connecting = data.plugin_graph_connecting.as_ref();
 
-            let track_header = if let Some(target) = data.plugin_graph_clip.as_ref() {
-                let clip_label = track
-                    .audio
-                    .clips
-                    .get(target.clip_idx)
-                    .map(|clip| clip.name.clone())
-                    .unwrap_or_else(|| format!("clip {}", target.clip_idx));
-                format!("Clip: {} / {}", track.name, clip_label)
-            } else {
-                format!("Track: {}", track.name)
-            };
-            frame.fill_text(Text {
-                content: Self::trim_label_to_width(&track_header, bounds.width),
-                position: Point::new(bounds.width / 2.0, 16.0),
-                color: Color::WHITE,
-                size: 16.0.into(),
-                align_x: Horizontal::Center.into(),
-                align_y: Vertical::Center,
-                ..Default::default()
-            });
-
             let in_rect = Self::track_input_rect(bounds);
             let out_rect = Self::track_output_rect(bounds);
             let left_box = Path::rectangle(in_rect.position(), in_rect.size());
@@ -1437,18 +1408,6 @@ mod tests {
         let height_1 = Graph::required_height_for_ports(1, 6.0);
         let height_4 = Graph::required_height_for_ports(4, 6.0);
         assert!(height_4 > height_1);
-    }
-
-    #[test]
-    fn trim_label_to_width_short_label_unchanged() {
-        let label = Graph::trim_label_to_width("Test", 1000.0);
-        assert_eq!(label, "Test");
-    }
-
-    #[test]
-    fn trim_label_to_width_long_label_truncated() {
-        let label = Graph::trim_label_to_width("Very Long Plugin Name That Exceeds Width", 50.0);
-        assert!(label.len() < "Very Long Plugin Name That Exceeds Width".len());
     }
 
     #[test]

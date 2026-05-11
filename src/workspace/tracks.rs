@@ -1,7 +1,7 @@
 use super::VisibleTrackWindow;
 use crate::{
     consts::state_ids::METRONOME_TRACK_ID,
-    consts::state_track::TRACK_SUBTRACK_GAP,
+    consts::state_track::{TRACK_FOLDER_HEADER_HEIGHT, TRACK_SUBTRACK_GAP},
     menu,
     message::{Message, MidiLaneChannelSelection, TrackAutomationTarget},
     state::{State, StateData, TrackLaneLayout},
@@ -557,7 +557,7 @@ impl Tracks {
         };
         let inner_available_height = (height - inner_vertical_padding).max(16.0);
         let body_height = (inner_available_height
-            - layout.header_height
+            - TRACK_FOLDER_HEADER_HEIGHT
             - resize_handle_height
             - outer_spacing
             - lane_rows_height)
@@ -585,7 +585,7 @@ impl Tracks {
                 .align_y(Alignment::Center)
                 .spacing(6),
             )
-            .height(Length::Fixed(layout.header_height))
+            .height(Length::Fixed(TRACK_FOLDER_HEADER_HEIGHT))
             .padding([2, 6])
             .style(move |_theme| container::Style {
                 background: Some(Background::Color(if selected {

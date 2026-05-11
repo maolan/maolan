@@ -1,4 +1,5 @@
 use super::*;
+use crate::consts::state_track::TRACK_MIN_HEIGHT;
 
 impl Maolan {
     pub(super) fn handle_response_track_action(&mut self, action: &Action) -> bool {
@@ -178,7 +179,7 @@ impl Maolan {
                 let mut state = self.state.blocking_write();
                 if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
                     track.audio.ins = track.audio.ins.saturating_add(1);
-                    track.height = track.height.max(track.min_height_for_layout().max(60.0));
+                    track.height = track.height.max(TRACK_MIN_HEIGHT);
                 }
                 true
             }
@@ -211,7 +212,7 @@ impl Maolan {
                     });
                     if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *name) {
                         track.audio.ins -= 1;
-                        track.height = track.height.max(track.min_height_for_layout().max(60.0));
+                        track.height = track.height.max(TRACK_MIN_HEIGHT);
                     }
                 }
                 true
