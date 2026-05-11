@@ -11,7 +11,7 @@ use crate::state::AudioBackendOption;
 use crate::state::AudioDeviceOption;
 use std::fmt;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Show {
     AddTrack,
     TrackPluginList,
@@ -25,6 +25,8 @@ pub enum Show {
     SaveAs,
     SaveTemplateAs,
     Open,
+    About,
+    TrackColor { track_name: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1204,6 +1206,12 @@ pub enum Message {
 
     Undo,
     Redo,
+    OpenUrl(String),
+    TrackColorChanged {
+        track_name: String,
+        color: Option<iced::Color>,
+    },
+    TrackColorClear(String),
 }
 
 #[derive(Debug, Clone)]

@@ -294,6 +294,7 @@ impl Menu {
                         shortcuts_pane_visible,
                         Message::ToggleShortcutsPane
                     )),
+                    (menu_item("About", Message::Show(Show::About))),
                 ))
             }),
         )

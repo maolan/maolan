@@ -322,6 +322,72 @@ impl Maolan {
         self.sync_pitch_correction_realtime()
     }
 
+    fn push_track_color_history(&mut self, track_name: String, color: Option<iced::Color>) {
+        self.track_color_undo
+            .push(super::TrackColorHistoryEntry { track_name, color });
+        self.track_color_redo.clear();
+    }
+
+    fn undo_track_color_change(&mut self) -> Task<Message> {
+        let Some(previous) = self.track_color_undo.pop() else {
+            return Task::none();
+        };
+        let mut state = self.state.blocking_write();
+        let Some(track) = state
+            .tracks
+            .iter_mut()
+            .find(|t| t.name == previous.track_name)
+        else {
+            return Task::none();
+        };
+        let current_color = track.color;
+        self.track_color_redo.push(super::TrackColorHistoryEntry {
+            track_name: previous.track_name.clone(),
+            color: current_color,
+        });
+        track.color = previous.color;
+        state.message = format!("Undid color change for {}", previous.track_name);
+        drop(state);
+        if self.track_color_undo.is_empty() {
+            self.track_color_dirty = false;
+        }
+        // Close the color picker modal if it's open for this track
+        if matches!(
+            self.modal,
+            Some(super::Show::TrackColor { ref track_name }) if track_name == &previous.track_name
+        ) {
+            self.modal = None;
+        }
+        Task::none()
+    }
+
+    fn redo_track_color_change(&mut self) -> Task<Message> {
+        let Some(next) = self.track_color_redo.pop() else {
+            return Task::none();
+        };
+        let mut state = self.state.blocking_write();
+        let Some(track) = state.tracks.iter_mut().find(|t| t.name == next.track_name) else {
+            return Task::none();
+        };
+        let current_color = track.color;
+        self.track_color_undo.push(super::TrackColorHistoryEntry {
+            track_name: next.track_name.clone(),
+            color: current_color,
+        });
+        track.color = next.color;
+        state.message = format!("Redid color change for {}", next.track_name);
+        drop(state);
+        self.track_color_dirty = true;
+        // Close the color picker modal if it's open for this track
+        if matches!(
+            self.modal,
+            Some(super::Show::TrackColor { ref track_name }) if track_name == &next.track_name
+        ) {
+            self.modal = None;
+        }
+        Task::none()
+    }
+
     fn quantize_meter_db(level_db: f32) -> f32 {
         let step = METER_QUANTIZE_STEP_DB;
         ((level_db / step).round() * step).clamp(-90.0, 20.0)

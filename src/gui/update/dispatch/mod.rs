@@ -262,7 +262,7 @@ impl Maolan {
     }
 
     pub(super) fn request_window_close(&mut self) -> Task<Message> {
-        if self.has_unsaved_changes {
+        if self.is_dirty() {
             self.modal = Some(Show::UnsavedChanges);
             self.state.blocking_write().message =
                 "Unsaved changes detected. Save, discard, or cancel.".to_string();
@@ -307,6 +307,8 @@ impl Maolan {
                 | Message::ClipToggleFade { .. }
                 | Message::ClipSetMuted { .. }
                 | Message::ClipOpenPitchCorrection { .. }
+                | Message::UngroupClip { .. }
+                | Message::GroupSelectedClips
         ) {
             self.state.blocking_write().clip_context_menu = None;
         }
@@ -324,6 +326,10 @@ impl Maolan {
                 | Message::TrackSetVcaMaster { .. }
                 | Message::TrackMidiLearnArm { .. }
                 | Message::TrackMidiLearnClear { .. }
+                | Message::TrackAddReturn(_)
+                | Message::TrackAddSend(_)
+                | Message::Request(_)
+                | Message::Show(_)
         ) {
             self.state.blocking_write().track_context_menu = None;
         }
@@ -352,6 +358,16 @@ impl Maolan {
                     return self.send(Action::TrackOfflineBounceCancelAll);
                 }
                 self.modal = None;
+            }
+            Message::OpenUrl(ref url) => {
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("open").arg(url).spawn();
+                #[cfg(target_os = "windows")]
+                let _ = std::process::Command::new("cmd")
+                    .args(["/c", "start", "", url])
+                    .spawn();
+                #[cfg(all(unix, not(target_os = "macos")))]
+                let _ = std::process::Command::new("xdg-open").arg(url).spawn();
             }
             Message::ConfirmCloseSave => {
                 self.pending_exit_after_save = true;
@@ -2405,6 +2421,12 @@ impl Maolan {
                             {
                                 track.height = height.max(TRACK_MIN_HEIGHT);
                             }
+                            if let Some(color) = state.pending_track_colors.remove(name)
+                                && let Some(track) =
+                                    state.tracks.iter_mut().find(|t| &t.name == name)
+                            {
+                                track.color = Some(color);
+                            }
                             if let Some((audio_backup, midi_backup, render_clip)) =
                                 self.pending_track_freeze_restore.remove(name)
                                 && let Some(track) =
@@ -3605,7 +3627,8 @@ impl Maolan {
                                             );
                                         }
                                     }
-                                    track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
+                                    track.height =
+                                        track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
                                     state.message = format!(
                                         "Added {} LV2 automation lanes on '{}'",
                                         controls.len(),
@@ -4479,6 +4502,31 @@ impl Maolan {
                     }
                     track.height = track.min_height_for_layout().max(TRACK_MIN_HEIGHT);
                 }
+            }
+            Message::TrackColorChanged {
+                ref track_name,
+                color,
+            } => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.name == track_name.as_str())
+                {
+                    track.color = color;
+                }
+                self.track_color_dirty = true;
+            }
+            Message::TrackColorClear(ref track_name) => {
+                let mut state = self.state.blocking_write();
+                if let Some(track) = state
+                    .tracks
+                    .iter_mut()
+                    .find(|track| track.name == track_name.as_str())
+                {
+                    track.color = None;
+                }
+                self.track_color_dirty = true;
             }
             Message::TrackAutomationCycleMode { ref track_name } => {
                 let mut state = self.state.blocking_write();

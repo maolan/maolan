@@ -156,7 +156,7 @@ impl Maolan {
                 Task::none()
             }
             Message::AutosaveSnapshotTick => {
-                if !self.has_unsaved_changes
+                if !self.is_dirty()
                     || self.session_restore_in_progress
                     || self.pending_save_path.is_some()
                 {
