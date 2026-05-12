@@ -1,7 +1,7 @@
 use super::*;
 use crate::consts::state_track::TRACK_MIN_HEIGHT;
 use crate::consts::widget_piano::PITCH_MAX;
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::message::PluginGraphNode;
 mod core;
 mod plugins;
@@ -3740,7 +3740,6 @@ impl Maolan {
                                 plugin.state = Some(Self::lv2_state_to_json(lv2_state));
                             }
                         }
-                        #[cfg(all(unix, not(target_os = "macos")))]
                         Action::TrackPluginGraph {
                             track_name,
                             plugins,

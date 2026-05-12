@@ -1,4 +1,3 @@
-#[cfg(all(unix, not(target_os = "macos")))]
 pub use crate::consts::platform_caps::SUPPORTS_PLUGIN_GRAPH;
 pub use crate::consts::platform_caps::{
     HAS_SEPARATE_AUDIO_INPUT_DEVICE, REQUIRE_SAMPLE_RATES_FOR_HW_READY,

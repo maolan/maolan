@@ -453,7 +453,6 @@ impl Maolan {
             } else {
                 self.open_lv2_plugin_ui_task(track_name, instance_id)
             }),
-            #[cfg(all(unix, not(target_os = "macos")))]
             Message::ClipConnectPlugin {
                 ref from_node,
                 from_port,
