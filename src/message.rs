@@ -914,7 +914,6 @@ pub enum Message {
         track_idx: String,
         clip_idx: usize,
     },
-    #[cfg(all(unix, not(target_os = "macos")))]
     ClipConnectPlugin {
         from_node: maolan_engine::message::PluginGraphNode,
         from_port: usize,

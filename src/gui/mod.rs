@@ -466,10 +466,8 @@ pub struct Maolan {
     pending_add_lv2_automation_uris: HashSet<(String, String)>,
     #[cfg(all(unix, not(target_os = "macos")))]
     pending_add_lv2_automation_instances: HashSet<(String, usize)>,
-    #[cfg(all(unix, not(target_os = "macos")))]
     pending_add_vst3_automation_paths: HashSet<(String, String)>,
     pending_add_vst3_automation_instances: HashSet<(String, usize)>,
-    #[cfg(all(unix, not(target_os = "macos")))]
     pending_add_clap_automation_paths: HashSet<(String, String)>,
     pending_add_clap_automation_instances: HashSet<(String, usize)>,
     midi_clip_previews: MidiClipPreviewMap,
@@ -760,10 +758,8 @@ impl Default for Maolan {
             pending_add_lv2_automation_uris: HashSet::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
             pending_add_lv2_automation_instances: HashSet::new(),
-            #[cfg(all(unix, not(target_os = "macos")))]
             pending_add_vst3_automation_paths: HashSet::new(),
             pending_add_vst3_automation_instances: HashSet::new(),
-            #[cfg(all(unix, not(target_os = "macos")))]
             pending_add_clap_automation_paths: HashSet::new(),
             pending_add_clap_automation_instances: HashSet::new(),
             midi_clip_previews: HashMap::new(),
@@ -4662,7 +4658,6 @@ impl Maolan {
         Ok((rel, length.max(1)))
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     fn plugin_node_to_json(
         node: &maolan_engine::message::PluginGraphNode,
         id_to_index: &std::collections::HashMap<usize, usize>,
@@ -4686,7 +4681,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[allow(dead_code)]
     fn plugin_node_from_json_with_runtime_nodes(
         v: &Value,
         runtime_nodes: &[maolan_engine::message::PluginGraphNode],
@@ -4723,7 +4718,6 @@ impl Maolan {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     fn plugin_graph_snapshot_to_json(
         previous_graph: Option<&Value>,
         plugins: &[maolan_engine::message::PluginGraphPlugin],
@@ -4826,6 +4820,7 @@ impl Maolan {
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
+    #[allow(dead_code)]
     fn plugin_graph_plugin_from_saved_json(
         instance_id: usize,
         plugin: &Value,
@@ -4921,7 +4916,81 @@ impl Maolan {
         }
     }
 
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    #[allow(dead_code)]
+    fn plugin_graph_plugin_from_saved_json(
+        instance_id: usize,
+        plugin: &Value,
+        vst3_plugins: &[maolan_engine::vst3::Vst3PluginInfo],
+        clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
+    ) -> Option<maolan_engine::message::PluginGraphPlugin> {
+        use maolan_engine::message::{PluginGraphNode, PluginGraphPlugin};
+
+        let uri = plugin.get("uri").and_then(Value::as_str)?.to_string();
+        match plugin.get("format").and_then(Value::as_str) {
+            Some(format) if format.eq_ignore_ascii_case("LV2") => None,
+            Some(format) if format.eq_ignore_ascii_case("VST3") => {
+                let info = vst3_plugins.iter().find(|info| info.path == uri);
+                Some(PluginGraphPlugin {
+                    node: PluginGraphNode::Vst3PluginInstance(instance_id),
+                    instance_id,
+                    format: "VST3".to_string(),
+                    uri: uri.clone(),
+                    plugin_id: info.map(|info| info.id.clone()).unwrap_or_default(),
+                    name: info
+                        .map(|info| info.name.clone())
+                        .unwrap_or_else(|| uri.clone()),
+                    main_audio_inputs: info.map(|info| info.audio_inputs).unwrap_or(0),
+                    main_audio_outputs: info.map(|info| info.audio_outputs).unwrap_or(0),
+                    audio_inputs: info.map(|info| info.audio_inputs).unwrap_or(0),
+                    audio_outputs: info.map(|info| info.audio_outputs).unwrap_or(0),
+                    midi_inputs: info
+                        .map(|info| usize::from(info.has_midi_input))
+                        .unwrap_or(0),
+                    midi_outputs: info
+                        .map(|info| usize::from(info.has_midi_output))
+                        .unwrap_or(0),
+                    state: None,
+                    bypassed: plugin
+                        .get("bypassed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                })
+            }
+            Some(format) if format.eq_ignore_ascii_case("CLAP") => {
+                let info = clap_plugins.iter().find(|info| info.path == uri);
+                let caps = info.and_then(|info| info.capabilities.as_ref());
+                Some(PluginGraphPlugin {
+                    node: PluginGraphNode::ClapPluginInstance(instance_id),
+                    instance_id,
+                    format: "CLAP".to_string(),
+                    uri: uri.clone(),
+                    plugin_id: uri
+                        .split_once("::")
+                        .map(|(_, id)| id.to_string())
+                        .unwrap_or_default(),
+                    name: info
+                        .map(|info| info.name.clone())
+                        .unwrap_or_else(|| uri.clone()),
+                    main_audio_inputs: caps.map(|caps| caps.audio_inputs).unwrap_or(0),
+                    main_audio_outputs: caps.map(|caps| caps.audio_outputs).unwrap_or(0),
+                    audio_inputs: caps.map(|caps| caps.audio_inputs).unwrap_or(0),
+                    audio_outputs: caps.map(|caps| caps.audio_outputs).unwrap_or(0),
+                    midi_inputs: caps.map(|caps| caps.midi_inputs).unwrap_or(0),
+                    midi_outputs: caps.map(|caps| caps.midi_outputs).unwrap_or(0),
+                    state: plugin.get("state").cloned(),
+                    bypassed: plugin
+                        .get("bypassed")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false),
+                })
+            }
+            _ => None,
+        }
+    }
+
     #[cfg(all(unix, not(target_os = "macos")))]
+    #[allow(dead_code)]
     fn plugin_graph_snapshot_from_json(
         graph: Option<&Value>,
         lv2_plugins: &[maolan_engine::lv2::Lv2PluginInfo],
@@ -4980,7 +5049,64 @@ impl Maolan {
         (plugins, connections)
     }
 
-    #[cfg(unix)]
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    #[allow(dead_code)]
+    fn plugin_graph_snapshot_from_json(
+        graph: Option<&Value>,
+        vst3_plugins: &[maolan_engine::vst3::Vst3PluginInfo],
+        clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
+    ) -> maolan_engine::message::PluginGraphSnapshot {
+        let Some(graph) = graph else {
+            return (Vec::new(), Vec::new());
+        };
+        let mut plugins = Vec::new();
+        let mut runtime_nodes = Vec::new();
+        if let Some(plugin_values) = graph.get("plugins").and_then(Value::as_array) {
+            for (idx, plugin) in plugin_values.iter().enumerate() {
+                let Some(saved) = Self::plugin_graph_plugin_from_saved_json(
+                    idx,
+                    plugin,
+                    vst3_plugins,
+                    clap_plugins,
+                ) else {
+                    continue;
+                };
+                runtime_nodes.push(saved.node.clone());
+                plugins.push(saved);
+            }
+        }
+
+        let mut connections = Vec::new();
+        if let Some(connection_values) = graph.get("connections").and_then(Value::as_array) {
+            for connection in connection_values {
+                let Some(from_node) = Self::plugin_node_from_json_with_runtime_nodes(
+                    &connection["from_node"],
+                    &runtime_nodes,
+                ) else {
+                    continue;
+                };
+                let Some(to_node) = Self::plugin_node_from_json_with_runtime_nodes(
+                    &connection["to_node"],
+                    &runtime_nodes,
+                ) else {
+                    continue;
+                };
+                let Some(kind) = Self::kind_from_json(&connection["kind"]) else {
+                    continue;
+                };
+                connections.push(maolan_engine::message::PluginGraphConnection {
+                    from_node,
+                    from_port: connection["from_port"].as_u64().unwrap_or(0) as usize,
+                    to_node,
+                    to_port: connection["to_port"].as_u64().unwrap_or(0) as usize,
+                    kind,
+                });
+            }
+        }
+
+        (plugins, connections)
+    }
+
     fn kind_to_json(kind: Kind) -> Value {
         match kind {
             Kind::Audio => json!("audio"),
@@ -4988,7 +5114,7 @@ impl Maolan {
         }
     }
 
-    #[cfg(unix)]
+    #[allow(dead_code)]
     fn kind_from_json(v: &Value) -> Option<Kind> {
         match v.as_str()? {
             "audio" | "Audio" => Some(Kind::Audio),

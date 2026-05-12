@@ -39,7 +39,6 @@ use crate::{
 };
 use iced::widget::{Id, operation};
 use iced::{Length, Point, Task, mouse};
-#[cfg(all(unix, not(target_os = "macos")))]
 use maolan_engine::message::PluginGraphPlugin;
 use maolan_engine::{
     history,
@@ -334,49 +333,28 @@ impl Maolan {
     }
 
     fn reset_track_plugin_view_state(state: &mut crate::state::StateData) {
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            state.plugin_graph_connecting = None;
-            state.plugin_graph_moving_plugin = None;
-        }
+        state.plugin_graph_connecting = None;
+        state.plugin_graph_moving_plugin = None;
         state.plugin_graph_last_plugin_click = None;
         state.plugin_graph_selected_plugins.clear();
     }
 
     fn open_track_plugins_followup(&self, _track_name: String) -> Task<Message> {
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            self.send(Action::TrackGetPluginGraph {
-                track_name: _track_name,
-            })
-        }
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
-        {
-            Task::perform(async {}, |_| {
-                Message::Show(crate::message::Show::TrackPluginList)
-            })
-        }
+        self.send(Action::TrackGetPluginGraph {
+            track_name: _track_name,
+        })
     }
 
     fn maybe_refresh_plugin_graph_for_track(&self, track_name: &str) -> Option<Task<Message>> {
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            if self.track_has_open_plugin_graph(track_name) {
-                Some(self.send(Action::TrackGetPluginGraph {
-                    track_name: track_name.to_string(),
-                }))
-            } else {
-                None
-            }
-        }
-        #[cfg(not(all(unix, not(target_os = "macos"))))]
-        {
-            let _ = track_name;
+        if self.track_has_open_plugin_graph(track_name) {
+            Some(self.send(Action::TrackGetPluginGraph {
+                track_name: track_name.to_string(),
+            }))
+        } else {
             None
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     fn track_has_open_plugin_graph(&self, track_name: &str) -> bool {
         platform_caps::SUPPORTS_PLUGIN_GRAPH && {
             let state = self.state.blocking_read();
@@ -385,7 +363,6 @@ impl Maolan {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     fn save_open_clip_plugin_graph(
         state: &mut crate::state::StateData,
     ) -> Option<maolan_engine::message::Action> {
@@ -432,7 +409,7 @@ impl Maolan {
         })
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[allow(dead_code)]
     fn clip_plugin_graph_json_or_default(
         graph_json: Option<serde_json::Value>,
         audio_ins: usize,
@@ -580,16 +557,9 @@ impl Maolan {
         clip
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
+    #[allow(dead_code)]
     fn open_clip_plugin_view(&mut self, track_name: String, clip_idx: usize) -> Task<Message> {
-        let (
-            graph_json,
-            track_audio_ins,
-            track_audio_outs,
-            lv2_plugins,
-            vst3_plugins,
-            clap_plugins,
-        ) = {
+        let (graph_json, track_audio_ins, track_audio_outs, vst3_plugins, clap_plugins) = {
             let state = self.state.blocking_read();
             let track = state.tracks.iter().find(|track| track.name == track_name);
             let graph_json = track
@@ -602,14 +572,23 @@ impl Maolan {
                 graph_json,
                 track_audio_ins,
                 track_audio_outs,
-                state.lv2_plugins.clone(),
                 state.vst3_plugins.clone(),
                 state.clap_plugins.clone(),
             )
         };
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let (plugins, connections) = {
+            let lv2_plugins = self.state.blocking_read().lv2_plugins.clone();
+            Self::plugin_graph_snapshot_from_json(
+                graph_json.as_ref(),
+                &lv2_plugins,
+                &vst3_plugins,
+                &clap_plugins,
+            )
+        };
+        #[cfg(not(all(unix, not(target_os = "macos"))))]
         let (plugins, connections) = Self::plugin_graph_snapshot_from_json(
             graph_json.as_ref(),
-            &lv2_plugins,
             &vst3_plugins,
             &clap_plugins,
         );
@@ -654,13 +633,13 @@ impl Maolan {
         Task::none()
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     fn queue_pending_graph_automation_queries(
         &mut self,
         track_name: &str,
         plugins: &[PluginGraphPlugin],
     ) -> Vec<Task<Message>> {
         let mut pending_queries: Vec<Task<Message>> = vec![];
+        #[cfg(all(unix, not(target_os = "macos")))]
         self.queue_pending_lv2_automation_queries(track_name, plugins, &mut pending_queries);
         let pending_vst3_paths: Vec<(String, String)> = self
             .pending_add_vst3_automation_paths

@@ -1,7 +1,5 @@
 use crate::state::{ConnectionViewSelection, HW_IN_ID, HW_OUT_ID, StateData};
-use maolan_engine::message::Action;
-#[cfg(all(unix, not(target_os = "macos")))]
-use maolan_engine::message::PluginGraphConnection;
+use maolan_engine::message::{Action, PluginGraphConnection};
 use std::collections::HashSet;
 
 pub fn is_bezier_hit(
@@ -85,7 +83,7 @@ pub fn track_disconnect_actions(state: &StateData, selected: &HashSet<usize>) ->
         .collect()
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
+#[allow(dead_code)]
 pub fn plugin_disconnect_actions(
     track_name: &str,
     connections: &[PluginGraphConnection],
