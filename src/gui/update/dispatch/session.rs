@@ -149,7 +149,8 @@ impl Maolan {
                 self.freeze_track_name = None;
                 self.freeze_cancel_requested = false;
                 self.has_unsaved_changes = false;
-                self.track_color_dirty = false;
+                self.engine_dirty = false;
+                self.pitch_correction_dirty = false;
                 self.pending_exit_after_save = false;
                 self.session_restore_in_progress = false;
                 self.last_autosave_snapshot = None;

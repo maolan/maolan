@@ -56,6 +56,7 @@ fn push_track_plugin_graph_restore_actions(
                         actions.push(Action::TrackLoadLv2Plugin {
                             track_name: track_name.clone(),
                             plugin_uri: uri.to_string(),
+                            instance_id: Some(instance_id),
                         });
                     }
                     Some("CLAP") => {
@@ -67,6 +68,7 @@ fn push_track_plugin_graph_restore_actions(
                             actions.push(Action::TrackLoadClapPlugin {
                                 track_name: track_name.clone(),
                                 plugin_path,
+                                instance_id: Some(instance_id),
                             });
                         }
                     }
@@ -77,6 +79,7 @@ fn push_track_plugin_graph_restore_actions(
                         actions.push(Action::TrackLoadVst3Plugin {
                             track_name: track_name.clone(),
                             plugin_path: uri.to_string(),
+                            instance_id: Some(instance_id),
                         });
                     }
                     _ => {}

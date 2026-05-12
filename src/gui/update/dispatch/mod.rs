@@ -2359,8 +2359,14 @@ impl Maolan {
                 return self.send(Action::SetRecordEnabled(true));
             }
             Message::Response(Ok(ref a)) => {
-                if !self.session_restore_in_progress && history::should_record(a) {
-                    self.has_unsaved_changes = true;
+                match a {
+                    Action::HistoryState { dirty } => {
+                        self.engine_dirty = *dirty;
+                    }
+                    _ if !self.session_restore_in_progress && history::should_record(a) => {
+                        self.engine_dirty = true;
+                    }
+                    _ => {}
                 }
                 let mut refresh_midi_clip_previews = false;
                 if let Some(task) = self.handle_response_freeze_meter_action(a) {
@@ -2420,12 +2426,6 @@ impl Maolan {
                                     state.tracks.iter_mut().find(|t| &t.name == name)
                             {
                                 track.height = height.max(TRACK_MIN_HEIGHT);
-                            }
-                            if let Some(color) = state.pending_track_colors.remove(name)
-                                && let Some(track) =
-                                    state.tracks.iter_mut().find(|t| &t.name == name)
-                            {
-                                track.color = Some(color);
                             }
                             if let Some((audio_backup, midi_backup, render_clip)) =
                                 self.pending_track_freeze_restore.remove(name)
@@ -3139,6 +3139,7 @@ impl Maolan {
                         Action::TrackLoadClapPlugin {
                             track_name,
                             plugin_path,
+                            ..
                         } => {
                             let plugin_name = std::path::Path::new(plugin_path)
                                 .file_stem()
@@ -3463,7 +3464,10 @@ impl Maolan {
                                         self.state.blocking_write().message =
                                             format!("Failed to save session: {}", e);
                                     } else {
-                                        return self.send(Action::SetSessionPath(path));
+                                        return Task::batch(vec![
+                                            self.send(Action::MarkHistorySavePoint),
+                                            self.send(Action::SetSessionPath(path)),
+                                        ]);
                                     }
                                 }
                             }
@@ -3533,7 +3537,10 @@ impl Maolan {
                                             self.state.blocking_write().message =
                                                 format!("Failed to save session: {}", e);
                                         } else {
-                                            return self.send(Action::SetSessionPath(path));
+                                            return Task::batch(vec![
+                                                self.send(Action::MarkHistorySavePoint),
+                                                self.send(Action::SetSessionPath(path)),
+                                            ]);
                                         }
                                     }
                                 }
@@ -3804,7 +3811,10 @@ impl Maolan {
                                                 self.state.blocking_write().message =
                                                     format!("Failed to save session: {}", e);
                                             } else {
-                                                return self.send(Action::SetSessionPath(path));
+                                                return Task::batch(vec![
+                                                    self.send(Action::MarkHistorySavePoint),
+                                                    self.send(Action::SetSessionPath(path)),
+                                                ]);
                                             }
                                         }
                                     }
@@ -4507,26 +4517,22 @@ impl Maolan {
                 ref track_name,
                 color,
             } => {
-                let mut state = self.state.blocking_write();
-                if let Some(track) = state
-                    .tracks
-                    .iter_mut()
-                    .find(|track| track.name == track_name.as_str())
-                {
-                    track.color = color;
-                }
-                self.track_color_dirty = true;
+                let engine_color = color.map(|c| maolan_engine::message::TrackColor {
+                    r: c.r,
+                    g: c.g,
+                    b: c.b,
+                    a: c.a,
+                });
+                return self.send(maolan_engine::message::Action::TrackSetColor {
+                    track_name: track_name.clone(),
+                    color: engine_color,
+                });
             }
             Message::TrackColorClear(ref track_name) => {
-                let mut state = self.state.blocking_write();
-                if let Some(track) = state
-                    .tracks
-                    .iter_mut()
-                    .find(|track| track.name == track_name.as_str())
-                {
-                    track.color = None;
-                }
-                self.track_color_dirty = true;
+                return self.send(maolan_engine::message::Action::TrackSetColor {
+                    track_name: track_name.clone(),
+                    color: None,
+                });
             }
             Message::TrackAutomationCycleMode { ref track_name } => {
                 let mut state = self.state.blocking_write();

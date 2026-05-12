@@ -5,9 +5,6 @@ impl Maolan {
         match message {
             Message::None => Some(Task::none()),
             Message::Undo => {
-                if !self.track_color_undo.is_empty() {
-                    return Some(self.undo_track_color_change());
-                }
                 if matches!(
                     self.state.blocking_read().view,
                     crate::state::View::PitchCorrection
@@ -17,9 +14,6 @@ impl Maolan {
                 Some(self.send(Action::Undo))
             }
             Message::Redo => {
-                if !self.track_color_redo.is_empty() {
-                    return Some(self.redo_track_color_change());
-                }
                 if matches!(
                     self.state.blocking_read().view,
                     crate::state::View::PitchCorrection

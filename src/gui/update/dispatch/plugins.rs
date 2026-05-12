@@ -207,6 +207,7 @@ impl Maolan {
                             self.send(Action::TrackLoadLv2Plugin {
                                 track_name: track_name.clone(),
                                 plugin_uri,
+                                instance_id: None,
                             })
                         })
                         .collect();
@@ -294,6 +295,7 @@ impl Maolan {
                             self.send(Action::TrackLoadVst3Plugin {
                                 track_name: track_name.clone(),
                                 plugin_path,
+                                instance_id: None,
                             })
                         })
                         .collect();
@@ -390,6 +392,7 @@ impl Maolan {
                             self.send(Action::TrackLoadClapPlugin {
                                 track_name: track_name.clone(),
                                 plugin_path,
+                                instance_id: None,
                             })
                         })
                         .collect();

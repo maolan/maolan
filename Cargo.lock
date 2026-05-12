@@ -458,7 +458,7 @@ dependencies = [
  "bitflags 2.11.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -478,7 +478,7 @@ dependencies = [
  "bitflags 2.11.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "regex",
@@ -4219,15 +4219,6 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
@@ -4774,9 +4765,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dc0c37c9b0de491330c27490abf4a1544ab528bb5959c346ea0888df06eec33"
+checksum = "a43d9909f7170b15790168deca890aeab426324845ffd76a4fb6c8c6ed3184a5"
 dependencies = [
  "alsa",
  "byteorder",

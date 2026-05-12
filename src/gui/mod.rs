@@ -168,12 +168,6 @@ struct PitchCorrectionHistoryEntry {
     selected_points: HashSet<usize>,
 }
 
-#[derive(Debug, Clone)]
-struct TrackColorHistoryEntry {
-    track_name: String,
-    color: Option<Color>,
-}
-
 struct ExportSessionOptions {
     export_path: PathBuf,
     sample_rate: i32,
@@ -460,8 +454,6 @@ pub struct Maolan {
     pending_precomputed_peaks: HashMap<AudioClipKey, crate::state::ClipPeaks>,
     pitch_correction_undo: Vec<PitchCorrectionHistoryEntry>,
     pitch_correction_redo: Vec<PitchCorrectionHistoryEntry>,
-    track_color_undo: Vec<TrackColorHistoryEntry>,
-    track_color_redo: Vec<TrackColorHistoryEntry>,
     pending_track_freeze_restore: HashMap<String, TrackFreezeRestore>,
     pending_track_midi_editor_view_mode: HashMap<String, crate::message::MidiEditorViewMode>,
     pending_track_freeze_bounce: HashMap<String, PendingTrackFreezeBounce>,
@@ -587,7 +579,8 @@ pub struct Maolan {
     midi_mappings_panel_open: bool,
     midi_mappings_report_lines: Vec<String>,
     has_unsaved_changes: bool,
-    track_color_dirty: bool,
+    engine_dirty: bool,
+    pitch_correction_dirty: bool,
     pending_exit_after_save: bool,
     session_restore_in_progress: bool,
     last_autosave_snapshot: Option<Instant>,
@@ -756,8 +749,6 @@ impl Default for Maolan {
             pending_precomputed_peaks: HashMap::new(),
             pitch_correction_undo: Vec::new(),
             pitch_correction_redo: Vec::new(),
-            track_color_undo: Vec::new(),
-            track_color_redo: Vec::new(),
             pending_track_freeze_restore: HashMap::new(),
             pending_track_midi_editor_view_mode: HashMap::new(),
             pending_track_freeze_bounce: HashMap::new(),
@@ -884,7 +875,8 @@ impl Default for Maolan {
             midi_mappings_panel_open: false,
             midi_mappings_report_lines: Vec::new(),
             has_unsaved_changes: false,
-            track_color_dirty: false,
+            engine_dirty: false,
+            pitch_correction_dirty: false,
             pending_exit_after_save: false,
             session_restore_in_progress: false,
             last_autosave_snapshot: None,
@@ -907,7 +899,7 @@ impl Default for Maolan {
 
 impl Maolan {
     fn is_dirty(&self) -> bool {
-        self.has_unsaved_changes || self.track_color_dirty
+        self.has_unsaved_changes || self.engine_dirty || self.pitch_correction_dirty
     }
 
     fn push_log_entry(state: &mut StateData, level: LogLevel, message: String) {

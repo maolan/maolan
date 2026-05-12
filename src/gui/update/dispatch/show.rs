@@ -159,14 +159,6 @@ impl Maolan {
                 Task::none()
             }
             Show::TrackColor { track_name } => {
-                let current_color = self
-                    .state
-                    .blocking_read()
-                    .tracks
-                    .iter()
-                    .find(|t| t.name == track_name.as_str())
-                    .and_then(|t| t.color);
-                self.push_track_color_history(track_name.clone(), current_color);
                 self.modal = Some(Show::TrackColor {
                     track_name: track_name.clone(),
                 });

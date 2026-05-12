@@ -432,6 +432,7 @@ impl Maolan {
                                     restore_actions.push(Action::TrackLoadLv2Plugin {
                                         track_name: track_name.clone(),
                                         plugin_uri: uri.to_string(),
+                                        instance_id: Some(instance_id),
                                     });
                                     if let Some(state) =
                                         plugin.get("state").and_then(Self::lv2_state_from_json)
@@ -457,6 +458,7 @@ impl Maolan {
                                         restore_actions.push(Action::TrackLoadClapPlugin {
                                             track_name: track_name.clone(),
                                             plugin_path,
+                                            instance_id: Some(instance_id),
                                         });
                                         if let Some(state) =
                                             plugin.get("state").and_then(Self::clap_state_from_json)
@@ -790,6 +792,7 @@ impl Maolan {
                                     actions.push(Action::TrackLoadLv2Plugin {
                                         track_name: track_name.to_string(),
                                         plugin_uri: uri.to_string(),
+                                        instance_id: Some(instance_id),
                                     });
                                     if let Some(state) =
                                         plugin.get("state").and_then(Self::lv2_state_from_json)
@@ -815,6 +818,7 @@ impl Maolan {
                                         actions.push(Action::TrackLoadClapPlugin {
                                             track_name: track_name.to_string(),
                                             plugin_path,
+                                            instance_id: Some(instance_id),
                                         });
                                         if let Some(state) =
                                             plugin.get("state").and_then(Self::clap_state_from_json)
@@ -1716,7 +1720,6 @@ impl Maolan {
             let mut state = self.state.blocking_write();
             state.pending_track_positions.clear();
             state.pending_track_heights.clear();
-            state.pending_track_colors.clear();
 
             let tracks_width = session["ui"]["tracks_width"].as_f64().ok_or_else(|| {
                 io::Error::new(
@@ -1948,10 +1951,15 @@ impl Maolan {
                         color_obj.get("a").and_then(|v| v.as_f64()),
                     )
                 {
-                    self.state.blocking_write().pending_track_colors.insert(
-                        name.clone(),
-                        iced::Color::from_rgba(r as f32, g as f32, b as f32, a as f32),
-                    );
+                    restore_actions.push(Action::TrackSetColor {
+                        track_name: name.clone(),
+                        color: Some(maolan_engine::message::TrackColor {
+                            r: r as f32,
+                            g: g as f32,
+                            b: b as f32,
+                            a: a as f32,
+                        }),
+                    });
                 }
                 if let Some(master_name) = track["vca_master"].as_str() {
                     pending_vca_assignments.push((name.clone(), master_name.to_string()));
@@ -2332,6 +2340,7 @@ impl Maolan {
                                 restore_actions.push(Action::TrackLoadLv2Plugin {
                                     track_name: track_name.clone(),
                                     plugin_uri: uri.to_string(),
+                                    instance_id: Some(instance_id),
                                 });
                                 if let Some(state) = Self::lv2_state_from_json(&p["state"]) {
                                     restore_actions.push(Action::TrackSetLv2PluginState {
@@ -2354,6 +2363,7 @@ impl Maolan {
                                     restore_actions.push(Action::TrackLoadClapPlugin {
                                         track_name: track_name.clone(),
                                         plugin_path,
+                                        instance_id: Some(instance_id),
                                     });
                                     if let Some(state) = Self::clap_state_from_json(&p["state"]) {
                                         restore_actions.push(Action::TrackClapRestoreState {
