@@ -6,7 +6,9 @@ use crate::{
 };
 use iced::{
     Alignment, Element, Length,
-    widget::{Space, column, container, lazy, mouse_area, row, scrollable, text, text_input},
+    widget::{
+        Space, button, column, container, lazy, mouse_area, row, scrollable, text, text_input,
+    },
 };
 use maolan_engine::message::Action;
 use maolan_widgets::{horizontal_slider::horizontal_slider, meters, slider::slider, ticks};
@@ -353,6 +355,67 @@ impl Mixer {
         (first_visible, last_visible, left_spacer, right_spacer)
     }
 
+    fn strip_controls(track: &Track, solo_upstream: bool) -> Option<Element<'static, Message>> {
+        if track.is_master || track.name == METRONOME_TRACK_ID {
+            return None;
+        }
+        let track_name = track.name.clone();
+        let muted = track.muted;
+        let soloed = track.soloed;
+        let armed = track.armed;
+        let mut controls = row![].spacing(4).align_y(Alignment::Center);
+        controls = controls.push(
+            button(
+                container(text("M").size(13))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
+            .width(Length::Fixed(22.0))
+            .height(Length::Fixed(22.0))
+            .padding(0)
+            .style(move |theme, _state| style::mute::style(theme, muted))
+            .on_press(Message::Request(Action::TrackToggleMute(
+                track_name.clone(),
+            ))),
+        );
+        let track_name = track.name.clone();
+        controls = controls.push(
+            button(
+                container(text("S").size(13))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
+            .width(Length::Fixed(22.0))
+            .height(Length::Fixed(22.0))
+            .padding(0)
+            .style(move |theme, _state| style::solo::style(theme, soloed, solo_upstream))
+            .on_press(Message::Request(Action::TrackToggleSolo(
+                track_name.clone(),
+            ))),
+        );
+        let track_name = track.name.clone();
+        controls = controls.push(
+            button(
+                container(text("R").size(13))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill),
+            )
+            .width(Length::Fixed(22.0))
+            .height(Length::Fixed(22.0))
+            .padding(0)
+            .style(move |theme, _state| style::arm::style(theme, armed))
+            .on_press(Message::Request(Action::TrackToggleArm(track_name.clone()))),
+        );
+        Some(controls.into())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn strip_shell<'a>(
         name: String,
         selected: bool,
@@ -361,6 +424,7 @@ impl Mixer {
         pan_section: Option<Element<'static, Message>>,
         bay: Element<'static, Message>,
         readout: StripReadout<'a>,
+        controls: Option<Element<'static, Message>>,
     ) -> Element<'a, Message> {
         let mut content = column![].spacing(8).width(Length::Fill);
         content = content.push(pan_section.unwrap_or_else(Self::pan_placeholder));
@@ -370,6 +434,9 @@ impl Mixer {
             readout.editing,
             readout.edit_input,
         ));
+        if let Some(controls) = controls {
+            content = content.push(controls);
+        }
         content = content.push(Self::strip_name_cached(name, width));
 
         container(content)
@@ -416,6 +483,31 @@ impl Mixer {
             .into_iter()
             .filter(|spec| spec.track.name != METRONOME_TRACK_ID)
             .collect();
+        let soloed_track_names: std::collections::HashSet<String> = state
+            .tracks
+            .iter()
+            .filter(|t| t.soloed)
+            .map(|t| t.name.clone())
+            .collect();
+        let mut upstream_track_names = std::collections::HashSet::new();
+        if !soloed_track_names.is_empty() {
+            let mut to_process: Vec<String> = soloed_track_names.iter().cloned().collect();
+            let mut processed = std::collections::HashSet::new();
+            while let Some(target_name) = to_process.pop() {
+                if !processed.insert(target_name.clone()) {
+                    continue;
+                }
+                for conn in &state.connections {
+                    if conn.kind == maolan_engine::kind::Kind::Audio
+                        && conn.to_track == target_name
+                        && !soloed_track_names.contains(&conn.from_track)
+                    {
+                        upstream_track_names.insert(conn.from_track.clone());
+                        to_process.push(conn.from_track.clone());
+                    }
+                }
+            }
+        }
         let (first_visible, last_visible, left_spacer, right_spacer) =
             Self::visible_track_window(&normal_track_specs, track_viewport_width, scroll_x);
 
@@ -453,6 +545,7 @@ impl Mixer {
                         edit_input: editing_input,
                         level_label: Self::format_level_db(track.level),
                     },
+                    None,
                 ))
                 .on_press(Message::SelectTrackFromMixer(track.name.clone()))
                 .into(),
@@ -479,6 +572,7 @@ impl Mixer {
                 fader_height,
                 true,
             );
+            let solo_upstream = upstream_track_names.contains(&track.name);
             let strip: Element<'a, Message> = mouse_area(Self::strip_shell(
                 strip_name,
                 state.selected.contains(track.name.as_str()),
@@ -492,8 +586,10 @@ impl Mixer {
                     edit_input: editing_input,
                     level_label: Self::format_level_db(track.level),
                 },
+                Self::strip_controls(track, solo_upstream),
             ))
             .on_press(Message::SelectTrackFromMixer(track.name.clone()))
+            .on_double_click(Message::OpenTrackPlugins(track.name.clone()))
             .into();
 
             strips = strips.push(strip);
@@ -535,6 +631,7 @@ impl Mixer {
                 edit_input: editing_input,
                 level_label: Self::format_level_db(hw_out_level),
             },
+            None,
         ))
         .on_press(Message::SelectTrackFromMixer("hw:out".to_string()))
         .into();

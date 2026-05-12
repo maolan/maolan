@@ -139,6 +139,18 @@ impl Maolan {
                 }
                 true
             }
+            Action::TrackSetColor { track_name, color } => {
+                if let Some(track) = self
+                    .state
+                    .blocking_write()
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.name == *track_name)
+                {
+                    track.color = color.map(|c| iced::Color::from_rgba(c.r, c.g, c.b, c.a));
+                }
+                true
+            }
             Action::TrackSetVcaMaster {
                 track_name,
                 master_track,
