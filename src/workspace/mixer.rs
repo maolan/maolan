@@ -158,7 +158,8 @@ impl Mixer {
                 Message::Request(Action::TrackBalance(on_change_track.clone(), value))
             })
             .width(Length::Fixed(PAN_SLIDER_WIDTH))
-            .height(Length::Fixed(PAN_ROW_HEIGHT)),
+            .height(Length::Fixed(PAN_ROW_HEIGHT))
+            .double_click_reset(0.0),
         ]
         .spacing(4)
         .align_y(Alignment::Center)
@@ -230,6 +231,7 @@ impl Mixer {
                             })
                             .width(Length::Fixed(FADER_WIDTH))
                             .height(Length::Fixed(fader_height))
+                            .double_click_reset(0.0)
                         )
                         .padding([7.0, 8.0]);
 

@@ -1263,20 +1263,16 @@ impl Maolan {
     }
 
     fn default_plugin_format() -> PluginFormat {
-        if platform_caps::SUPPORTS_LV2 {
-            PluginFormat::Lv2
-        } else {
-            PluginFormat::Vst3
-        }
+        PluginFormat::Clap
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
     fn supported_plugin_formats() -> Vec<PluginFormat> {
         let mut formats = Vec::new();
+        formats.push(PluginFormat::Clap);
         if platform_caps::SUPPORTS_LV2 {
             formats.push(PluginFormat::Lv2);
         }
-        formats.push(PluginFormat::Clap);
         formats.push(PluginFormat::Vst3);
         formats
     }

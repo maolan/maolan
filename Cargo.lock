@@ -4741,7 +4741,7 @@ dependencies = [
  "lilv",
  "maolan-engine",
  "maolan-generate",
- "maolan-widgets 0.0.14",
+ "maolan-widgets",
  "midly",
  "mixosc",
  "nix 0.31.2",
@@ -4817,20 +4817,9 @@ dependencies = [
 
 [[package]]
 name = "maolan-widgets"
-version = "0.0.8"
+version = "0.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0ed20106c5b2ac032885f4214f9254a2af3f9739b4e44af23c8208a7ccb21a2"
-dependencies = [
- "iced",
- "iced_fonts",
- "wavers",
-]
-
-[[package]]
-name = "maolan-widgets"
-version = "0.0.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96f639d068d54b941e83c8c2b006b2035213860ac7f2a44b5acc6c5891bd5bad"
+checksum = "c2d5c1d74ae26781f5abdbba94f6d8044de731b49285982717187519fbcf7e49"
 dependencies = [
  "iced",
  "iced_fonts",
@@ -4999,13 +4988,13 @@ dependencies = [
 
 [[package]]
 name = "mixosc"
-version = "0.0.3"
+version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61296982db379758abdcfc3a34fcce2c68567ab47ba6f46e7836ed3441403ae9"
+checksum = "62074d3fe504e312b0eea0bf33a7913e661f0f1b001819329760693de61b4c23"
 dependencies = [
  "iced",
  "iced_fonts",
- "maolan-widgets 0.0.8",
+ "maolan-widgets",
  "tokio",
 ]
 

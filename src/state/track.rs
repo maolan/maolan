@@ -258,7 +258,7 @@ impl Track {
             automation_lanes: vec![],
             editor_markers: vec![],
             automation_mode: TrackAutomationMode::Read,
-            height: 60.0,
+            height: 82.0,
             position: Point::new(100.0, 100.0),
             color: None,
         };
