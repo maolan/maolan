@@ -1,7 +1,7 @@
 use super::{ClipSnapEdge, timeline_sample_to_x, timeline_x_to_sample_f32};
 use crate::consts::workspace::{
-    CONTEXT_MENU_ITEM_HEIGHT, CONTEXT_MENU_WIDTH, LEFT_HIT_WIDTH, TEMPO_HEIGHT, TEMPO_HIT_HEIGHT,
-    TIME_SIG_HIT_X_SPLIT,
+    CONTEXT_MENU_ITEM_HEIGHT, CONTEXT_MENU_WIDTH, LEFT_HIT_WIDTH, MIN_LABEL_SPACING_PX,
+    TEMPO_HEIGHT, TEMPO_HIT_HEIGHT, TIME_SIG_HIT_X_SPLIT,
 };
 use crate::message::{Message, SnapMode};
 use iced::{
@@ -27,7 +27,10 @@ fn clip_kind_key(kind: maolan_engine::kind::Kind) -> u8 {
 pub struct Tempo;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 enum MarkerLane {
+    Marker,
+    Time,
     Tempo,
     TimeSignature,
 }
@@ -96,6 +99,8 @@ struct TempoCanvas {
     selected_time_signature_points: Vec<usize>,
     timeline_left_inset_px: f32,
     clip_start_samples: usize,
+    sample_rate: f64,
+    markers: Vec<(usize, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +122,8 @@ pub struct TempoViewArgs {
     pub selected_time_signature_points: Vec<usize>,
     pub timeline_left_inset_px: f32,
     pub clip_start_samples: usize,
+    pub sample_rate: f64,
+    pub markers: Vec<(usize, String)>,
 }
 
 impl Tempo {
@@ -145,8 +152,10 @@ impl Tempo {
 
     fn lane_key(lane: MarkerLane) -> u8 {
         match lane {
-            MarkerLane::Tempo => 0,
-            MarkerLane::TimeSignature => 1,
+            MarkerLane::Marker => 0,
+            MarkerLane::Time => 1,
+            MarkerLane::Tempo => 2,
+            MarkerLane::TimeSignature => 3,
         }
     }
 
@@ -168,6 +177,8 @@ impl Tempo {
             selected_time_signature_points: args.selected_time_signature_points,
             timeline_left_inset_px: args.timeline_left_inset_px,
             clip_start_samples: args.clip_start_samples,
+            sample_rate: args.sample_rate,
+            markers: args.markers,
         })
         .width(Length::Fixed(args.content_width.max(1.0)))
         .height(Length::Fill)
@@ -354,13 +365,19 @@ impl canvas::Program<Message> for TempoCanvas {
                                 CanvasAction::publish(Message::TimeSignatureSelectionDelete)
                                     .and_capture()
                             }
+                            (MarkerLane::Time, _) => CanvasAction::capture(),
+                            (MarkerLane::Marker, _) => CanvasAction::capture(),
                         });
                     }
                     state.context_menu = None;
                     if pos.x <= LEFT_HIT_WIDTH {
                         return Some(CanvasAction::capture());
                     }
-                    if pos.y <= TEMPO_HIT_HEIGHT
+                    if pos.y > TEMPO_HIT_HEIGHT && pos.y <= TEMPO_HIT_HEIGHT * 2.0 {
+                        return Some(CanvasAction::capture());
+                    }
+                    if pos.y > TEMPO_HIT_HEIGHT * 2.0
+                        && pos.y <= TEMPO_HIT_HEIGHT * 3.0
                         && let Some(sample) = nearest_tempo_point_at_x(pos.x)
                     {
                         let sample_selected = self.selected_tempo_points.contains(&sample);
@@ -388,7 +405,8 @@ impl canvas::Program<Message> for TempoCanvas {
                             .and_capture(),
                         );
                     }
-                    if pos.y > TEMPO_HIT_HEIGHT
+                    if pos.y > TEMPO_HIT_HEIGHT * 3.0
+                        && pos.y <= TEMPO_HIT_HEIGHT * 4.0
                         && let Some(sample) = nearest_tsig_point_at_x(pos.x)
                     {
                         let sample_selected = self.selected_time_signature_points.contains(&sample);
@@ -570,6 +588,8 @@ impl canvas::Program<Message> for TempoCanvas {
                                 })
                                 .and_capture()
                             }
+                            MarkerLane::Time => CanvasAction::capture(),
+                            MarkerLane::Marker => CanvasAction::capture(),
                         });
                     }
                     DragMode::AdjustPunchEdge { .. } => return Some(CanvasAction::capture()),
@@ -580,7 +600,18 @@ impl canvas::Program<Message> for TempoCanvas {
                     if pos.x <= LEFT_HIT_WIDTH {
                         return Some(CanvasAction::capture());
                     }
-                    if pos.y <= TEMPO_HIT_HEIGHT
+                    if pos.y <= TEMPO_HIT_HEIGHT {
+                        let sample = snap_sample(sample_at_x(pos.x)).0;
+                        return Some(
+                            CanvasAction::publish(Message::MarkerLaneCreate { sample })
+                                .and_capture(),
+                        );
+                    }
+                    if pos.y > TEMPO_HIT_HEIGHT && pos.y <= TEMPO_HIT_HEIGHT * 2.0 {
+                        return Some(CanvasAction::capture());
+                    }
+                    if pos.y > TEMPO_HIT_HEIGHT * 2.0
+                        && pos.y <= TEMPO_HIT_HEIGHT * 3.0
                         && let Some(sample) = nearest_tempo_point_at_x(pos.x)
                     {
                         state.context_menu = Some(ContextMenuState {
@@ -598,7 +629,8 @@ impl canvas::Program<Message> for TempoCanvas {
                             .and_capture(),
                         );
                     }
-                    if pos.y > TEMPO_HIT_HEIGHT
+                    if pos.y > TEMPO_HIT_HEIGHT * 3.0
+                        && pos.y <= TEMPO_HIT_HEIGHT * 4.0
                         && let Some(sample) = nearest_tsig_point_at_x(pos.x)
                     {
                         state.context_menu = Some(ContextMenuState {
@@ -698,6 +730,8 @@ impl canvas::Program<Message> for TempoCanvas {
                 {
                     if let Some((punch_start, punch_end)) = self.punch_range_samples
                         && punch_end > punch_start
+                        && pos.y > TEMPO_HIT_HEIGHT * 2.0
+                        && pos.y <= TEMPO_HIT_HEIGHT * 4.0
                     {
                         let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
                         let start_x = timeline_sample_to_x(
@@ -726,13 +760,23 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                     let sample = snap_sample(sample_at_x(pos.x)).0;
                     if pos.y <= TEMPO_HIT_HEIGHT {
+                        return Some(CanvasAction::capture());
+                    }
+                    if pos.y > TEMPO_HIT_HEIGHT && pos.y <= TEMPO_HIT_HEIGHT * 2.0 {
+                        return Some(CanvasAction::capture());
+                    }
+                    if pos.y > TEMPO_HIT_HEIGHT * 2.0 && pos.y <= TEMPO_HIT_HEIGHT * 3.0 {
                         return Some(
                             CanvasAction::publish(Message::TempoPointAdd(sample)).and_capture(),
                         );
                     }
-                    return Some(
-                        CanvasAction::publish(Message::TimeSignaturePointAdd(sample)).and_capture(),
-                    );
+                    if pos.y > TEMPO_HIT_HEIGHT * 3.0 && pos.y <= TEMPO_HIT_HEIGHT * 4.0 {
+                        return Some(
+                            CanvasAction::publish(Message::TimeSignaturePointAdd(sample))
+                                .and_capture(),
+                        );
+                    }
+                    return Some(CanvasAction::capture());
                 }
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Middle)) => {
@@ -776,25 +820,34 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                     if pos.x <= LEFT_HIT_WIDTH {
                         if pos.y <= TEMPO_HIT_HEIGHT {
+                            return Some(CanvasAction::capture());
+                        }
+                        if pos.y > TEMPO_HIT_HEIGHT && pos.y <= TEMPO_HIT_HEIGHT * 2.0 {
+                            return Some(CanvasAction::capture());
+                        }
+                        if pos.y > TEMPO_HIT_HEIGHT * 2.0 && pos.y <= TEMPO_HIT_HEIGHT * 3.0 {
                             return Some(
                                 CanvasAction::publish(Message::TempoAdjust(scroll_y.signum()))
                                     .and_capture(),
                             );
                         }
-                        if pos.x <= TIME_SIG_HIT_X_SPLIT {
+                        if pos.y > TEMPO_HIT_HEIGHT * 3.0 && pos.y <= TEMPO_HIT_HEIGHT * 4.0 {
+                            if pos.x <= TIME_SIG_HIT_X_SPLIT {
+                                return Some(
+                                    CanvasAction::publish(Message::TimeSignatureNumeratorAdjust(
+                                        signed_step(scroll_y),
+                                    ))
+                                    .and_capture(),
+                                );
+                            }
                             return Some(
-                                CanvasAction::publish(Message::TimeSignatureNumeratorAdjust(
+                                CanvasAction::publish(Message::TimeSignatureDenominatorAdjust(
                                     signed_step(scroll_y),
                                 ))
                                 .and_capture(),
                             );
                         }
-                        return Some(
-                            CanvasAction::publish(Message::TimeSignatureDenominatorAdjust(
-                                signed_step(scroll_y),
-                            ))
-                            .and_capture(),
-                        );
+                        return Some(CanvasAction::capture());
                     }
                     return Some(CanvasAction::capture());
                 }
@@ -828,6 +881,7 @@ impl canvas::Program<Message> for TempoCanvas {
         self.samples_per_beat.to_bits().hash(&mut hasher);
         self.samples_per_bar.to_bits().hash(&mut hasher);
         self.timeline_left_inset_px.to_bits().hash(&mut hasher);
+        self.sample_rate.to_bits().hash(&mut hasher);
         self.shift_pressed.hash(&mut hasher);
         self.tempo_points.len().hash(&mut hasher);
         for (sample, bpm) in &self.tempo_points {
@@ -837,6 +891,11 @@ impl canvas::Program<Message> for TempoCanvas {
         self.time_signature_points.hash(&mut hasher);
         self.selected_tempo_points.hash(&mut hasher);
         self.selected_time_signature_points.hash(&mut hasher);
+        self.markers.len().hash(&mut hasher);
+        for (sample, name) in &self.markers {
+            sample.hash(&mut hasher);
+            name.hash(&mut hasher);
+        }
         cursor_hash.hash(&mut hasher);
         match &state.drag_mode {
             DragMode::None => {
@@ -906,7 +965,10 @@ impl canvas::Program<Message> for TempoCanvas {
                     let x = sample_to_x(*sample);
                     let selected = self.selected_tempo_points.contains(sample);
                     frame.stroke(
-                        &Path::line(Point::new(x, 0.0), Point::new(x, TEMPO_HIT_HEIGHT)),
+                        &Path::line(
+                            Point::new(x, TEMPO_HIT_HEIGHT * 2.0),
+                            Point::new(x, TEMPO_HIT_HEIGHT * 3.0),
+                        ),
                         Stroke::default()
                             .with_width(if selected { 2.0 } else { 1.0 })
                             .with_color(if selected {
@@ -917,7 +979,7 @@ impl canvas::Program<Message> for TempoCanvas {
                     );
                     frame.fill_text(Text {
                         content: format!("{:.0}", bpm),
-                        position: Point::new(x + 3.0, 2.0),
+                        position: Point::new(x + 3.0, TEMPO_HIT_HEIGHT * 2.0 + 2.0),
                         color: Color::from_rgba(0.95, 0.95, 0.78, 0.92),
                         size: 9.0.into(),
                         ..Default::default()
@@ -932,8 +994,8 @@ impl canvas::Program<Message> for TempoCanvas {
                     let selected = self.selected_time_signature_points.contains(sample);
                     frame.stroke(
                         &Path::line(
-                            Point::new(x, TEMPO_HIT_HEIGHT),
-                            Point::new(x, bounds.height),
+                            Point::new(x, TEMPO_HIT_HEIGHT * 3.0),
+                            Point::new(x, TEMPO_HIT_HEIGHT * 4.0),
                         ),
                         Stroke::default()
                             .with_width(if selected { 2.0 } else { 1.0 })
@@ -945,11 +1007,164 @@ impl canvas::Program<Message> for TempoCanvas {
                     );
                     frame.fill_text(Text {
                         content: format!("{n}/{d}"),
-                        position: Point::new(x + 3.0, TEMPO_HIT_HEIGHT + 1.0),
+                        position: Point::new(x + 3.0, TEMPO_HIT_HEIGHT * 3.0 + 1.0),
                         color: Color::from_rgba(0.8, 0.98, 0.98, 0.9),
                         size: 9.0.into(),
                         ..Default::default()
                     });
+                }
+
+                // Lane divider lines
+                frame.stroke(
+                    &Path::line(
+                        Point::new(0.0, TEMPO_HIT_HEIGHT),
+                        Point::new(bounds.width, TEMPO_HIT_HEIGHT),
+                    ),
+                    Stroke::default()
+                        .with_width(1.0)
+                        .with_color(Color::from_rgba(0.25, 0.25, 0.25, 0.8)),
+                );
+                frame.stroke(
+                    &Path::line(
+                        Point::new(0.0, TEMPO_HIT_HEIGHT * 2.0),
+                        Point::new(bounds.width, TEMPO_HIT_HEIGHT * 2.0),
+                    ),
+                    Stroke::default()
+                        .with_width(1.0)
+                        .with_color(Color::from_rgba(0.25, 0.25, 0.25, 0.8)),
+                );
+                frame.stroke(
+                    &Path::line(
+                        Point::new(0.0, TEMPO_HIT_HEIGHT * 3.0),
+                        Point::new(bounds.width, TEMPO_HIT_HEIGHT * 3.0),
+                    ),
+                    Stroke::default()
+                        .with_width(1.0)
+                        .with_color(Color::from_rgba(0.25, 0.25, 0.25, 0.8)),
+                );
+
+                // Marker lane
+                let _marker_lane_top = 0.0;
+                let marker_color = Color::from_rgba(0.96, 0.72, 0.18, 0.95);
+                let marker_border = Color::from_rgba(0.2, 0.16, 0.04, 0.95);
+                for (sample, name) in &self.markers {
+                    let x = sample_to_x(*sample);
+                    // Vertical line
+                    frame.stroke(
+                        &Path::line(Point::new(x, 3.0), Point::new(x, TEMPO_HIT_HEIGHT - 2.0)),
+                        Stroke::default().with_width(2.0).with_color(marker_color),
+                    );
+                    // Square handle
+                    let handle_size = 6.0;
+                    frame.fill(
+                        &Path::rectangle(
+                            Point::new(x - handle_size / 2.0, 0.0),
+                            iced::Size::new(handle_size, handle_size),
+                        ),
+                        marker_color,
+                    );
+                    frame.stroke(
+                        &Path::rectangle(
+                            Point::new(x - handle_size / 2.0, 0.0),
+                            iced::Size::new(handle_size, handle_size),
+                        ),
+                        Stroke::default().with_width(1.0).with_color(marker_border),
+                    );
+                    // Name label
+                    let trimmed = name.trim();
+                    if !trimmed.is_empty() {
+                        let label_bg = Color::from_rgba(0.28, 0.20, 0.06, 0.92);
+                        let label_border = Color::from_rgba(0.78, 0.62, 0.18, 0.85);
+                        let text_color = Color::from_rgba(0.98, 0.92, 0.72, 0.96);
+                        let text_x = x + 5.0;
+                        let text_y = 1.0;
+                        let approx_width = trimmed.len() as f32 * 5.5 + 8.0;
+                        frame.fill(
+                            &Path::rectangle(
+                                Point::new(text_x, text_y),
+                                iced::Size::new(approx_width, 10.0),
+                            ),
+                            label_bg,
+                        );
+                        frame.stroke(
+                            &Path::rectangle(
+                                Point::new(text_x, text_y),
+                                iced::Size::new(approx_width, 10.0),
+                            ),
+                            Stroke::default().with_width(1.0).with_color(label_border),
+                        );
+                        frame.fill_text(Text {
+                            content: trimmed.to_string(),
+                            position: Point::new(text_x + 3.0, text_y + 1.0),
+                            color: text_color,
+                            size: 9.0.into(),
+                            ..Default::default()
+                        });
+                    }
+                }
+
+                // Time lane labels
+                if self.sample_rate > 0.0 {
+                    let pixels_per_second = self.pixels_per_sample as f64 * self.sample_rate;
+                    let visible_start_time = self.clip_start_samples as f64 / self.sample_rate;
+                    let visible_end_time = visible_start_time
+                        + (bounds.width as f64 / self.pixels_per_sample as f64) / self.sample_rate;
+                    let raw_interval = MIN_LABEL_SPACING_PX as f64 / pixels_per_second;
+                    let interval = if raw_interval <= 0.1 {
+                        0.1
+                    } else if raw_interval <= 0.2 {
+                        0.2
+                    } else if raw_interval <= 0.5 {
+                        0.5
+                    } else if raw_interval <= 1.0 {
+                        1.0
+                    } else if raw_interval <= 2.0 {
+                        2.0
+                    } else if raw_interval <= 5.0 {
+                        5.0
+                    } else if raw_interval <= 10.0 {
+                        10.0
+                    } else if raw_interval <= 15.0 {
+                        15.0
+                    } else if raw_interval <= 30.0 {
+                        30.0
+                    } else if raw_interval <= 60.0 {
+                        60.0
+                    } else {
+                        (raw_interval / 60.0).ceil() * 60.0
+                    };
+
+                    let first_time = (visible_start_time / interval).floor() * interval;
+                    let mut t = first_time;
+                    while t <= visible_end_time {
+                        let sample = (t * self.sample_rate).round() as usize;
+                        let x = sample_to_x(sample);
+                        let mins = (t / 60.0).floor() as u64;
+                        let secs = (t % 60.0).floor() as u64;
+                        let millis = ((t % 1.0) * 1000.0).round() as u64;
+                        let label = if interval < 1.0 {
+                            format!("{:02}:{:02}.{:03}", mins, secs, millis)
+                        } else {
+                            format!("{:02}:{:02}", mins, secs)
+                        };
+                        frame.fill_text(Text {
+                            content: label,
+                            position: Point::new(x + 2.0, TEMPO_HIT_HEIGHT + 2.0),
+                            color: Color::from_rgba(0.85, 0.85, 0.9, 0.85),
+                            size: 9.0.into(),
+                            ..Default::default()
+                        });
+                        frame.stroke(
+                            &Path::line(
+                                Point::new(x, TEMPO_HIT_HEIGHT),
+                                Point::new(x, TEMPO_HIT_HEIGHT + 4.0),
+                            ),
+                            Stroke::default()
+                                .with_width(1.0)
+                                .with_color(Color::from_rgba(0.6, 0.6, 0.65, 0.6)),
+                        );
+                        t += interval;
+                    }
                 }
 
                 if !matches!(state.drag_mode, DragMode::Punch { .. })
@@ -959,17 +1174,19 @@ impl canvas::Program<Message> for TempoCanvas {
                 {
                     let start_x = sample_to_x(punch_start);
                     let end_x = sample_to_x(punch_end);
+                    let punch_h = TEMPO_HIT_HEIGHT * 2.0;
+                    let punch_y = TEMPO_HIT_HEIGHT * 2.0;
                     frame.fill(
                         &Path::rectangle(
-                            Point::new(start_x.max(0.0), 0.0),
-                            iced::Size::new((end_x - start_x).max(1.0), bounds.height),
+                            Point::new(start_x.max(0.0), punch_y),
+                            iced::Size::new((end_x - start_x).max(1.0), punch_h),
                         ),
                         Color::from_rgba(0.55, 0.18, 0.18, 0.30),
                     );
                     frame.stroke(
                         &Path::line(
-                            Point::new(start_x.max(0.0), 0.0),
-                            Point::new(start_x.max(0.0), bounds.height),
+                            Point::new(start_x.max(0.0), punch_y),
+                            Point::new(start_x.max(0.0), punch_y + punch_h),
                         ),
                         Stroke::default()
                             .with_width(1.5)
@@ -977,8 +1194,8 @@ impl canvas::Program<Message> for TempoCanvas {
                     );
                     frame.stroke(
                         &Path::line(
-                            Point::new(end_x.max(0.0), 0.0),
-                            Point::new(end_x.max(0.0), bounds.height),
+                            Point::new(end_x.max(0.0), punch_y),
+                            Point::new(end_x.max(0.0), punch_y + punch_h),
                         ),
                         Stroke::default()
                             .with_width(1.5)
@@ -994,24 +1211,29 @@ impl canvas::Program<Message> for TempoCanvas {
                     } => {
                         let start_x = drag_start_x.min(*last_x).max(0.0);
                         let end_x = drag_start_x.max(*last_x).max(0.0);
+                        let punch_h = TEMPO_HIT_HEIGHT * 2.0;
+                        let punch_y = TEMPO_HIT_HEIGHT * 2.0;
                         frame.fill(
                             &Path::rectangle(
-                                Point::new(start_x, 0.0),
-                                iced::Size::new((end_x - start_x).max(1.0), bounds.height),
+                                Point::new(start_x, punch_y),
+                                iced::Size::new((end_x - start_x).max(1.0), punch_h),
                             ),
                             Color::from_rgba(0.92, 0.36, 0.36, 0.22),
                         );
                         frame.stroke(
                             &Path::line(
-                                Point::new(start_x, 0.0),
-                                Point::new(start_x, bounds.height),
+                                Point::new(start_x, punch_y),
+                                Point::new(start_x, punch_y + punch_h),
                             ),
                             Stroke::default()
                                 .with_width(1.5)
                                 .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
                         );
                         frame.stroke(
-                            &Path::line(Point::new(end_x, 0.0), Point::new(end_x, bounds.height)),
+                            &Path::line(
+                                Point::new(end_x, punch_y),
+                                Point::new(end_x, punch_y + punch_h),
+                            ),
                             Stroke::default()
                                 .with_width(1.5)
                                 .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
@@ -1034,17 +1256,19 @@ impl canvas::Program<Message> for TempoCanvas {
                         } else {
                             current_x.max(fixed_x)
                         };
+                        let punch_h = TEMPO_HIT_HEIGHT * 2.0;
+                        let punch_y = TEMPO_HIT_HEIGHT * 2.0;
                         frame.fill(
                             &Path::rectangle(
-                                Point::new(start_x.max(0.0), 0.0),
-                                iced::Size::new((end_x - start_x).max(1.0), bounds.height),
+                                Point::new(start_x.max(0.0), punch_y),
+                                iced::Size::new((end_x - start_x).max(1.0), punch_h),
                             ),
                             Color::from_rgba(0.92, 0.36, 0.36, 0.22),
                         );
                         frame.stroke(
                             &Path::line(
-                                Point::new(start_x.max(0.0), 0.0),
-                                Point::new(start_x.max(0.0), bounds.height),
+                                Point::new(start_x.max(0.0), punch_y),
+                                Point::new(start_x.max(0.0), punch_y + punch_h),
                             ),
                             Stroke::default()
                                 .with_width(1.5)
@@ -1052,8 +1276,8 @@ impl canvas::Program<Message> for TempoCanvas {
                         );
                         frame.stroke(
                             &Path::line(
-                                Point::new(end_x.max(0.0), 0.0),
-                                Point::new(end_x.max(0.0), bounds.height),
+                                Point::new(end_x.max(0.0), punch_y),
+                                Point::new(end_x.max(0.0), punch_y + punch_h),
                             ),
                             Stroke::default()
                                 .with_width(1.5)
@@ -1071,13 +1295,23 @@ impl canvas::Program<Message> for TempoCanvas {
                             let moved_sample = (*sample as i64 + delta).max(1) as usize;
                             let x = sample_to_x(moved_sample);
                             let (y0, y1, color) = match lane {
-                                MarkerLane::Tempo => (
+                                MarkerLane::Marker => (
                                     0.0,
                                     TEMPO_HIT_HEIGHT,
+                                    Color::from_rgba(0.96, 0.72, 0.18, 0.85),
+                                ),
+                                MarkerLane::Time => (
+                                    TEMPO_HIT_HEIGHT,
+                                    TEMPO_HIT_HEIGHT * 2.0,
+                                    Color::from_rgba(0.85, 0.85, 0.9, 0.85),
+                                ),
+                                MarkerLane::Tempo => (
+                                    TEMPO_HIT_HEIGHT * 2.0,
+                                    TEMPO_HIT_HEIGHT * 3.0,
                                     Color::from_rgba(1.0, 0.95, 0.45, 0.85),
                                 ),
                                 MarkerLane::TimeSignature => (
-                                    TEMPO_HIT_HEIGHT,
+                                    TEMPO_HIT_HEIGHT * 3.0,
                                     bounds.height,
                                     Color::from_rgba(0.52, 1.0, 1.0, 0.85),
                                 ),
@@ -1092,7 +1326,7 @@ impl canvas::Program<Message> for TempoCanvas {
 
                 frame.fill_text(Text {
                     content: format!("{:.0}", self.bpm),
-                    position: Point::new(10.0, 2.0),
+                    position: Point::new(10.0, TEMPO_HIT_HEIGHT * 2.0 + 2.0),
                     color: Color::WHITE,
                     size: 14.0.into(),
                     ..Default::default()
@@ -1100,7 +1334,7 @@ impl canvas::Program<Message> for TempoCanvas {
 
                 frame.fill_text(Text {
                     content: format!("{}/{}", self.time_signature.0, self.time_signature.1),
-                    position: Point::new(10.0, 15.0),
+                    position: Point::new(10.0, TEMPO_HIT_HEIGHT * 3.0 + 1.0),
                     color: Color::WHITE,
                     size: 10.0.into(),
                     ..Default::default()
@@ -1146,6 +1380,45 @@ impl canvas::Program<Message> for TempoCanvas {
                     && pos.x > LEFT_HIT_WIDTH
                 {
                     let tooltip = if pos.y <= TEMPO_HIT_HEIGHT {
+                        self.markers
+                            .iter()
+                            .min_by(|(sa, _), (sb, _)| {
+                                let ax = sample_to_x(*sa);
+                                let bx = sample_to_x(*sb);
+                                (ax - pos.x)
+                                    .abs()
+                                    .partial_cmp(&(bx - pos.x).abs())
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                            .and_then(|(sample, name)| {
+                                let x = sample_to_x(*sample);
+                                if (x - pos.x).abs() <= 6.0 {
+                                    let trimmed = name.trim();
+                                    if trimmed.is_empty() {
+                                        Some(format!("s:{}", sample))
+                                    } else {
+                                        Some(format!("s:{}  {}", sample, trimmed))
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                    } else if pos.y <= TEMPO_HIT_HEIGHT * 2.0 {
+                        if self.sample_rate > 0.0 {
+                            let sample = timeline_x_to_sample_f32(
+                                pos.x,
+                                self.pixels_per_sample,
+                                self.timeline_left_inset_px,
+                            ) as usize;
+                            let seconds = sample as f64 / self.sample_rate;
+                            let mins = (seconds / 60.0).floor() as u64;
+                            let secs = (seconds % 60.0).floor() as u64;
+                            let millis = ((seconds % 1.0) * 1000.0).round() as u64;
+                            Some(format!("{:02}:{:02}.{:03}", mins, secs, millis))
+                        } else {
+                            None
+                        }
+                    } else if pos.y <= TEMPO_HIT_HEIGHT * 3.0 {
                         self.tempo_points
                             .iter()
                             .filter(|(sample, _)| *sample > 0)
@@ -1258,8 +1531,10 @@ mod tests {
 
     #[test]
     fn lane_key_returns_expected_values() {
-        assert_eq!(Tempo::lane_key(MarkerLane::Tempo), 0);
-        assert_eq!(Tempo::lane_key(MarkerLane::TimeSignature), 1);
+        assert_eq!(Tempo::lane_key(MarkerLane::Marker), 0);
+        assert_eq!(Tempo::lane_key(MarkerLane::Time), 1);
+        assert_eq!(Tempo::lane_key(MarkerLane::Tempo), 2);
+        assert_eq!(Tempo::lane_key(MarkerLane::TimeSignature), 3);
     }
 
     #[test]
@@ -1287,10 +1562,15 @@ mod tests {
             selected_time_signature_points: Vec::new(),
             timeline_left_inset_px: 0.0,
             clip_start_samples: 0,
+            sample_rate: 48_000.0,
+            markers: Vec::new(),
         };
         let bounds = Rectangle::new(Point::ORIGIN, Size::new(400.0, 60.0));
         let mut state = TempoState::default();
-        let cursor = mouse::Cursor::Available(Point::new(100.0, TEMPO_HIT_HEIGHT - 2.0));
+        let cursor = mouse::Cursor::Available(Point::new(
+            100.0,
+            TEMPO_HIT_HEIGHT * 2.0 + (TEMPO_HIT_HEIGHT - 2.0),
+        ));
 
         let action = canvas
             .update(

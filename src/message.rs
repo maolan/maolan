@@ -648,6 +648,9 @@ pub enum Message {
         track_name: String,
         marker_index: usize,
     },
+    MarkerLaneCreate {
+        sample: usize,
+    },
     SelectClip {
         track_idx: String,
         clip_idx: usize,

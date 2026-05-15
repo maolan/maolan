@@ -2425,7 +2425,8 @@ impl Maolan {
                                 && let Some(track) =
                                     state.tracks.iter_mut().find(|t| &t.name == name)
                             {
-                                track.height = height.max(TRACK_MIN_HEIGHT);
+                                let min_h = track.min_height_for_layout();
+                                track.height = height.max(min_h);
                             }
                             if let Some((audio_backup, midi_backup, render_clip)) =
                                 self.pending_track_freeze_restore.remove(name)
@@ -4737,6 +4738,18 @@ impl Maolan {
                     crate::track_marker::TrackMarkerView::name_input_id(),
                 );
             }
+            Message::MarkerLaneCreate { sample } => {
+                self.state.blocking_write().track_marker_dialog =
+                    Some(crate::state::TrackMarkerDialog {
+                        track_name: String::new(),
+                        sample,
+                        marker_index: None,
+                        name: String::new(),
+                    });
+                return iced::widget::operation::focus(
+                    crate::track_marker::TrackMarkerView::name_input_id(),
+                );
+            }
             Message::TrackMarkerRenameShow {
                 ref track_name,
                 marker_index,
@@ -4773,7 +4786,21 @@ impl Maolan {
                     return Task::none();
                 }
                 let mut state = self.state.blocking_write();
-                if let Some(track) = state
+                if dialog.track_name.is_empty() {
+                    let markers = &mut state.session_markers;
+                    if let Some(marker_index) = dialog.marker_index {
+                        if let Some(marker) = markers.get_mut(marker_index) {
+                            marker.name = marker_name;
+                        }
+                    } else {
+                        markers.push(crate::state::EditorMarker {
+                            sample: dialog.sample,
+                            name: marker_name,
+                        });
+                    }
+                    markers.sort_unstable_by_key(|marker| marker.sample);
+                    markers.dedup_by(|a, b| a.sample == b.sample && a.name == b.name);
+                } else if let Some(track) = state
                     .tracks
                     .iter_mut()
                     .find(|t| t.name == dialog.track_name)
@@ -6053,7 +6080,8 @@ impl Maolan {
                         let delta = position.y - initial_mouse_y;
                         if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
                         {
-                            track.height = (initial_height + delta).clamp(TRACK_MIN_HEIGHT, 600.0);
+                            let min_h = track.min_height_for_layout();
+                            track.height = (initial_height + delta).clamp(min_h, 600.0);
                         }
                     }
                     Some(Resizing::TrackMarker {

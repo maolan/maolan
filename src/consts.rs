@@ -30,7 +30,7 @@ pub mod workspace {
     pub const MIN_TICK_SPACING_PX: f32 = 8.0;
     pub const MIN_LABEL_SPACING_PX: f32 = 64.0;
 
-    pub const TEMPO_HEIGHT: f32 = 28.0;
+    pub const TEMPO_HEIGHT: f32 = 56.0;
     pub const TEMPO_HIT_HEIGHT: f32 = 14.0;
     pub const TIME_SIG_HIT_X_SPLIT: f32 = 36.0;
     pub const LEFT_HIT_WIDTH: f32 = 84.0;
@@ -92,7 +92,7 @@ pub mod state_ids {
 pub mod state_track {
     pub const TRACK_FOLDER_HEADER_HEIGHT: f32 = 24.0;
     pub const TRACK_SUBTRACK_GAP: f32 = 2.0;
-    pub const TRACK_SUBTRACK_MIN_HEIGHT: f32 = 40.0;
+    pub const TRACK_SUBTRACK_MIN_HEIGHT: f32 = 22.0;
     pub const TRACK_MIN_HEIGHT: f32 = 82.0;
 }
 
@@ -410,7 +410,7 @@ mod tests {
     fn state_track_constants_are_expected_values() {
         assert_eq!(state_track::TRACK_FOLDER_HEADER_HEIGHT, 24.0);
         assert_eq!(state_track::TRACK_SUBTRACK_GAP, 2.0);
-        assert_eq!(state_track::TRACK_SUBTRACK_MIN_HEIGHT, 40.0);
+        assert_eq!(state_track::TRACK_SUBTRACK_MIN_HEIGHT, 22.0);
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
