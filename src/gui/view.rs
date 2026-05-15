@@ -283,6 +283,7 @@ impl Maolan {
                                 .collect(),
                             mixer_level_edit_track: self.mixer_level_edit_track.as_deref(),
                             mixer_level_edit_input: &self.mixer_level_edit_input,
+                            sample_rate: self.playback_rate_hz,
                         }),
                         View::Connections => self.connections.view(),
                         View::X32 => mixosc::app::view(&self.hw_mixer).map(Message::HwMixer),
@@ -334,6 +335,7 @@ impl Maolan {
                                 .collect(),
                             mixer_level_edit_track: None,
                             mixer_level_edit_input: "",
+                            sample_rate: self.playback_rate_hz,
                         }),
                         View::PitchCorrection => {
                             self.workspace.pitch_correction_view(WorkspaceViewArgs {
@@ -380,6 +382,7 @@ impl Maolan {
                                     .collect(),
                                 mixer_level_edit_track: None,
                                 mixer_level_edit_input: "",
+                                sample_rate: self.playback_rate_hz,
                             })
                         }
                         #[cfg(not(all(unix, not(target_os = "macos"))))]

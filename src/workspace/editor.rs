@@ -2,6 +2,7 @@ use super::VisibleTrackWindow;
 use crate::{
     consts::{
         state_ids::METRONOME_TRACK_ID,
+        state_track::{TRACK_SUBTRACK_GAP, TRACK_SUBTRACK_MIN_HEIGHT},
         workspace::{AUDIO_CLIP_SELECTED_BASE, MIDI_CLIP_SELECTED_BASE, MIN_TICK_SPACING_PX},
         workspace_editor::CHECKPOINTS,
     },
@@ -238,35 +239,38 @@ impl canvas::Program<Message> for TrackLaneBackgroundCanvas {
         let geom = state
             .cache
             .draw(renderer, bounds.size(), |frame: &mut Frame| {
-                frame.fill(
-                    &Path::rectangle(
-                        Point::new(0.0, 0.0),
-                        iced::Size::new(bounds.width, self.header_height),
-                    ),
-                    Color::from_rgba(0.08, 0.08, 0.08, 0.12),
-                );
-
-                for lane in 0..self.audio_lanes {
-                    let y = self.header_height + lane as f32 * self.lane_height;
+                let mut y = 0.0;
+                for i in 0..self.audio_lanes {
+                    let is_last = i + 1 == self.audio_lanes && self.midi_lanes == 0;
+                    let h = if is_last {
+                        (bounds.height - y - 1.0).max(0.0)
+                    } else {
+                        self.lane_height - 2.0
+                    };
                     frame.fill(
                         &Path::rectangle(
-                            Point::new(0.0, y),
-                            iced::Size::new(bounds.width, self.lane_height),
+                            Point::new(0.0, y + 1.0),
+                            iced::Size::new(bounds.width, h),
                         ),
-                        Color::from_rgba(0.15, 0.20, 0.28, 0.22),
+                        Color::from_rgba(0.15, 0.20, 0.28, 0.12),
                     );
+                    y += self.lane_height + TRACK_SUBTRACK_GAP;
                 }
-
-                for lane in 0..self.midi_lanes {
-                    let y =
-                        self.header_height + (self.audio_lanes + lane) as f32 * self.lane_height;
+                for i in 0..self.midi_lanes {
+                    let is_last = i + 1 == self.midi_lanes;
+                    let h = if is_last {
+                        (bounds.height - y - 1.0).max(0.0)
+                    } else {
+                        self.lane_height - 2.0
+                    };
                     frame.fill(
                         &Path::rectangle(
-                            Point::new(0.0, y),
-                            iced::Size::new(bounds.width, self.lane_height),
+                            Point::new(0.0, y + 1.0),
+                            iced::Size::new(bounds.width, h),
                         ),
-                        Color::from_rgba(0.12, 0.26, 0.14, 0.25),
+                        Color::from_rgba(0.12, 0.26, 0.14, 0.12),
                     );
+                    y += self.lane_height + TRACK_SUBTRACK_GAP;
                 }
             });
 
@@ -341,6 +345,12 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     let layout = track.lane_layout();
     let lane_height = layout.lane_height.max(12.0);
     let lane_clip_height = (lane_height - 6.0).max(12.0);
+    let total_lanes = (layout.audio_lanes + layout.midi_lanes).max(1);
+    let gaps = (total_lanes.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP;
+    let editor_lane_height =
+        ((track.height - gaps) / total_lanes as f32).max(TRACK_SUBTRACK_MIN_HEIGHT);
+    let editor_lane_top =
+        |lane_index: usize| lane_index as f32 * (editor_lane_height + TRACK_SUBTRACK_GAP);
     let track_name_cloned = track.name.clone();
     let mut selected_audio_indices = HashSet::new();
     let mut selected_midi_indices = HashSet::new();
@@ -363,7 +373,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         pin(track_lane_background_overlay(
             height,
             layout.header_height,
-            lane_height,
+            editor_lane_height,
             if track.is_master { 0 } else { track.audio.ins },
             if track.is_master { 0 } else { track.midi.ins },
         ))
@@ -379,87 +389,6 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
         .position(Point::new(0.0, 0.0))
         .into(),
     );
-    clips.push(
-        pin(mouse_area(
-            container("")
-                .width(Length::Fill)
-                .height(Length::Fixed(layout.header_height)),
-        )
-        .on_right_press(Message::TrackMarkerCreate(track_name_cloned.clone())))
-        .position(Point::new(0.0, 0.0))
-        .into(),
-    );
-    for (marker_index, marker) in track.editor_markers.iter().enumerate() {
-        let marker_track_name = track_name_cloned.clone();
-        let marker_x = marker.sample as f32 * pixels_per_sample;
-        let marker_name = marker.name.trim().to_string();
-        let marker_has_name = !marker_name.is_empty();
-        let marker_color = Color::from_rgba(0.96, 0.72, 0.18, 0.95);
-        let marker_hitbox = mouse_area(
-            container(Stack::with_children(vec![
-                pin(container(text(marker_name).size(10))
-                    .padding([1, 4])
-                    .style(|_theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgba(
-                            0.28, 0.20, 0.06, 0.92,
-                        ))),
-                        text_color: Some(Color::from_rgba(0.98, 0.92, 0.72, 0.96)),
-                        border: Border {
-                            color: Color::from_rgba(0.78, 0.62, 0.18, 0.85),
-                            width: 1.0,
-                            radius: 3.0.into(),
-                        },
-                        ..container::Style::default()
-                    }))
-                .position(Point::new(10.0, 0.0))
-                .into(),
-                pin(container("")
-                    .width(Length::Fixed(2.0))
-                    .height(Length::Fixed((layout.header_height - 8.0).max(8.0)))
-                    .style(move |_theme| container::Style {
-                        background: Some(Background::Color(marker_color)),
-                        ..container::Style::default()
-                    }))
-                .position(Point::new(3.0, 6.0))
-                .into(),
-                pin(container("")
-                    .width(Length::Fixed(8.0))
-                    .height(Length::Fixed(8.0))
-                    .style(move |_theme| container::Style {
-                        background: Some(Background::Color(marker_color)),
-                        border: Border {
-                            color: Color::from_rgba(0.2, 0.16, 0.04, 0.95),
-                            width: 1.0,
-                            radius: 2.0.into(),
-                        },
-                        ..container::Style::default()
-                    }))
-                .position(Point::new(0.0, 0.0))
-                .into(),
-            ]))
-            .width(Length::Fixed(if marker_has_name { 112.0 } else { 8.0 }))
-            .height(Length::Fixed(layout.header_height.max(12.0))),
-        )
-        .interaction(mouse::Interaction::ResizingHorizontally)
-        .on_press(Message::TrackMarkerDragStart {
-            track_name: marker_track_name.clone(),
-            marker_index,
-        })
-        .on_right_press(Message::TrackMarkerRenameShow {
-            track_name: marker_track_name.clone(),
-            marker_index,
-        })
-        .on_middle_press(Message::TrackMarkerDelete {
-            track_name: marker_track_name,
-            marker_index,
-        });
-        clips.push(
-            pin(marker_hitbox)
-                .position(Point::new((marker_x - 4.0).max(0.0), 0.0))
-                .into(),
-        );
-    }
-
     let visible_automation_lanes: Vec<_> = track
         .automation_lanes
         .iter()
@@ -614,10 +543,10 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 })
                 .unwrap_or(clip.start as f32);
 
-            let lane = 0;
-            let lane_top = track.lane_top(Kind::Audio, lane) + 4.0;
+            let _lane = 0;
+            let lane_top = editor_lane_top(0) + 1.0;
             let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
-            let clip_height = (lane_height - 4.0).max(8.0);
+            let clip_height = (editor_lane_height - 2.0).max(8.0);
             let display_clip_label =
                 AudioClipWidget::<Message>::label_for_width(&clip_label, clip_width);
             let audio_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
@@ -825,9 +754,9 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 })
                 .unwrap_or(clip.start as f32);
             let lane = clip.input_channel.min(track.midi.ins.saturating_sub(1));
-            let lane_top = track.lane_top(Kind::MIDI, lane) + 4.0;
+            let lane_top = editor_lane_top(layout.audio_lanes + lane) + 1.0;
             let clip_width = (clip.length as f32 * pixels_per_sample).max(12.0);
-            let clip_height = (lane_height - 4.0).max(8.0);
+            let clip_height = (editor_lane_height - 2.0).max(8.0);
             let display_clip_label =
                 MIDIClipWidget::<Message>::label_for_width(&clip_label, clip_width);
             let midi_left_handle_hovered = state.hovered_clip_resize_handle.as_ref().is_some_and(
@@ -1057,14 +986,8 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             }
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
-                        let clip_height = (lane_height - 3.0).max(12.0);
-                        let lane_top = if active_target_valid || track.audio.ins > 0 {
-                            track.lane_top(Kind::Audio, 0) + 3.0
-                        } else if track.midi.ins > 0 {
-                            track.lane_top(Kind::MIDI, 0) + 3.0
-                        } else {
-                            track.lane_layout().header_height + 3.0
-                        };
+                        let clip_height = (editor_lane_height - 2.0).max(8.0);
+                        let lane_top = editor_lane_top(0) + 1.0;
                         let preview_start =
                             snap_sample(source_clip.start as f32 + delta_samples, delta_samples)
                                 + active_clip_snap_adjust_samples;
@@ -1147,18 +1070,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             }
                         };
                         let clip_width = (source_clip.length as f32 * pixels_per_sample).max(12.0);
-                        let lane_top = if active_target_valid && track.midi.ins > 0 {
-                            let lane = source_clip
-                                .input_channel
-                                .min(track.midi.ins.saturating_sub(1));
-                            track.lane_top(Kind::MIDI, lane) + 3.0
-                        } else if track.audio.ins > 0 {
-                            track.lane_top(Kind::Audio, 0) + 3.0
-                        } else if track.midi.ins > 0 {
-                            track.lane_top(Kind::MIDI, 0) + 3.0
-                        } else {
-                            track.lane_layout().header_height + 3.0
-                        };
+                        let lane_top = editor_lane_top(0) + 1.0;
                         let preview_start =
                             snap_sample(source_clip.start as f32 + delta_samples, delta_samples)
                                 + active_clip_snap_adjust_samples;
@@ -1168,7 +1080,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                         );
                         clips.push(
                             pin(MIDIClipWidget::new(widget_midi_clip_data(source_clip))
-                                .with_size(clip_width, (lane_height - 3.0).max(12.0))
+                                .with_size(clip_width, (editor_lane_height - 2.0).max(8.0))
                                 .with_label(display_clip_label)
                                 .preview(
                                     if active_target_valid {
@@ -1195,7 +1107,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
     {
         let preview_width =
             ((preview_current - preview_start) as f32 * pixels_per_sample).max(12.0);
-        let preview_top = track.lane_top(Kind::Audio, 0) + 3.0;
+        let preview_top = editor_lane_top(0) + 1.0;
         let preview_peaks = recording_preview_peaks
             .and_then(|map| map.get(&track.name))
             .cloned()
@@ -1609,7 +1521,6 @@ impl Editor {
             track.armed.hash(&mut hasher);
             track.audio.ins.hash(&mut hasher);
             track.midi.ins.hash(&mut hasher);
-            track.editor_markers.hash(&mut hasher);
             track.midi_lane_channels.hash(&mut hasher);
             std::mem::discriminant(&track.automation_mode).hash(&mut hasher);
 

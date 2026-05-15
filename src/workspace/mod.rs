@@ -170,6 +170,7 @@ pub struct WorkspaceViewArgs<'a> {
     pub selected_time_signature_points: Vec<usize>,
     pub mixer_level_edit_track: Option<&'a str>,
     pub mixer_level_edit_input: &'a str,
+    pub sample_rate: f64,
 }
 
 impl Workspace {
@@ -294,6 +295,7 @@ impl Workspace {
             selected_time_signature_points,
             mixer_level_edit_track,
             mixer_level_edit_input,
+            sample_rate,
         } = args;
         let (
             tracks_width,
@@ -306,6 +308,7 @@ impl Workspace {
             tempo_points,
             time_signature_points,
             mixer_height_px,
+            markers,
         ) = {
             let state = self.state.blocking_read();
             let max_end_samples = state
@@ -336,6 +339,11 @@ impl Workspace {
                 .filter(|track| track.name != METRONOME_TRACK_ID)
                 .map(|track| track.height)
                 .collect::<Vec<_>>();
+            let markers = state
+                .session_markers
+                .iter()
+                .map(|m| (m.sample, m.name.clone()))
+                .collect::<Vec<_>>();
             (
                 state.tracks_width,
                 match state.tracks_width {
@@ -361,6 +369,7 @@ impl Workspace {
                     Length::Fixed(height) => height,
                     _ => 300.0,
                 },
+                markers,
             )
         };
         const TOP_CHROME_ESTIMATE_PX: f32 = 72.0;
@@ -544,6 +553,8 @@ impl Workspace {
             selected_time_signature_points,
             timeline_left_inset_px: TIMELINE_LEFT_INSET_PX,
             clip_start_samples: 0,
+            sample_rate,
+            markers: markers.clone(),
         }))
         .id(Id::new(WORKSPACE_TEMPO_SCROLL_ID))
         .direction(scrollable::Direction::Horizontal(
@@ -778,6 +789,7 @@ impl Workspace {
             mixer_visible: _,
             selected_tempo_points,
             selected_time_signature_points,
+            sample_rate,
             ..
         } = args;
 
@@ -789,8 +801,14 @@ impl Workspace {
             clip_start_samples,
             clip_length_samples,
             zoom_x,
+            markers,
         ) = {
             let state = self.state.blocking_read();
+            let markers = state
+                .session_markers
+                .iter()
+                .map(|m| (m.sample, m.name.clone()))
+                .collect::<Vec<_>>();
             (
                 state.tempo,
                 (state.time_signature_num, state.time_signature_denom),
@@ -815,6 +833,7 @@ impl Workspace {
                     .map(|roll| roll.clip_length_samples)
                     .unwrap_or(samples_per_bar.max(1.0) as usize),
                 state.piano_zoom_x,
+                markers,
             )
         };
         let horizontal_zoom = zoom_x.max(1.0);
@@ -857,6 +876,8 @@ impl Workspace {
                         selected_time_signature_points,
                         timeline_left_inset_px: 0.0,
                         clip_start_samples: 0,
+                        sample_rate,
+                        markers,
                     })))
                     .id(Id::new(PIANO_TEMPO_SCROLL_ID))
                     .direction(scrollable::Direction::Horizontal(
@@ -932,6 +953,7 @@ impl Workspace {
             shift_pressed,
             selected_tempo_points,
             selected_time_signature_points,
+            sample_rate,
             ..
         } = args;
         let (
@@ -941,8 +963,14 @@ impl Workspace {
             time_signature,
             tempo_points,
             time_signature_points,
+            markers,
         ) = {
             let state = self.state.blocking_read();
+            let markers = state
+                .session_markers
+                .iter()
+                .map(|m| (m.sample, m.name.clone()))
+                .collect::<Vec<_>>();
             (
                 state
                     .pitch_correction
@@ -962,6 +990,7 @@ impl Workspace {
                     .iter()
                     .map(|p| (p.sample, p.numerator, p.denominator))
                     .collect::<Vec<_>>(),
+                markers,
             )
         };
         let horizontal_zoom = zoom_x.max(1.0);
@@ -1002,6 +1031,8 @@ impl Workspace {
                         selected_time_signature_points,
                         timeline_left_inset_px: 0.0,
                         clip_start_samples: 0,
+                        sample_rate,
+                        markers,
                     })))
                     .id(Id::new(PIANO_TEMPO_SCROLL_ID))
                     .direction(scrollable::Direction::Horizontal(
