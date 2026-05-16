@@ -2110,6 +2110,17 @@ impl Maolan {
                                     self.pending_peak_file_loads.insert(key, peaks_path);
                                 }
                             }
+                            if let Some(saved_source_len) = clip
+                                .get("source_length_samples")
+                                .and_then(Value::as_u64)
+                                .map(|v| v as usize)
+                                && saved_source_len > 0
+                            {
+                                let key = Self::audio_clip_key(
+                                    &name, &clip_name, start, length, offset,
+                                );
+                                self.pending_source_lengths.insert(key, saved_source_len);
+                            }
                         }
 
                         if clip

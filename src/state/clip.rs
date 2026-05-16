@@ -18,6 +18,8 @@ pub struct AudioClip {
     pub muted: bool,
     #[serde(skip)]
     pub max_length_samples: usize,
+    #[serde(default)]
+    pub source_length_samples: usize,
     pub peaks_file: Option<String>,
     #[serde(skip, default)]
     pub peaks: ClipPeaks,

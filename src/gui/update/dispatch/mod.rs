@@ -2481,11 +2481,30 @@ impl Maolan {
                             }
                         }
                         Action::RemoveTrack(name) => {
+                            let mut undo_peaks = Vec::new();
+                            let mut undo_source_lengths = Vec::new();
                             let mut state = self.state.blocking_write();
 
                             if let Some(removed_idx) =
                                 state.tracks.iter().position(|t| t.name == *name)
                             {
+                                if let Some(track) = state.tracks.get(removed_idx) {
+                                    for clip in &track.audio.clips {
+                                        let key = Self::audio_clip_key(
+                                            name,
+                                            &clip.name,
+                                            clip.start,
+                                            clip.length,
+                                            clip.offset,
+                                        );
+                                        if !clip.peaks.is_empty() {
+                                            undo_peaks.push((key.clone(), clip.peaks.clone()));
+                                        }
+                                        if clip.source_length_samples > 0 {
+                                            undo_source_lengths.push((key, clip.source_length_samples));
+                                        }
+                                    }
+                                }
                                 state.connections.retain(|conn| {
                                     conn.from_track != *name && conn.to_track != *name
                                 });
@@ -2505,6 +2524,13 @@ impl Maolan {
                                         track.vca_master = None;
                                     }
                                 }
+                            }
+                            drop(state);
+                            for (key, peaks) in undo_peaks {
+                                self.undo_peaks_cache.insert(key, peaks);
+                            }
+                            for (key, source_len) in undo_source_lengths {
+                                self.undo_source_lengths_cache.insert(key, source_len);
                             }
                         }
                         Action::ClipMove {
@@ -2601,9 +2627,17 @@ impl Maolan {
                             let key =
                                 Self::audio_clip_key(track_name, name, *start, *length, *offset);
                             let mut max_length_samples = offset.saturating_add(*length);
+                            let mut source_length_samples = self
+                                .pending_source_lengths
+                                .remove(&key)
+                                .or_else(|| self.undo_source_lengths_cache.remove(&key))
+                                .unwrap_or(0);
                             let mut wav_path_for_rebuild: Option<std::path::PathBuf> = None;
                             let mut peaks_path_for_load: Option<std::path::PathBuf> = None;
-                            let precomputed_peaks = self.pending_precomputed_peaks.remove(&key);
+                            let precomputed_peaks = self
+                                .pending_precomputed_peaks
+                                .remove(&key)
+                                .or_else(|| self.undo_peaks_cache.remove(&key));
                             let loaded_bins = 0usize;
                             if *kind == Kind::Audio {
                                 peaks_path_for_load = peaks_file.as_ref().and_then(|rel| {
@@ -2630,6 +2664,7 @@ impl Maolan {
                                         {
                                             max_length_samples =
                                                 total_samples.saturating_sub(*offset).max(1);
+                                            source_length_samples = total_samples;
                                         }
                                         wav_path_for_rebuild = Some(wav_path);
                                     }
@@ -2649,6 +2684,7 @@ impl Maolan {
                                             input_channel: *input_channel,
                                             muted: *muted,
                                             max_length_samples,
+                                            source_length_samples,
                                             peaks_file: peaks_file.clone(),
                                             peaks: precomputed_peaks.clone().unwrap_or_default(),
                                             fade_enabled: *fade_enabled,
@@ -2739,9 +2775,27 @@ impl Maolan {
                                         if let Some(clip) = audio_clip {
                                             let max_length_samples =
                                                 clip.offset.saturating_add(clip.length).max(1);
+                                            let mut source_length_samples = 0usize;
+                                            if clip.name.to_ascii_lowercase().ends_with(".wav") {
+                                                let wav_path = if std::path::Path::new(&clip.name).is_absolute() {
+                                                    Some(std::path::PathBuf::from(&clip.name))
+                                                } else {
+                                                    self.session_dir
+                                                        .as_ref()
+                                                        .map(|session_root| session_root.join(&clip.name))
+                                                };
+                                                if let Some(wav_path) = wav_path
+                                                    && wav_path.exists()
+                                                    && let Ok(total_samples) =
+                                                        Self::audio_clip_source_length(&wav_path)
+                                                {
+                                                    source_length_samples = total_samples;
+                                                }
+                                            }
                                             track.audio.clips.push(Self::audio_clip_from_data(
                                                 clip,
                                                 max_length_samples,
+                                                source_length_samples,
                                             ));
                                         }
                                     }
@@ -2941,6 +2995,8 @@ impl Maolan {
                             kind,
                             clip_indices,
                         } => {
+                            let mut undo_peaks = Vec::new();
+                            let mut undo_source_lengths = Vec::new();
                             let mut state = self.state.blocking_write();
                             if let Some(track) =
                                 state.tracks.iter_mut().find(|t| &t.name == track_name)
@@ -2950,6 +3006,23 @@ impl Maolan {
                                         let mut indices = clip_indices.clone();
                                         indices.sort_unstable();
                                         indices.dedup();
+                                        for &idx in &indices {
+                                            if let Some(clip) = track.audio.clips.get(idx) {
+                                                let key = Self::audio_clip_key(
+                                                    track_name,
+                                                    &clip.name,
+                                                    clip.start,
+                                                    clip.length,
+                                                    clip.offset,
+                                                );
+                                                if !clip.peaks.is_empty() {
+                                                    undo_peaks.push((key.clone(), clip.peaks.clone()));
+                                                }
+                                                if clip.source_length_samples > 0 {
+                                                    undo_source_lengths.push((key, clip.source_length_samples));
+                                                }
+                                            }
+                                        }
                                         for idx in indices.into_iter().rev() {
                                             if idx < track.audio.clips.len() {
                                                 track.audio.clips.remove(idx);
@@ -2976,6 +3049,13 @@ impl Maolan {
                             });
                             if *kind == Kind::MIDI {
                                 refresh_midi_clip_previews = true;
+                            }
+                            drop(state);
+                            for (key, peaks) in undo_peaks {
+                                self.undo_peaks_cache.insert(key, peaks);
+                            }
+                            for (key, source_len) in undo_source_lengths {
+                                self.undo_source_lengths_cache.insert(key, source_len);
                             }
                         }
                         Action::ModifyMidiNotes {
