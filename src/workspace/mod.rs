@@ -497,25 +497,20 @@ impl Workspace {
             .on_scroll(|viewport| Message::EditorScrollYChanged(viewport.relative_offset().y))
             .width(Length::Fill)
             .height(Length::Fill);
-        let right_lanes_with_scrollbar: Element<'_, Message> =
-            if tracks_total_height > track_viewport_height + f32::EPSILON {
-                row![
-                    right_lanes_scrolled,
-                    VerticalScrollbar::new(
-                        tracks_total_height,
-                        editor_scroll_y,
-                        Message::EditorScrollYChanged,
-                    )
-                    .width(Length::Fixed(16.0))
-                    .height(Length::Fill),
-                ]
-                .spacing(0)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-            } else {
-                right_lanes_scrolled.into()
-            };
+        let right_lanes_with_scrollbar: Element<'_, Message> = row![
+            right_lanes_scrolled,
+            VerticalScrollbar::new(
+                tracks_total_height,
+                editor_scroll_y,
+                Message::EditorScrollYChanged,
+            )
+            .width(Length::Fixed(16.0))
+            .height(Length::Fill),
+        ]
+        .spacing(0)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into();
 
         let h_scroll = HorizontalScrollbar::new(
             editor_content_width,

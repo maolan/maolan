@@ -708,7 +708,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 kind: Kind::Audio,
             }) {
                 clips.push(
-                    pin(clip_snap_outline(clip_width, clip_height, 3.0))
+                    pin(clip_snap_outline(clip_width, clip_height, 8.0))
                         .position(Point::new(clip.start as f32 * pixels_per_sample, lane_top))
                         .into(),
                 );
@@ -1089,7 +1089,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                                         Background::Color(Color::TRANSPARENT)
                                     },
                                     preview_border,
-                                    3.0,
+                                    8.0,
                                 )
                                 .into_element())
                             .position(Point::new(preview_start * pixels_per_sample, lane_top))
@@ -1153,7 +1153,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     a: 0.9,
                 },
                 width: 1.0,
-                radius: 3.0.into(),
+                radius: 8.0.into(),
             },
             ..container::Style::default()
         });
@@ -1756,7 +1756,7 @@ impl Editor {
                                 a: 0.95,
                             },
                             width: 1.0,
-                            radius: 0.0.into(),
+                            radius: 8.0.into(),
                         },
                         ..container::Style::default()
                     }))

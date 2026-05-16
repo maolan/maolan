@@ -18,7 +18,7 @@ use crate::{
     consts::gui::{AUTOSAVE_SNAPSHOT_INTERVAL, METER_QUANTIZE_STEP_DB},
     consts::gui_update_mod::{ATTACK_ALPHA, RELEASE_ALPHA},
     consts::state_ids::METRONOME_TRACK_ID,
-    consts::state_track::TRACK_MIN_HEIGHT,
+    consts::state_track::{TRACK_MIN_HEIGHT, TRACK_SUBTRACK_GAP, TRACK_SUBTRACK_MIN_HEIGHT},
     consts::widget_piano::PITCH_MAX,
     message::{
         ClipPitchCorrectionRequest, ClipStretchRequest, ExportNormalizeMode, ExportRenderMode,
@@ -2269,17 +2269,24 @@ impl Maolan {
                 for track in state.tracks.iter().filter(|t| t.name != METRONOME_TRACK_ID) {
                     if track.name == track_name {
                         let layout = track.lane_layout();
-                        let lane_clip_h = layout.lane_height.max(12.0);
+                        let total_lanes = (layout.audio_lanes + layout.midi_lanes).max(1);
+                        let gaps =
+                            (total_lanes.saturating_sub(1)) as f32 * TRACK_SUBTRACK_GAP;
+                        let editor_lane_height = ((track.height - gaps) / total_lanes as f32)
+                            .max(TRACK_SUBTRACK_MIN_HEIGHT);
+                        let lane_clip_h = (editor_lane_height - 2.0).max(8.0);
                         let lane_top = match kind {
                             maolan_engine::kind::Kind::Audio => {
-                                track.lane_top(maolan_engine::kind::Kind::Audio, 0)
+                                0.0 * (editor_lane_height + TRACK_SUBTRACK_GAP) + 1.0
                             }
                             maolan_engine::kind::Kind::MIDI => {
                                 let local_y = (position.y - y_offset).max(0.0);
                                 let midi_lane = track
                                     .lane_index_at_y(maolan_engine::kind::Kind::MIDI, local_y)
                                     .min(track.midi.ins.saturating_sub(1));
-                                track.lane_top(maolan_engine::kind::Kind::MIDI, midi_lane)
+                                (layout.audio_lanes + midi_lane) as f32
+                                    * (editor_lane_height + TRACK_SUBTRACK_GAP)
+                                    + 1.0
                             }
                         };
                         indicator = Some((position.x, y_offset + lane_top, lane_clip_h));
@@ -2676,14 +2683,13 @@ impl Maolan {
                 let right_fade_in = clip.fade_in_samples.min(right_len / 2);
                 let right_fade_out = clip.fade_out_samples.min(right_len / 2);
                 self.state.blocking_write().message = format!("Split audio clip '{}'", clip.name);
-                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
-                tasks.push(self.send(Action::RemoveClip {
-                    track_name: track_name.clone(),
-                    kind: Kind::Audio,
-                    clip_indices: vec![clip_idx],
-                }));
-                tasks.push(
-                    self.send(Action::AddClip {
+                self.send(Action::ApplyGroupedActions(vec![
+                    Action::RemoveClip {
+                        track_name: track_name.clone(),
+                        kind: Kind::Audio,
+                        clip_indices: vec![clip_idx],
+                    },
+                    Action::AddClip {
                         name: clip.name.clone(),
                         track_name: track_name.clone(),
                         start: clip.start,
@@ -2707,10 +2713,8 @@ impl Maolan {
                         pitch_correction_inertia_ms: None,
                         pitch_correction_formant_compensation: None,
                         plugin_graph_json: clip.plugin_graph_json.clone(),
-                    }),
-                );
-                tasks.push(
-                    self.send(Action::AddClip {
+                    },
+                    Action::AddClip {
                         name: clip.name,
                         track_name,
                         start: split_sample,
@@ -2736,10 +2740,8 @@ impl Maolan {
                         pitch_correction_inertia_ms: None,
                         pitch_correction_formant_compensation: None,
                         plugin_graph_json: clip.plugin_graph_json,
-                    }),
-                );
-                tasks.push(self.send(Action::EndHistoryGroup));
-                Task::batch(tasks)
+                    },
+                ]))
             }
             Kind::MIDI => {
                 let Some(clip) = self
@@ -2772,60 +2774,59 @@ impl Maolan {
                     return Task::none();
                 }
                 self.state.blocking_write().message = format!("Split MIDI clip '{}'", clip.name);
-                let mut tasks = vec![self.send(Action::BeginHistoryGroup)];
-                tasks.push(self.send(Action::RemoveClip {
-                    track_name: track_name.clone(),
-                    kind: Kind::MIDI,
-                    clip_indices: vec![clip_idx],
-                }));
-                tasks.push(self.send(Action::AddClip {
-                    name: clip.name.clone(),
-                    track_name: track_name.clone(),
-                    start: clip.start,
-                    length: left_len,
-                    offset: clip.offset,
-                    input_channel: clip.input_channel,
-                    muted: clip.muted,
-                    peaks_file: None,
-                    kind: Kind::MIDI,
-                    fade_enabled: true,
-                    fade_in_samples: 240,
-                    fade_out_samples: 240,
-                    source_name: None,
-                    source_offset: None,
-                    source_length: None,
-                    preview_name: None,
-                    pitch_correction_points: vec![],
-                    pitch_correction_frame_likeness: None,
-                    pitch_correction_inertia_ms: None,
-                    pitch_correction_formant_compensation: None,
-                    plugin_graph_json: None,
-                }));
-                tasks.push(self.send(Action::AddClip {
-                    name: clip.name,
-                    track_name,
-                    start: split_sample,
-                    length: right_len,
-                    offset: clip.offset.saturating_add(left_len),
-                    input_channel: clip.input_channel,
-                    muted: clip.muted,
-                    peaks_file: None,
-                    kind: Kind::MIDI,
-                    fade_enabled: true,
-                    fade_in_samples: 240,
-                    fade_out_samples: 240,
-                    source_name: None,
-                    source_offset: None,
-                    source_length: None,
-                    preview_name: None,
-                    pitch_correction_points: vec![],
-                    pitch_correction_frame_likeness: None,
-                    pitch_correction_inertia_ms: None,
-                    pitch_correction_formant_compensation: None,
-                    plugin_graph_json: None,
-                }));
-                tasks.push(self.send(Action::EndHistoryGroup));
-                Task::batch(tasks)
+                self.send(Action::ApplyGroupedActions(vec![
+                    Action::RemoveClip {
+                        track_name: track_name.clone(),
+                        kind: Kind::MIDI,
+                        clip_indices: vec![clip_idx],
+                    },
+                    Action::AddClip {
+                        name: clip.name.clone(),
+                        track_name: track_name.clone(),
+                        start: clip.start,
+                        length: left_len,
+                        offset: clip.offset,
+                        input_channel: clip.input_channel,
+                        muted: clip.muted,
+                        peaks_file: None,
+                        kind: Kind::MIDI,
+                        fade_enabled: true,
+                        fade_in_samples: 240,
+                        fade_out_samples: 240,
+                        source_name: None,
+                        source_offset: None,
+                        source_length: None,
+                        preview_name: None,
+                        pitch_correction_points: vec![],
+                        pitch_correction_frame_likeness: None,
+                        pitch_correction_inertia_ms: None,
+                        pitch_correction_formant_compensation: None,
+                        plugin_graph_json: None,
+                    },
+                    Action::AddClip {
+                        name: clip.name,
+                        track_name,
+                        start: split_sample,
+                        length: right_len,
+                        offset: clip.offset.saturating_add(left_len),
+                        input_channel: clip.input_channel,
+                        muted: clip.muted,
+                        peaks_file: None,
+                        kind: Kind::MIDI,
+                        fade_enabled: true,
+                        fade_in_samples: 240,
+                        fade_out_samples: 240,
+                        source_name: None,
+                        source_offset: None,
+                        source_length: None,
+                        preview_name: None,
+                        pitch_correction_points: vec![],
+                        pitch_correction_frame_likeness: None,
+                        pitch_correction_inertia_ms: None,
+                        pitch_correction_formant_compensation: None,
+                        plugin_graph_json: None,
+                    },
+                ]))
             }
         }
     }

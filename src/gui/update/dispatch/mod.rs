@@ -513,6 +513,15 @@ impl Maolan {
             Message::EditorScrollYChanged(value) => {
                 let y = value.clamp(0.0, 1.0);
                 if (self.editor_scroll_y - y).abs() > 0.0005 {
+                    // Ignore scroll changes during track resize to prevent
+                    // the editor from snapping to the top when scrollable
+                    // content temporarily shrinks below the viewport.
+                    if matches!(
+                        self.state.blocking_read().resizing,
+                        Some(crate::state::Resizing::Track(..))
+                    ) {
+                        return Task::none();
+                    }
                     self.editor_scroll_y = y;
                     return self.sync_editor_scrollbars();
                 }
@@ -6064,25 +6073,34 @@ impl Maolan {
                     };
                     (state.resizing.clone(), bottom_trigger_top)
                 };
-                let previous_cursor = {
-                    let mut state = self.state.blocking_write();
-                    let prev = state.cursor;
-                    state.cursor = position;
-                    prev
-                };
                 let should_scroll_up = position.y >= TRACK_DRAG_SCROLL_TOP_INSET
                     && position.y
                         <= TRACK_DRAG_SCROLL_TOP_INSET + TRACK_DRAG_SCROLL_UP_HOTZONE_HEIGHT;
                 let should_scroll_down = position.y >= mixer_drag_scroll_top;
-                match resizing {
-                    Some(Resizing::Track(ref track_name, initial_height, initial_mouse_y)) => {
-                        let mut state = self.state.blocking_write();
+                let previous_cursor = {
+                    let mut state = self.state.blocking_write();
+                    let prev = state.cursor;
+                    state.cursor = position;
+                    // Handle track resize inside the same write lock to avoid contention.
+                    if let Some(Resizing::Track(ref track_name, initial_height, initial_mouse_y)) =
+                        resizing
+                    {
                         let delta = position.y - initial_mouse_y;
                         if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name)
                         {
                             let min_h = track.min_height_for_layout();
-                            track.height = (initial_height + delta).clamp(min_h, 600.0);
+                            let new_height = (initial_height + delta).clamp(min_h, 600.0);
+                            // Only update when height actually changes to reduce re-renders.
+                            if (track.height - new_height).abs() >= 0.5 {
+                                track.height = new_height;
+                            }
                         }
+                    }
+                    prev
+                };
+                match resizing {
+                    Some(Resizing::Track(..)) => {
+                        // Already handled inside the cursor-update block above.
                     }
                     Some(Resizing::TrackMarker {
                         ref track_name,
