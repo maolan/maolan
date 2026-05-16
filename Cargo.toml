@@ -17,6 +17,7 @@ categories = ["multimedia::audio"]
 
 [patch.crates-io]
 esaxx-rs = { git = "https://github.com/maolan/esaxx" }
+maolan-widgets = { path = "../widgets" }
 
 [dependencies]
 crossterm = "0.29.0"
