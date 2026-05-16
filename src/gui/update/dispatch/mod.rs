@@ -2415,14 +2415,20 @@ impl Maolan {
                             midi_outs,
                         } => {
                             let mut state = self.state.blocking_write();
-                            state.tracks.push(Track::new(
+                            let track = Track::new(
                                 name.clone(),
                                 0.0,
                                 *audio_ins,
                                 *audio_outs,
                                 *midi_ins,
                                 *midi_outs,
-                            ));
+                            );
+                            if let Some(index) = state.undo_track_indices.remove(name) {
+                                let insert_index = index.min(state.tracks.len());
+                                state.tracks.insert(insert_index, track);
+                            } else {
+                                state.tracks.push(track);
+                            }
 
                             if let Some(position) = state.pending_track_positions.remove(name)
                                 && let Some(track) =
@@ -2508,6 +2514,7 @@ impl Maolan {
                                 state.connections.retain(|conn| {
                                     conn.from_track != *name && conn.to_track != *name
                                 });
+                                state.undo_track_indices.insert(name.clone(), removed_idx);
                                 state.tracks.remove(removed_idx);
 
                                 state.selected.remove(name);
@@ -4783,6 +4790,7 @@ impl Maolan {
             Message::ConnectionViewSelectTrack(ref idx) => {
                 let ctrl = self.state.blocking_read().ctrl;
                 let mut state = self.state.blocking_write();
+                state.last_selected_track = Some(idx.clone());
 
                 match &mut state.connection_view_selection {
                     ConnectionViewSelection::Tracks(set) if ctrl => {

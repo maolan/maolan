@@ -32,6 +32,7 @@ impl Maolan {
                 self.last_autosave_snapshot = None;
                 self.pending_autosave_recovery = None;
                 self.pending_open_session_dir = None;
+                self.state.blocking_write().undo_track_indices.clear();
                 true
             }
             Action::EndSessionRestore => {
