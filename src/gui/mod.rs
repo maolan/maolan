@@ -563,6 +563,7 @@ pub struct Maolan {
     export_normalize_tp_limiter: bool,
     export_master_limiter: bool,
     export_master_limiter_ceiling_input: String,
+    clap_param_values: HashMap<(String, Option<usize>, usize, u32), f64>,
     clap_ui_host: GuiClapUiHost,
     #[cfg(all(unix, not(target_os = "macos")))]
     lv2_ui_host: GuiLv2UiHost,
@@ -860,6 +861,7 @@ impl Default for Maolan {
             export_normalize_tp_limiter: true,
             export_master_limiter: true,
             export_master_limiter_ceiling_input: "-1.0".to_string(),
+            clap_param_values: HashMap::new(),
             clap_ui_host: GuiClapUiHost::new(),
             #[cfg(all(unix, not(target_os = "macos")))]
             lv2_ui_host: GuiLv2UiHost::new(),

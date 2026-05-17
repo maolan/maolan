@@ -2389,13 +2389,43 @@ impl Maolan {
                 let handled_response_timing = self.handle_response_timing_state_action(a);
                 if handled_response_track {
                     match a {
-                        Action::TrackAddAudioInput(track_name)
-                        | Action::TrackAddAudioOutput(track_name)
-                        | Action::TrackRemoveAudioInput(track_name)
-                        | Action::TrackRemoveAudioOutput(track_name) => {
-                            if let Some(task) =
-                                self.maybe_refresh_plugin_graph_for_track(track_name)
-                            {
+                        Action::TrackAddAudioInput(track_name) => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                                track.audio.ins += 1;
+                            }
+                            drop(state);
+                            if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                                return task;
+                            }
+                        }
+                        Action::TrackAddAudioOutput(track_name) => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                                track.audio.outs += 1;
+                            }
+                            drop(state);
+                            if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                                return task;
+                            }
+                        }
+                        Action::TrackRemoveAudioInput(track_name) => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                                track.audio.ins = track.audio.ins.saturating_sub(1);
+                            }
+                            drop(state);
+                            if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                                return task;
+                            }
+                        }
+                        Action::TrackRemoveAudioOutput(track_name) => {
+                            let mut state = self.state.blocking_write();
+                            if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                                track.audio.outs = track.audio.outs.saturating_sub(1);
+                            }
+                            drop(state);
+                            if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
                                 return task;
                             }
                         }
@@ -3376,6 +3406,9 @@ impl Maolan {
                                     processor.clone(),
                                 ) {
                                     self.state.blocking_write().message = e;
+                                } else {
+                                    let json = self.build_sidechain_options_json();
+                                    self.clap_ui_host.send_sidechain_options(&json);
                                 }
                                 self.pending_clap_ui_open = None;
                             }
@@ -3399,6 +3432,9 @@ impl Maolan {
                                     processor.clone(),
                                 ) {
                                     self.state.blocking_write().message = e;
+                                } else {
+                                    let json = self.build_sidechain_options_json();
+                                    self.clap_ui_host.send_sidechain_options(&json);
                                 }
                                 self.pending_clap_ui_open = None;
                             }
@@ -3876,6 +3912,14 @@ impl Maolan {
                                 return Task::batch(pending_queries);
                             }
 
+                            if let Some(task) = self.process_pending_sidechain_connections() {
+                                return task;
+                            }
+
+                            if let Some(task) = self.retry_sidechain_plugin_sources(track_name) {
+                                return task;
+                            }
+
                             if self.pending_save_path.is_some() {
                                 self.pending_save_tracks.remove(track_name);
                                 if self.pending_save_ready() {
@@ -3983,6 +4027,23 @@ impl Maolan {
                             }
                             state.message = format!("Renamed track to '{}'", new_name);
                             refresh_midi_clip_previews = true;
+                        }
+                        Action::TrackSetClapParameter {
+                            track_name,
+                            instance_id,
+                            param_id,
+                            value,
+                        } => {
+                            let key = (track_name.clone(), None, *instance_id, *param_id);
+                            self.clap_param_values.insert(key, *value);
+
+                            // Intercept EQ sidechain routing params (196-199) from
+                            // automation/remote to trigger reconfiguration.
+                            if *param_id >= 196 && *param_id <= 199 {
+                                if let Some(task) = self.reconfigure_sidechain(track_name, *instance_id) {
+                                    return task;
+                                }
+                            }
                         }
                         _ => {}
                     }

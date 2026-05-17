@@ -584,6 +584,25 @@ pub struct StateData {
     pub session_genre: String,
     pub available_templates: Vec<String>,
     pub available_group_templates: Vec<String>,
+    pub plugin_sidechains: HashMap<(String, usize), PluginSidechainState>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PluginSidechainState {
+    pub enabled: bool,
+    pub source_track: Option<String>,
+    #[serde(default)]
+    pub source_plugin_idx: usize,
+    pub source_plugin_instance_id: Option<usize>,
+    pub source_port: usize,
+    pub source_is_hw: bool,
+    pub target_receive_port: Option<usize>,
+    pub target_plugin_sidechain_port: usize,
+    #[serde(default)]
+    pub sidechain_channel_count: usize,
+    pub plugin_connection_pending: bool,
+    #[serde(default)]
+    pub source_track_send_port: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -770,6 +789,7 @@ impl Default for StateData {
             session_genre: String::new(),
             available_templates: vec![],
             available_group_templates: vec![],
+            plugin_sidechains: HashMap::new(),
         }
     }
 }

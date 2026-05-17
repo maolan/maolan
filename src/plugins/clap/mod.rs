@@ -9,7 +9,7 @@ use crate::plugins::x11::{
     XRootWindow, XSelectInput, XSetWMProtocols, XStoreName, XSync, XWhitePixel,
     set_dialog_window_type,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -62,6 +62,7 @@ pub struct GuiClapUiHost {
     pending_param_updates: Arc<AtomicUsize>,
     pending_state_updates: Arc<AtomicUsize>,
     active_session_keys: Arc<Mutex<HashSet<ClapUiSessionKey>>>,
+    active_processors: Arc<Mutex<HashMap<ClapUiSessionKey, SharedClapProcessor>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -81,6 +82,7 @@ impl GuiClapUiHost {
         let pending_param_updates = Arc::new(AtomicUsize::new(0));
         let pending_state_updates = Arc::new(AtomicUsize::new(0));
         let active_session_keys = Arc::new(Mutex::new(HashSet::new()));
+        let active_processors = Arc::new(Mutex::new(HashMap::new()));
         Self {
             closed_tx,
             closed_rx,
@@ -93,6 +95,7 @@ impl GuiClapUiHost {
             pending_param_updates,
             pending_state_updates,
             active_session_keys,
+            active_processors,
         }
     }
 
@@ -156,11 +159,15 @@ impl GuiClapUiHost {
         let active_ui_sessions = self.active_ui_sessions.clone();
         let active_ui_sessions_spawn = active_ui_sessions.clone();
         let active_session_keys = self.active_session_keys.clone();
+        let active_processors = self.active_processors.clone();
         let session_key_for_thread = session_key.clone();
         let pending_closed_states = self.pending_closed_states.clone();
         let pending_param_updates = self.pending_param_updates.clone();
         let pending_state_updates = self.pending_state_updates.clone();
         active_ui_sessions.fetch_add(1, Ordering::AcqRel);
+        if let Ok(mut procs) = active_processors.lock() {
+            procs.insert(session_key.clone(), processor.clone());
+        }
         thread::Builder::new()
             .name("clap-ui".to_string())
             .spawn(move || {
@@ -212,16 +219,32 @@ impl GuiClapUiHost {
                 if let Ok(mut active) = active_session_keys.lock() {
                     active.remove(&session_key_for_thread);
                 }
+                if let Ok(mut procs) = active_processors.lock() {
+                    procs.remove(&session_key_for_thread);
+                }
                 active_ui_sessions_spawn.fetch_sub(1, Ordering::AcqRel);
             })
             .map_err(|e| {
                 if let Ok(mut active) = self.active_session_keys.lock() {
                     active.remove(&session_key);
                 }
+                if let Ok(mut procs) = self.active_processors.lock() {
+                    procs.remove(&session_key);
+                }
                 active_ui_sessions.fetch_sub(1, Ordering::AcqRel);
                 format!("Failed to spawn CLAP UI thread: {e}")
             })?;
         Ok(())
+    }
+
+    pub fn send_sidechain_options(&self, json: &str) {
+        if let Ok(procs) = self.active_processors.lock() {
+            for (_, processor) in procs.iter() {
+                if let Err(e) = processor.set_sidechain_options(json) {
+                    tracing::warn!("Failed to send sidechain options: {e}");
+                }
+            }
+        }
     }
 }
 

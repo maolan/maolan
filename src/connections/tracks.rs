@@ -838,38 +838,85 @@ impl canvas::Program<Message> for Graph {
                                 let is_source_hw_audio = from_t == HW_IN_ID || from_t == HW_OUT_ID;
                                 let is_source_midi_hw = from_t.starts_with(MIDI_HW_IN_ID)
                                     || from_t.starts_with(MIDI_HW_OUT_ID);
-                                let f_p_idx = if is_source_hw_audio || is_source_midi_hw {
-                                    from_p
+
+                                let parallel_count = if data.shift {
+                                    let src_count = if is_source_hw_audio {
+                                        data.hw_in.as_ref().map(|h| h.channels.saturating_sub(from_p)).unwrap_or(0)
+                                    } else if is_source_midi_hw {
+                                        1usize.saturating_sub(from_p)
+                                    } else if let Some(t) = data.tracks.iter().find(|t| t.name == from_t) {
+                                        let total = if is_input {
+                                            t.primary_audio_ins() + t.midi.ins + t.return_count()
+                                        } else {
+                                            t.primary_audio_outs() + t.midi.outs + t.send_count()
+                                        };
+                                        (from_p..total)
+                                            .take_while(|&p| Self::track_port_kind(t, p, is_input) == kind)
+                                            .count()
+                                    } else {
+                                        0
+                                    };
+                                    let tgt_count = if to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID {
+                                        let hw = if !is_input { &data.hw_in } else { &data.hw_out };
+                                        hw.as_ref().map(|h| h.channels.saturating_sub(to_p)).unwrap_or(0)
+                                    } else if is_target_midi_hw {
+                                        1usize.saturating_sub(to_p)
+                                    } else if let Some(t) = target_track_option {
+                                        let total = if !is_input {
+                                            t.primary_audio_ins() + t.midi.ins + t.return_count()
+                                        } else {
+                                            t.primary_audio_outs() + t.midi.outs + t.send_count()
+                                        };
+                                        (to_p..total)
+                                            .take_while(|&p| Self::track_port_kind(t, p, !is_input) == kind)
+                                            .count()
+                                    } else {
+                                        0
+                                    };
+                                    src_count.min(tgt_count).max(1)
                                 } else {
-                                    let t = data.tracks.iter().find(|t| t.name == from_t).unwrap();
-                                    Self::track_port_to_engine_index(t, from_p, is_input).1
+                                    1
                                 };
 
-                                let t_p_idx = if to_t_name == HW_IN_ID
-                                    || to_t_name == HW_OUT_ID
-                                    || is_target_midi_hw
-                                {
-                                    to_p
-                                } else {
-                                    let t = target_track_option.unwrap();
-                                    Self::track_port_to_engine_index(t, to_p, !is_input).1
-                                };
+                                let mut actions = Vec::with_capacity(parallel_count);
+                                for offset in 0..parallel_count {
+                                    let f_p_idx = if is_source_hw_audio || is_source_midi_hw {
+                                        from_p + offset
+                                    } else {
+                                        let t = data.tracks.iter().find(|t| t.name == from_t).unwrap();
+                                        Self::track_port_to_engine_index(t, from_p + offset, is_input).1
+                                    };
 
-                                let (final_from, final_f_p, final_to, final_t_p) = if is_input {
-                                    (to_t_name, t_p_idx, from_t, f_p_idx)
-                                } else {
-                                    (from_t, f_p_idx, to_t_name, t_p_idx)
-                                };
+                                    let t_p_idx = if to_t_name == HW_IN_ID
+                                        || to_t_name == HW_OUT_ID
+                                        || is_target_midi_hw
+                                    {
+                                        to_p + offset
+                                    } else {
+                                        let t = target_track_option.unwrap();
+                                        Self::track_port_to_engine_index(t, to_p + offset, !is_input).1
+                                    };
 
-                                return Some(Action::publish(Message::Request(
-                                    EngineAction::Connect {
+                                    let (final_from, final_f_p, final_to, final_t_p) = if is_input {
+                                        (to_t_name.clone(), t_p_idx, from_t.clone(), f_p_idx)
+                                    } else {
+                                        (from_t.clone(), f_p_idx, to_t_name.clone(), t_p_idx)
+                                    };
+
+                                    actions.push(EngineAction::Connect {
                                         from_track: final_from,
                                         from_port: final_f_p,
                                         to_track: final_to,
                                         to_port: final_t_p,
                                         kind,
-                                    },
-                                )));
+                                    });
+                                }
+
+                                if actions.len() == 1 {
+                                    return Some(Action::publish(Message::Request(actions.into_iter().next().unwrap())));
+                                } else {
+                                    return Some(Action::publish(Message::RequestBatch(actions)));
+                                }
                             }
                         }
                         return Some(Action::request_redraw());
@@ -1298,102 +1345,129 @@ impl canvas::Program<Message> for Graph {
             if let Some(conn) = &data.connecting {
                 let start_track_option = data.tracks.iter().find(|t| t.name == conn.from_track);
 
-                let start_point = if conn.from_track == HW_IN_ID {
-                    data.hw_in.as_ref().map(move |hw_in| {
-                        let py = 50.0
-                            + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
-                                * (conn.from_port + 1) as f32;
-                        Point::new(hw_width, py)
-                    })
-                } else if conn.from_track == HW_OUT_ID {
-                    data.hw_out.as_ref().map(move |hw_out| {
-                        let py = 50.0
-                            + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
-                                * (conn.from_port + 1) as f32;
-                        Point::new(bounds.width - hw_width, py)
-                    })
-                } else if let Some(device) =
-                    conn.from_track.strip_prefix(&format!("{MIDI_HW_IN_ID}:"))
-                {
-                    data.opened_midi_in_hw
-                        .iter()
-                        .position(|d| d == device)
-                        .map(|idx| {
-                            Self::midi_hw_in_port_pos(
-                                &data,
-                                device,
-                                idx,
-                                midi_hw_box_h,
-                                midi_hw_box_gap,
-                            )
-                        })
-                } else if let Some(device) =
-                    conn.from_track.strip_prefix(&format!("{MIDI_HW_OUT_ID}:"))
-                {
-                    data.opened_midi_out_hw
-                        .iter()
-                        .position(|d| d == device)
-                        .map(|idx| {
-                            Self::midi_hw_out_port_pos(
-                                &data,
-                                device,
-                                idx,
-                                bounds,
-                                hw_width,
-                                midi_hw_box_h,
-                                midi_hw_box_gap,
-                            )
-                        })
-                } else {
-                    start_track_option.map(|t| {
-                        let track_size = Self::track_box_size(t);
-                        if conn.is_input {
-                            Self::track_port_position(t, conn.from_port, t.position, track_size)
+                let preview_count = if data.shift {
+                    if conn.from_track == HW_IN_ID {
+                        data.hw_in.as_ref().map(|h| h.channels.saturating_sub(conn.from_port)).unwrap_or(1).max(1)
+                    } else if conn.from_track == HW_OUT_ID {
+                        data.hw_out.as_ref().map(|h| h.channels.saturating_sub(conn.from_port)).unwrap_or(1).max(1)
+                    } else if conn.from_track.starts_with(MIDI_HW_IN_ID) || conn.from_track.starts_with(MIDI_HW_OUT_ID) {
+                        1usize.saturating_sub(conn.from_port).max(1)
+                    } else if let Some(t) = start_track_option {
+                        let total = if conn.is_input {
+                            t.primary_audio_ins() + t.midi.ins + t.return_count()
                         } else {
-                            Self::track_output_port_position(
-                                t,
-                                conn.from_port,
-                                t.position,
-                                track_size,
-                            )
-                        }
-                    })
+                            t.primary_audio_outs() + t.midi.outs + t.send_count()
+                        };
+                        (conn.from_port..total)
+                            .take_while(|&p| Self::track_port_kind(t, p, conn.is_input) == conn.kind)
+                            .count()
+                            .max(1)
+                    } else {
+                        1
+                    }
+                } else {
+                    1
                 };
 
-                if let Some(start) = start_point {
-                    let end = conn.point;
-                    let start_edge = if let Some(track) = start_track_option {
-                        Self::track_port_edge(track, conn.from_port, conn.is_input)
+                for offset in 0..preview_count {
+                    let from_port = conn.from_port + offset;
+                    let start_point = if conn.from_track == HW_IN_ID {
+                        data.hw_in.as_ref().map(move |hw_in| {
+                            let py = 50.0
+                                + ((bounds.height - 60.0) / (hw_in.channels + 1) as f32)
+                                    * (from_port + 1) as f32;
+                            Point::new(hw_width, py)
+                        })
+                    } else if conn.from_track == HW_OUT_ID {
+                        data.hw_out.as_ref().map(move |hw_out| {
+                            let py = 50.0
+                                + ((bounds.height - 60.0) / (hw_out.channels + 1) as f32)
+                                    * (from_port + 1) as f32;
+                            Point::new(bounds.width - hw_width, py)
+                        })
+                    } else if let Some(device) =
+                        conn.from_track.strip_prefix(&format!("{MIDI_HW_IN_ID}:"))
+                    {
+                        data.opened_midi_in_hw
+                            .iter()
+                            .position(|d| d == device)
+                            .map(|idx| {
+                                Self::midi_hw_in_port_pos(
+                                    &data,
+                                    device,
+                                    idx,
+                                    midi_hw_box_h,
+                                    midi_hw_box_gap,
+                                )
+                            })
+                    } else if let Some(device) =
+                        conn.from_track.strip_prefix(&format!("{MIDI_HW_OUT_ID}:"))
+                    {
+                        data.opened_midi_out_hw
+                            .iter()
+                            .position(|d| d == device)
+                            .map(|idx| {
+                                Self::midi_hw_out_port_pos(
+                                    &data,
+                                    device,
+                                    idx,
+                                    bounds,
+                                    hw_width,
+                                    midi_hw_box_h,
+                                    midi_hw_box_gap,
+                                )
+                            })
                     } else {
-                        match conn.from_track.as_str() {
-                            HW_IN_ID => TrackPortEdge::Right,
-                            HW_OUT_ID => TrackPortEdge::Left,
-                            _ if conn.from_track.starts_with(MIDI_HW_IN_ID) => TrackPortEdge::Right,
-                            _ if conn.from_track.starts_with(MIDI_HW_OUT_ID) => TrackPortEdge::Left,
-                            _ => {
-                                if conn.is_input {
-                                    TrackPortEdge::Left
-                                } else {
-                                    TrackPortEdge::Right
+                        start_track_option.map(|t| {
+                            let track_size = Self::track_box_size(t);
+                            if conn.is_input {
+                                Self::track_port_position(t, from_port, t.position, track_size)
+                            } else {
+                                Self::track_output_port_position(
+                                    t,
+                                    from_port,
+                                    t.position,
+                                    track_size,
+                                )
+                            }
+                        })
+                    };
+
+                    if let Some(start) = start_point {
+                        let end = conn.point;
+                        let start_edge = if let Some(track) = start_track_option {
+                            Self::track_port_edge(track, from_port, conn.is_input)
+                        } else {
+                            match conn.from_track.as_str() {
+                                HW_IN_ID => TrackPortEdge::Right,
+                                HW_OUT_ID => TrackPortEdge::Left,
+                                _ if conn.from_track.starts_with(MIDI_HW_IN_ID) => TrackPortEdge::Right,
+                                _ if conn.from_track.starts_with(MIDI_HW_OUT_ID) => TrackPortEdge::Left,
+                                _ => {
+                                    if conn.is_input {
+                                        TrackPortEdge::Left
+                                    } else {
+                                        TrackPortEdge::Right
+                                    }
                                 }
                             }
-                        }
-                    };
-                    let end_edge = if conn.is_input {
-                        TrackPortEdge::Right
-                    } else {
-                        TrackPortEdge::Left
-                    };
-                    let (c1, c2) = Self::bezier_controls(start, start_edge, end, end_edge);
-                    frame.stroke(
-                        &Path::new(|p| {
-                            p.move_to(start);
-                            p.bezier_curve_to(c1, c2, end);
-                        }),
-                        canvas::Stroke::default()
-                            .with_color(Color::from_rgba(0.73, 0.84, 1.0, 0.6))
-                            .with_width(2.0),
-                    );
+                        };
+                        let end_edge = if conn.is_input {
+                            TrackPortEdge::Right
+                        } else {
+                            TrackPortEdge::Left
+                        };
+                        let (c1, c2) = Self::bezier_controls(start, start_edge, end, end_edge);
+                        frame.stroke(
+                            &Path::new(|p| {
+                                p.move_to(start);
+                                p.bezier_curve_to(c1, c2, end);
+                            }),
+                            canvas::Stroke::default()
+                                .with_color(Color::from_rgba(0.73, 0.84, 1.0, 0.6))
+                                .with_width(2.0),
+                        );
+                    }
                 }
             }
 
