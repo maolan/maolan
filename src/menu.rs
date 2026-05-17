@@ -1,163 +1,15 @@
 use crate::message::{Message, Show};
-use iced::{
-    Border, Color, Element, Length, alignment,
-    widget::{button, row, text},
-};
+use iced::Length;
 use iced_aw::{
     menu::{DrawPath, Item, Menu as IcedMenu},
     menu_bar, menu_items,
 };
-use iced_fonts::lucide::{chevron_right, square, square_check_big};
 use maolan_engine::message::GlobalMidiLearnTarget;
 use std::path::{Path, PathBuf};
 
-pub(crate) fn base_button<'a>(
-    content: impl Into<Element<'a, Message>>,
-    msg: Message,
-) -> button::Button<'a, Message> {
-    button(content)
-        .padding([4, 8])
-        .style(|theme, status| {
-            use button::{Status, Style};
-
-            let palette = theme.extended_palette();
-            let base = Style {
-                text_color: palette.background.base.text,
-                border: Border::default().rounded(6.0),
-                ..Style::default()
-            };
-            match status {
-                Status::Active => base.with_background(Color::TRANSPARENT),
-                Status::Hovered => base.with_background(Color::from_rgb(
-                    palette.primary.weak.color.r * 1.2,
-                    palette.primary.weak.color.g * 1.2,
-                    palette.primary.weak.color.b * 1.2,
-                )),
-                Status::Disabled => base.with_background(Color::from_rgb(0.5, 0.5, 0.5)),
-                Status::Pressed => base.with_background(palette.primary.weak.color),
-            }
-        })
-        .on_press(msg)
-}
-
-pub(crate) fn menu_button(
-    label: impl Into<String>,
-    width: Option<Length>,
-    height: Option<Length>,
-    msg: Message,
-) -> Element<'static, Message, iced::Theme, iced::Renderer> {
-    let label = label.into();
-    base_button(
-        text(label)
-            .height(height.unwrap_or(Length::Shrink))
-            .align_y(alignment::Vertical::Center),
-        msg,
-    )
-    .width(width.unwrap_or(Length::Shrink))
-    .height(height.unwrap_or(Length::Shrink))
-    .into()
-}
-
-pub(crate) fn menu_dropdown(
-    label: impl Into<String>,
-    message: Message,
-) -> Element<'static, Message, iced::Theme, iced::Renderer> {
-    menu_button(label, Some(Length::Shrink), Some(Length::Shrink), message)
-}
-
-pub(crate) fn menu_item(
-    label: impl Into<String>,
-    message: Message,
-) -> Element<'static, Message, iced::Theme, iced::Renderer> {
-    menu_button(label, Some(Length::Fill), Some(Length::Shrink), message)
-}
-
-pub(crate) fn menu_checkbox_item(
-    label: impl Into<String>,
-    checked: bool,
-    message: Message,
-) -> Element<'static, Message, iced::Theme, iced::Renderer> {
-    let label = label.into();
-    let icon = if checked {
-        square_check_big()
-    } else {
-        square()
-    };
-    base_button(
-        row![
-            icon.width(20).align_y(alignment::Vertical::Center),
-            text(label)
-                .height(Length::Shrink)
-                .align_y(alignment::Vertical::Center),
-        ]
-        .spacing(6)
-        .align_y(iced::Alignment::Center),
-        message,
-    )
-    .width(Length::Fill)
-    .height(Length::Shrink)
-    .into()
-}
-
-pub(crate) fn menu_item_maybe(
-    label: impl Into<String>,
-    message: Option<Message>,
-) -> Element<'static, Message, iced::Theme, iced::Renderer> {
-    let label = label.into();
-    let button = button(
-        text(label)
-            .height(Length::Shrink)
-            .align_y(alignment::Vertical::Center),
-    )
-    .padding([4, 8])
-    .style(|theme: &iced::Theme, status| {
-        use button::{Status, Style};
-
-        let palette = theme.extended_palette();
-        let base = Style {
-            text_color: palette.background.base.text,
-            border: Border::default().rounded(6.0),
-            ..Style::default()
-        };
-        match status {
-            Status::Active => base.with_background(Color::TRANSPARENT),
-            Status::Hovered => base.with_background(Color::from_rgb(
-                palette.primary.weak.color.r * 1.2,
-                palette.primary.weak.color.g * 1.2,
-                palette.primary.weak.color.b * 1.2,
-            )),
-            Status::Disabled => base.with_background(Color::from_rgb(0.5, 0.5, 0.5)),
-            Status::Pressed => base.with_background(palette.primary.weak.color),
-        }
-    })
-    .width(Length::Fill)
-    .height(Length::Shrink);
-    if let Some(message) = message {
-        button.on_press(message).into()
-    } else {
-        button.into()
-    }
-}
-
-pub(crate) fn submenu(
-    label: impl Into<String>,
-    msg: Message,
-) -> Element<'static, Message, iced::Theme, iced::Renderer> {
-    let label = label.into();
-    base_button(
-        row![
-            text(label)
-                .width(Length::Fill)
-                .align_y(alignment::Vertical::Center),
-            chevron_right(),
-        ]
-        .align_y(iced::Alignment::Center),
-        msg,
-    )
-    .width(Length::Fill)
-    .height(Length::Shrink)
-    .into()
-}
+pub use maolan_widgets::menu::{
+    menu_checkbox_item, menu_dropdown, menu_item, menu_item_maybe, submenu,
+};
 
 #[derive(Default)]
 pub struct Menu {
@@ -222,7 +74,6 @@ impl Menu {
             .offset(15.0)
             .spacing(5.0);
 
-        #[rustfmt::skip]
         let mb = menu_bar!(
             (menu_dropdown("File", Message::None), {
                 menu_tpl(menu_items!(
@@ -235,7 +86,10 @@ impl Menu {
                     (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
                     (menu_item("Import", Message::OpenFileImporter)),
                     (menu_item("Generate audio", Message::Show(Show::GenerateAudio))),
-                    (menu_item("Delete unused files", Message::DeleteUnusedSessionMediaFiles)),
+                    (menu_item(
+                        "Delete unused files",
+                        Message::DeleteUnusedSessionMediaFiles
+                    )),
                     (menu_item("Export", Message::OpenExporter)),
                     (menu_item("Quit", Message::WindowCloseRequested)),
                 ))
@@ -246,20 +100,71 @@ impl Menu {
                     (menu_item("Redo", Message::Redo)),
                     (menu_item("Preferences", Message::Show(Show::Preferences))),
                     (menu_item("Session Diagnostics", Message::SessionDiagnosticsRequest)),
-                    (menu_item("Export Diagnostics Bundle", Message::ExportDiagnosticsBundleRequest)),
-                    (menu_item("Toggle MIDI Mappings Panel", Message::MidiLearnMappingsPanelToggle)),
-                    (menu_item("MIDI Mappings Report", Message::MidiLearnMappingsReportRequest)),
-                    (menu_item("Export MIDI Mappings", Message::MidiLearnMappingsExportRequest)),
-                    (menu_item("Import MIDI Mappings", Message::MidiLearnMappingsImportRequest)),
-                    (menu_item("Clear All MIDI Mappings", Message::MidiLearnMappingsClearAllRequest)),
-                    (submenu("MIDI Learn", Message::None), menu_tpl(menu_items!(
-                        (menu_item("MIDI Learn: Play/Pause", Message::GlobalMidiLearnArm { target: GlobalMidiLearnTarget::PlayPause })),
-                        (menu_item("MIDI Learn: Stop", Message::GlobalMidiLearnArm { target: GlobalMidiLearnTarget::Stop })),
-                        (menu_item("MIDI Learn: Record Toggle", Message::GlobalMidiLearnArm { target: GlobalMidiLearnTarget::RecordToggle })),
-                        (menu_item("Clear MIDI Learn: Play/Pause", Message::GlobalMidiLearnClear { target: GlobalMidiLearnTarget::PlayPause })),
-                        (menu_item("Clear MIDI Learn: Stop", Message::GlobalMidiLearnClear { target: GlobalMidiLearnTarget::Stop })),
-                        (menu_item("Clear MIDI Learn: Record Toggle", Message::GlobalMidiLearnClear { target: GlobalMidiLearnTarget::RecordToggle })),
-                    ))),
+                    (menu_item(
+                        "Export Diagnostics Bundle",
+                        Message::ExportDiagnosticsBundleRequest
+                    )),
+                    (menu_item(
+                        "Toggle MIDI Mappings Panel",
+                        Message::MidiLearnMappingsPanelToggle
+                    )),
+                    (menu_item(
+                        "MIDI Mappings Report",
+                        Message::MidiLearnMappingsReportRequest
+                    )),
+                    (menu_item(
+                        "Export MIDI Mappings",
+                        Message::MidiLearnMappingsExportRequest
+                    )),
+                    (menu_item(
+                        "Import MIDI Mappings",
+                        Message::MidiLearnMappingsImportRequest
+                    )),
+                    (menu_item(
+                        "Clear All MIDI Mappings",
+                        Message::MidiLearnMappingsClearAllRequest
+                    )),
+                    (
+                        submenu("MIDI Learn", Message::None),
+                        menu_tpl(menu_items!(
+                            (menu_item(
+                                "MIDI Learn: Play/Pause",
+                                Message::GlobalMidiLearnArm {
+                                    target: GlobalMidiLearnTarget::PlayPause
+                                }
+                            )),
+                            (menu_item(
+                                "MIDI Learn: Stop",
+                                Message::GlobalMidiLearnArm {
+                                    target: GlobalMidiLearnTarget::Stop
+                                }
+                            )),
+                            (menu_item(
+                                "MIDI Learn: Record Toggle",
+                                Message::GlobalMidiLearnArm {
+                                    target: GlobalMidiLearnTarget::RecordToggle
+                                }
+                            )),
+                            (menu_item(
+                                "Clear MIDI Learn: Play/Pause",
+                                Message::GlobalMidiLearnClear {
+                                    target: GlobalMidiLearnTarget::PlayPause
+                                }
+                            )),
+                            (menu_item(
+                                "Clear MIDI Learn: Stop",
+                                Message::GlobalMidiLearnClear {
+                                    target: GlobalMidiLearnTarget::Stop
+                                }
+                            )),
+                            (menu_item(
+                                "Clear MIDI Learn: Record Toggle",
+                                Message::GlobalMidiLearnClear {
+                                    target: GlobalMidiLearnTarget::RecordToggle
+                                }
+                            )),
+                        ))
+                    ),
                 ))
             }),
             (menu_dropdown("Track", Message::None), {
@@ -269,26 +174,10 @@ impl Menu {
             }),
             (menu_dropdown("View", Message::None), {
                 menu_tpl(menu_items!(
-                    (menu_checkbox_item(
-                        "Tracks",
-                        tracks_visible,
-                        Message::ToggleTracksVisibility
-                    )),
-                    (menu_checkbox_item(
-                        "Editor",
-                        editor_visible,
-                        Message::ToggleEditorVisibility
-                    )),
-                    (menu_checkbox_item(
-                        "Mixer",
-                        mixer_visible,
-                        Message::ToggleMixerVisibility
-                    )),
-                    (menu_checkbox_item(
-                        "Log",
-                        log_visible,
-                        Message::ToggleLogVisibility
-                    )),
+                    (menu_checkbox_item("Tracks", tracks_visible, Message::ToggleTracksVisibility)),
+                    (menu_checkbox_item("Editor", editor_visible, Message::ToggleEditorVisibility)),
+                    (menu_checkbox_item("Mixer", mixer_visible, Message::ToggleMixerVisibility)),
+                    (menu_checkbox_item("Log", log_visible, Message::ToggleLogVisibility)),
                     (menu_checkbox_item(
                         "Shortcuts",
                         shortcuts_pane_visible,

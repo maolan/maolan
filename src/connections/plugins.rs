@@ -698,32 +698,79 @@ impl canvas::Program<Message> for Graph {
                                 )
                             };
                             if from_node != to_node || from_port != to_port {
-                                let action = if data.plugin_graph_clip.is_some() {
-                                    return Some(Action::publish(Message::ClipConnectPlugin {
-                                        from_node,
-                                        from_port,
-                                        to_node,
-                                        to_port,
-                                        kind: connecting.kind,
-                                    }));
-                                } else if connecting.kind == Kind::Audio {
-                                    EngineAction::TrackConnectPluginAudio {
-                                        track_name,
-                                        from_node,
-                                        from_port,
-                                        to_node,
-                                        to_port,
-                                    }
+                                let parallel_count = if data.shift {
+                                    let track = data.tracks.iter().find(|t| Some(&t.name) == data.plugin_graph_track.as_ref());
+                                    let from_count = match &from_node {
+                                        PluginGraphNode::TrackInput => {
+                                            track.map(|t| if connecting.kind == Kind::Audio { t.audio.ins } else { t.midi.ins }).unwrap_or(0)
+                                        }
+                                        PluginGraphNode::Lv2PluginInstance(id)
+                                        | PluginGraphNode::Vst3PluginInstance(id)
+                                        | PluginGraphNode::ClapPluginInstance(id) => {
+                                            data.plugin_graph_plugins.iter().find(|p| p.instance_id == *id).map(|p| {
+                                                if connecting.kind == Kind::Audio { p.audio_outputs } else { p.midi_outputs }
+                                            }).unwrap_or(0)
+                                        }
+                                        PluginGraphNode::TrackOutput => 0,
+                                    };
+                                    let to_count = match &to_node {
+                                        PluginGraphNode::TrackOutput => {
+                                            track.map(|t| if connecting.kind == Kind::Audio { t.audio.outs } else { t.midi.outs }).unwrap_or(0)
+                                        }
+                                        PluginGraphNode::Lv2PluginInstance(id)
+                                        | PluginGraphNode::Vst3PluginInstance(id)
+                                        | PluginGraphNode::ClapPluginInstance(id) => {
+                                            data.plugin_graph_plugins.iter().find(|p| p.instance_id == *id).map(|p| {
+                                                if connecting.kind == Kind::Audio { p.audio_inputs } else { p.midi_inputs }
+                                            }).unwrap_or(0)
+                                        }
+                                        PluginGraphNode::TrackInput => 0,
+                                    };
+                                    from_count.saturating_sub(from_port).min(to_count.saturating_sub(to_port)).max(1)
                                 } else {
-                                    EngineAction::TrackConnectPluginMidi {
-                                        track_name,
-                                        from_node,
-                                        from_port,
-                                        to_node,
-                                        to_port,
-                                    }
+                                    1
                                 };
-                                return Some(Action::publish(Message::Request(action)));
+
+                                if data.plugin_graph_clip.is_some() {
+                                    let mut connections = Vec::with_capacity(parallel_count);
+                                    for offset in 0..parallel_count {
+                                        connections.push(maolan_engine::message::PluginGraphConnection {
+                                            from_node: from_node.clone(),
+                                            from_port: from_port + offset,
+                                            to_node: to_node.clone(),
+                                            to_port: to_port + offset,
+                                            kind: connecting.kind,
+                                        });
+                                    }
+                                    return Some(Action::publish(Message::ClipConnectPlugins(connections)));
+                                } else {
+                                    let mut actions = Vec::with_capacity(parallel_count);
+                                    for offset in 0..parallel_count {
+                                        let action = if connecting.kind == Kind::Audio {
+                                            EngineAction::TrackConnectPluginAudio {
+                                                track_name: track_name.clone(),
+                                                from_node: from_node.clone(),
+                                                from_port: from_port + offset,
+                                                to_node: to_node.clone(),
+                                                to_port: to_port + offset,
+                                            }
+                                        } else {
+                                            EngineAction::TrackConnectPluginMidi {
+                                                track_name: track_name.clone(),
+                                                from_node: from_node.clone(),
+                                                from_port: from_port + offset,
+                                                to_node: to_node.clone(),
+                                                to_port: to_port + offset,
+                                            }
+                                        };
+                                        actions.push(action);
+                                    }
+                                    if actions.len() == 1 {
+                                        return Some(Action::publish(Message::Request(actions.into_iter().next().unwrap())));
+                                    } else {
+                                        return Some(Action::publish(Message::RequestBatch(actions)));
+                                    }
+                                }
                             }
                         }
                         return Some(Action::request_redraw());
@@ -1227,89 +1274,111 @@ impl canvas::Program<Message> for Graph {
             }
 
             if let Some(connecting) = &data.plugin_graph_connecting {
-                let start = match &connecting.from_node {
-                    PluginGraphNode::TrackInput => {
-                        let Some(py) = Self::track_input_port_y(
-                            track,
-                            in_rect,
-                            connecting.kind,
-                            connecting.from_port,
-                        ) else {
-                            return vec![frame.into_geometry()];
-                        };
-                        Point::new(in_rect.x + in_rect.width, py)
-                    }
-                    PluginGraphNode::TrackOutput => {
-                        let Some(py) = Self::track_output_port_y(
-                            track,
-                            out_rect,
-                            connecting.kind,
-                            connecting.from_port,
-                        ) else {
-                            return vec![frame.into_geometry()];
-                        };
-                        Point::new(out_rect.x, py)
-                    }
-                    PluginGraphNode::Lv2PluginInstance(id)
-                    | PluginGraphNode::Vst3PluginInstance(id)
-                    | PluginGraphNode::ClapPluginInstance(id) => {
-                        let Some((idx, plugin)) = data
-                            .plugin_graph_plugins
-                            .iter()
-                            .enumerate()
-                            .find(|(_, p)| p.instance_id == *id)
-                        else {
-                            return vec![frame.into_geometry()];
-                        };
-                        let pos = Self::plugin_pos(&data, plugin, idx, bounds);
-                        let plugin_h = Self::plugin_height(plugin);
-                        if connecting.is_input {
-                            let Some(py) = Self::plugin_input_port_y(
-                                plugin,
-                                plugin_h,
-                                pos.y,
-                                connecting.kind,
-                                connecting.from_port,
-                            ) else {
-                                return vec![frame.into_geometry()];
-                            };
-                            Point::new(pos.x, py)
-                        } else {
-                            let Some(py) = Self::plugin_output_port_y(
-                                plugin,
-                                plugin_h,
-                                pos.y,
-                                connecting.kind,
-                                connecting.from_port,
-                            ) else {
-                                return vec![frame.into_geometry()];
-                            };
-                            Point::new(pos.x + PLUGIN_W, py)
+                let preview_count = if data.shift {
+                    let source_count = match &connecting.from_node {
+                        PluginGraphNode::TrackInput => {
+                            if connecting.kind == Kind::Audio { track.audio.ins } else { track.midi.ins }
                         }
-                    }
-                };
-                let end = connecting.point;
-                let dist = (end.x - start.x).abs() / 2.0;
-                let (c1, c2) = if connecting.is_input {
-                    (
-                        Point::new(start.x - dist, start.y),
-                        Point::new(end.x + dist, end.y),
-                    )
+                        PluginGraphNode::Lv2PluginInstance(id)
+                        | PluginGraphNode::Vst3PluginInstance(id)
+                        | PluginGraphNode::ClapPluginInstance(id) => {
+                            data.plugin_graph_plugins.iter().find(|p| p.instance_id == *id).map(|p| {
+                                if connecting.kind == Kind::Audio { p.audio_outputs } else { p.midi_outputs }
+                            }).unwrap_or(0)
+                        }
+                        PluginGraphNode::TrackOutput => 0,
+                    };
+                    source_count.saturating_sub(connecting.from_port).max(1)
                 } else {
-                    (
-                        Point::new(start.x + dist, start.y),
-                        Point::new(end.x - dist, end.y),
-                    )
+                    1
                 };
-                frame.stroke(
-                    &Path::new(|p| {
-                        p.move_to(start);
-                        p.bezier_curve_to(c1, c2, end);
-                    }),
-                    canvas::Stroke::default()
-                        .with_color(Color::from_rgba(0.73, 0.84, 1.0, 0.6))
-                        .with_width(2.0),
-                );
+
+                for offset in 0..preview_count {
+                    let from_port = connecting.from_port + offset;
+                    let start = match &connecting.from_node {
+                        PluginGraphNode::TrackInput => {
+                            let Some(py) = Self::track_input_port_y(
+                                track,
+                                in_rect,
+                                connecting.kind,
+                                from_port,
+                            ) else {
+                                continue;
+                            };
+                            Point::new(in_rect.x + in_rect.width, py)
+                        }
+                        PluginGraphNode::TrackOutput => {
+                            let Some(py) = Self::track_output_port_y(
+                                track,
+                                out_rect,
+                                connecting.kind,
+                                from_port,
+                            ) else {
+                                continue;
+                            };
+                            Point::new(out_rect.x, py)
+                        }
+                        PluginGraphNode::Lv2PluginInstance(id)
+                        | PluginGraphNode::Vst3PluginInstance(id)
+                        | PluginGraphNode::ClapPluginInstance(id) => {
+                            let Some((idx, plugin)) = data
+                                .plugin_graph_plugins
+                                .iter()
+                                .enumerate()
+                                .find(|(_, p)| p.instance_id == *id)
+                            else {
+                                continue;
+                            };
+                            let pos = Self::plugin_pos(&data, plugin, idx, bounds);
+                            let plugin_h = Self::plugin_height(plugin);
+                            if connecting.is_input {
+                                let Some(py) = Self::plugin_input_port_y(
+                                    plugin,
+                                    plugin_h,
+                                    pos.y,
+                                    connecting.kind,
+                                    from_port,
+                                ) else {
+                                    continue;
+                                };
+                                Point::new(pos.x, py)
+                            } else {
+                                let Some(py) = Self::plugin_output_port_y(
+                                    plugin,
+                                    plugin_h,
+                                    pos.y,
+                                    connecting.kind,
+                                    from_port,
+                                ) else {
+                                    continue;
+                                };
+                                Point::new(pos.x + PLUGIN_W, py)
+                            }
+                        }
+                    };
+                    let end = connecting.point;
+                    let dist = (end.x - start.x).abs() / 2.0;
+                    let (c1, c2) = if connecting.is_input {
+                        (
+                            Point::new(start.x - dist, start.y),
+                            Point::new(end.x + dist, end.y),
+                        )
+                    } else {
+                        (
+                            Point::new(start.x + dist, start.y),
+                            Point::new(end.x - dist, end.y),
+                        )
+                    };
+                    frame.stroke(
+                        &Path::new(|p| {
+                            p.move_to(start);
+                            p.bezier_curve_to(c1, c2, end);
+                        }),
+                        canvas::Stroke::default()
+                            .with_color(Color::from_rgba(0.73, 0.84, 1.0, 0.6))
+                            .with_width(2.0),
+                    );
+                }
             }
         }
         vec![frame.into_geometry()]

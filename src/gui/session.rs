@@ -309,6 +309,13 @@ impl Maolan {
                 "master_limiter": self.export_master_limiter,
                 "master_limiter_ceiling_input": self.export_master_limiter_ceiling_input,
             },
+            "plugin_sidechains": state.plugin_sidechains.iter().map(|((track, instance), sc)| {
+                json!({
+                    "track": track,
+                    "instance_id": instance,
+                    "state": sc,
+                })
+            }).collect::<Vec<_>>(),
             "midi_learn_global": {
                 "play_pause": state.global_midi_learn_play_pause,
                 "stop": state.global_midi_learn_stop,
@@ -2464,6 +2471,69 @@ impl Maolan {
                 master_track: Some(master_track),
             });
         }
+
+        // Restore sidechain routing from saved session state.
+        if let Some(sidechains_arr) = session.get("plugin_sidechains").and_then(Value::as_array) {
+            for entry in sidechains_arr {
+                let Some(track_name) = entry.get("track").and_then(Value::as_str) else { continue; };
+                let Some(instance_id) = entry.get("instance_id").and_then(Value::as_u64) else { continue; };
+                let instance_id = instance_id as usize;
+                let Ok(sc_state) = serde_json::from_value::<crate::state::PluginSidechainState>(entry.get("state").cloned().unwrap_or(Value::Null)) else { continue; };
+                if sc_state.enabled {
+                    if let Some(source_track) = &sc_state.source_track {
+                        if let Some(receive_port) = sc_state.target_receive_port {
+                            let ch_count = sc_state.sidechain_channel_count.max(1);
+                            let restore_from_port = sc_state.source_track_send_port.unwrap_or(sc_state.source_port);
+                            // Add receive ports on target track (one per sidechain channel)
+                            for _ in 0..ch_count {
+                                restore_actions.push(Action::TrackAddAudioInput(track_name.to_string()));
+                            }
+                            // Connect source track outputs to target track receives
+                            for ch in 0..ch_count {
+                                restore_actions.push(Action::Connect {
+                                    from_track: source_track.clone(),
+                                    from_port: restore_from_port + ch,
+                                    to_track: track_name.to_string(),
+                                    to_port: receive_port + ch,
+                                    kind: maolan_engine::kind::Kind::Audio,
+                                });
+                            }
+                            // If plugin source was used, reconnect plugin output to source track send
+                            if let (Some(src_plugin_id), Some(src_send_port)) = (sc_state.source_plugin_instance_id, sc_state.source_track_send_port) {
+                                restore_actions.push(Action::TrackAddAudioOutput(source_track.clone()));
+                                restore_actions.push(Action::TrackConnectPluginAudio {
+                                    track_name: source_track.clone(),
+                                    from_node: maolan_engine::message::PluginGraphNode::ClapPluginInstance(src_plugin_id),
+                                    from_port: 0,
+                                    to_node: maolan_engine::message::PluginGraphNode::TrackOutput,
+                                    to_port: src_send_port,
+                                });
+                            }
+                            // Store in DAW state; plugin connection will be completed
+                            // when the plugin reconfigures its ports.
+                            let mut state = self.state.blocking_write();
+                            state.plugin_sidechains.insert(
+                                (track_name.to_string(), instance_id),
+                                crate::state::PluginSidechainState {
+                                    enabled: true,
+                                    source_track: Some(source_track.clone()),
+                                    source_plugin_idx: sc_state.source_plugin_idx,
+                                    source_plugin_instance_id: sc_state.source_plugin_instance_id,
+                                    source_port: sc_state.source_port,
+                                    source_is_hw: sc_state.source_is_hw,
+                                    target_receive_port: Some(receive_port),
+                                    target_plugin_sidechain_port: 0,
+                                    sidechain_channel_count: ch_count,
+                                    plugin_connection_pending: true,
+                                    source_track_send_port: sc_state.source_track_send_port,
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         restore_actions.push(Action::EndSessionRestore);
         Ok(Self::restore_actions_task(restore_actions))
     }

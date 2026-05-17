@@ -178,7 +178,8 @@ impl Maolan {
                 self.send(a.clone())
             }
             Message::RequestBatch(ref actions) => {
-                let mut tasks = Vec::with_capacity(actions.len());
+                let mut tasks = Vec::with_capacity(actions.len() + 2);
+                tasks.push(self.send(Action::BeginHistoryGroup));
                 for action in actions {
                     if let Action::TransportPosition(sample) = action {
                         self.transport_samples = *sample as f64;
@@ -193,6 +194,7 @@ impl Maolan {
                         tasks.push(self.send(action.clone()));
                     }
                 }
+                tasks.push(self.send(Action::EndHistoryGroup));
                 Task::batch(tasks)
             }
             Message::MeterPollTick => {

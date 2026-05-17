@@ -924,6 +924,7 @@ pub enum Message {
         to_port: usize,
         kind: maolan_engine::kind::Kind,
     },
+    ClipConnectPlugins(Vec<maolan_engine::message::PluginGraphConnection>),
     OpenMidiPiano {
         track_idx: String,
         clip_idx: usize,
