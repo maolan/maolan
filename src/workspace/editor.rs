@@ -1791,7 +1791,9 @@ impl Editor {
                     .height(Length::Fill),
             )
             .on_move(Message::EditorMouseMoved)
-            .on_press(Message::DeselectClips),
+            .on_press(Message::DeselectClips)
+            .on_enter(Message::ShortcutsHint(Some("Marquee select".to_string())))
+            .on_exit(Message::ShortcutsHint(None)),
         )
         .style(|_theme| crate::style::app_background())
         .width(Length::Fill)

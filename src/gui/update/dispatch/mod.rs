@@ -6000,6 +6000,10 @@ impl Maolan {
                     state.hovered_track_resize_handle = None;
                 }
             }
+            Message::ShortcutsHint(ref hint) => {
+                let mut state = self.state.blocking_write();
+                state.shortcuts_hint = hint.clone();
+            }
             Message::ClipResizeHandleHover {
                 ref kind,
                 ref track_idx,

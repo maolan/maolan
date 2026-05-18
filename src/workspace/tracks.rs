@@ -643,7 +643,9 @@ impl Tracks {
             }),
         )
         .on_press(Message::SelectTrack(track.name.clone()))
-        .on_double_click(Message::OpenTrackPlugins(track.name.clone()));
+        .on_double_click(Message::OpenTrackPlugins(track.name.clone()))
+        .on_enter(Message::ShortcutsHint(Some("Select track".to_string())))
+        .on_exit(Message::ShortcutsHint(None));
 
         let track_name = track.name.clone();
         let mut controls: Vec<Element<'static, Message>> = vec![];
@@ -926,26 +928,30 @@ impl Tracks {
                 }),
             lane_rows.spacing(TRACK_SUBTRACK_GAP),
             mouse_area(
-                container("")
-                    .width(Length::Fill)
-                    .height(Length::Fixed(resize_handle_height))
-                    .style(move |_theme| container::Style {
-                        background: Some(Background::Color(if is_resize_hovered {
-                            Color::from_rgba(0.51, 0.68, 0.92, 0.95)
-                        } else {
-                            Color::from_rgba(0.33, 0.40, 0.52, 0.65)
-                        })),
-                        border: Border {
-                            color: Color::TRANSPARENT,
-                            width: 0.0,
-                            radius: 2.0.into(),
-                        },
-                        ..container::Style::default()
-                    }),
+                mouse_area(
+                    container("")
+                        .width(Length::Fill)
+                        .height(Length::Fixed(resize_handle_height))
+                        .style(move |_theme| container::Style {
+                            background: Some(Background::Color(if is_resize_hovered {
+                                Color::from_rgba(0.51, 0.68, 0.92, 0.95)
+                            } else {
+                                Color::from_rgba(0.33, 0.40, 0.52, 0.65)
+                            })),
+                            border: Border {
+                                color: Color::TRANSPARENT,
+                                width: 0.0,
+                                radius: 2.0.into(),
+                            },
+                            ..container::Style::default()
+                        }),
+                )
+                .on_enter(Message::TrackResizeHover(track.name.clone(), true))
+                .on_exit(Message::TrackResizeHover(track.name.clone(), false))
+                .on_press(Message::TrackResizeStart(track.name.clone())),
             )
-            .on_enter(Message::TrackResizeHover(track.name.clone(), true))
-            .on_exit(Message::TrackResizeHover(track.name.clone(), false))
-            .on_press(Message::TrackResizeStart(track.name.clone())),
+            .on_enter(Message::ShortcutsHint(Some("Resize height".to_string())))
+            .on_exit(Message::ShortcutsHint(None)),
         ]
         .spacing(TRACK_SUBTRACK_GAP);
 

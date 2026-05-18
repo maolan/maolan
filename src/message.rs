@@ -737,6 +737,7 @@ pub enum Message {
 
     TrackResizeStart(String),
     TrackResizeHover(String, bool),
+    ShortcutsHint(Option<String>),
     ClipResizeHandleHover {
         kind: Kind,
         track_idx: String,
