@@ -42,6 +42,12 @@ enum DragMode {
         drag_start_x: f32,
         last_x: f32,
     },
+    MovePunchRange {
+        original_start: usize,
+        original_end: usize,
+        drag_start_x: f32,
+        last_x: f32,
+    },
     AdjustPunchEdge {
         adjust_start: bool,
         fixed_sample: usize,
@@ -477,6 +483,10 @@ impl canvas::Program<Message> for TempoCanvas {
                             }
                             return Some(CanvasAction::request_redraw().and_capture());
                         }
+                        DragMode::MovePunchRange { last_x, .. } => {
+                            *last_x = x;
+                            return Some(CanvasAction::request_redraw().and_capture());
+                        }
                         DragMode::AdjustPunchEdge { current_sample, .. } => {
                             let (snapped_sample, snap_targets) = snap_sample(sample_at_x(x));
                             *current_sample = snapped_sample;
@@ -592,6 +602,7 @@ impl canvas::Program<Message> for TempoCanvas {
                             MarkerLane::Marker => CanvasAction::capture(),
                         });
                     }
+                    DragMode::MovePunchRange { .. } => return Some(CanvasAction::capture()),
                     DragMode::AdjustPunchEdge { .. } => return Some(CanvasAction::capture()),
                 }
             }
@@ -650,6 +661,23 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                     state.context_menu = None;
                     let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
+                    if let Some((punch_start, punch_end)) = self.punch_range_samples
+                        && punch_end > punch_start
+                    {
+                        let start_x = punch_start as f32 * self.pixels_per_sample;
+                        let end_x = punch_end as f32 * self.pixels_per_sample;
+                        let start_hit = (x - start_x).abs() <= Tempo::RANGE_EDGE_HIT_PX;
+                        let end_hit = (x - end_x).abs() <= Tempo::RANGE_EDGE_HIT_PX;
+                        if !start_hit && !end_hit && x >= start_x.min(end_x) && x <= start_x.max(end_x) {
+                            state.drag_mode = DragMode::MovePunchRange {
+                                original_start: punch_start,
+                                original_end: punch_end,
+                                drag_start_x: x,
+                                last_x: x,
+                            };
+                            return Some(CanvasAction::capture());
+                        }
+                    }
                     state.drag_mode = DragMode::Punch {
                         drag_start_x: x,
                         last_x: x,
@@ -719,6 +747,28 @@ impl canvas::Program<Message> for TempoCanvas {
                             start_sample.max(0.0) as usize,
                             end_sample.max(0.0) as usize,
                         )))));
+                    }
+                    DragMode::MovePunchRange {
+                        original_start,
+                        original_end,
+                        drag_start_x,
+                        last_x,
+                    } => {
+                        if self.pixels_per_sample <= 1.0e-9 {
+                            return None;
+                        }
+                        let delta_samples = (last_x - drag_start_x) / self.pixels_per_sample;
+                        let raw_start = (original_start as f32 + delta_samples).max(0.0);
+                        let snapped_start = snap_sample(raw_start as usize).0;
+                        let length = original_end - original_start;
+                        let new_end = snapped_start + length;
+                        return Some(
+                            CanvasAction::publish(Message::SetPunchRange(Some((
+                                snapped_start,
+                                new_end,
+                            ))))
+                            .and_capture(),
+                        );
                     }
                     DragMode::Marker { .. } => return Some(CanvasAction::capture()),
                     DragMode::AdjustPunchEdge { .. } => return Some(CanvasAction::capture()),
@@ -920,6 +970,18 @@ impl canvas::Program<Message> for TempoCanvas {
                 original_samples.hash(&mut hasher);
                 start_sample.hash(&mut hasher);
                 current_sample.hash(&mut hasher);
+            }
+            DragMode::MovePunchRange {
+                original_start,
+                original_end,
+                drag_start_x,
+                last_x,
+            } => {
+                4_u8.hash(&mut hasher);
+                original_start.hash(&mut hasher);
+                original_end.hash(&mut hasher);
+                drag_start_x.to_bits().hash(&mut hasher);
+                last_x.to_bits().hash(&mut hasher);
             }
             DragMode::AdjustPunchEdge {
                 adjust_start,
@@ -1167,7 +1229,7 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                 }
 
-                if !matches!(state.drag_mode, DragMode::Punch { .. })
+                if !matches!(state.drag_mode, DragMode::Punch { .. } | DragMode::MovePunchRange { .. })
                     && let Some((punch_start, punch_end)) = self.punch_range_samples
                     && self.pixels_per_sample > 1.0e-9
                     && punch_end > punch_start
@@ -1211,6 +1273,43 @@ impl canvas::Program<Message> for TempoCanvas {
                     } => {
                         let start_x = drag_start_x.min(*last_x).max(0.0);
                         let end_x = drag_start_x.max(*last_x).max(0.0);
+                        let punch_h = TEMPO_HIT_HEIGHT * 2.0;
+                        let punch_y = TEMPO_HIT_HEIGHT * 2.0;
+                        frame.fill(
+                            &Path::rectangle(
+                                Point::new(start_x, punch_y),
+                                iced::Size::new((end_x - start_x).max(1.0), punch_h),
+                            ),
+                            Color::from_rgba(0.92, 0.36, 0.36, 0.22),
+                        );
+                        frame.stroke(
+                            &Path::line(
+                                Point::new(start_x, punch_y),
+                                Point::new(start_x, punch_y + punch_h),
+                            ),
+                            Stroke::default()
+                                .with_width(1.5)
+                                .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
+                        );
+                        frame.stroke(
+                            &Path::line(
+                                Point::new(end_x, punch_y),
+                                Point::new(end_x, punch_y + punch_h),
+                            ),
+                            Stroke::default()
+                                .with_width(1.5)
+                                .with_color(Color::from_rgba(0.97, 0.58, 0.58, 0.95)),
+                        );
+                    }
+                    DragMode::MovePunchRange {
+                        original_start,
+                        original_end,
+                        drag_start_x,
+                        last_x,
+                    } => {
+                        let delta_x = last_x - drag_start_x;
+                        let start_x = (*original_start as f32 * self.pixels_per_sample + delta_x).max(0.0);
+                        let end_x = start_x + (*original_end - *original_start) as f32 * self.pixels_per_sample;
                         let punch_h = TEMPO_HIT_HEIGHT * 2.0;
                         let punch_y = TEMPO_HIT_HEIGHT * 2.0;
                         frame.fill(

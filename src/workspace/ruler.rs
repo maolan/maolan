@@ -32,6 +32,9 @@ struct RulerState {
     drag_with_right: bool,
     drag_adjust_loop_edge: bool,
     adjust_loop_start: bool,
+    drag_move_loop_range: bool,
+    loop_move_original_start: usize,
+    loop_move_original_end: usize,
     drag_start_x: f32,
     last_x: f32,
     cache: canvas::Cache,
@@ -45,6 +48,9 @@ impl Default for RulerState {
             drag_with_right: false,
             drag_adjust_loop_edge: false,
             adjust_loop_start: false,
+            drag_move_loop_range: false,
+            loop_move_original_start: 0,
+            loop_move_original_end: 0,
             drag_start_x: 0.0,
             last_x: 0.0,
             cache: canvas::Cache::default(),
@@ -232,10 +238,28 @@ impl canvas::Program<Message> for RulerCanvas {
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) => {
                 if let Some(pos) = cursor_position {
+                    let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
+                    if let Some((loop_start, loop_end)) = self.loop_range_samples
+                        && loop_end > loop_start
+                    {
+                        let start_x = loop_start as f32 * self.pixels_per_sample;
+                        let end_x = loop_end as f32 * self.pixels_per_sample;
+                        let start_hit = (x - start_x).abs() <= Ruler::RANGE_EDGE_HIT_PX;
+                        let end_hit = (x - end_x).abs() <= Ruler::RANGE_EDGE_HIT_PX;
+                        if !start_hit && !end_hit && x >= start_x.min(end_x) && x <= start_x.max(end_x) {
+                            state.dragging = true;
+                            state.drag_with_right = true;
+                            state.drag_move_loop_range = true;
+                            state.loop_move_original_start = loop_start;
+                            state.loop_move_original_end = loop_end;
+                            state.drag_start_x = x;
+                            state.last_x = x;
+                            return Some(CanvasAction::capture());
+                        }
+                    }
                     state.dragging = true;
                     state.drag_adjust_loop_edge = false;
                     state.drag_with_right = true;
-                    let x = cursor_x.unwrap_or(pos.x.clamp(0.0, bounds.width.max(0.0)));
                     state.drag_start_x = x;
                     state.last_x = x;
                     return Some(CanvasAction::capture());
@@ -362,6 +386,22 @@ impl canvas::Program<Message> for RulerCanvas {
                     return None;
                 }
 
+                if state.drag_move_loop_range {
+                    state.drag_move_loop_range = false;
+                    let delta_samples = (state.last_x - state.drag_start_x) / self.pixels_per_sample;
+                    let raw_start = (state.loop_move_original_start as f32 + delta_samples).max(0.0);
+                    let snapped_start = snap_sample(raw_start as usize).0;
+                    let length = state.loop_move_original_end - state.loop_move_original_start;
+                    let new_end = snapped_start + length;
+                    return Some(
+                        CanvasAction::publish(Message::SetLoopRange(Some((
+                            snapped_start,
+                            new_end,
+                        ))))
+                        .and_capture(),
+                    );
+                }
+
                 let drag_delta = (state.last_x - state.drag_start_x).abs();
                 if drag_delta < 3.0 {
                     return Some(CanvasAction::publish(Message::SetLoopRange(None)).and_capture());
@@ -461,6 +501,9 @@ impl canvas::Program<Message> for RulerCanvas {
         state.drag_with_right.hash(&mut hasher);
         state.drag_adjust_loop_edge.hash(&mut hasher);
         state.adjust_loop_start.hash(&mut hasher);
+        state.drag_move_loop_range.hash(&mut hasher);
+        state.loop_move_original_start.hash(&mut hasher);
+        state.loop_move_original_end.hash(&mut hasher);
         state.drag_start_x.to_bits().hash(&mut hasher);
         state.last_x.to_bits().hash(&mut hasher);
         let hash = hasher.finish();
@@ -513,7 +556,12 @@ impl canvas::Program<Message> for RulerCanvas {
                 }
 
                 if state.dragging {
-                    let (start_x, end_x) = if state.drag_adjust_loop_edge {
+                    let (start_x, end_x) = if state.drag_move_loop_range {
+                        let delta_x = state.last_x - state.drag_start_x;
+                        let start_x = (state.loop_move_original_start as f32 * self.pixels_per_sample + delta_x).max(0.0);
+                        let end_x = start_x + (state.loop_move_original_end - state.loop_move_original_start) as f32 * self.pixels_per_sample;
+                        (start_x, end_x)
+                    } else if state.drag_adjust_loop_edge {
                         if let Some((loop_start, loop_end)) = self.loop_range_samples {
                             let moved_x = state.last_x.max(0.0);
                             if state.adjust_loop_start {
