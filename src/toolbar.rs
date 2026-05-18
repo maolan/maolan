@@ -6,7 +6,7 @@ use crate::{
 };
 use iced::{
     Alignment, Background, Border, Color, Length, Theme,
-    widget::{button, container, pick_list, row, text, text_input},
+    widget::{button, container, mouse_area, pick_list, row, text, text_input},
 };
 use iced_fonts::lucide::{
     audio_lines, brackets, cable, circle, fast_forward, pause, play, repeat, rewind,
@@ -80,20 +80,35 @@ impl Toolbar {
         let metronome_active = view_state.metronome_enabled;
         let loop_active = view_state.has_loop_range && view_state.loop_enabled;
         let punch_active = view_state.has_punch_range && view_state.punch_enabled;
-        let play_button = button(play())
-            .style(Self::button_style(
-                true,
-                play_active,
-                Color::from_rgba(0.2, 0.7, 0.35, 0.35),
-            ))
-            .on_press(Message::TransportPlay);
-        let pause_button = button(pause())
-            .style(Self::button_style(
-                true,
-                pause_active,
-                Color::from_rgba(0.85, 0.7, 0.1, 0.35),
-            ))
-            .on_press(Message::TransportPause);
+        fn with_hint<'a>(
+            element: iced::Element<'a, Message>,
+            hint: &'static str,
+        ) -> iced::Element<'a, Message> {
+            mouse_area(element)
+                .on_enter(Message::ShortcutsHint(Some(hint.to_string())))
+                .on_exit(Message::ShortcutsHint(None))
+                .into()
+        }
+        let play_button = with_hint(
+            button(play())
+                .style(Self::button_style(
+                    true,
+                    play_active,
+                    Color::from_rgba(0.2, 0.7, 0.35, 0.35),
+                ))
+                .on_press(Message::TransportPlay).into(),
+            "Space: Play/stop",
+        );
+        let pause_button = with_hint(
+            button(pause())
+                .style(Self::button_style(
+                    true,
+                    pause_active,
+                    Color::from_rgba(0.85, 0.7, 0.1, 0.35),
+                ))
+                .on_press(Message::TransportPause).into(),
+            "Shift+Space: Pause",
+        );
         let loop_button = if view_state.has_loop_range {
             button(repeat())
                 .style(Self::button_style(
@@ -143,44 +158,59 @@ impl Toolbar {
                         Color::from_rgba(0.15, 0.65, 0.9, 0.35)
                     ))
                     .on_press(Message::ToggleMetronome),
-                button(rewind())
-                    .style(Self::button_style(true, false, Color::TRANSPARENT))
-                    .on_press(Message::JumpToStart),
+                with_hint(
+                    button(rewind())
+                        .style(Self::button_style(true, false, Color::TRANSPARENT))
+                        .on_press(Message::JumpToStart).into(),
+                    "Home: Rewind to start",
+                ),
                 play_button,
                 pause_button,
-                button(square())
-                    .style(Self::button_style(
-                        true,
-                        stop_active,
-                        Color::from_rgba(0.45, 0.45, 0.45, 0.35)
-                    ))
-                    .on_press(Message::TransportStop),
-                button(volume_x())
-                    .style(Self::button_style(
-                        true,
-                        false,
-                        Color::from_rgba(0.85, 0.45, 0.1, 0.35)
-                    ))
-                    .on_press(Message::TransportPanic),
-                button(circle())
-                    .style(Self::button_style(
-                        true,
-                        rec_active,
-                        Color::from_rgba(0.9, 0.15, 0.15, 0.45)
-                    ))
-                    .on_press(Message::TransportRecordToggle),
+                with_hint(
+                    button(square())
+                        .style(Self::button_style(
+                            true,
+                            stop_active,
+                            Color::from_rgba(0.45, 0.45, 0.45, 0.35)
+                        ))
+                        .on_press(Message::TransportStop).into(),
+                    "Space: Play/stop",
+                ),
+                with_hint(
+                    button(volume_x())
+                        .style(Self::button_style(
+                            true,
+                            false,
+                            Color::from_rgba(0.85, 0.45, 0.1, 0.35)
+                        ))
+                        .on_press(Message::TransportPanic).into(),
+                    "Ctrl+L: MIDI panic",
+                ),
+                with_hint(
+                    button(circle())
+                        .style(Self::button_style(
+                            true,
+                            rec_active,
+                            Color::from_rgba(0.9, 0.15, 0.15, 0.45)
+                        ))
+                        .on_press(Message::TransportRecordToggle).into(),
+                    "Ctrl+R: Record arm toggle",
+                ),
                 loop_button,
                 punch_button,
                 if view_state.has_session_end {
-                    button(fast_forward())
-                        .style(Self::button_style(true, false, Color::TRANSPARENT))
-                        .on_press(Message::JumpToEnd)
+                    with_hint(
+                        button(fast_forward())
+                            .style(Self::button_style(true, false, Color::TRANSPARENT))
+                            .on_press(Message::JumpToEnd).into(),
+                        "End: Rewind to end",
+                    )
                 } else {
                     button(fast_forward()).style(Self::button_style(
                         false,
                         false,
                         Color::TRANSPARENT,
-                    ))
+                    )).into()
                 },
                 if view_state.midi_editor_active {
                     pick_list(

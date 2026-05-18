@@ -630,6 +630,8 @@ impl HW {
                     .spacing(10),
                 );
             }
+            let latency_ms =
+                (period_frames as f64 * nperiods as f64 * 1000.0) / chosen_sample_rate_hz as f64;
             content = content
                 .push(
                     row![
@@ -639,7 +641,8 @@ impl HW {
                             Some(period_frames),
                             Message::HWPeriodFramesChanged
                         )
-                        .placeholder("Period")
+                        .placeholder("Period"),
+                        text(format!("{latency_ms:.1} ms"))
                     ]
                     .spacing(10),
                 )

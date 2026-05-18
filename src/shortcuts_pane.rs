@@ -1,20 +1,20 @@
 use crate::message::Message;
 use crate::state::View;
 use iced::{
-    Border, Color, Element, Length,
+    Background, Border, Color, Element, Length,
     widget::{column, container, scrollable, text},
 };
 
 pub struct ShortcutsPane;
 
 impl ShortcutsPane {
-    pub fn view(view: View) -> Element<'static, Message> {
+    pub fn view(view: View, hint: Option<&str>) -> Element<'static, Message> {
         let content = match view {
-            View::Connections | View::TrackPlugins => connections_shortcuts(),
-            View::Piano => piano_shortcuts(),
-            View::PitchCorrection => pitch_correction_shortcuts(),
+            View::Connections | View::TrackPlugins => connections_shortcuts(hint),
+            View::Piano => piano_shortcuts(hint),
+            View::PitchCorrection => pitch_correction_shortcuts(hint),
             View::X32 => column![].into(),
-            _ => workspace_shortcuts(),
+            _ => workspace_shortcuts(hint),
         };
 
         container(
@@ -39,16 +39,41 @@ impl ShortcutsPane {
     }
 }
 
-fn section(title: impl Into<String>, items: &[impl AsRef<str>]) -> Element<'static, Message> {
+fn section(
+    title: impl Into<String>,
+    items: &[impl AsRef<str>],
+    hint: Option<&str>,
+) -> Element<'static, Message> {
     let title = title.into();
     let mut col = column![text(title).size(13)].spacing(4);
     for item in items {
-        col = col.push(text(format!("  • {}", item.as_ref())).size(11));
+        let item_str = item.as_ref();
+        let is_highlighted = hint.map_or(false, |h| item_str.contains(h));
+        let item_element: Element<'static, Message> = if is_highlighted {
+            container(
+                text(format!("  • {}", item_str))
+                    .size(11)
+                    .color(Color::from_rgb(1.0, 0.95, 0.6)),
+            )
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.35, 0.4, 0.22, 0.45))),
+                border: Border {
+                    radius: 4.0.into(),
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            })
+            .padding([2, 4])
+            .into()
+        } else {
+            text(format!("  • {}", item_str)).size(11).into()
+        };
+        col = col.push(item_element);
     }
     col.into()
 }
 
-fn connections_shortcuts() -> Element<'static, Message> {
+fn connections_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
     column![section(
         "Mouse",
         &[
@@ -56,13 +81,14 @@ fn connections_shortcuts() -> Element<'static, Message> {
             "Drag from port to port: Create connection",
             "Select connection + Delete: Remove connection",
             "Select plugin + Delete: Remove plugin",
-        ]
+        ],
+        hint
     ),]
     .spacing(16)
     .into()
 }
 
-fn piano_shortcuts() -> Element<'static, Message> {
+fn piano_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
     column![
         section(
             "Keyboard",
@@ -74,7 +100,8 @@ fn piano_shortcuts() -> Element<'static, Message> {
                 "Shift+Space: Pause",
                 "Home: Rewind to start",
                 "End: Rewind to end",
-            ]
+            ],
+            hint
         ),
         section(
             "Mouse",
@@ -85,7 +112,8 @@ fn piano_shortcuts() -> Element<'static, Message> {
                 "Right drag empty area: Create notes",
                 "Middle click note: Delete note",
                 "Mouse wheel over note: Adjust velocity",
-            ]
+            ],
+            hint
         ),
         section(
             "Controller Lanes",
@@ -94,21 +122,23 @@ fn piano_shortcuts() -> Element<'static, Message> {
                 "Middle click/drag: Erase",
                 "Right drag: Draw",
                 "Mouse wheel over event: Adjust value",
-            ]
+            ],
+            hint
         ),
     ]
     .spacing(16)
     .into()
 }
 
-fn pitch_correction_shortcuts() -> Element<'static, Message> {
+fn pitch_correction_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
     column![
         section(
             "Keyboard",
             &[
                 "Ctrl+Z: Undo local edits",
                 "Ctrl+Shift+Z / Ctrl+Y: Redo local edits",
-            ]
+            ],
+            hint
         ),
         section(
             "Mouse",
@@ -119,14 +149,15 @@ fn pitch_correction_shortcuts() -> Element<'static, Message> {
                 "Left drag empty: Box-select",
                 "Shift+Left drag empty: Add to selection",
                 "Double click: Snap to nearest semitone",
-            ]
+            ],
+            hint
         ),
     ]
     .spacing(16)
     .into()
 }
 
-fn workspace_shortcuts() -> Element<'static, Message> {
+fn workspace_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
     column![
         section(
             "Session",
@@ -144,7 +175,8 @@ fn workspace_shortcuts() -> Element<'static, Message> {
                 "Ctrl+Shift+Z / Ctrl+Y: Redo",
                 "Delete / Backspace: Remove selected",
                 "Escape: Cancel / clear",
-            ]
+            ],
+            hint
         ),
         section(
             "Transport",
@@ -153,7 +185,8 @@ fn workspace_shortcuts() -> Element<'static, Message> {
                 "Shift+Space: Pause",
                 "Home: Rewind to start",
                 "End: Rewind to end",
-            ]
+            ],
+            hint
         ),
         section(
             "Tracks",
@@ -164,7 +197,8 @@ fn workspace_shortcuts() -> Element<'static, Message> {
                 "Right click: Context menu",
                 "Drag track: Reorder",
                 "Drag bottom edge: Resize height",
-            ]
+            ],
+            hint
         ),
         section(
             "Timeline Clips",
@@ -179,7 +213,8 @@ fn workspace_shortcuts() -> Element<'static, Message> {
                 "Middle click clip: Split at cursor",
                 "Double click MIDI clip: Open piano roll",
                 "Right click clip: Context menu",
-            ]
+            ],
+            hint
         ),
         section(
             "Markers",
@@ -188,14 +223,16 @@ fn workspace_shortcuts() -> Element<'static, Message> {
                 "Left drag marker: Move",
                 "Right click marker: Rename",
                 "Middle click marker: Delete",
-            ]
+            ],
+            hint
         ),
         section(
             "Selection",
             &[
                 "Left drag empty editor: Marquee select",
                 "Right drag MIDI lane: Create empty MIDI clip",
-            ]
+            ],
+            hint
         ),
         section(
             "Ruler",
@@ -203,7 +240,8 @@ fn workspace_shortcuts() -> Element<'static, Message> {
                 "Left click: Move playhead",
                 "Left drag: Set loop range",
                 "Right click: Clear loop range",
-            ]
+            ],
+            hint
         ),
     ]
     .spacing(16)

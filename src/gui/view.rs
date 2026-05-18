@@ -216,6 +216,7 @@ impl Maolan {
                     let (playhead_bar, playhead_beat) =
                         self.playhead_bar_beat(&state, playhead_sample);
                     let show_track_marker_dialog = state.track_marker_dialog.is_some();
+                    let shortcuts_hint = state.shortcuts_hint.clone();
                     let diagnostics_report = state.diagnostics_report.clone();
                     let status_message = state.message.clone();
                     let plugin_graph_track = state.plugin_graph_track.clone();
@@ -595,7 +596,7 @@ impl Maolan {
                     if self.shortcuts_pane_visible {
                         view = row![
                             container(view).width(Length::Fill),
-                            crate::shortcuts_pane::ShortcutsPane::view(view_kind)
+                            crate::shortcuts_pane::ShortcutsPane::view(view_kind, shortcuts_hint.as_deref())
                         ]
                         .width(Length::Fill)
                         .height(Length::Fill)
