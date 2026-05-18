@@ -2811,9 +2811,25 @@ impl Maolan {
                                 match kind {
                                     Kind::Audio => {
                                         if let Some(clip) = audio_clip {
-                                            let max_length_samples =
+                                            let key = Self::audio_clip_key(
+                                                track_name,
+                                                &clip.name,
+                                                clip.start,
+                                                clip.length,
+                                                clip.offset,
+                                            );
+                                            let mut max_length_samples =
                                                 clip.offset.saturating_add(clip.length).max(1);
-                                            let mut source_length_samples = 0usize;
+                                            let mut source_length_samples = self
+                                                .pending_source_lengths
+                                                .remove(&key)
+                                                .or_else(|| self.undo_source_lengths_cache.remove(&key))
+                                                .unwrap_or(0);
+                                            if source_length_samples > 0 {
+                                                max_length_samples = source_length_samples
+                                                    .saturating_sub(clip.offset)
+                                                    .max(1);
+                                            }
                                             if clip.name.to_ascii_lowercase().ends_with(".wav") {
                                                 let wav_path = if std::path::Path::new(&clip.name).is_absolute() {
                                                     Some(std::path::PathBuf::from(&clip.name))
@@ -2827,6 +2843,8 @@ impl Maolan {
                                                     && let Ok(total_samples) =
                                                         Self::audio_clip_source_length(&wav_path)
                                                 {
+                                                    max_length_samples =
+                                                        total_samples.saturating_sub(clip.offset).max(1);
                                                     source_length_samples = total_samples;
                                                 }
                                             }

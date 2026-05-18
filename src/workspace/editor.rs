@@ -32,7 +32,7 @@ use std::{
     sync::Arc,
 };
 
-fn widget_audio_clip_data(clip: &crate::state::AudioClip) -> WidgetAudioClipData {
+fn widget_audio_clip_data(clip: &crate::state::AudioClip, stretch_ratio: f32) -> WidgetAudioClipData {
     WidgetAudioClipData {
         name: clip.name.clone(),
         start: clip.start,
@@ -48,8 +48,9 @@ fn widget_audio_clip_data(clip: &crate::state::AudioClip) -> WidgetAudioClipData
         grouped_clips: clip
             .grouped_clips
             .iter()
-            .map(widget_audio_clip_data)
+            .map(|c| widget_audio_clip_data(c, stretch_ratio))
             .collect(),
+        stretch_ratio,
     }
 }
 
@@ -567,10 +568,24 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                 },
             );
 
+            let stretch_ratio = match &state.resizing {
+                Some(crate::state::Resizing::Clip {
+                    kind: maolan_engine::kind::Kind::Audio,
+                    track_name: t,
+                    index: i,
+                    stretch_mode: true,
+                    initial_length,
+                    ..
+                }) if t == &track_name_cloned && *i == index => {
+                    (clip.length as f32 / initial_length.max(1.0)).max(0.01)
+                }
+                _ => 1.0,
+            };
+
             if !dragged_to_other_track {
                 let track_name_for_drag = track_name_cloned.clone();
                 clips.push(
-                    pin(AudioClipWidget::new(widget_audio_clip_data(clip))
+                    pin(AudioClipWidget::new(widget_audio_clip_data(clip, stretch_ratio))
                         .with_session_root(session_root)
                         .with_pixels_per_sample(pixels_per_sample)
                         .with_size(clip_width, clip_height)
@@ -693,7 +708,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                     }
                 };
                 clips.push(
-                    pin(AudioClipWidget::new(widget_audio_clip_data(clip))
+                    pin(AudioClipWidget::new(widget_audio_clip_data(clip, 1.0))
                         .with_session_root(session_root)
                         .with_size(clip_width, clip_height)
                         .with_label(display_clip_label.clone())
@@ -997,7 +1012,7 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             clip_width,
                         );
                         clips.push(
-                            pin(AudioClipWidget::new(widget_audio_clip_data(source_clip))
+                            pin(AudioClipWidget::new(widget_audio_clip_data(source_clip, 1.0))
                                 .with_session_root(session_root)
                                 .with_size(clip_width, clip_height)
                                 .with_label(display_clip_label)
