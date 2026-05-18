@@ -889,6 +889,7 @@ pub enum Message {
     TimeSignatureDenominatorAdjust(i8),
     TempoInputChanged(String),
     TempoInputCommit,
+    TapTempo,
     TimeSignatureNumeratorInputChanged(String),
     TimeSignatureDenominatorInputChanged(String),
     TimeSignatureInputCommit,

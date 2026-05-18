@@ -199,6 +199,10 @@ impl Toolbar {
                     .on_input(Message::TempoInputChanged)
                     .on_submit(Message::TempoInputCommit)
                     .width(Length::Fixed(72.0)),
+                button(text("Tap"))
+                    .style(Self::button_style(true, false, Color::TRANSPARENT))
+                    .on_press(Message::TapTempo)
+                    .width(Length::Fixed(40.0)),
                 text_input("Num", &view_state.tsig_num_input)
                     .on_input(Message::TimeSignatureNumeratorInputChanged)
                     .on_submit(Message::TimeSignatureInputCommit)

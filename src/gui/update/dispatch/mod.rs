@@ -411,6 +411,7 @@ impl Maolan {
             | Message::TimeSignatureDenominatorAdjust(_)
             | Message::TempoInputChanged(_)
             | Message::TempoInputCommit
+            | Message::TapTempo
             | Message::TimeSignatureNumeratorInputChanged(_)
             | Message::TimeSignatureDenominatorInputChanged(_)
             | Message::TimeSignatureInputCommit => {
