@@ -777,6 +777,67 @@ impl Maolan {
                 self.last_sent_tempo_bpm = Some(bpm as f64);
                 return self.send(Action::SetTempo(bpm as f64));
             }
+            Message::TapTempo => {
+                let now = Instant::now();
+                const TAP_TIMEOUT: Duration = Duration::from_secs(2);
+                const MAX_TAPS: usize = 8;
+
+                if let Some(last) = self.tap_tempo_times.last() {
+                    if now.duration_since(*last) > TAP_TIMEOUT {
+                        self.tap_tempo_times.clear();
+                    }
+                }
+
+                self.tap_tempo_times.push(now);
+
+                if self.tap_tempo_times.len() > MAX_TAPS {
+                    self.tap_tempo_times.remove(0);
+                }
+
+                if self.tap_tempo_times.len() >= 2 {
+                    let intervals: Vec<f32> = self
+                        .tap_tempo_times
+                        .windows(2)
+                        .map(|w| w[1].duration_since(w[0]).as_secs_f32())
+                        .collect();
+
+                    let avg_interval = intervals.iter().sum::<f32>() / intervals.len() as f32;
+
+                    if avg_interval > 0.0 {
+                        let bpm = (60.0 / avg_interval).clamp(20.0, 300.0);
+                        let sample = self.transport_samples.max(0.0) as usize;
+                        let mut state = self.state.blocking_write();
+                        let (_, numerator, denominator) = Self::timing_at_sample(&state, sample);
+                        if let Some(point) = state.tempo_points.iter_mut().find(|p| p.sample == sample) {
+                            point.bpm = bpm;
+                        } else {
+                            state.tempo_points.push(TempoPoint { sample, bpm });
+                        }
+                        if state.time_signature_points.iter().all(|p| p.sample != sample) {
+                            state.time_signature_points.push(TimeSignaturePoint {
+                                sample,
+                                numerator,
+                                denominator,
+                            });
+                        }
+                        state.tempo_points.sort_unstable_by_key(|p| p.sample);
+                        state.time_signature_points.sort_unstable_by_key(|p| p.sample);
+                        if sample == 0 {
+                            state.tempo = bpm;
+                        } else {
+                            Self::ensure_tempo_anchor_at_zero(&mut state);
+                        }
+                        self.tempo_input = format!("{:.2}", bpm);
+                        drop(state);
+                        self.selected_tempo_points.clear();
+                        self.selected_time_signature_points.clear();
+                        self.timing_selection_lane = None;
+                        self.last_sent_tempo_bpm = Some(bpm as f64);
+                        return self.send(Action::SetTempo(bpm as f64));
+                    }
+                }
+                return Task::none();
+            }
             Message::TimeSignatureNumeratorInputChanged(ref value) => {
                 self.time_signature_num_input = value.clone();
             }
