@@ -3425,9 +3425,6 @@ impl Maolan {
                                     processor.clone(),
                                 ) {
                                     self.state.blocking_write().message = e;
-                                } else {
-                                    let json = self.build_sidechain_options_json();
-                                    self.clap_ui_host.send_sidechain_options(&json);
                                 }
                                 self.pending_clap_ui_open = None;
                             }
@@ -3451,9 +3448,6 @@ impl Maolan {
                                     processor.clone(),
                                 ) {
                                     self.state.blocking_write().message = e;
-                                } else {
-                                    let json = self.build_sidechain_options_json();
-                                    self.clap_ui_host.send_sidechain_options(&json);
                                 }
                                 self.pending_clap_ui_open = None;
                             }
@@ -3931,13 +3925,7 @@ impl Maolan {
                                 return Task::batch(pending_queries);
                             }
 
-                            if let Some(task) = self.process_pending_sidechain_connections() {
-                                return task;
-                            }
 
-                            if let Some(task) = self.retry_sidechain_plugin_sources(track_name) {
-                                return task;
-                            }
 
                             if self.pending_save_path.is_some() {
                                 self.pending_save_tracks.remove(track_name);
@@ -4056,13 +4044,7 @@ impl Maolan {
                             let key = (track_name.clone(), None, *instance_id, *param_id);
                             self.clap_param_values.insert(key, *value);
 
-                            // Intercept EQ sidechain routing params (196-199) from
-                            // automation/remote to trigger reconfiguration.
-                            if *param_id >= 196 && *param_id <= 199 {
-                                if let Some(task) = self.reconfigure_sidechain(track_name, *instance_id) {
-                                    return task;
-                                }
-                            }
+
                         }
                         _ => {}
                     }
