@@ -2392,41 +2392,57 @@ impl Maolan {
                     match a {
                         Action::TrackAddAudioInput(track_name) => {
                             let mut state = self.state.blocking_write();
-                            if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| t.name == *track_name)
+                            {
                                 track.audio.ins += 1;
                             }
                             drop(state);
-                            if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                            if let Some(task) =
+                                self.maybe_refresh_plugin_graph_for_track(track_name)
+                            {
                                 return task;
                             }
                         }
                         Action::TrackAddAudioOutput(track_name) => {
                             let mut state = self.state.blocking_write();
-                            if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| t.name == *track_name)
+                            {
                                 track.audio.outs += 1;
                             }
                             drop(state);
-                            if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                            if let Some(task) =
+                                self.maybe_refresh_plugin_graph_for_track(track_name)
+                            {
                                 return task;
                             }
                         }
                         Action::TrackRemoveAudioInput(track_name) => {
                             let mut state = self.state.blocking_write();
-                            if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| t.name == *track_name)
+                            {
                                 track.audio.ins = track.audio.ins.saturating_sub(1);
                             }
                             drop(state);
-                            if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                            if let Some(task) =
+                                self.maybe_refresh_plugin_graph_for_track(track_name)
+                            {
                                 return task;
                             }
                         }
                         Action::TrackRemoveAudioOutput(track_name) => {
                             let mut state = self.state.blocking_write();
-                            if let Some(track) = state.tracks.iter_mut().find(|t| t.name == *track_name) {
+                            if let Some(track) =
+                                state.tracks.iter_mut().find(|t| t.name == *track_name)
+                            {
                                 track.audio.outs = track.audio.outs.saturating_sub(1);
                             }
                             drop(state);
-                            if let Some(task) = self.maybe_refresh_plugin_graph_for_track(track_name) {
+                            if let Some(task) =
+                                self.maybe_refresh_plugin_graph_for_track(track_name)
+                            {
                                 return task;
                             }
                         }
@@ -2538,7 +2554,8 @@ impl Maolan {
                                             undo_peaks.push((key.clone(), clip.peaks.clone()));
                                         }
                                         if clip.source_length_samples > 0 {
-                                            undo_source_lengths.push((key, clip.source_length_samples));
+                                            undo_source_lengths
+                                                .push((key, clip.source_length_samples));
                                         }
                                     }
                                 }
@@ -2823,7 +2840,9 @@ impl Maolan {
                                             let mut source_length_samples = self
                                                 .pending_source_lengths
                                                 .remove(&key)
-                                                .or_else(|| self.undo_source_lengths_cache.remove(&key))
+                                                .or_else(|| {
+                                                    self.undo_source_lengths_cache.remove(&key)
+                                                })
                                                 .unwrap_or(0);
                                             if source_length_samples > 0 {
                                                 max_length_samples = source_length_samples
@@ -2831,20 +2850,23 @@ impl Maolan {
                                                     .max(1);
                                             }
                                             if clip.name.to_ascii_lowercase().ends_with(".wav") {
-                                                let wav_path = if std::path::Path::new(&clip.name).is_absolute() {
+                                                let wav_path = if std::path::Path::new(&clip.name)
+                                                    .is_absolute()
+                                                {
                                                     Some(std::path::PathBuf::from(&clip.name))
                                                 } else {
-                                                    self.session_dir
-                                                        .as_ref()
-                                                        .map(|session_root| session_root.join(&clip.name))
+                                                    self.session_dir.as_ref().map(|session_root| {
+                                                        session_root.join(&clip.name)
+                                                    })
                                                 };
                                                 if let Some(wav_path) = wav_path
                                                     && wav_path.exists()
                                                     && let Ok(total_samples) =
                                                         Self::audio_clip_source_length(&wav_path)
                                                 {
-                                                    max_length_samples =
-                                                        total_samples.saturating_sub(clip.offset).max(1);
+                                                    max_length_samples = total_samples
+                                                        .saturating_sub(clip.offset)
+                                                        .max(1);
                                                     source_length_samples = total_samples;
                                                 }
                                             }
@@ -3072,10 +3094,12 @@ impl Maolan {
                                                     clip.offset,
                                                 );
                                                 if !clip.peaks.is_empty() {
-                                                    undo_peaks.push((key.clone(), clip.peaks.clone()));
+                                                    undo_peaks
+                                                        .push((key.clone(), clip.peaks.clone()));
                                                 }
                                                 if clip.source_length_samples > 0 {
-                                                    undo_source_lengths.push((key, clip.source_length_samples));
+                                                    undo_source_lengths
+                                                        .push((key, clip.source_length_samples));
                                                 }
                                             }
                                         }
@@ -3925,8 +3949,6 @@ impl Maolan {
                                 return Task::batch(pending_queries);
                             }
 
-
-
                             if self.pending_save_path.is_some() {
                                 self.pending_save_tracks.remove(track_name);
                                 if self.pending_save_ready() {
@@ -4043,8 +4065,6 @@ impl Maolan {
                         } => {
                             let key = (track_name.clone(), None, *instance_id, *param_id);
                             self.clap_param_values.insert(key, *value);
-
-
                         }
                         _ => {}
                     }

@@ -596,7 +596,10 @@ impl Maolan {
                     if self.shortcuts_pane_visible {
                         view = row![
                             container(view).width(Length::Fill),
-                            crate::shortcuts_pane::ShortcutsPane::view(view_kind, shortcuts_hint.as_deref())
+                            crate::shortcuts_pane::ShortcutsPane::view(
+                                view_kind,
+                                shortcuts_hint.as_deref()
+                            )
                         ]
                         .width(Length::Fill)
                         .height(Length::Fill)

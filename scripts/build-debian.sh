@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# build-rpm.sh — Build a .rpm package for Maolan DAW on Fedora.
+# build-debian.sh — Build a .deb package for Maolan DAW on Debian.
 #
 # Usage:
-#   ./scripts/build-rpm.sh [OPTIONS]
+#   ./scripts/build-debian.sh [OPTIONS]
 #
 # Options:
 #   -s, --source-dir DIR     Path to maolan source directory (default: parent of this script)
-#   -o, --output-dir DIR     Where to write the .rpm file (default: ./dist)
+#   -o, --output-dir DIR     Where to write the .deb file (default: ./dist)
 #   -v, --version VERSION    Override package version (default: read from Cargo.toml)
 #   -t, --target-dir DIR     Local target directory (useful when source is on NFS)
 #   -h, --help               Show this help message
 #
-# The script installs build dependencies via dnf, installs Rust via rustup if missing,
-# builds the release binaries, and produces a .rpm package using rpmbuild.
+# The script installs build dependencies via apt, installs Rust via rustup if missing,
+# builds the release binaries, and produces a .deb package using dpkg-deb.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$(dirname "$SCRIPT_DIR")"
@@ -68,18 +68,16 @@ else
     PKG_VERSION="$(grep -m1 '^version' "$CARGO_TOML" | sed 's/.*= *"\(.*\)".*/\1/')"
 fi
 
-RPM_ARCH="$(uname -m)"
+DEB_ARCH="$(dpkg --print-architecture)"
 PKG_NAME="maolan"
-RPM_NAME="${PKG_NAME}-${PKG_VERSION}-1%{?dist}.${RPM_ARCH}.rpm"
-# rpmbuild will expand %{?dist}; for display we show the literal
-RPM_NAME_DISPLAY="${PKG_NAME}-${PKG_VERSION}-1.dist.${RPM_ARCH}.rpm"
+DEB_NAME="${PKG_NAME}_${PKG_VERSION}-debian_${DEB_ARCH}.deb"
 
 echo "========================================"
-echo "Building Maolan .rpm package"
+echo "Building Maolan .deb package"
 echo "Version: $PKG_VERSION"
-echo "Architecture: $RPM_ARCH"
+echo "Architecture: $DEB_ARCH"
 echo "Source: $SOURCE_DIR"
-echo "Output: $OUTPUT_DIR/$RPM_NAME_DISPLAY"
+echo "Output: $OUTPUT_DIR/$DEB_NAME"
 echo "========================================"
 
 # ---------------------------------------------------------------------------
@@ -87,44 +85,56 @@ echo "========================================"
 # ---------------------------------------------------------------------------
 echo ""
 echo "[1/6] Installing build dependencies..."
-sudo dnf install -y \
-    pkgconf-pkg-config \
-    gcc \
-    gcc-c++ \
-    jack-audio-connection-kit-devel \
-    alsa-lib-devel \
-    lilv-devel \
-    suil-devel \
-    gtk2-devel \
-    rubberband-devel \
-    ffmpeg-free-devel \
-    llvm-devel \
-    clang-devel \
+sudo apt-get update
+sudo apt-get install -y \
+    pkg-config \
+    build-essential \
+    jackd2 \
+    libjack-jackd2-dev \
+    libasound2-dev \
+    liblilv-dev \
+    libsuil-dev \
+    libgtk2.0-dev \
+    librubberband-dev \
+    rubberband-cli \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavfilter-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswresample-dev \
+    llvm-dev \
+    libclang-dev \
+    curl \
+    ca-certificates \
     cmake \
     protobuf-compiler \
-    protobuf-devel \
-    git \
-    rpm-build \
-    curl \
-    ca-certificates
+    libprotobuf-dev \
+    git
 
 # ---------------------------------------------------------------------------
-# 2. Ensure Rust is installed
+# 2. Install Rust if missing
 # ---------------------------------------------------------------------------
 echo ""
 echo "[2/6] Checking Rust toolchain..."
 if ! command -v cargo &>/dev/null; then
-    echo "Rust not found. Installing from distribution packages..."
-    sudo dnf install -y rust cargo
+    echo "Rust not found. Installing via rustup..."
+    export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+    export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    source "$CARGO_HOME/env"
 else
     echo "Rust already installed: $(rustc --version)"
+fi
+
+# Ensure cargo is in PATH for the rest of the script
+if [[ -f "${CARGO_HOME:-$HOME/.cargo}/env" ]]; then
+    source "${CARGO_HOME:-$HOME/.cargo}/env"
 fi
 
 # ---------------------------------------------------------------------------
 # 3. Set LIBCLANG_PATH if needed
 # ---------------------------------------------------------------------------
-echo ""
-echo "[3/6] Configuring build environment..."
 if command -v llvm-config &>/dev/null; then
     export LIBCLANG_PATH="$(llvm-config --libdir)"
     echo "LIBCLANG_PATH set to: $LIBCLANG_PATH"
@@ -134,7 +144,7 @@ fi
 # 4. Build release binaries
 # ---------------------------------------------------------------------------
 echo ""
-echo "[4/6] Building release binaries..."
+echo "[3/6] Building release binaries..."
 cd "$SOURCE_DIR"
 
 CARGO_ARGS=("--release")
@@ -143,6 +153,8 @@ if [[ -n "$TARGET_DIR" ]]; then
     CARGO_ARGS+=("--target-dir" "$TARGET_DIR")
     echo "Using local target directory: $TARGET_DIR"
 fi
+
+# Limit parallel jobs on low-memory systems to avoid OOM
 
 cargo build "${CARGO_ARGS[@]}"
 
@@ -164,17 +176,15 @@ done
 echo "Build completed successfully."
 
 # ---------------------------------------------------------------------------
-# 5. Prepare RPM package staging area
+# 5. Prepare Debian package staging area
 # ---------------------------------------------------------------------------
 echo ""
-echo "[5/6] Preparing RPM package structure..."
+echo "[4/6] Preparing Debian package structure..."
 
-SPEC_DIR="$(mktemp -d)"
-trap "rm -rf '$SPEC_DIR'" EXIT
+STAGING_DIR="$(mktemp -d)"
+trap "rm -rf '$STAGING_DIR'" EXIT
 
-mkdir -p "$SPEC_DIR"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-
-STAGING_DIR="$SPEC_DIR/staging"
+mkdir -p "$STAGING_DIR/DEBIAN"
 mkdir -p "$STAGING_DIR/usr/bin"
 mkdir -p "$STAGING_DIR/usr/share/applications"
 mkdir -p "$STAGING_DIR/usr/share/icons/hicolor/scalable/apps"
@@ -184,7 +194,9 @@ mkdir -p "$STAGING_DIR/usr/share/doc/$PKG_NAME"
 cp "$BIN_DIR/maolan"     "$STAGING_DIR/usr/bin/"
 cp "$BIN_DIR/maolan-cli" "$STAGING_DIR/usr/bin/"
 cp "$BIN_DIR/maolan-osc" "$STAGING_DIR/usr/bin/"
-strip "$STAGING_DIR/usr/bin/"*
+strip "$STAGING_DIR/usr/bin/maolan"
+strip "$STAGING_DIR/usr/bin/maolan-cli"
+strip "$STAGING_DIR/usr/bin/maolan-osc"
 chmod 755 "$STAGING_DIR/usr/bin/"*
 
 # Desktop entry
@@ -198,76 +210,51 @@ chmod 644 "$STAGING_DIR/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg"
 # Documentation
 cp "$SOURCE_DIR/README.md" "$STAGING_DIR/usr/share/doc/$PKG_NAME/"
 cp "$SOURCE_DIR/LICENSE"   "$STAGING_DIR/usr/share/doc/$PKG_NAME/"
+gzip -9 -n -c > "$STAGING_DIR/usr/share/doc/$PKG_NAME/changelog.gz" /dev/null 2>/dev/null || true
 
-# Create tarball for rpmbuild
-cd "$STAGING_DIR"
-tar czf "$SPEC_DIR/SOURCES/maolan-files.tar.gz" .
+# DEBIAN/control
+cat > "$STAGING_DIR/DEBIAN/control" <<EOF
+Package: $PKG_NAME
+Version: $PKG_VERSION
+Section: sound
+Priority: optional
+Architecture: $DEB_ARCH
+Depends: libjack-jackd2-0, libasound2t64, liblilv-0-0, libsuil-0-0, libgtk2.0-0t64, librubberband3, rubberband-cli, libavcodec61, libavdevice61, libavfilter10, libavformat61, libavutil59, libswresample5
+Maintainer: Maolan Team <maolan@github.io>
+Description: Rust Digital Audio Workstation
+ Maolan is a Rust DAW focused on recording, editing, routing,
+ automation, export, and plugin hosting.
+ It supports CLAP, VST3, and LV2 plugins on Unix.
+EOF
 
-# Generate spec file
-cat > "$SPEC_DIR/SPECS/maolan.spec" <<EOF
-Name:           $PKG_NAME
-Version:        $PKG_VERSION
-Release:        1%{?dist}
-Summary:        Rust Digital Audio Workstation
-License:        BSD-2-Clause
-URL:            https://github.com/maolan/maolan
-Source0:        maolan-files.tar.gz
-BuildArch:      $RPM_ARCH
+cat > "$STAGING_DIR/DEBIAN/copyright" <<EOF
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Maolan
+Source: https://github.com/maolan/maolan
 
-Requires:       jack-audio-connection-kit, alsa-lib, lilv-libs, suil, gtk2, rubberband-libs, rubberband, ffmpeg-free
-
-%description
-Maolan is a Rust DAW focused on recording, editing, routing,
-automation, export, and plugin hosting.
-It supports CLAP, VST3, and LV2 plugins on Unix.
-
-%prep
-# No source preparation needed for binary build
-
-%build
-# No build needed — binaries are already built
-
-%install
-mkdir -p %{buildroot}
-cd %{buildroot}
-tar xzf %{SOURCE0}
-
-%files
-%defattr(-,root,root,-)
-/usr/bin/maolan
-/usr/bin/maolan-cli
-/usr/bin/maolan-osc
-/usr/share/applications/maolan.desktop
-/usr/share/icons/hicolor/scalable/apps/maolan-icon.svg
-%doc /usr/share/doc/maolan/README.md
-%license /usr/share/doc/maolan/LICENSE
-
-%changelog
-* Sun May 10 2026 Maolan Team <meka@sys.it.com> - $PKG_VERSION-1
-- Initial RPM package.
+Files: *
+Copyright: Maolan Team
+License: BSD-2-Clause
 EOF
 
 # ---------------------------------------------------------------------------
-# 6. Build the .rpm package
+# 6. Build the .deb package
 # ---------------------------------------------------------------------------
 echo ""
-echo "[6/6] Building .rpm package..."
-cd "$SPEC_DIR"
-rpmbuild --define "_topdir $SPEC_DIR" --bb "$SPEC_DIR/SPECS/maolan.spec"
-
-# ---------------------------------------------------------------------------
-# 7. Copy result to output directory
-# ---------------------------------------------------------------------------
+echo "[5/6] Building .deb package..."
 mkdir -p "$OUTPUT_DIR"
+fakeroot dpkg-deb --build "$STAGING_DIR" "$OUTPUT_DIR/$DEB_NAME"
 
-# rpmbuild expands Release, so find the actual file name
-BUILT_RPM="$(ls "$SPEC_DIR/RPMS/$RPM_ARCH/"*.rpm | head -n1)"
-cp "$BUILT_RPM" "$OUTPUT_DIR/"
-
-BUILT_RPM_BASENAME="$(basename "$BUILT_RPM")"
+# ---------------------------------------------------------------------------
+# 7. Verify the package
+# ---------------------------------------------------------------------------
+echo ""
+echo "[6/6] Verifying package..."
+dpkg-deb --info "$OUTPUT_DIR/$DEB_NAME"
+dpkg-deb --contents "$OUTPUT_DIR/$DEB_NAME"
 
 echo ""
 echo "========================================"
 echo "Package built successfully:"
-echo "  $OUTPUT_DIR/$BUILT_RPM_BASENAME"
+echo "  $OUTPUT_DIR/$DEB_NAME"
 echo "========================================"

@@ -246,7 +246,11 @@ impl canvas::Program<Message> for RulerCanvas {
                         let end_x = loop_end as f32 * self.pixels_per_sample;
                         let start_hit = (x - start_x).abs() <= Ruler::RANGE_EDGE_HIT_PX;
                         let end_hit = (x - end_x).abs() <= Ruler::RANGE_EDGE_HIT_PX;
-                        if !start_hit && !end_hit && x >= start_x.min(end_x) && x <= start_x.max(end_x) {
+                        if !start_hit
+                            && !end_hit
+                            && x >= start_x.min(end_x)
+                            && x <= start_x.max(end_x)
+                        {
                             state.dragging = true;
                             state.drag_with_right = true;
                             state.drag_move_loop_range = true;
@@ -388,8 +392,10 @@ impl canvas::Program<Message> for RulerCanvas {
 
                 if state.drag_move_loop_range {
                     state.drag_move_loop_range = false;
-                    let delta_samples = (state.last_x - state.drag_start_x) / self.pixels_per_sample;
-                    let raw_start = (state.loop_move_original_start as f32 + delta_samples).max(0.0);
+                    let delta_samples =
+                        (state.last_x - state.drag_start_x) / self.pixels_per_sample;
+                    let raw_start =
+                        (state.loop_move_original_start as f32 + delta_samples).max(0.0);
                     let snapped_start = snap_sample(raw_start as usize).0;
                     let length = state.loop_move_original_end - state.loop_move_original_start;
                     let new_end = snapped_start + length;
@@ -558,8 +564,14 @@ impl canvas::Program<Message> for RulerCanvas {
                 if state.dragging {
                     let (start_x, end_x) = if state.drag_move_loop_range {
                         let delta_x = state.last_x - state.drag_start_x;
-                        let start_x = (state.loop_move_original_start as f32 * self.pixels_per_sample + delta_x).max(0.0);
-                        let end_x = start_x + (state.loop_move_original_end - state.loop_move_original_start) as f32 * self.pixels_per_sample;
+                        let start_x = (state.loop_move_original_start as f32
+                            * self.pixels_per_sample
+                            + delta_x)
+                            .max(0.0);
+                        let end_x = start_x
+                            + (state.loop_move_original_end - state.loop_move_original_start)
+                                as f32
+                                * self.pixels_per_sample;
                         (start_x, end_x)
                     } else if state.drag_adjust_loop_edge {
                         if let Some((loop_start, loop_end)) = self.loop_range_samples {

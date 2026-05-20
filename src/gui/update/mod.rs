@@ -509,7 +509,9 @@ impl Maolan {
             grouped_clips: data
                 .grouped_clips
                 .iter()
-                .map(|child| Self::audio_clip_from_data(child, max_length_samples, source_length_samples))
+                .map(|child| {
+                    Self::audio_clip_from_data(child, max_length_samples, source_length_samples)
+                })
                 .collect(),
         };
         clip.normalize_group_children();
@@ -2714,10 +2716,8 @@ impl Maolan {
                     self.pending_precomputed_peaks
                         .insert(right_key.clone(), clip.peaks.clone());
                 }
-                self.pending_source_lengths
-                    .insert(left_key, 0usize);
-                self.pending_source_lengths
-                    .insert(right_key, 0usize);
+                self.pending_source_lengths.insert(left_key, 0usize);
+                self.pending_source_lengths.insert(right_key, 0usize);
                 self.state.blocking_write().message = format!("Split audio clip '{}'", clip.name);
                 self.send(Action::ApplyGroupedActions(vec![
                     Action::RemoveClip {
@@ -2823,10 +2823,8 @@ impl Maolan {
                     right_len,
                     clip.offset.saturating_add(left_len),
                 );
-                self.pending_source_lengths
-                    .insert(left_key, 0usize);
-                self.pending_source_lengths
-                    .insert(right_key, 0usize);
+                self.pending_source_lengths.insert(left_key, 0usize);
+                self.pending_source_lengths.insert(right_key, 0usize);
                 self.state.blocking_write().message = format!("Split MIDI clip '{}'", clip.name);
                 self.send(Action::ApplyGroupedActions(vec![
                     Action::RemoveClip {

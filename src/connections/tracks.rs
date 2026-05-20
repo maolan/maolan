@@ -841,24 +841,35 @@ impl canvas::Program<Message> for Graph {
 
                                 let parallel_count = if data.shift {
                                     let src_count = if is_source_hw_audio {
-                                        data.hw_in.as_ref().map(|h| h.channels.saturating_sub(from_p)).unwrap_or(0)
+                                        data.hw_in
+                                            .as_ref()
+                                            .map(|h| h.channels.saturating_sub(from_p))
+                                            .unwrap_or(0)
                                     } else if is_source_midi_hw {
                                         1usize.saturating_sub(from_p)
-                                    } else if let Some(t) = data.tracks.iter().find(|t| t.name == from_t) {
+                                    } else if let Some(t) =
+                                        data.tracks.iter().find(|t| t.name == from_t)
+                                    {
                                         let total = if is_input {
                                             t.primary_audio_ins() + t.midi.ins + t.return_count()
                                         } else {
                                             t.primary_audio_outs() + t.midi.outs + t.send_count()
                                         };
                                         (from_p..total)
-                                            .take_while(|&p| Self::track_port_kind(t, p, is_input) == kind)
+                                            .take_while(|&p| {
+                                                Self::track_port_kind(t, p, is_input) == kind
+                                            })
                                             .count()
                                     } else {
                                         0
                                     };
-                                    let tgt_count = if to_t_name == HW_IN_ID || to_t_name == HW_OUT_ID {
+                                    let tgt_count = if to_t_name == HW_IN_ID
+                                        || to_t_name == HW_OUT_ID
+                                    {
                                         let hw = if !is_input { &data.hw_in } else { &data.hw_out };
-                                        hw.as_ref().map(|h| h.channels.saturating_sub(to_p)).unwrap_or(0)
+                                        hw.as_ref()
+                                            .map(|h| h.channels.saturating_sub(to_p))
+                                            .unwrap_or(0)
                                     } else if is_target_midi_hw {
                                         1usize.saturating_sub(to_p)
                                     } else if let Some(t) = target_track_option {
@@ -868,7 +879,9 @@ impl canvas::Program<Message> for Graph {
                                             t.primary_audio_outs() + t.midi.outs + t.send_count()
                                         };
                                         (to_p..total)
-                                            .take_while(|&p| Self::track_port_kind(t, p, !is_input) == kind)
+                                            .take_while(|&p| {
+                                                Self::track_port_kind(t, p, !is_input) == kind
+                                            })
                                             .count()
                                     } else {
                                         0
@@ -883,8 +896,14 @@ impl canvas::Program<Message> for Graph {
                                     let f_p_idx = if is_source_hw_audio || is_source_midi_hw {
                                         from_p + offset
                                     } else {
-                                        let t = data.tracks.iter().find(|t| t.name == from_t).unwrap();
-                                        Self::track_port_to_engine_index(t, from_p + offset, is_input).1
+                                        let t =
+                                            data.tracks.iter().find(|t| t.name == from_t).unwrap();
+                                        Self::track_port_to_engine_index(
+                                            t,
+                                            from_p + offset,
+                                            is_input,
+                                        )
+                                        .1
                                     };
 
                                     let t_p_idx = if to_t_name == HW_IN_ID
@@ -894,7 +913,12 @@ impl canvas::Program<Message> for Graph {
                                         to_p + offset
                                     } else {
                                         let t = target_track_option.unwrap();
-                                        Self::track_port_to_engine_index(t, to_p + offset, !is_input).1
+                                        Self::track_port_to_engine_index(
+                                            t,
+                                            to_p + offset,
+                                            !is_input,
+                                        )
+                                        .1
                                     };
 
                                     let (final_from, final_f_p, final_to, final_t_p) = if is_input {
@@ -913,7 +937,9 @@ impl canvas::Program<Message> for Graph {
                                 }
 
                                 if actions.len() == 1 {
-                                    return Some(Action::publish(Message::Request(actions.into_iter().next().unwrap())));
+                                    return Some(Action::publish(Message::Request(
+                                        actions.into_iter().next().unwrap(),
+                                    )));
                                 } else {
                                     return Some(Action::publish(Message::RequestBatch(actions)));
                                 }
@@ -1347,10 +1373,20 @@ impl canvas::Program<Message> for Graph {
 
                 let preview_count = if data.shift {
                     if conn.from_track == HW_IN_ID {
-                        data.hw_in.as_ref().map(|h| h.channels.saturating_sub(conn.from_port)).unwrap_or(1).max(1)
+                        data.hw_in
+                            .as_ref()
+                            .map(|h| h.channels.saturating_sub(conn.from_port))
+                            .unwrap_or(1)
+                            .max(1)
                     } else if conn.from_track == HW_OUT_ID {
-                        data.hw_out.as_ref().map(|h| h.channels.saturating_sub(conn.from_port)).unwrap_or(1).max(1)
-                    } else if conn.from_track.starts_with(MIDI_HW_IN_ID) || conn.from_track.starts_with(MIDI_HW_OUT_ID) {
+                        data.hw_out
+                            .as_ref()
+                            .map(|h| h.channels.saturating_sub(conn.from_port))
+                            .unwrap_or(1)
+                            .max(1)
+                    } else if conn.from_track.starts_with(MIDI_HW_IN_ID)
+                        || conn.from_track.starts_with(MIDI_HW_OUT_ID)
+                    {
                         1usize.saturating_sub(conn.from_port).max(1)
                     } else if let Some(t) = start_track_option {
                         let total = if conn.is_input {
@@ -1359,7 +1395,9 @@ impl canvas::Program<Message> for Graph {
                             t.primary_audio_outs() + t.midi.outs + t.send_count()
                         };
                         (conn.from_port..total)
-                            .take_while(|&p| Self::track_port_kind(t, p, conn.is_input) == conn.kind)
+                            .take_while(|&p| {
+                                Self::track_port_kind(t, p, conn.is_input) == conn.kind
+                            })
                             .count()
                             .max(1)
                     } else {
@@ -1424,10 +1462,7 @@ impl canvas::Program<Message> for Graph {
                                 Self::track_port_position(t, from_port, t.position, track_size)
                             } else {
                                 Self::track_output_port_position(
-                                    t,
-                                    from_port,
-                                    t.position,
-                                    track_size,
+                                    t, from_port, t.position, track_size,
                                 )
                             }
                         })
@@ -1441,8 +1476,12 @@ impl canvas::Program<Message> for Graph {
                             match conn.from_track.as_str() {
                                 HW_IN_ID => TrackPortEdge::Right,
                                 HW_OUT_ID => TrackPortEdge::Left,
-                                _ if conn.from_track.starts_with(MIDI_HW_IN_ID) => TrackPortEdge::Right,
-                                _ if conn.from_track.starts_with(MIDI_HW_OUT_ID) => TrackPortEdge::Left,
+                                _ if conn.from_track.starts_with(MIDI_HW_IN_ID) => {
+                                    TrackPortEdge::Right
+                                }
+                                _ if conn.from_track.starts_with(MIDI_HW_OUT_ID) => {
+                                    TrackPortEdge::Left
+                                }
                                 _ => {
                                     if conn.is_input {
                                         TrackPortEdge::Left

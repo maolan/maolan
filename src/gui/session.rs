@@ -2117,9 +2117,8 @@ impl Maolan {
                                 .map(|v| v as usize)
                                 && saved_source_len > 0
                             {
-                                let key = Self::audio_clip_key(
-                                    &name, &clip_name, start, length, offset,
-                                );
+                                let key =
+                                    Self::audio_clip_key(&name, &clip_name, start, length, offset);
                                 self.pending_source_lengths.insert(key, saved_source_len);
                             }
                         }

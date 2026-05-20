@@ -32,7 +32,10 @@ use std::{
     sync::Arc,
 };
 
-fn widget_audio_clip_data(clip: &crate::state::AudioClip, stretch_ratio: f32) -> WidgetAudioClipData {
+fn widget_audio_clip_data(
+    clip: &crate::state::AudioClip,
+    stretch_ratio: f32,
+) -> WidgetAudioClipData {
     WidgetAudioClipData {
         name: clip.name.clone(),
         start: clip.start,
@@ -585,89 +588,93 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
             if !dragged_to_other_track {
                 let track_name_for_drag = track_name_cloned.clone();
                 clips.push(
-                    pin(AudioClipWidget::new(widget_audio_clip_data(clip, stretch_ratio))
-                        .with_session_root(session_root)
-                        .with_pixels_per_sample(pixels_per_sample)
-                        .with_size(clip_width, clip_height)
-                        .with_label(display_clip_label.clone())
-                        .selected(is_selected)
-                        .hovered_handles(audio_left_handle_hovered, audio_right_handle_hovered)
-                        .interactive(WidgetAudioClipInteraction {
-                            on_select: Message::SelectClip {
-                                track_idx: track_name_cloned.clone(),
-                                clip_idx: index,
-                                kind: Kind::Audio,
-                            },
-                            on_open: Message::OpenClipPlugins {
-                                track_idx: track_name_cloned.clone(),
-                                clip_idx: index,
-                            },
-                            on_drag: (!clip.take_lane_locked).then_some(Arc::new(move |point| {
-                                let mut clip_data = DraggedClip::new(
-                                    Kind::Audio,
-                                    index,
-                                    track_name_for_drag.clone(),
-                                );
-                                clip_data.start = point;
-                                Message::ClipDrag(clip_data)
+                    pin(
+                        AudioClipWidget::new(widget_audio_clip_data(clip, stretch_ratio))
+                            .with_session_root(session_root)
+                            .with_pixels_per_sample(pixels_per_sample)
+                            .with_size(clip_width, clip_height)
+                            .with_label(display_clip_label.clone())
+                            .selected(is_selected)
+                            .hovered_handles(audio_left_handle_hovered, audio_right_handle_hovered)
+                            .interactive(WidgetAudioClipInteraction {
+                                on_select: Message::SelectClip {
+                                    track_idx: track_name_cloned.clone(),
+                                    clip_idx: index,
+                                    kind: Kind::Audio,
+                                },
+                                on_open: Message::OpenClipPlugins {
+                                    track_idx: track_name_cloned.clone(),
+                                    clip_idx: index,
+                                },
+                                on_drag: (!clip.take_lane_locked).then_some(
+                                    Arc::new(move |point| {
+                                        let mut clip_data = DraggedClip::new(
+                                            Kind::Audio,
+                                            index,
+                                            track_name_for_drag.clone(),
+                                        );
+                                        clip_data.start = point;
+                                        Message::ClipDrag(clip_data)
+                                    })
+                                        as Arc<dyn Fn(Point) -> Message + Send + Sync + 'static>,
+                                ),
+                                edges: WidgetClipEdgeMessages {
+                                    left_hover_enter: Message::ClipResizeHandleHover {
+                                        kind: Kind::Audio,
+                                        track_idx: track_name_cloned.clone(),
+                                        clip_idx: index,
+                                        is_right_side: false,
+                                        hovered: true,
+                                    },
+                                    left_hover_exit: Message::ClipResizeHandleHover {
+                                        kind: Kind::Audio,
+                                        track_idx: track_name_cloned.clone(),
+                                        clip_idx: index,
+                                        is_right_side: false,
+                                        hovered: false,
+                                    },
+                                    left_press: Message::ClipResizeStart(
+                                        Kind::Audio,
+                                        track_name_cloned.clone(),
+                                        index,
+                                        false,
+                                    ),
+                                    right_hover_enter: Message::ClipResizeHandleHover {
+                                        kind: Kind::Audio,
+                                        track_idx: track_name_cloned.clone(),
+                                        clip_idx: index,
+                                        is_right_side: true,
+                                        hovered: true,
+                                    },
+                                    right_hover_exit: Message::ClipResizeHandleHover {
+                                        kind: Kind::Audio,
+                                        track_idx: track_name_cloned.clone(),
+                                        clip_idx: index,
+                                        is_right_side: true,
+                                        hovered: false,
+                                    },
+                                    right_press: Message::ClipResizeStart(
+                                        Kind::Audio,
+                                        track_name_cloned.clone(),
+                                        index,
+                                        true,
+                                    ),
+                                },
+                                fade_in_press: Some(Message::FadeResizeStart {
+                                    kind: Kind::Audio,
+                                    track_idx: track_name_cloned.clone(),
+                                    clip_idx: index,
+                                    is_fade_out: false,
+                                }),
+                                fade_out_press: Some(Message::FadeResizeStart {
+                                    kind: Kind::Audio,
+                                    track_idx: track_name_cloned.clone(),
+                                    clip_idx: index,
+                                    is_fade_out: true,
+                                }),
                             })
-                                as Arc<dyn Fn(Point) -> Message + Send + Sync + 'static>),
-                            edges: WidgetClipEdgeMessages {
-                                left_hover_enter: Message::ClipResizeHandleHover {
-                                    kind: Kind::Audio,
-                                    track_idx: track_name_cloned.clone(),
-                                    clip_idx: index,
-                                    is_right_side: false,
-                                    hovered: true,
-                                },
-                                left_hover_exit: Message::ClipResizeHandleHover {
-                                    kind: Kind::Audio,
-                                    track_idx: track_name_cloned.clone(),
-                                    clip_idx: index,
-                                    is_right_side: false,
-                                    hovered: false,
-                                },
-                                left_press: Message::ClipResizeStart(
-                                    Kind::Audio,
-                                    track_name_cloned.clone(),
-                                    index,
-                                    false,
-                                ),
-                                right_hover_enter: Message::ClipResizeHandleHover {
-                                    kind: Kind::Audio,
-                                    track_idx: track_name_cloned.clone(),
-                                    clip_idx: index,
-                                    is_right_side: true,
-                                    hovered: true,
-                                },
-                                right_hover_exit: Message::ClipResizeHandleHover {
-                                    kind: Kind::Audio,
-                                    track_idx: track_name_cloned.clone(),
-                                    clip_idx: index,
-                                    is_right_side: true,
-                                    hovered: false,
-                                },
-                                right_press: Message::ClipResizeStart(
-                                    Kind::Audio,
-                                    track_name_cloned.clone(),
-                                    index,
-                                    true,
-                                ),
-                            },
-                            fade_in_press: Some(Message::FadeResizeStart {
-                                kind: Kind::Audio,
-                                track_idx: track_name_cloned.clone(),
-                                clip_idx: index,
-                                is_fade_out: false,
-                            }),
-                            fade_out_press: Some(Message::FadeResizeStart {
-                                kind: Kind::Audio,
-                                track_idx: track_name_cloned.clone(),
-                                clip_idx: index,
-                                is_fade_out: true,
-                            }),
-                        })
-                        .into_element())
+                            .into_element(),
+                    )
                     .position(Point::new(dragged_start * pixels_per_sample, lane_top))
                     .into(),
                 );
@@ -1012,19 +1019,21 @@ fn view_track_elements(args: TrackElementViewArgs<'_>) -> Element<'static, Messa
                             clip_width,
                         );
                         clips.push(
-                            pin(AudioClipWidget::new(widget_audio_clip_data(source_clip, 1.0))
-                                .with_session_root(session_root)
-                                .with_size(clip_width, clip_height)
-                                .with_label(display_clip_label)
-                                .preview(
-                                    if active_target_valid {
-                                        preview_fill
-                                    } else {
-                                        Background::Color(Color::TRANSPARENT)
-                                    },
-                                    preview_border,
-                                )
-                                .into_element())
+                            pin(
+                                AudioClipWidget::new(widget_audio_clip_data(source_clip, 1.0))
+                                    .with_session_root(session_root)
+                                    .with_size(clip_width, clip_height)
+                                    .with_label(display_clip_label)
+                                    .preview(
+                                        if active_target_valid {
+                                            preview_fill
+                                        } else {
+                                            Background::Color(Color::TRANSPARENT)
+                                        },
+                                        preview_border,
+                                    )
+                                    .into_element(),
+                            )
                             .position(Point::new(preview_start * pixels_per_sample, lane_top))
                             .into(),
                         );

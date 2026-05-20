@@ -772,7 +772,6 @@ impl Default for StateData {
             session_genre: String::new(),
             available_templates: vec![],
             available_group_templates: vec![],
-
         }
     }
 }
