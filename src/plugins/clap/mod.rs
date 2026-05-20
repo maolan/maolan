@@ -237,15 +237,7 @@ impl GuiClapUiHost {
         Ok(())
     }
 
-    pub fn send_sidechain_options(&self, json: &str) {
-        if let Ok(procs) = self.active_processors.lock() {
-            for (_, processor) in procs.iter() {
-                if let Err(e) = processor.set_sidechain_options(json) {
-                    tracing::warn!("Failed to send sidechain options: {e}");
-                }
-            }
-        }
-    }
+
 }
 
 fn open_editor_blocking(
