@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# build-deb.sh — Build a .deb package for Maolan DAW on Debian/Ubuntu.
+# build-ubuntu.sh — Build a .deb package for Maolan DAW on Ubuntu.
 #
 # Usage:
-#   ./scripts/build-deb.sh [OPTIONS]
+#   ./scripts/build-ubuntu.sh [OPTIONS]
 #
 # Options:
 #   -s, --source-dir DIR     Path to maolan source directory (default: parent of this script)
@@ -70,7 +70,7 @@ fi
 
 DEB_ARCH="$(dpkg --print-architecture)"
 PKG_NAME="maolan"
-DEB_NAME="${PKG_NAME}_${PKG_VERSION}_${DEB_ARCH}.deb"
+DEB_NAME="${PKG_NAME}_${PKG_VERSION}-ubuntu_${DEB_ARCH}.deb"
 
 echo "========================================"
 echo "Building Maolan .deb package"

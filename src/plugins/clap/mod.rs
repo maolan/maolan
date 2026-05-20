@@ -236,8 +236,6 @@ impl GuiClapUiHost {
             })?;
         Ok(())
     }
-
-
 }
 
 fn open_editor_blocking(

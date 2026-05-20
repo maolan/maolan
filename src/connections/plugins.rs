@@ -699,34 +699,65 @@ impl canvas::Program<Message> for Graph {
                             };
                             if from_node != to_node || from_port != to_port {
                                 let parallel_count = if data.shift {
-                                    let track = data.tracks.iter().find(|t| Some(&t.name) == data.plugin_graph_track.as_ref());
+                                    let track = data.tracks.iter().find(|t| {
+                                        Some(&t.name) == data.plugin_graph_track.as_ref()
+                                    });
                                     let from_count = match &from_node {
-                                        PluginGraphNode::TrackInput => {
-                                            track.map(|t| if connecting.kind == Kind::Audio { t.audio.ins } else { t.midi.ins }).unwrap_or(0)
-                                        }
+                                        PluginGraphNode::TrackInput => track
+                                            .map(|t| {
+                                                if connecting.kind == Kind::Audio {
+                                                    t.audio.ins
+                                                } else {
+                                                    t.midi.ins
+                                                }
+                                            })
+                                            .unwrap_or(0),
                                         PluginGraphNode::Lv2PluginInstance(id)
                                         | PluginGraphNode::Vst3PluginInstance(id)
-                                        | PluginGraphNode::ClapPluginInstance(id) => {
-                                            data.plugin_graph_plugins.iter().find(|p| p.instance_id == *id).map(|p| {
-                                                if connecting.kind == Kind::Audio { p.audio_outputs } else { p.midi_outputs }
-                                            }).unwrap_or(0)
-                                        }
+                                        | PluginGraphNode::ClapPluginInstance(id) => data
+                                            .plugin_graph_plugins
+                                            .iter()
+                                            .find(|p| p.instance_id == *id)
+                                            .map(|p| {
+                                                if connecting.kind == Kind::Audio {
+                                                    p.audio_outputs
+                                                } else {
+                                                    p.midi_outputs
+                                                }
+                                            })
+                                            .unwrap_or(0),
                                         PluginGraphNode::TrackOutput => 0,
                                     };
                                     let to_count = match &to_node {
-                                        PluginGraphNode::TrackOutput => {
-                                            track.map(|t| if connecting.kind == Kind::Audio { t.audio.outs } else { t.midi.outs }).unwrap_or(0)
-                                        }
+                                        PluginGraphNode::TrackOutput => track
+                                            .map(|t| {
+                                                if connecting.kind == Kind::Audio {
+                                                    t.audio.outs
+                                                } else {
+                                                    t.midi.outs
+                                                }
+                                            })
+                                            .unwrap_or(0),
                                         PluginGraphNode::Lv2PluginInstance(id)
                                         | PluginGraphNode::Vst3PluginInstance(id)
-                                        | PluginGraphNode::ClapPluginInstance(id) => {
-                                            data.plugin_graph_plugins.iter().find(|p| p.instance_id == *id).map(|p| {
-                                                if connecting.kind == Kind::Audio { p.audio_inputs } else { p.midi_inputs }
-                                            }).unwrap_or(0)
-                                        }
+                                        | PluginGraphNode::ClapPluginInstance(id) => data
+                                            .plugin_graph_plugins
+                                            .iter()
+                                            .find(|p| p.instance_id == *id)
+                                            .map(|p| {
+                                                if connecting.kind == Kind::Audio {
+                                                    p.audio_inputs
+                                                } else {
+                                                    p.midi_inputs
+                                                }
+                                            })
+                                            .unwrap_or(0),
                                         PluginGraphNode::TrackInput => 0,
                                     };
-                                    from_count.saturating_sub(from_port).min(to_count.saturating_sub(to_port)).max(1)
+                                    from_count
+                                        .saturating_sub(from_port)
+                                        .min(to_count.saturating_sub(to_port))
+                                        .max(1)
                                 } else {
                                     1
                                 };
@@ -734,15 +765,19 @@ impl canvas::Program<Message> for Graph {
                                 if data.plugin_graph_clip.is_some() {
                                     let mut connections = Vec::with_capacity(parallel_count);
                                     for offset in 0..parallel_count {
-                                        connections.push(maolan_engine::message::PluginGraphConnection {
-                                            from_node: from_node.clone(),
-                                            from_port: from_port + offset,
-                                            to_node: to_node.clone(),
-                                            to_port: to_port + offset,
-                                            kind: connecting.kind,
-                                        });
+                                        connections.push(
+                                            maolan_engine::message::PluginGraphConnection {
+                                                from_node: from_node.clone(),
+                                                from_port: from_port + offset,
+                                                to_node: to_node.clone(),
+                                                to_port: to_port + offset,
+                                                kind: connecting.kind,
+                                            },
+                                        );
                                     }
-                                    return Some(Action::publish(Message::ClipConnectPlugins(connections)));
+                                    return Some(Action::publish(Message::ClipConnectPlugins(
+                                        connections,
+                                    )));
                                 } else {
                                     let mut actions = Vec::with_capacity(parallel_count);
                                     for offset in 0..parallel_count {
@@ -766,9 +801,13 @@ impl canvas::Program<Message> for Graph {
                                         actions.push(action);
                                     }
                                     if actions.len() == 1 {
-                                        return Some(Action::publish(Message::Request(actions.into_iter().next().unwrap())));
+                                        return Some(Action::publish(Message::Request(
+                                            actions.into_iter().next().unwrap(),
+                                        )));
                                     } else {
-                                        return Some(Action::publish(Message::RequestBatch(actions)));
+                                        return Some(Action::publish(Message::RequestBatch(
+                                            actions,
+                                        )));
                                     }
                                 }
                             }
@@ -1277,15 +1316,26 @@ impl canvas::Program<Message> for Graph {
                 let preview_count = if data.shift {
                     let source_count = match &connecting.from_node {
                         PluginGraphNode::TrackInput => {
-                            if connecting.kind == Kind::Audio { track.audio.ins } else { track.midi.ins }
+                            if connecting.kind == Kind::Audio {
+                                track.audio.ins
+                            } else {
+                                track.midi.ins
+                            }
                         }
                         PluginGraphNode::Lv2PluginInstance(id)
                         | PluginGraphNode::Vst3PluginInstance(id)
-                        | PluginGraphNode::ClapPluginInstance(id) => {
-                            data.plugin_graph_plugins.iter().find(|p| p.instance_id == *id).map(|p| {
-                                if connecting.kind == Kind::Audio { p.audio_outputs } else { p.midi_outputs }
-                            }).unwrap_or(0)
-                        }
+                        | PluginGraphNode::ClapPluginInstance(id) => data
+                            .plugin_graph_plugins
+                            .iter()
+                            .find(|p| p.instance_id == *id)
+                            .map(|p| {
+                                if connecting.kind == Kind::Audio {
+                                    p.audio_outputs
+                                } else {
+                                    p.midi_outputs
+                                }
+                            })
+                            .unwrap_or(0),
                         PluginGraphNode::TrackOutput => 0,
                     };
                     source_count.saturating_sub(connecting.from_port).max(1)

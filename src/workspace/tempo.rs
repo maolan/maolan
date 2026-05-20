@@ -668,7 +668,11 @@ impl canvas::Program<Message> for TempoCanvas {
                         let end_x = punch_end as f32 * self.pixels_per_sample;
                         let start_hit = (x - start_x).abs() <= Tempo::RANGE_EDGE_HIT_PX;
                         let end_hit = (x - end_x).abs() <= Tempo::RANGE_EDGE_HIT_PX;
-                        if !start_hit && !end_hit && x >= start_x.min(end_x) && x <= start_x.max(end_x) {
+                        if !start_hit
+                            && !end_hit
+                            && x >= start_x.min(end_x)
+                            && x <= start_x.max(end_x)
+                        {
                             state.drag_mode = DragMode::MovePunchRange {
                                 original_start: punch_start,
                                 original_end: punch_end,
@@ -1229,8 +1233,10 @@ impl canvas::Program<Message> for TempoCanvas {
                     }
                 }
 
-                if !matches!(state.drag_mode, DragMode::Punch { .. } | DragMode::MovePunchRange { .. })
-                    && let Some((punch_start, punch_end)) = self.punch_range_samples
+                if !matches!(
+                    state.drag_mode,
+                    DragMode::Punch { .. } | DragMode::MovePunchRange { .. }
+                ) && let Some((punch_start, punch_end)) = self.punch_range_samples
                     && self.pixels_per_sample > 1.0e-9
                     && punch_end > punch_start
                 {
@@ -1308,8 +1314,10 @@ impl canvas::Program<Message> for TempoCanvas {
                         last_x,
                     } => {
                         let delta_x = last_x - drag_start_x;
-                        let start_x = (*original_start as f32 * self.pixels_per_sample + delta_x).max(0.0);
-                        let end_x = start_x + (*original_end - *original_start) as f32 * self.pixels_per_sample;
+                        let start_x =
+                            (*original_start as f32 * self.pixels_per_sample + delta_x).max(0.0);
+                        let end_x = start_x
+                            + (*original_end - *original_start) as f32 * self.pixels_per_sample;
                         let punch_h = TEMPO_HIT_HEIGHT * 2.0;
                         let punch_y = TEMPO_HIT_HEIGHT * 2.0;
                         frame.fill(

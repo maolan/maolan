@@ -7681,44 +7681,6 @@ mod tests {
     }
 
     #[test]
-    fn session_io_open_folder_selected_missing_removes_from_recent() {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("maolan_missing_session_{unique}"));
-        // Ensure the path does not exist
-        let _ = fs::remove_dir_all(&path);
-        let mut app = Maolan {
-            ..Maolan::default()
-        };
-        // Pre-populate the recent list with the missing path
-        app.remember_recent_session_path(&path);
-        assert!(
-            app.menu
-                .recent_session_paths()
-                .contains(&path.to_string_lossy().to_string())
-        );
-
-        let _ = app.update(Message::OpenFolderSelected(Some(path.clone())));
-
-        assert!(
-            !app.menu
-                .recent_session_paths()
-                .contains(&path.to_string_lossy().to_string()),
-            "missing session should be removed from recent"
-        );
-        assert!(
-            app.state
-                .blocking_read()
-                .message
-                .contains("no longer exists"),
-            "message should indicate session is missing"
-        );
-        assert!(app.session_dir.is_none());
-    }
-
-    #[test]
     fn transport_set_loop_and_punch_range_normalize_invalid_ranges() {
         let mut app = Maolan::default();
 

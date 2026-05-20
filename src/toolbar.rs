@@ -96,7 +96,8 @@ impl Toolbar {
                     play_active,
                     Color::from_rgba(0.2, 0.7, 0.35, 0.35),
                 ))
-                .on_press(Message::TransportPlay).into(),
+                .on_press(Message::TransportPlay)
+                .into(),
             "Space: Play/stop",
         );
         let pause_button = with_hint(
@@ -106,7 +107,8 @@ impl Toolbar {
                     pause_active,
                     Color::from_rgba(0.85, 0.7, 0.1, 0.35),
                 ))
-                .on_press(Message::TransportPause).into(),
+                .on_press(Message::TransportPause)
+                .into(),
             "Shift+Space: Pause",
         );
         let loop_button = if view_state.has_loop_range {
@@ -161,7 +163,8 @@ impl Toolbar {
                 with_hint(
                     button(rewind())
                         .style(Self::button_style(true, false, Color::TRANSPARENT))
-                        .on_press(Message::JumpToStart).into(),
+                        .on_press(Message::JumpToStart)
+                        .into(),
                     "Home: Rewind to start",
                 ),
                 play_button,
@@ -173,7 +176,8 @@ impl Toolbar {
                             stop_active,
                             Color::from_rgba(0.45, 0.45, 0.45, 0.35)
                         ))
-                        .on_press(Message::TransportStop).into(),
+                        .on_press(Message::TransportStop)
+                        .into(),
                     "Space: Play/stop",
                 ),
                 with_hint(
@@ -183,7 +187,8 @@ impl Toolbar {
                             false,
                             Color::from_rgba(0.85, 0.45, 0.1, 0.35)
                         ))
-                        .on_press(Message::TransportPanic).into(),
+                        .on_press(Message::TransportPanic)
+                        .into(),
                     "Ctrl+L: MIDI panic",
                 ),
                 with_hint(
@@ -193,7 +198,8 @@ impl Toolbar {
                             rec_active,
                             Color::from_rgba(0.9, 0.15, 0.15, 0.45)
                         ))
-                        .on_press(Message::TransportRecordToggle).into(),
+                        .on_press(Message::TransportRecordToggle)
+                        .into(),
                     "Ctrl+R: Record arm toggle",
                 ),
                 loop_button,
@@ -202,15 +208,14 @@ impl Toolbar {
                     with_hint(
                         button(fast_forward())
                             .style(Self::button_style(true, false, Color::TRANSPARENT))
-                            .on_press(Message::JumpToEnd).into(),
+                            .on_press(Message::JumpToEnd)
+                            .into(),
                         "End: Rewind to end",
                     )
                 } else {
-                    button(fast_forward()).style(Self::button_style(
-                        false,
-                        false,
-                        Color::TRANSPARENT,
-                    )).into()
+                    button(fast_forward())
+                        .style(Self::button_style(false, false, Color::TRANSPARENT))
+                        .into()
                 },
                 if view_state.midi_editor_active {
                     pick_list(

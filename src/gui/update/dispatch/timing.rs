@@ -782,10 +782,10 @@ impl Maolan {
                 const TAP_TIMEOUT: Duration = Duration::from_secs(2);
                 const MAX_TAPS: usize = 8;
 
-                if let Some(last) = self.tap_tempo_times.last() {
-                    if now.duration_since(*last) > TAP_TIMEOUT {
-                        self.tap_tempo_times.clear();
-                    }
+                if let Some(last) = self.tap_tempo_times.last()
+                    && now.duration_since(*last) > TAP_TIMEOUT
+                {
+                    self.tap_tempo_times.clear();
                 }
 
                 self.tap_tempo_times.push(now);
@@ -808,12 +808,18 @@ impl Maolan {
                         let sample = self.transport_samples.max(0.0) as usize;
                         let mut state = self.state.blocking_write();
                         let (_, numerator, denominator) = Self::timing_at_sample(&state, sample);
-                        if let Some(point) = state.tempo_points.iter_mut().find(|p| p.sample == sample) {
+                        if let Some(point) =
+                            state.tempo_points.iter_mut().find(|p| p.sample == sample)
+                        {
                             point.bpm = bpm;
                         } else {
                             state.tempo_points.push(TempoPoint { sample, bpm });
                         }
-                        if state.time_signature_points.iter().all(|p| p.sample != sample) {
+                        if state
+                            .time_signature_points
+                            .iter()
+                            .all(|p| p.sample != sample)
+                        {
                             state.time_signature_points.push(TimeSignaturePoint {
                                 sample,
                                 numerator,
@@ -821,7 +827,9 @@ impl Maolan {
                             });
                         }
                         state.tempo_points.sort_unstable_by_key(|p| p.sample);
-                        state.time_signature_points.sort_unstable_by_key(|p| p.sample);
+                        state
+                            .time_signature_points
+                            .sort_unstable_by_key(|p| p.sample);
                         if sample == 0 {
                             state.tempo = bpm;
                         } else {

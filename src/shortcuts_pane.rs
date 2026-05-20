@@ -48,7 +48,7 @@ fn section(
     let mut col = column![text(title).size(13)].spacing(4);
     for item in items {
         let item_str = item.as_ref();
-        let is_highlighted = hint.map_or(false, |h| item_str.contains(h));
+        let is_highlighted = hint.is_some_and(|h| item_str.contains(h));
         let item_element: Element<'static, Message> = if is_highlighted {
             container(
                 text(format!("  • {}", item_str))
