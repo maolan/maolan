@@ -1,6 +1,6 @@
 # Maolan Shortcuts and Gestures
 
-Last updated: 2026-03-21
+Last updated: 2026-05-21
 
 ## Keyboard Shortcuts
 ### Global / Session
@@ -11,6 +11,7 @@ Last updated: 2026-03-21
 - `Ctrl+I`: Import files
 - `Ctrl+E`: Open export dialog
 - `Ctrl+T`: Add track
+- `Ctrl+A`: Select all (in pitch-correction view: selects all segments)
 - `Ctrl+R`: Toggle session record arm
 - `Ctrl+L`: Send transport panic / MIDI panic
 - `Ctrl+Z`: Undo
@@ -18,6 +19,8 @@ Last updated: 2026-03-21
 - `Ctrl+Y`: Redo
 - `Delete` or `Backspace`: Remove selected item(s)
 - `Escape`: Cancel or clear the current context-dependent interaction
+- `N`: Toggle the Shortcuts pane
+- `C`: Toggle the cut indicator (a vertical guide line showing where a cut would land; only visible in workspace view)
 
 ### Transport
 - `Space`: Toggle play/stop
@@ -65,9 +68,15 @@ Last updated: 2026-03-21
 - `Left drag on empty editor`: Marquee clip selection rectangle
 - `Right drag on MIDI lane`: Create empty MIDI clip
 
+### Automation Lanes
+- `Left click empty area`: Insert automation point at the cursor position
+- `Right click point`: Delete automation point
+
 ### Ruler (Top Timeline)
 - `Left click`: Move transport playhead
 - `Left drag`: Set loop range (snap-aware, supports "Clips" snap mode)
+- `Right drag inside loop range`: Move the entire loop range
+- `Middle drag loop edge`: Adjust loop start or end point
 - `Right click`: Clear loop range
 
 ### Zoom Controls
@@ -113,6 +122,7 @@ Last updated: 2026-03-21
 - `Left drag empty area`: Box-select pitch segments
 - `Shift+Left drag empty area`: Add box-selected segments to the current selection
 - `Double click pitch segment`: Snap the clicked segment, or the current selected group, to the nearest semitone
+- `Ctrl+A` in pitch-correction view: Select all segments
 - `Ctrl+Z` / `Ctrl+Shift+Z` / `Ctrl+Y` in pitch-correction view: Undo/redo local pitch-segment edits
 
 ### Plugin Graph
@@ -120,6 +130,9 @@ Last updated: 2026-03-21
 - `Drag from port to port`: Create audio or MIDI connection
 - `Select connection + delete`: Remove selected graph connection
 - `Select plugin + delete`: Remove selected plugin instance
+
+## Shortcuts Pane
+The in-app Shortcuts pane can be shown or hidden with `N` or via **View → Shortcuts**. It displays context-sensitive shortcuts for the active view (workspace, piano roll, pitch correction, or plugin graph) and highlights the relevant entry when hovering a widget that has a shortcut hint.
 
 ## Notes
 - Current keyboard handling is `Ctrl`-based in code paths (including on macOS builds).

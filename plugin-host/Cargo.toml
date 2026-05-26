@@ -1,0 +1,38 @@
+[package]
+name = "maolan-plugin-host"
+version = "0.0.1"
+edition = "2024"
+description = "Out-of-process plugin host for Maolan DAW"
+authors = ["Maolan Team"]
+license = "BSD-2-Clause"
+readme = "README.md"
+repository = "https://github.com/maolan/maolan"
+homepage = "https://maolan.github.io"
+documentation = "https://maolan.github.io/docs"
+keywords = ["audio", "plugin", "clap", "vst3", "lv2"]
+categories = ["multimedia::audio"]
+
+[lib]
+name = "maolan_plugin_host"
+path = "src/lib.rs"
+
+[[bin]]
+name = "maolan-plugin-host"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+libloading = "0.9"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+vst3 = "0.3"
+maolan-plugin-protocol = { path = "../../plugin-protocol" }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+lilv = "0.2.4"
+lv2_raw = "0.2.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Memory"] }

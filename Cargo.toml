@@ -1,67 +1,70 @@
 [package]
 name = "maolan"
 default-run = "maolan"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 description = "Rust DAW application for recording, editing, routing, automation, export, and plugin hosting"
 authors = ["Maolan Team"]
 license = "BSD-2-Clause"
 readme = "README.md"
+repository = "https://github.com/maolan/maolan"
+homepage = "https://maolan.rs"
+documentation = "https://maolan.rs"
+keywords = ["audio", "midi", "daw", "clap", "lv2"]
+categories = ["multimedia::audio"]
 
 [package.metadata.wix]
 eula = false
-repository = "https://github.com/maolan/maolan"
-homepage = "https://maolan.github.io"
-keywords = ["audio", "midi", "daw", "vst3", "lv2"]
-categories = ["multimedia::audio"]
+
+[workspace]
+members = [".", "plugin-host"]
 
 [patch.crates-io]
 esaxx-rs = { git = "https://github.com/maolan/esaxx" }
 
 [dependencies]
+chrono = "0.4"
 crossterm = "0.29.0"
+dirs = "6"
 ebur128 = "0.1"
 flacenc = "0.5"
 hf-hub = { version = "0.5.0", default-features = false, features = ["tokio", "rustls-tls"] }
-i24 = "1.0.1"
+i24 = "2.3.3"
 iced = { version = "0.14.0", features = ["advanced", "image", "lazy", "tokio"] }
-iced_aw = "0.13.1"
+iced_aw = "0.14.1"
 iced_drop = { version = "0.2.16", features = ["helpers"] }
 iced_fonts = { version = "0.3.0", features = ["lucide"] }
-libloading = "0.8.9"
-maolan-generate = "0.0.5"
-maolan-engine = "0.1.13"
+maolan-generate = "0.0.8"
+maolan-engine = "0.2.1"
+maolan-plugin-host = { path = "plugin-host" }
 maolan-widgets = "0.0.21"
-mixosc = "0.0.5"
+mixosc = "0.0.6"
 midly = "0.5.3"
 ffmpeg-next = "8"
 pitch-detection = "0.3.0"
 ratatui = "0.30.0"
 rfd = "0.17.2"
-rubato = "0.16.2"
+rubato = "3"
 wide = "1.4.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-symphonia = { version = "0.5.5", default-features = false, features = ["all-formats", "all-codecs"] }
 tokio = { version = "1.50.0", features = ["full"] }
-toml = "0.8.23"
+toml = "1.1.2"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
-vst3 = "0.3"
 hound = "3.5.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-alsa = "0.9.1"
+alsa = "0.11.0"
 
 [target.'cfg(target_os = "freebsd")'.dependencies]
 nix = { version = "0.31.2", features = ["ioctl"] }
 nvtree = "0.0.2"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-lilv = "0.2.4"
 nix = { version = "0.31.2", features = ["signal", "process"] }
 x11-dl = "2.21.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-cpal = { version = "0.15.3" }
+cpal = { version = "0.17.3" }
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }

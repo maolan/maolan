@@ -754,19 +754,6 @@ impl Maolan {
         }
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
-    fn open_lv2_plugin_ui_task(&self, track_name: &str, instance_id: usize) -> Task<Message> {
-        self.send(Action::TrackGetLv2PluginControls {
-            track_name: track_name.to_string(),
-            instance_id,
-        })
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    fn pump_lv2_ui(&mut self) {
-        self.lv2_ui_host.pump();
-    }
-
     fn rebuild_midi_mappings_report_lines_from_state(&mut self) {
         let state = self.state.blocking_read();
         let mut lines = Vec::<String>::new();

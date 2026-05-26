@@ -1085,9 +1085,6 @@ pub enum Message {
         clip_idx: Option<usize>,
         instance_id: usize,
     },
-    #[cfg(all(unix, not(target_os = "macos")))]
-    PumpLv2Ui,
-    PumpClapUi,
     RefreshVst3Plugins,
     FilterVst3Plugins(String),
     SelectVst3Plugin(String),

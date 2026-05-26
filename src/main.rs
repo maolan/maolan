@@ -12,7 +12,7 @@ mod icon;
 mod menu;
 mod message;
 mod platform_caps;
-mod plugins;
+mod plugin_host;
 mod shortcuts_pane;
 mod state;
 mod style;

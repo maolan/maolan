@@ -110,50 +110,6 @@ pub mod connections_plugins {
     pub const TRACK_IO_MARGIN_X: f32 = 24.0;
 }
 
-#[cfg(all(unix, not(target_os = "macos")))]
-pub mod plugins_x11 {
-    use std::ffi::c_long;
-
-    pub const CLIENT_MESSAGE: i32 = 33;
-    pub const DESTROY_NOTIFY: i32 = 17;
-    pub const STRUCTURE_NOTIFY_MASK: i64 = 1 << 17;
-    pub const EXPOSURE_MASK: i64 = 1 << 15;
-    pub const XEMBED_EMBEDDED_NOTIFY: c_long = 0;
-    pub const XEMBED_WINDOW_ACTIVATE: c_long = 1;
-    pub const XEMBED_FOCUS_IN: c_long = 4;
-    pub const XEMBED_FOCUS_CURRENT: c_long = 0;
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-pub mod plugins_clap {
-    use std::ffi::{c_int, c_long};
-
-    pub const DESTROY_NOTIFY: c_int = 17;
-    pub const UNMAP_NOTIFY: c_int = 18;
-    pub const CLIENT_MESSAGE: c_int = 33;
-    pub const STRUCTURE_NOTIFY_MASK: c_long = 1 << 17;
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-pub mod plugins_lv2 {
-    pub const GTK_WINDOW_TOPLEVEL: i32 = 0;
-    pub const LV2_URID_MAP: &str = "http://lv2plug.in/ns/ext/urid#map";
-    pub const LV2_URID_MAP_TYPO_COMPAT: &str = "http://lv2plug.in/ns//ext/urid#map";
-    pub const LV2_URID_UNMAP: &str = "http://lv2plug.in/ns/ext/urid#unmap";
-    pub const LV2_UI_GTK3: &str = "http://lv2plug.in/ns/extensions/ui#Gtk3UI";
-    pub const LV2_UI_GTK: &str = "http://lv2plug.in/ns/extensions/ui#GtkUI";
-    pub const LV2_UI_X11: &str = "http://lv2plug.in/ns/extensions/ui#X11UI";
-    pub const LV2_UI_QT4: &str = "http://lv2plug.in/ns/extensions/ui#Qt4UI";
-    pub const LV2_UI_QT5: &str = "http://lv2plug.in/ns/extensions/ui#Qt5UI";
-    pub const LV2_UI_QT6: &str = "http://lv2plug.in/ns/extensions/ui#Qt6UI";
-    pub const LV2_UI_PARENT: &str = "http://lv2plug.in/ns/extensions/ui#parent";
-    pub const LV2_UI_RESIZE: &str = "http://lv2plug.in/ns/extensions/ui#resize";
-    pub const LV2_UI_IDLE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#idleInterface";
-    pub const LV2_UI_SHOW_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#showInterface";
-    pub const LV2_UI_HIDE_INTERFACE: &str = "http://lv2plug.in/ns/extensions/ui#hideInterface";
-    pub const LV2_INSTANCE_ACCESS: &str = "http://lv2plug.in/ns/ext/instance-access";
-}
-
 #[cfg(target_os = "freebsd")]
 pub mod state_platform_freebsd {
     pub const AFMT_S16_LE: u64 = 0x00000010;
@@ -420,23 +376,6 @@ mod tests {
         assert_eq!(connections_plugins::MIN_PLUGIN_H, 96.0);
         assert_eq!(connections_plugins::AUDIO_PORT_RADIUS, 4.5);
         assert_eq!(connections_plugins::MIDI_PORT_RADIUS, 3.5);
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    #[test]
-    fn plugins_x11_constants_exist() {
-        let _ = plugins_x11::CLIENT_MESSAGE;
-        let _ = plugins_x11::DESTROY_NOTIFY;
-        let _ = plugins_x11::STRUCTURE_NOTIFY_MASK;
-        let _ = plugins_x11::EXPOSURE_MASK;
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    #[test]
-    fn plugins_lv2_constants_exist() {
-        assert!(!plugins_lv2::LV2_URID_MAP.is_empty());
-        assert!(!plugins_lv2::LV2_URID_UNMAP.is_empty());
-        assert!(!plugins_lv2::LV2_UI_X11.is_empty());
     }
 
     #[test]
