@@ -125,6 +125,14 @@ fn piano_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
             ],
             hint
         ),
+        section(
+            "SysEx Lane",
+            &[
+                "Left drag: Move SysEx event",
+                "Double click: Open SysEx editor",
+            ],
+            hint
+        ),
     ]
     .spacing(16)
     .into()
@@ -135,6 +143,7 @@ fn pitch_correction_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
         section(
             "Keyboard",
             &[
+                "Ctrl+A: Select all segments",
                 "Ctrl+Z: Undo local edits",
                 "Ctrl+Shift+Z / Ctrl+Y: Redo local edits",
             ],
@@ -169,12 +178,15 @@ fn workspace_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
                 "Ctrl+I: Import files",
                 "Ctrl+E: Export",
                 "Ctrl+T: Add track",
+                "Ctrl+A: Select all",
                 "Ctrl+R: Record arm toggle",
                 "Ctrl+L: MIDI panic",
                 "Ctrl+Z: Undo",
                 "Ctrl+Shift+Z / Ctrl+Y: Redo",
                 "Delete / Backspace: Remove selected",
                 "Escape: Cancel / clear",
+                "N: Toggle shortcuts pane",
+                "C: Toggle cut indicator",
             ],
             hint
         ),
@@ -235,10 +247,20 @@ fn workspace_shortcuts(hint: Option<&str>) -> Element<'static, Message> {
             hint
         ),
         section(
+            "Automation Lanes",
+            &[
+                "Left click empty area: Insert automation point",
+                "Right click point: Delete automation point",
+            ],
+            hint
+        ),
+        section(
             "Ruler",
             &[
                 "Left click: Move playhead",
                 "Left drag: Set loop range",
+                "Right drag inside loop: Move loop range",
+                "Middle drag loop edge: Adjust loop start/end",
                 "Right click: Clear loop range",
             ],
             hint

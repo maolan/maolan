@@ -5,7 +5,6 @@ mod update;
 mod view;
 
 #[cfg(all(unix, not(target_os = "macos")))]
-use crate::plugins::lv2::GuiLv2UiHost;
 use crate::{
     add_track, clip_rename, config, connections,
     consts::audio_defaults,
@@ -27,7 +26,6 @@ use crate::{
         PreferencesDeviceOption, Show, SnapMode, TrackAutomationTarget,
     },
     platform_caps,
-    plugins::{clap::GuiClapUiHost, vst3::GuiVst3UiHost},
     state::{
         AudioClip, ClipPeaks, LOG_HISTORY_LIMIT, LogEntry, LogLevel, MIDIClip, MidiClipPreviewMap,
         PianoControllerPoint, PianoNote, PianoSysExPoint, PitchCorrectionData,
@@ -79,10 +77,6 @@ use std::{
     sync::atomic::AtomicBool,
     sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant},
-};
-use symphonia::core::{
-    audio::SampleBuffer, codecs::DecoderOptions, errors::Error as SymphoniaError,
-    formats::FormatOptions, io::MediaSourceStream, meta::MetadataOptions, probe::Hint,
 };
 use tokio::sync::RwLock;
 use tracing::error;
@@ -359,22 +353,6 @@ pub(super) struct AudioPeakChunkUpdate {
 pub(super) static AUDIO_PEAK_UPDATES: LazyLock<Mutex<Vec<AudioPeakChunkUpdate>>> =
     LazyLock::new(|| Mutex::new(Vec::new()));
 
-#[derive(Debug, Clone)]
-pub(super) struct PendingClapUiOpen {
-    track_name: String,
-    clip_idx: Option<usize>,
-    instance_id: usize,
-    plugin_path: String,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct PendingVst3UiOpen {
-    track_name: String,
-    clip_idx: Option<usize>,
-    instance_id: usize,
-    plugin_path: String,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum AutomationWriteKey {
     Volume,
@@ -564,12 +542,6 @@ pub struct Maolan {
     export_master_limiter: bool,
     export_master_limiter_ceiling_input: String,
     clap_param_values: HashMap<(String, Option<usize>, usize, u32), f64>,
-    clap_ui_host: GuiClapUiHost,
-    #[cfg(all(unix, not(target_os = "macos")))]
-    lv2_ui_host: GuiLv2UiHost,
-    vst3_ui_host: GuiVst3UiHost,
-    pending_clap_ui_open: Option<PendingClapUiOpen>,
-    pending_vst3_ui_open: Option<PendingVst3UiOpen>,
     tempo_input: String,
     time_signature_num_input: String,
     time_signature_denom_input: String,
@@ -863,12 +835,6 @@ impl Default for Maolan {
             export_master_limiter: true,
             export_master_limiter_ceiling_input: "-1.0".to_string(),
             clap_param_values: HashMap::new(),
-            clap_ui_host: GuiClapUiHost::new(),
-            #[cfg(all(unix, not(target_os = "macos")))]
-            lv2_ui_host: GuiLv2UiHost::new(),
-            vst3_ui_host: GuiVst3UiHost::new(),
-            pending_clap_ui_open: None,
-            pending_vst3_ui_open: None,
             tempo_input: "120".to_string(),
             time_signature_num_input: "4".to_string(),
             time_signature_denom_input: "4".to_string(),
@@ -2242,101 +2208,134 @@ impl Maolan {
     where
         F: FnMut(f32),
     {
-        let file = File::open(path)?;
-        let file_size = file.metadata()?.len();
-        let mss = MediaSourceStream::new(Box::new(file), Default::default());
-        let mut hint = Hint::new();
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            hint.with_extension(ext);
-        }
-        let probed = symphonia::default::get_probe()
-            .format(
-                &hint,
-                mss,
-                &FormatOptions::default(),
-                &MetadataOptions::default(),
+        use ffmpeg_next::{
+            format::Sample as FfSample, format::sample::Type as SampleType,
+            media::Type as MediaType, software::resampling,
+        };
+        use tokio::sync::mpsc;
+
+        Self::ffmpeg_init().map_err(|e| io::Error::other(format!("FFmpeg init failed: {e}")))?;
+
+        let file_size = path.metadata().map(|m| m.len()).unwrap_or(0);
+        let path_owned = path.to_owned();
+
+        // FFmpeg types are !Send, so run the blocking decode on the current thread
+        // and send progress updates through a channel.
+        let (progress_tx, mut progress_rx) = mpsc::unbounded_channel::<f32>();
+
+        let decode_result = tokio::task::block_in_place(move || {
+            let mut ictx = ffmpeg_next::format::input(&path_owned).map_err(|e| {
+                io::Error::other(format!(
+                    "Unsupported or unreadable audio '{}': {e}",
+                    path_owned.display()
+                ))
+            })?;
+
+            let stream = ictx.streams().best(MediaType::Audio).ok_or_else(|| {
+                io::Error::other(format!(
+                    "No decodable audio track in '{}'",
+                    path_owned.display()
+                ))
+            })?;
+
+            let stream_index = stream.index();
+            let mut decoder = ffmpeg_next::codec::Context::from_parameters(stream.parameters())
+                .and_then(|ctx| ctx.decoder().audio())
+                .map_err(|e| {
+                    io::Error::other(format!("Failed to decode '{}': {e}", path_owned.display()))
+                })?;
+
+            let channels = decoder.channels() as usize;
+            let sample_rate = decoder.rate();
+            let channel_layout = decoder.channel_layout();
+            let in_format = decoder.format();
+            let out_format = FfSample::F32(SampleType::Packed);
+
+            let mut resampler = resampling::Context::get(
+                in_format,
+                channel_layout,
+                sample_rate,
+                out_format,
+                channel_layout,
+                sample_rate,
             )
             .map_err(|e| {
                 io::Error::other(format!(
-                    "Unsupported or unreadable audio '{}': {e}",
-                    path.display()
+                    "Failed to create audio resampler '{}': {e}",
+                    path_owned.display()
                 ))
             })?;
-        let mut format = probed.format;
-        let track = format.default_track().ok_or_else(|| {
-            io::Error::other(format!("No decodable audio track in '{}'", path.display()))
-        })?;
-        let mut decoder = symphonia::default::get_codecs()
-            .make(&track.codec_params, &DecoderOptions::default())
-            .map_err(|e| io::Error::other(format!("Failed to decode '{}': {e}", path.display())))?;
-        let mut channels = track
-            .codec_params
-            .channels
-            .map(|c| c.count())
-            .unwrap_or(1usize)
-            .max(1);
-        let mut sample_rate = track.codec_params.sample_rate.unwrap_or(48_000u32);
-        let mut samples = Vec::<f32>::new();
 
-        let mut packets_decoded = 0usize;
-        let report_interval = 100;
+            let mut samples = Vec::<f32>::new();
+            let mut packets_decoded = 0usize;
+            let report_interval = 100;
 
-        loop {
-            let packet = match format.next_packet() {
-                Ok(packet) => packet,
-                Err(SymphoniaError::IoError(e))
-                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
-                    break;
-                }
-                Err(SymphoniaError::ResetRequired) => {
-                    return Err(io::Error::other(format!(
-                        "Decoder reset required for '{}'",
-                        path.display()
-                    )));
-                }
-                Err(e) => {
-                    return Err(io::Error::other(format!(
-                        "Failed reading audio packets '{}': {e}",
-                        path.display()
-                    )));
+            let mut raw_frame = ffmpeg_next::frame::Audio::empty();
+            let mut resampled_frame = ffmpeg_next::frame::Audio::empty();
+
+            let collect_resampled = |resampled_frame: &ffmpeg_next::frame::Audio,
+                                     samples: &mut Vec<f32>| {
+                if resampled_frame.samples() > 0 {
+                    let data = resampled_frame.data(0);
+                    let f32_samples = unsafe {
+                        std::slice::from_raw_parts(
+                            data.as_ptr() as *const f32,
+                            data.len() / std::mem::size_of::<f32>(),
+                        )
+                    };
+                    samples.extend_from_slice(f32_samples);
                 }
             };
-            let decoded = match decoder.decode(&packet) {
-                Ok(decoded) => decoded,
-                Err(SymphoniaError::DecodeError(_)) => continue,
-                Err(SymphoniaError::ResetRequired) => {
-                    return Err(io::Error::other(format!(
-                        "Decoder reset required for '{}'",
-                        path.display()
-                    )));
-                }
-                Err(e) => {
-                    return Err(io::Error::other(format!(
-                        "Audio decode failed '{}': {e}",
-                        path.display()
-                    )));
-                }
-            };
-            let spec = *decoded.spec();
-            channels = spec.channels.count().max(1);
-            sample_rate = spec.rate;
-            let mut sample_buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-            sample_buffer.copy_interleaved_ref(decoded);
-            samples.extend_from_slice(sample_buffer.samples());
 
-            packets_decoded += 1;
-            if packets_decoded.is_multiple_of(report_interval) {
-                let bytes_read = samples.len() * std::mem::size_of::<f32>();
-                let progress = if file_size > 0 {
-                    (bytes_read as f64 / file_size as f64).clamp(0.0, 1.0) as f32
-                } else {
-                    0.0
-                };
-                progress_callback(progress);
-                tokio::task::yield_now().await;
+            for (stream, packet) in ictx.packets() {
+                if stream.index() != stream_index {
+                    continue;
+                }
+                if decoder.send_packet(&packet).is_err() {
+                    continue;
+                }
+                while decoder.receive_frame(&mut raw_frame).is_ok() {
+                    resampler
+                        .run(&raw_frame, &mut resampled_frame)
+                        .map_err(|e| {
+                            io::Error::other(format!(
+                                "Audio resample failed '{}': {e}",
+                                path_owned.display()
+                            ))
+                        })?;
+                    collect_resampled(&resampled_frame, &mut samples);
+                }
+                packets_decoded += 1;
+                if packets_decoded.is_multiple_of(report_interval) {
+                    let bytes_read = samples.len() * std::mem::size_of::<f32>();
+                    let progress = if file_size > 0 {
+                        (bytes_read as f64 / file_size as f64).clamp(0.0, 1.0) as f32
+                    } else {
+                        0.0
+                    };
+                    let _ = progress_tx.send(progress);
+                }
             }
+
+            let _ = decoder.send_eof();
+            while decoder.receive_frame(&mut raw_frame).is_ok() {
+                if resampler.run(&raw_frame, &mut resampled_frame).is_ok() {
+                    collect_resampled(&resampled_frame, &mut samples);
+                }
+            }
+            if resampler.flush(&mut resampled_frame).is_ok() {
+                collect_resampled(&resampled_frame, &mut samples);
+            }
+
+            Ok::<_, io::Error>((samples, channels, sample_rate))
+        });
+
+        // Drain any progress updates produced during blocking decode
+        while let Ok(p) = progress_rx.try_recv() {
+            progress_callback(p);
         }
+
+        let (samples, channels, sample_rate) = decode_result?;
 
         if samples.is_empty() {
             return Err(io::Error::other(format!(
@@ -2363,8 +2362,9 @@ impl Maolan {
             return Ok(samples.to_vec());
         }
 
+        use rubato::audioadapter_buffers::direct::SequentialSliceOfVecs;
         use rubato::{
-            Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
+            Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
             WindowFunction,
         };
 
@@ -2378,12 +2378,13 @@ impl Maolan {
 
         progress_callback(0.1);
 
-        let mut resampler = SincFixedIn::<f32>::new(
+        let mut resampler = Async::<f32>::new_sinc(
             to_rate as f64 / from_rate as f64,
             2.0,
-            params,
+            &params,
             samples.len() / channels.max(1),
             channels.max(1),
+            FixedAsync::Input,
         )
         .map_err(|e| io::Error::other(format!("Failed to create resampler: {e}")))?;
 
@@ -2433,54 +2434,14 @@ impl Maolan {
         progress_callback(0.5);
         tokio::task::yield_now().await;
 
+        let input = SequentialSliceOfVecs::new(&channel_buffers, channels.max(1), frames)
+            .map_err(|e| io::Error::other(format!("Resampler input error: {e}")))?;
         let resampled = resampler
-            .process(&channel_buffers, None)
+            .process(&input, 0, None)
             .map_err(|e| io::Error::other(format!("Resampling failed: {e}")))?;
 
-        progress_callback(0.8);
-        tokio::task::yield_now().await;
-
-        let out_frames = resampled[0].len();
-        let mut output: Vec<f32> = Vec::with_capacity(out_frames * channels);
-
-        #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-        unsafe {
-            if channels == 2 && std::arch::is_x86_feature_detected!("sse") {
-                output.set_len(out_frames * 2);
-                let left = &resampled[0];
-                let right = &resampled[1];
-                let n = out_frames / 4;
-                for i in 0..n {
-                    let l = std::arch::x86_64::_mm_loadu_ps(left.as_ptr().add(i * 4));
-                    let r = std::arch::x86_64::_mm_loadu_ps(right.as_ptr().add(i * 4));
-                    let lr0 = std::arch::x86_64::_mm_unpacklo_ps(l, r);
-                    let lr1 = std::arch::x86_64::_mm_unpackhi_ps(l, r);
-                    std::arch::x86_64::_mm_storeu_ps(output.as_mut_ptr().add(i * 8), lr0);
-                    std::arch::x86_64::_mm_storeu_ps(output.as_mut_ptr().add(i * 8 + 4), lr1);
-                }
-                for i in n * 4..out_frames {
-                    output[i * 2] = left[i];
-                    output[i * 2 + 1] = right[i];
-                }
-            } else {
-                for frame_idx in 0..out_frames {
-                    for channel in resampled.iter().take(channels) {
-                        output.push(channel[frame_idx]);
-                    }
-                }
-            }
-        }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
-        {
-            for frame_idx in 0..out_frames {
-                for channel in resampled.iter().take(channels) {
-                    output.push(channel[frame_idx]);
-                }
-            }
-        }
-
         progress_callback(1.0);
-        Ok(output)
+        Ok(resampled.take_data())
     }
 
     async fn import_audio_to_session_wav_with_progress<F>(
@@ -5131,68 +5092,19 @@ impl Maolan {
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    fn lv2_state_to_json(state: &maolan_engine::message::Lv2PluginState) -> Value {
-        let port_values = state
-            .port_values
-            .iter()
-            .map(|p| json!({"index": p.index, "value": p.value}))
-            .collect::<Vec<_>>();
-        let properties = state
-            .properties
-            .iter()
-            .map(|p| {
-                json!({
-                    "key_uri": p.key_uri,
-                    "type_uri": p.type_uri,
-                    "flags": p.flags,
-                    "value": p.value,
-                })
-            })
-            .collect::<Vec<_>>();
-        json!({
-            "port_values": port_values,
-            "properties": properties,
-        })
+    fn lv2_state_to_json(state: &[u8]) -> Value {
+        json!(state)
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]
-    fn lv2_state_from_json(v: &Value) -> Option<maolan_engine::message::Lv2PluginState> {
-        let port_values = v["port_values"]
-            .as_array()
+    fn lv2_state_from_json(v: &Value) -> Option<Vec<u8>> {
+        v.as_array()
             .map(|arr| {
                 arr.iter()
-                    .filter_map(|item| {
-                        Some(maolan_engine::message::Lv2StatePortValue {
-                            index: item["index"].as_u64()? as u32,
-                            value: item["value"].as_f64()? as f32,
-                        })
-                    })
+                    .filter_map(|item| item.as_u64().map(|n| n as u8))
                     .collect::<Vec<_>>()
             })
-            .unwrap_or_default();
-        let properties = v["properties"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|item| {
-                        Some(maolan_engine::message::Lv2StateProperty {
-                            key_uri: item["key_uri"].as_str()?.to_string(),
-                            type_uri: item["type_uri"].as_str()?.to_string(),
-                            flags: item["flags"].as_u64().unwrap_or(0) as u32,
-                            value: item["value"]
-                                .as_array()?
-                                .iter()
-                                .map(|b| b.as_u64().unwrap_or(0) as u8)
-                                .collect(),
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        Some(maolan_engine::message::Lv2PluginState {
-            port_values,
-            properties,
-        })
+            .filter(|bytes| !bytes.is_empty())
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

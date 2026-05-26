@@ -23,7 +23,7 @@ use iced::{
 };
 use iced_aw::{
     menu::{DrawPath, Item, Menu as IcedMenu},
-    menu_bar, menu_items,
+    menu_bar,
 };
 use maolan_widgets::{
     controller::{self, ControllerKindOption},

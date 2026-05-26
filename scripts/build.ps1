@@ -353,9 +353,10 @@ $env:INCLUDE = "$vcpkgRoot\installed\x64-windows\include;$env:INCLUDE"
 # ---------------------------------------------------------------------------
 # VC++ Redistributable
 # ---------------------------------------------------------------------------
-$vcRedist = Join-Path (Split-Path $PSScriptRoot -Parent) "vc_redist.x64.exe"
+$maolanRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+$vcRedist = Join-Path $maolanRoot "vc_redist.x64.exe"
 if (-not (Test-Path $vcRedist)) {
-    Write-Host "Downloading VC++ Redistributable..."
+    Write-Host "Downloading VC++ Redistributable to $vcRedist..."
     Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile $vcRedist
 }
 

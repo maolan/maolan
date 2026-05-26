@@ -5,5 +5,5 @@ rustflags = ["-L", "native=/usr/X11R6/lib"]
 rustflags = ["-L", "native=/usr/local/lib"]
 
 [env]
-LIBCLANG_PATH = "/usr/local/llvm20/lib"
+LIBCLANG_PATH = "/usr/local/llvm19/lib"
 BINDGEN_EXTRA_CLANG_ARGS = "-I/usr/local/include"
