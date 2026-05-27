@@ -56,7 +56,7 @@ cargo run --release
 ### Debug logging
 
 ```bash
-cargo run --release -- --debug
+cargo run --release -- --log-level debug
 ```
 
 ## Documentation

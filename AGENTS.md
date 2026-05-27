@@ -19,11 +19,11 @@ Use Cargo from the repository root:
 cargo build
 cargo test
 cargo run --release
-cargo run --release -- --debug
+cargo run --release -- --log-level debug
 ```
 
 `cargo build` compiles the package locally. `cargo run --release`
-launches the app, and `-- --debug` enables extra runtime logging. On
+launches the app, and `-- --log-level <level>` enables extra runtime logging. On
 Linux and FreeBSD, install the native packages used in CI first,
 especially JACK, ALSA/X11, Lilv, Suil, and GTK2 development libraries.
 

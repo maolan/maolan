@@ -311,6 +311,10 @@ impl HostRuntime {
         let ptr = self.mapping.as_ptr();
         let header = unsafe { header_ref(self.mapping.as_ptr()) };
 
+        unsafe {
+            maolan_plugin_protocol::protocol::write_plugin_name_to_scratch(ptr, &plugin.name());
+        }
+
         // Read sample rate from transport, fallback to 48 kHz for backward compat.
         let sample_rate = unsafe {
             let ts = transport_ref(ptr);

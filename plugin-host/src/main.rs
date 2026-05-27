@@ -15,8 +15,70 @@ fn print_usage() {
     );
 }
 
+#[cfg(target_os = "linux")]
+fn setup_parent_death_signal() {
+    unsafe {
+        let r = libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM, 0, 0, 0);
+        if r != 0 {
+            eprintln!(
+                "Warning: failed to set PR_SET_PDEATHSIG: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "freebsd")]
+fn setup_parent_death_signal() {
+    unsafe {
+        let sig: libc::c_int = libc::SIGTERM;
+        let r = libc::procctl(
+            libc::P_PID,
+            0,
+            libc::PROC_PDEATHSIG_CTL,
+            &sig as *const _ as *mut libc::c_void,
+        );
+        if r != 0 {
+            eprintln!(
+                "Warning: failed to set PROC_PDEATHSIG: {}",
+                std::io::Error::last_os_error()
+            );
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn setup_parent_death_signal() {}
+
+fn parse_log_level(args: &mut Vec<String>) -> Option<tracing::Level> {
+    if let Some(pos) = args.iter().position(|a| a == "--log-level") {
+        args.remove(pos);
+        if pos < args.len() {
+            let level_str = args.remove(pos);
+            match level_str.as_str() {
+                "none" => None,
+                "info" => Some(tracing::Level::INFO),
+                "warning" => Some(tracing::Level::WARN),
+                "error" => Some(tracing::Level::ERROR),
+                "debug" => Some(tracing::Level::DEBUG),
+                other => {
+                    eprintln!("Unknown log level '{}', using none", other);
+                    None
+                }
+            }
+        } else {
+            eprintln!("--log-level requires a value");
+            None
+        }
+    } else {
+        None
+    }
+}
+
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    setup_parent_death_signal();
+
+    let mut args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
         print_usage();
@@ -63,11 +125,7 @@ fn main() {
         std::process::exit(code);
     }
 
-    let mut args = args;
-    let debug_mode = args.last().map(|a| a == "--debug").unwrap_or(false);
-    if debug_mode {
-        args.pop();
-    }
+    let log_level = parse_log_level(&mut args);
 
     let format = args[1].clone();
 
@@ -138,15 +196,12 @@ fn main() {
         (plugin_spec.clone(), String::new())
     };
 
-    let level = if debug_mode {
-        tracing::Level::DEBUG
-    } else {
-        tracing::Level::WARN
-    };
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_max_level(level)
-        .init();
+    if let Some(level) = log_level {
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_max_level(level)
+            .init();
+    }
 
     match format.as_str() {
         "vst3" => {
