@@ -63,6 +63,12 @@ fn main() {
         std::process::exit(code);
     }
 
+    let mut args = args;
+    let debug_mode = args.last().map(|a| a == "--debug").unwrap_or(false);
+    if debug_mode {
+        args.pop();
+    }
+
     let format = args[1].clone();
 
     // Determine expected arg count based on format.
@@ -115,7 +121,12 @@ fn main() {
     // For CLAP, plugin_spec may be "path#plugin_id" to select a specific plugin
     // from a factory. If no # is present, the first plugin in the factory is used.
     let (plugin_path, _plugin_id) = if format == "clap" {
-        if let Some(pos) = plugin_spec.rfind('#') {
+        if let Some(pos) = plugin_spec.rfind("::") {
+            (
+                plugin_spec[..pos].to_string(),
+                plugin_spec[pos + 2..].to_string(),
+            )
+        } else if let Some(pos) = plugin_spec.rfind('#') {
             (
                 plugin_spec[..pos].to_string(),
                 plugin_spec[pos + 1..].to_string(),
@@ -127,8 +138,14 @@ fn main() {
         (plugin_spec.clone(), String::new())
     };
 
+    let level = if debug_mode {
+        tracing::Level::DEBUG
+    } else {
+        tracing::Level::WARN
+    };
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
+        .with_max_level(level)
         .init();
 
     match format.as_str() {

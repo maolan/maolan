@@ -33,7 +33,6 @@ use gui::Maolan;
 use iced::window;
 use iced::{Pixels, Settings, Theme};
 use iced_fonts::LUCIDE_FONT_BYTES;
-use tracing::{Level, span};
 use tracing_subscriber::{
     fmt::{Layer as FmtLayer, writer::MakeWriterExt},
     prelude::*,
@@ -44,14 +43,19 @@ pub fn main() -> iced::Result {
     prefer_x11_backend();
 
     let debug_logging = std::env::args().any(|arg| arg == "--debug");
-    if debug_logging {
-        let stdout_layer =
-            FmtLayer::new().with_writer(std::io::stdout.with_max_level(tracing::Level::INFO));
-        tracing_subscriber::registry().with(stdout_layer).init();
-        let my_span = span!(Level::INFO, "main");
-        let _enter = my_span.enter();
-        return run_app();
-    }
+    let level = if debug_logging {
+        tracing::Level::DEBUG
+    } else {
+        tracing::Level::WARN
+    };
+    let layer = FmtLayer::new().with_writer(std::io::stderr.with_max_level(level));
+    tracing_subscriber::registry().with(layer).init();
+
+    let _enter = if debug_logging {
+        tracing::info_span!("main").entered()
+    } else {
+        tracing::warn_span!("main").entered()
+    };
 
     run_app()
 }

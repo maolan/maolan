@@ -88,6 +88,16 @@ pub fn scan_plugin_file(
         .spawn()
         .map_err(|e| format!("failed to spawn scanner: {e}"))?;
 
+    // Drain stdout in a background thread so the pipe never fills and deadlocks the child.
+    let stdout_handle = child.stdout.take().map(|mut stdout| {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            let _ = stdout.read_to_end(&mut buf);
+            buf
+        })
+    });
+
     let start = std::time::Instant::now();
     let status = loop {
         if start.elapsed() >= timeout {
@@ -101,11 +111,9 @@ pub fn scan_plugin_file(
         }
     };
 
-    let mut output = Vec::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        use std::io::Read;
-        let _ = stdout.read_to_end(&mut output);
-    }
+    let output = stdout_handle
+        .map(|h| h.join().unwrap_or_default())
+        .unwrap_or_default();
 
     if !status.success() {
         let code = status.code().unwrap_or(-1);

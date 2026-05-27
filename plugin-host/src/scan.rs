@@ -248,7 +248,7 @@ pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
         unsafe {
             let ext = (*plugin)
                 .get_extension
-                .map(|f| f(plugin, CLAP_EXT_PARAMS.as_ptr() as *const c_char));
+                .map(|f| f(plugin, CLAP_EXT_PARAMS.as_ptr()));
             if let Some(ptr) = ext
                 && !ptr.is_null()
             {
@@ -293,7 +293,7 @@ pub fn scan_clap_plugin(plugin_path: &str) -> ScanResult {
         unsafe {
             let ext = (*plugin)
                 .get_extension
-                .map(|f| f(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr() as *const c_char));
+                .map(|f| f(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr()));
             if let Some(ptr) = ext
                 && !ptr.is_null()
             {
@@ -573,22 +573,22 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
             unsafe {
                 let ext = (*plugin)
                     .get_extension
-                    .map(|f| f(plugin, c"clap.gui".as_ptr() as *const c_char));
+                    .map(|f| f(plugin, c"clap.gui".as_ptr()));
                 if let Some(ptr) = ext
                     && !ptr.is_null()
                 {
                     let gui = &*(ptr as *const ClapPluginGui);
                     caps.has_gui = gui
                         .is_api_supported
-                        .map(|f| f(plugin, c"x11".as_ptr() as *const c_char, true))
+                        .map(|f| f(plugin, c"x11".as_ptr(), true))
                         .unwrap_or(false)
                         || gui
                             .is_api_supported
-                            .map(|f| f(plugin, c"win32".as_ptr() as *const c_char, true))
+                            .map(|f| f(plugin, c"win32".as_ptr(), true))
                             .unwrap_or(false)
                         || gui
                             .is_api_supported
-                            .map(|f| f(plugin, c"cocoa".as_ptr() as *const c_char, true))
+                            .map(|f| f(plugin, c"cocoa".as_ptr(), true))
                             .unwrap_or(false);
                     if caps.has_gui {
                         caps.gui_apis = vec!["x11".to_string()];
@@ -604,7 +604,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
             unsafe {
                 let ext = (*plugin)
                     .get_extension
-                    .map(|f| f(plugin, CLAP_EXT_PARAMS.as_ptr() as *const c_char));
+                    .map(|f| f(plugin, CLAP_EXT_PARAMS.as_ptr()));
                 if let Some(ptr) = ext
                     && !ptr.is_null()
                 {
@@ -616,7 +616,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
             unsafe {
                 let ext = (*plugin)
                     .get_extension
-                    .map(|f| f(plugin, c"clap.state".as_ptr() as *const c_char));
+                    .map(|f| f(plugin, c"clap.state".as_ptr()));
                 if let Some(ptr) = ext
                     && !ptr.is_null()
                 {
@@ -627,7 +627,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
             unsafe {
                 let ext = (*plugin)
                     .get_extension
-                    .map(|f| f(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr() as *const c_char));
+                    .map(|f| f(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr()));
                 if let Some(ptr) = ext
                     && !ptr.is_null()
                 {
@@ -640,7 +640,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
             unsafe {
                 let ext = (*plugin)
                     .get_extension
-                    .map(|f| f(plugin, c"clap.note-ports".as_ptr() as *const c_char));
+                    .map(|f| f(plugin, c"clap.note-ports".as_ptr()));
                 if let Some(ptr) = ext
                     && !ptr.is_null()
                 {
@@ -661,7 +661,7 @@ fn scan_clap_bundle(path: &Path, scan_capabilities: bool) -> Vec<ClapPluginInfo>
 
         out.push(ClapPluginInfo {
             name,
-            path: path_str.clone(),
+            path: format!("{}::{}", path_str, plugin_id),
             capabilities,
         });
     }
@@ -747,7 +747,9 @@ pub fn scan_clap_plugins(scan_capabilities: bool) -> Vec<ClapPluginInfo> {
     }
 
     out.sort_by_key(|a| a.name.to_lowercase());
-    out.dedup_by(|a, b| a.path.eq_ignore_ascii_case(&b.path));
+    out.dedup_by(|a, b| {
+        a.name.eq_ignore_ascii_case(&b.name) && a.path.eq_ignore_ascii_case(&b.path)
+    });
     out
 }
 

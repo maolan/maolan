@@ -44,12 +44,9 @@ impl PortBuffers {
         num_out: usize,
     ) -> Option<Self> {
         let ext = unsafe {
-            (*plugin).get_extension.map(|f| {
-                f(
-                    plugin,
-                    CLAP_EXT_AUDIO_PORTS.as_ptr() as *const std::ffi::c_char,
-                )
-            })
+            (*plugin)
+                .get_extension
+                .map(|f| f(plugin, CLAP_EXT_AUDIO_PORTS.as_ptr()))
         }?;
         if ext.is_null() {
             return None;
@@ -178,9 +175,11 @@ impl HostRuntime {
     }
 
     /// Extract the plugin ID for CLAP factories.
-    /// `plugin_path` may be encoded as "path#plugin_id" by the caller.
+    /// `plugin_path` may be encoded as "path::plugin_id" or "path#plugin_id" by the caller.
     fn plugin_id(&self) -> &str {
-        if let Some(pos) = self.plugin_path.rfind('#') {
+        if let Some(pos) = self.plugin_path.rfind("::") {
+            &self.plugin_path[pos + 2..]
+        } else if let Some(pos) = self.plugin_path.rfind('#') {
             &self.plugin_path[pos + 1..]
         } else {
             ""
@@ -189,7 +188,9 @@ impl HostRuntime {
 
     /// Extract the real file path (without the optional #plugin_id suffix).
     fn real_plugin_path(&self) -> &str {
-        if let Some(pos) = self.plugin_path.rfind('#') {
+        if let Some(pos) = self.plugin_path.rfind("::") {
+            &self.plugin_path[..pos]
+        } else if let Some(pos) = self.plugin_path.rfind('#') {
             &self.plugin_path[..pos]
         } else {
             &self.plugin_path
@@ -333,7 +334,7 @@ impl HostRuntime {
                 .map(|f| {
                     f(
                         plugin.plugin_ptr(),
-                        crate::clap::CLAP_EXT_NOTE_PORTS.as_ptr() as *const std::ffi::c_char,
+                        crate::clap::CLAP_EXT_NOTE_PORTS.as_ptr(),
                     )
                 })
                 .filter(|p| !p.is_null())
@@ -361,36 +362,21 @@ impl HostRuntime {
         let params_ext = unsafe {
             (*plugin.plugin_ptr())
                 .get_extension
-                .map(|f| {
-                    f(
-                        plugin.plugin_ptr(),
-                        CLAP_EXT_PARAMS.as_ptr() as *const std::ffi::c_char,
-                    )
-                })
+                .map(|f| f(plugin.plugin_ptr(), CLAP_EXT_PARAMS.as_ptr()))
                 .filter(|p| !p.is_null())
                 .map(|p| p as *const ClapPluginParams)
         };
         let timer_ext = unsafe {
             (*plugin.plugin_ptr())
                 .get_extension
-                .map(|f| {
-                    f(
-                        plugin.plugin_ptr(),
-                        CLAP_EXT_TIMER_SUPPORT.as_ptr() as *const std::ffi::c_char,
-                    )
-                })
+                .map(|f| f(plugin.plugin_ptr(), CLAP_EXT_TIMER_SUPPORT.as_ptr()))
                 .filter(|p| !p.is_null())
                 .map(|p| p as *const crate::clap::ClapPluginTimerSupport)
         };
         let fd_ext = unsafe {
             (*plugin.plugin_ptr())
                 .get_extension
-                .map(|f| {
-                    f(
-                        plugin.plugin_ptr(),
-                        CLAP_EXT_POSIX_FD_SUPPORT.as_ptr() as *const std::ffi::c_char,
-                    )
-                })
+                .map(|f| f(plugin.plugin_ptr(), CLAP_EXT_POSIX_FD_SUPPORT.as_ptr()))
                 .filter(|p| !p.is_null())
                 .map(|p| p as *const crate::clap::ClapPluginPosixFdSupport)
         };
@@ -600,7 +586,7 @@ impl HostRuntime {
             let transport =
                 unsafe { transport_ref(ptr) as *const TransportState as *const std::ffi::c_void };
 
-            tracing::info!(
+            tracing::debug!(
                 instance_id = %self.instance_id,
                 block_size,
                 num_in,
@@ -696,7 +682,7 @@ impl HostRuntime {
                 }
             }
 
-            tracing::info!(instance_id = %self.instance_id, "Block processed, signalling DAW");
+            tracing::debug!(instance_id = %self.instance_id, "Block processed, signalling DAW");
 
             if let Err(e) = self.events.signal_daw() {
                 tracing::error!("Failed to signal DAW: {e}");

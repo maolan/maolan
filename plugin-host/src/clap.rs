@@ -67,8 +67,8 @@ pub struct ClapVersion {
 
 pub const CLAP_VERSION: ClapVersion = ClapVersion {
     major: 1,
-    minor: 1,
-    revision: 10,
+    minor: 2,
+    revision: 5,
 };
 
 // ─── Core structs ───
@@ -402,18 +402,18 @@ pub union ClapWindowUnion {
 
 // ─── Extension IDs ───
 
-pub const CLAP_EXT_PARAMS: &str = "clap.params";
-pub const CLAP_EXT_AUDIO_PORTS: &str = "clap.audio-ports";
-pub const CLAP_EXT_NOTE_PORTS: &str = "clap.note-ports";
-pub const CLAP_EXT_GUI: &str = "clap.gui";
-pub const CLAP_EXT_STATE: &str = "clap.state";
-pub const CLAP_EXT_THREAD_POOL: &str = "clap.thread-pool";
-pub const CLAP_EXT_LATENCY: &str = "clap.latency";
-pub const CLAP_EXT_TAIL: &str = "clap.tail";
-pub const CLAP_EXT_TIMER_SUPPORT: &str = "clap.timer-support";
-pub const CLAP_EXT_THREAD_CHECK: &str = "clap.thread-check";
-pub const CLAP_EXT_LOG: &str = "clap.log";
-pub const CLAP_EXT_POSIX_FD_SUPPORT: &str = "clap.posix-fd-support";
+pub const CLAP_EXT_PARAMS: &CStr = c"clap.params";
+pub const CLAP_EXT_AUDIO_PORTS: &CStr = c"clap.audio-ports";
+pub const CLAP_EXT_NOTE_PORTS: &CStr = c"clap.note-ports";
+pub const CLAP_EXT_GUI: &CStr = c"clap.gui";
+pub const CLAP_EXT_STATE: &CStr = c"clap.state";
+pub const CLAP_EXT_THREAD_POOL: &CStr = c"clap.thread-pool";
+pub const CLAP_EXT_LATENCY: &CStr = c"clap.latency";
+pub const CLAP_EXT_TAIL: &CStr = c"clap.tail";
+pub const CLAP_EXT_TIMER_SUPPORT: &CStr = c"clap.timer-support";
+pub const CLAP_EXT_THREAD_CHECK: &CStr = c"clap.thread-check";
+pub const CLAP_EXT_LOG: &CStr = c"clap.log";
+pub const CLAP_EXT_POSIX_FD_SUPPORT: &CStr = c"clap.posix-fd-support";
 pub const CLAP_PORT_MONO: &str = "clap.mono";
 pub const CLAP_PORT_STEREO: &str = "clap.stereo";
 
@@ -607,7 +607,7 @@ impl PluginInstance {
         let param_count = unsafe {
             let params_ext = (*plugin)
                 .get_extension
-                .map(|f| f(plugin, CLAP_EXT_PARAMS.as_ptr() as *const c_char));
+                .map(|f| f(plugin, CLAP_EXT_PARAMS.as_ptr()));
             if let Some(ext) = params_ext {
                 if !ext.is_null() {
                     let params = &*(ext as *const ClapPluginParams);
@@ -706,7 +706,7 @@ impl PluginInstance {
         let ext = unsafe {
             (*self.plugin)
                 .get_extension
-                .map(|f| f(self.plugin, CLAP_EXT_GUI.as_ptr() as *const c_char))
+                .map(|f| f(self.plugin, CLAP_EXT_GUI.as_ptr()))
         };
         if let Some(ptr) = ext
             && !ptr.is_null()
@@ -908,7 +908,7 @@ unsafe extern "C" fn host_thread_pool_request_exec(host: *const ClapHost, num_ta
     let ext = unsafe {
         (*plugin)
             .get_extension
-            .map(|f| f(plugin, CLAP_EXT_THREAD_POOL.as_ptr() as *const c_char))
+            .map(|f| f(plugin, CLAP_EXT_THREAD_POOL.as_ptr()))
     };
     let ext = match ext {
         Some(p) if !p.is_null() => p,
