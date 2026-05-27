@@ -614,7 +614,7 @@ pub fn list_plugins_with_capabilities(scan_capabilities: bool) -> Vec<ClapPlugin
     }
 
     out.sort_by_key(|a| a.name.to_lowercase());
-    out.dedup_by(|a, b| a.path.eq_ignore_ascii_case(&b.path));
+    out.dedup_by(|a, b| a.name.eq_ignore_ascii_case(&b.name) && a.path.eq_ignore_ascii_case(&b.path));
     out
 }
 
