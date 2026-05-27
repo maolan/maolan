@@ -20,7 +20,7 @@ Last updated: 2026-05-01
 - When using `CLAP_PATH`, point it at a dedicated plugin directory that only contains plugin binaries.
   - Example (Linux/FreeBSD): `CLAP_PATH=/home/user/plugins`
   - Avoid broad build output roots when possible (for example full Cargo target trees) to reduce unrelated binary probing.
-- Passing `--debug` enables tracing output to stdout.
+- Passing `--log-level <level>` enables tracing output to stderr. Valid levels: none, info, warning, error, debug.
 
 ## Configuration File
 

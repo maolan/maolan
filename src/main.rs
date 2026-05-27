@@ -42,22 +42,39 @@ pub fn main() -> iced::Result {
     #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
     prefer_x11_backend();
 
-    let debug_logging = std::env::args().any(|arg| arg == "--debug");
-    let level = if debug_logging {
-        tracing::Level::DEBUG
-    } else {
-        tracing::Level::WARN
-    };
-    let layer = FmtLayer::new().with_writer(std::io::stderr.with_max_level(level));
-    tracing_subscriber::registry().with(layer).init();
+    let log_level = parse_log_level_from_env();
+    if let Some(level) = log_level {
+        let layer = FmtLayer::new().with_writer(std::io::stderr.with_max_level(level));
+        tracing_subscriber::registry().with(layer).init();
+    }
 
-    let _enter = if debug_logging {
-        tracing::info_span!("main").entered()
-    } else {
-        tracing::warn_span!("main").entered()
-    };
+    let _enter = tracing::info_span!("main").entered();
 
     run_app()
+}
+
+fn parse_log_level_from_env() -> Option<tracing::Level> {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(pos) = args.iter().position(|a| a == "--log-level") {
+        if pos + 1 < args.len() {
+            match args[pos + 1].as_str() {
+                "none" => None,
+                "info" => Some(tracing::Level::INFO),
+                "warning" => Some(tracing::Level::WARN),
+                "error" => Some(tracing::Level::ERROR),
+                "debug" => Some(tracing::Level::DEBUG),
+                other => {
+                    eprintln!("Unknown log level '{}', using none", other);
+                    None
+                }
+            }
+        } else {
+            eprintln!("--log-level requires a value");
+            None
+        }
+    } else {
+        None
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]

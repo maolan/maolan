@@ -663,6 +663,13 @@ pub fn run_vst3(args: Vst3RunArgs) {
 
     processor.setup_audio_ports();
 
+    unsafe {
+        maolan_plugin_protocol::protocol::write_plugin_name_to_scratch(
+            mapping.as_ptr(),
+            processor.name(),
+        );
+    }
+
     let header = unsafe { header_ref(mapping.as_ptr()) };
     let ptr = mapping.as_ptr();
     let mut vst3_param_cache = HashMap::new();
@@ -1140,6 +1147,13 @@ pub fn run_lv2(
             return;
         }
     };
+
+    unsafe {
+        maolan_plugin_protocol::protocol::write_plugin_name_to_scratch(
+            mapping.as_ptr(),
+            processor.name(),
+        );
+    }
 
     let header = unsafe { header_ref(mapping.as_ptr()) };
     let ptr = mapping.as_ptr();
