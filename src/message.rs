@@ -821,6 +821,10 @@ pub enum Message {
         filename: String,
         operation: Option<String>,
     },
+    ImportFinished {
+        total_files: usize,
+        failed_files: Vec<String>,
+    },
     ImportPreparedAudioPeaks {
         track_name: String,
         clip_name: String,
@@ -1122,6 +1126,8 @@ pub enum Message {
     HWBitsChanged(usize),
     HWSampleRateChanged(i32),
     HWPeriodFramesChanged(usize),
+    HWRealtimeFramesChanged(usize),
+    HWLowWatermarkFramesChanged(usize),
     HWNPeriodsChanged(usize),
     HWSyncModeToggled(bool),
 

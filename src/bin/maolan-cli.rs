@@ -1437,6 +1437,8 @@ fn resolve_open_audio_action(options: &CliOptions, config: &CliConfig) -> Result
         bits: bits as i32,
         exclusive: options.exclusive,
         period_frames: options.period_frames,
+        realtime_frames: audio_defaults::REALTIME_FRAMES.min(options.period_frames),
+        low_watermark_frames: audio_defaults::LOW_WATERMARK_FRAMES.min(options.period_frames),
         nperiods: options.nperiods,
         sync_mode: options.sync_mode,
     })
@@ -1636,6 +1638,8 @@ mod tests {
                 bits: audio_defaults::BIT_DEPTH as i32,
                 exclusive: false,
                 period_frames: audio_defaults::PERIOD_FRAMES,
+                realtime_frames: audio_defaults::REALTIME_FRAMES,
+                low_watermark_frames: audio_defaults::LOW_WATERMARK_FRAMES,
                 nperiods: audio_defaults::NPERIODS,
                 sync_mode: audio_defaults::SYNC_MODE,
             }),
@@ -1651,6 +1655,8 @@ mod tests {
                 bits: audio_defaults::BIT_DEPTH as i32,
                 exclusive: false,
                 period_frames: audio_defaults::PERIOD_FRAMES,
+                realtime_frames: audio_defaults::REALTIME_FRAMES,
+                low_watermark_frames: audio_defaults::LOW_WATERMARK_FRAMES,
                 nperiods: audio_defaults::NPERIODS,
                 sync_mode: audio_defaults::SYNC_MODE,
             }),
@@ -1723,6 +1729,8 @@ mod tests {
                 bits,
                 exclusive,
                 period_frames,
+                realtime_frames,
+                low_watermark_frames,
                 nperiods,
                 sync_mode,
             } => {
@@ -1732,6 +1740,8 @@ mod tests {
                 assert_eq!(bits, 24);
                 assert!(!exclusive);
                 assert_eq!(period_frames, audio_defaults::PERIOD_FRAMES);
+                assert_eq!(realtime_frames, audio_defaults::REALTIME_FRAMES);
+                assert_eq!(low_watermark_frames, audio_defaults::LOW_WATERMARK_FRAMES);
                 assert_eq!(nperiods, audio_defaults::NPERIODS);
                 assert_eq!(sync_mode, audio_defaults::SYNC_MODE);
             }
@@ -1760,6 +1770,8 @@ mod tests {
                 bits,
                 exclusive,
                 period_frames,
+                realtime_frames,
+                low_watermark_frames,
                 nperiods,
                 sync_mode,
             } => {
@@ -1769,6 +1781,8 @@ mod tests {
                 assert_eq!(bits, 24);
                 assert!(!exclusive);
                 assert_eq!(period_frames, audio_defaults::PERIOD_FRAMES);
+                assert_eq!(realtime_frames, audio_defaults::REALTIME_FRAMES);
+                assert_eq!(low_watermark_frames, audio_defaults::LOW_WATERMARK_FRAMES);
                 assert_eq!(nperiods, audio_defaults::NPERIODS);
                 assert_eq!(sync_mode, audio_defaults::SYNC_MODE);
             }

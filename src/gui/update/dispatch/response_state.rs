@@ -49,22 +49,33 @@ impl Maolan {
                 bits,
                 exclusive,
                 period_frames,
+                realtime_frames,
+                low_watermark_frames,
                 nperiods,
                 sync_mode,
             } => {
                 let mut state = self.state.blocking_write();
                 state.message = format!(
-                    "Opened device {} (rate={} Hz, bits={}, exclusive={}, period={}, nperiods={}, sync_mode={})",
+                    "Opened device {} (rate={} Hz, bits={}, exclusive={}, period={}, realtime={}, low_watermark={}, nperiods={}, sync_mode={})",
                     device,
                     state.hw_sample_rate_hz.max(1),
                     bits,
                     exclusive,
                     period_frames,
+                    realtime_frames,
+                    low_watermark_frames,
                     nperiods,
                     sync_mode
                 );
                 state.hw_loaded = true;
                 state.oss_period_frames = (*period_frames).max(1);
+                state.oss_realtime_frames = (*realtime_frames).max(1).min(state.oss_period_frames);
+                let step = state.oss_realtime_frames.max(1);
+                state.oss_low_watermark_frames =
+                    ((*low_watermark_frames).max(1).min(state.oss_period_frames) / step)
+                        .max(1)
+                        .saturating_mul(step)
+                        .min(state.oss_period_frames);
                 state.oss_nperiods = (*nperiods).max(1);
                 true
             }

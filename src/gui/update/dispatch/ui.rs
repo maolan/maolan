@@ -175,8 +175,37 @@ impl Maolan {
                 true
             }
             Message::HWPeriodFramesChanged(period_frames) => {
-                self.state.blocking_write().oss_period_frames =
-                    Self::normalize_period_frames(*period_frames);
+                let mut state = self.state.blocking_write();
+                state.oss_period_frames = Self::normalize_period_frames(*period_frames);
+                state.oss_realtime_frames = state.oss_realtime_frames.min(state.oss_period_frames);
+                state.oss_low_watermark_frames =
+                    state.oss_low_watermark_frames.min(state.oss_period_frames);
+                let step = state.oss_realtime_frames.max(1);
+                state.oss_low_watermark_frames = (state.oss_low_watermark_frames / step)
+                    .max(1)
+                    .saturating_mul(step)
+                    .min(state.oss_period_frames);
+                true
+            }
+            Message::HWRealtimeFramesChanged(realtime_frames) => {
+                let mut state = self.state.blocking_write();
+                let normalized = Self::normalize_period_frames(*realtime_frames);
+                state.oss_realtime_frames = normalized.min(state.oss_period_frames);
+                let step = state.oss_realtime_frames.max(1);
+                state.oss_low_watermark_frames = (state.oss_low_watermark_frames / step)
+                    .max(1)
+                    .saturating_mul(step)
+                    .min(state.oss_period_frames);
+                true
+            }
+            Message::HWLowWatermarkFramesChanged(low_watermark_frames) => {
+                let mut state = self.state.blocking_write();
+                let normalized = Self::normalize_period_frames(*low_watermark_frames);
+                let step = state.oss_realtime_frames.max(1);
+                state.oss_low_watermark_frames = (normalized.min(state.oss_period_frames) / step)
+                    .max(1)
+                    .saturating_mul(step)
+                    .min(state.oss_period_frames);
                 true
             }
             Message::HWNPeriodsChanged(nperiods) => {

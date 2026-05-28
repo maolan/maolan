@@ -19,6 +19,8 @@ struct OpenAudioSelection {
     chosen_sample_rate_hz: i32,
     exclusive: bool,
     period_frames: usize,
+    realtime_frames: usize,
+    low_watermark_frames: usize,
     nperiods: usize,
     sync_mode: bool,
 }
@@ -293,6 +295,8 @@ impl HW {
             bits,
             exclusive: selection.exclusive,
             period_frames: selection.period_frames,
+            realtime_frames: selection.realtime_frames,
+            low_watermark_frames: selection.low_watermark_frames,
             nperiods: selection.nperiods,
             sync_mode: selection.sync_mode,
         }
@@ -302,6 +306,21 @@ impl HW {
         let period_options = vec![
             16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536,
         ];
+        let constrained_period_options = |max_frames: usize| -> Vec<usize> {
+            period_options
+                .iter()
+                .copied()
+                .filter(|v| *v <= max_frames.max(1))
+                .collect()
+        };
+        let watermark_options_for = |max_frames: usize, realtime: usize| -> Vec<usize> {
+            let step = realtime.max(1);
+            period_options
+                .iter()
+                .copied()
+                .filter(|v| *v <= max_frames.max(1) && (*v % step == 0))
+                .collect()
+        };
         let nperiod_options: Vec<usize> = (1..=16).collect();
         let fallback_sample_rates = vec![
             8_000, 11_025, 16_000, 22_050, 32_000, 44_100, 48_000, 88_200, 96_000, 176_400,
@@ -321,7 +340,9 @@ impl HW {
             mut selected_hw,
             sample_rate_hz,
             exclusive,
-            period_frames,
+            mut period_frames,
+            mut realtime_frames,
+            mut low_watermark_frames,
             nperiods,
             sync_mode,
         ) = {
@@ -334,10 +355,27 @@ impl HW {
                 state.hw_sample_rate_hz,
                 state.oss_exclusive,
                 state.oss_period_frames,
+                state.oss_realtime_frames,
+                state.oss_low_watermark_frames,
                 state.oss_nperiods,
                 state.oss_sync_mode,
             )
         };
+        period_frames = period_frames.max(1);
+        realtime_frames = realtime_frames.max(1).min(period_frames);
+        low_watermark_frames = low_watermark_frames.max(1).min(period_frames);
+        low_watermark_frames = (low_watermark_frames / realtime_frames.max(1))
+            .max(1)
+            .saturating_mul(realtime_frames.max(1))
+            .min(period_frames);
+        let realtime_options = constrained_period_options(period_frames);
+        let low_watermark_options = watermark_options_for(period_frames, realtime_frames);
+        if !low_watermark_options.contains(&low_watermark_frames) {
+            low_watermark_frames = low_watermark_options
+                .last()
+                .copied()
+                .unwrap_or(realtime_frames.min(period_frames).max(1));
+        }
         #[cfg(target_os = "linux")]
         let (available_input_hw, mut selected_input_hw) = {
             let state = self.state.blocking_read();
@@ -538,6 +576,8 @@ impl HW {
                 chosen_sample_rate_hz,
                 exclusive,
                 period_frames,
+                realtime_frames,
+                low_watermark_frames,
                 nperiods,
                 sync_mode,
             };
@@ -643,6 +683,30 @@ impl HW {
                         )
                         .placeholder("Period"),
                         text(format!("{latency_ms:.1} ms"))
+                    ]
+                    .spacing(10),
+                )
+                .push(
+                    row![
+                        text("Realtime frames:"),
+                        pick_list(
+                            realtime_options,
+                            Some(realtime_frames),
+                            Message::HWRealtimeFramesChanged
+                        )
+                        .placeholder("Realtime")
+                    ]
+                    .spacing(10),
+                )
+                .push(
+                    row![
+                        text("Low watermark:"),
+                        pick_list(
+                            low_watermark_options,
+                            Some(low_watermark_frames),
+                            Message::HWLowWatermarkFramesChanged
+                        )
+                        .placeholder("Low watermark")
                     ]
                     .spacing(10),
                 )
@@ -803,6 +867,8 @@ mod tests {
             chosen_sample_rate_hz: 48000,
             exclusive: false,
             period_frames: 1024,
+            realtime_frames: 64,
+            low_watermark_frames: 256,
             nperiods: 2,
             sync_mode: true,
         };

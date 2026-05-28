@@ -1,3 +1,6 @@
+#[path = "../audio_defaults.rs"]
+mod audio_defaults;
+
 use maolan_engine::{
     client::Client,
     message::{Action, Message as EngineMessage},
@@ -30,9 +33,9 @@ impl Default for TestOptions {
             device: "/dev/dsp6".to_string(),
             input_device: Some("/dev/dsp6".to_string()),
             duration_secs: 5,
-            sample_rate_hz: 48_000,
-            period_frames: 1024,
-            nperiods: 1,
+            sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ,
+            period_frames: audio_defaults::PERIOD_FRAMES,
+            nperiods: audio_defaults::NPERIODS,
             track_name: "test".to_string(),
             param_id: None,
             param_value: None,
@@ -271,11 +274,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             device: options.device.clone(),
             input_device: options.input_device.clone(),
             sample_rate_hz: options.sample_rate_hz,
-            bits: 32,
+            bits: audio_defaults::BIT_DEPTH as i32,
             exclusive: false,
             period_frames: options.period_frames,
+            realtime_frames: audio_defaults::REALTIME_FRAMES.min(options.period_frames),
+            low_watermark_frames: audio_defaults::LOW_WATERMARK_FRAMES.min(options.period_frames),
             nperiods: options.nperiods,
-            sync_mode: false,
+            sync_mode: audio_defaults::SYNC_MODE,
         }))
         .await?;
 
