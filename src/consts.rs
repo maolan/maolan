@@ -194,7 +194,6 @@ pub mod gui_mod {
 
 pub mod gui_update_mod {
     pub const ATTACK_ALPHA: f32 = 0.60;
-    pub const RELEASE_ALPHA: f32 = 0.22;
 }
 
 pub mod gui_update_dispatch_transport {

@@ -5104,7 +5104,6 @@ dependencies = [
  "ffmpeg-next",
  "flacenc",
  "hf-hub",
- "hound",
  "i24 2.3.3",
  "iced",
  "iced_aw",
@@ -5135,16 +5134,16 @@ dependencies = [
 
 [[package]]
 name = "maolan-engine"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3f9ee037a3cf55c700335a149a3d202e98fad8d9a15b3b9cafa4ad7af06835f"
+checksum = "6b7158f2bd07031429e3cfc32d3abd7b07425c57410ecb532591b504f0aecbdb"
 dependencies = [
  "alsa",
  "byteorder",
  "coreaudio-sys",
  "coremidi",
  "cpal",
- "hound",
+ "ffmpeg-next",
  "jack",
  "maolan-plugin-protocol 0.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "midir",

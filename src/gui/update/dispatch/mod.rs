@@ -7708,14 +7708,14 @@ impl Maolan {
                                     output_path.display()
                                 )
                             })?;
-                            let reader = hound::WavReader::open(&output_path).map_err(|e| {
-                                format!(
-                                    "Failed to open generated WAV '{}': {e}",
-                                    output_path.display()
-                                )
-                            })?;
-                            let channels = reader.spec().channels.max(1) as usize;
-                            drop(reader);
+                            let channels =
+                                super::super::Maolan::audio_clip_channel_count(&output_path)
+                                    .map_err(|e| {
+                                        format!(
+                                            "Failed to inspect generated audio channels '{}': {e}",
+                                            output_path.display()
+                                        )
+                                    })?;
                             let length =
                                 super::super::Maolan::audio_clip_source_length(&output_path)
                                     .map_err(|e| {

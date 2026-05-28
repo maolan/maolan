@@ -3,6 +3,7 @@ use maolan_engine::{kind::Kind, message::AudioClipData};
 use std::{
     collections::{BTreeSet, HashMap},
     fmt, fs, io,
+    io::Write,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -17,8 +18,6 @@ use ffmpeg_next::{
 use flacenc::bitsink::ByteSink;
 use flacenc::component::BitRepr;
 use flacenc::error::Verify;
-use hound::{SampleFormat, WavReader, WavSpec};
-
 pub const STANDARD_EXPORT_SAMPLE_RATES: [u32; 12] = [
     8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000, 384000,
 ];
@@ -594,36 +593,7 @@ fn mix_clip_into_buffer(
         return Ok(());
     }
     let clip_path = resolve_audio_clip_path(clip, session_root);
-    let mut reader = WavReader::open(&clip_path).map_err(|e| {
-        io::Error::other(format!(
-            "Failed to open WAV '{}': {}",
-            clip_path.display(),
-            e
-        ))
-    })?;
-    let spec = reader.spec();
-    let clip_channels = spec.channels.max(1) as usize;
-    let samples: Vec<f32> = match spec.sample_format {
-        SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
-        SampleFormat::Int => match spec.bits_per_sample {
-            16 => reader
-                .samples::<i16>()
-                .filter_map(|s| s.ok())
-                .map(|s| s as f32 * (1.0 / 32768.0))
-                .collect(),
-            24 => reader
-                .samples::<i32>()
-                .filter_map(|s| s.ok())
-                .map(|s| s as f32 * (1.0 / 8_388_608.0))
-                .collect(),
-            32 => reader
-                .samples::<i32>()
-                .filter_map(|s| s.ok())
-                .map(|s| s as f32 * (1.0 / 2_147_483_648.0))
-                .collect(),
-            _ => return Ok(()),
-        },
-    };
+    let (samples, clip_channels, _) = decode_audio_to_f32_interleaved_sync(&clip_path)?;
     if samples.is_empty() {
         return Ok(());
     }
@@ -780,48 +750,179 @@ fn write_wav_with_bit_depth(
     output_channels: usize,
     bit_depth: ExportBitDepth,
 ) -> io::Result<()> {
-    let spec = WavSpec {
-        channels: output_channels as u16,
-        sample_rate: sample_rate as u32,
-        bits_per_sample: match bit_depth {
-            ExportBitDepth::Int16 => 16,
-            ExportBitDepth::Int24 => 24,
-            ExportBitDepth::Int32 => 32,
-            ExportBitDepth::Float32 => 32,
-        },
-        sample_format: match bit_depth {
-            ExportBitDepth::Float32 => SampleFormat::Float,
-            _ => SampleFormat::Int,
-        },
+    let bits_per_sample = match bit_depth {
+        ExportBitDepth::Int16 => 16u16,
+        ExportBitDepth::Int24 => 24u16,
+        ExportBitDepth::Int32 => 32u16,
+        ExportBitDepth::Float32 => 32u16,
     };
-    let mut writer = hound::WavWriter::create(export_path, spec)
-        .map_err(|e| io::Error::other(format!("Failed to create WAV writer: {e}")))?;
-    match bit_depth {
-        ExportBitDepth::Int16 | ExportBitDepth::Int24 | ExportBitDepth::Int32 => {
-            let (quantized, _) = quantize_samples_for_bit_depth(mixed_buffer, bit_depth);
-            for &q in &quantized {
-                match bit_depth {
-                    ExportBitDepth::Int16 => writer.write_sample(q as i16),
-                    _ => writer.write_sample(q),
-                }
-                .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+    let is_float = matches!(bit_depth, ExportBitDepth::Float32);
+    write_wav_pcm(
+        export_path,
+        mixed_buffer,
+        output_channels.max(1),
+        sample_rate as u32,
+        bits_per_sample,
+        is_float,
+    )
+}
+
+fn write_wav_pcm(
+    path: &Path,
+    samples: &[f32],
+    channels: usize,
+    sample_rate: u32,
+    bits_per_sample: u16,
+    is_float: bool,
+) -> io::Result<()> {
+    let bytes_per_sample = usize::from(bits_per_sample / 8);
+    let block_align = (channels * bytes_per_sample) as u16;
+    let byte_rate = sample_rate * u32::from(block_align);
+    let data_size = samples
+        .len()
+        .checked_mul(bytes_per_sample)
+        .ok_or_else(|| io::Error::other("WAV data too large"))? as u32;
+    let riff_size = 36u32
+        .checked_add(data_size)
+        .ok_or_else(|| io::Error::other("WAV file too large"))?;
+
+    let mut file = fs::File::create(path)?;
+    file.write_all(b"RIFF")?;
+    file.write_all(&riff_size.to_le_bytes())?;
+    file.write_all(b"WAVE")?;
+    file.write_all(b"fmt ")?;
+    file.write_all(&16u32.to_le_bytes())?;
+    let audio_format: u16 = if is_float { 3 } else { 1 };
+    file.write_all(&audio_format.to_le_bytes())?;
+    file.write_all(&(channels as u16).to_le_bytes())?;
+    file.write_all(&sample_rate.to_le_bytes())?;
+    file.write_all(&byte_rate.to_le_bytes())?;
+    file.write_all(&block_align.to_le_bytes())?;
+    file.write_all(&bits_per_sample.to_le_bytes())?;
+    file.write_all(b"data")?;
+    file.write_all(&data_size.to_le_bytes())?;
+
+    for &sample in samples {
+        let s = sample.clamp(-1.0, 1.0);
+        match (is_float, bits_per_sample) {
+            (true, 32) => file.write_all(&s.to_le_bytes())?,
+            (false, 16) => {
+                let q = (s * i16::MAX as f32).round() as i16;
+                file.write_all(&q.to_le_bytes())?;
             }
-        }
-        ExportBitDepth::Float32 => {
-            for &sample in mixed_buffer {
-                writer
-                    .write_sample(sample)
-                    .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
+            (false, 24) => {
+                let q = (s * 8_388_607.0).round() as i32;
+                let b = q.to_le_bytes();
+                file.write_all(&b[..3])?;
             }
+            (false, 32) => {
+                let q = (s * i32::MAX as f32).round() as i32;
+                file.write_all(&q.to_le_bytes())?;
+            }
+            _ => return Err(io::Error::other("Unsupported WAV format")),
         }
     }
-    writer.finalize().map_err(|e| {
-        io::Error::other(format!(
-            "Failed to write '{}': {}",
-            export_path.display(),
-            e
-        ))
-    })
+    Ok(())
+}
+
+fn decode_audio_to_f32_interleaved_sync(path: &Path) -> io::Result<(Vec<f32>, usize, u32)> {
+    use ffmpeg_next::{format::sample::Type as SampleType, media::Type};
+
+    ffmpeg_init().map_err(|e| io::Error::other(format!("FFmpeg init failed: {e}")))?;
+    let mut ictx = ffmpeg_next::format::input(path)
+        .map_err(|e| io::Error::other(format!("Failed to open '{}': {e}", path.display())))?;
+    let stream = ictx
+        .streams()
+        .best(Type::Audio)
+        .ok_or_else(|| io::Error::other(format!("No audio stream in '{}'", path.display())))?;
+    let stream_index = stream.index();
+    let mut decoder = ffmpeg_next::codec::Context::from_parameters(stream.parameters())
+        .map_err(|e| io::Error::other(format!("Decoder init failed: {e}")))?
+        .decoder()
+        .audio()
+        .map_err(|e| io::Error::other(format!("Audio decoder init failed: {e}")))?;
+    let sample_rate = decoder.rate() as u32;
+    let channels = decoder.channels().max(1) as usize;
+    let mut samples = Vec::<f32>::new();
+    let mut raw_frame = ffmpeg_next::frame::Audio::empty();
+    let append_frame = |frame: &ffmpeg_next::frame::Audio,
+                        channels: usize,
+                        out: &mut Vec<f32>|
+     -> io::Result<()> {
+        let frame_samples = frame.samples();
+        match frame.format() {
+            ffmpeg_next::format::Sample::F32(SampleType::Packed) => {
+                let plane = frame.plane::<f32>(0);
+                out.extend_from_slice(plane);
+            }
+            ffmpeg_next::format::Sample::F32(SampleType::Planar) => {
+                let start = out.len();
+                out.resize(start + frame_samples * channels, 0.0);
+                for ch in 0..channels {
+                    let plane = frame.plane::<f32>(ch);
+                    for i in 0..frame_samples {
+                        out[start + i * channels + ch] = plane[i];
+                    }
+                }
+            }
+            ffmpeg_next::format::Sample::I16(SampleType::Packed) => {
+                let plane = frame.plane::<i16>(0);
+                out.extend(plane.iter().map(|&v| v as f32 / 32768.0));
+            }
+            ffmpeg_next::format::Sample::I16(SampleType::Planar) => {
+                let start = out.len();
+                out.resize(start + frame_samples * channels, 0.0);
+                for ch in 0..channels {
+                    let plane = frame.plane::<i16>(ch);
+                    for i in 0..frame_samples {
+                        out[start + i * channels + ch] = plane[i] as f32 / 32768.0;
+                    }
+                }
+            }
+            ffmpeg_next::format::Sample::I32(SampleType::Packed) => {
+                let plane = frame.plane::<i32>(0);
+                out.extend(plane.iter().map(|&v| v as f32 / 2_147_483_648.0));
+            }
+            ffmpeg_next::format::Sample::I32(SampleType::Planar) => {
+                let start = out.len();
+                out.resize(start + frame_samples * channels, 0.0);
+                for ch in 0..channels {
+                    let plane = frame.plane::<i32>(ch);
+                    for i in 0..frame_samples {
+                        out[start + i * channels + ch] = plane[i] as f32 / 2_147_483_648.0;
+                    }
+                }
+            }
+            other => {
+                return Err(io::Error::other(format!(
+                    "Unsupported decoded sample format: {other:?}"
+                )));
+            }
+        }
+        Ok(())
+    };
+    for (stream, packet) in ictx.packets() {
+        if stream.index() != stream_index {
+            continue;
+        }
+        decoder
+            .send_packet(&packet)
+            .map_err(|e| io::Error::other(format!("Failed to send packet: {e}")))?;
+        while decoder.receive_frame(&mut raw_frame).is_ok() {
+            append_frame(&raw_frame, channels, &mut samples)?;
+        }
+    }
+    let _ = decoder.send_eof();
+    while decoder.receive_frame(&mut raw_frame).is_ok() {
+        append_frame(&raw_frame, channels, &mut samples)?;
+    }
+    if samples.is_empty() {
+        return Err(io::Error::other(format!(
+            "Audio file '{}' contains no samples",
+            path.display()
+        )));
+    }
+    Ok((samples, channels, sample_rate))
 }
 
 fn quantize_samples_for_bit_depth(
