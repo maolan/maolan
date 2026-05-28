@@ -2210,7 +2210,7 @@ impl Maolan {
     {
         use ffmpeg_next::{
             format::Sample as FfSample, format::sample::Type as SampleType,
-            media::Type as MediaType, software::resampling,
+            media::Type as MediaType,
         };
         use tokio::sync::mpsc;
 
@@ -2247,44 +2247,109 @@ impl Maolan {
 
             let channels = decoder.channels() as usize;
             let sample_rate = decoder.rate();
-            let channel_layout = decoder.channel_layout();
-            let in_format = decoder.format();
-            let out_format = FfSample::F32(SampleType::Packed);
-
-            let mut resampler = resampling::Context::get(
-                in_format,
-                channel_layout,
-                sample_rate,
-                out_format,
-                channel_layout,
-                sample_rate,
-            )
-            .map_err(|e| {
-                io::Error::other(format!(
-                    "Failed to create audio resampler '{}': {e}",
-                    path_owned.display()
-                ))
-            })?;
 
             let mut samples = Vec::<f32>::new();
             let mut packets_decoded = 0usize;
             let report_interval = 100;
 
             let mut raw_frame = ffmpeg_next::frame::Audio::empty();
-            let mut resampled_frame = ffmpeg_next::frame::Audio::empty();
-
-            let collect_resampled = |resampled_frame: &ffmpeg_next::frame::Audio,
-                                     samples: &mut Vec<f32>| {
-                if resampled_frame.samples() > 0 {
-                    let data = resampled_frame.data(0);
-                    let f32_samples = unsafe {
-                        std::slice::from_raw_parts(
-                            data.as_ptr() as *const f32,
-                            data.len() / std::mem::size_of::<f32>(),
-                        )
-                    };
-                    samples.extend_from_slice(f32_samples);
+            let append_frame_as_f32 = |frame: &ffmpeg_next::frame::Audio,
+                                       channels: usize,
+                                       dst: &mut Vec<f32>|
+             -> io::Result<()> {
+                let frame_samples = frame.samples();
+                if frame_samples == 0 || channels == 0 {
+                    return Ok(());
                 }
+                let fmt = frame.format();
+                let is_planar = fmt.is_planar();
+                match fmt {
+                    FfSample::F32(SampleType::Packed) => {
+                        let data = frame.data(0);
+                        let src = unsafe {
+                            std::slice::from_raw_parts(
+                                data.as_ptr() as *const f32,
+                                frame_samples.saturating_mul(channels),
+                            )
+                        };
+                        dst.extend_from_slice(src);
+                    }
+                    FfSample::F32(SampleType::Planar) => {
+                        for i in 0..frame_samples {
+                            for ch in 0..channels {
+                                let data = frame.data(ch);
+                                let src = unsafe {
+                                    std::slice::from_raw_parts(
+                                        data.as_ptr() as *const f32,
+                                        frame_samples,
+                                    )
+                                };
+                                dst.push(src[i]);
+                            }
+                        }
+                    }
+                    FfSample::I16(SampleType::Packed) => {
+                        let data = frame.data(0);
+                        let src = unsafe {
+                            std::slice::from_raw_parts(
+                                data.as_ptr() as *const i16,
+                                frame_samples.saturating_mul(channels),
+                            )
+                        };
+                        let scale = i16::MAX as f32;
+                        dst.extend(src.iter().map(|s| *s as f32 / scale));
+                    }
+                    FfSample::I16(SampleType::Planar) => {
+                        let scale = i16::MAX as f32;
+                        for i in 0..frame_samples {
+                            for ch in 0..channels {
+                                let data = frame.data(ch);
+                                let src = unsafe {
+                                    std::slice::from_raw_parts(
+                                        data.as_ptr() as *const i16,
+                                        frame_samples,
+                                    )
+                                };
+                                dst.push(src[i] as f32 / scale);
+                            }
+                        }
+                    }
+                    FfSample::I32(SampleType::Packed) => {
+                        let data = frame.data(0);
+                        let src = unsafe {
+                            std::slice::from_raw_parts(
+                                data.as_ptr() as *const i32,
+                                frame_samples.saturating_mul(channels),
+                            )
+                        };
+                        let scale = i32::MAX as f32;
+                        dst.extend(src.iter().map(|s| *s as f32 / scale));
+                    }
+                    FfSample::I32(SampleType::Planar) => {
+                        let scale = i32::MAX as f32;
+                        for i in 0..frame_samples {
+                            for ch in 0..channels {
+                                let data = frame.data(ch);
+                                let src = unsafe {
+                                    std::slice::from_raw_parts(
+                                        data.as_ptr() as *const i32,
+                                        frame_samples,
+                                    )
+                                };
+                                dst.push(src[i] as f32 / scale);
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(io::Error::other(format!(
+                            "Unsupported decoded audio format '{}': {:?} ({})",
+                            path_owned.display(),
+                            fmt,
+                            if is_planar { "planar" } else { "packed" }
+                        )));
+                    }
+                }
+                Ok(())
             };
 
             for (stream, packet) in ictx.packets() {
@@ -2295,15 +2360,7 @@ impl Maolan {
                     continue;
                 }
                 while decoder.receive_frame(&mut raw_frame).is_ok() {
-                    resampler
-                        .run(&raw_frame, &mut resampled_frame)
-                        .map_err(|e| {
-                            io::Error::other(format!(
-                                "Audio resample failed '{}': {e}",
-                                path_owned.display()
-                            ))
-                        })?;
-                    collect_resampled(&resampled_frame, &mut samples);
+                    append_frame_as_f32(&raw_frame, channels, &mut samples)?;
                 }
                 packets_decoded += 1;
                 if packets_decoded.is_multiple_of(report_interval) {
@@ -2319,12 +2376,7 @@ impl Maolan {
 
             let _ = decoder.send_eof();
             while decoder.receive_frame(&mut raw_frame).is_ok() {
-                if resampler.run(&raw_frame, &mut resampled_frame).is_ok() {
-                    collect_resampled(&resampled_frame, &mut samples);
-                }
-            }
-            if resampler.flush(&mut resampled_frame).is_ok() {
-                collect_resampled(&resampled_frame, &mut samples);
+                append_frame_as_f32(&raw_frame, channels, &mut samples)?;
             }
 
             Ok::<_, io::Error>((samples, channels, sample_rate))

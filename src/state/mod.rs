@@ -492,6 +492,8 @@ pub struct StateData {
     #[cfg(any(unix, target_os = "windows"))]
     pub oss_bits: usize,
     pub oss_period_frames: usize,
+    pub oss_realtime_frames: usize,
+    pub oss_low_watermark_frames: usize,
     pub oss_nperiods: usize,
     pub oss_sync_mode: bool,
     pub opened_midi_in_hw: Vec<String>,
@@ -672,6 +674,8 @@ impl Default for StateData {
             #[cfg(any(unix, target_os = "windows"))]
             oss_bits: cfg.default_audio_bit_depth,
             oss_period_frames: crate::consts::audio_defaults::PERIOD_FRAMES,
+            oss_realtime_frames: crate::consts::audio_defaults::REALTIME_FRAMES,
+            oss_low_watermark_frames: crate::consts::audio_defaults::LOW_WATERMARK_FRAMES,
             oss_nperiods: crate::consts::audio_defaults::NPERIODS,
             oss_sync_mode: crate::consts::audio_defaults::SYNC_MODE,
             opened_midi_in_hw: vec![],

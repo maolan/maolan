@@ -7493,6 +7493,10 @@ impl Maolan {
                             {
                                 return;
                             }
+                            let _ = tx.send(Message::ImportFinished {
+                                total_files,
+                                failed_files: failures.clone(),
+                            });
                             drop(tx);
                         });
 
@@ -8384,6 +8388,20 @@ impl Maolan {
                     self.state.blocking_write().message = format!(
                         "Importing {}/{} ({percent}%){}: {}",
                         file_index, total_files, op_text, filename
+                    );
+                }
+            }
+            Message::ImportFinished {
+                total_files,
+                ref failed_files,
+            } => {
+                if failed_files.is_empty() {
+                    self.state.blocking_write().message = format!("Imported {total_files} file(s)");
+                } else {
+                    let succeeded = total_files.saturating_sub(failed_files.len());
+                    let first_error = failed_files.first().cloned().unwrap_or_default();
+                    self.state.blocking_write().message = format!(
+                        "Imported {succeeded}/{total_files} file(s). First error: {first_error}"
                     );
                 }
             }
