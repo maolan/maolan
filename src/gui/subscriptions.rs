@@ -12,7 +12,7 @@ use iced::keyboard::Event as KeyEvent;
 use iced::{Subscription, event, keyboard, mouse, window};
 use maolan_engine::message::{Action as EngineAction, Message as EngineMessage};
 use std::collections::HashMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
 
@@ -68,8 +68,9 @@ impl Maolan {
                         receiver,
                         Vec::<f32>::new(),
                         HashMap::<String, Vec<f32>>::new(),
+                        Instant::now(),
                     ),
-                    |(mut rx, mut last_hw_out, mut last_meters)| async move {
+                    |(mut rx, mut last_hw_out, mut last_meters, mut last_unchanged_forward_at)| async move {
                         loop {
                             match rx.recv().await {
                                 Some(EngineMessage::Response(r)) => {
@@ -110,8 +111,17 @@ impl Maolan {
                                                             None => true,
                                                         },
                                                     );
-                                                if !hw_changed && !tracks_changed {
-                                                    continue;
+                                                let changed = hw_changed || tracks_changed;
+                                                if !changed {
+                                                    // Forward unchanged snapshots at a steady, limited cadence
+                                                    // so meter release remains smooth without saturating UI events.
+                                                    let now = Instant::now();
+                                                    if now.duration_since(last_unchanged_forward_at)
+                                                        < Duration::from_millis(16)
+                                                    {
+                                                        continue;
+                                                    }
+                                                    last_unchanged_forward_at = now;
                                                 }
 
                                                 last_hw_out.clear();
@@ -130,7 +140,12 @@ impl Maolan {
                                     }
                                     return Some((
                                         Message::Response(r),
-                                        (rx, last_hw_out, last_meters),
+                                        (
+                                            rx,
+                                            last_hw_out,
+                                            last_meters,
+                                            last_unchanged_forward_at,
+                                        ),
                                     ));
                                 }
                                 Some(_) => {}

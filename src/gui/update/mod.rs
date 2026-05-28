@@ -16,7 +16,7 @@ use crate::state::AudioDeviceOption;
 use crate::{
     connections,
     consts::gui::{AUTOSAVE_SNAPSHOT_INTERVAL, METER_QUANTIZE_STEP_DB},
-    consts::gui_update_mod::{ATTACK_ALPHA, RELEASE_ALPHA},
+    consts::gui_update_mod::ATTACK_ALPHA,
     consts::state_ids::METRONOME_TRACK_ID,
     consts::state_track::TRACK_MIN_HEIGHT,
     consts::widget_piano::PITCH_MAX,
@@ -2069,6 +2069,8 @@ impl Maolan {
     }
 
     fn smooth_meter_db_levels(current: &mut Vec<f32>, target: &[f32]) {
+        const RELEASE_DB_PER_UPDATE: f32 = 12.0;
+
         if current.len() != target.len() {
             *current = target
                 .iter()
@@ -2079,12 +2081,12 @@ impl Maolan {
         }
 
         for (cur, tgt) in current.iter_mut().zip(target.iter().copied()) {
-            let alpha = if tgt > *cur {
-                ATTACK_ALPHA
+            let next = if tgt > *cur {
+                *cur + (tgt - *cur) * ATTACK_ALPHA
             } else {
-                RELEASE_ALPHA
+                (*cur - RELEASE_DB_PER_UPDATE).max(tgt)
             };
-            *cur = Self::quantize_meter_db((*cur + (tgt - *cur) * alpha).clamp(-90.0, 20.0));
+            *cur = next.clamp(-90.0, 20.0);
         }
     }
 

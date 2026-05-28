@@ -71,7 +71,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs::{self, File},
     hash::{DefaultHasher, Hash, Hasher},
-    io::{self, BufReader},
+    io::{self, BufReader, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::AtomicBool,
@@ -80,8 +80,6 @@ use std::{
 };
 use tokio::sync::RwLock;
 use tracing::error;
-
-use hound::{SampleFormat, WavReader, WavSpec};
 
 pub(crate) use gui_consts::{MIN_CLIP_WIDTH_PX, PREF_DEVICE_AUTO_ID};
 type TickToSampleFn = dyn Fn(u64) -> usize + Send + Sync;
@@ -1499,32 +1497,7 @@ impl Maolan {
     }
 
     fn compute_audio_clip_peaks(path: &Path) -> std::io::Result<ClipPeaks> {
-        let mut reader = WavReader::open(path).map_err(|e| {
-            io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
-        })?;
-        let spec = reader.spec();
-        let channels = spec.channels.max(1) as usize;
-        let samples: Vec<f32> = match spec.sample_format {
-            SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
-            SampleFormat::Int => match spec.bits_per_sample {
-                16 => reader
-                    .samples::<i16>()
-                    .filter_map(|s| s.ok())
-                    .map(|s| s as f32 * (1.0 / 32768.0))
-                    .collect(),
-                24 => reader
-                    .samples::<i32>()
-                    .filter_map(|s| s.ok())
-                    .map(|s| s as f32 * (1.0 / 8_388_608.0))
-                    .collect(),
-                32 => reader
-                    .samples::<i32>()
-                    .filter_map(|s| s.ok())
-                    .map(|s| s as f32 * (1.0 / 2_147_483_648.0))
-                    .collect(),
-                _ => return Ok(Arc::new(Vec::new())),
-            },
-        };
+        let (samples, channels, _) = Self::decode_audio_to_f32_interleaved_sync(path)?;
         let mut per_channel = vec![Vec::with_capacity(samples.len() / channels + 1); channels];
         for frame in samples.chunks(channels) {
             for (channel_idx, sample) in frame.iter().enumerate() {
@@ -1737,13 +1710,8 @@ impl Maolan {
         length: usize,
         offset: usize,
     ) -> std::io::Result<()> {
-        let mut reader = WavReader::open(path).map_err(|e| {
-            io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
-        })?;
-        let spec = reader.spec();
-        let channels = spec.channels.max(1) as usize;
-        let total_samples = reader.duration() as usize;
-        let total_frames = total_samples / channels.max(1);
+        let (samples, channels, _) = Self::decode_audio_to_f32_interleaved_sync(path)?;
+        let total_frames = samples.len() / channels.max(1);
         if total_frames == 0 {
             if let Ok(mut queue) = AUDIO_PEAK_UPDATES.lock() {
                 queue.push(AudioPeakChunkUpdate {
@@ -1767,36 +1735,13 @@ impl Maolan {
         let mut touched = vec![vec![false; target_bins]; channels];
         let mut processed_frames = 0usize;
         let mut last_emitted_bin = 0usize;
-
-        let mut sample_iter: Box<dyn Iterator<Item = f32>> = match spec.sample_format {
-            SampleFormat::Float => Box::new(reader.samples::<f32>().filter_map(|s| s.ok())),
-            SampleFormat::Int => match spec.bits_per_sample {
-                16 => Box::new(
-                    reader
-                        .samples::<i16>()
-                        .filter_map(|s| s.ok())
-                        .map(|s| s as f32 * (1.0 / 32768.0)),
-                ),
-                24 => Box::new(
-                    reader
-                        .samples::<i32>()
-                        .filter_map(|s| s.ok())
-                        .map(|s| s as f32 * (1.0 / 8_388_608.0)),
-                ),
-                32 => Box::new(
-                    reader
-                        .samples::<i32>()
-                        .filter_map(|s| s.ok())
-                        .map(|s| s as f32 * (1.0 / 2_147_483_648.0)),
-                ),
-                _ => return Ok(()),
-            },
-        };
+        let mut sample_offset = 0usize;
 
         while processed_frames < total_frames {
             let frames_to_read = (total_frames - processed_frames).min(CHUNK_FRAMES);
             let samples_to_read = frames_to_read.saturating_mul(channels);
-            let chunk: Vec<f32> = sample_iter.by_ref().take(samples_to_read).collect();
+            let end = (sample_offset + samples_to_read).min(samples.len());
+            let chunk = &samples[sample_offset..end];
             if chunk.is_empty() {
                 break;
             }
@@ -1804,6 +1749,7 @@ impl Maolan {
             if frames_read == 0 {
                 break;
             }
+            sample_offset = sample_offset.saturating_add(chunk.len());
 
             for (frame_offset, frame) in chunk.chunks(channels).enumerate() {
                 let frame_index = processed_frames + frame_offset;
@@ -1871,12 +1817,257 @@ impl Maolan {
     }
 
     fn audio_clip_source_length(path: &Path) -> std::io::Result<usize> {
-        let reader = WavReader::open(path).map_err(|e| {
-            io::Error::other(format!("Failed to open WAV '{}': {e}", path.display()))
+        let (samples, channels, _) = Self::decode_audio_to_f32_interleaved_sync(path)?;
+        Ok(samples.len() / channels.max(1))
+    }
+
+    fn audio_clip_channel_count(path: &Path) -> std::io::Result<usize> {
+        let (_, channels, _) = Self::decode_audio_to_f32_interleaved_sync(path)?;
+        Ok(channels.max(1))
+    }
+
+    fn decode_audio_to_f32_interleaved_sync(
+        path: &Path,
+    ) -> std::io::Result<(Vec<f32>, usize, u32)> {
+        use ffmpeg_next::{
+            format::Sample as FfSample, format::sample::Type as SampleType,
+            media::Type as MediaType,
+        };
+
+        Self::ffmpeg_init().map_err(|e| io::Error::other(format!("FFmpeg init failed: {e}")))?;
+
+        let mut ictx = ffmpeg_next::format::input(path).map_err(|e| {
+            io::Error::other(format!(
+                "Unsupported or unreadable audio '{}': {e}",
+                path.display()
+            ))
         })?;
-        let spec = reader.spec();
-        let total_samples = reader.duration() as usize;
-        Ok(total_samples / spec.channels.max(1) as usize)
+        let stream = ictx.streams().best(MediaType::Audio).ok_or_else(|| {
+            io::Error::other(format!("No decodable audio track in '{}'", path.display()))
+        })?;
+        let stream_index = stream.index();
+        let mut decoder = ffmpeg_next::codec::Context::from_parameters(stream.parameters())
+            .and_then(|ctx| ctx.decoder().audio())
+            .map_err(|e| io::Error::other(format!("Failed to decode '{}': {e}", path.display())))?;
+
+        let channels = decoder.channels().max(1) as usize;
+        let sample_rate = decoder.rate();
+        let mut samples = Vec::<f32>::new();
+        let mut raw_frame = ffmpeg_next::frame::Audio::empty();
+
+        let append_frame = |frame: &ffmpeg_next::frame::Audio,
+                            channels: usize,
+                            dst: &mut Vec<f32>|
+         -> io::Result<()> {
+            let frame_samples = frame.samples();
+            if frame_samples == 0 || channels == 0 {
+                return Ok(());
+            }
+            match frame.format() {
+                FfSample::F32(SampleType::Packed) => {
+                    let data = frame.data(0);
+                    let src = unsafe {
+                        std::slice::from_raw_parts(
+                            data.as_ptr() as *const f32,
+                            frame_samples.saturating_mul(channels),
+                        )
+                    };
+                    dst.extend_from_slice(src);
+                }
+                FfSample::F32(SampleType::Planar) => {
+                    for i in 0..frame_samples {
+                        for ch in 0..channels {
+                            let data = frame.data(ch);
+                            let src = unsafe {
+                                std::slice::from_raw_parts(
+                                    data.as_ptr() as *const f32,
+                                    frame_samples,
+                                )
+                            };
+                            dst.push(src[i]);
+                        }
+                    }
+                }
+                FfSample::I16(SampleType::Packed) => {
+                    let data = frame.data(0);
+                    let src = unsafe {
+                        std::slice::from_raw_parts(
+                            data.as_ptr() as *const i16,
+                            frame_samples.saturating_mul(channels),
+                        )
+                    };
+                    let scale = i16::MAX as f32;
+                    dst.extend(src.iter().map(|s| *s as f32 / scale));
+                }
+                FfSample::I16(SampleType::Planar) => {
+                    let scale = i16::MAX as f32;
+                    for i in 0..frame_samples {
+                        for ch in 0..channels {
+                            let data = frame.data(ch);
+                            let src = unsafe {
+                                std::slice::from_raw_parts(
+                                    data.as_ptr() as *const i16,
+                                    frame_samples,
+                                )
+                            };
+                            dst.push(src[i] as f32 / scale);
+                        }
+                    }
+                }
+                FfSample::I32(SampleType::Packed) => {
+                    let data = frame.data(0);
+                    let src = unsafe {
+                        std::slice::from_raw_parts(
+                            data.as_ptr() as *const i32,
+                            frame_samples.saturating_mul(channels),
+                        )
+                    };
+                    let scale = i32::MAX as f32;
+                    dst.extend(src.iter().map(|s| *s as f32 / scale));
+                }
+                FfSample::I32(SampleType::Planar) => {
+                    let scale = i32::MAX as f32;
+                    for i in 0..frame_samples {
+                        for ch in 0..channels {
+                            let data = frame.data(ch);
+                            let src = unsafe {
+                                std::slice::from_raw_parts(
+                                    data.as_ptr() as *const i32,
+                                    frame_samples,
+                                )
+                            };
+                            dst.push(src[i] as f32 / scale);
+                        }
+                    }
+                }
+                fmt => {
+                    return Err(io::Error::other(format!(
+                        "Unsupported decoded audio format '{}': {:?}",
+                        path.display(),
+                        fmt
+                    )));
+                }
+            }
+            Ok(())
+        };
+
+        for (stream, packet) in ictx.packets() {
+            if stream.index() != stream_index {
+                continue;
+            }
+            if decoder.send_packet(&packet).is_err() {
+                continue;
+            }
+            while decoder.receive_frame(&mut raw_frame).is_ok() {
+                append_frame(&raw_frame, channels, &mut samples)?;
+            }
+        }
+        let _ = decoder.send_eof();
+        while decoder.receive_frame(&mut raw_frame).is_ok() {
+            append_frame(&raw_frame, channels, &mut samples)?;
+        }
+
+        if samples.is_empty() {
+            return Err(io::Error::other(format!(
+                "Audio file '{}' contains no samples",
+                path.display()
+            )));
+        }
+        Ok((samples, channels, sample_rate))
+    }
+
+    fn write_wav_f32_via_ffmpeg(
+        path: &Path,
+        samples: &[f32],
+        channels: usize,
+        sample_rate: u32,
+    ) -> io::Result<()> {
+        Self::write_wav_via_ffmpeg_codec(path, samples, channels, sample_rate, "pcm_f32le")
+    }
+
+    fn write_wav_via_ffmpeg_codec(
+        path: &Path,
+        samples: &[f32],
+        channels: usize,
+        sample_rate: u32,
+        codec: &str,
+    ) -> io::Result<()> {
+        let bits_per_sample = match codec {
+            "pcm_s16le" => 16u16,
+            "pcm_s24le" => 24u16,
+            "pcm_s32le" => 32u16,
+            "pcm_f32le" => 32u16,
+            other => {
+                return Err(io::Error::other(format!("Unsupported WAV codec '{other}'")));
+            }
+        };
+        let is_float = codec == "pcm_f32le";
+        Self::write_wav_pcm(
+            path,
+            samples,
+            channels.max(1),
+            sample_rate,
+            bits_per_sample,
+            is_float,
+        )
+    }
+
+    fn write_wav_pcm(
+        path: &Path,
+        samples: &[f32],
+        channels: usize,
+        sample_rate: u32,
+        bits_per_sample: u16,
+        is_float: bool,
+    ) -> io::Result<()> {
+        let bytes_per_sample = usize::from(bits_per_sample / 8);
+        let block_align = (channels * bytes_per_sample) as u16;
+        let byte_rate = sample_rate * u32::from(block_align);
+        let data_size = samples
+            .len()
+            .checked_mul(bytes_per_sample)
+            .ok_or_else(|| io::Error::other("WAV data too large"))? as u32;
+        let riff_size = 36u32
+            .checked_add(data_size)
+            .ok_or_else(|| io::Error::other("WAV file too large"))?;
+
+        let mut file = File::create(path)?;
+        file.write_all(b"RIFF")?;
+        file.write_all(&riff_size.to_le_bytes())?;
+        file.write_all(b"WAVE")?;
+        file.write_all(b"fmt ")?;
+        file.write_all(&16u32.to_le_bytes())?;
+        let audio_format: u16 = if is_float { 3 } else { 1 };
+        file.write_all(&audio_format.to_le_bytes())?;
+        file.write_all(&(channels as u16).to_le_bytes())?;
+        file.write_all(&sample_rate.to_le_bytes())?;
+        file.write_all(&byte_rate.to_le_bytes())?;
+        file.write_all(&block_align.to_le_bytes())?;
+        file.write_all(&bits_per_sample.to_le_bytes())?;
+        file.write_all(b"data")?;
+        file.write_all(&data_size.to_le_bytes())?;
+
+        for &sample in samples {
+            let s = sample.clamp(-1.0, 1.0);
+            match (is_float, bits_per_sample) {
+                (true, 32) => file.write_all(&s.to_le_bytes())?,
+                (false, 16) => {
+                    let q = (s * i16::MAX as f32).round() as i16;
+                    file.write_all(&q.to_le_bytes())?;
+                }
+                (false, 24) => {
+                    let q = (s * 8_388_607.0).round() as i32;
+                    let b = q.to_le_bytes();
+                    file.write_all(&b[..3])?;
+                }
+                (false, 32) => {
+                    let q = (s * i32::MAX as f32).round() as i32;
+                    file.write_all(&q.to_le_bytes())?;
+                }
+                _ => return Err(io::Error::other("Unsupported WAV format")),
+            }
+        }
+        Ok(())
     }
 
     fn file_extension_lower(path: &Path) -> Option<String> {
@@ -2540,31 +2731,7 @@ impl Maolan {
         progress_callback(0.85, Some("Writing".to_string()));
         tokio::task::yield_now().await;
 
-        {
-            let spec = WavSpec {
-                channels: channels as u16,
-                sample_rate: target_sample_rate,
-                bits_per_sample: 32,
-                sample_format: SampleFormat::Float,
-            };
-            let mut writer = hound::WavWriter::create(&dst, spec).map_err(|e| {
-                io::Error::other(format!(
-                    "Failed to create WAV writer for '{}': {e}",
-                    dst.display()
-                ))
-            })?;
-            for sample in &final_samples {
-                writer.write_sample(*sample).map_err(|e| {
-                    io::Error::other(format!(
-                        "Failed to write sample to '{}': {e}",
-                        dst.display()
-                    ))
-                })?;
-            }
-            writer.finalize().map_err(|e| {
-                io::Error::other(format!("Failed to finalize WAV '{}': {e}", dst.display()))
-            })?;
-        }
+        Self::write_wav_f32_via_ffmpeg(&dst, &final_samples, channels, target_sample_rate)?;
 
         progress_callback(0.95, Some("Calculating peaks".to_string()));
         tokio::task::yield_now().await;
@@ -2610,34 +2777,7 @@ impl Maolan {
             Self::unique_import_rel_path(session_root, "audio", &format!("{stem}_stretch"), "wav")?;
         let output_path = session_root.join(&output_rel);
 
-        {
-            let spec = WavSpec {
-                channels: channels as u16,
-                sample_rate,
-                bits_per_sample: 32,
-                sample_format: SampleFormat::Float,
-            };
-            let mut writer = hound::WavWriter::create(&temp_path, spec).map_err(|e| {
-                io::Error::other(format!(
-                    "Failed to create WAV writer for '{}': {e}",
-                    temp_path.display()
-                ))
-            })?;
-            for sample in segment_samples {
-                writer.write_sample(*sample).map_err(|e| {
-                    io::Error::other(format!(
-                        "Failed to write sample to '{}': {e}",
-                        temp_path.display()
-                    ))
-                })?;
-            }
-            writer.finalize().map_err(|e| {
-                io::Error::other(format!(
-                    "Failed to finalize WAV '{}': {e}",
-                    temp_path.display()
-                ))
-            })?;
-        }
+        Self::write_wav_f32_via_ffmpeg(&temp_path, segment_samples, channels, sample_rate)?;
 
         let command_result = tokio::process::Command::new("rubberband")
             .arg("--quiet")
@@ -2905,34 +3045,7 @@ impl Maolan {
         )?;
         let output_path = session_root.join(&output_rel);
 
-        {
-            let spec = WavSpec {
-                channels: channels as u16,
-                sample_rate,
-                bits_per_sample: 32,
-                sample_format: SampleFormat::Float,
-            };
-            let mut writer = hound::WavWriter::create(&temp_path, spec).map_err(|e| {
-                io::Error::other(format!(
-                    "Failed to create WAV writer for '{}': {e}",
-                    temp_path.display()
-                ))
-            })?;
-            for sample in segment_samples {
-                writer.write_sample(*sample).map_err(|e| {
-                    io::Error::other(format!(
-                        "Failed to write sample to '{}': {e}",
-                        temp_path.display()
-                    ))
-                })?;
-            }
-            writer.finalize().map_err(|e| {
-                io::Error::other(format!(
-                    "Failed to finalize WAV '{}': {e}",
-                    temp_path.display()
-                ))
-            })?;
-        }
+        Self::write_wav_f32_via_ffmpeg(&temp_path, segment_samples, channels, sample_rate)?;
 
         let mut pitchmap = String::new();
         if points.is_empty() {
@@ -3025,48 +3138,19 @@ impl Maolan {
         output_channels: usize,
         bit_depth: ExportBitDepth,
     ) -> io::Result<()> {
-        let spec = WavSpec {
-            channels: output_channels as u16,
-            sample_rate: sample_rate as u32,
-            bits_per_sample: match bit_depth {
-                ExportBitDepth::Int16 => 16,
-                ExportBitDepth::Int24 => 24,
-                ExportBitDepth::Int32 => 32,
-                ExportBitDepth::Float32 => 32,
-            },
-            sample_format: match bit_depth {
-                ExportBitDepth::Float32 => SampleFormat::Float,
-                _ => SampleFormat::Int,
-            },
+        let codec = match bit_depth {
+            ExportBitDepth::Int16 => "pcm_s16le",
+            ExportBitDepth::Int24 => "pcm_s24le",
+            ExportBitDepth::Int32 => "pcm_s32le",
+            ExportBitDepth::Float32 => "pcm_f32le",
         };
-        let mut writer = hound::WavWriter::create(export_path, spec)
-            .map_err(|e| io::Error::other(format!("Failed to create WAV writer: {e}")))?;
-        match bit_depth {
-            ExportBitDepth::Int16 | ExportBitDepth::Int24 | ExportBitDepth::Int32 => {
-                let (quantized, _) = Self::quantize_samples_for_bit_depth(mixed_buffer, bit_depth);
-                for &q in &quantized {
-                    match bit_depth {
-                        ExportBitDepth::Int16 => writer.write_sample(q as i16),
-                        _ => writer.write_sample(q),
-                    }
-                    .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
-                }
-            }
-            ExportBitDepth::Float32 => {
-                for &sample in mixed_buffer {
-                    writer
-                        .write_sample(sample)
-                        .map_err(|e| io::Error::other(format!("Failed to write sample: {e}")))?;
-                }
-            }
-        }
-        writer.finalize().map_err(|e| {
-            io::Error::other(format!(
-                "Failed to write '{}': {}",
-                export_path.display(),
-                e
-            ))
-        })
+        Self::write_wav_via_ffmpeg_codec(
+            export_path,
+            mixed_buffer,
+            output_channels,
+            sample_rate as u32,
+            codec,
+        )
     }
 
     fn quantize_samples_for_bit_depth(
@@ -3640,36 +3724,14 @@ impl Maolan {
             } else {
                 session_root.join(&clip.name)
             };
-            let mut reader = WavReader::open(&clip_path).map_err(|e| {
-                io::Error::other(format!(
-                    "Failed to open WAV '{}': {}",
-                    clip_path.display(),
-                    e
-                ))
-            })?;
-            let spec = reader.spec();
-            let clip_channels = spec.channels.max(1) as usize;
-            let samples: Vec<f32> = match spec.sample_format {
-                SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
-                SampleFormat::Int => match spec.bits_per_sample {
-                    16 => reader
-                        .samples::<i16>()
-                        .filter_map(|s| s.ok())
-                        .map(|s| s as f32 * (1.0 / 32768.0))
-                        .collect(),
-                    24 => reader
-                        .samples::<i32>()
-                        .filter_map(|s| s.ok())
-                        .map(|s| s as f32 * (1.0 / 8_388_608.0))
-                        .collect(),
-                    32 => reader
-                        .samples::<i32>()
-                        .filter_map(|s| s.ok())
-                        .map(|s| s as f32 * (1.0 / 2_147_483_648.0))
-                        .collect(),
-                    _ => continue,
-                },
-            };
+            let (samples, clip_channels, _) =
+                Self::decode_audio_to_f32_interleaved_sync(&clip_path).map_err(|e| {
+                    io::Error::other(format!(
+                        "Failed to decode audio '{}': {}",
+                        clip_path.display(),
+                        e
+                    ))
+                })?;
             if samples.is_empty() {
                 continue;
             }
@@ -4280,36 +4342,14 @@ impl Maolan {
                     .ok_or_else(|| {
                         io::Error::other(format!("No bounced clip for track '{}'", track.name))
                     })?;
-                let mut reader = WavReader::open(&temp_path).map_err(|e| {
-                    io::Error::other(format!(
-                        "Failed to open bounced WAV '{}': {}",
-                        temp_path.display(),
-                        e
-                    ))
-                })?;
-                let spec = reader.spec();
-                let wav_channels = spec.channels.max(1) as usize;
-                let samples: Vec<f32> = match spec.sample_format {
-                    SampleFormat::Float => reader.samples::<f32>().filter_map(|s| s.ok()).collect(),
-                    SampleFormat::Int => match spec.bits_per_sample {
-                        16 => reader
-                            .samples::<i16>()
-                            .filter_map(|s| s.ok())
-                            .map(|s| s as f32 * (1.0 / 32768.0))
-                            .collect(),
-                        24 => reader
-                            .samples::<i32>()
-                            .filter_map(|s| s.ok())
-                            .map(|s| s as f32 * (1.0 / 8_388_608.0))
-                            .collect(),
-                        32 => reader
-                            .samples::<i32>()
-                            .filter_map(|s| s.ok())
-                            .map(|s| s as f32 * (1.0 / 2_147_483_648.0))
-                            .collect(),
-                        _ => Vec::new(),
-                    },
-                };
+                let (samples, wav_channels, _) =
+                    Self::decode_audio_to_f32_interleaved_sync(&temp_path).map_err(|e| {
+                        io::Error::other(format!(
+                            "Failed to decode bounced audio '{}': {}",
+                            temp_path.display(),
+                            e
+                        ))
+                    })?;
                 let wav_frames = samples.len() / wav_channels;
                 let mut buf = vec![0.0_f32; total_length * output_channels];
                 let copy_frames = wav_frames.min(total_length);
