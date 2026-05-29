@@ -8524,6 +8524,9 @@ impl Maolan {
             Message::ToggleEditorVisibility => {
                 self.editor_visible = !self.editor_visible;
             }
+            Message::ToggleToolbarVisibility => {
+                self.toolbar_visible = !self.toolbar_visible;
+            }
             Message::X32 => {
                 let mut state = self.state.blocking_write();
                 state.view = crate::state::View::X32;
