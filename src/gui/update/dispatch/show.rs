@@ -108,6 +108,14 @@ impl Maolan {
                 self.modal = Some(Show::SessionMetadata);
                 Task::none()
             }
+            Show::BranchManager => {
+                self.modal = Some(Show::BranchManager);
+                Task::none()
+            }
+            Show::BranchTrackList(branch) => {
+                self.modal = Some(Show::BranchTrackList(branch.clone()));
+                Task::none()
+            }
             Show::Preferences => {
                 #[cfg(any(target_os = "linux", target_os = "windows"))]
                 {

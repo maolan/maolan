@@ -82,6 +82,7 @@ impl Maolan {
                 self.midi_clip_previews.clear();
                 self.pending_midi_clip_previews.clear();
                 self.session_dir = None;
+                self.session_branch = "main".to_string();
                 self.stop_recording_preview();
 
                 let existing_tracks: Vec<String> = self

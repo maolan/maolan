@@ -180,6 +180,12 @@ impl Maolan {
                 Some(Show::SessionMetadata) => {
                     self.wrap_with_log_window(self.session_metadata_view())
                 }
+                Some(Show::BranchManager) => {
+                    self.wrap_with_log_window(self.branch_manager_view())
+                }
+                Some(Show::BranchTrackList(ref branch)) => {
+                    self.wrap_with_log_window(self.branch_track_list_view(branch))
+                }
                 Some(Show::Preferences) => self.wrap_with_log_window(self.preferences_view()),
                 Some(Show::AutosaveRecovery) => {
                     self.wrap_with_log_window(self.autosave_recovery_view())

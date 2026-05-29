@@ -84,6 +84,7 @@ impl Menu {
                     (menu_item("Save", Message::Show(Show::Save))),
                     (menu_item("Save as", Message::Show(Show::SaveAs))),
                     (menu_item("Session metadata", Message::Show(Show::SessionMetadata))),
+                    (menu_item("Branches", Message::Show(Show::BranchManager))),
                     (menu_item("Save as template", Message::Show(Show::SaveTemplateAs))),
                     (menu_item("Import", Message::OpenFileImporter)),
                     (menu_item("Generate audio", Message::Show(Show::GenerateAudio))),

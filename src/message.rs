@@ -27,6 +27,8 @@ pub enum Show {
     Open,
     About,
     TrackColor { track_name: String },
+    BranchManager,
+    BranchTrackList(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1197,6 +1199,15 @@ pub enum Message {
 
     NewSession,
     NewFromTemplate(String),
+    BranchInput(String),
+    BranchCreate(String),
+    BranchSwitch(String),
+    BranchMerge(String),
+    BranchResetHard(String),
+    BranchCopyTrack {
+        branch: String,
+        track_name: String,
+    },
 
     AddTrackFromTemplate {
         name: String,
