@@ -1053,10 +1053,10 @@ impl Maolan {
     }
 
     pub(super) fn save(&self, path: String) -> std::io::Result<()> {
-        let filename = "session.json";
+        let filename = format!("{}.json", self.session_branch);
         let session_root = PathBuf::from(path.clone());
         let mut p = session_root.clone();
-        p.push(filename);
+        p.push(&filename);
         fs::create_dir_all(&path)?;
         fs::create_dir_all(session_root.join("plugins"))?;
         fs::create_dir_all(session_root.join("audio"))?;
@@ -1282,6 +1282,13 @@ impl Maolan {
             }
         });
         serde_json::to_writer_pretty(file, &result)?;
+        let commit_dir = session_root
+            .join(".maolan_commits")
+            .join(&self.session_branch);
+        fs::create_dir_all(&commit_dir)?;
+        let commit_filename = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+        let commit_path = commit_dir.join(format!("{}.json", commit_filename));
+        fs::copy(&p, &commit_path)?;
         Ok(())
     }
 
@@ -1343,9 +1350,9 @@ impl Maolan {
             #[cfg(all(unix, not(target_os = "macos")))]
             state.plugin_graphs_by_track.clear();
         }
-        let filename = "session.json";
+        let filename = format!("{}.json", self.session_branch);
         let mut p = PathBuf::from(path.clone());
-        p.push(filename);
+        p.push(&filename);
         let file = File::open(&p)?;
         let reader = BufReader::new(file);
         let session: Value = serde_json::from_reader(reader)?;

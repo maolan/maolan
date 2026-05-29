@@ -419,6 +419,7 @@ pub struct Maolan {
     selected_clap_plugins: BTreeSet<String>,
     plugin_format: PluginFormat,
     session_dir: Option<PathBuf>,
+    session_branch: String,
     pending_save_path: Option<String>,
     pending_save_tracks: std::collections::HashSet<String>,
     pending_save_clap_tracks: std::collections::HashSet<String>,
@@ -712,6 +713,7 @@ impl Default for Maolan {
             selected_clap_plugins: BTreeSet::new(),
             plugin_format: Self::default_plugin_format(),
             session_dir: None,
+            session_branch: "main".to_string(),
             pending_save_path: None,
             pending_save_tracks: std::collections::HashSet::new(),
             pending_save_clap_tracks: std::collections::HashSet::new(),
@@ -6723,7 +6725,7 @@ mod tests {
         app.save(session_root.to_string_lossy().to_string())
             .expect("save session");
 
-        let session_path = session_root.join("session.json");
+        let session_path = session_root.join("main.json");
         let mut session: Value =
             serde_json::from_reader(File::open(&session_path).expect("open saved session"))
                 .expect("parse saved session");
@@ -6771,7 +6773,7 @@ mod tests {
         app.save(session_root.to_string_lossy().to_string())
             .expect("save session");
 
-        let session_path = session_root.join("session.json");
+        let session_path = session_root.join("main.json");
         let session: serde_json::Value =
             serde_json::from_reader(File::open(&session_path).expect("open saved session"))
                 .expect("parse saved session");
@@ -6865,7 +6867,7 @@ mod tests {
         });
 
         fs::create_dir_all(&session_root).expect("create session dir");
-        let session_path = session_root.join("session.json");
+        let session_path = session_root.join("main.json");
         serde_json::to_writer_pretty(
             File::create(&session_path).expect("create session file"),
             &session,

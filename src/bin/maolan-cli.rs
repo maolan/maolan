@@ -42,6 +42,7 @@ use tokio::sync::mpsc::{Receiver, UnboundedReceiver, UnboundedSender, unbounded_
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CliOptions {
     session_dir: Option<PathBuf>,
+    branch: String,
     device: Option<String>,
     input_device: Option<String>,
     sample_rate_hz: i32,
@@ -56,6 +57,7 @@ impl Default for CliOptions {
     fn default() -> Self {
         Self {
             session_dir: None,
+            branch: "main".to_string(),
             device: None,
             input_device: None,
             sample_rate_hz: audio_defaults::SAMPLE_RATE_HZ,
@@ -161,6 +163,7 @@ struct SessionDiagnostics {
 #[derive(Debug)]
 struct App {
     session_dir: Option<PathBuf>,
+    session_branch: String,
     playing: bool,
     paused: bool,
     transport_sample: usize,
@@ -185,12 +188,14 @@ struct App {
 impl App {
     fn new(
         session_dir: Option<PathBuf>,
+        session_branch: String,
         open_audio_action: Option<Action>,
         status: String,
         default_export_sample_rate_hz: u32,
     ) -> Self {
         Self {
             session_dir,
+            session_branch,
             playing: false,
             paused: false,
             transport_sample: 0,
@@ -227,7 +232,7 @@ impl App {
         let Some(session_dir) = session_dir else {
             return;
         };
-        match load_session_restore_actions(session_dir) {
+        match load_session_restore_actions(session_dir, &self.session_branch) {
             Ok(actions) => {
                 self.status = format!("Restoring session '{}'", session_dir.display());
                 for action in actions {
@@ -328,7 +333,7 @@ impl App {
                     self.status = "Jump to end requires an opened/saved session".to_string();
                     return true;
                 };
-                match load_session_end_sample(session_dir) {
+                match load_session_end_sample(session_dir, &self.session_branch) {
                     Ok(sample) => {
                         self.transport_sample = sample;
                         self.status = "Jumped to end".to_string();
@@ -376,7 +381,7 @@ impl App {
             self.status = "Export requires an opened/saved session".to_string();
             return;
         };
-        match load_export_session_data(session_dir) {
+        match load_export_session_data(session_dir, &self.session_branch) {
             Ok(session) => {
                 let mut settings =
                     ExportSettings::new(self.default_export_sample_rate_hz, self.output_channels);
@@ -1380,6 +1385,11 @@ fn parse_cli_options(args: impl IntoIterator<Item = String>) -> Result<CliOption
             "--exclusive" => {
                 options.exclusive = true;
             }
+            "--branch" => {
+                options.branch = args
+                    .next()
+                    .ok_or_else(|| "--branch requires a value".to_string())?;
+            }
             "--sync-mode" => {
                 options.sync_mode = true;
             }
@@ -1567,6 +1577,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (export_tx, mut export_rx) = unbounded_channel();
     let mut app = App::new(
         options.session_dir.clone(),
+        options.branch.clone(),
         open_audio_action,
         status,
         if config.default_export_sample_rate_hz == 0 {
@@ -1851,7 +1862,7 @@ mod tests {
 
     #[test]
     fn track_meter_columns_only_include_track_peaks() {
-        let mut app = App::new(None, None, String::new(), 48_000);
+        let mut app = App::new(None, "main".to_string(), None, String::new(), 48_000);
         app.track_meters = vec![
             ("Track 1".to_string(), vec![-18.0, -12.0]),
             ("Track 2".to_string(), vec![-9.0]),
@@ -1863,7 +1874,7 @@ mod tests {
 
     #[test]
     fn hw_meter_columns_only_include_hw_outputs() {
-        let mut app = App::new(None, None, String::new(), 48_000);
+        let mut app = App::new(None, "main".to_string(), None, String::new(), 48_000);
         app.track_meters = vec![("Track 1".to_string(), vec![-18.0, -12.0])];
         app.hw_out_db = vec![-6.0, -3.0];
 

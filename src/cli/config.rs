@@ -34,8 +34,8 @@ fn config_path() -> Result<PathBuf, String> {
         .join("config.toml"))
 }
 
-pub fn load_session_end_sample(session_dir: &Path) -> Result<usize, String> {
-    let session = load_session_json(session_dir)?;
+pub fn load_session_end_sample(session_dir: &Path, branch: &str) -> Result<usize, String> {
+    let session = load_session_json(session_dir, branch)?;
     Ok(session
         .get("tracks")
         .and_then(serde_json::Value::as_array)
@@ -43,8 +43,8 @@ pub fn load_session_end_sample(session_dir: &Path) -> Result<usize, String> {
         .unwrap_or(0))
 }
 
-fn load_session_json(session_dir: &Path) -> Result<serde_json::Value, String> {
-    let session_path = session_dir.join("session.json");
+fn load_session_json(session_dir: &Path, branch: &str) -> Result<serde_json::Value, String> {
+    let session_path = session_dir.join(format!("{}.json", branch));
     let file = std::fs::File::open(&session_path)
         .map_err(|err| format!("Failed to open {}: {err}", session_path.display()))?;
     let reader = std::io::BufReader::new(file);
@@ -94,7 +94,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create temp dir");
         std::fs::write(
-            dir.join("session.json"),
+            dir.join("main.json"),
             serde_json::json!({
                 "tracks": [{
                     "name": "Track 1",
@@ -123,7 +123,10 @@ mod tests {
         )
         .expect("write session");
 
-        assert_eq!(load_session_end_sample(&dir).expect("end sample"), 425);
+        assert_eq!(
+            load_session_end_sample(&dir, "main").expect("end sample"),
+            425
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

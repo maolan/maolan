@@ -11,30 +11,37 @@ impl Maolan {
         path.join(".maolan_autosave/snapshots")
     }
 
-    pub(super) fn list_autosave_snapshots_for(path: &std::path::Path) -> Vec<std::path::PathBuf> {
+    pub(super) fn list_autosave_snapshots_for(
+        path: &std::path::Path,
+        branch: &str,
+    ) -> Vec<std::path::PathBuf> {
         let snapshots_dir = Self::autosave_snapshots_dir_for(path);
+        let branch_file = format!("{}.json", branch);
         let mut snapshots = fs::read_dir(snapshots_dir)
             .ok()
             .into_iter()
             .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
             .map(|entry| entry.path())
             .filter(|snapshot_dir| {
-                snapshot_dir.is_dir() && snapshot_dir.join("session.json").exists()
+                snapshot_dir.is_dir() && snapshot_dir.join(&branch_file).exists()
             })
             .collect::<Vec<_>>();
         snapshots.sort_by(|a, b| b.cmp(a));
         snapshots
     }
 
-    pub(super) fn has_newer_autosave_snapshot(path: &std::path::Path) -> bool {
-        let Some(autosave_session) = Self::list_autosave_snapshots_for(path).first().cloned()
+    pub(super) fn has_newer_autosave_snapshot(path: &std::path::Path, branch: &str) -> bool {
+        let Some(autosave_session) = Self::list_autosave_snapshots_for(path, branch)
+            .first()
+            .cloned()
         else {
             return false;
         };
-        let autosave_mtime = fs::metadata(autosave_session.join("session.json"))
+        let branch_file = format!("{}.json", branch);
+        let autosave_mtime = fs::metadata(autosave_session.join(&branch_file))
             .and_then(|m| m.modified())
             .ok();
-        let session_mtime = fs::metadata(path.join("session.json"))
+        let session_mtime = fs::metadata(path.join(&branch_file))
             .and_then(|m| m.modified())
             .ok();
         match (autosave_mtime, session_mtime) {
@@ -47,6 +54,7 @@ impl Maolan {
     pub(super) fn autosave_recovery_preview_summary(
         session_dir: &std::path::Path,
         snapshot_dir: &std::path::Path,
+        branch: &str,
     ) -> String {
         fn read_counts(path: &std::path::Path) -> Option<(usize, usize, usize)> {
             let f = fs::File::open(path).ok()?;
@@ -76,8 +84,9 @@ impl Maolan {
             Some((track_count, audio_count, midi_count))
         }
 
-        let live = read_counts(&session_dir.join("session.json"));
-        let snap = read_counts(&snapshot_dir.join("session.json"));
+        let branch_file = format!("{}.json", branch);
+        let live = read_counts(&session_dir.join(&branch_file));
+        let snap = read_counts(&snapshot_dir.join(&branch_file));
         let label = snapshot_dir
             .file_name()
             .and_then(|s| s.to_str())
@@ -148,7 +157,8 @@ impl Maolan {
             .clone()
             .or_else(|| self.session_dir.clone())
             .ok_or_else(|| "No session available for autosave recovery".to_string())?;
-        let snapshots = Self::list_autosave_snapshots_for(&base_session_dir);
+        let branch = self.session_branch.clone();
+        let snapshots = Self::list_autosave_snapshots_for(&base_session_dir, &branch);
         if snapshots.is_empty() {
             return Err("No autosave snapshot found for this session".to_string());
         }
@@ -213,10 +223,10 @@ mod tests {
         fs::create_dir_all(&older).unwrap();
         fs::create_dir_all(&newer).unwrap();
         fs::create_dir_all(&invalid).unwrap();
-        fs::write(older.join("session.json"), "{}").unwrap();
-        fs::write(newer.join("session.json"), "{}").unwrap();
+        fs::write(older.join("main.json"), "{}").unwrap();
+        fs::write(newer.join("main.json"), "{}").unwrap();
 
-        let snapshots = Maolan::list_autosave_snapshots_for(&session_dir);
+        let snapshots = Maolan::list_autosave_snapshots_for(&session_dir, "main");
         assert_eq!(snapshots, vec![newer, older]);
     }
 
@@ -225,9 +235,9 @@ mod tests {
         let session_dir = temp_session_dir("autosave-newer");
         let snapshot_dir = Maolan::autosave_snapshots_dir_for(&session_dir).join("20260102-010101");
         fs::create_dir_all(&snapshot_dir).unwrap();
-        fs::write(snapshot_dir.join("session.json"), "{\"tracks\":[]}").unwrap();
+        fs::write(snapshot_dir.join("main.json"), "{\"tracks\":[]}").unwrap();
 
-        assert!(Maolan::has_newer_autosave_snapshot(&session_dir));
+        assert!(Maolan::has_newer_autosave_snapshot(&session_dir, "main"));
     }
 
     #[test]
@@ -235,7 +245,7 @@ mod tests {
         let session_dir = temp_session_dir("autosave-preview-live");
         let snapshot_dir = temp_session_dir("autosave-preview-snap");
         fs::write(
-            session_dir.join("session.json"),
+            session_dir.join("main.json"),
             r#"{
                 "tracks": [
                     { "audio": { "clips": [1] }, "midi": { "clips": [1, 2] } }
@@ -244,7 +254,7 @@ mod tests {
         )
         .unwrap();
         fs::write(
-            snapshot_dir.join("session.json"),
+            snapshot_dir.join("main.json"),
             r#"{
                 "tracks": [
                     { "audio": { "clips": [1, 2] }, "midi": { "clips": [] } },
@@ -254,7 +264,8 @@ mod tests {
         )
         .unwrap();
 
-        let summary = Maolan::autosave_recovery_preview_summary(&session_dir, &snapshot_dir);
+        let summary =
+            Maolan::autosave_recovery_preview_summary(&session_dir, &snapshot_dir, "main");
         assert!(summary.contains("tracks 1->2"));
         assert!(summary.contains("audio clips 1->2"));
         assert!(summary.contains("midi clips 2->1"));

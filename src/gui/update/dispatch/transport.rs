@@ -180,10 +180,11 @@ impl Maolan {
                 match self.save(snapshot_dir.to_string_lossy().to_string()) {
                     Ok(()) => {
                         self.last_autosave_snapshot = Some(now);
+                        let branch = self.session_branch.clone();
                         let mut snapshots = self
                             .session_dir
                             .as_ref()
-                            .map(|path| Self::list_autosave_snapshots_for(path))
+                            .map(|path| Self::list_autosave_snapshots_for(path, &branch))
                             .unwrap_or_default();
                         if snapshots.len()
                             > crate::consts::gui_update_dispatch_transport::AUTOSAVE_KEEP_COUNT

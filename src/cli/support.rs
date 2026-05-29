@@ -52,8 +52,11 @@ pub struct ExportSessionData {
     pub connections: Vec<ExportConnection>,
 }
 
-pub fn load_session_restore_actions(session_dir: &Path) -> Result<Vec<Action>, String> {
-    let session = load_session_json(session_dir)?;
+pub fn load_session_restore_actions(
+    session_dir: &Path,
+    branch: &str,
+) -> Result<Vec<Action>, String> {
+    let session = load_session_json(session_dir, branch)?;
 
     let mut actions = vec![
         Action::BeginSessionRestore,
@@ -140,8 +143,11 @@ pub fn load_session_restore_actions(session_dir: &Path) -> Result<Vec<Action>, S
     Ok(actions)
 }
 
-pub fn load_export_session_data(session_dir: &Path) -> Result<ExportSessionData, String> {
-    let session = load_session_json(session_dir)?;
+pub fn load_export_session_data(
+    session_dir: &Path,
+    branch: &str,
+) -> Result<ExportSessionData, String> {
+    let session = load_session_json(session_dir, branch)?;
     let tracks = session
         .get("tracks")
         .and_then(Value::as_array)
@@ -156,8 +162,8 @@ pub fn load_export_session_data(session_dir: &Path) -> Result<ExportSessionData,
     })
 }
 
-fn load_session_json(session_dir: &Path) -> Result<Value, String> {
-    let session_path = session_dir.join("session.json");
+fn load_session_json(session_dir: &Path, branch: &str) -> Result<Value, String> {
+    let session_path = session_dir.join(format!("{}.json", branch));
     let file = File::open(&session_path)
         .map_err(|err| format!("Failed to open {}: {err}", session_path.display()))?;
     let reader = BufReader::new(file);
@@ -925,7 +931,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("create temp dir");
         std::fs::write(
-            dir.join("session.json"),
+            dir.join("main.json"),
             serde_json::json!({
                 "transport": {
                     "loop_range_samples": null,
@@ -981,7 +987,7 @@ mod tests {
         )
         .expect("write session");
 
-        let actions = load_session_restore_actions(&dir).expect("restore actions");
+        let actions = load_session_restore_actions(&dir, "main").expect("restore actions");
 
         assert!(actions.iter().any(|action| matches!(
             action,

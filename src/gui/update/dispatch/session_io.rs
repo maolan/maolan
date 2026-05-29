@@ -50,7 +50,7 @@ impl Maolan {
                         format!("Session no longer exists: {}", path.display());
                     return Some(Task::none());
                 }
-                if Self::has_newer_autosave_snapshot(&path) {
+                if Self::has_newer_autosave_snapshot(&path, &self.session_branch) {
                     self.pending_recovery_session_dir = Some(path.clone());
                     self.pending_autosave_recovery = None;
                     self.pending_open_session_dir = Some(path.clone());
@@ -107,6 +107,7 @@ impl Maolan {
                     let preview = Self::autosave_recovery_preview_summary(
                         &pending.session_dir,
                         &selected_snapshot,
+                        &self.session_branch,
                     );
                     if !pending.confirm_armed {
                         pending.confirm_armed = true;
