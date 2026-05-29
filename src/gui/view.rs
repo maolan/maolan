@@ -394,32 +394,35 @@ impl Maolan {
                         self.tracks_visible,
                         self.editor_visible,
                         self.mixer_visible,
+                        self.toolbar_visible,
                         self.show_log_window,
                         self.shortcuts_pane_visible,
                     ),];
-                    content = content.push(self.toolbar.view(ToolbarViewState {
-                        playing: self.playing,
-                        paused: self.paused,
-                        recording: self.record_armed,
-                        metronome_enabled: self.metronome_enabled,
-                        has_session_end,
-                        has_loop_range: self.loop_range_samples.is_some(),
-                        loop_enabled: self.loop_enabled,
-                        has_punch_range: self.punch_range_samples.is_some(),
-                        punch_enabled: self.punch_enabled,
-                        snap_mode: self.snap_mode,
-                        midi_editor_active: matches!(
-                            view_kind,
-                            View::Piano | View::PitchCorrection
-                        ),
-                        midi_snap_mode: self.midi_snap_mode,
-                        tempo_input: self.tempo_input.clone(),
-                        tsig_num_input: self.time_signature_num_input.clone(),
-                        tsig_denom_input: self.time_signature_denom_input.clone(),
-                        playhead_time_label,
-                        playhead_bar,
-                        playhead_beat,
-                    }));
+                    if self.toolbar_visible {
+                        content = content.push(self.toolbar.view(ToolbarViewState {
+                            playing: self.playing,
+                            paused: self.paused,
+                            recording: self.record_armed,
+                            metronome_enabled: self.metronome_enabled,
+                            has_session_end,
+                            has_loop_range: self.loop_range_samples.is_some(),
+                            loop_enabled: self.loop_enabled,
+                            has_punch_range: self.punch_range_samples.is_some(),
+                            punch_enabled: self.punch_enabled,
+                            snap_mode: self.snap_mode,
+                            midi_editor_active: matches!(
+                                view_kind,
+                                View::Piano | View::PitchCorrection
+                            ),
+                            midi_snap_mode: self.midi_snap_mode,
+                            tempo_input: self.tempo_input.clone(),
+                            tsig_num_input: self.time_signature_num_input.clone(),
+                            tsig_denom_input: self.time_signature_denom_input.clone(),
+                            playhead_time_label,
+                            playhead_bar,
+                            playhead_beat,
+                        }));
+                    }
                     if matches!(view_kind, View::TrackPlugins) {
                         let track_selector: iced::Element<'_, Message> = if let Some(ref header) =
                             clip_header

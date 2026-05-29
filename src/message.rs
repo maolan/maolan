@@ -910,6 +910,7 @@ pub enum Message {
     ToggleMixerVisibility,
     ToggleTracksVisibility,
     ToggleEditorVisibility,
+    ToggleToolbarVisibility,
     ToggleLogVisibility,
     ToggleShortcutsPane,
     ToggleCutIndicator,

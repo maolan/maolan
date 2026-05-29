@@ -12,11 +12,25 @@ use iced::keyboard::Event as KeyEvent;
 use iced::{Subscription, event, keyboard, mouse, window};
 use maolan_engine::message::{Action as EngineAction, Message as EngineMessage};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 #[cfg(unix)]
 use tokio::signal::unix::{SignalKind, signal};
 
 impl Maolan {
+    fn should_drive_playback_ui(&self) -> bool {
+        let state = self.state.blocking_read();
+        match state.view {
+            crate::state::View::Workspace => {
+                self.toolbar_visible
+                    || self.tracks_visible
+                    || self.editor_visible
+                    || self.mixer_visible
+            }
+            crate::state::View::Piano | crate::state::View::PitchCorrection => true,
+            _ => false,
+        }
+    }
+
     fn should_poll_meters(
         mixer_visible: bool,
         playing: bool,
@@ -68,9 +82,8 @@ impl Maolan {
                         receiver,
                         Vec::<f32>::new(),
                         HashMap::<String, Vec<f32>>::new(),
-                        Instant::now(),
                     ),
-                    |(mut rx, mut last_hw_out, mut last_meters, mut last_unchanged_forward_at)| async move {
+                    |(mut rx, mut last_hw_out, mut last_meters)| async move {
                         loop {
                             match rx.recv().await {
                                 Some(EngineMessage::Response(r)) => {
@@ -113,15 +126,7 @@ impl Maolan {
                                                     );
                                                 let changed = hw_changed || tracks_changed;
                                                 if !changed {
-                                                    // Forward unchanged snapshots at a steady, limited cadence
-                                                    // so meter release remains smooth without saturating UI events.
-                                                    let now = Instant::now();
-                                                    if now.duration_since(last_unchanged_forward_at)
-                                                        < Duration::from_millis(16)
-                                                    {
-                                                        continue;
-                                                    }
-                                                    last_unchanged_forward_at = now;
+                                                    continue;
                                                 }
 
                                                 last_hw_out.clear();
@@ -140,12 +145,7 @@ impl Maolan {
                                     }
                                     return Some((
                                         Message::Response(r),
-                                        (
-                                            rx,
-                                            last_hw_out,
-                                            last_meters,
-                                            last_unchanged_forward_at,
-                                        ),
+                                        (rx, last_hw_out, last_meters),
                                     ));
                                 }
                                 Some(_) => {}
@@ -193,7 +193,7 @@ impl Maolan {
             })
         });
 
-        let playback_sub = if self.playing && !self.paused {
+        let playback_sub = if self.playing && !self.paused && self.should_drive_playback_ui() {
             iced::time::every(PLAYHEAD_UPDATE_INTERVAL).map(|_| Message::PlaybackTick)
         } else {
             Subscription::none()

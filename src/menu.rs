@@ -41,6 +41,7 @@ impl Menu {
         tracks_visible: bool,
         editor_visible: bool,
         mixer_visible: bool,
+        toolbar_visible: bool,
         log_visible: bool,
         shortcuts_pane_visible: bool,
     ) -> iced::Element<'_, Message> {
@@ -177,6 +178,11 @@ impl Menu {
                     (menu_checkbox_item("Tracks", tracks_visible, Message::ToggleTracksVisibility)),
                     (menu_checkbox_item("Editor", editor_visible, Message::ToggleEditorVisibility)),
                     (menu_checkbox_item("Mixer", mixer_visible, Message::ToggleMixerVisibility)),
+                    (menu_checkbox_item(
+                        "Toolbar",
+                        toolbar_visible,
+                        Message::ToggleToolbarVisibility
+                    )),
                     (menu_checkbox_item("Log", log_visible, Message::ToggleLogVisibility)),
                     (menu_checkbox_item(
                         "Shortcuts",
