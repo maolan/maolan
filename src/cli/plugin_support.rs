@@ -5,9 +5,10 @@ use std::path::Path;
 #[cfg(unix)]
 pub fn load_session_plugin_restore_actions(
     session_dir: &Path,
+    branch: &str,
     clap_plugins: &[maolan_engine::clap::ClapPluginInfo],
 ) -> Result<Vec<Action>, String> {
-    let session = load_session_json(session_dir)?;
+    let session = load_session_json(session_dir, branch)?;
     let mut actions = Vec::new();
     push_track_plugin_graph_restore_actions(&mut actions, session.get("graphs"), clap_plugins)?;
     Ok(actions)
@@ -185,8 +186,8 @@ fn resolve_clap_plugin_path(
     None
 }
 
-fn load_session_json(session_dir: &Path) -> Result<Value, String> {
-    let session_path = session_dir.join("session.json");
+fn load_session_json(session_dir: &Path, branch: &str) -> Result<Value, String> {
+    let session_path = session_dir.join(format!("{}.json", branch));
     let file = std::fs::File::open(&session_path)
         .map_err(|err| format!("Failed to open {}: {err}", session_path.display()))?;
     let reader = std::io::BufReader::new(file);

@@ -47,12 +47,13 @@ If the file does not exist, Maolan creates it on startup with defaults.
 
 A saved session is a directory containing:
 
-- `session.json`: main project state
+- `<branch>.json`: main project state for the current branch (default: `main.json`)
 - `audio/`: imported or rendered audio stored in-session
 - `midi/`: copied MIDI files used by clips
 - `peaks/`: cached waveform peak data written on save
 - `pitch/`: cached pitch-analysis JSON files keyed by source clip path + source window
 - `plugins/`: plugin-related session assets
+- `.maolan_commits/<branch>/<timestamp>.json`: commit history created on every save
 - `.maolan_autosave/snapshots/`: autosave snapshots
 
 The session JSON persists:
@@ -74,7 +75,7 @@ Session templates live under:
 
 `~/.config/maolan/session_templates/<name>/`
 
-Each session template contains a `session.json` plus the same supporting subdirectories used by a normal session. Session templates keep:
+Each session template contains a `session.json` (templates are not branch-aware) plus the same supporting subdirectories used by a normal session. Session templates keep:
 
 - track structure
 - routing
@@ -134,9 +135,9 @@ Group templates intentionally do not keep:
 
 - Autosave snapshots are generated every 15 seconds.
 - Snapshots are stored in `<session>/.maolan_autosave/snapshots/<timestamp>/`.
-- A snapshot is considered valid when it contains `session.json`.
+- A snapshot is considered valid when it contains a `<branch>.json` file.
 - Recovery prefers newer snapshots and sorts them newest-first.
-- On startup or open, Maolan can detect when the newest autosave snapshot is newer than the live `session.json`.
+- On startup or open, Maolan can detect when the newest autosave snapshot is newer than the live `<branch>.json`.
 - Recovery preview currently summarizes track, audio-clip, and MIDI-clip count deltas between the live session and the selected snapshot.
 
 Recovering an autosave snapshot loads that snapshot as the current session state and marks the session as having unsaved changes.
